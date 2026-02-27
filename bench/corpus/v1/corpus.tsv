@@ -1,0 +1,6 @@
+# schema_version=1
+# corpus_version=v1
+# description=Deterministic starter corpus for benchmark harness smoke tests and command-shape validation.
+# columns=sample_id<TAB>relative_path<TAB>language<TAB>duration_ms<TAB>generator
+synthetic_short	artifacts/bench/corpus/v1/synthetic_short.wav	en	3000	sine:440.0
+synthetic_medium	artifacts/bench/corpus/v1/synthetic_medium.wav	en	8000	silence
