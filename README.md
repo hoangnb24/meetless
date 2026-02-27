@@ -24,6 +24,8 @@ Sequoia Capture is a macOS 15+ Rust project that records:
 - `docs/research.md`: API/TCC/platform research
 - `docs/architecture.md`: real-time pipeline and interleave spec
 - `docs/adr-001-backend-decision.md`: backend decision and explicit fallback triggers
+- `docs/adr-002-lock-free-transport.md`: callback transport architecture decision
+- `docs/adr-003-cleanup-boundary-policy.md`: cleanup isolation and policy decision
 - `docs/beads-governance.md`: issue decomposition and traceability governance
 
 ## Commands
@@ -116,7 +118,7 @@ cargo run --bin sequoia_capture -- [duration_seconds] [output_path] [sample_rate
 
 ### Transcription CLI contract (`src/bin/transcribe_live.rs`)
 ```bash
-cargo run --bin transcribe-live -- --asr-model <local-model-path> [flags...]
+cargo run --bin transcribe-live -- [--asr-model <local-model-path>] [flags...]
 ```
 - key flags currently validated:
   - `--duration-sec`
@@ -139,6 +141,7 @@ cargo run --bin transcribe-live -- --asr-model <local-model-path> [flags...]
   - `--llm-model`
   - `--llm-timeout-ms`
   - `--llm-max-queue`
+  - `--llm-retries`
   - `--transcribe-channels`
   - `--speaker-labels`
   - `--benchmark-runs`
@@ -147,7 +150,39 @@ cargo run --bin transcribe-live -- --asr-model <local-model-path> [flags...]
   - `whispercpp` (primary)
   - `whisperkit` (fallback)
   - `moonshine` (placeholder; adapter not wired yet)
+- model resolution precedence:
+  - `--asr-model <path>` (explicit override, highest priority)
+  - `RECORDIT_ASR_MODEL` environment variable
+  - backend defaults (sandbox container model path, then repo-local model defaults)
+  - whispercpp expects a **file** path; whisperkit expects a **directory** path
+  - preflight/runtime manifests expose both resolved path and source (`asr_model_resolved`, `asr_model_source`)
+- channel mode values:
+  - `separate`
+  - `mixed`
+  - `mixed-fallback` (prefers separate but falls back to mixed when dual-channel inputs are unavailable)
+- mode/degradation artifact policy:
+  - runtime manifest records both `channel_mode_requested` and active `channel_mode`
+  - runtime JSONL emits `event_type=mode_degradation` when fallback/degradation occurs
+  - runtime manifest includes a `degradation_events` array with stable `code` + `detail`
+- readability default contract:
+  - merged transcript line format: `[MM:SS.mmm-MM:SS.mmm] <channel>: <text>`
+  - per-channel transcript line format: `[MM:SS.mmm-MM:SS.mmm] <text>`
+  - near-simultaneous cross-channel finals are deterministic: keep canonical sort order and annotate the later line with `(overlap<=120ms with <channel>)`
+  - runtime manifest includes `readability_defaults` + `transcript_per_channel` entries
 - use `cargo run --bin transcribe-live -- --help` to print the full contract
+- cleanup isolation policy:
+  - finalized-segment cleanup is queued via non-blocking enqueue (`try_send`)
+  - queue-full cleanup requests are dropped, never blocking ASR/final event emission
+  - processed cleanup requests use `--llm-timeout-ms` and `--llm-retries` policy
+  - prompt policy is constrained to readability cleanup only (no semantic expansion)
+  - successful cleanup emits `llm_final` events with `source_final_segment_id` lineage to the original `final` segment
+  - queue telemetry is emitted as `cleanup_queue` in both JSONL and runtime manifest outputs
+
+Sample readable transcript output:
+```text
+[00:00.000-00:00.420] mic: hello from mic
+[00:00.050-00:00.410] system: hello from system (overlap<=120ms with mic)
+```
 
 Replay example:
 ```bash

@@ -19,6 +19,29 @@ Enforcement points:
   - `non_float_pcm`
   - `chunk_too_large`
 
+## Cleanup Queue Contract (Transcribe)
+
+Finalized-segment cleanup is an optional post-processing lane and must never block ASR event emission:
+
+1. Only `final` transcript events are eligible for cleanup.
+2. Cleanup submission uses bounded non-blocking enqueue (`try_send` on a fixed-capacity queue).
+3. Queue-full submissions are dropped and counted instead of waiting.
+4. Per-request execution is constrained by `--llm-timeout-ms` and `--llm-retries`.
+5. Runtime drain is budgeted; unfinished cleanup work is reported as pending rather than delaying transcript completion indefinitely.
+
+Operational knobs:
+- `--llm-cleanup`
+- `--llm-endpoint`
+- `--llm-model`
+- `--llm-timeout-ms`
+- `--llm-max-queue`
+- `--llm-retries`
+
+Telemetry/artifact surface:
+- terminal summary prints cleanup queue totals (`submitted`, `enqueued`, `dropped_queue_full`, `processed`, `succeeded`, `timed_out`, `failed`, `retry_attempts`, `pending`, `drain_completed`)
+- runtime JSONL emits a terminal `cleanup_queue` control event
+- runtime manifest persists the same cleanup queue summary under `cleanup_queue`
+
 ## Error to Recovery Matrix
 
 | Error Class | Detection | Recovery Action |
@@ -43,4 +66,3 @@ Current contract/recovery logic is validated with:
 - transport unit tests (`cargo test --lib`)
 - recorder policy tests (`DYLD_LIBRARY_PATH=/usr/lib/swift cargo test --bin sequoia_capture -- --nocapture`)
 - transport stress harness (`cargo run --quiet --bin transport_stress -- --iterations 50000 --capacity 128 --payload-bytes 2048 --consumer-delay-micros 20`)
-
