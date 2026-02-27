@@ -23,6 +23,7 @@ Sequoia Capture is a macOS 15+ Rust project that records:
 - `packaging/entitlements.plist`: sandbox and privacy entitlements
 - `docs/research.md`: API/TCC/platform research
 - `docs/architecture.md`: real-time pipeline and interleave spec
+- `docs/adr-001-backend-decision.md`: backend decision and explicit fallback triggers
 - `docs/beads-governance.md`: issue decomposition and traceability governance
 
 ## Commands
@@ -45,12 +46,11 @@ make capture CAPTURE_SECS=10 OUT=artifacts/hello-world.wav SAMPLE_RATE=48000
 ```
 Runs the debug recorder binary directly.
 
-### Validate Transcription CLI Contract (debug)
+### Run Representative Transcription Runtime (debug)
 ```bash
 make transcribe-live ASR_MODEL=models/ggml-base.en.bin
 ```
-Parses and validates the planned live-transcription flags, then prints the resolved configuration summary.
-The current `transcribe-live` binary defines the CLI contract only; capture, VAD, ASR, and JSONL emission land in follow-up tasks.
+Validates CLI flags, runs representative ASR transcription against `--input-wav` (auto-generated locally if missing), emits `partial`/`final` events to terminal + JSONL, computes VAD boundaries, and writes runtime manifest + single-channel benchmark artifacts.
 
 ### Run Transcription Preflight (debug)
 ```bash
@@ -120,6 +120,7 @@ cargo run --bin transcribe-live -- --asr-model <local-model-path> [flags...]
 ```
 - key flags currently validated:
   - `--duration-sec`
+  - `--input-wav`
   - `--out-wav`
   - `--out-jsonl`
   - `--out-manifest`
@@ -140,7 +141,22 @@ cargo run --bin transcribe-live -- --asr-model <local-model-path> [flags...]
   - `--llm-max-queue`
   - `--transcribe-channels`
   - `--speaker-labels`
+  - `--benchmark-runs`
+  - `--replay-jsonl`
+- backend values:
+  - `whispercpp` (primary)
+  - `whisperkit` (fallback)
+  - `moonshine` (placeholder; adapter not wired yet)
 - use `cargo run --bin transcribe-live -- --help` to print the full contract
+
+Replay example:
+```bash
+cargo run --bin transcribe-live -- --replay-jsonl artifacts/transcribe-live.runtime.jsonl
+```
+
+Single-channel benchmark artifacts are written under:
+- `artifacts/bench/transcribe-live-single-channel/<timestamp>/summary.csv`
+- `artifacts/bench/transcribe-live-single-channel/<timestamp>/runs.csv`
 
 ## Output Paths
 - `make capture` / direct `cargo run --bin sequoia_capture`: output path is resolved from the current shell working directory.
