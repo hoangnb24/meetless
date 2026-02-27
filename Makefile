@@ -25,8 +25,9 @@ BENCH_CORPUS ?= bench/corpus/v1/corpus.tsv
 BENCH_OUT ?= artifacts/bench
 BENCH_BACKEND ?= noop-cat
 BENCH_CMD ?= cat {input} > /dev/null
+GATE_D_SECONDS ?= 3600
 
-.PHONY: help build build-release probe capture transcribe-live transcribe-preflight run-transcribe-app run-transcribe-preflight-app bench-harness bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
+.PHONY: help build build-release probe capture transcribe-live transcribe-preflight run-transcribe-app run-transcribe-preflight-app bench-harness gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
 
 help:
 	@echo "Targets:"
@@ -39,6 +40,7 @@ help:
 	@echo "  run-transcribe-app - Run signed transcribe-live app bundle"
 	@echo "  run-transcribe-preflight-app - Run signed transcribe-live preflight diagnostics"
 	@echo "  bench-harness - Run benchmark harness and emit machine-readable artifacts"
+	@echo "  gate-d-soak - Run 60-minute soak gate harness and emit runs/summary artifacts"
 	@echo "  bundle        - Create minimal .app bundle"
 	@echo "  sign          - Codesign app bundle"
 	@echo "  verify        - Verify signature and print entitlements"
@@ -70,6 +72,9 @@ transcribe-preflight: transcribe-live
 
 bench-harness: build
 	cargo run --bin benchmark_harness -- --corpus "$(BENCH_CORPUS)" --out-dir "$(BENCH_OUT)" --backend-id "$(BENCH_BACKEND)" --cmd "$(BENCH_CMD)"
+
+gate-d-soak:
+	SOAK_SECONDS=$(GATE_D_SECONDS) scripts/gate_d_soak.sh
 
 bundle: build-release
 	rm -rf $(APP_DIR)
