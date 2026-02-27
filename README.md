@@ -50,7 +50,7 @@ Runs the debug recorder binary directly.
 ```bash
 make transcribe-live ASR_MODEL=models/ggml-base.en.bin
 ```
-Validates CLI flags, runs representative ASR transcription against `--input-wav` (auto-generated locally if missing), emits `partial`/`final` events to terminal + JSONL, computes VAD boundaries, and writes runtime manifest + single-channel benchmark artifacts.
+Validates CLI flags, runs representative ASR transcription against `--input-wav` (auto-generated locally if missing), emits `partial`/`final` events to terminal + JSONL, computes VAD boundaries, and writes runtime manifest + mode-specific latency benchmark artifacts.
 
 ### Run Transcription Preflight (debug)
 ```bash
@@ -154,9 +154,11 @@ Replay example:
 cargo run --bin transcribe-live -- --replay-jsonl artifacts/transcribe-live.runtime.jsonl
 ```
 
-Single-channel benchmark artifacts are written under:
+Benchmark artifacts are written under:
 - `artifacts/bench/transcribe-live-single-channel/<timestamp>/summary.csv`
 - `artifacts/bench/transcribe-live-single-channel/<timestamp>/runs.csv`
+- `artifacts/bench/transcribe-live-dual-channel/<timestamp>/summary.csv`
+- `artifacts/bench/transcribe-live-dual-channel/<timestamp>/runs.csv`
 
 ## Output Paths
 - `make capture` / direct `cargo run --bin sequoia_capture`: output path is resolved from the current shell working directory.

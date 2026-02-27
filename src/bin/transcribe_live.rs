@@ -1,5 +1,5 @@
-use screencapturekit::prelude::*;
 use hound::{SampleFormat, WavReader};
+use screencapturekit::prelude::*;
 use std::env;
 use std::fmt::{self, Display};
 use std::fs::{self, File};
@@ -42,6 +42,7 @@ Options:
   --llm-model <id>                Local cleanup model id
   --llm-timeout-ms <ms>           Cleanup timeout in milliseconds (default: 1000)
   --llm-max-queue <n>             Max queued cleanup requests (default: 32)
+  --llm-retries <n>               Retry count for failed cleanup requests (default: 0)
   --transcribe-channels <mode>    Channel mode: separate | mixed (default: separate)
   --speaker-labels <mic,system>   Comma-separated labels for the two channels (default: mic,system)
   --benchmark-runs <n>            Number of representative latency benchmark runs (default: 3)
@@ -230,6 +231,7 @@ struct TranscribeConfig {
     llm_model: Option<String>,
     llm_timeout_ms: u64,
     llm_max_queue: usize,
+    llm_retries: usize,
     channel_mode: ChannelMode,
     speaker_labels: SpeakerLabels,
     benchmark_runs: usize,
@@ -260,6 +262,7 @@ impl Default for TranscribeConfig {
             llm_model: None,
             llm_timeout_ms: 1_000,
             llm_max_queue: 32,
+            llm_retries: 0,
             channel_mode: ChannelMode::Separate,
             speaker_labels: SpeakerLabels {
                 mic: "mic".to_owned(),
@@ -325,7 +328,9 @@ impl TranscribeConfig {
         }
 
         if self.benchmark_runs == 0 {
-            return Err(CliError::new("`--benchmark-runs` must be greater than zero"));
+            return Err(CliError::new(
+                "`--benchmark-runs` must be greater than zero",
+            ));
         }
 
         if self.llm_cleanup {
@@ -377,6 +382,7 @@ impl TranscribeConfig {
         );
         println!("  llm_timeout_ms: {}", self.llm_timeout_ms);
         println!("  llm_max_queue: {}", self.llm_max_queue);
+        println!("  llm_retries: {}", self.llm_retries);
         println!("  transcribe_channels: {}", self.channel_mode);
         println!("  speaker_labels: {}", self.speaker_labels);
         println!("  benchmark_runs: {}", self.benchmark_runs);
@@ -662,41 +668,51 @@ fn run_live_pipeline(config: &TranscribeConfig) -> Result<LiveRunReport, CliErro
         .unwrap_or_else(|_| "unknown".to_string());
     let stamp = command_stdout("date", &["-u", "+%Y%m%dT%H%M%SZ"])
         .unwrap_or_else(|_| "unknown".to_string());
-    let adapter = select_adapter(config.asr_backend)?;
-
+    let backend_id = select_adapter(config.asr_backend)?.backend_id();
+    let channel_inputs = prepare_channel_inputs(config, &stamp)?;
     let mut wall_ms_runs = Vec::with_capacity(config.benchmark_runs);
-    let mut transcript_text = String::new();
+    let mut first_channel_transcripts = Vec::new();
     for _ in 0..config.benchmark_runs {
         let started_at = Instant::now();
-        let transcript = adapter.transcribe(&AsrRequest {
-            model_path: &config.asr_model,
-            audio_path: &config.input_wav,
-            language: &config.asr_language,
-            threads: config.asr_threads,
-        })?;
+        let transcripts = transcribe_channels_once(config, &channel_inputs)?;
         wall_ms_runs.push(started_at.elapsed().as_secs_f64() * 1_000.0);
-        if transcript_text.is_empty() {
-            transcript_text = transcript;
+        if first_channel_transcripts.is_empty() {
+            first_channel_transcripts = transcripts;
         }
     }
-    if transcript_text.is_empty() {
-        transcript_text = "<no speech detected>".to_string();
-    }
-
     let vad_boundaries = detect_vad_boundaries_from_wav(
         &config.input_wav,
         config.vad_threshold,
         config.vad_min_speech_ms,
         config.vad_min_silence_ms,
     )?;
-    let events = build_transcript_events(&transcript_text, &vad_boundaries);
-    let (benchmark_summary_csv, benchmark_runs_csv, benchmark) =
-        write_single_channel_benchmark(&stamp, adapter.backend_id(), &wall_ms_runs)?;
+    let events = merge_transcript_events(
+        first_channel_transcripts
+            .iter()
+            .flat_map(|transcript| {
+                build_transcript_events(
+                    &transcript.text,
+                    &vad_boundaries,
+                    &transcript.label,
+                    transcript.role,
+                )
+            })
+            .collect(),
+    );
+    let transcript_text = reconstruct_transcript(&events);
+    let (benchmark_summary_csv, benchmark_runs_csv, benchmark) = write_benchmark_artifact(
+        &stamp,
+        backend_id,
+        benchmark_track(config.channel_mode),
+        &wall_ms_runs,
+    )?;
 
     let report = LiveRunReport {
         generated_at_utc,
-        backend_id: adapter.backend_id(),
+        backend_id,
+        channel_mode: config.channel_mode,
         transcript_text,
+        channel_transcripts: first_channel_transcripts,
         vad_boundaries,
         events,
         benchmark,
@@ -709,7 +725,220 @@ fn run_live_pipeline(config: &TranscribeConfig) -> Result<LiveRunReport, CliErro
     Ok(report)
 }
 
-fn build_transcript_events(transcript_text: &str, vad_boundaries: &[VadBoundary]) -> Vec<TranscriptEvent> {
+fn prepare_channel_inputs(
+    config: &TranscribeConfig,
+    stamp: &str,
+) -> Result<Vec<ChannelInputPlan>, CliError> {
+    match config.channel_mode {
+        ChannelMode::Mixed => Ok(vec![ChannelInputPlan {
+            role: "mixed",
+            label: "merged".to_string(),
+            audio_path: config.input_wav.clone(),
+        }]),
+        ChannelMode::Separate => {
+            prepare_separate_channel_inputs(&config.input_wav, &config.speaker_labels, stamp)
+        }
+    }
+}
+
+fn prepare_separate_channel_inputs(
+    input_wav: &Path,
+    speaker_labels: &SpeakerLabels,
+    stamp: &str,
+) -> Result<Vec<ChannelInputPlan>, CliError> {
+    let channel_count = wav_channel_count(input_wav)?;
+    if channel_count < 2 {
+        return Ok(vec![
+            ChannelInputPlan {
+                role: "mic",
+                label: speaker_labels.mic.clone(),
+                audio_path: input_wav.to_path_buf(),
+            },
+            ChannelInputPlan {
+                role: "system",
+                label: speaker_labels.system.clone(),
+                audio_path: input_wav.to_path_buf(),
+            },
+        ]);
+    }
+
+    let slice_dir = PathBuf::from("artifacts")
+        .join("transcribe-live-channel-slices")
+        .join(stamp);
+    fs::create_dir_all(&slice_dir).map_err(|err| {
+        CliError::new(format!(
+            "failed to create channel slice directory {}: {err}",
+            slice_dir.display()
+        ))
+    })?;
+
+    let mic_path = slice_dir.join("mic.wav");
+    let system_path = slice_dir.join("system.wav");
+    extract_channel_wav(input_wav, 0, &mic_path)?;
+    extract_channel_wav(input_wav, 1, &system_path)?;
+
+    Ok(vec![
+        ChannelInputPlan {
+            role: "mic",
+            label: speaker_labels.mic.clone(),
+            audio_path: mic_path,
+        },
+        ChannelInputPlan {
+            role: "system",
+            label: speaker_labels.system.clone(),
+            audio_path: system_path,
+        },
+    ])
+}
+
+fn wav_channel_count(path: &Path) -> Result<u16, CliError> {
+    let reader = WavReader::open(path).map_err(|err| {
+        CliError::new(format!(
+            "failed to inspect WAV {}: {err}",
+            display_path(path)
+        ))
+    })?;
+    Ok(reader.spec().channels)
+}
+
+fn extract_channel_wav(
+    input_wav: &Path,
+    channel_index: usize,
+    output_wav: &Path,
+) -> Result<(), CliError> {
+    if let Some(parent) = output_wav.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            CliError::new(format!(
+                "failed to create channel output directory {}: {err}",
+                parent.display()
+            ))
+        })?;
+    }
+
+    let mut reader = WavReader::open(input_wav).map_err(|err| {
+        CliError::new(format!(
+            "failed to open WAV {} for channel extraction: {err}",
+            display_path(input_wav)
+        ))
+    })?;
+    let spec = reader.spec();
+    let channel_count = spec.channels as usize;
+    if channel_index >= channel_count {
+        return Err(CliError::new(format!(
+            "cannot extract channel {} from {} channel WAV {}",
+            channel_index,
+            channel_count,
+            display_path(input_wav)
+        )));
+    }
+
+    let mono_spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: spec.sample_rate,
+        bits_per_sample: spec.bits_per_sample,
+        sample_format: spec.sample_format,
+    };
+    let mut writer = hound::WavWriter::create(output_wav, mono_spec).map_err(|err| {
+        CliError::new(format!(
+            "failed to create channel WAV {}: {err}",
+            display_path(output_wav)
+        ))
+    })?;
+
+    match spec.sample_format {
+        SampleFormat::Float => {
+            for (idx, sample) in reader.samples::<f32>().enumerate() {
+                let sample = sample
+                    .map_err(|err| CliError::new(format!("failed to read float sample: {err}")))?;
+                if idx % channel_count == channel_index {
+                    writer.write_sample(sample).map_err(|err| {
+                        CliError::new(format!("failed to write float sample: {err}"))
+                    })?;
+                }
+            }
+        }
+        SampleFormat::Int => {
+            if spec.bits_per_sample <= 16 {
+                for (idx, sample) in reader.samples::<i16>().enumerate() {
+                    let sample = sample.map_err(|err| {
+                        CliError::new(format!("failed to read i16 sample: {err}"))
+                    })?;
+                    if idx % channel_count == channel_index {
+                        writer.write_sample(sample).map_err(|err| {
+                            CliError::new(format!("failed to write i16 sample: {err}"))
+                        })?;
+                    }
+                }
+            } else {
+                for (idx, sample) in reader.samples::<i32>().enumerate() {
+                    let sample = sample.map_err(|err| {
+                        CliError::new(format!("failed to read i32 sample: {err}"))
+                    })?;
+                    if idx % channel_count == channel_index {
+                        writer.write_sample(sample).map_err(|err| {
+                            CliError::new(format!("failed to write i32 sample: {err}"))
+                        })?;
+                    }
+                }
+            }
+        }
+    }
+
+    writer
+        .finalize()
+        .map_err(|err| CliError::new(format!("failed to finalize channel WAV: {err}")))?;
+    Ok(())
+}
+
+fn transcribe_channels_once(
+    config: &TranscribeConfig,
+    channel_inputs: &[ChannelInputPlan],
+) -> Result<Vec<ChannelTranscriptSummary>, CliError> {
+    let mut handles = Vec::with_capacity(channel_inputs.len());
+    for input in channel_inputs.iter().cloned() {
+        let backend = config.asr_backend;
+        let model_path = config.asr_model.clone();
+        let language = config.asr_language.clone();
+        let threads = config.asr_threads;
+        handles.push(thread::spawn(
+            move || -> Result<ChannelTranscriptSummary, CliError> {
+                let adapter = select_adapter(backend)?;
+                let text = adapter.transcribe(&AsrRequest {
+                    model_path: &model_path,
+                    audio_path: &input.audio_path,
+                    language: &language,
+                    threads,
+                })?;
+                Ok(ChannelTranscriptSummary {
+                    role: input.role,
+                    label: input.label,
+                    text,
+                })
+            },
+        ));
+    }
+
+    let mut summaries = Vec::with_capacity(handles.len());
+    for handle in handles {
+        let summary = handle
+            .join()
+            .map_err(|_| CliError::new("dual-channel worker panicked during transcription"))??;
+        summaries.push(summary);
+    }
+    summaries.sort_by(|a, b| {
+        channel_sort_key(a.role)
+            .cmp(&channel_sort_key(b.role))
+            .then_with(|| a.label.cmp(&b.label))
+    });
+    Ok(summaries)
+}
+
+fn build_transcript_events(
+    transcript_text: &str,
+    vad_boundaries: &[VadBoundary],
+    channel_label: &str,
+    segment_key: &str,
+) -> Vec<TranscriptEvent> {
     let start_ms = vad_boundaries.first().map(|v| v.start_ms).unwrap_or(0);
     let end_ms = vad_boundaries.last().map(|v| v.end_ms).unwrap_or(0);
     let partial_end_ms = start_ms + ((end_ms.saturating_sub(start_ms)) / 2);
@@ -718,21 +947,73 @@ fn build_transcript_events(transcript_text: &str, vad_boundaries: &[VadBoundary]
     vec![
         TranscriptEvent {
             event_type: "partial",
-            channel: "merged".to_string(),
-            segment_id: "representative-0".to_string(),
+            channel: channel_label.to_string(),
+            segment_id: format!("{segment_key}-representative-0"),
             start_ms,
             end_ms: partial_end_ms,
             text: partial_text,
         },
         TranscriptEvent {
             event_type: "final",
-            channel: "merged".to_string(),
-            segment_id: "representative-0".to_string(),
+            channel: channel_label.to_string(),
+            segment_id: format!("{segment_key}-representative-0"),
             start_ms,
             end_ms,
             text: transcript_text.to_string(),
         },
     ]
+}
+
+fn merge_transcript_events(mut events: Vec<TranscriptEvent>) -> Vec<TranscriptEvent> {
+    events.sort_by(|a, b| {
+        a.start_ms
+            .cmp(&b.start_ms)
+            .then_with(|| a.end_ms.cmp(&b.end_ms))
+            .then_with(|| event_type_rank(a.event_type).cmp(&event_type_rank(b.event_type)))
+            .then_with(|| a.channel.cmp(&b.channel))
+            .then_with(|| a.segment_id.cmp(&b.segment_id))
+            .then_with(|| a.text.cmp(&b.text))
+    });
+    events
+}
+
+fn event_type_rank(event_type: &str) -> u8 {
+    if event_type == "partial" { 0 } else { 1 }
+}
+
+fn reconstruct_transcript(events: &[TranscriptEvent]) -> String {
+    let mut parts = Vec::new();
+    for event in events.iter().filter(|event| event.event_type == "final") {
+        let text = event.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if event.channel == "merged" {
+            parts.push(text.to_string());
+        } else {
+            parts.push(format!("[{}] {text}", event.channel));
+        }
+    }
+    if parts.is_empty() {
+        "<no speech detected>".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
+fn benchmark_track(channel_mode: ChannelMode) -> &'static str {
+    match channel_mode {
+        ChannelMode::Separate => "transcribe-live-dual-channel",
+        ChannelMode::Mixed => "transcribe-live-single-channel",
+    }
+}
+
+fn channel_sort_key(role: &str) -> u8 {
+    match role {
+        "mic" => 0,
+        "system" => 1,
+        _ => 2,
+    }
 }
 
 fn partial_text(full_text: &str) -> String {
@@ -743,9 +1024,10 @@ fn partial_text(full_text: &str) -> String {
     words[..(words.len() / 2).max(1)].join(" ")
 }
 
-fn write_single_channel_benchmark(
+fn write_benchmark_artifact(
     stamp: &str,
     backend_id: &str,
+    artifact_track: &str,
     wall_ms_runs: &[f64],
 ) -> Result<(PathBuf, PathBuf, BenchmarkSummary), CliError> {
     if wall_ms_runs.is_empty() {
@@ -756,7 +1038,7 @@ fn write_single_channel_benchmark(
 
     let run_dir = PathBuf::from("artifacts")
         .join("bench")
-        .join("transcribe-live-single-channel")
+        .join(artifact_track)
         .join(stamp);
     fs::create_dir_all(&run_dir).map_err(|err| {
         CliError::new(format!(
@@ -780,11 +1062,20 @@ fn write_single_channel_benchmark(
     })?;
     writeln!(summary_file, "key,value").map_err(io_to_cli)?;
     writeln!(summary_file, "backend_id,{backend_id}").map_err(io_to_cli)?;
+    writeln!(summary_file, "artifact_track,{artifact_track}").map_err(io_to_cli)?;
     writeln!(summary_file, "run_count,{}", wall_ms_runs.len()).map_err(io_to_cli)?;
     writeln!(summary_file, "wall_ms_p50,{wall_ms_p50:.6}").map_err(io_to_cli)?;
     writeln!(summary_file, "wall_ms_p95,{wall_ms_p95:.6}").map_err(io_to_cli)?;
-    writeln!(summary_file, "partial_slo_target_ms,{PARTIAL_LATENCY_SLO_MS:.0}").map_err(io_to_cli)?;
-    writeln!(summary_file, "final_slo_target_ms,{FINAL_LATENCY_SLO_MS:.0}").map_err(io_to_cli)?;
+    writeln!(
+        summary_file,
+        "partial_slo_target_ms,{PARTIAL_LATENCY_SLO_MS:.0}"
+    )
+    .map_err(io_to_cli)?;
+    writeln!(
+        summary_file,
+        "final_slo_target_ms,{FINAL_LATENCY_SLO_MS:.0}"
+    )
+    .map_err(io_to_cli)?;
     writeln!(summary_file, "partial_slo_met,{partial_slo_met}").map_err(io_to_cli)?;
     writeln!(summary_file, "final_slo_met,{final_slo_met}").map_err(io_to_cli)?;
 
@@ -951,23 +1242,27 @@ fn detect_vad_boundaries_from_wav(
     match spec.sample_format {
         SampleFormat::Float => {
             for sample in reader.samples::<f32>() {
-                normalized_samples.push(sample.map_err(|err| {
-                    CliError::new(format!("failed to read float sample: {err}"))
-                })?);
+                normalized_samples.push(
+                    sample.map_err(|err| {
+                        CliError::new(format!("failed to read float sample: {err}"))
+                    })?,
+                );
             }
         }
         SampleFormat::Int => {
             if spec.bits_per_sample <= 16 {
                 for sample in reader.samples::<i16>() {
-                    let value = sample
-                        .map_err(|err| CliError::new(format!("failed to read i16 sample: {err}")))?;
+                    let value = sample.map_err(|err| {
+                        CliError::new(format!("failed to read i16 sample: {err}"))
+                    })?;
                     normalized_samples.push(value as f32 / i16::MAX as f32);
                 }
             } else {
                 let denom = (1i64 << (spec.bits_per_sample.saturating_sub(1) as u32)) as f32;
                 for sample in reader.samples::<i32>() {
-                    let value = sample
-                        .map_err(|err| CliError::new(format!("failed to read i32 sample: {err}")))?;
+                    let value = sample.map_err(|err| {
+                        CliError::new(format!("failed to read i32 sample: {err}"))
+                    })?;
                     normalized_samples.push((value as f32 / denom).clamp(-1.0, 1.0));
                 }
             }
@@ -1079,7 +1374,15 @@ fn print_live_report(report: &LiveRunReport) {
     println!("Representative runtime result");
     println!("  generated_at_utc: {}", report.generated_at_utc);
     println!("  backend: {}", report.backend_id);
+    println!("  channel_mode: {}", report.channel_mode);
     println!("  transcript_text: {}", report.transcript_text);
+    println!("  channel_transcripts:");
+    for channel in &report.channel_transcripts {
+        println!(
+            "    - role={} label={} text={}",
+            channel.role, channel.label, channel.text
+        );
+    }
     println!(
         "  benchmark_wall_ms: p50={:.2} p95={:.2} (runs={})",
         report.benchmark.wall_ms_p50, report.benchmark.wall_ms_p95, report.benchmark.run_count
@@ -1092,7 +1395,10 @@ fn print_live_report(report: &LiveRunReport) {
         "  benchmark_summary_csv: {}",
         report.benchmark_summary_csv.display()
     );
-    println!("  benchmark_runs_csv: {}", report.benchmark_runs_csv.display());
+    println!(
+        "  benchmark_runs_csv: {}",
+        report.benchmark_runs_csv.display()
+    );
     println!("  vad_boundaries: {}", report.vad_boundaries.len());
     for boundary in &report.vad_boundaries {
         println!(
@@ -1103,8 +1409,8 @@ fn print_live_report(report: &LiveRunReport) {
     println!("  terminal_event_stream:");
     for event in &report.events {
         println!(
-            "    {} [{}-{}ms] {}",
-            event.event_type, event.start_ms, event.end_ms, event.text
+            "    {} channel={} [{}-{}ms] {}",
+            event.event_type, event.channel, event.start_ms, event.end_ms, event.text
         );
     }
     println!("  jsonl_written: true");
@@ -1159,7 +1465,10 @@ fn write_runtime_jsonl(config: &TranscribeConfig, report: &LiveRunReport) -> Res
     Ok(())
 }
 
-fn write_runtime_manifest(config: &TranscribeConfig, report: &LiveRunReport) -> Result<(), CliError> {
+fn write_runtime_manifest(
+    config: &TranscribeConfig,
+    report: &LiveRunReport,
+) -> Result<(), CliError> {
     if let Some(parent) = config.out_manifest.parent() {
         fs::create_dir_all(parent).map_err(|err| {
             CliError::new(format!(
@@ -1175,8 +1484,19 @@ fn write_runtime_manifest(config: &TranscribeConfig, report: &LiveRunReport) -> 
         ))
     })?;
 
-    let first_start_ms = report.vad_boundaries.first().map(|v| v.start_ms).unwrap_or(0);
+    let first_start_ms = report
+        .vad_boundaries
+        .first()
+        .map(|v| v.start_ms)
+        .unwrap_or(0);
     let last_end_ms = report.vad_boundaries.last().map(|v| v.end_ms).unwrap_or(0);
+    let mut event_channels = report
+        .events
+        .iter()
+        .map(|event| event.channel.clone())
+        .collect::<Vec<_>>();
+    event_channels.sort();
+    event_channels.dedup();
 
     writeln!(file, "{{").map_err(io_to_cli)?;
     writeln!(file, "  \"schema_version\": \"1\",").map_err(io_to_cli)?;
@@ -1187,7 +1507,12 @@ fn write_runtime_manifest(config: &TranscribeConfig, report: &LiveRunReport) -> 
         json_escape(&report.generated_at_utc)
     )
     .map_err(io_to_cli)?;
-    writeln!(file, "  \"asr_backend\": \"{}\",", json_escape(report.backend_id)).map_err(io_to_cli)?;
+    writeln!(
+        file,
+        "  \"asr_backend\": \"{}\",",
+        json_escape(report.backend_id)
+    )
+    .map_err(io_to_cli)?;
     writeln!(
         file,
         "  \"asr_model\": \"{}\",",
@@ -1198,6 +1523,29 @@ fn write_runtime_manifest(config: &TranscribeConfig, report: &LiveRunReport) -> 
         file,
         "  \"input_wav\": \"{}\",",
         json_escape(&display_path(&config.input_wav))
+    )
+    .map_err(io_to_cli)?;
+    writeln!(
+        file,
+        "  \"channel_mode\": \"{}\",",
+        json_escape(&report.channel_mode.to_string())
+    )
+    .map_err(io_to_cli)?;
+    writeln!(
+        file,
+        "  \"speaker_labels\": [\"{}\",\"{}\"],",
+        json_escape(&config.speaker_labels.mic),
+        json_escape(&config.speaker_labels.system)
+    )
+    .map_err(io_to_cli)?;
+    writeln!(
+        file,
+        "  \"event_channels\": [{}],",
+        event_channels
+            .iter()
+            .map(|channel| format!("\"{}\"", json_escape(channel)))
+            .collect::<Vec<_>>()
+            .join(",")
     )
     .map_err(io_to_cli)?;
     writeln!(
@@ -1237,8 +1585,12 @@ fn write_runtime_manifest(config: &TranscribeConfig, report: &LiveRunReport) -> 
         report.events.len()
     )
     .map_err(io_to_cli)?;
-    writeln!(file, "  \"jsonl_path\": \"{}\"", json_escape(&display_path(&config.out_jsonl)))
-        .map_err(io_to_cli)?;
+    writeln!(
+        file,
+        "  \"jsonl_path\": \"{}\"",
+        json_escape(&display_path(&config.out_jsonl))
+    )
+    .map_err(io_to_cli)?;
     writeln!(file, "}}").map_err(io_to_cli)?;
     Ok(())
 }
@@ -1265,15 +1617,25 @@ fn replay_timeline(path: &Path) -> Result<(), CliError> {
         }
 
         let segment_id = extract_json_string_field(trimmed, "segment_id").ok_or_else(|| {
-            CliError::new(format!("invalid replay line {}: missing segment_id", line_no + 1))
+            CliError::new(format!(
+                "invalid replay line {}: missing segment_id",
+                line_no + 1
+            ))
         })?;
-        let channel = extract_json_string_field(trimmed, "channel").unwrap_or_else(|| "merged".to_string());
+        let channel =
+            extract_json_string_field(trimmed, "channel").unwrap_or_else(|| "merged".to_string());
         let text = extract_json_string_field(trimmed, "text").unwrap_or_default();
         let start_ms = extract_json_u64_field(trimmed, "start_ms").ok_or_else(|| {
-            CliError::new(format!("invalid replay line {}: missing start_ms", line_no + 1))
+            CliError::new(format!(
+                "invalid replay line {}: missing start_ms",
+                line_no + 1
+            ))
         })?;
         let end_ms = extract_json_u64_field(trimmed, "end_ms").ok_or_else(|| {
-            CliError::new(format!("invalid replay line {}: missing end_ms", line_no + 1))
+            CliError::new(format!(
+                "invalid replay line {}: missing end_ms",
+                line_no + 1
+            ))
         })?;
         let event_name = if event_type == "partial" {
             "partial"
@@ -1290,30 +1652,19 @@ fn replay_timeline(path: &Path) -> Result<(), CliError> {
         });
     }
 
-    events.sort_by(|a, b| {
-        a.start_ms
-            .cmp(&b.start_ms)
-            .then_with(|| a.end_ms.cmp(&b.end_ms))
-            .then_with(|| a.event_type.cmp(b.event_type))
-    });
+    let events = merge_transcript_events(events);
 
     println!("Replay timeline");
     println!("  source_jsonl: {}", display_path(path));
     println!("  events: {}", events.len());
     for event in &events {
         println!(
-            "  {} [{}-{}ms] {}",
-            event.event_type, event.start_ms, event.end_ms, event.text
+            "  {} channel={} [{}-{}ms] {}",
+            event.event_type, event.channel, event.start_ms, event.end_ms, event.text
         );
     }
 
-    let reconstructed = events
-        .iter()
-        .filter(|event| event.event_type == "final")
-        .map(|event| event.text.trim())
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
+    let reconstructed = reconstruct_transcript(&events);
     println!();
     println!("Reconstructed transcript");
     println!("  {}", reconstructed);
@@ -1511,6 +1862,10 @@ fn parse_args() -> Result<ParseOutcome, CliError> {
                     "--llm-max-queue",
                 )?;
             }
+            "--llm-retries" => {
+                config.llm_retries =
+                    parse_usize(&read_value(&mut args, "--llm-retries")?, "--llm-retries")?;
+            }
             "--transcribe-channels" => {
                 config.channel_mode =
                     ChannelMode::parse(&read_value(&mut args, "--transcribe-channels")?)?;
@@ -1520,8 +1875,10 @@ fn parse_args() -> Result<ParseOutcome, CliError> {
                     SpeakerLabels::parse(&read_value(&mut args, "--speaker-labels")?)?;
             }
             "--benchmark-runs" => {
-                config.benchmark_runs =
-                    parse_usize(&read_value(&mut args, "--benchmark-runs")?, "--benchmark-runs")?;
+                config.benchmark_runs = parse_usize(
+                    &read_value(&mut args, "--benchmark-runs")?,
+                    "--benchmark-runs",
+                )?;
             }
             "--replay-jsonl" => {
                 config.replay_jsonl = Some(PathBuf::from(read_value(&mut args, "--replay-jsonl")?));
@@ -2031,7 +2388,10 @@ fn command_stdout(program: &str, args: &[&str]) -> Result<String, CliError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AsrBackend, detect_vad_boundaries};
+    use super::{
+        AsrBackend, TranscriptEvent, detect_vad_boundaries, merge_transcript_events,
+        reconstruct_transcript,
+    };
 
     #[test]
     fn asr_backend_parse_accepts_current_and_legacy_labels() {
@@ -2074,5 +2434,92 @@ mod tests {
         assert_eq!(boundaries[0].start_ms, 0);
         assert_eq!(boundaries[0].end_ms, 500);
         assert_eq!(boundaries[0].source, "fallback_full_audio");
+    }
+
+    #[test]
+    fn merged_events_sort_deterministically_and_keep_partial_before_final() {
+        let events = vec![
+            TranscriptEvent {
+                event_type: "final",
+                channel: "system".to_string(),
+                segment_id: "system-0".to_string(),
+                start_ms: 10,
+                end_ms: 20,
+                text: "sys-final".to_string(),
+            },
+            TranscriptEvent {
+                event_type: "partial",
+                channel: "mic".to_string(),
+                segment_id: "mic-0".to_string(),
+                start_ms: 10,
+                end_ms: 20,
+                text: "mic-partial".to_string(),
+            },
+            TranscriptEvent {
+                event_type: "partial",
+                channel: "system".to_string(),
+                segment_id: "system-0".to_string(),
+                start_ms: 10,
+                end_ms: 20,
+                text: "sys-partial".to_string(),
+            },
+            TranscriptEvent {
+                event_type: "final",
+                channel: "mic".to_string(),
+                segment_id: "mic-0".to_string(),
+                start_ms: 10,
+                end_ms: 20,
+                text: "mic-final".to_string(),
+            },
+        ];
+        let ordered = merge_transcript_events(events);
+        let ordered_tuples: Vec<(&str, &str)> = ordered
+            .iter()
+            .map(|event| (event.event_type, event.channel.as_str()))
+            .collect();
+        assert_eq!(
+            ordered_tuples,
+            vec![
+                ("partial", "mic"),
+                ("partial", "system"),
+                ("final", "mic"),
+                ("final", "system"),
+            ]
+        );
+    }
+
+    #[test]
+    fn reconstructed_transcript_keeps_channel_labels_for_final_events() {
+        let events = vec![
+            TranscriptEvent {
+                event_type: "partial",
+                channel: "mic".to_string(),
+                segment_id: "mic-0".to_string(),
+                start_ms: 0,
+                end_ms: 50,
+                text: "hello".to_string(),
+            },
+            TranscriptEvent {
+                event_type: "final",
+                channel: "mic".to_string(),
+                segment_id: "mic-0".to_string(),
+                start_ms: 0,
+                end_ms: 100,
+                text: "hello from mic".to_string(),
+            },
+            TranscriptEvent {
+                event_type: "final",
+                channel: "system".to_string(),
+                segment_id: "system-0".to_string(),
+                start_ms: 0,
+                end_ms: 100,
+                text: "hello from system".to_string(),
+            },
+        ];
+        let reconstructed = reconstruct_transcript(&events);
+        assert_eq!(
+            reconstructed,
+            "[mic] hello from mic [system] hello from system"
+        );
     }
 }
