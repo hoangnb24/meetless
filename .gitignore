@@ -1,3 +1,6 @@
 /target
 /dist
 /artifacts
+
+# bv (beads viewer) local config and caches
+.bv/
