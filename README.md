@@ -110,11 +110,16 @@ cargo run -- [duration_seconds]
 
 ### Recorder binary (`src/bin/sequoia_capture.rs`)
 ```bash
-cargo run --bin sequoia_capture -- [duration_seconds] [output_path] [sample_rate_hz]
+cargo run --bin sequoia_capture -- [duration_seconds] [output_path] [sample_rate_hz] [sample_rate_mismatch_policy] [callback_contract_mode]
 ```
 - `duration_seconds` optional, default `10`
 - `output_path` optional, default `artifacts/hello-world.wav`
 - `sample_rate_hz` optional, default `48000`
+- `sample_rate_mismatch_policy` optional, default `adapt-stream-rate` (`adapt-stream-rate` or `strict`)
+  - `adapt-stream-rate` keeps callback non-blocking and performs worker-side resampling to the requested output rate when mic/system native rates differ
+  - `strict` fails fast when either stream rate differs from the requested target
+- `callback_contract_mode` optional, default `warn` (`warn` or `strict`)
+- telemetry artifact `<output_stem>.telemetry.json` includes `sample_rate_policy` with input rates and resampled chunk/frame counters
 
 ### Transcription CLI contract (`src/bin/transcribe_live.rs`)
 ```bash

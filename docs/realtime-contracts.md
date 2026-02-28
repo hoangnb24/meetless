@@ -18,6 +18,7 @@ Enforcement points:
   - `missing_sample_rate`
   - `non_float_pcm`
   - `chunk_too_large`
+- `src/bin/sequoia_capture.rs` telemetry also records `sample_rate_policy` with mismatch mode, input rates, and per-channel resampling counters.
 
 ## Cleanup Queue Contract (Transcribe)
 
@@ -57,8 +58,7 @@ Telemetry/artifact surface:
 | Stream interruption with restarts remaining | idle-gap + restart budget | `RestartStream` |
 | Stream interruption with restart budget exhausted | idle-gap + restart budget | `FailFastReconfigure` |
 | Sample-rate mismatch in `strict` mode | policy check | `FailFastReconfigure` |
-| Sample-rate mismatch in `adapt-stream-rate` mode with equal mic/system rates | policy check | `AdaptOutputRate` |
-| Sample-rate mismatch in `adapt-stream-rate` mode with unequal mic/system rates | policy check | `FailFastReconfigure` |
+| Sample-rate mismatch in `adapt-stream-rate` mode | policy check + worker resampling to canonical output rate | `AdaptOutputRate` |
 
 ## Validation
 

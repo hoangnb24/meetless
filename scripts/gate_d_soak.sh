@@ -61,6 +61,52 @@ fi
 start_epoch="$(date +%s)"
 end_epoch=$((start_epoch + SOAK_SECONDS))
 run=0
+termination_reason=""
+
+write_status_marker() {
+  local status="$1"
+  local detail="$2"
+  cat >"$OUT_DIR/status.txt" <<EOF
+status=$status
+detail=$detail
+generated_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+}
+
+emit_summary_if_possible() {
+  if [[ ! -f "$OUT_DIR/runs.csv" ]]; then
+    return 0
+  fi
+  if [[ "$(wc -l <"$OUT_DIR/runs.csv")" -le 1 ]]; then
+    return 0
+  fi
+  python3 "$ROOT/scripts/gate_d_summary.py" \
+    --runs-csv "$OUT_DIR/runs.csv" \
+    --summary-csv "$OUT_DIR/summary.csv" \
+    --target-seconds "$SOAK_SECONDS" >/dev/null 2>&1 || true
+}
+
+finalize_soak() {
+  local exit_status="$1"
+  trap - EXIT INT TERM HUP
+  set +e
+
+  if [[ -n "$termination_reason" ]]; then
+    write_status_marker "interrupted" "$termination_reason"
+  elif [[ "$exit_status" -eq 0 ]]; then
+    write_status_marker "completed" "normal_exit"
+  else
+    write_status_marker "failed" "exit_status=$exit_status"
+  fi
+
+  emit_summary_if_possible
+  return "$exit_status"
+}
+
+trap 'termination_reason="SIGINT"; exit 130' INT
+trap 'termination_reason="SIGTERM"; exit 143' TERM
+trap 'termination_reason="SIGHUP"; exit 129' HUP
+trap 'finalize_soak $?' EXIT
 
 while [[ "$(date +%s)" -lt "$end_epoch" ]]; do
   run=$((run + 1))
@@ -97,15 +143,15 @@ while [[ "$(date +%s)" -lt "$end_epoch" ]]; do
   real_ms="${real_ms:-0}"
   max_rss_kb="${max_rss_kb:-0}"
 
-  if [[ -f "$manifest" ]]; then
-    wall_ms_p95="$(jq -r '.benchmark.wall_ms_p95 // 0' "$manifest")"
-    wall_ms_p50="$(jq -r '.benchmark.wall_ms_p50 // 0' "$manifest")"
-    cleanup_dropped_queue_full="$(jq -r '.cleanup_queue.dropped_queue_full // 0' "$manifest")"
-    cleanup_failed="$(jq -r '.cleanup_queue.failed // 0' "$manifest")"
-    cleanup_timed_out="$(jq -r '.cleanup_queue.timed_out // 0' "$manifest")"
-    mode_requested="$(jq -r '.channel_mode_requested // "unknown"' "$manifest")"
-    mode_active="$(jq -r '.channel_mode // "unknown"' "$manifest")"
-    degradation_events="$(jq -r '(.degradation_events // []) | length' "$manifest")"
+  if [[ -f "$manifest" ]] && jq -e . "$manifest" >/dev/null 2>&1; then
+    wall_ms_p95="$(jq -r '.benchmark.wall_ms_p95 // 0' "$manifest" 2>/dev/null || echo 0)"
+    wall_ms_p50="$(jq -r '.benchmark.wall_ms_p50 // 0' "$manifest" 2>/dev/null || echo 0)"
+    cleanup_dropped_queue_full="$(jq -r '.cleanup_queue.dropped_queue_full // 0' "$manifest" 2>/dev/null || echo 0)"
+    cleanup_failed="$(jq -r '.cleanup_queue.failed // 0' "$manifest" 2>/dev/null || echo 0)"
+    cleanup_timed_out="$(jq -r '.cleanup_queue.timed_out // 0' "$manifest" 2>/dev/null || echo 0)"
+    mode_requested="$(jq -r '.channel_mode_requested // "unknown"' "$manifest" 2>/dev/null || echo unknown)"
+    mode_active="$(jq -r '.channel_mode // "unknown"' "$manifest" 2>/dev/null || echo unknown)"
+    degradation_events="$(jq -r '(.degradation_events // []) | length' "$manifest" 2>/dev/null || echo 0)"
   else
     wall_ms_p95=0
     wall_ms_p50=0
@@ -119,10 +165,5 @@ while [[ "$(date +%s)" -lt "$end_epoch" ]]; do
 
   echo "$run,$start_utc,$end_utc,$exit_code,$real_ms,$max_rss_kb,$wall_ms_p95,$wall_ms_p50,$cleanup_dropped_queue_full,$cleanup_failed,$cleanup_timed_out,$mode_requested,$mode_active,$degradation_events" >>"$OUT_DIR/runs.csv"
 done
-
-python3 "$ROOT/scripts/gate_d_summary.py" \
-  --runs-csv "$OUT_DIR/runs.csv" \
-  --summary-csv "$OUT_DIR/summary.csv" \
-  --target-seconds "$SOAK_SECONDS"
 
 echo "GATE_D_OUT=$OUT_DIR"

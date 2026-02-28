@@ -44,9 +44,10 @@ Per chunk:
 ## Failure and Recovery
 
 - If `SCStreamErrorSystemStoppedStream` occurs, restart stream and continue into new segment.
-- If sample-rate mismatch occurs between mic/system, either:
-  - fail fast in sprint 1, or
-  - resample one side in worker (sprint 2).
+- Sample-rate mismatch policy is explicit:
+  - `strict`: fail fast if mic/system rates do not both match the requested target rate.
+  - `adapt-stream-rate` (default): keep requested target as canonical output rate and resample mismatched chunks in the worker path.
+  - recorder telemetry includes a `sample_rate_policy` section with mode, input rates, and resample counters.
 
 ## Prototype in Repo
 

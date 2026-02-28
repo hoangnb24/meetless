@@ -1,13 +1,13 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use crossbeam_channel::RecvTimeoutError;
 use hound::{SampleFormat, WavSpec, WavWriter};
-use recordit::rt_transport::{PreallocatedProducer, preallocated_spsc};
+use recordit::rt_transport::{preallocated_spsc, PreallocatedProducer};
 use screencapturekit::prelude::*;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -32,6 +32,13 @@ impl SampleRateMismatchPolicy {
                 "unknown sample-rate policy '{}'; expected one of: strict, adapt-stream-rate",
                 value
             ),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::AdaptStreamRate => "adapt-stream-rate",
         }
     }
 }
@@ -195,15 +202,18 @@ fn resolve_output_sample_rate(
     system_rate_hz: u32,
     policy: SampleRateMismatchPolicy,
 ) -> Result<u32> {
-    if mic_rate_hz == target_rate_hz && system_rate_hz == target_rate_hz {
-        return Ok(target_rate_hz);
+    if target_rate_hz == 0 {
+        bail!("target sample rate must be greater than zero");
     }
 
     match policy {
         SampleRateMismatchPolicy::Strict => {
+            if mic_rate_hz == target_rate_hz && system_rate_hz == target_rate_hz {
+                return Ok(target_rate_hz);
+            }
             let action = RecoveryAction::FailFastReconfigure;
             bail!(
-                "sample-rate mismatch: mic={} Hz, system={} Hz, target={} Hz. Recovery action: {:?}. Retry with policy 'adapt-stream-rate' only if both streams match each other.",
+                "sample-rate mismatch: mic={} Hz, system={} Hz, target={} Hz. Recovery action: {:?}. Retry with policy 'adapt-stream-rate' to allow worker-side resampling.",
                 mic_rate_hz,
                 system_rate_hz,
                 target_rate_hz,
@@ -211,17 +221,8 @@ fn resolve_output_sample_rate(
             );
         }
         SampleRateMismatchPolicy::AdaptStreamRate => {
-            if mic_rate_hz != system_rate_hz {
-                let action = RecoveryAction::FailFastReconfigure;
-                bail!(
-                    "sample-rate mismatch cannot be adapted because mic/system differ (mic={} Hz, system={} Hz). Recovery action: {:?}. Resampling is not implemented.",
-                    mic_rate_hz,
-                    system_rate_hz,
-                    action
-                );
-            }
             let _action = RecoveryAction::AdaptOutputRate;
-            Ok(mic_rate_hz)
+            Ok(target_rate_hz)
         }
     }
 }
@@ -257,6 +258,13 @@ impl ReusableTimedChunk {
     fn mono_slice(&self) -> &[f32] {
         &self.mono_samples[..self.valid_samples]
     }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ResampleStats {
+    resampled_chunks: usize,
+    input_frames: usize,
+    output_frames: usize,
 }
 
 fn parse_u64_arg(args: &[String], index: usize, default: u64) -> Result<u64> {
@@ -406,21 +414,80 @@ fn callback(
     });
 }
 
-fn paint_chunks_timeline(chunks: &[TimedChunk], base_pts: f64, sample_rate_hz: u32) -> Vec<f32> {
+fn resample_linear_mono(samples: &[f32], input_rate_hz: u32, output_rate_hz: u32) -> Vec<f32> {
+    if samples.is_empty()
+        || input_rate_hz == output_rate_hz
+        || input_rate_hz == 0
+        || output_rate_hz == 0
+    {
+        return samples.to_vec();
+    }
+
+    let mut output_len = ((samples.len() as u128 * output_rate_hz as u128
+        + input_rate_hz as u128 / 2)
+        / input_rate_hz as u128) as usize;
+    output_len = output_len.max(1);
+
+    if samples.len() == 1 {
+        return vec![samples[0]; output_len];
+    }
+
+    let mut output = Vec::with_capacity(output_len);
+    let ratio = f64::from(input_rate_hz) / f64::from(output_rate_hz);
+    for i in 0..output_len {
+        let src_pos = i as f64 * ratio;
+        let src_idx = src_pos.floor() as usize;
+        if src_idx >= samples.len() - 1 {
+            output.push(*samples.last().unwrap_or(&0.0));
+            continue;
+        }
+        let frac = (src_pos - src_idx as f64) as f32;
+        let a = samples[src_idx];
+        let b = samples[src_idx + 1];
+        output.push(a + ((b - a) * frac));
+    }
+    output
+}
+
+fn paint_chunks_timeline(
+    chunks: &[TimedChunk],
+    base_pts: f64,
+    sample_rate_hz: u32,
+) -> (Vec<f32>, ResampleStats) {
     let mut timeline = Vec::<f32>::new();
+    let mut resample_stats = ResampleStats::default();
     let rate = f64::from(sample_rate_hz);
 
     for chunk in chunks {
+        let maybe_resampled = if chunk.sample_rate_hz == sample_rate_hz {
+            None
+        } else {
+            Some(resample_linear_mono(
+                &chunk.mono_samples,
+                chunk.sample_rate_hz,
+                sample_rate_hz,
+            ))
+        };
+
+        let chunk_samples = if let Some(resampled) = maybe_resampled.as_deref() {
+            resample_stats.resampled_chunks += 1;
+            resample_stats.input_frames += chunk.mono_samples.len();
+            resample_stats.output_frames += resampled.len();
+            resampled
+        } else {
+            chunk.mono_samples.as_slice()
+        };
+
         let start = ((chunk.pts_seconds - base_pts) * rate).round();
         let start_index = if start <= 0.0 { 0usize } else { start as usize };
-        let end_index = start_index.saturating_add(chunk.mono_samples.len());
+        let end_index = start_index.saturating_add(chunk_samples.len());
         if timeline.len() < end_index {
             timeline.resize(end_index, 0.0);
         }
-        timeline[start_index..end_index].copy_from_slice(&chunk.mono_samples);
+        timeline[start_index..end_index].copy_from_slice(chunk_samples);
     }
 
-    timeline
+    (timeline, resample_stats)
 }
 
 fn write_interleaved_stereo_wav(
@@ -482,6 +549,11 @@ struct RunTelemetry {
     duration_secs: u64,
     target_rate_hz: u32,
     output_rate_hz: u32,
+    mismatch_policy: SampleRateMismatchPolicy,
+    mic_input_rate_hz: u32,
+    system_input_rate_hz: u32,
+    mic_resample: ResampleStats,
+    system_resample: ResampleStats,
     mic_chunks: usize,
     system_chunks: usize,
     output_frames: usize,
@@ -663,6 +735,19 @@ fn write_run_telemetry(path: &Path, telemetry: &RunTelemetry) -> Result<()> {
             "    \"non_float_pcm\": {},\n",
             "    \"chunk_too_large\": {}\n",
             "  }},\n",
+            "  \"sample_rate_policy\": {{\n",
+            "    \"mismatch_policy\": \"{}\",\n",
+            "    \"target_rate_hz\": {},\n",
+            "    \"output_rate_hz\": {},\n",
+            "    \"mic_input_rate_hz\": {},\n",
+            "    \"system_input_rate_hz\": {},\n",
+            "    \"mic_resampled_chunks\": {},\n",
+            "    \"mic_resampled_input_frames\": {},\n",
+            "    \"mic_resampled_output_frames\": {},\n",
+            "    \"system_resampled_chunks\": {},\n",
+            "    \"system_resampled_input_frames\": {},\n",
+            "    \"system_resampled_output_frames\": {}\n",
+            "  }},\n",
             "  \"degradation_events\": [{}]\n",
             "}}\n"
         ),
@@ -690,6 +775,17 @@ fn write_run_telemetry(path: &Path, telemetry: &RunTelemetry) -> Result<()> {
         telemetry.callback_audit.missing_sample_rate,
         telemetry.callback_audit.non_float_pcm,
         telemetry.callback_audit.chunk_too_large,
+        telemetry.mismatch_policy.as_str(),
+        telemetry.target_rate_hz,
+        telemetry.output_rate_hz,
+        telemetry.mic_input_rate_hz,
+        telemetry.system_input_rate_hz,
+        telemetry.mic_resample.resampled_chunks,
+        telemetry.mic_resample.input_frames,
+        telemetry.mic_resample.output_frames,
+        telemetry.system_resample.resampled_chunks,
+        telemetry.system_resample.input_frames,
+        telemetry.system_resample.output_frames,
         degradation_events_json,
     );
 
@@ -776,7 +872,8 @@ fn main() -> Result<()> {
     let duration_secs = parse_u64_arg(&args, 1, 10)?;
     let output = parse_output_arg(&args, 2, "artifacts/hello-world.wav");
     let target_rate_hz = parse_u64_arg(&args, 3, 48_000)? as u32;
-    let mismatch_policy = parse_sample_rate_policy_arg(&args, 4, SampleRateMismatchPolicy::Strict)?;
+    let mismatch_policy =
+        parse_sample_rate_policy_arg(&args, 4, SampleRateMismatchPolicy::AdaptStreamRate)?;
     let callback_contract_mode =
         parse_callback_contract_mode_arg(&args, 5, CallbackContractMode::Warn)?;
     let interruption_policy = InterruptionPolicy {
@@ -795,7 +892,7 @@ fn main() -> Result<()> {
         output.display()
     );
     println!("Stereo mapping: left=mic, right=system");
-    println!("Sample-rate mismatch policy: {:?}", mismatch_policy);
+    println!("Sample-rate mismatch policy: {}", mismatch_policy.as_str());
     println!("Callback contract mode: {:?}", callback_contract_mode);
 
     let content = SCShareableContent::get().context(
@@ -939,8 +1036,8 @@ fn main() -> Result<()> {
     let output_rate_hz =
         resolve_output_sample_rate(target_rate_hz, mic_rate, sys_rate, mismatch_policy)?;
     let base_pts = mic_chunks[0].pts_seconds.min(sys_chunks[0].pts_seconds);
-    let mic = paint_chunks_timeline(&mic_chunks, base_pts, output_rate_hz);
-    let sys = paint_chunks_timeline(&sys_chunks, base_pts, output_rate_hz);
+    let (mic, mic_resample) = paint_chunks_timeline(&mic_chunks, base_pts, output_rate_hz);
+    let (sys, sys_resample) = paint_chunks_timeline(&sys_chunks, base_pts, output_rate_hz);
     write_interleaved_stereo_wav(&output, output_rate_hz, &mic, &sys)?;
 
     println!(
@@ -951,6 +1048,16 @@ fn main() -> Result<()> {
         mic.len().max(sys.len()),
         restart_count,
         output_rate_hz
+    );
+    println!(
+        "sample_rate_policy: mode={}, mic_input_rate_hz={}, system_input_rate_hz={}, target_rate_hz={}, output_rate_hz={}, mic_resampled_chunks={}, system_resampled_chunks={}",
+        mismatch_policy.as_str(),
+        mic_rate,
+        sys_rate,
+        target_rate_hz,
+        output_rate_hz,
+        mic_resample.resampled_chunks,
+        sys_resample.resampled_chunks
     );
     println!(
         "transport: capacity={}, high_water={}, in_flight={}, enqueued={}, dequeued={}, slot_miss_drops={}, fill_failures={}, queue_full_drops={}, recycle_failures={}",
@@ -980,6 +1087,11 @@ fn main() -> Result<()> {
         duration_secs,
         target_rate_hz,
         output_rate_hz,
+        mismatch_policy,
+        mic_input_rate_hz: mic_rate,
+        system_input_rate_hz: sys_rate,
+        mic_resample,
+        system_resample: sys_resample,
         mic_chunks: mic_chunks.len(),
         system_chunks: sys_chunks.len(),
         output_frames: mic.len().max(sys.len()),
@@ -997,13 +1109,15 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CallbackAuditSnapshot, CallbackContractMode, CallbackContractViolation, InterruptionPolicy,
-        RecoveryAction, RunTelemetry, SampleRateMismatchPolicy, build_degradation_events,
-        callback_recovery_breakdown, can_restart_capture, enforce_callback_contract,
-        recovery_action_for_callback_violation, recovery_action_for_interruption,
-        resolve_output_sample_rate, telemetry_path_for_output, write_run_telemetry,
+        build_degradation_events, callback_recovery_breakdown, can_restart_capture,
+        enforce_callback_contract, paint_chunks_timeline, recovery_action_for_callback_violation,
+        recovery_action_for_interruption, resample_linear_mono, resolve_output_sample_rate,
+        telemetry_path_for_output, write_run_telemetry, CallbackAuditSnapshot,
+        CallbackContractMode, CallbackContractViolation, InterruptionPolicy, RecoveryAction,
+        ResampleStats, RunTelemetry, SampleRateMismatchPolicy, TimedChunk,
     };
     use recordit::rt_transport::TransportStatsSnapshot;
+    use screencapturekit::prelude::SCStreamOutputType;
     use std::fs;
     use std::path::PathBuf;
     use std::time::Duration;
@@ -1016,7 +1130,64 @@ mod tests {
     }
 
     #[test]
-    fn adapt_policy_uses_stream_rate_when_channels_match() {
+    fn sample_rate_policy_matrix_covers_strict_and_adapt_modes() {
+        let cases = [
+            (
+                "strict_match",
+                SampleRateMismatchPolicy::Strict,
+                48_000,
+                48_000,
+                48_000,
+                Some(48_000),
+            ),
+            (
+                "strict_equal_non_target",
+                SampleRateMismatchPolicy::Strict,
+                48_000,
+                44_100,
+                44_100,
+                None,
+            ),
+            (
+                "strict_mixed",
+                SampleRateMismatchPolicy::Strict,
+                48_000,
+                44_100,
+                48_000,
+                None,
+            ),
+            (
+                "adapt_equal_non_target",
+                SampleRateMismatchPolicy::AdaptStreamRate,
+                48_000,
+                44_100,
+                44_100,
+                Some(48_000),
+            ),
+            (
+                "adapt_mixed",
+                SampleRateMismatchPolicy::AdaptStreamRate,
+                48_000,
+                44_100,
+                48_000,
+                Some(48_000),
+            ),
+        ];
+
+        for (name, policy, target_rate_hz, mic_rate_hz, system_rate_hz, expected) in cases {
+            let result =
+                resolve_output_sample_rate(target_rate_hz, mic_rate_hz, system_rate_hz, policy);
+            match expected {
+                Some(expected_rate) => {
+                    assert_eq!(result.unwrap_or_default(), expected_rate, "{name}");
+                }
+                None => assert!(result.is_err(), "{name}"),
+            }
+        }
+    }
+
+    #[test]
+    fn adapt_policy_preserves_requested_target_rate() {
         let rate = resolve_output_sample_rate(
             48_000,
             44_100,
@@ -1024,18 +1195,45 @@ mod tests {
             SampleRateMismatchPolicy::AdaptStreamRate,
         )
         .expect("adapt policy should accept equal stream rates");
-        assert_eq!(rate, 44_100);
+        assert_eq!(rate, 48_000);
     }
 
     #[test]
-    fn adapt_policy_fails_when_mic_and_system_differ() {
-        let result = resolve_output_sample_rate(
+    fn adapt_policy_handles_mixed_stream_rates() {
+        let rate = resolve_output_sample_rate(
             48_000,
             44_100,
             48_000,
             SampleRateMismatchPolicy::AdaptStreamRate,
-        );
-        assert!(result.is_err());
+        )
+        .expect("adapt policy should allow mixed-rate worker-side resampling");
+        assert_eq!(rate, 48_000);
+    }
+
+    #[test]
+    fn linear_resampler_upsamples_deterministically() {
+        let resampled = resample_linear_mono(&[0.0, 1.0], 2, 4);
+        assert_eq!(resampled.len(), 4);
+        assert_eq!(resampled[0], 0.0);
+        assert!((resampled[1] - 0.5).abs() < 1e-6);
+        assert!((resampled[2] - 1.0).abs() < 1e-6);
+        assert!((resampled[3] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mixed_rate_timeline_reports_resampling_stats() {
+        let chunks = vec![TimedChunk {
+            kind: SCStreamOutputType::Microphone,
+            pts_seconds: 0.0,
+            sample_rate_hz: 2,
+            mono_samples: vec![0.0, 1.0],
+        }];
+
+        let (timeline, stats) = paint_chunks_timeline(&chunks, 0.0, 4);
+        assert_eq!(timeline.len(), 4);
+        assert_eq!(stats.resampled_chunks, 1);
+        assert_eq!(stats.input_frames, 2);
+        assert_eq!(stats.output_frames, 4);
     }
 
     #[test]
@@ -1071,6 +1269,15 @@ mod tests {
             duration_secs: 5,
             target_rate_hz: 48_000,
             output_rate_hz: 48_000,
+            mismatch_policy: SampleRateMismatchPolicy::AdaptStreamRate,
+            mic_input_rate_hz: 44_100,
+            system_input_rate_hz: 48_000,
+            mic_resample: ResampleStats {
+                resampled_chunks: 2,
+                input_frames: 8_820,
+                output_frames: 9_600,
+            },
+            system_resample: ResampleStats::default(),
             mic_chunks: 2,
             system_chunks: 2,
             output_frames: 100,
@@ -1101,6 +1308,12 @@ mod tests {
             fs::read_to_string(&tmp).expect("telemetry artifact should be readable as UTF-8");
         assert!(contents.contains("\"transport\""));
         assert!(contents.contains("\"callback_contract\""));
+        assert!(contents.contains("\"sample_rate_policy\""));
+        assert!(contents.contains("\"mismatch_policy\": \"adapt-stream-rate\""));
+        assert!(contents.contains("\"mic_input_rate_hz\": 44100"));
+        assert!(contents.contains("\"system_input_rate_hz\": 48000"));
+        assert!(contents.contains("\"mic_resampled_chunks\": 2"));
+        assert!(contents.contains("\"mic_resampled_output_frames\": 9600"));
         assert!(contents.contains("\"degradation_events\""));
         let _ = fs::remove_file(tmp);
     }
@@ -1112,6 +1325,15 @@ mod tests {
             duration_secs: 5,
             target_rate_hz: 48_000,
             output_rate_hz: 48_000,
+            mismatch_policy: SampleRateMismatchPolicy::AdaptStreamRate,
+            mic_input_rate_hz: 44_100,
+            system_input_rate_hz: 48_000,
+            mic_resample: ResampleStats {
+                resampled_chunks: 1,
+                input_frames: 4_410,
+                output_frames: 4_800,
+            },
+            system_resample: ResampleStats::default(),
             mic_chunks: 2,
             system_chunks: 2,
             output_frames: 100,
@@ -1139,21 +1361,15 @@ mod tests {
 
         let events = build_degradation_events(&telemetry, 1_700_000_000);
         assert!(!events.is_empty());
-        assert!(
-            events
-                .iter()
-                .any(|event| event.contains("\"generated_unix\":1700000000"))
-        );
-        assert!(
-            events
-                .iter()
-                .any(|event| event.contains("\"recovery_action\":\"RestartStream\""))
-        );
-        assert!(
-            events
-                .iter()
-                .any(|event| event.contains("\"source\":\"missing_format_description\""))
-        );
+        assert!(events
+            .iter()
+            .any(|event| event.contains("\"generated_unix\":1700000000")));
+        assert!(events
+            .iter()
+            .any(|event| event.contains("\"recovery_action\":\"RestartStream\"")));
+        assert!(events
+            .iter()
+            .any(|event| event.contains("\"source\":\"missing_format_description\"")));
     }
 
     #[test]
