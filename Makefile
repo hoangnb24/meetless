@@ -37,8 +37,15 @@ BENCH_OUT ?= artifacts/bench
 BENCH_BACKEND ?= noop-cat
 BENCH_CMD ?= cat {input} > /dev/null
 GATE_D_SECONDS ?= 3600
+SMOKE_OFFLINE_SECS ?= 8
+SMOKE_NEAR_LIVE_SECS ?= 8
+SMOKE_OFFLINE_DIR ?= artifacts/smoke/offline
+SMOKE_NEAR_LIVE_DIR ?= artifacts/smoke/near-live
+SMOKE_NEAR_LIVE_DETERMINISTIC_DIR ?= artifacts/smoke/near-live-deterministic
+SMOKE_NEAR_LIVE_INPUT_WAV ?= $(SMOKE_NEAR_LIVE_DIR)/capture.input.wav
+SMOKE_NEAR_LIVE_DETERMINISTIC_INPUT_WAV ?= artifacts/bench/corpus/gate_c/tts_phrase_stereo.wav
 
-.PHONY: help build build-release probe capture transcribe-live capture-transcribe transcribe-preflight setup-whispercpp-model run-transcribe-app run-transcribe-preflight-app bench-harness gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
+.PHONY: help build build-release probe capture transcribe-live capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic setup-whispercpp-model run-transcribe-app run-transcribe-preflight-app bench-harness gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
 
 help:
 	@echo "Targets:"
@@ -49,6 +56,11 @@ help:
 	@echo "  transcribe-live   - Validate transcribe-live CLI contract (debug)"
 	@echo "  capture-transcribe - One-command capture then transcription workflow (debug)"
 	@echo "  transcribe-preflight - Run transcribe-live preflight diagnostics (debug)"
+	@echo "  transcribe-model-doctor - Run transcribe-live model/backend diagnostics (debug)"
+	@echo "  smoke         - CI-safe smoke bundle (offline + near-live deterministic fallback)"
+	@echo "  smoke-offline - Smoke the offline journey on representative fixture input"
+	@echo "  smoke-near-live - Smoke the host near-live journey via live capture (machine-dependent)"
+	@echo "  smoke-near-live-deterministic - CI-safe near-live fallback smoke using deterministic stereo fixture"
 	@echo "  setup-whispercpp-model - Bootstrap default local whispercpp model asset"
 	@echo "  run-transcribe-app - Run signed transcribe-live app bundle"
 	@echo "  run-transcribe-preflight-app - Run signed transcribe-live preflight diagnostics"
@@ -91,6 +103,40 @@ capture-transcribe: build
 
 transcribe-preflight: TRANSCRIBE_ARGS += --preflight
 transcribe-preflight: transcribe-live
+
+transcribe-model-doctor: TRANSCRIBE_ARGS += --model-doctor
+transcribe-model-doctor: transcribe-live
+
+smoke: smoke-offline smoke-near-live-deterministic
+
+smoke-offline: build
+	@mkdir -p "$(abspath $(SMOKE_OFFLINE_DIR))"
+	@echo "Smoke offline artifact paths:"
+	@echo "  WAV:      $(abspath $(SMOKE_OFFLINE_DIR)/session.wav)"
+	@echo "  JSONL:    $(abspath $(SMOKE_OFFLINE_DIR)/session.jsonl)"
+	@echo "  Manifest: $(abspath $(SMOKE_OFFLINE_DIR)/session.manifest.json)"
+	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin $(TRANSCRIBE_BIN) -- --duration-sec $(SMOKE_OFFLINE_SECS) --out-wav "$(abspath $(SMOKE_OFFLINE_DIR)/session.wav)" --out-jsonl "$(abspath $(SMOKE_OFFLINE_DIR)/session.jsonl)" --out-manifest "$(abspath $(SMOKE_OFFLINE_DIR)/session.manifest.json)" --asr-model "$(ASR_MODEL)" --model-doctor
+	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin $(TRANSCRIBE_BIN) -- --duration-sec $(SMOKE_OFFLINE_SECS) --input-wav "$(abspath artifacts/bench/corpus/gate_a/tts_phrase.wav)" --out-wav "$(abspath $(SMOKE_OFFLINE_DIR)/session.wav)" --out-jsonl "$(abspath $(SMOKE_OFFLINE_DIR)/session.jsonl)" --out-manifest "$(abspath $(SMOKE_OFFLINE_DIR)/session.manifest.json)" --asr-model "$(ASR_MODEL)" --benchmark-runs 1 --transcribe-channels mixed-fallback
+
+smoke-near-live: build
+	@mkdir -p "$(abspath $(SMOKE_NEAR_LIVE_DIR))"
+	@echo "Smoke near-live (host capture required) artifact paths:"
+	@echo "  Input WAV: $(abspath $(SMOKE_NEAR_LIVE_INPUT_WAV))"
+	@echo "  WAV:       $(abspath $(SMOKE_NEAR_LIVE_DIR)/session.wav)"
+	@echo "  JSONL:     $(abspath $(SMOKE_NEAR_LIVE_DIR)/session.jsonl)"
+	@echo "  Manifest:  $(abspath $(SMOKE_NEAR_LIVE_DIR)/session.manifest.json)"
+	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin $(TRANSCRIBE_BIN) -- --duration-sec $(SMOKE_NEAR_LIVE_SECS) --out-wav "$(abspath $(SMOKE_NEAR_LIVE_DIR)/session.wav)" --out-jsonl "$(abspath $(SMOKE_NEAR_LIVE_DIR)/session.jsonl)" --out-manifest "$(abspath $(SMOKE_NEAR_LIVE_DIR)/session.manifest.json)" --asr-model "$(ASR_MODEL)" --model-doctor
+	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin $(TRANSCRIBE_BIN) -- --duration-sec $(SMOKE_NEAR_LIVE_SECS) --live-chunked --input-wav "$(abspath $(SMOKE_NEAR_LIVE_INPUT_WAV))" --out-wav "$(abspath $(SMOKE_NEAR_LIVE_DIR)/session.wav)" --out-jsonl "$(abspath $(SMOKE_NEAR_LIVE_DIR)/session.jsonl)" --out-manifest "$(abspath $(SMOKE_NEAR_LIVE_DIR)/session.manifest.json)" --asr-model "$(ASR_MODEL)" --benchmark-runs 1 --transcribe-channels mixed-fallback
+
+smoke-near-live-deterministic: build
+	@mkdir -p "$(abspath $(SMOKE_NEAR_LIVE_DETERMINISTIC_DIR))"
+	@echo "Smoke near-live deterministic fallback artifact paths:"
+	@echo "  Input WAV: $(abspath $(SMOKE_NEAR_LIVE_DETERMINISTIC_INPUT_WAV))"
+	@echo "  WAV:       $(abspath $(SMOKE_NEAR_LIVE_DETERMINISTIC_DIR)/session.wav)"
+	@echo "  JSONL:     $(abspath $(SMOKE_NEAR_LIVE_DETERMINISTIC_DIR)/session.jsonl)"
+	@echo "  Manifest:  $(abspath $(SMOKE_NEAR_LIVE_DETERMINISTIC_DIR)/session.manifest.json)"
+	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin $(TRANSCRIBE_BIN) -- --duration-sec $(SMOKE_NEAR_LIVE_SECS) --out-wav "$(abspath $(SMOKE_NEAR_LIVE_DETERMINISTIC_DIR)/session.wav)" --out-jsonl "$(abspath $(SMOKE_NEAR_LIVE_DETERMINISTIC_DIR)/session.jsonl)" --out-manifest "$(abspath $(SMOKE_NEAR_LIVE_DETERMINISTIC_DIR)/session.manifest.json)" --asr-model "$(ASR_MODEL)" --model-doctor
+	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin $(TRANSCRIBE_BIN) -- --duration-sec $(SMOKE_NEAR_LIVE_SECS) --input-wav "$(abspath $(SMOKE_NEAR_LIVE_DETERMINISTIC_INPUT_WAV))" --out-wav "$(abspath $(SMOKE_NEAR_LIVE_DETERMINISTIC_DIR)/session.wav)" --out-jsonl "$(abspath $(SMOKE_NEAR_LIVE_DETERMINISTIC_DIR)/session.jsonl)" --out-manifest "$(abspath $(SMOKE_NEAR_LIVE_DETERMINISTIC_DIR)/session.manifest.json)" --asr-model "$(ASR_MODEL)" --benchmark-runs 1 --transcribe-channels mixed-fallback
 
 setup-whispercpp-model:
 	scripts/setup_whispercpp_model.sh --dest "$(abspath $(WHISPERCPP_MODEL_DEFAULT))"

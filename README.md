@@ -74,6 +74,24 @@ make transcribe-preflight ASR_MODEL=models/ggml-base.en.bin
 ```
 Runs structured PASS/WARN/FAIL prerequisite checks before capture/transcription startup and writes a preflight manifest to `--out-manifest`.
 
+### Run Smoke Journeys (debug)
+```bash
+make smoke
+```
+Runs the CI-safe smoke bundle:
+- `make smoke-offline` (deterministic offline journey)
+- `make smoke-near-live-deterministic` (deterministic near-live fallback using a stereo fixture)
+
+Host near-live smoke (machine-dependent, requires Screen Recording + Microphone permissions):
+```bash
+make smoke-near-live
+```
+
+Smoke artifact roots:
+- offline: `artifacts/smoke/offline/`
+- near-live host capture: `artifacts/smoke/near-live/`
+- near-live deterministic fallback: `artifacts/smoke/near-live-deterministic/`
+
 ### Validate Transcription CLI Contract (signed app mode)
 ```bash
 make run-transcribe-app ASR_MODEL=models/ggml-base.en.bin
@@ -168,6 +186,7 @@ cargo run --bin transcribe-live -- [--asr-model <local-model-path>] [flags...]
   - `--transcribe-channels`
   - `--speaker-labels`
   - `--benchmark-runs`
+  - `--model-doctor`
   - `--replay-jsonl`
 - `--out-wav` contract:
   - canonical session WAV artifact path for the run
@@ -184,14 +203,19 @@ cargo run --bin transcribe-live -- [--asr-model <local-model-path>] [flags...]
   - backend defaults (sandbox container model path, then repo-local model defaults)
   - whispercpp expects a **file** path; whisperkit expects a **directory** path
   - preflight/runtime manifests expose both resolved path and source (`asr_model_resolved`, `asr_model_source`)
+- model doctor:
+  - run `cargo run --bin transcribe-live -- --model-doctor [--asr-backend ...] [--asr-model ...]`
+  - PASS/WARN/FAIL report includes backend helper availability, model path resolution/kind, and model readability
+  - use this as first-stop diagnostics before runtime execution when model/backend setup is uncertain
 - channel mode values:
   - `separate`
   - `mixed`
   - `mixed-fallback` (prefers separate but falls back to mixed when dual-channel inputs are unavailable)
 - near-live runtime contract:
   - default runtime mode is `representative-offline`
-  - enable near-live contract with `--live-chunked` (downstream implementation path)
-  - current behavior for `--live-chunked`: fail fast with explicit remediation until near-live runtime tasks land
+  - enable near-live contract with `--live-chunked`
+  - `--live-chunked` prepares runtime input by launching a live capture session (`sequoia_capture`) and then runs a rolling near-live scheduler over the captured WAV
+  - rolling scheduler semantics: `4s` default window, `1s` default stride, deterministic chunk segment IDs, and tail-aligned final window coverage
   - `--chunk-window-ms` default `4000`
   - `--chunk-stride-ms` default `1000`
   - `--chunk-queue-cap` default `4`
