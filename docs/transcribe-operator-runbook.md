@@ -3,13 +3,35 @@
 Date: 2026-02-27  
 Scope: model bootstrap, signing/entitlements verification, TCC reset workflow, preflight troubleshooting
 
+Packaged entrypoint policy: operator runs should use signed `SequoiaTranscribe.app` via
+`make run-transcribe-app`, with `make run-transcribe-preflight-app` and
+`make run-transcribe-model-doctor-app` as the diagnostics companions.
+Debug commands in this runbook are troubleshooting/development surfaces, not the packaged default.
+
 ## Bundle IDs and Paths
 
 - Signed transcribe app bundle id: `com.recordit.sequoiatranscribe`
 - Signed app path: `dist/SequoiaTranscribe.app`
-- Signed app sandbox artifact root: `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/`
+- Signed app sandbox artifact root: `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/`
+- Default packaged session artifacts:
+  - `session.wav`
+  - `session.jsonl`
+  - `session.manifest.json`
 - Evidence artifacts from this runbook validation:
   - `artifacts/ops/bd-1yp/`
+
+## Packaged Session Summary Contract
+
+`make run-transcribe-app` now provides a two-part operator summary:
+
+1. pre-run absolute artifact paths (single packaged root + session files)
+2. post-run summary after signed app exit:
+   - manifest presence check
+   - trust degraded-mode flag
+   - trust notice count
+   - degradation event count
+
+This keeps the "where are my files and was this healthy?" answer in one operator-facing command flow.
 
 ## 1) Bootstrap the Default whispercpp Model
 
@@ -100,7 +122,25 @@ Expected first-run prompts:
 
 If prompts do not appear after reset, quit the app, rerun the `tccutil reset` commands, and relaunch.
 
-## 4) Preflight Command for Operator Checks
+## 4) Packaged Diagnostic Commands for Operator Checks
+
+Packaged preflight command:
+
+```bash
+make setup-whispercpp-model
+make run-transcribe-preflight-app ASR_MODEL=artifacts/bench/models/whispercpp/ggml-tiny.en.bin
+```
+
+Packaged model-doctor command:
+
+```bash
+make setup-whispercpp-model
+make run-transcribe-model-doctor-app ASR_MODEL=artifacts/bench/models/whispercpp/ggml-tiny.en.bin
+```
+
+Both commands run in signed-app context and keep diagnostics aligned with the packaged beta execution path.
+
+### Debug fallback command (engineering-only)
 
 Debug preflight command:
 
@@ -118,7 +158,40 @@ Preflight checks include:
 - `microphone_access`
 - `backend_runtime`
 
-## 5) Tested Failure Signatures and Fixes
+## 5) Degraded-Mode Interpretation and Recovery Guidance
+
+For packaged runs, use the post-run summary emitted by `make run-transcribe-app` first:
+
+- `trust.degraded_mode_active`
+- `trust.notice_count`
+- `degradation_events` count
+
+If deeper inspection is needed, read the packaged manifest directly:
+
+```bash
+jq '.trust, .degradation_events, .chunk_queue' \
+  ~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/session.manifest.json
+```
+
+Primary near-live trust/degradation codes and what to do:
+
+- `mode_degradation`
+  - Meaning: requested channel behavior degraded (for example stereo assumptions were not met).
+  - Immediate action: verify input channel assumptions and re-run `make run-transcribe-preflight-app`.
+- `chunk_queue_backpressure`
+  - Meaning: near-live queue saturation dropped oldest queued ASR work (`chunk_queue.dropped_oldest > 0`).
+  - Immediate action: treat live transcript as degraded and review `reconciled_final`/manifest output for final completeness.
+- `reconciliation_applied`
+  - Meaning: post-session reconciliation ran after backlog pressure to improve final completeness.
+  - Immediate action: use reconciled final output for review; if frequent, reduce system load before next run.
+- `live_capture_interruption_recovered`
+  - Meaning: capture restart(s) occurred and runtime recovered.
+  - Immediate action: check permission/device stability, then re-run preflight if interruptions persist.
+- `live_capture_continuity_unverified`
+  - Meaning: continuity telemetry was missing/unreadable, so continuity confidence is reduced.
+  - Immediate action: verify writable artifact paths and rerun packaged preflight/model-doctor before trusting continuity-sensitive outcomes.
+
+## 6) Tested Failure Signatures and Fixes
 
 ### A) Unwritable output path
 
@@ -175,18 +248,25 @@ Evidence:
 - `artifacts/ops/bd-1yp/preflight-moonshine.log`
 - `artifacts/ops/bd-1yp/preflight-moonshine.manifest.json`
 
-## 6) Important Model-Resolution Behavior
+## 7) Important Model-Resolution Behavior
 
-`--asr-model` does not always produce a hard failure if the provided path is missing. The resolver can fall through to backend defaults (for example repo benchmark defaults), so operators should verify the resolved source in preflight detail:
+Current packaged/debug behavior is strict for explicit model overrides:
 
-- see `model_path` detail and `via <source>` note in preflight output/manifest
+- `--asr-model <path>` is fail-fast.
+- if the explicit path is missing/invalid for the selected backend kind, preflight/model-doctor reports failure and the command exits non-zero.
+- explicit invalid `--asr-model` does not silently fall through to backend defaults.
 
-This behavior was observed in:
+When `--asr-model` is not provided, resolver precedence remains:
 
-- `artifacts/ops/bd-1yp/preflight-missing-model.log`
-- `artifacts/ops/bd-1yp/preflight-missing-model.manifest.json`
+1. `RECORDIT_ASR_MODEL`
+2. backend defaults for the current execution context
 
-## 7) Escalation Checklist
+Operator verification path:
+
+- inspect `model_path` detail and `via <source>` note in preflight/model-doctor output
+- confirm manifest fields `asr_model_resolved` and `asr_model_source` match expectation
+
+## 8) Escalation Checklist
 
 1. Re-run preflight and capture manifest/log path.
 2. Confirm model bootstrap completed (`make setup-whispercpp-model`).

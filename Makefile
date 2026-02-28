@@ -18,9 +18,11 @@ TRANSCRIBE_SECS ?= 10
 TRANSCRIBE_OUT_WAV ?= artifacts/transcribe-live.wav
 TRANSCRIBE_OUT_JSONL ?= artifacts/transcribe-live.jsonl
 TRANSCRIBE_OUT_MANIFEST ?= artifacts/transcribe-live.manifest.json
-TRANSCRIBE_APP_OUT_WAV ?= $(HOME)/Library/Containers/com.recordit.sequoiatranscribe/Data/$(TRANSCRIBE_OUT_WAV)
-TRANSCRIBE_APP_OUT_JSONL ?= $(HOME)/Library/Containers/com.recordit.sequoiatranscribe/Data/$(TRANSCRIBE_OUT_JSONL)
-TRANSCRIBE_APP_OUT_MANIFEST ?= $(HOME)/Library/Containers/com.recordit.sequoiatranscribe/Data/$(TRANSCRIBE_OUT_MANIFEST)
+TRANSCRIBE_APP_ARTIFACT_ROOT ?= $(HOME)/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta
+TRANSCRIBE_APP_SESSION_STEM ?= session
+TRANSCRIBE_APP_OUT_WAV ?= $(TRANSCRIBE_APP_ARTIFACT_ROOT)/$(TRANSCRIBE_APP_SESSION_STEM).wav
+TRANSCRIBE_APP_OUT_JSONL ?= $(TRANSCRIBE_APP_ARTIFACT_ROOT)/$(TRANSCRIBE_APP_SESSION_STEM).jsonl
+TRANSCRIBE_APP_OUT_MANIFEST ?= $(TRANSCRIBE_APP_ARTIFACT_ROOT)/$(TRANSCRIBE_APP_SESSION_STEM).manifest.json
 WHISPERCPP_MODEL_DEFAULT ?= artifacts/bench/models/whispercpp/ggml-tiny.en.bin
 ASR_MODEL ?= $(WHISPERCPP_MODEL_DEFAULT)
 TRANSCRIBE_ARGS ?=
@@ -45,7 +47,7 @@ SMOKE_NEAR_LIVE_DETERMINISTIC_DIR ?= artifacts/smoke/near-live-deterministic
 SMOKE_NEAR_LIVE_INPUT_WAV ?= $(SMOKE_NEAR_LIVE_DIR)/capture.input.wav
 SMOKE_NEAR_LIVE_DETERMINISTIC_INPUT_WAV ?= artifacts/bench/corpus/gate_c/tts_phrase_stereo.wav
 
-.PHONY: help build build-release probe capture transcribe-live capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic setup-whispercpp-model run-transcribe-app run-transcribe-preflight-app bench-harness gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
+.PHONY: help build build-release probe capture transcribe-live capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic setup-whispercpp-model run-transcribe-app run-transcribe-preflight-app run-transcribe-model-doctor-app bench-harness gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
 
 help:
 	@echo "Targets:"
@@ -62,15 +64,16 @@ help:
 	@echo "  smoke-near-live - Smoke the host near-live journey via live capture (machine-dependent)"
 	@echo "  smoke-near-live-deterministic - CI-safe near-live fallback smoke using deterministic stereo fixture"
 	@echo "  setup-whispercpp-model - Bootstrap default local whispercpp model asset"
-	@echo "  run-transcribe-app - Run signed transcribe-live app bundle"
-	@echo "  run-transcribe-preflight-app - Run signed transcribe-live preflight diagnostics"
+	@echo "  run-transcribe-app - Run signed transcribe-live app bundle (recommended packaged beta entrypoint)"
+	@echo "  run-transcribe-preflight-app - Run signed transcribe-live preflight diagnostics (packaged companion path)"
+	@echo "  run-transcribe-model-doctor-app - Run signed transcribe-live model/backend diagnostics (packaged companion path)"
 	@echo "  bench-harness - Run benchmark harness and emit machine-readable artifacts"
-	@echo "  gate-d-soak - Run 60-minute soak gate harness and emit runs/summary artifacts"
+	@echo "  gate-d-soak - Run deterministic near-live 60-minute soak gate harness and emit runs/summary artifacts"
 	@echo "  bundle        - Create minimal .app bundle"
 	@echo "  sign          - Codesign app bundle"
 	@echo "  verify        - Verify signature and print entitlements"
-	@echo "  run-app       - Run signed app bundle (launch via open)"
-	@echo "  reset-perms   - Reset TCC permissions for this bundle id"
+	@echo "  run-app       - Run signed recorder app bundle (engineering support surface)"
+	@echo "  reset-perms   - Reset TCC permissions for transcribe and capture bundle ids"
 	@echo "  clean         - Remove build artifacts"
 
 build:
@@ -181,16 +184,38 @@ run-app:
 	open -W $(APP_DIR) --args $(CAPTURE_SECS) $(OUT) $(SAMPLE_RATE)
 
 run-transcribe-app: sign-transcribe
+	@mkdir -p "$(dir $(TRANSCRIBE_APP_OUT_WAV))"
 	@echo "Signed app transcribe-live absolute artifact paths:"
+	@echo "  Root:     $(TRANSCRIBE_APP_ARTIFACT_ROOT)"
 	@echo "  WAV:      $(TRANSCRIBE_APP_OUT_WAV)"
 	@echo "  JSONL:    $(TRANSCRIBE_APP_OUT_JSONL)"
 	@echo "  Manifest: $(TRANSCRIBE_APP_OUT_MANIFEST)"
 	open -W $(TRANSCRIBE_APP_DIR) --args --duration-sec $(TRANSCRIBE_SECS) --out-wav "$(TRANSCRIBE_APP_OUT_WAV)" --out-jsonl "$(TRANSCRIBE_APP_OUT_JSONL)" --out-manifest "$(TRANSCRIBE_APP_OUT_MANIFEST)" --asr-model "$(ASR_MODEL)" $(TRANSCRIBE_ARGS)
+	@echo "Signed app session summary:"
+	@echo "  Artifacts root: $(TRANSCRIBE_APP_ARTIFACT_ROOT)"
+	@echo "  Manifest:       $(TRANSCRIBE_APP_OUT_MANIFEST)"
+	@if [ -f "$(TRANSCRIBE_APP_OUT_MANIFEST)" ]; then \
+		echo "  Manifest present: true"; \
+		if command -v jq >/dev/null 2>&1; then \
+			echo "  Trust degraded mode: $$(jq -r '.trust.degraded_mode_active // false' \"$(TRANSCRIBE_APP_OUT_MANIFEST)\")"; \
+			echo "  Trust notice count:  $$(jq -r '.trust.notice_count // 0' \"$(TRANSCRIBE_APP_OUT_MANIFEST)\")"; \
+			echo "  Degradation events:  $$(jq -r '(.degradation_events // []) | length' \"$(TRANSCRIBE_APP_OUT_MANIFEST)\")"; \
+		else \
+			echo "  Install jq to print trust/degradation summary fields automatically."; \
+		fi; \
+	else \
+		echo "  Manifest present: false"; \
+	fi
 
 run-transcribe-preflight-app: TRANSCRIBE_ARGS += --preflight
 run-transcribe-preflight-app: run-transcribe-app
 
+run-transcribe-model-doctor-app: TRANSCRIBE_ARGS += --model-doctor
+run-transcribe-model-doctor-app: run-transcribe-app
+
 reset-perms:
+	tccutil reset ScreenCapture com.recordit.sequoiatranscribe || true
+	tccutil reset Microphone com.recordit.sequoiatranscribe || true
 	tccutil reset ScreenCapture com.recordit.sequoiacapture || true
 	tccutil reset Microphone com.recordit.sequoiacapture || true
 

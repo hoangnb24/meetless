@@ -54,9 +54,14 @@ Near-live chunk scheduling must keep producer behavior non-blocking even when AS
 3. Drop counts are surfaced as degradation/trust signals rather than silent data loss.
 
 Telemetry/artifact surface:
-- terminal summary prints near-live `chunk_queue` totals (`submitted`, `enqueued`, `dropped_oldest`, `processed`, `pending`, `high_water`, `drain_completed`)
+- terminal summary prints near-live `chunk_queue` totals (`submitted`, `enqueued`, `dropped_oldest`, `processed`, `pending`, `high_water`, `drain_completed`) plus lag stats (`lag_sample_count`, `lag_p50_ms`, `lag_p95_ms`, `lag_max_ms`)
 - runtime JSONL emits `chunk_queue` control events
 - runtime manifest persists `chunk_queue` under top-level reliability telemetry
+- runtime manifest persists out-wav truth fields (`out_wav`, `out_wav_materialized`, `out_wav_bytes`) for gate-safe artifact validation
+
+Deterministic gate evidence:
+- `scripts/gate_backlog_pressure.sh` induces near-live queue pressure and evaluates degradation/trust thresholds
+- `scripts/gate_transcript_completeness.sh` measures replay-readable completeness gain before/after reconciliation under induced backlog
 
 ## Near-Live Terminal UX Contract
 

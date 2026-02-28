@@ -41,7 +41,7 @@ Line format for transcript rows:
 
 Optional overlap annotation remains bounded and deterministic:
 
-`(overlap<=150ms with <channel>)`
+`(overlap<=120ms with <channel>)`
 
 ### Profile B: Verbose Diagnostics
 
@@ -62,9 +62,9 @@ Summary must be emitted exactly once and in fixed field order:
 2. `duration_sec`
 3. `channel_mode_requested`
 4. `channel_mode_active`
-5. `transcript_events` (`partial`, `final`, `llm_final`)
-6. `chunk_queue` (`submitted`, `enqueued`, `dropped_queue_full`, `pending`)
-7. `latency` (`lag_p50_ms`, `lag_p95_ms`, `lag_max_ms`)
+5. `transcript_events` (`partial`, `final`, `llm_final`, `reconciled_final`)
+6. `chunk_queue` (`submitted`, `enqueued`, `dropped_oldest`, `processed`, `pending`, `high_water`, `drain_completed`)
+7. `chunk_lag` (`lag_sample_count`, `lag_p50_ms`, `lag_p95_ms`, `lag_max_ms`)
 8. `trust_notices` count and top codes
 9. `degradation_events` count and top codes
 10. `cleanup_queue` summary
@@ -88,10 +88,10 @@ Field omission is not allowed in successful runs. Unknown values must be rendere
 Terminal summary fields must map directly to existing or planned JSONL/manifest keys so replay and automation can verify consistency:
 
 - `channel_mode_*` -> manifest `channel_mode_requested`, `channel_mode`
-- transcript counts -> JSONL event type counts (`partial`, `final`, `llm_final`)
+- transcript counts -> JSONL event type counts (`partial`, `final`, `llm_final`, `reconciled_final`)
 - transcript event timeline -> manifest `events[]` and JSONL transcript events (replay-safe ordering)
 - trust/degradation counts -> JSONL `trust_notice` and `mode_degradation`
-- queue counters -> manifest/JSONL cleanup and near-live queue telemetry
+- queue counters -> manifest/JSONL near-live `chunk_queue` telemetry and `cleanup_queue` telemetry
 - artifact paths -> runtime output destinations
 
 ## Acceptance for bd-279

@@ -26,6 +26,7 @@ Sequoia Capture is a macOS 15+ Rust project that records:
 - `docs/adr-001-backend-decision.md`: backend decision and explicit fallback triggers
 - `docs/adr-002-lock-free-transport.md`: callback transport architecture decision
 - `docs/adr-003-cleanup-boundary-policy.md`: cleanup isolation and policy decision
+- `docs/adr-004-packaged-entrypoint.md`: packaged beta entrypoint decision and rationale
 - `docs/beads-governance.md`: issue decomposition and traceability governance
 
 ## Commands
@@ -92,20 +93,48 @@ Smoke artifact roots:
 - near-live host capture: `artifacts/smoke/near-live/`
 - near-live deterministic fallback: `artifacts/smoke/near-live-deterministic/`
 
-### Validate Transcription CLI Contract (signed app mode)
+### Run Near-Live Reliability Soak Gate
+```bash
+make gate-d-soak
+```
+Runs the deterministic near-live soak harness (`scripts/gate_d_soak.sh`) and writes per-run artifacts plus `summary.csv` under `artifacts/bench/gate_d/<timestamp>/`.
+
+### Run Packaged Beta Entrypoint (signed app mode, recommended)
 ```bash
 make run-transcribe-app ASR_MODEL=models/ggml-base.en.bin
 ```
 Builds/signs `dist/SequoiaTranscribe.app` (signed app mode for `transcribe-live`) and launches it via `open -W`.
-The target prints absolute container-scoped artifact destinations before launch and passes those absolute paths to the CLI.
+This is the recommended packaged beta launch path and should be treated as the primary operator entrypoint.
+The target prints absolute container-scoped artifact destinations before launch and prints a concise post-run session summary after the signed app exits.
 
-### Run Transcription Preflight (signed app mode)
+For packaged diagnostics on the same path, use `make run-transcribe-preflight-app`.
+For engineering-only development flows, keep using debug targets such as `make transcribe-live`, `make capture-transcribe`, and direct `cargo run`.
+Decision record: `docs/adr-004-packaged-entrypoint.md`.
+
+Packaged artifact destination defaults:
+- root: `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/`
+- session files:
+  - `session.wav`
+  - `session.jsonl`
+  - `session.manifest.json`
+
+Optional overrides:
+- `TRANSCRIBE_APP_ARTIFACT_ROOT`
+- `TRANSCRIBE_APP_SESSION_STEM`
+
+### Run Transcription Preflight (signed app mode diagnostics)
 ```bash
 make run-transcribe-preflight-app ASR_MODEL=models/ggml-base.en.bin
 ```
 Runs the same preflight diagnostics in signed app context and writes results into the configured manifest path.
 Default signed preflight manifest path:
-- `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/transcribe-live.manifest.json`
+- `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/session.manifest.json`
+
+### Run Transcription Model Doctor (signed app mode diagnostics)
+```bash
+make run-transcribe-model-doctor-app ASR_MODEL=models/ggml-base.en.bin
+```
+Runs model/backend diagnostics in the same signed app context used by packaged beta runs so model resolution and backend readiness can be verified without using debug-only entrypoints.
 
 ### Bundle + Sign
 ```bash
@@ -124,7 +153,9 @@ Launches the app bundle via `open -W` and passes recorder arguments.
 ```bash
 make reset-perms
 ```
-Resets ScreenCapture and Microphone grants for `com.recordit.sequoiacapture`.
+Resets ScreenCapture and Microphone grants for both:
+- `com.recordit.sequoiatranscribe`
+- `com.recordit.sequoiacapture`
 
 ### Clean
 ```bash
@@ -188,10 +219,12 @@ cargo run --bin transcribe-live -- [--asr-model <local-model-path>] [flags...]
   - `--benchmark-runs`
   - `--model-doctor`
   - `--replay-jsonl`
+  - `--preflight`
 - `--out-wav` contract:
   - canonical session WAV artifact path for the run
   - always materialized on successful runtime execution
   - in the current representative-runtime phase, materialized from `--input-wav`
+  - runtime manifest records `out_wav_materialized` and `out_wav_bytes` so artifact truth does not depend on reading the filesystem out-of-band
 - backend values:
   - `whispercpp` (primary)
   - `whisperkit` (fallback)
@@ -228,9 +261,10 @@ cargo run --bin transcribe-live -- [--asr-model <local-model-path>] [flags...]
   - runtime manifest records both `channel_mode_requested` and active `channel_mode`
   - runtime JSONL emits `event_type=mode_degradation` when fallback/degradation occurs
   - runtime JSONL emits `event_type=trust_notice` with cause/impact/guidance for user-facing trust calibration
-  - runtime JSONL emits `event_type=chunk_queue` with near-live chunk queue pressure counters
+  - runtime JSONL emits `event_type=chunk_queue` with near-live queue pressure + lag counters
+  - runtime manifest records `out_wav`, `out_wav_materialized`, and `out_wav_bytes` for canonical session artifact truth
   - runtime manifest includes a `degradation_events` array with stable `code` + `detail`
-  - runtime manifest includes `chunk_queue` telemetry (`submitted`, `enqueued`, `dropped_oldest`, `processed`, `pending`, `high_water`)
+  - runtime manifest includes `chunk_queue` telemetry (`submitted`, `enqueued`, `dropped_oldest`, `processed`, `pending`, `high_water`, `lag_sample_count`, `lag_p50_ms`, `lag_p95_ms`, `lag_max_ms`)
   - runtime manifest includes a structured `trust` object (`degraded_mode_active`, `notice_count`, `notices`)
   - replay output prints trust notices so audit reads preserve degraded-mode context
 - readability default contract:
@@ -264,14 +298,18 @@ Benchmark artifacts are written under:
 - `artifacts/bench/transcribe-live-single-channel/<timestamp>/runs.csv`
 - `artifacts/bench/transcribe-live-dual-channel/<timestamp>/summary.csv`
 - `artifacts/bench/transcribe-live-dual-channel/<timestamp>/runs.csv`
+- `artifacts/bench/gate_backlog_pressure/<timestamp>/summary.csv`
+- `artifacts/bench/gate_transcript_completeness/<timestamp>/summary.csv`
 
 ## Output Paths
 - `make capture` / direct `cargo run --bin sequoia_capture`: output path is resolved from the current shell working directory.
 - `make run-app`: app is sandboxed, so relative paths resolve inside container storage.
 - `make transcribe-live` and `make run-transcribe-app`: both pass absolute artifact paths and print them before execution.
+- `make run-transcribe-app` also prints a post-run session summary (manifest presence + trust/degradation counters when `jq` is available).
 - `make transcribe-preflight` and `make run-transcribe-preflight-app`: run deterministic preflight checks and persist checklist outcomes in the manifest output.
+- `make transcribe-model-doctor` and `make run-transcribe-model-doctor-app`: run model/backend diagnostics in debug and packaged contexts with the same operator-facing contract.
 - Signed transcribe targets default to container-scoped absolute destinations under:
-  - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/`
+  - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/`
 
 Default `run-app` output for `OUT=artifacts/hello-world.wav`:
 - `~/Library/Containers/com.recordit.sequoiacapture/Data/artifacts/hello-world.wav`

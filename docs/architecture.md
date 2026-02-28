@@ -115,12 +115,16 @@ Per chunk:
    - enforce soak/regression commands as required CI/manual gate inputs
 3. Keep architecture/ADR set synchronized with implementation
    - update this doc and ADRs on each contract-level behavior change
+4. Keep packaged operator entrypoint strategy stable
+   - primary packaged beta path is signed `SequoiaTranscribe.app` (`make run-transcribe-app`)
+   - debug binaries and capture-only app paths remain development/support surfaces, not the packaged operator default
 
 ## ADR Index
 
 - `docs/adr-001-backend-decision.md`: backend selection + explicit fallback triggers
 - `docs/adr-002-lock-free-transport.md`: callback transport decision and tradeoffs
 - `docs/adr-003-cleanup-boundary-policy.md`: cleanup isolation boundary and auto-disable policy
+- `docs/adr-004-packaged-entrypoint.md`: packaged beta entrypoint and bundle-strategy decision
 
 ## Contract Index
 

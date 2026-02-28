@@ -37,8 +37,10 @@ Top-level required fields:
   - `asr_backend`, `asr_model`, `asr_model_source`
   - `asr_model_checksum_sha256`, `asr_model_checksum_status`
   - `input_wav`
-  - `out_wav`
-  - `out_wav_semantics` (`"canonical session WAV artifact for the run"`)
+- `out_wav`
+- `out_wav_semantics` (`"canonical session WAV artifact for the run"`)
+- `out_wav_materialized` (bool; runtime write/copy truth)
+- `out_wav_bytes` (u64; artifact byte size when materialized, else `0`)
 - channel/mode:
   - `channel_mode_requested`, `channel_mode`
   - `speaker_labels`, `event_channels`
@@ -50,7 +52,7 @@ Top-level required fields:
   - `events` (ordered transcript event timeline: `partial`, `final`, `llm_final`, `reconciled_final`)
 - performance/reliability:
   - `benchmark` (`wall_ms_p50/p95`, SLO booleans, summary/runs artifact paths)
-  - `chunk_queue` (near-live chunk queue pressure + drop-oldest semantics)
+  - `chunk_queue` (near-live chunk queue pressure + drop-oldest semantics + lag stats: `lag_sample_count`, `lag_p50_ms`, `lag_p95_ms`, `lag_max_ms`)
   - `cleanup_queue` (queue pressure + drain semantics)
   - `degradation_events`
   - `trust` (structured trust notices)
@@ -128,6 +130,7 @@ Use these in order:
   - inspect `degradation_events[]` and `trust.notices[]`
   - any non-empty trust notices should be treated as a calibrated degraded run, not a silent pass
 4. Queue isolation:
+  - inspect near-live `chunk_queue` counters (`dropped_oldest`, `high_water`, `lag_p95_ms`) for backlog pressure severity
   - inspect `cleanup_queue` counters (`dropped_queue_full`, `failed`, `timed_out`, `pending`, `drain_completed`)
 
 ### Comparison Rules
@@ -150,7 +153,8 @@ For cross-run comparisons, prefer:
 
 1. Invalid harness runs (for example loader-context failures) can show misleadingly low latency/RSS and must be excluded.
 2. Cleanup-enabled runs may maintain ASR SLO while still producing degraded trust state; trust notices are part of pass/fail interpretation.
-3. Warm-up effects can skew early samples; inspect per-run series when p95 tails diverge.
+3. Near-live reconciliation can improve post-session transcript completeness after queue pressure; interpret `reconciled_final` coverage with `chunk_queue` degradation counters rather than treating live-path drops as silent success.
+4. Warm-up effects can skew early samples; inspect per-run series when p95 tails diverge.
 
 ## Referenced Benchmark Evidence
 
