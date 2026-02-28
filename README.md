@@ -54,6 +54,20 @@ make transcribe-live ASR_MODEL=models/ggml-base.en.bin
 ```
 Validates CLI flags, runs representative ASR transcription against `--input-wav` (auto-generated locally if missing), emits `partial`/`final` events to terminal + JSONL, computes VAD boundaries, and writes runtime manifest + mode-specific latency benchmark artifacts.
 
+### One-Command Capture then Transcribe (debug)
+```bash
+make capture-transcribe
+```
+Runs `sequoia_capture` first and stops immediately on capture failure, then invokes `transcribe-live` on the captured WAV (`--asr-backend whispercpp` by default). The target prints absolute paths for input/output artifacts before execution.
+
+Common overrides:
+- `PIPELINE_SECS` (capture/transcribe duration)
+- `PIPELINE_CAPTURE_WAV` (intermediate captured WAV used as `--input-wav`)
+- `PIPELINE_OUT_WAV`, `PIPELINE_OUT_JSONL`, `PIPELINE_OUT_MANIFEST`
+- `PIPELINE_CHANNEL_MODE` (`separate`, `mixed`, or `mixed-fallback`)
+- `PIPELINE_ASR_MODEL` (optional explicit model path; if unset, transcribe-live uses its backend default resolution)
+- `PIPELINE_ARGS` (pass-through extra `transcribe-live` flags)
+
 ### Run Transcription Preflight (debug)
 ```bash
 make transcribe-preflight ASR_MODEL=models/ggml-base.en.bin

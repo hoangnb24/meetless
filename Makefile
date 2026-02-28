@@ -12,6 +12,8 @@ SIGN_IDENTITY ?= -
 CAPTURE_SECS ?= 10
 OUT ?= artifacts/hello-world.wav
 SAMPLE_RATE ?= 48000
+CAPTURE_MISMATCH_POLICY ?= adapt-stream-rate
+CAPTURE_CALLBACK_MODE ?= warn
 TRANSCRIBE_SECS ?= 10
 TRANSCRIBE_OUT_WAV ?= artifacts/transcribe-live.wav
 TRANSCRIBE_OUT_JSONL ?= artifacts/transcribe-live.jsonl
@@ -21,13 +23,21 @@ TRANSCRIBE_APP_OUT_JSONL ?= $(HOME)/Library/Containers/com.recordit.sequoiatrans
 TRANSCRIBE_APP_OUT_MANIFEST ?= $(HOME)/Library/Containers/com.recordit.sequoiatranscribe/Data/$(TRANSCRIBE_OUT_MANIFEST)
 ASR_MODEL ?= models/ggml-base.en.bin
 TRANSCRIBE_ARGS ?=
+PIPELINE_SECS ?= 10
+PIPELINE_CAPTURE_WAV ?= artifacts/capture-transcribe.input.wav
+PIPELINE_OUT_WAV ?= artifacts/capture-transcribe.wav
+PIPELINE_OUT_JSONL ?= artifacts/capture-transcribe.jsonl
+PIPELINE_OUT_MANIFEST ?= artifacts/capture-transcribe.manifest.json
+PIPELINE_CHANNEL_MODE ?= separate
+PIPELINE_ASR_MODEL ?=
+PIPELINE_ARGS ?=
 BENCH_CORPUS ?= bench/corpus/v1/corpus.tsv
 BENCH_OUT ?= artifacts/bench
 BENCH_BACKEND ?= noop-cat
 BENCH_CMD ?= cat {input} > /dev/null
 GATE_D_SECONDS ?= 3600
 
-.PHONY: help build build-release probe capture transcribe-live transcribe-preflight run-transcribe-app run-transcribe-preflight-app bench-harness gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
+.PHONY: help build build-release probe capture transcribe-live capture-transcribe transcribe-preflight run-transcribe-app run-transcribe-preflight-app bench-harness gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
 
 help:
 	@echo "Targets:"
@@ -36,6 +46,7 @@ help:
 	@echo "  probe         - Run API probe (debug)"
 	@echo "  capture       - Run WAV recorder (debug)"
 	@echo "  transcribe-live   - Validate transcribe-live CLI contract (debug)"
+	@echo "  capture-transcribe - One-command capture then transcription workflow (debug)"
 	@echo "  transcribe-preflight - Run transcribe-live preflight diagnostics (debug)"
 	@echo "  run-transcribe-app - Run signed transcribe-live app bundle"
 	@echo "  run-transcribe-preflight-app - Run signed transcribe-live preflight diagnostics"
@@ -58,7 +69,7 @@ probe: build
 	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run -- $(CAPTURE_SECS)
 
 capture: build
-	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin $(BIN_NAME) -- $(CAPTURE_SECS) $(OUT) $(SAMPLE_RATE)
+	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin $(BIN_NAME) -- $(CAPTURE_SECS) $(OUT) $(SAMPLE_RATE) $(CAPTURE_MISMATCH_POLICY) $(CAPTURE_CALLBACK_MODE)
 
 transcribe-live: build
 	@echo "Transcribe-live absolute artifact paths:"
@@ -66,6 +77,15 @@ transcribe-live: build
 	@echo "  JSONL:    $(abspath $(TRANSCRIBE_OUT_JSONL))"
 	@echo "  Manifest: $(abspath $(TRANSCRIBE_OUT_MANIFEST))"
 	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin $(TRANSCRIBE_BIN) -- --duration-sec $(TRANSCRIBE_SECS) --out-wav "$(abspath $(TRANSCRIBE_OUT_WAV))" --out-jsonl "$(abspath $(TRANSCRIBE_OUT_JSONL))" --out-manifest "$(abspath $(TRANSCRIBE_OUT_MANIFEST))" --asr-model "$(ASR_MODEL)" $(TRANSCRIBE_ARGS)
+
+capture-transcribe: build
+	@echo "Capture+Transcribe absolute artifact paths:"
+	@echo "  Input WAV:  $(abspath $(PIPELINE_CAPTURE_WAV))"
+	@echo "  WAV:        $(abspath $(PIPELINE_OUT_WAV))"
+	@echo "  JSONL:      $(abspath $(PIPELINE_OUT_JSONL))"
+	@echo "  Manifest:   $(abspath $(PIPELINE_OUT_MANIFEST))"
+	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin $(BIN_NAME) -- $(PIPELINE_SECS) "$(abspath $(PIPELINE_CAPTURE_WAV))" $(SAMPLE_RATE) $(CAPTURE_MISMATCH_POLICY) $(CAPTURE_CALLBACK_MODE)
+	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin $(TRANSCRIBE_BIN) -- --duration-sec $(PIPELINE_SECS) --input-wav "$(abspath $(PIPELINE_CAPTURE_WAV))" --out-wav "$(abspath $(PIPELINE_OUT_WAV))" --out-jsonl "$(abspath $(PIPELINE_OUT_JSONL))" --out-manifest "$(abspath $(PIPELINE_OUT_MANIFEST))" --asr-backend whispercpp --transcribe-channels "$(PIPELINE_CHANNEL_MODE)" $(if $(strip $(PIPELINE_ASR_MODEL)),--asr-model "$(PIPELINE_ASR_MODEL)",) $(PIPELINE_ARGS)
 
 transcribe-preflight: TRANSCRIBE_ARGS += --preflight
 transcribe-preflight: transcribe-live
