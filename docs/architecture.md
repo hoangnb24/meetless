@@ -82,7 +82,7 @@ Per chunk:
 - Type validation is backend-specific:
   - `whispercpp` must resolve to a file
   - `whisperkit` must resolve to a directory
-- Preflight/runtime diagnostics include resolved path + source, and failures enumerate checked paths with remediation to set `--asr-model` or `RECORDIT_ASR_MODEL`.
+- Preflight/runtime diagnostics include resolved path + source + checksum status (`asr_model_checksum_sha256`, `asr_model_checksum_status`), and failures enumerate checked paths with remediation to set `--asr-model` or `RECORDIT_ASR_MODEL`.
 
 ## Test Runtime Path Contract
 

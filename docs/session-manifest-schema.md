@@ -35,6 +35,7 @@ Top-level required fields:
 - identity/config:
   - `schema_version`, `kind`, `generated_at_utc`
   - `asr_backend`, `asr_model`, `asr_model_source`
+  - `asr_model_checksum_sha256`, `asr_model_checksum_status`
   - `input_wav`
   - `out_wav`
   - `out_wav_semantics` (`"canonical session WAV artifact for the run"`)
@@ -66,6 +67,18 @@ Top-level required fields:
   - `impact`
   - `guidance`
 
+### Model checksum status contract
+
+`asr_model_checksum_status` is required wherever `asr_model_*` fields are emitted.
+
+Current status values:
+
+- `available`: checksum computed successfully for a file-backed model path
+- `unavailable_directory`: resolved model path is a directory (checksum intentionally omitted)
+- `unavailable_not_file`: resolved model path is neither regular file nor directory
+- `unavailable_unresolved`: model path did not resolve in the current preflight/runtime context
+- `unavailable_checksum_error`: model path resolved but checksum computation failed
+
 ## Preflight Manifest (`kind=transcribe-live-preflight`)
 
 Canonical example:
@@ -82,6 +95,7 @@ Top-level required fields:
   - `out_wav`, `out_wav_semantics`, `out_jsonl`, `out_manifest`
   - `asr_backend`
   - `asr_model_requested`, `asr_model_resolved`, `asr_model_source`
+  - `asr_model_checksum_sha256`, `asr_model_checksum_status`
   - `sample_rate_hz`
 - `checks[]` objects:
   - `id`

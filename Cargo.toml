@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.100"
 crossbeam-channel = "0.5.15"
 hound = "3.5.1"
+sha2 = "0.10.9"
 screencapturekit = { version = "1.5.1", features = ["macos_15_0"] }
 
 [[bin]]

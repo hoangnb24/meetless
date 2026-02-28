@@ -20,6 +20,7 @@ Enforcement points:
   - `chunk_too_large`
 - `src/bin/sequoia_capture.rs` telemetry also records `sample_rate_policy` with mismatch mode, input rates, and per-channel resampling counters.
 - `src/bin/transcribe_live.rs` near-live runtime path reuses recorder capture primitives by invoking `sequoia_capture` session capture for `--live-chunked`, avoiding duplicate callback-thread logic in transcribe.
+- `src/bin/transcribe_live.rs` reads near-live capture telemetry (`restart_count`) and converts interruption recovery or missing continuity telemetry into explicit degradation/trust notices so continuity impact is never silent.
 
 ## Cleanup Queue Contract (Transcribe)
 
