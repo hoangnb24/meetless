@@ -2990,6 +2990,18 @@ fn print_live_report(report: &LiveRunReport) {
         }
     }
     println!(
+        "  chunk_queue: enabled={} max_queue={} submitted={} enqueued={} dropped_oldest={} processed={} pending={} high_water={} drain_completed={}",
+        report.chunk_queue.enabled,
+        report.chunk_queue.max_queue,
+        report.chunk_queue.submitted,
+        report.chunk_queue.enqueued,
+        report.chunk_queue.dropped_oldest,
+        report.chunk_queue.processed,
+        report.chunk_queue.pending,
+        report.chunk_queue.high_water,
+        report.chunk_queue.drain_completed
+    );
+    println!(
         "  cleanup_queue: enabled={} submitted={} enqueued={} dropped_queue_full={} processed={} succeeded={} timed_out={} failed={} retry_attempts={} pending={} drain_completed={}",
         report.cleanup_queue.enabled,
         report.cleanup_queue.submitted,
@@ -3094,6 +3106,21 @@ fn write_runtime_jsonl(config: &TranscribeConfig, report: &LiveRunReport) -> Res
         )
         .map_err(io_to_cli)?;
     }
+
+    writeln!(
+        file,
+        "{{\"event_type\":\"chunk_queue\",\"channel\":\"control\",\"enabled\":{},\"max_queue\":{},\"submitted\":{},\"enqueued\":{},\"dropped_oldest\":{},\"processed\":{},\"pending\":{},\"high_water\":{},\"drain_completed\":{}}}",
+        report.chunk_queue.enabled,
+        report.chunk_queue.max_queue,
+        report.chunk_queue.submitted,
+        report.chunk_queue.enqueued,
+        report.chunk_queue.dropped_oldest,
+        report.chunk_queue.processed,
+        report.chunk_queue.pending,
+        report.chunk_queue.high_water,
+        report.chunk_queue.drain_completed
+    )
+    .map_err(io_to_cli)?;
 
     writeln!(
         file,
@@ -3308,6 +3335,20 @@ fn write_runtime_manifest(
         report.benchmark.final_slo_met,
         json_escape(&report.benchmark_summary_csv.display().to_string()),
         json_escape(&report.benchmark_runs_csv.display().to_string())
+    )
+    .map_err(io_to_cli)?;
+    writeln!(
+        file,
+        "  \"chunk_queue\": {{\"enabled\":{},\"max_queue\":{},\"submitted\":{},\"enqueued\":{},\"dropped_oldest\":{},\"processed\":{},\"pending\":{},\"high_water\":{},\"drain_completed\":{}}},",
+        report.chunk_queue.enabled,
+        report.chunk_queue.max_queue,
+        report.chunk_queue.submitted,
+        report.chunk_queue.enqueued,
+        report.chunk_queue.dropped_oldest,
+        report.chunk_queue.processed,
+        report.chunk_queue.pending,
+        report.chunk_queue.high_water,
+        report.chunk_queue.drain_completed
     )
     .map_err(io_to_cli)?;
     writeln!(
@@ -4469,9 +4510,10 @@ mod tests {
         materialize_out_wav, merge_transcript_events, model_checksum_info, parse_args_from,
         parse_trust_notice, prepare_channel_inputs, reconstruct_transcript,
         reconstruct_transcript_per_channel, resolve_model_path, run_cleanup_queue_with,
-        sequoia_capture_binary_candidates, AsrBackend, ChannelMode, CleanupAttemptOutcome,
-        CleanupQueueTelemetry, CleanupTaskStatus, ModeDegradationEvent, ParseOutcome,
-        ResolvedModelPath, TranscribeConfig, TranscriptEvent, VadBoundary, HELP_TEXT,
+        run_live_chunk_queue, sequoia_capture_binary_candidates, AsrBackend, ChannelMode,
+        CleanupAttemptOutcome, CleanupQueueTelemetry, CleanupTaskStatus, LiveChunkQueueTelemetry,
+        LiveChunkTask, ModeDegradationEvent, ParseOutcome, ResolvedModelPath, TranscribeConfig,
+        TranscriptEvent, VadBoundary, HELP_TEXT, LIVE_CHUNK_QUEUE_DROP_OLDEST_CODE,
     };
     use hound::{SampleFormat, WavSpec, WavWriter};
     use std::env;
@@ -4769,6 +4811,111 @@ mod tests {
         assert!(notices
             .iter()
             .any(|notice| notice.code == "continuity_recovered_with_gaps"));
+    }
+
+    #[test]
+    fn trust_notice_builder_emits_chunk_queue_backpressure_notice() {
+        let config = TranscribeConfig::default();
+        let cleanup = CleanupQueueTelemetry::disabled(&config);
+        let mut chunk_queue = LiveChunkQueueTelemetry::disabled(&config);
+        chunk_queue.enabled = true;
+        chunk_queue.max_queue = 2;
+        chunk_queue.dropped_oldest = 2;
+        chunk_queue.submitted = 6;
+        chunk_queue.processed = 4;
+        let notices = build_trust_notices(
+            ChannelMode::Separate,
+            ChannelMode::Separate,
+            &[ModeDegradationEvent {
+                code: LIVE_CHUNK_QUEUE_DROP_OLDEST_CODE,
+                detail: "near-live ASR chunk queue dropped 2 oldest task(s) under pressure"
+                    .to_string(),
+            }],
+            &cleanup,
+            &chunk_queue,
+        );
+        assert!(notices
+            .iter()
+            .any(|notice| notice.code == "chunk_queue_backpressure"));
+    }
+
+    #[test]
+    fn live_chunk_queue_drops_oldest_queued_tasks_under_pressure() {
+        let result = run_live_chunk_queue(
+            vec![
+                LiveChunkTask {
+                    tick_index: 0,
+                    channel: "mic".to_string(),
+                    segment_id: "s0-mic".to_string(),
+                    start_ms: 0,
+                    end_ms: 4_000,
+                    text: "a".to_string(),
+                },
+                LiveChunkTask {
+                    tick_index: 0,
+                    channel: "system".to_string(),
+                    segment_id: "s0-system".to_string(),
+                    start_ms: 0,
+                    end_ms: 4_000,
+                    text: "b".to_string(),
+                },
+                LiveChunkTask {
+                    tick_index: 1,
+                    channel: "mic".to_string(),
+                    segment_id: "s1-mic".to_string(),
+                    start_ms: 1_000,
+                    end_ms: 5_000,
+                    text: "c".to_string(),
+                },
+                LiveChunkTask {
+                    tick_index: 1,
+                    channel: "system".to_string(),
+                    segment_id: "s1-system".to_string(),
+                    start_ms: 1_000,
+                    end_ms: 5_000,
+                    text: "d".to_string(),
+                },
+                LiveChunkTask {
+                    tick_index: 2,
+                    channel: "mic".to_string(),
+                    segment_id: "s2-mic".to_string(),
+                    start_ms: 2_000,
+                    end_ms: 6_000,
+                    text: "e".to_string(),
+                },
+                LiveChunkTask {
+                    tick_index: 2,
+                    channel: "system".to_string(),
+                    segment_id: "s2-system".to_string(),
+                    start_ms: 2_000,
+                    end_ms: 6_000,
+                    text: "f".to_string(),
+                },
+            ],
+            2,
+        );
+
+        assert_eq!(result.telemetry.submitted, 6);
+        assert_eq!(result.telemetry.dropped_oldest, 2);
+        assert_eq!(result.telemetry.processed, 4);
+        assert_eq!(result.telemetry.max_queue, 2);
+        assert_eq!(result.telemetry.high_water, 2);
+        assert!(result.telemetry.drain_completed);
+        let final_ids = result
+            .events
+            .iter()
+            .filter(|event| event.event_type == "final")
+            .map(|event| event.segment_id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            final_ids,
+            vec![
+                "s0-mic".to_string(),
+                "s1-mic".to_string(),
+                "s2-mic".to_string(),
+                "s2-system".to_string(),
+            ]
+        );
     }
 
     #[test]
