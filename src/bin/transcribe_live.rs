@@ -6493,6 +6493,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_accepts_model_doctor_with_live_stream() {
+        let args = vec!["--live-stream".to_string(), "--model-doctor".to_string()];
+        match parse_args_from(args.into_iter()).unwrap() {
+            ParseOutcome::Help => panic!("expected config parse outcome"),
+            ParseOutcome::Config(config) => {
+                assert!(config.live_stream);
+                assert!(config.model_doctor);
+                assert_eq!(config.runtime_mode_label(), "live-stream");
+                assert_eq!(config.runtime_mode_selector_label(), "--live-stream");
+            }
+        }
+    }
+
+    #[test]
     fn parse_accepts_live_stream_chunk_tuning_values() {
         let args = vec![
             "--live-stream".to_string(),

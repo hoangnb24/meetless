@@ -29,6 +29,9 @@ TRANSCRIBE_APP_SESSION_STEM ?= session
 TRANSCRIBE_APP_OUT_WAV ?= $(TRANSCRIBE_APP_ARTIFACT_ROOT)/$(TRANSCRIBE_APP_SESSION_STEM).wav
 TRANSCRIBE_APP_OUT_JSONL ?= $(TRANSCRIBE_APP_ARTIFACT_ROOT)/$(TRANSCRIBE_APP_SESSION_STEM).jsonl
 TRANSCRIBE_APP_OUT_MANIFEST ?= $(TRANSCRIBE_APP_ARTIFACT_ROOT)/$(TRANSCRIBE_APP_SESSION_STEM).manifest.json
+TRANSCRIBE_APP_LIVE_STREAM_INPUT_WAV ?= $(TRANSCRIBE_APP_ARTIFACT_ROOT)/$(TRANSCRIBE_APP_SESSION_STEM).input.wav
+TRANSCRIBE_APP_LIVE_STREAM_ARGS ?=
+TRANSCRIBE_APP_SHOW_LIVE_INPUT ?= 0
 WHISPERCPP_MODEL_DEFAULT ?= artifacts/bench/models/whispercpp/ggml-tiny.en.bin
 ASR_MODEL ?= $(WHISPERCPP_MODEL_DEFAULT)
 TRANSCRIBE_ARGS ?=
@@ -53,7 +56,7 @@ SMOKE_NEAR_LIVE_DETERMINISTIC_DIR ?= artifacts/smoke/near-live-deterministic
 SMOKE_NEAR_LIVE_INPUT_WAV ?= $(SMOKE_NEAR_LIVE_DIR)/capture.input.wav
 SMOKE_NEAR_LIVE_DETERMINISTIC_INPUT_WAV ?= artifacts/bench/corpus/gate_c/tts_phrase_stereo.wav
 
-.PHONY: help build build-release probe capture transcribe-live transcribe-live-stream capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic setup-whispercpp-model run-transcribe-app run-transcribe-preflight-app run-transcribe-model-doctor-app bench-harness gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
+.PHONY: help build build-release probe capture transcribe-live transcribe-live-stream capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic setup-whispercpp-model run-transcribe-app run-transcribe-live-stream-app run-transcribe-preflight-app run-transcribe-model-doctor-app bench-harness gate-backlog-pressure gate-transcript-completeness gate-v1-acceptance gate-packaged-live-smoke gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
 
 help:
 	@echo "Targets:"
@@ -72,9 +75,14 @@ help:
 	@echo "  smoke-near-live-deterministic - CI-safe near-live fallback smoke using deterministic stereo fixture"
 	@echo "  setup-whispercpp-model - Bootstrap default local whispercpp model asset"
 	@echo "  run-transcribe-app - Run signed transcribe-live app bundle (recommended packaged beta entrypoint)"
+	@echo "  run-transcribe-live-stream-app - Run signed transcribe-live app bundle with explicit --live-stream selector"
 	@echo "  run-transcribe-preflight-app - Run signed transcribe-live preflight diagnostics (packaged companion path)"
 	@echo "  run-transcribe-model-doctor-app - Run signed transcribe-live model/backend diagnostics (packaged companion path)"
 	@echo "  bench-harness - Run benchmark harness and emit machine-readable artifacts"
+	@echo "  gate-backlog-pressure - Run deterministic near-live backlog pressure gate harness"
+	@echo "  gate-transcript-completeness - Run reconciliation completeness gate harness under induced backlog"
+	@echo "  gate-v1-acceptance - Run cold/warm first-emit + artifact/trust v1 acceptance gate harness"
+	@echo "  gate-packaged-live-smoke - Run signed-app live-stream smoke gate with machine-readable summary"
 	@echo "  gate-d-soak - Run deterministic near-live 60-minute soak gate harness and emit runs/summary artifacts"
 	@echo "  bundle        - Create minimal .app bundle"
 	@echo "  sign          - Codesign app bundle"
@@ -162,6 +170,18 @@ setup-whispercpp-model:
 bench-harness: build
 	cargo run --bin benchmark_harness -- --corpus "$(BENCH_CORPUS)" --out-dir "$(BENCH_OUT)" --backend-id "$(BENCH_BACKEND)" --cmd "$(BENCH_CMD)"
 
+gate-backlog-pressure:
+	MODEL="$(abspath $(ASR_MODEL))" scripts/gate_backlog_pressure.sh
+
+gate-transcript-completeness:
+	MODEL="$(abspath $(ASR_MODEL))" scripts/gate_transcript_completeness.sh
+
+gate-v1-acceptance:
+	MODEL="$(abspath $(ASR_MODEL))" scripts/gate_v1_acceptance.sh
+
+gate-packaged-live-smoke:
+	MODEL="$(abspath $(ASR_MODEL))" PACKAGED_ROOT="$(TRANSCRIBE_APP_ARTIFACT_ROOT)" SIGN_IDENTITY="$(SIGN_IDENTITY)" scripts/gate_packaged_live_smoke.sh
+
 gate-d-soak:
 	SOAK_SECONDS=$(GATE_D_SECONDS) scripts/gate_d_soak.sh
 
@@ -202,6 +222,9 @@ run-transcribe-app: sign-transcribe
 	@mkdir -p "$(dir $(TRANSCRIBE_APP_OUT_WAV))"
 	@echo "Signed app transcribe-live absolute artifact paths:"
 	@echo "  Root:     $(TRANSCRIBE_APP_ARTIFACT_ROOT)"
+	@if [ "$(TRANSCRIBE_APP_SHOW_LIVE_INPUT)" = "1" ]; then \
+		echo "  Input WAV: $(TRANSCRIBE_APP_LIVE_STREAM_INPUT_WAV)"; \
+	fi
 	@echo "  WAV:      $(TRANSCRIBE_APP_OUT_WAV)"
 	@echo "  JSONL:    $(TRANSCRIBE_APP_OUT_JSONL)"
 	@echo "  Manifest: $(TRANSCRIBE_APP_OUT_MANIFEST)"
@@ -221,6 +244,10 @@ run-transcribe-app: sign-transcribe
 	else \
 		echo "  Manifest present: false"; \
 	fi
+
+run-transcribe-live-stream-app: TRANSCRIBE_ARGS += --live-stream --input-wav "$(TRANSCRIBE_APP_LIVE_STREAM_INPUT_WAV)" $(TRANSCRIBE_APP_LIVE_STREAM_ARGS)
+run-transcribe-live-stream-app: TRANSCRIBE_APP_SHOW_LIVE_INPUT := 1
+run-transcribe-live-stream-app: run-transcribe-app
 
 run-transcribe-preflight-app: TRANSCRIBE_ARGS += --preflight
 run-transcribe-preflight-app: run-transcribe-app
