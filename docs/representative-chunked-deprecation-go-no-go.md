@@ -1,7 +1,7 @@
 # Representative-Chunked Deprecation Go/No-Go Review (bd-119)
 
 Date: 2026-03-01
-Status: in-progress (`HOLD`) pending packaged evidence from `bd-3dx`
+Status: complete (`NO-GO` for deprecation on current evidence)
 Owner: `HazyDune`
 
 ## Purpose
@@ -23,17 +23,19 @@ References:
 
 ## Current Decision State
 
-`HOLD` (no-go-by-default until required packaged evidence is complete).
+`NO-GO` for deprecating representative chunk mode on the current host/state.
 
 Rationale:
 
 1. CLI-side evidence is available (`bd-nqn`/v1 acceptance gate landed).
 2. Packaged diagnostics parity lane (`bd-3ma`) is complete.
-3. Packaged smoke/gate evidence lane (`bd-3dx`) is still in progress and is a hard input.
+3. Packaged smoke/gate evidence lane (`bd-3dx`) is complete and emits machine-readable no-go artifacts.
+4. The current packaged run fails before manifest materialization, so it cannot prove signed-app `runtime_mode=live-stream`.
+5. Remediation is explicitly tracked in `bd-y2v`; deprecation should not move ahead of that fix.
 
-## Required Evidence Inputs
+## Evidence Inputs Reviewed
 
-All inputs below must be present before finalizing go/no-go.
+Inputs reviewed for the final recommendation.
 
 ### A) CLI v1 Baseline (already available)
 
@@ -62,19 +64,31 @@ Current local evidence snapshot:
   - packaged live diagnostics invocation path documented
   - parser/test coverage proving `--live-stream --model-doctor` compatibility
 
-### C) Packaged Live Smoke/Gate Evidence (pending `bd-3dx`)
+### C) Packaged Live Smoke/Gate Evidence (available from `bd-3dx`)
 
-Required once available:
+Available evidence:
 
-- packaged gate summary artifact(s) under packaged container-root evidence path
-- manifest proof from signed-app context with `runtime_mode=live-stream`
-- trust/degradation surface consistency under packaged path
+- `/Users/themrb/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/20260301T081827Z/summary.csv`
+- `/Users/themrb/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/20260301T081827Z/status.txt`
+- referenced runtime manifest path:
+  - `/Users/themrb/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/20260301T081827Z/runtime/session.manifest.json`
 
-Expected artifact shape once `bd-3dx` lands:
+Observed result from `summary.csv`:
 
-- `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/<gate>/<timestamp>/summary.csv`
-- `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/<gate>/<timestamp>/status.txt`
-- packaged runtime manifest(s) proving `runtime_mode=live-stream`
+- `gate_pass=false`
+- `runtime_helper_exec_blocked=true`
+- `runtime_manifest_exists=false`
+- `runtime_mode_ok=false`
+- `runtime_mode_status_ok=false`
+- `runtime_transcript_surface_ok=false`
+- `runtime_degradation_surface_ok=false`
+- `runtime_error_line=...failed to execute \`whisper-cli\` prewarm probe: Operation not permitted...`
+
+Interpretation:
+
+- The packaged gate contract now exists and is producing the exact evidence shape this review required.
+- The current signed-app runtime is still a no-go because ASR prewarm fails before the runtime manifest is emitted.
+- Since no manifest exists, packaged evidence does not yet prove `runtime_mode=live-stream` under signed-app execution.
 
 ### D) Operator Messaging Readiness (partially available)
 
@@ -102,40 +116,40 @@ Hold or reject deprecation if any are true:
 3. Trust/degradation signaling diverges between CLI and packaged paths.
 4. Tooling still depends on `runtime_mode=live-chunked` as a true-live proxy.
 
-## Planned Final Decision Template
+## Final Decision Record
 
-Fill this section once `bd-3dx` is complete.
-
-- Final recommendation: `GO` | `NO-GO` | `HOLD`
-- Effective date:
+- Final recommendation: `NO-GO`
+- Effective date: 2026-03-01
 - Scope:
-  - selector lifecycle intent
-  - compatibility grace period
-  - rollback trigger
+  - keep `--live-chunked` available as the representative compatibility path
+  - do not start deprecation messaging/removal for representative-chunked yet
+  - revisit only after `bd-y2v` produces a passing packaged smoke summary and manifest-backed signed-app evidence
 - Evidence snapshot:
-  - CLI acceptance artifact path(s)
-  - packaged gate artifact path(s)
-  - supporting docs/contracts updated
+  - CLI acceptance artifact paths:
+    - `artifacts/tmp/gate_v1_acceptance_fake/summary.csv`
+    - `artifacts/tmp/gate_backlog_fake/summary.csv`
+    - `artifacts/tmp/gate_d_fake/summary.csv`
+  - packaged gate artifact paths:
+    - `/Users/themrb/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/20260301T081827Z/summary.csv`
+    - `/Users/themrb/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/20260301T081827Z/status.txt`
+  - supporting docs/contracts:
+    - `docs/live-chunked-migration.md`
+    - `docs/packaged-live-stream-plumbing.md`
+    - `docs/gate-v1-acceptance.md`
 
-## Decision Procedure (When `bd-3dx` Artifacts Arrive)
+## Decision Summary
 
-1. Confirm packaged gate pass signal from the new packaged summary artifact.
-2. Confirm packaged manifest reports `runtime_mode=live-stream`.
-3. Confirm trust/degradation surfaces are present and non-empty when pressure is induced.
-4. Re-check migration messaging consistency in:
-   - `docs/live-chunked-migration.md`
-   - `README.md`
-   - `docs/realtime-contracts.md`
-5. Write final recommendation in this file and close `bd-119`.
+Representative-chunked should not be deprecated now.
 
-Suggested command pattern (fill concrete packaged paths from `bd-3dx` closeout):
+Why:
 
-```bash
-cat <packaged_gate_summary.csv>
-jq '.runtime_mode, .runtime_mode_taxonomy, .trust, .degradation_events' <packaged_runtime_manifest.json>
-```
+1. CLI v1 evidence is good, but packaged evidence is still failing in the signed-app lane.
+2. The packaged gate failure is not ambiguous; it is explicitly classified as helper execution blocked.
+3. Because the runtime manifest is absent, there is no signed-app proof yet that packaged live execution reaches the expected `live-stream` runtime contract.
+4. Deprecating representative-chunked before `bd-y2v` lands would remove a still-useful compatibility lane without equivalent packaged live proof.
 
-## Immediate Next Step
+Re-review trigger:
 
-Wait for `bd-3dx` completion artifacts, then update this document with final
-decision and close `bd-119`.
+1. `bd-y2v` closes with a passing packaged smoke summary.
+2. Signed-app artifacts include a materialized manifest with `runtime_mode=live-stream`.
+3. Transcript/trust/degradation surfaces are present and consistent enough to meet the packaged gate contract.

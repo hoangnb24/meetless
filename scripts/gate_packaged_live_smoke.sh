@@ -12,6 +12,7 @@ DURATION_SEC="${DURATION_SEC:-3}"
 CHUNK_WINDOW_MS="${CHUNK_WINDOW_MS:-1800}"
 CHUNK_STRIDE_MS="${CHUNK_STRIDE_MS:-300}"
 CHUNK_QUEUE_CAP="${CHUNK_QUEUE_CAP:-4}"
+WHISPER_HELPER="${WHISPER_HELPER:-$(command -v whisper-cli || true)}"
 
 usage() {
   cat <<USAGE
@@ -27,6 +28,7 @@ Options:
   --packaged-root PATH      Packaged artifact root (default: ~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta)
   --model PATH              ASR model path (default: artifacts/bench/models/whispercpp/ggml-tiny.en.bin)
   --fixture PATH            Deterministic fake-capture fixture (default: artifacts/bench/corpus/gate_c/tts_phrase_stereo.wav)
+  --whisper-helper PATH     whispercpp helper binary path (default: auto-detect via 'which whisper-cli')
   --sign-identity VALUE     Codesign identity passed to make sign-transcribe (default: -)
   --duration-sec N          Runtime duration for the smoke scenario (default: 3)
   --chunk-window-ms N       Chunk window for live-stream runtime (default: 1800)
@@ -52,6 +54,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --fixture)
       FIXTURE="$2"
+      shift 2
+      ;;
+    --whisper-helper)
+      WHISPER_HELPER="$2"
       shift 2
       ;;
     --sign-identity)
@@ -127,6 +133,11 @@ if [[ ! -f "$FIXTURE" ]]; then
   echo "error: fixture does not exist: $FIXTURE" >&2
   exit 2
 fi
+if [[ -z "$WHISPER_HELPER" || ! -x "$WHISPER_HELPER" ]]; then
+  echo "error: whisper helper is missing or not executable: $WHISPER_HELPER" >&2
+  echo "hint: install whisper-cli or pass --whisper-helper <path>" >&2
+  exit 2
+fi
 
 DOCTOR_DIR="$OUT_DIR/model_doctor"
 RUNTIME_DIR="$OUT_DIR/runtime"
@@ -139,6 +150,7 @@ mkdir -p "$DOCTOR_DIR" "$RUNTIME_DIR" "$STAGED_INPUT_DIR" "$SHARED_STAGE_DIR"
 
 STAGED_MODEL="$SHARED_STAGE_DIR/$(basename "$MODEL")"
 STAGED_FIXTURE="$STAGED_INPUT_DIR/$(basename "$FIXTURE")"
+STAGED_HELPER="$STAGED_INPUT_DIR/whisper-cli"
 
 if [[ ! -f "$STAGED_MODEL" ]]; then
   EXISTING_STAGED_MODEL="$(find "$PACKAGED_ROOT/gates/gate_packaged_live_smoke" -path "*/staged_inputs/$(basename "$MODEL")" -type f -print -quit 2>/dev/null || true)"
@@ -150,6 +162,8 @@ if [[ ! -f "$STAGED_MODEL" ]]; then
 fi
 
 cp "$FIXTURE" "$STAGED_FIXTURE"
+cp "$WHISPER_HELPER" "$STAGED_HELPER"
+chmod +x "$STAGED_HELPER"
 
 (
   cd "$ROOT"
@@ -179,7 +193,7 @@ RUNTIME_MANIFEST="$RUNTIME_DIR/session.manifest.json"
 set +e
 (
   cd "$ROOT"
-  /usr/bin/time -l "$APP_BIN" \
+  /usr/bin/time -l env RECORDIT_WHISPERCPP_CLI_PATH="$STAGED_HELPER" "$APP_BIN" \
     --duration-sec "$DURATION_SEC" \
     --live-stream \
     --model-doctor \
@@ -194,7 +208,7 @@ DOCTOR_EXIT_CODE=$?
 
 (
   cd "$ROOT"
-  /usr/bin/time -l env RECORDIT_FAKE_CAPTURE_FIXTURE="$STAGED_FIXTURE" "$APP_BIN" \
+  /usr/bin/time -l env RECORDIT_FAKE_CAPTURE_FIXTURE="$STAGED_FIXTURE" RECORDIT_WHISPERCPP_CLI_PATH="$STAGED_HELPER" "$APP_BIN" \
     --duration-sec "$DURATION_SEC" \
     --live-stream \
     --input-wav "$RUNTIME_INPUT_WAV" \
@@ -244,6 +258,7 @@ runtime_stdout_path=$RUNTIME_STDOUT
 runtime_time_path=$RUNTIME_TIME
 staged_model_path=$STAGED_MODEL
 staged_fixture_path=$STAGED_FIXTURE
+staged_helper_path=$STAGED_HELPER
 generated_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 STATUS
 
