@@ -193,36 +193,42 @@ impl LiveAsrService {
             let exec = Arc::clone(&executor);
             let policy = config.temp_audio_policy;
             let retries = config.retries;
-            worker_handles.push(thread::spawn(move || loop {
-                let maybe_job = LiveAsrService::pop_next_job(&queue);
-                let Some(job) = maybe_job else {
-                    break;
-                };
+            worker_handles.push(thread::spawn(move || {
+                loop {
+                    let maybe_job = LiveAsrService::pop_next_job(&queue);
+                    let Some(job) = maybe_job else {
+                        break;
+                    };
 
-                let mut attempts = 0usize;
-                let (transcript, error) = loop {
-                    match exec.transcribe(&job.audio_path) {
-                        Ok(text) => break (Some(text), None),
-                        Err(err) => {
-                            if attempts >= retries {
-                                break (None, Some(err));
+                    let mut attempts = 0usize;
+                    let (transcript, error) = loop {
+                        match exec.transcribe(&job.audio_path) {
+                            Ok(text) => break (Some(text), None),
+                            Err(err) => {
+                                if attempts >= retries {
+                                    break (None, Some(err));
+                                }
+                                attempts += 1;
                             }
-                            attempts += 1;
                         }
-                    }
-                };
+                    };
 
-                let success = error.is_none();
-                let (retained, deleted) =
-                    finalize_temp_audio_path(&job.audio_path, job.is_temp_audio, success, policy);
-                let _ = tx.send(LiveAsrJobResult {
-                    job,
-                    transcript_text: transcript,
-                    error,
-                    retry_attempts: attempts,
-                    temp_audio_retained: retained,
-                    temp_audio_deleted: deleted,
-                });
+                    let success = error.is_none();
+                    let (retained, deleted) = finalize_temp_audio_path(
+                        &job.audio_path,
+                        job.is_temp_audio,
+                        success,
+                        policy,
+                    );
+                    let _ = tx.send(LiveAsrJobResult {
+                        job,
+                        transcript_text: transcript,
+                        error,
+                        retry_attempts: attempts,
+                        temp_audio_retained: retained,
+                        temp_audio_deleted: deleted,
+                    });
+                }
             }));
         }
         drop(result_tx);
@@ -506,13 +512,13 @@ fn finalize_temp_audio_path(
 #[cfg(test)]
 mod tests {
     use super::{
-        run_live_asr_pool, LiveAsrExecutor, LiveAsrJob, LiveAsrJobClass, LiveAsrPoolConfig,
-        LiveAsrService, QueueEnqueueOutcome, ServiceQueueState, TempAudioPolicy,
+        LiveAsrExecutor, LiveAsrJob, LiveAsrJobClass, LiveAsrPoolConfig, LiveAsrService,
+        QueueEnqueueOutcome, ServiceQueueState, TempAudioPolicy, run_live_asr_pool,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
     use std::time::Duration;
 
@@ -623,6 +629,30 @@ mod tests {
     }
 
     #[test]
+    fn queue_policy_final_drops_only_when_no_background_jobs_exist() {
+        let mut queue = ServiceQueueState::default();
+        assert!(matches!(
+            queue.enqueue_with_policy(job(20, LiveAsrJobClass::Final), 1),
+            QueueEnqueueOutcome::Enqueued
+        ));
+
+        match queue.enqueue_with_policy(job(21, LiveAsrJobClass::Final), 1) {
+            QueueEnqueueOutcome::DroppedIncoming(dropped, reason) => {
+                assert_eq!(dropped.job_id, 21);
+                assert_eq!(dropped.class, LiveAsrJobClass::Final);
+                assert!(reason.contains("dropped final submission"));
+            }
+            _ => panic!("expected final drop when only final jobs are queued"),
+        }
+
+        let queued = queue
+            .pop_next()
+            .expect("original final should remain queued");
+        assert_eq!(queued.job_id, 20);
+        assert_eq!(queued.class, LiveAsrJobClass::Final);
+    }
+
+    #[test]
     fn queue_stays_non_blocking_and_drops_on_full_capacity() {
         let executor = Arc::new(MockExecutor {
             prewarm_ok: true,
@@ -656,6 +686,75 @@ mod tests {
         assert_eq!(telemetry.submitted, 6);
         assert!(telemetry.dropped_queue_full > 0);
         assert_eq!(results.len(), 6);
+    }
+
+    #[test]
+    fn service_final_submission_evicts_background_job_under_pressure() {
+        let executor = Arc::new(MockExecutor {
+            prewarm_ok: true,
+            fail_text: false,
+            sleep_ms: 5,
+            attempts: AtomicUsize::new(0),
+        });
+        let mut service = LiveAsrService::start(
+            executor,
+            LiveAsrPoolConfig {
+                worker_count: 1,
+                queue_capacity: 1,
+                retries: 0,
+                temp_audio_policy: TempAudioPolicy::RetainOnFailure,
+            },
+        );
+
+        {
+            let (lock, _) = &*service.queue_state;
+            let mut queue = lock.lock().expect("queue lock should not be poisoned");
+            queue.push_job(job(100, LiveAsrJobClass::Partial));
+        }
+
+        let final_job = job(101, LiveAsrJobClass::Final);
+        assert!(
+            service.submit(final_job.clone()).is_ok(),
+            "final submission should evict background work instead of dropping"
+        );
+
+        let evicted = service
+            .try_recv_result()
+            .expect("evicted background job should be reported immediately");
+        assert_eq!(evicted.job.job_id, 100);
+        assert_eq!(evicted.job.class, LiveAsrJobClass::Partial);
+        assert!(!evicted.success());
+        assert!(
+            evicted
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("evicted partial job in favor of final")
+        );
+
+        service.close();
+        let mut final_result = None;
+        for _ in 0..20 {
+            let Some(result) = service.recv_result_timeout(Duration::from_millis(100)) else {
+                continue;
+            };
+            if result.job.job_id == final_job.job_id {
+                final_result = Some(result);
+                break;
+            }
+        }
+        service.join();
+
+        let final_result = final_result.expect("expected final result after eviction path");
+        assert!(final_result.success());
+        assert_eq!(final_result.job.class, LiveAsrJobClass::Final);
+
+        let telemetry = service.telemetry();
+        assert_eq!(telemetry.submitted, 1);
+        assert_eq!(telemetry.enqueued, 1);
+        assert_eq!(telemetry.dropped_queue_full, 1);
+        assert_eq!(telemetry.failed, 1);
+        assert_eq!(telemetry.succeeded, 1);
     }
 
     #[test]
@@ -753,11 +852,13 @@ mod tests {
         assert_eq!(telemetry.failed, 1);
         assert_eq!(telemetry.temp_audio_retained, 1);
         assert_eq!(telemetry.temp_audio_deleted, 0);
-        assert!(results[0]
-            .error
-            .as_deref()
-            .unwrap_or_default()
-            .contains("prewarm failed"));
+        assert!(
+            results[0]
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("prewarm failed")
+        );
         assert!(tmp.exists());
         let _ = fs::remove_file(tmp);
     }
@@ -855,11 +956,13 @@ mod tests {
 
         let result = service.recv_result_timeout(Duration::from_millis(100));
         assert!(result.is_some());
-        assert!(result
-            .as_ref()
-            .and_then(|r| r.error.as_ref())
-            .map(|msg| msg.contains("closed"))
-            .unwrap_or(false));
+        assert!(
+            result
+                .as_ref()
+                .and_then(|r| r.error.as_ref())
+                .map(|msg| msg.contains("closed"))
+                .unwrap_or(false)
+        );
         let telemetry = service.telemetry();
         assert_eq!(telemetry.failed, 1);
         assert_eq!(telemetry.temp_audio_retained, 1);

@@ -1,6 +1,6 @@
-use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TryRecvError, TrySendError};
-use std::sync::atomic::{AtomicU64, Ordering};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError, TrySendError, bounded};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 #[derive(Debug, Default)]
@@ -178,7 +178,7 @@ impl<T> PreallocatedConsumer<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{preallocated_spsc, TransportStatsSnapshot};
+    use super::{TransportStatsSnapshot, preallocated_spsc};
     use std::time::Duration;
 
     #[test]

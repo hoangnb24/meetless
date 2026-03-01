@@ -15,9 +15,9 @@ usage() {
   cat <<USAGE
 Usage: $0 [options]
 
-Runs deterministic v1 acceptance checks for near-live runtime behavior:
-- cold start first transcript emission during active runtime
-- warm start first transcript emission during active runtime
+Runs deterministic v1 acceptance checks for true live-stream runtime behavior:
+- cold start first stable transcript emission during active runtime
+- warm start first stable transcript emission during active runtime
 - artifact truth checks for cold/warm runs
 - non-blocking/degradation/trust checks via gate_backlog_pressure
 
@@ -26,9 +26,9 @@ Options:
   --model PATH              ASR model path (default: artifacts/bench/models/whispercpp/ggml-tiny.en.bin)
   --fixture PATH            Deterministic stereo fixture (default: artifacts/bench/corpus/gate_c/tts_phrase_stereo.wav)
   --duration-sec N          Duration for cold/warm runs (default: 3)
-  --chunk-window-ms N       Cold/warm chunk window (default: 2000)
-  --chunk-stride-ms N       Cold/warm chunk stride (default: 500)
-  --chunk-queue-cap N       Cold/warm queue cap (default: 4)
+  --chunk-window-ms N       Cold/warm live-stream chunk window (default: 2000)
+  --chunk-stride-ms N       Cold/warm live-stream chunk stride (default: 500)
+  --chunk-queue-cap N       Cold/warm live-stream queue cap (default: 4)
   -h, --help                Show this help text
 USAGE
 }
@@ -122,7 +122,7 @@ run_live_case() {
     cd "$ROOT"
     /usr/bin/time -l env DYLD_LIBRARY_PATH=/usr/lib/swift RECORDIT_FAKE_CAPTURE_FIXTURE="$FIXTURE" "$BIN" \
       --duration-sec "$DURATION_SEC" \
-      --live-chunked \
+      --live-stream \
       --input-wav "$input_wav" \
       --out-wav "$out_wav" \
       --out-jsonl "$out_jsonl" \

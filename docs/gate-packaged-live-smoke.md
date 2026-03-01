@@ -50,7 +50,7 @@ Core checks:
 6. `runtime_mode_status_ok=true`
 7. `runtime_input_capture_ok=true` (`session.input.wav` materialized and non-zero bytes)
 8. `runtime_out_wav_truth_ok=true` (`out_wav_materialized=true`, manifest bytes > 0, file exists)
-9. `runtime_first_emit_during_active_ok=true`
+9. `runtime_first_stable_emit_ok=true` (active phase observed and stable first-emit evidence present)
 10. `runtime_terminal_live_mode_ok=true`
 11. `runtime_terminal_replay_suppressed_ok=true`
 12. `runtime_trust_surface_ok=true`
@@ -67,3 +67,4 @@ Interpretation:
 - trust/degradation checks enforce manifest-shape consistency so downstream review work can rely on packaged artifacts without re-deriving contract assumptions
 - `status.txt` is a quick PASS/FAIL envelope; `summary.csv` is the canonical machine-readable evidence artifact
 - `summary.csv` also records `runtime_error_line` and `runtime_helper_exec_blocked` for no-go classification when packaged live prewarm fails
+- `runtime_first_emit_during_active_ok` and `runtime_first_stable_during_active_ok` remain diagnostic fields; final pass/fail uses `runtime_first_stable_emit_ok` to avoid false negatives from non-chronological JSONL row ordering

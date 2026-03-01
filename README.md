@@ -59,7 +59,7 @@ Validates CLI flags, runs representative ASR transcription against `--input-wav`
 ```bash
 make transcribe-live-stream ASR_MODEL=models/ggml-base.en.bin
 ```
-Runs the `--live-stream` runtime selector and prints absolute paths for captured input + emitted artifacts before execution.
+Runs the `--live-stream` runtime selector and prints absolute paths for captured input + emitted artifacts before execution. In this mode, `--input-wav` is the progressive scratch capture artifact that grows during runtime, while `--out-wav` is the canonical session WAV materialized on successful closeout.
 
 Common overrides:
 - `TRANSCRIBE_LIVE_STREAM_SECS`
@@ -163,7 +163,14 @@ Runs the signed transcribe app executable in `--live-stream` mode with determini
 - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<timestamp>/summary.csv`
 - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<timestamp>/status.txt`
 
+Key packaged live checks:
+- `runtime_first_stable_emit_ok=true`: first stable transcript evidence is present during active runtime
+- `runtime_transcript_surface_ok=true`: manifest/JSONL transcript surfaces are populated
+- `runtime_terminal_live_mode_ok=true`: terminal contract stayed in live mode without replay fallback
+- `gate_pass=true`: packaged live-stream operator path satisfies the current acceptance bar
+
 Reference: `docs/gate-packaged-live-smoke.md`.
+Post-implementation verification checklist and evidence index: `docs/post-implementation-verification-checklist.md`.
 
 ### Run Packaged Beta Entrypoint (signed app mode, recommended)
 ```bash
@@ -200,6 +207,10 @@ This keeps the same signed app entrypoint, prints the live input/output artifact
 - `<root>/<session-stem>.wav`
 - `<root>/<session-stem>.jsonl`
 - `<root>/<session-stem>.manifest.json`
+
+Artifact semantics for this wrapper:
+- `<session-stem>.input.wav`: progressive live scratch artifact written during capture
+- `<session-stem>.wav`: canonical session artifact materialized after successful runtime shutdown/drain
 
 Packaged live follow-on evidence path:
 
@@ -318,7 +329,8 @@ cargo run --bin transcribe-live -- [--asr-model <local-model-path>] [flags...]
 - `--out-wav` contract:
   - canonical session WAV artifact path for the run
   - always materialized on successful runtime execution
-  - in the current representative-runtime phase, materialized from `--input-wav`
+  - for `--live-stream`, materialized from the progressive `--input-wav` scratch artifact during successful runtime closeout
+  - for representative modes, materialized according to the mode-specific input/output semantics described in the manifest
   - runtime manifest records `out_wav_materialized` and `out_wav_bytes` so artifact truth does not depend on reading the filesystem out-of-band
 - backend values:
   - `whispercpp` (primary)
@@ -374,6 +386,7 @@ cargo run --bin transcribe-live -- [--asr-model <local-model-path>] [flags...]
   - runtime JSONL emits `event_type=asr_worker_pool` with prewarm, queue, and temp-audio cleanup counters
   - runtime JSONL emits `event_type=chunk_queue` with near-live queue pressure + lag counters
   - runtime JSONL is append-only and emitted incrementally during lifecycle progression (not only at shutdown)
+  - in `live-stream`, lifecycle transitions and transcript events are emitted during active runtime so JSONL growth itself is evidence of true live behavior
   - runtime JSONL durability checkpoints call `sync_data()` every 24 lines and at stage boundaries
   - runtime manifest records `out_wav`, `out_wav_materialized`, and `out_wav_bytes` for canonical session artifact truth
   - runtime manifest includes a `degradation_events` array with stable `code` + `detail`
@@ -382,6 +395,7 @@ cargo run --bin transcribe-live -- [--asr-model <local-model-path>] [flags...]
   - runtime manifest includes a structured `trust` object (`degraded_mode_active`, `notice_count`, `notices`)
   - runtime manifest includes `session_summary`, a deterministic machine-consumable mirror of terminal close-summary fields (`session_status`, modes, transcript event counts, queue/lag, trust/degradation top codes, cleanup queue, artifacts)
   - runtime manifest `event_counts` includes transcript family counts (`partial`, `final`, `llm_final`, `reconciled_final`) for deterministic diagnostics
+  - runtime manifest `first_emit_timing_ms` includes `first_any`, `first_partial`, `first_final`, and `first_stable` so gates can validate active-runtime emission without relying on raw JSONL row ordering
   - replay output prints trust notices so audit reads preserve degraded-mode context
 - readability default contract:
   - terminal rendering is capability-aware:

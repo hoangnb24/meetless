@@ -1,12 +1,21 @@
 use hound::{SampleFormat, WavReader};
-use recordit::capture_api::capture_telemetry_path_for_output;
+use recordit::capture_api::{
+    CaptureChunk, CaptureEvent, CaptureSink, capture_telemetry_path_for_output,
+};
 use recordit::live_asr_pool::{
-    run_live_asr_pool, LiveAsrExecutor, LiveAsrJob, LiveAsrJobClass, LiveAsrPoolConfig,
-    LiveAsrPoolTelemetry, TempAudioPolicy,
+    LiveAsrExecutor, LiveAsrJob, LiveAsrJobClass, LiveAsrJobResult, LiveAsrPoolConfig,
+    LiveAsrPoolTelemetry, LiveAsrService, TempAudioPolicy,
 };
 use recordit::live_capture::{
-    run_capture_session, CallbackContractMode as LiveCaptureCallbackMode, LiveCaptureConfig,
-    SampleRateMismatchPolicy as LiveCaptureSampleRateMismatchPolicy,
+    CallbackContractMode as LiveCaptureCallbackMode, LiveCaptureConfig,
+    SampleRateMismatchPolicy as LiveCaptureSampleRateMismatchPolicy, run_capture_session,
+    run_streaming_capture_session,
+};
+use recordit::live_stream_runtime::{
+    LiveAsrJobClass as RuntimeAsrJobClass, LiveAsrJobSpec as RuntimeAsrJobSpec, LiveAsrResult,
+    LiveRuntimePhase, LiveRuntimeSummary, LiveStreamCoordinator, RuntimeFinalizer,
+    RuntimeOutputEvent, RuntimeOutputSink, StreamingSchedulerConfig, StreamingVadConfig,
+    StreamingVadScheduler,
 };
 use screencapturekit::prelude::*;
 use sha2::{Digest, Sha256};
@@ -17,8 +26,8 @@ use std::fs::{self, File};
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::sync::mpsc::{self, sync_channel, Receiver, RecvTimeoutError, TrySendError};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TrySendError, sync_channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -33,9 +42,28 @@ const DEFAULT_LIVE_ASR_WORKERS: usize = 2;
 const JSONL_SYNC_EVERY_LINES: usize = 24;
 const LIVE_CAPTURE_INTERRUPTION_RECOVERED_CODE: &str = "live_capture_interruption_recovered";
 const LIVE_CAPTURE_CONTINUITY_UNVERIFIED_CODE: &str = "live_capture_continuity_unverified";
+const LIVE_CAPTURE_TRANSPORT_DEGRADED_CODE: &str = "live_capture_transport_degraded";
+const LIVE_CAPTURE_CALLBACK_CONTRACT_DEGRADED_CODE: &str =
+    "live_capture_callback_contract_degraded";
 const LIVE_CHUNK_QUEUE_DROP_OLDEST_CODE: &str = "live_chunk_queue_drop_oldest";
 const LIVE_CHUNK_QUEUE_BACKPRESSURE_SEVERE_CODE: &str = "live_chunk_queue_backpressure_severe";
 const RECONCILIATION_APPLIED_CODE: &str = "reconciliation_applied_after_backpressure";
+
+const LIVE_CAPTURE_TRANSPORT_SOURCES: [&str; 4] = [
+    "slot_miss_drops",
+    "fill_failures",
+    "queue_full_drops",
+    "recycle_failures",
+];
+
+const LIVE_CAPTURE_CALLBACK_SOURCES: [&str; 6] = [
+    "missing_audio_buffer_list",
+    "missing_first_audio_buffer",
+    "missing_format_description",
+    "missing_sample_rate",
+    "non_float_pcm",
+    "chunk_too_large",
+];
 
 const HELP_TEXT: &str = "\
 transcribe-live
@@ -47,8 +75,8 @@ Usage:
 
 Options:
   --duration-sec <seconds>        Capture duration in seconds (default: 10)
-  --input-wav <path>              Runtime WAV path (offline: representative fixture path; live-chunked: capture destination; default: artifacts/bench/corpus/gate_a/tts_phrase.wav)
-  --out-wav <path>                Canonical session WAV artifact path (always materialized on success; default: artifacts/transcribe-live.wav)
+  --input-wav <path>              Runtime WAV path (offline: representative fixture path; live-stream: progressive capture scratch; default: artifacts/bench/corpus/gate_a/tts_phrase.wav)
+  --out-wav <path>                Canonical session WAV artifact path (materialized on successful runtime completion; default: artifacts/transcribe-live.wav)
   --out-jsonl <path>              Output JSONL transcript path (default: artifacts/transcribe-live.jsonl)
   --out-manifest <path>           Output session manifest path (default: artifacts/transcribe-live.manifest.json)
   --sample-rate <hz>              Capture sample rate in Hz (default: 48000)
@@ -898,11 +926,19 @@ struct LiveRunReport {
     lifecycle: LiveLifecycleTelemetry,
     reconciliation: ReconciliationMatrix,
     asr_worker_pool: LiveAsrPoolTelemetry,
+    final_buffering: FinalBufferingTelemetry,
     chunk_queue: LiveChunkQueueTelemetry,
     cleanup_queue: CleanupQueueTelemetry,
     benchmark: BenchmarkSummary,
     benchmark_summary_csv: PathBuf,
     benchmark_runs_csv: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct FinalBufferingTelemetry {
+    submit_window: usize,
+    deferred_final_submissions: usize,
+    max_pending_final_backlog: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -1248,6 +1284,15 @@ enum TerminalRenderMode {
     DeterministicNonTty,
 }
 
+impl TerminalRenderMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::InteractiveTty => "interactive-tty",
+            Self::DeterministicNonTty => "deterministic-non-tty",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TerminalRenderAction {
     kind: TerminalRenderActionKind,
@@ -1353,6 +1398,483 @@ struct ChannelTranscriptSummary {
 struct ChannelTranscriptionRun {
     summaries: Vec<ChannelTranscriptSummary>,
     asr_worker_pool: LiveAsrPoolTelemetry,
+    final_buffering: FinalBufferingTelemetry,
+}
+
+struct LiveStreamIncrementalJsonlWriter {
+    stream: RuntimeJsonlStream,
+    backend_id: &'static str,
+    channel_mode: ChannelMode,
+    speaker_labels: SpeakerLabels,
+    lifecycle_transition_index: usize,
+}
+
+impl LiveStreamIncrementalJsonlWriter {
+    fn open(config: &TranscribeConfig) -> Result<Self, CliError> {
+        Ok(Self {
+            stream: RuntimeJsonlStream::open(&config.out_jsonl)?,
+            backend_id: backend_id_for_asr_backend(config.asr_backend),
+            channel_mode: config.channel_mode,
+            speaker_labels: config.speaker_labels.clone(),
+            lifecycle_transition_index: 0,
+        })
+    }
+
+    fn emit_runtime_event(&mut self, event: &RuntimeOutputEvent) -> Result<(), CliError> {
+        match event {
+            RuntimeOutputEvent::Lifecycle { phase, detail, .. } => {
+                let transition = LiveLifecycleTransition {
+                    phase: runtime_phase_to_lifecycle_phase(*phase),
+                    entered_at_utc: runtime_timestamp_utc(),
+                    detail: detail.clone(),
+                };
+                self.stream.write_line(&jsonl_lifecycle_phase_line(
+                    self.lifecycle_transition_index,
+                    &transition,
+                ))?;
+                self.lifecycle_transition_index += 1;
+                self.stream.checkpoint()?;
+            }
+            RuntimeOutputEvent::AsrCompleted { result, .. } => {
+                let Some(event) = transcript_event_from_runtime_asr_result(
+                    self.channel_mode,
+                    &self.speaker_labels,
+                    result,
+                ) else {
+                    return Ok(());
+                };
+                self.stream
+                    .write_line(&jsonl_transcript_event_line(&event, self.backend_id, 0))?;
+                self.stream.checkpoint()?;
+            }
+            RuntimeOutputEvent::CaptureEvent { .. } | RuntimeOutputEvent::AsrQueued { .. } => {}
+        }
+        Ok(())
+    }
+
+    fn finalize(self) -> Result<(), CliError> {
+        self.stream.finalize()
+    }
+}
+
+struct CollectingRuntimeOutputSink {
+    events: Vec<RuntimeOutputEvent>,
+    incremental_jsonl: Option<LiveStreamIncrementalJsonlWriter>,
+}
+
+impl Default for CollectingRuntimeOutputSink {
+    fn default() -> Self {
+        Self {
+            events: Vec::new(),
+            incremental_jsonl: None,
+        }
+    }
+}
+
+impl CollectingRuntimeOutputSink {
+    fn with_incremental_jsonl(writer: LiveStreamIncrementalJsonlWriter) -> Self {
+        Self {
+            events: Vec::new(),
+            incremental_jsonl: Some(writer),
+        }
+    }
+
+    fn finalize_incremental_jsonl(&mut self) -> Result<(), CliError> {
+        if let Some(writer) = self.incremental_jsonl.take() {
+            writer.finalize()?;
+        }
+        Ok(())
+    }
+}
+
+impl RuntimeOutputSink for CollectingRuntimeOutputSink {
+    fn emit(&mut self, event: RuntimeOutputEvent) -> Result<(), String> {
+        if let Some(writer) = self.incremental_jsonl.as_mut() {
+            writer
+                .emit_runtime_event(&event)
+                .map_err(|err| err.to_string())?;
+        }
+        self.events.push(event);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct CollectingRuntimeFinalizer {
+    summary: Option<LiveRuntimeSummary>,
+}
+
+impl RuntimeFinalizer for CollectingRuntimeFinalizer {
+    fn finalize(&mut self, summary: &LiveRuntimeSummary) -> Result<(), String> {
+        self.summary = Some(summary.clone());
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct RuntimeChannelAudio {
+    sample_rate_hz: u32,
+    base_pts_ms: Option<u64>,
+    samples: Vec<f32>,
+}
+
+impl RuntimeChannelAudio {
+    fn ingest_chunk(&mut self, chunk: &CaptureChunk) {
+        let start_ms = if chunk.pts_seconds.is_finite() && chunk.pts_seconds > 0.0 {
+            (chunk.pts_seconds * 1_000.0).round() as u64
+        } else {
+            0
+        };
+        if self.base_pts_ms.is_none() {
+            self.base_pts_ms = Some(start_ms);
+            self.sample_rate_hz = chunk.sample_rate_hz;
+        }
+        if self.sample_rate_hz == 0 {
+            self.sample_rate_hz = chunk.sample_rate_hz;
+        }
+
+        let base_pts_ms = self.base_pts_ms.unwrap_or(start_ms);
+        let start_offset_ms = start_ms.saturating_sub(base_pts_ms);
+        let start_index = ms_to_sample_index(start_offset_ms, self.sample_rate_hz);
+        let end_index = start_index.saturating_add(chunk.mono_samples.len());
+        if self.samples.len() < end_index {
+            self.samples.resize(end_index, 0.0);
+        }
+        self.samples[start_index..end_index].copy_from_slice(&chunk.mono_samples);
+    }
+
+    fn render_window(&self, start_ms: u64, end_ms: u64) -> Vec<f32> {
+        let Some(base_pts_ms) = self.base_pts_ms else {
+            return Vec::new();
+        };
+        if self.sample_rate_hz == 0 {
+            return Vec::new();
+        }
+        let start_offset_ms = start_ms.saturating_sub(base_pts_ms);
+        let end_offset_ms = end_ms.saturating_sub(base_pts_ms);
+        let start_index = ms_to_sample_index(start_offset_ms, self.sample_rate_hz);
+        let end_index = ms_to_sample_index(end_offset_ms, self.sample_rate_hz)
+            .max(start_index.saturating_add(1))
+            .min(self.samples.len());
+        if start_index >= end_index || start_index >= self.samples.len() {
+            return Vec::new();
+        }
+        self.samples[start_index..end_index].to_vec()
+    }
+}
+
+#[derive(Debug)]
+struct LiveStreamRuntimeOutcome {
+    output_events: Vec<RuntimeOutputEvent>,
+    runtime_summary: LiveRuntimeSummary,
+    asr_worker_pool: LiveAsrPoolTelemetry,
+}
+
+struct LiveStreamRuntimeExecution {
+    channel_mode: ChannelMode,
+    speaker_labels: SpeakerLabels,
+    segment_dir: PathBuf,
+    coordinator: LiveStreamCoordinator<
+        StreamingVadScheduler,
+        CollectingRuntimeOutputSink,
+        CollectingRuntimeFinalizer,
+    >,
+    asr_service: LiveAsrService,
+    submit_window: usize,
+    pending_specs: VecDeque<RuntimeAsrJobSpec>,
+    in_flight: usize,
+    next_job_id: usize,
+    submitted_specs: HashMap<usize, RuntimeAsrJobSpec>,
+    audio_by_channel: HashMap<String, RuntimeChannelAudio>,
+}
+
+fn live_stream_vad_thresholds_per_mille(vad_threshold: f32) -> (u16, u16) {
+    // StreamingVadScheduler activity is measured as average absolute PCM energy per-mille.
+    // Keep CLI vad_threshold (0..1) aligned with scheduler defaults (40/20) at 0.50.
+    let normalized = vad_threshold.clamp(0.0, 1.0);
+    let open = ((normalized * 80.0).round() as u16).max(1);
+    let close = open.saturating_div(2).max(1);
+    (open, close)
+}
+
+impl LiveStreamRuntimeExecution {
+    fn new(
+        config: &TranscribeConfig,
+        resolved_model_path: &Path,
+        stamp: &str,
+    ) -> Result<Self, CliError> {
+        let (open_threshold_per_mille, close_threshold_per_mille) =
+            live_stream_vad_thresholds_per_mille(config.vad_threshold);
+        let scheduler = StreamingVadScheduler::with_configs(
+            StreamingVadConfig {
+                rolling_window_ms: config
+                    .chunk_window_ms
+                    .max(config.chunk_stride_ms)
+                    .max(config.vad_min_speech_ms as u64),
+                min_speech_ms: config.vad_min_speech_ms as u64,
+                min_silence_ms: config.vad_min_silence_ms as u64,
+                open_threshold_per_mille,
+                close_threshold_per_mille,
+            },
+            StreamingSchedulerConfig {
+                partial_window_ms: config.chunk_window_ms,
+                partial_stride_ms: config.chunk_stride_ms,
+                min_partial_span_ms: config.chunk_stride_ms.min(config.chunk_window_ms).max(1),
+            },
+        );
+        let incremental_jsonl = LiveStreamIncrementalJsonlWriter::open(config).map_err(|err| {
+            CliError::new(format!(
+                "failed to initialize live-stream incremental JSONL writer: {err}"
+            ))
+        })?;
+        let mut coordinator = LiveStreamCoordinator::new(
+            scheduler,
+            CollectingRuntimeOutputSink::with_incremental_jsonl(incremental_jsonl),
+            CollectingRuntimeFinalizer::default(),
+        );
+        coordinator
+            .transition_to(
+                LiveRuntimePhase::Warmup,
+                "preparing model, capture input, and channel routing",
+            )
+            .map_err(|err| CliError::new(format!("failed to initialize live runtime: {err}")))?;
+        coordinator
+            .transition_to(
+                LiveRuntimePhase::Active,
+                "capture/model warmup complete; transcript chunks may emit now",
+            )
+            .map_err(|err| CliError::new(format!("failed to activate live runtime: {err}")))?;
+
+        let helper_program = resolve_backend_program(config.asr_backend, resolved_model_path);
+        let executor = Arc::new(PooledAsrExecutor {
+            backend: config.asr_backend,
+            helper_program,
+            model_path: resolved_model_path.to_path_buf(),
+            language: config.asr_language.clone(),
+            threads: config.asr_threads,
+            prewarm_enabled: true,
+        });
+        let temp_audio_policy = if config.keep_temp_audio {
+            TempAudioPolicy::RetainAlways
+        } else {
+            TempAudioPolicy::RetainOnFailure
+        };
+        let asr_service = LiveAsrService::start(
+            executor,
+            LiveAsrPoolConfig {
+                worker_count: config.live_asr_workers.max(1),
+                queue_capacity: config.chunk_queue_cap.max(config.live_asr_workers).max(1),
+                retries: 0,
+                temp_audio_policy,
+            },
+        );
+
+        let segment_dir = PathBuf::from("artifacts")
+            .join("transcribe-live-runtime-segments")
+            .join(stamp);
+        fs::create_dir_all(&segment_dir).map_err(|err| {
+            CliError::new(format!(
+                "failed to create live-stream segment directory {}: {err}",
+                segment_dir.display()
+            ))
+        })?;
+
+        let submit_window = asr_service.queue_capacity().max(1);
+        Ok(Self {
+            channel_mode: config.channel_mode,
+            speaker_labels: config.speaker_labels.clone(),
+            segment_dir,
+            coordinator,
+            asr_service,
+            submit_window,
+            pending_specs: VecDeque::new(),
+            in_flight: 0,
+            next_job_id: 0,
+            submitted_specs: HashMap::new(),
+            audio_by_channel: HashMap::new(),
+        })
+    }
+
+    fn finish(mut self) -> Result<LiveStreamRuntimeOutcome, CliError> {
+        self.pump_once()?;
+        self.coordinator
+            .transition_to(
+                LiveRuntimePhase::Draining,
+                "finalizing queue cleanup, reconciliation, and transcript assembly",
+            )
+            .map_err(|err| CliError::new(format!("failed to enter drain phase: {err}")))?;
+        self.drain_until_idle()?;
+        self.coordinator
+            .transition_to(
+                LiveRuntimePhase::Shutdown,
+                "runtime work finished; writing session artifacts and summary output",
+            )
+            .map_err(|err| CliError::new(format!("failed to enter shutdown phase: {err}")))?;
+        self.drain_until_idle()?;
+        self.asr_service.close();
+        self.drain_until_idle()?;
+        self.asr_service.join();
+
+        let (_, mut output_sink, finalizer, runtime_summary) = self
+            .coordinator
+            .finalize()
+            .map_err(|err| CliError::new(format!("failed to finalize live runtime: {err}")))?;
+        output_sink.finalize_incremental_jsonl().map_err(|err| {
+            CliError::new(format!(
+                "failed to finalize live-stream incremental JSONL writer: {err}"
+            ))
+        })?;
+        let runtime_summary = finalizer.summary.unwrap_or(runtime_summary);
+
+        Ok(LiveStreamRuntimeOutcome {
+            output_events: output_sink.events,
+            runtime_summary,
+            asr_worker_pool: self.asr_service.telemetry(),
+        })
+    }
+
+    fn pump_once(&mut self) -> Result<(), CliError> {
+        self.collect_pending_specs();
+        self.submit_pending_specs()?;
+        self.drain_ready_results()?;
+        Ok(())
+    }
+
+    fn drain_until_idle(&mut self) -> Result<(), CliError> {
+        for _ in 0..4_096 {
+            self.collect_pending_specs();
+            self.submit_pending_specs()?;
+            self.drain_ready_results()?;
+            if self.pending_specs.is_empty() && self.in_flight == 0 {
+                return Ok(());
+            }
+            if let Some(result) = self
+                .asr_service
+                .recv_result_timeout(Duration::from_millis(25))
+            {
+                self.handle_asr_result(result)?;
+            }
+        }
+        Err(CliError::new(
+            "live-stream runtime did not drain queued ASR work before shutdown",
+        ))
+    }
+
+    fn collect_pending_specs(&mut self) {
+        while let Some(spec) = self.coordinator.pop_next_job() {
+            self.pending_specs.push_back(spec);
+        }
+    }
+
+    fn submit_pending_specs(&mut self) -> Result<(), CliError> {
+        while self.in_flight < self.submit_window {
+            let Some(spec) = self.pending_specs.pop_front() else {
+                break;
+            };
+            let job_id = self.next_job_id;
+            self.next_job_id += 1;
+            let job = self.build_asr_job(job_id, &spec)?;
+            if self.asr_service.submit(job).is_ok() {
+                self.submitted_specs.insert(job_id, spec);
+                self.in_flight += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn drain_ready_results(&mut self) -> Result<(), CliError> {
+        while let Some(result) = self.asr_service.try_recv_result() {
+            self.handle_asr_result(result)?;
+        }
+        Ok(())
+    }
+
+    fn handle_asr_result(&mut self, result: LiveAsrJobResult) -> Result<(), CliError> {
+        let Some(spec) = self.submitted_specs.remove(&result.job.job_id) else {
+            return Ok(());
+        };
+        self.in_flight = self.in_flight.saturating_sub(1);
+        let transcript_text = result.transcript_text.unwrap_or_default();
+        self.coordinator
+            .on_asr_result(LiveAsrResult {
+                job: spec,
+                transcript_text,
+            })
+            .map_err(|err| CliError::new(format!("failed to emit live ASR result: {err}")))?;
+        Ok(())
+    }
+
+    fn build_asr_job(
+        &mut self,
+        job_id: usize,
+        spec: &RuntimeAsrJobSpec,
+    ) -> Result<LiveAsrJob, CliError> {
+        let audio_path = self.materialize_job_audio(job_id, spec)?;
+        Ok(LiveAsrJob {
+            job_id,
+            class: runtime_job_class_to_pool_job_class(spec.job_class),
+            role: runtime_channel_role(spec.channel.as_str()),
+            label: runtime_channel_label(
+                self.channel_mode,
+                &self.speaker_labels,
+                spec.channel.as_str(),
+            ),
+            segment_id: spec.segment_id.clone(),
+            audio_path,
+            is_temp_audio: true,
+        })
+    }
+
+    fn materialize_job_audio(
+        &mut self,
+        job_id: usize,
+        spec: &RuntimeAsrJobSpec,
+    ) -> Result<PathBuf, CliError> {
+        let channel_audio = self
+            .audio_by_channel
+            .get(spec.channel.as_str())
+            .ok_or_else(|| {
+                CliError::new(format!(
+                    "live-stream runtime missing buffered audio for channel `{}`",
+                    spec.channel
+                ))
+            })?;
+        let mut samples = channel_audio.render_window(spec.start_ms, spec.end_ms);
+        if samples.is_empty() {
+            samples.push(0.0);
+        }
+        let audio_path = self.segment_dir.join(format!("job-{job_id:06}.wav"));
+        write_runtime_job_wav(&audio_path, channel_audio.sample_rate_hz.max(1), &samples)?;
+        Ok(audio_path)
+    }
+}
+
+impl CaptureSink for LiveStreamRuntimeExecution {
+    fn on_chunk(&mut self, chunk: CaptureChunk) -> Result<(), String> {
+        let channel_key = match chunk.stream {
+            recordit::capture_api::CaptureStream::Microphone => "microphone",
+            recordit::capture_api::CaptureStream::SystemAudio => "system-audio",
+        };
+        self.audio_by_channel
+            .entry(channel_key.to_string())
+            .or_default()
+            .ingest_chunk(&chunk);
+        self.coordinator
+            .on_capture_chunk(chunk)
+            .map_err(|err| format!("live runtime rejected capture chunk: {err}"))?;
+        self.pump_once()
+            .map_err(|err| format!("live runtime pump failed after capture chunk: {err}"))?;
+        Ok(())
+    }
+
+    fn on_event(&mut self, event: CaptureEvent) -> Result<(), String> {
+        self.coordinator
+            .on_capture_event(event)
+            .map_err(|err| format!("live runtime rejected capture event: {err}"))?;
+        self.pump_once()
+            .map_err(|err| format!("live runtime pump failed after capture event: {err}"))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1613,6 +2135,14 @@ fn run_runtime_pipeline(config: &TranscribeConfig) -> Result<LiveRunReport, CliE
     }
 }
 
+const fn backend_id_for_asr_backend(backend: AsrBackend) -> &'static str {
+    match backend {
+        AsrBackend::WhisperCpp => "whispercpp",
+        AsrBackend::WhisperKit => "whisperkit",
+        AsrBackend::Moonshine => "moonshine",
+    }
+}
+
 fn run_representative_offline_pipeline(
     config: &TranscribeConfig,
 ) -> Result<LiveRunReport, CliError> {
@@ -1632,11 +2162,175 @@ fn run_representative_chunked_pipeline(
 }
 
 fn run_live_stream_pipeline(config: &TranscribeConfig) -> Result<LiveRunReport, CliError> {
-    // The dedicated live-stream branch currently reuses the chunked scheduler engine
-    // while retaining live-stream runtime mode labels/contracts in emitted artifacts.
-    let mut live_stream_config = config.clone();
-    live_stream_config.live_chunked = true;
-    run_standard_pipeline(&live_stream_config)
+    let started_at = Instant::now();
+    let resolved_model = validate_model_path_for_backend(config)?;
+    let generated_at_utc = runtime_timestamp_utc();
+    let stamp = command_stdout("date", &["-u", "+%Y%m%dT%H%M%SZ"])
+        .unwrap_or_else(|_| "unknown".to_string());
+    let backend_id = backend_id_for_asr_backend(config.asr_backend);
+
+    let mut runtime = LiveStreamRuntimeExecution::new(config, &resolved_model.path, &stamp)?;
+    let capture_output = live_capture_output_path(config).to_path_buf();
+    let live_capture_config = LiveCaptureConfig {
+        duration_secs: config.duration_sec,
+        output: capture_output.clone(),
+        target_rate_hz: config.sample_rate_hz,
+        mismatch_policy: LiveCaptureSampleRateMismatchPolicy::AdaptStreamRate,
+        callback_contract_mode: LiveCaptureCallbackMode::Warn,
+    };
+    let capture_result = run_streaming_capture_session(&live_capture_config, &mut runtime)
+        .map_err(|err| CliError::new(format!("live capture session failed: {err}")))?;
+    ensure_live_capture_output_exists(&capture_output)?;
+    let (materialize_from, materialize_to) = live_capture_materialization_paths(config);
+    materialize_out_wav(materialize_from, materialize_to)?;
+
+    let runtime_outcome = {
+        let _capture_summary = capture_result.summary;
+        runtime.finish()?
+    };
+    let mut lifecycle = lifecycle_from_runtime_output_events(&runtime_outcome.output_events);
+    if lifecycle.transitions.is_empty() {
+        lifecycle.transition(
+            LiveLifecyclePhase::Warmup,
+            "preparing model, capture input, and channel routing",
+        );
+        lifecycle.transition(
+            LiveLifecyclePhase::Active,
+            "capture/model warmup complete; transcript chunks may emit now",
+        );
+        lifecycle.transition(
+            LiveLifecyclePhase::Draining,
+            "finalizing queue cleanup, reconciliation, and transcript assembly",
+        );
+        lifecycle.transition(
+            LiveLifecyclePhase::Shutdown,
+            "runtime work finished; writing session artifacts and summary output",
+        );
+    }
+
+    let mut vad_boundaries =
+        vad_boundaries_from_runtime_output_events(&runtime_outcome.output_events);
+    let mut events =
+        transcript_events_from_runtime_output_events(config, &runtime_outcome.output_events);
+    events = merge_transcript_events(merge_live_transcript_events_for_display(events));
+    maybe_emit_live_terminal_stream(config, &events);
+
+    let mut degradation_events = collect_live_capture_continuity_events(config);
+    let final_buffering = FinalBufferingTelemetry {
+        submit_window: config.chunk_queue_cap.max(config.live_asr_workers).max(1),
+        deferred_final_submissions: 0,
+        max_pending_final_backlog: 0,
+    };
+    let chunk_queue = live_stream_chunk_queue_telemetry(
+        config,
+        &runtime_outcome.runtime_summary,
+        &runtime_outcome.asr_worker_pool,
+    );
+    if chunk_queue.dropped_oldest > 0 {
+        degradation_events.push(ModeDegradationEvent {
+            code: LIVE_CHUNK_QUEUE_DROP_OLDEST_CODE,
+            detail: format!(
+                "live-stream ASR queue dropped {} background task(s) under pressure (cap={}, submitted={}, processed={})",
+                chunk_queue.dropped_oldest,
+                chunk_queue.max_queue,
+                chunk_queue.submitted,
+                chunk_queue.processed
+            ),
+        });
+        if chunk_queue_backpressure_is_severe(&chunk_queue) {
+            degradation_events.push(ModeDegradationEvent {
+                code: LIVE_CHUNK_QUEUE_BACKPRESSURE_SEVERE_CODE,
+                detail: format!(
+                    "live-stream ASR queue entered severe backpressure (dropped={}, submitted={}, cap={}, high_water={})",
+                    chunk_queue.dropped_oldest,
+                    chunk_queue.submitted,
+                    chunk_queue.max_queue,
+                    chunk_queue.high_water
+                ),
+            });
+        }
+    }
+
+    let mut channel_transcripts = channel_transcript_summaries_from_events(config, &events);
+    let mut reconciliation = build_reconciliation_matrix(&vad_boundaries, &degradation_events);
+    let mut post_live_events = Vec::new();
+    if reconciliation.required {
+        let reconciliation_events = build_targeted_reconciliation_events(
+            &channel_transcripts,
+            &vad_boundaries,
+            &events,
+            &reconciliation,
+        );
+        if !reconciliation_events.is_empty() {
+            post_live_events.extend(reconciliation_events);
+            reconciliation.applied = true;
+            degradation_events.push(ModeDegradationEvent {
+                code: RECONCILIATION_APPLIED_CODE,
+                detail: format!(
+                    "targeted reconciliation emitted `reconciled_final` events for affected segments (triggers={})",
+                    reconciliation.trigger_codes_csv()
+                ),
+            });
+        }
+    }
+
+    let cleanup_run = run_cleanup_queue(config, &events);
+    post_live_events.extend(cleanup_run.llm_events);
+    if !post_live_events.is_empty() {
+        events.extend(post_live_events);
+        events = merge_transcript_events(events);
+    }
+    if vad_boundaries.is_empty() {
+        vad_boundaries = fallback_vad_boundaries_from_events(&events);
+    }
+    channel_transcripts = channel_transcript_summaries_from_events(config, &events);
+    let active_channel_mode = active_channel_mode_from_transcripts(config, &channel_transcripts);
+
+    let cleanup_queue = cleanup_run.telemetry;
+    let trust_notices = build_trust_notices(
+        config.channel_mode,
+        active_channel_mode,
+        &degradation_events,
+        &cleanup_queue,
+        &chunk_queue,
+    );
+    let transcript_text = reconstruct_transcript(&events);
+
+    let wall_ms_runs = vec![started_at.elapsed().as_secs_f64() * 1_000.0];
+    let (benchmark_summary_csv, benchmark_runs_csv, benchmark) = write_benchmark_artifact(
+        &stamp,
+        backend_id,
+        benchmark_track(active_channel_mode),
+        &wall_ms_runs,
+    )?;
+
+    let report = LiveRunReport {
+        generated_at_utc,
+        backend_id,
+        resolved_model_path: resolved_model.path,
+        resolved_model_source: resolved_model.source,
+        channel_mode: config.channel_mode,
+        active_channel_mode,
+        transcript_text,
+        channel_transcripts,
+        vad_boundaries,
+        events,
+        degradation_events,
+        trust_notices,
+        lifecycle,
+        reconciliation,
+        asr_worker_pool: runtime_outcome.asr_worker_pool,
+        final_buffering,
+        chunk_queue,
+        cleanup_queue,
+        benchmark,
+        benchmark_summary_csv,
+        benchmark_runs_csv,
+    };
+
+    write_runtime_jsonl(config, &report)?;
+    write_runtime_manifest(config, &report)?;
+    Ok(report)
 }
 
 fn run_standard_pipeline(config: &TranscribeConfig) -> Result<LiveRunReport, CliError> {
@@ -1649,16 +2343,14 @@ fn run_standard_pipeline(config: &TranscribeConfig) -> Result<LiveRunReport, Cli
     emit_latest_lifecycle_transition_jsonl(&mut jsonl_stream, &lifecycle)?;
     let resolved_model = validate_model_path_for_backend(config)?;
     prepare_runtime_input_wav(config)?;
-    materialize_out_wav(&config.input_wav, &config.out_wav)?;
+    if !config.live_stream {
+        materialize_out_wav(&config.input_wav, &config.out_wav)?;
+    }
 
     let generated_at_utc = runtime_timestamp_utc();
     let stamp = command_stdout("date", &["-u", "+%Y%m%dT%H%M%SZ"])
         .unwrap_or_else(|_| "unknown".to_string());
-    let backend_id = match config.asr_backend {
-        AsrBackend::WhisperCpp => "whispercpp",
-        AsrBackend::WhisperKit => "whisperkit",
-        AsrBackend::Moonshine => "moonshine",
-    };
+    let backend_id = backend_id_for_asr_backend(config.asr_backend);
     let channel_plan = prepare_channel_inputs(config, &stamp)?;
     let refresh_channel_inputs_per_run =
         channel_plan.inputs.iter().any(|input| input.is_temp_audio);
@@ -1673,6 +2365,7 @@ fn run_standard_pipeline(config: &TranscribeConfig) -> Result<LiveRunReport, Cli
         prewarm_ok: true,
         ..LiveAsrPoolTelemetry::default()
     };
+    let mut final_buffering = FinalBufferingTelemetry::default();
     for run_idx in 0..config.benchmark_runs {
         let run_inputs = if run_idx == 0 {
             channel_plan.inputs.clone()
@@ -1691,6 +2384,7 @@ fn run_standard_pipeline(config: &TranscribeConfig) -> Result<LiveRunReport, Cli
         )?;
         wall_ms_runs.push(started_at.elapsed().as_secs_f64() * 1_000.0);
         absorb_live_asr_pool_telemetry(&mut asr_worker_pool, &run.asr_worker_pool);
+        absorb_final_buffering_telemetry(&mut final_buffering, &run.final_buffering);
         if first_channel_transcripts.is_empty() {
             first_channel_transcripts = run.summaries;
         }
@@ -1839,6 +2533,9 @@ fn run_standard_pipeline(config: &TranscribeConfig) -> Result<LiveRunReport, Cli
         benchmark_track(channel_plan.active_mode),
         &wall_ms_runs,
     )?;
+    if config.live_stream {
+        materialize_out_wav(&config.input_wav, &config.out_wav)?;
+    }
     lifecycle.transition(
         LiveLifecyclePhase::Shutdown,
         "runtime work finished; writing session artifacts and summary output",
@@ -1877,6 +2574,7 @@ fn run_standard_pipeline(config: &TranscribeConfig) -> Result<LiveRunReport, Cli
         lifecycle,
         reconciliation,
         asr_worker_pool,
+        final_buffering,
         chunk_queue,
         cleanup_queue,
         benchmark,
@@ -2104,6 +2802,10 @@ fn transcribe_channels_once(
     channel_inputs: &[ChannelInputPlan],
     prewarm_enabled: bool,
 ) -> Result<ChannelTranscriptionRun, CliError> {
+    let worker_count = config
+        .live_asr_workers
+        .max(1)
+        .min(channel_inputs.len().max(1));
     let mut ordered_inputs = channel_inputs.to_vec();
     ordered_inputs.sort_by(|a, b| {
         channel_sort_key(a.role)
@@ -2125,10 +2827,6 @@ fn transcribe_channels_once(
             is_temp_audio: input.is_temp_audio,
         })
         .collect::<Vec<_>>();
-    let worker_count = config
-        .live_asr_workers
-        .max(1)
-        .min(channel_inputs.len().max(1));
     let helper_program = resolve_backend_program(config.asr_backend, resolved_model_path);
     let executor = Arc::new(PooledAsrExecutor {
         backend: config.asr_backend,
@@ -2143,7 +2841,7 @@ fn transcribe_channels_once(
     } else {
         TempAudioPolicy::RetainOnFailure
     };
-    let (results, telemetry) = run_live_asr_pool(
+    let (results, telemetry, final_buffering) = run_live_asr_pool_with_final_buffering(
         executor,
         jobs,
         LiveAsrPoolConfig {
@@ -2190,7 +2888,72 @@ fn transcribe_channels_once(
     Ok(ChannelTranscriptionRun {
         summaries,
         asr_worker_pool: telemetry,
+        final_buffering,
     })
+}
+
+fn run_live_asr_pool_with_final_buffering(
+    executor: Arc<dyn LiveAsrExecutor>,
+    jobs: Vec<LiveAsrJob>,
+    config: LiveAsrPoolConfig,
+) -> (
+    Vec<LiveAsrJobResult>,
+    LiveAsrPoolTelemetry,
+    FinalBufferingTelemetry,
+) {
+    let expected_results = jobs.len();
+    let mut service = LiveAsrService::start(executor, config);
+
+    // Keep accepted in-flight finals bounded by service queue capacity so the
+    // coordinator can defer remaining finals and retry submission as results drain.
+    let submit_window = service.queue_capacity().max(1);
+    let mut pending_jobs: VecDeque<LiveAsrJob> = jobs.into_iter().collect();
+    let mut in_flight = 0usize;
+    let mut results = Vec::with_capacity(expected_results);
+    let mut final_buffering = FinalBufferingTelemetry {
+        submit_window,
+        deferred_final_submissions: expected_results.saturating_sub(submit_window),
+        max_pending_final_backlog: 0,
+    };
+
+    while results.len() < expected_results {
+        while in_flight < submit_window {
+            let Some(job) = pending_jobs.pop_front() else {
+                break;
+            };
+            if service.submit(job).is_ok() {
+                in_flight += 1;
+            }
+        }
+        final_buffering.max_pending_final_backlog = final_buffering
+            .max_pending_final_backlog
+            .max(pending_jobs.len());
+
+        match service.recv_result_timeout(Duration::from_millis(25)) {
+            Some(result) => {
+                in_flight = in_flight.saturating_sub(1);
+                results.push(result);
+            }
+            None if pending_jobs.is_empty() && in_flight == 0 => break,
+            None => {}
+        }
+    }
+
+    service.close();
+    while results.len() < expected_results {
+        match service.recv_result_timeout(Duration::from_millis(25)) {
+            Some(result) => {
+                in_flight = in_flight.saturating_sub(1);
+                results.push(result);
+            }
+            None => break,
+        }
+    }
+    service.join();
+
+    let telemetry = service.telemetry();
+    results.sort_by_key(|result| result.job.job_id);
+    (results, telemetry, final_buffering)
 }
 
 fn absorb_live_asr_pool_telemetry(
@@ -2207,6 +2970,17 @@ fn absorb_live_asr_pool_telemetry(
     aggregate.retry_attempts += run.retry_attempts;
     aggregate.temp_audio_retained += run.temp_audio_retained;
     aggregate.temp_audio_deleted += run.temp_audio_deleted;
+}
+
+fn absorb_final_buffering_telemetry(
+    aggregate: &mut FinalBufferingTelemetry,
+    run: &FinalBufferingTelemetry,
+) {
+    aggregate.submit_window = aggregate.submit_window.max(run.submit_window);
+    aggregate.deferred_final_submissions += run.deferred_final_submissions;
+    aggregate.max_pending_final_backlog = aggregate
+        .max_pending_final_backlog
+        .max(run.max_pending_final_backlog);
 }
 
 fn build_transcript_events(
@@ -2477,13 +3251,15 @@ fn build_targeted_reconciliation_events(
         .map(|event| event.segment_id.clone())
         .collect::<HashSet<_>>();
 
-    let continuity_triggered = trigger_codes.contains("continuity_recovered_with_gaps")
-        || trigger_codes.contains("continuity_unverified");
+    let capture_integrity_triggered = trigger_codes.contains("continuity_recovered_with_gaps")
+        || trigger_codes.contains("continuity_unverified")
+        || trigger_codes.contains("capture_transport_degraded")
+        || trigger_codes.contains("capture_callback_contract_degraded");
     let queue_drop_triggered = trigger_codes.contains("chunk_queue_drop_oldest");
     let shutdown_flush_triggered = trigger_codes.contains("shutdown_flush_boundary");
 
     let mut targeted_boundary_indexes = BTreeSet::new();
-    if continuity_triggered {
+    if capture_integrity_triggered {
         targeted_boundary_indexes.extend(0..ordered_boundaries.len());
     }
 
@@ -2562,6 +3338,10 @@ fn build_reconciliation_matrix(
             LIVE_CHUNK_QUEUE_DROP_OLDEST_CODE => Some("chunk_queue_drop_oldest"),
             LIVE_CAPTURE_INTERRUPTION_RECOVERED_CODE => Some("continuity_recovered_with_gaps"),
             LIVE_CAPTURE_CONTINUITY_UNVERIFIED_CODE => Some("continuity_unverified"),
+            LIVE_CAPTURE_TRANSPORT_DEGRADED_CODE => Some("capture_transport_degraded"),
+            LIVE_CAPTURE_CALLBACK_CONTRACT_DEGRADED_CODE => {
+                Some("capture_callback_contract_degraded")
+            }
             _ => None,
         };
         if let Some(code) = trigger_code {
@@ -3194,6 +3974,28 @@ fn build_trust_notices(
                         "near-live continuity guarantees cannot be fully confirmed for this session".to_string(),
                     guidance:
                         "Ensure capture telemetry is writable/readable and rerun the session to verify interruption recovery state.".to_string(),
+                });
+            }
+            LIVE_CAPTURE_TRANSPORT_DEGRADED_CODE => {
+                notices.push(TrustNotice {
+                    code: "capture_transport_degraded".to_string(),
+                    severity: "warn".to_string(),
+                    cause: degradation.detail.clone(),
+                    impact:
+                        "capture transport reported drop/failure signals; near-live completeness may be reduced".to_string(),
+                    guidance:
+                        "Inspect capture telemetry transport counters and reduce capture pressure before treating this session as fully gap-free.".to_string(),
+                });
+            }
+            LIVE_CAPTURE_CALLBACK_CONTRACT_DEGRADED_CODE => {
+                notices.push(TrustNotice {
+                    code: "capture_callback_contract_degraded".to_string(),
+                    severity: "warn".to_string(),
+                    cause: degradation.detail.clone(),
+                    impact:
+                        "capture callback contract violations were detected; audio continuity/fidelity may be affected".to_string(),
+                    guidance:
+                        "Review callback-contract counters in capture telemetry and validate host capture configuration before relying on strict completeness.".to_string(),
                 });
             }
             LIVE_CHUNK_QUEUE_DROP_OLDEST_CODE => {
@@ -3899,25 +4701,56 @@ fn sha256_file_hex(path: &Path) -> Result<String, CliError> {
 }
 
 fn prepare_runtime_input_wav(config: &TranscribeConfig) -> Result<(), CliError> {
-    if config.live_chunked {
+    if config.live_chunked || config.live_stream {
         run_live_capture_session(config)
     } else {
         prepare_input_wav(&config.input_wav)
     }
 }
 
+fn input_wav_semantics(config: &TranscribeConfig) -> &'static str {
+    if config.live_stream {
+        "progressive live capture scratch artifact (materialized into canonical out_wav on success)"
+    } else if config.live_chunked {
+        "representative live scratch artifact mirrored from canonical out_wav after capture"
+    } else {
+        "representative offline fixture input path"
+    }
+}
+
+fn live_capture_output_path(config: &TranscribeConfig) -> &Path {
+    if config.live_stream {
+        &config.input_wav
+    } else {
+        &config.out_wav
+    }
+}
+
+fn live_capture_materialization_paths(config: &TranscribeConfig) -> (&Path, &Path) {
+    if config.live_stream {
+        (&config.input_wav, &config.out_wav)
+    } else {
+        (&config.out_wav, &config.input_wav)
+    }
+}
+
 fn run_live_capture_session(config: &TranscribeConfig) -> Result<(), CliError> {
+    let capture_output = live_capture_output_path(config).to_path_buf();
     let live_capture_config = LiveCaptureConfig {
         duration_secs: config.duration_sec,
-        output: config.out_wav.clone(),
+        output: capture_output.clone(),
         target_rate_hz: config.sample_rate_hz,
         mismatch_policy: LiveCaptureSampleRateMismatchPolicy::AdaptStreamRate,
         callback_contract_mode: LiveCaptureCallbackMode::Warn,
     };
     run_capture_session(&live_capture_config)
         .map_err(|err| CliError::new(format!("live capture session failed: {err}")))?;
-    ensure_live_capture_output_exists(&config.out_wav)?;
-    materialize_out_wav(&config.out_wav, &config.input_wav)
+    ensure_live_capture_output_exists(&capture_output)?;
+    if config.live_stream {
+        return Ok(());
+    }
+    let (materialize_from, materialize_to) = live_capture_materialization_paths(config);
+    materialize_out_wav(materialize_from, materialize_to)
 }
 
 fn ensure_live_capture_output_exists(path: &Path) -> Result<(), CliError> {
@@ -3931,7 +4764,7 @@ fn ensure_live_capture_output_exists(path: &Path) -> Result<(), CliError> {
 }
 
 fn collect_live_capture_continuity_events(config: &TranscribeConfig) -> Vec<ModeDegradationEvent> {
-    if !config.live_chunked {
+    if !(config.live_chunked || config.live_stream) {
         return Vec::new();
     }
 
@@ -3939,15 +4772,41 @@ fn collect_live_capture_continuity_events(config: &TranscribeConfig) -> Vec<Mode
         .into_iter()
         .find(|path| path.is_file())
         .unwrap_or_else(|| live_capture_telemetry_path(&config.out_wav));
-    match load_live_capture_restart_count(&telemetry_path) {
-        Ok(restart_count) if restart_count > 0 => vec![ModeDegradationEvent {
-            code: LIVE_CAPTURE_INTERRUPTION_RECOVERED_CODE,
-            detail: format!(
-                "near-live capture recovered from {restart_count} stream interruption restart(s) under bounded restart policy; continuity may include restart gaps (telemetry={})",
-                display_path(&telemetry_path)
-            ),
-        }],
-        Ok(_) => Vec::new(),
+    match load_live_capture_telemetry_signals(&telemetry_path) {
+        Ok(signals) => {
+            let mut events = Vec::new();
+            if signals.restart_count > 0 {
+                events.push(ModeDegradationEvent {
+                    code: LIVE_CAPTURE_INTERRUPTION_RECOVERED_CODE,
+                    detail: format!(
+                        "near-live capture recovered from {} stream interruption restart(s) under bounded restart policy; continuity may include restart gaps (telemetry={})",
+                        signals.restart_count,
+                        display_path(&telemetry_path)
+                    ),
+                });
+            }
+            if !signals.transport_sources.is_empty() {
+                events.push(ModeDegradationEvent {
+                    code: LIVE_CAPTURE_TRANSPORT_DEGRADED_CODE,
+                    detail: format!(
+                        "near-live capture transport reported degradation source(s): {} (telemetry={})",
+                        signals.transport_sources.join(","),
+                        display_path(&telemetry_path)
+                    ),
+                });
+            }
+            if !signals.callback_sources.is_empty() {
+                events.push(ModeDegradationEvent {
+                    code: LIVE_CAPTURE_CALLBACK_CONTRACT_DEGRADED_CODE,
+                    detail: format!(
+                        "near-live capture callback contract violations detected: {} (telemetry={})",
+                        signals.callback_sources.join(","),
+                        display_path(&telemetry_path)
+                    ),
+                });
+            }
+            events
+        }
         Err(err) => vec![ModeDegradationEvent {
             code: LIVE_CAPTURE_CONTINUITY_UNVERIFIED_CODE,
             detail: format!(
@@ -3957,6 +4816,12 @@ fn collect_live_capture_continuity_events(config: &TranscribeConfig) -> Vec<Mode
             ),
         }],
     }
+}
+
+struct LiveCaptureTelemetrySignals {
+    restart_count: u64,
+    transport_sources: Vec<&'static str>,
+    callback_sources: Vec<&'static str>,
 }
 
 fn live_capture_telemetry_path(output_wav: &Path) -> PathBuf {
@@ -3973,19 +4838,43 @@ fn live_capture_telemetry_path_candidates(config: &TranscribeConfig) -> Vec<Path
     candidates
 }
 
-fn load_live_capture_restart_count(telemetry_path: &Path) -> Result<u64, CliError> {
+fn load_live_capture_telemetry_signals(
+    telemetry_path: &Path,
+) -> Result<LiveCaptureTelemetrySignals, CliError> {
     let payload = fs::read_to_string(telemetry_path).map_err(|err| {
         CliError::new(format!(
             "failed to read live capture telemetry {}: {err}",
             display_path(telemetry_path)
         ))
     })?;
-    extract_json_u64_field(&payload, "restart_count").ok_or_else(|| {
+    let restart_count = extract_json_u64_field(&payload, "restart_count").ok_or_else(|| {
         CliError::new(format!(
             "live capture telemetry {} is missing `restart_count`",
             display_path(telemetry_path)
         ))
+    })?;
+
+    let transport_sources = LIVE_CAPTURE_TRANSPORT_SOURCES
+        .iter()
+        .copied()
+        .filter(|source| payload_has_json_string_field_value(&payload, "source", source))
+        .collect::<Vec<_>>();
+    let callback_sources = LIVE_CAPTURE_CALLBACK_SOURCES
+        .iter()
+        .copied()
+        .filter(|source| payload_has_json_string_field_value(&payload, "source", source))
+        .collect::<Vec<_>>();
+
+    Ok(LiveCaptureTelemetrySignals {
+        restart_count,
+        transport_sources,
+        callback_sources,
     })
+}
+
+fn payload_has_json_string_field_value(payload: &str, key: &str, value: &str) -> bool {
+    payload.contains(&format!("\"{key}\":\"{value}\""))
+        || payload.contains(&format!("\"{key}\": \"{value}\""))
 }
 
 fn prepare_input_wav(path: &Path) -> Result<(), CliError> {
@@ -4295,12 +5184,334 @@ fn sample_to_ms(sample_idx: u64, sample_rate_hz: u32) -> u64 {
     sample_idx.saturating_mul(1_000) / sample_rate_hz.max(1) as u64
 }
 
+fn ms_to_sample_index(ms: u64, sample_rate_hz: u32) -> usize {
+    if sample_rate_hz == 0 {
+        return 0;
+    }
+    ((ms as u128 * sample_rate_hz as u128 + 500) / 1_000) as usize
+}
+
+fn runtime_job_class_to_pool_job_class(class: RuntimeAsrJobClass) -> LiveAsrJobClass {
+    match class {
+        RuntimeAsrJobClass::Partial => LiveAsrJobClass::Partial,
+        RuntimeAsrJobClass::Final => LiveAsrJobClass::Final,
+        RuntimeAsrJobClass::Reconcile => LiveAsrJobClass::Reconcile,
+    }
+}
+
+fn runtime_channel_role(channel: &str) -> &'static str {
+    match channel {
+        "microphone" => "mic",
+        "system-audio" => "system",
+        _ => "mixed",
+    }
+}
+
+fn runtime_channel_label(
+    channel_mode: ChannelMode,
+    speaker_labels: &SpeakerLabels,
+    channel: &str,
+) -> String {
+    if channel_mode == ChannelMode::Mixed {
+        return "merged".to_string();
+    }
+    match channel {
+        "microphone" => speaker_labels.mic.clone(),
+        "system-audio" => speaker_labels.system.clone(),
+        _ => channel.to_string(),
+    }
+}
+
+fn write_runtime_job_wav(
+    path: &Path,
+    sample_rate_hz: u32,
+    samples: &[f32],
+) -> Result<(), CliError> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: sample_rate_hz,
+        bits_per_sample: 32,
+        sample_format: SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(path, spec).map_err(|err| {
+        CliError::new(format!(
+            "failed to create runtime segment WAV {}: {err}",
+            display_path(path)
+        ))
+    })?;
+    for sample in samples {
+        writer.write_sample(*sample).map_err(|err| {
+            CliError::new(format!(
+                "failed writing runtime segment WAV sample {}: {err}",
+                display_path(path)
+            ))
+        })?;
+    }
+    writer.finalize().map_err(|err| {
+        CliError::new(format!(
+            "failed to finalize runtime segment WAV {}: {err}",
+            display_path(path)
+        ))
+    })?;
+    Ok(())
+}
+
+fn runtime_phase_to_lifecycle_phase(phase: LiveRuntimePhase) -> LiveLifecyclePhase {
+    match phase {
+        LiveRuntimePhase::Warmup => LiveLifecyclePhase::Warmup,
+        LiveRuntimePhase::Active => LiveLifecyclePhase::Active,
+        LiveRuntimePhase::Draining => LiveLifecyclePhase::Draining,
+        LiveRuntimePhase::Shutdown => LiveLifecyclePhase::Shutdown,
+    }
+}
+
+fn lifecycle_from_runtime_output_events(events: &[RuntimeOutputEvent]) -> LiveLifecycleTelemetry {
+    let mut lifecycle = LiveLifecycleTelemetry::new();
+    for event in events {
+        if let RuntimeOutputEvent::Lifecycle { phase, detail, .. } = event {
+            lifecycle.transition(runtime_phase_to_lifecycle_phase(*phase), detail.clone());
+        }
+    }
+    lifecycle
+}
+
+fn transcript_events_from_runtime_output_events(
+    config: &TranscribeConfig,
+    events: &[RuntimeOutputEvent],
+) -> Vec<TranscriptEvent> {
+    let mut transcript_events = Vec::new();
+    for event in events {
+        let RuntimeOutputEvent::AsrCompleted { result, .. } = event else {
+            continue;
+        };
+        if let Some(transcript_event) = transcript_event_from_runtime_asr_result(
+            config.channel_mode,
+            &config.speaker_labels,
+            result,
+        ) {
+            transcript_events.push(transcript_event);
+        }
+    }
+    transcript_events
+}
+
+fn transcript_event_from_runtime_asr_result(
+    channel_mode: ChannelMode,
+    speaker_labels: &SpeakerLabels,
+    result: &LiveAsrResult,
+) -> Option<TranscriptEvent> {
+    let event_type = match result.job.job_class {
+        RuntimeAsrJobClass::Partial => "partial",
+        RuntimeAsrJobClass::Final => "final",
+        RuntimeAsrJobClass::Reconcile => "reconciled_final",
+    };
+    let text = result.transcript_text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let segment_id = if result.job.job_class == RuntimeAsrJobClass::Reconcile {
+        format!("{}-reconciled", result.job.segment_id)
+    } else {
+        result.job.segment_id.clone()
+    };
+    Some(TranscriptEvent {
+        event_type,
+        channel: runtime_channel_label(channel_mode, speaker_labels, result.job.channel.as_str()),
+        segment_id,
+        start_ms: result.job.start_ms,
+        end_ms: result.job.end_ms,
+        text: text.to_string(),
+        source_final_segment_id: if result.job.job_class == RuntimeAsrJobClass::Reconcile {
+            Some(result.job.segment_id.clone())
+        } else {
+            None
+        },
+    })
+}
+
+fn vad_boundaries_from_runtime_output_events(events: &[RuntimeOutputEvent]) -> Vec<VadBoundary> {
+    let mut boundaries = events
+        .iter()
+        .filter_map(|event| match event {
+            RuntimeOutputEvent::AsrCompleted { result, .. }
+                if matches!(
+                    result.job.job_class,
+                    RuntimeAsrJobClass::Final | RuntimeAsrJobClass::Reconcile
+                ) =>
+            {
+                Some((result.job.start_ms, result.job.end_ms))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    boundaries.sort_unstable();
+    boundaries.dedup();
+
+    boundaries
+        .into_iter()
+        .enumerate()
+        .map(|(id, (start_ms, end_ms))| VadBoundary {
+            id,
+            start_ms,
+            end_ms,
+            source: "live_runtime",
+        })
+        .collect()
+}
+
+fn fallback_vad_boundaries_from_events(events: &[TranscriptEvent]) -> Vec<VadBoundary> {
+    let mut boundaries = events
+        .iter()
+        .filter(|event| matches!(event.event_type, "final" | "reconciled_final"))
+        .map(|event| (event.start_ms, event.end_ms))
+        .collect::<Vec<_>>();
+    boundaries.sort_unstable();
+    boundaries.dedup();
+
+    boundaries
+        .into_iter()
+        .enumerate()
+        .map(|(id, (start_ms, end_ms))| VadBoundary {
+            id,
+            start_ms,
+            end_ms,
+            source: "live_runtime",
+        })
+        .collect()
+}
+
+fn merge_live_transcript_events_for_display(events: Vec<TranscriptEvent>) -> Vec<TranscriptEvent> {
+    events
+}
+
+fn live_stream_chunk_queue_telemetry(
+    config: &TranscribeConfig,
+    runtime_summary: &LiveRuntimeSummary,
+    asr_worker_pool: &LiveAsrPoolTelemetry,
+) -> LiveChunkQueueTelemetry {
+    let mut telemetry = LiveChunkQueueTelemetry::enabled(config.chunk_queue_cap);
+    telemetry.submitted = runtime_summary.asr_jobs_queued as usize;
+    telemetry.enqueued = asr_worker_pool.enqueued;
+    telemetry.dropped_oldest = asr_worker_pool.dropped_queue_full;
+    telemetry.processed = runtime_summary.asr_results_emitted as usize;
+    telemetry.pending = runtime_summary.pending_jobs as usize;
+    telemetry.high_water = telemetry.enqueued.min(telemetry.max_queue.max(1));
+    telemetry.drain_completed = runtime_summary.final_phase == LiveRuntimePhase::Shutdown
+        && runtime_summary.pending_jobs == 0;
+    telemetry
+}
+
+fn channel_transcript_summaries_from_events(
+    config: &TranscribeConfig,
+    events: &[TranscriptEvent],
+) -> Vec<ChannelTranscriptSummary> {
+    let finals = final_events_for_display(events);
+    let mut by_channel = HashMap::<String, Vec<String>>::new();
+    for event in finals {
+        let text = event.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        by_channel
+            .entry(event.channel.clone())
+            .or_default()
+            .push(text.to_string());
+    }
+
+    let mut summaries = by_channel
+        .into_iter()
+        .map(|(channel, lines)| {
+            let role = if channel == "merged" {
+                "mixed"
+            } else if channel == config.speaker_labels.mic {
+                "mic"
+            } else if channel == config.speaker_labels.system {
+                "system"
+            } else {
+                "mixed"
+            };
+            ChannelTranscriptSummary {
+                role,
+                label: channel,
+                text: lines.join(" "),
+            }
+        })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|a, b| {
+        channel_sort_key(a.role)
+            .cmp(&channel_sort_key(b.role))
+            .then_with(|| a.label.cmp(&b.label))
+    });
+    summaries
+}
+
+fn active_channel_mode_from_transcripts(
+    config: &TranscribeConfig,
+    channel_transcripts: &[ChannelTranscriptSummary],
+) -> ChannelMode {
+    if config.channel_mode == ChannelMode::Mixed {
+        return ChannelMode::Mixed;
+    }
+    let has_mic = channel_transcripts
+        .iter()
+        .any(|summary| summary.role == "mic");
+    let has_system = channel_transcripts
+        .iter()
+        .any(|summary| summary.role == "system");
+    if has_mic && has_system {
+        ChannelMode::Separate
+    } else {
+        ChannelMode::Mixed
+    }
+}
+
 fn stable_terminal_summary_lines(events: &[TranscriptEvent]) -> Vec<String> {
     build_terminal_render_actions(events, TerminalRenderMode::DeterministicNonTty)
         .into_iter()
         .filter(|action| action.kind == TerminalRenderActionKind::StableLine)
         .map(|action| action.line)
         .collect()
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct FirstEmitTiming {
+    first_any_end_ms: Option<u64>,
+    first_partial_end_ms: Option<u64>,
+    first_final_end_ms: Option<u64>,
+    first_stable_end_ms: Option<u64>,
+}
+
+fn first_emit_timing(events: &[TranscriptEvent]) -> FirstEmitTiming {
+    let mut timing = FirstEmitTiming::default();
+    for event in events {
+        let end_ms = event.end_ms;
+        if timing.first_any_end_ms.is_none() {
+            timing.first_any_end_ms = Some(end_ms);
+        }
+        if event.event_type == "partial" && timing.first_partial_end_ms.is_none() {
+            timing.first_partial_end_ms = Some(end_ms);
+        }
+        if event.event_type == "final" && timing.first_final_end_ms.is_none() {
+            timing.first_final_end_ms = Some(end_ms);
+        }
+        if is_stable_terminal_event(event.event_type) && timing.first_stable_end_ms.is_none() {
+            timing.first_stable_end_ms = Some(end_ms);
+        }
+        if timing.first_any_end_ms.is_some()
+            && timing.first_partial_end_ms.is_some()
+            && timing.first_final_end_ms.is_some()
+            && timing.first_stable_end_ms.is_some()
+        {
+            break;
+        }
+    }
+    timing
+}
+
+fn json_optional_u64(value: Option<u64>) -> String {
+    value
+        .map(|number| number.to_string())
+        .unwrap_or_else(|| "null".to_string())
 }
 
 fn transcript_event_count(events: &[TranscriptEvent], event_type: &str) -> usize {
@@ -4513,6 +5724,7 @@ fn print_live_report(config: &TranscribeConfig, report: &LiveRunReport) {
         "  benchmark_runs_csv: {}",
         report.benchmark_runs_csv.display()
     );
+    println!("  input_wav_semantics: {}", input_wav_semantics(config));
     println!("  out_wav_semantics: {OUT_WAV_SEMANTICS}");
     println!("  vad_boundaries: {}", report.vad_boundaries.len());
     for boundary in &report.vad_boundaries {
@@ -4787,6 +5999,23 @@ fn write_runtime_jsonl(config: &TranscribeConfig, report: &LiveRunReport) -> Res
         ))
     })?;
 
+    let early_lifecycle_count = report
+        .lifecycle
+        .transitions
+        .iter()
+        .position(|transition| transition.phase == LiveLifecyclePhase::Active)
+        .map(|index| index + 1)
+        .unwrap_or_else(|| report.lifecycle.transitions.len());
+    for (index, transition) in report
+        .lifecycle
+        .transitions
+        .iter()
+        .enumerate()
+        .take(early_lifecycle_count)
+    {
+        writeln!(file, "{}", jsonl_lifecycle_phase_line(index, transition)).map_err(io_to_cli)?;
+    }
+
     for boundary in &report.vad_boundaries {
         writeln!(file, "{}", jsonl_vad_boundary_line(boundary, config)).map_err(io_to_cli)?;
     }
@@ -4817,7 +6046,13 @@ fn write_runtime_jsonl(config: &TranscribeConfig, report: &LiveRunReport) -> Res
         writeln!(file, "{}", jsonl_trust_notice_line(notice)).map_err(io_to_cli)?;
     }
 
-    for (index, transition) in report.lifecycle.transitions.iter().enumerate() {
+    for (index, transition) in report
+        .lifecycle
+        .transitions
+        .iter()
+        .enumerate()
+        .skip(early_lifecycle_count)
+    {
         writeln!(file, "{}", jsonl_lifecycle_phase_line(index, transition)).map_err(io_to_cli)?;
     }
 
@@ -4876,6 +6111,8 @@ fn write_runtime_manifest(
     let per_channel_defaults = reconstruct_transcript_per_channel(&report.events);
     let live_mode = report.chunk_queue.enabled;
     let stable_terminal_lines = stable_terminal_summary_lines(&report.events);
+    let terminal_mode = terminal_render_mode();
+    let first_emit = first_emit_timing(&report.events);
     let model_checksum = model_checksum_info(Some(&ResolvedModelPath {
         path: report.resolved_model_path.clone(),
         source: report.resolved_model_source.clone(),
@@ -4930,6 +6167,12 @@ fn write_runtime_manifest(
         file,
         "  \"input_wav\": \"{}\",",
         json_escape(&display_path(&config.input_wav))
+    )
+    .map_err(io_to_cli)?;
+    writeln!(
+        file,
+        "  \"input_wav_semantics\": \"{}\",",
+        json_escape(input_wav_semantics(config))
     )
     .map_err(io_to_cli)?;
     writeln!(
@@ -5081,8 +6324,9 @@ fn write_runtime_manifest(
     writeln!(file, "  ],").map_err(io_to_cli)?;
     writeln!(
         file,
-        "  \"terminal_summary\": {{\"live_mode\":{},\"stable_line_count\":{},\"stable_lines_replayed\":{},\"stable_lines\": [",
+        "  \"terminal_summary\": {{\"live_mode\":{},\"render_mode\":\"{}\",\"stable_line_policy\":\"final-only\",\"stable_line_count\":{},\"stable_lines_replayed\":{},\"stable_lines\": [",
         live_mode,
+        json_escape(terminal_mode.as_str()),
         stable_terminal_lines.len(),
         !live_mode
     )
@@ -5101,6 +6345,29 @@ fn write_runtime_manifest(
         .map_err(io_to_cli)?;
     }
     writeln!(file, "  ]}},").map_err(io_to_cli)?;
+    writeln!(
+        file,
+        "  \"first_emit_timing_ms\": {{\"first_any\":{},\"first_partial\":{},\"first_final\":{},\"first_stable\":{}}},",
+        json_optional_u64(first_emit.first_any_end_ms),
+        json_optional_u64(first_emit.first_partial_end_ms),
+        json_optional_u64(first_emit.first_final_end_ms),
+        json_optional_u64(first_emit.first_stable_end_ms)
+    )
+    .map_err(io_to_cli)?;
+    writeln!(
+        file,
+        "  \"queue_defer\": {{\"submit_window\":{},\"deferred_final_submissions\":{},\"max_pending_final_backlog\":{}}},",
+        report.final_buffering.submit_window,
+        report.final_buffering.deferred_final_submissions,
+        report.final_buffering.max_pending_final_backlog
+    )
+    .map_err(io_to_cli)?;
+    writeln!(
+        file,
+        "  \"ordering_metadata\": {{\"event_sort_key\":\"start_ms,end_ms,event_type,channel,segment_id,source_final_segment_id,text\",\"stable_line_sort_key\":\"start_ms,end_ms,channel,segment_id,source_final_segment_id,text\",\"stable_line_event_types\":[\"final\",\"llm_final\",\"reconciled_final\"],\"event_count\":{}}},",
+        report.events.len()
+    )
+    .map_err(io_to_cli)?;
     writeln!(file, "  \"events\": [").map_err(io_to_cli)?;
     for (idx, event) in report.events.iter().enumerate() {
         if let Some(source_segment_id) = &event.source_final_segment_id {
@@ -6282,6 +7549,18 @@ fn write_preflight_manifest(
     writeln!(file, "  \"config\": {{").map_err(io_to_cli)?;
     writeln!(
         file,
+        "    \"input_wav\": \"{}\",",
+        json_escape(&display_path(&config.input_wav))
+    )
+    .map_err(io_to_cli)?;
+    writeln!(
+        file,
+        "    \"input_wav_semantics\": \"{}\",",
+        json_escape(input_wav_semantics(config))
+    )
+    .map_err(io_to_cli)?;
+    writeln!(
+        file,
         "    \"out_wav\": \"{}\",",
         json_escape(&display_path(&config.out_wav))
     )
@@ -6446,37 +7725,84 @@ fn command_stdout(program: &str, args: &[&str]) -> Result<String, CliError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_live_chunked_events_with_queue, build_live_close_summary_lines,
+        AsrBackend, AsrWorkClass, AsrWorkItem, BenchmarkSummary, CaptureChunk, CaptureEvent,
+        CaptureSink, ChannelMode, ChannelVadBoundary, CheckStatus, CleanupAttemptOutcome,
+        CleanupQueueTelemetry, CleanupTaskStatus, CollectingRuntimeOutputSink,
+        FinalBufferingTelemetry, HELP_TEXT, IncrementalVadTracker,
+        LIVE_CAPTURE_CALLBACK_CONTRACT_DEGRADED_CODE, LIVE_CAPTURE_CONTINUITY_UNVERIFIED_CODE,
+        LIVE_CAPTURE_INTERRUPTION_RECOVERED_CODE, LIVE_CAPTURE_TRANSPORT_DEGRADED_CODE,
+        LIVE_CHUNK_QUEUE_BACKPRESSURE_SEVERE_CODE, LIVE_CHUNK_QUEUE_DROP_OLDEST_CODE,
+        LiveAsrExecutor, LiveAsrJob, LiveAsrJobClass, LiveAsrPoolConfig, LiveAsrPoolTelemetry,
+        LiveCaptureCallbackMode, LiveCaptureConfig, LiveCaptureSampleRateMismatchPolicy,
+        LiveChunkQueueTelemetry, LiveLifecyclePhase, LiveLifecycleTelemetry, LiveRunReport,
+        ModeDegradationEvent, ParseOutcome, PreflightCheck, PreflightReport,
+        RECONCILIATION_APPLIED_CODE, ReconciliationMatrix, ResolvedModelPath,
+        RuntimeExecutionBranch, RuntimeJsonlStream, RuntimeOutputSink, TempAudioPolicy,
+        TerminalRenderActionKind, TerminalRenderMode, TranscribeConfig, TranscriptEvent,
+        VadBoundary, build_live_chunked_events_with_queue, build_live_close_summary_lines,
         build_reconciliation_events, build_reconciliation_matrix, build_rolling_chunk_windows,
         build_targeted_reconciliation_events, build_terminal_render_actions,
         build_transcript_events, build_trust_notices, bundled_backend_program_from_exe,
         chunk_queue_backpressure_is_severe, collect_live_capture_continuity_events,
         detect_per_channel_vad_boundaries, detect_vad_boundaries,
-        emit_latest_lifecycle_transition_jsonl, live_capture_telemetry_path_candidates,
-        live_terminal_render_actions, materialize_out_wav, merge_channel_vad_boundaries,
-        merge_transcript_events, model_checksum_info, parse_args_from,
-        parse_replay_transcript_event, parse_trust_notice, prepare_channel_inputs,
+        emit_latest_lifecycle_transition_jsonl, input_wav_semantics,
+        live_capture_materialization_paths, live_capture_output_path,
+        live_capture_telemetry_path_candidates, live_stream_chunk_queue_telemetry,
+        live_stream_vad_thresholds_per_mille, live_terminal_render_actions, materialize_out_wav,
+        merge_channel_vad_boundaries, merge_transcript_events, model_checksum_info,
+        parse_args_from, parse_replay_transcript_event, parse_trust_notice, prepare_channel_inputs,
         reconstruct_transcript, reconstruct_transcript_per_channel, replay_timeline,
-        resolve_backend_program, resolve_model_path, run_cleanup_queue_with, run_live_chunk_queue,
-        runtime_mode_compatibility_matrix, select_runtime_execution_branch,
-        write_preflight_manifest, write_runtime_jsonl, write_runtime_manifest, AsrBackend,
-        AsrWorkClass, AsrWorkItem, BenchmarkSummary, ChannelMode, ChannelVadBoundary, CheckStatus,
-        CleanupAttemptOutcome, CleanupQueueTelemetry, CleanupTaskStatus, IncrementalVadTracker,
-        LiveAsrPoolTelemetry, LiveChunkQueueTelemetry, LiveLifecyclePhase, LiveLifecycleTelemetry,
-        LiveRunReport, ModeDegradationEvent, ParseOutcome, PreflightCheck, PreflightReport,
-        ReconciliationMatrix, ResolvedModelPath, RuntimeExecutionBranch, RuntimeJsonlStream,
-        TerminalRenderActionKind, TerminalRenderMode, TranscribeConfig, TranscriptEvent,
-        VadBoundary, HELP_TEXT, LIVE_CAPTURE_CONTINUITY_UNVERIFIED_CODE,
-        LIVE_CAPTURE_INTERRUPTION_RECOVERED_CODE, LIVE_CHUNK_QUEUE_BACKPRESSURE_SEVERE_CODE,
-        LIVE_CHUNK_QUEUE_DROP_OLDEST_CODE, RECONCILIATION_APPLIED_CODE,
+        resolve_backend_program, resolve_model_path, run_cleanup_queue_with,
+        run_live_asr_pool_with_final_buffering, run_live_chunk_queue,
+        run_streaming_capture_session, runtime_mode_compatibility_matrix,
+        select_runtime_execution_branch, transcript_events_from_runtime_output_events,
+        write_preflight_manifest, write_runtime_jsonl, write_runtime_manifest,
     };
     use hound::{SampleFormat, WavSpec, WavWriter};
+    use recordit::live_stream_runtime::{
+        LiveAsrJobClass as RuntimeAsrJobClass, LiveAsrJobSpec as RuntimeAsrJobSpec,
+        LiveAsrResult as RuntimeAsrResult, LiveRuntimePhase, LiveRuntimeSummary,
+        RuntimeOutputEvent,
+    };
     use std::env;
     use std::fs::{self, File};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    struct MockLiveAsrExecutor {
+        prewarm_calls: AtomicUsize,
+        transcribe_calls: AtomicUsize,
+        sleep_ms: u64,
+    }
+
+    impl LiveAsrExecutor for MockLiveAsrExecutor {
+        fn prewarm(&self) -> Result<(), String> {
+            self.prewarm_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn transcribe(&self, audio_path: &Path) -> Result<String, String> {
+            self.transcribe_calls.fetch_add(1, Ordering::Relaxed);
+            if self.sleep_ms > 0 {
+                std::thread::sleep(Duration::from_millis(self.sleep_ms));
+            }
+            Ok(format!("ok:{}", audio_path.display()))
+        }
+    }
+
+    struct NoopCaptureSink;
+
+    impl CaptureSink for NoopCaptureSink {
+        fn on_chunk(&mut self, _chunk: CaptureChunk) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn on_event(&mut self, _event: CaptureEvent) -> Result<(), String> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn asr_backend_parse_accepts_current_and_legacy_labels() {
@@ -6529,9 +7855,11 @@ mod tests {
     fn runtime_mode_compatibility_matrix_includes_live_stream_implemented_row() {
         let matrix = runtime_mode_compatibility_matrix();
         assert_eq!(matrix.len(), 3);
-        assert!(matrix
-            .iter()
-            .any(|row| row.taxonomy_mode == "live-stream" && row.status == "implemented"));
+        assert!(
+            matrix
+                .iter()
+                .any(|row| row.taxonomy_mode == "live-stream" && row.status == "implemented")
+        );
     }
 
     #[test]
@@ -6565,6 +7893,14 @@ mod tests {
     }
 
     #[test]
+    fn live_stream_vad_threshold_mapping_stays_in_scheduler_calibrated_range() {
+        assert_eq!(live_stream_vad_thresholds_per_mille(0.50), (40, 20));
+        assert_eq!(live_stream_vad_thresholds_per_mille(0.25), (20, 10));
+        assert_eq!(live_stream_vad_thresholds_per_mille(1.00), (80, 40));
+        assert_eq!(live_stream_vad_thresholds_per_mille(0.0), (1, 1));
+    }
+
+    #[test]
     fn parse_rejects_chunk_overrides_without_live_chunked() {
         let args = vec![
             "--chunk-window-ms".to_string(),
@@ -6574,9 +7910,10 @@ mod tests {
         ];
         match parse_args_from(args.into_iter()) {
             Ok(_) => panic!("expected parse failure"),
-            Err(err) => assert!(err
-                .to_string()
-                .contains("require `--live-chunked` or `--live-stream`")),
+            Err(err) => assert!(
+                err.to_string()
+                    .contains("require `--live-chunked` or `--live-stream`")
+            ),
         }
     }
 
@@ -6589,9 +7926,10 @@ mod tests {
         ];
         match parse_args_from(args.into_iter()) {
             Ok(_) => panic!("expected parse failure"),
-            Err(err) => assert!(err
-                .to_string()
-                .contains("cannot be combined with `--replay-jsonl`")),
+            Err(err) => assert!(
+                err.to_string()
+                    .contains("cannot be combined with `--replay-jsonl`")
+            ),
         }
     }
 
@@ -6604,9 +7942,10 @@ mod tests {
         ];
         match parse_args_from(args.into_iter()) {
             Ok(_) => panic!("expected parse failure"),
-            Err(err) => assert!(err
-                .to_string()
-                .contains("cannot be combined with `--replay-jsonl`")),
+            Err(err) => assert!(
+                err.to_string()
+                    .contains("cannot be combined with `--replay-jsonl`")
+            ),
         }
     }
 
@@ -6615,9 +7954,10 @@ mod tests {
         let args = vec!["--live-stream".to_string(), "--preflight".to_string()];
         match parse_args_from(args.into_iter()) {
             Ok(_) => panic!("expected parse failure"),
-            Err(err) => assert!(err
-                .to_string()
-                .contains("cannot be combined with `--preflight`")),
+            Err(err) => assert!(
+                err.to_string()
+                    .contains("cannot be combined with `--preflight`")
+            ),
         }
     }
 
@@ -6626,9 +7966,10 @@ mod tests {
         let args = vec!["--live-stream".to_string(), "--live-chunked".to_string()];
         match parse_args_from(args.into_iter()) {
             Ok(_) => panic!("expected parse failure"),
-            Err(err) => assert!(err
-                .to_string()
-                .contains("cannot be combined with `--live-chunked`")),
+            Err(err) => assert!(
+                err.to_string()
+                    .contains("cannot be combined with `--live-chunked`")
+            ),
         }
     }
 
@@ -6820,9 +8161,10 @@ mod tests {
         ];
         match parse_args_from(args.into_iter()) {
             Ok(_) => panic!("expected parse failure"),
-            Err(err) => assert!(err
-                .to_string()
-                .contains("`--model-doctor` cannot be combined with `--replay-jsonl`")),
+            Err(err) => assert!(
+                err.to_string()
+                    .contains("`--model-doctor` cannot be combined with `--replay-jsonl`")
+            ),
         }
     }
 
@@ -6831,9 +8173,10 @@ mod tests {
         let args = vec!["--model-doctor".to_string(), "--preflight".to_string()];
         match parse_args_from(args.into_iter()) {
             Ok(_) => panic!("expected parse failure"),
-            Err(err) => assert!(err
-                .to_string()
-                .contains("`--model-doctor` cannot be combined with `--preflight`")),
+            Err(err) => assert!(
+                err.to_string()
+                    .contains("`--model-doctor` cannot be combined with `--preflight`")
+            ),
         }
     }
 
@@ -6893,18 +8236,26 @@ mod tests {
             &chunk_queue,
         );
 
-        assert!(notices
-            .iter()
-            .any(|notice| notice.code == "mode_degradation"));
-        assert!(notices
-            .iter()
-            .any(|notice| notice.code == "cleanup_queue_drop"));
-        assert!(notices
-            .iter()
-            .any(|notice| notice.code == "cleanup_processing_failure"));
-        assert!(notices
-            .iter()
-            .any(|notice| notice.code == "cleanup_drain_incomplete"));
+        assert!(
+            notices
+                .iter()
+                .any(|notice| notice.code == "mode_degradation")
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|notice| notice.code == "cleanup_queue_drop")
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|notice| notice.code == "cleanup_processing_failure")
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|notice| notice.code == "cleanup_drain_incomplete")
+        );
     }
 
     #[test]
@@ -6924,9 +8275,11 @@ mod tests {
             &chunk_queue,
         );
 
-        assert!(notices
-            .iter()
-            .any(|notice| notice.code == "continuity_recovered_with_gaps"));
+        assert!(
+            notices
+                .iter()
+                .any(|notice| notice.code == "continuity_recovered_with_gaps")
+        );
     }
 
     #[test]
@@ -6950,9 +8303,37 @@ mod tests {
             .find(|notice| notice.code == "continuity_unverified")
             .expect("expected continuity_unverified trust notice");
         assert_eq!(notice.severity, "warn");
-        assert!(notice
-            .guidance
-            .contains("Ensure capture telemetry is writable/readable"));
+        assert!(
+            notice
+                .guidance
+                .contains("Ensure capture telemetry is writable/readable")
+        );
+    }
+
+    #[test]
+    fn trust_notice_builder_emits_capture_transport_degraded_notice() {
+        let config = TranscribeConfig::default();
+        let cleanup = CleanupQueueTelemetry::disabled(&config);
+        let chunk_queue = LiveChunkQueueTelemetry::disabled(&config);
+        let notices = build_trust_notices(
+            ChannelMode::Separate,
+            ChannelMode::Separate,
+            &[ModeDegradationEvent {
+                code: LIVE_CAPTURE_TRANSPORT_DEGRADED_CODE,
+                detail:
+                    "near-live capture transport reported degradation source(s): queue_full_drops"
+                        .to_string(),
+            }],
+            &cleanup,
+            &chunk_queue,
+        );
+
+        let notice = notices
+            .iter()
+            .find(|notice| notice.code == "capture_transport_degraded")
+            .expect("expected capture_transport_degraded trust notice");
+        assert_eq!(notice.severity, "warn");
+        assert!(notice.impact.contains("transport"));
     }
 
     #[test]
@@ -7107,6 +8488,35 @@ mod tests {
 
         assert!(!matrix.required);
         assert!(matrix.triggers.is_empty());
+    }
+
+    #[test]
+    fn reconciliation_matrix_triggers_on_capture_transport_and_callback_degradation() {
+        let matrix = build_reconciliation_matrix(
+            &[VadBoundary {
+                id: 0,
+                start_ms: 0,
+                end_ms: 2_000,
+                source: "energy_threshold",
+            }],
+            &[
+                ModeDegradationEvent {
+                    code: LIVE_CAPTURE_TRANSPORT_DEGRADED_CODE,
+                    detail: "queue pressure".to_string(),
+                },
+                ModeDegradationEvent {
+                    code: LIVE_CAPTURE_CALLBACK_CONTRACT_DEGRADED_CODE,
+                    detail: "callback violations".to_string(),
+                },
+            ],
+        );
+        let codes = matrix
+            .triggers
+            .iter()
+            .map(|trigger| trigger.code)
+            .collect::<Vec<_>>();
+        assert!(codes.contains(&"capture_transport_degraded"));
+        assert!(codes.contains(&"capture_callback_contract_degraded"));
     }
 
     #[test]
@@ -7471,12 +8881,16 @@ mod tests {
 
         assert_eq!(finals.len(), 1);
         assert_eq!(finals[0].segment_id, "mic-segment-0000-0-2600");
-        assert!(partial_ids
-            .iter()
-            .any(|id| id == "mic-segment-0000-partial-0000-0-2000"));
-        assert!(partial_ids
-            .iter()
-            .any(|id| id == "mic-segment-0000-partial-0001-500-2500"));
+        assert!(
+            partial_ids
+                .iter()
+                .any(|id| id == "mic-segment-0000-partial-0000-0-2000")
+        );
+        assert!(
+            partial_ids
+                .iter()
+                .any(|id| id == "mic-segment-0000-partial-0001-500-2500")
+        );
         assert!(partial_ids.iter().any(|id| id == "mic-segment-0000-0-2600"));
     }
 
@@ -7536,9 +8950,11 @@ mod tests {
         let events = collect_live_capture_continuity_events(&config);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].code, "live_capture_interruption_recovered");
-        assert!(events[0]
-            .detail
-            .contains("2 stream interruption restart(s)"));
+        assert!(
+            events[0]
+                .detail
+                .contains("2 stream interruption restart(s)")
+        );
 
         let _ = fs::remove_file(input_wav);
         let _ = fs::remove_file(telemetry_path);
@@ -7565,6 +8981,171 @@ mod tests {
     }
 
     #[test]
+    fn continuity_events_include_transport_and_callback_signals() {
+        let temp_dir = write_temp_dir("recordit-live-continuity-degradation-sources");
+        let input_wav = temp_dir.join("capture.wav");
+        File::create(&input_wav).unwrap();
+        let telemetry_path = temp_dir.join("capture.telemetry.json");
+        fs::write(
+            &telemetry_path,
+            concat!(
+                "{\n",
+                "  \"restart_count\": 0,\n",
+                "  \"degradation_events\": [\n",
+                "    {\"source\":\"queue_full_drops\",\"count\":2},\n",
+                "    {\"source\":\"missing_format_description\",\"count\":1}\n",
+                "  ]\n",
+                "}\n"
+            ),
+        )
+        .unwrap();
+
+        let mut config = TranscribeConfig::default();
+        config.live_chunked = true;
+        config.input_wav = input_wav.clone();
+
+        let events = collect_live_capture_continuity_events(&config);
+        let codes = events.iter().map(|event| event.code).collect::<Vec<_>>();
+        assert!(codes.contains(&LIVE_CAPTURE_TRANSPORT_DEGRADED_CODE));
+        assert!(codes.contains(&LIVE_CAPTURE_CALLBACK_CONTRACT_DEGRADED_CODE));
+        assert!(!codes.contains(&LIVE_CAPTURE_INTERRUPTION_RECOVERED_CODE));
+
+        let _ = fs::remove_file(input_wav);
+        let _ = fs::remove_file(telemetry_path);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn continuity_events_apply_to_live_stream_mode_without_live_chunked_flag() {
+        let temp_dir = write_temp_dir("recordit-live-stream-continuity-sources");
+        let input_wav = temp_dir.join("capture.wav");
+        File::create(&input_wav).unwrap();
+        let telemetry_path = temp_dir.join("capture.telemetry.json");
+        fs::write(&telemetry_path, "{\"restart_count\":1}").unwrap();
+
+        let mut config = TranscribeConfig::default();
+        config.live_stream = true;
+        config.input_wav = input_wav.clone();
+
+        let events = collect_live_capture_continuity_events(&config);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].code, LIVE_CAPTURE_INTERRUPTION_RECOVERED_CODE);
+        assert!(events[0].detail.contains("restart(s)"));
+
+        let _ = fs::remove_file(input_wav);
+        let _ = fs::remove_file(telemetry_path);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn runtime_output_events_convert_to_live_transcript_contract_events() {
+        let config = TranscribeConfig::default();
+        let runtime_events = vec![
+            RuntimeOutputEvent::AsrCompleted {
+                emit_seq: 1,
+                result: RuntimeAsrResult {
+                    job: RuntimeAsrJobSpec {
+                        emit_seq: 1,
+                        job_class: RuntimeAsrJobClass::Partial,
+                        channel: "microphone".to_string(),
+                        segment_id: "seg-a".to_string(),
+                        segment_ord: 1,
+                        window_ord: 1,
+                        start_ms: 0,
+                        end_ms: 500,
+                    },
+                    transcript_text: "partial text".to_string(),
+                },
+            },
+            RuntimeOutputEvent::AsrCompleted {
+                emit_seq: 2,
+                result: RuntimeAsrResult {
+                    job: RuntimeAsrJobSpec {
+                        emit_seq: 2,
+                        job_class: RuntimeAsrJobClass::Final,
+                        channel: "system-audio".to_string(),
+                        segment_id: "seg-b".to_string(),
+                        segment_ord: 2,
+                        window_ord: 2,
+                        start_ms: 500,
+                        end_ms: 1_000,
+                    },
+                    transcript_text: "final text".to_string(),
+                },
+            },
+            RuntimeOutputEvent::AsrCompleted {
+                emit_seq: 3,
+                result: RuntimeAsrResult {
+                    job: RuntimeAsrJobSpec {
+                        emit_seq: 3,
+                        job_class: RuntimeAsrJobClass::Reconcile,
+                        channel: "microphone".to_string(),
+                        segment_id: "seg-c".to_string(),
+                        segment_ord: 3,
+                        window_ord: 3,
+                        start_ms: 1_000,
+                        end_ms: 1_400,
+                    },
+                    transcript_text: "reconciled text".to_string(),
+                },
+            },
+        ];
+
+        let events = transcript_events_from_runtime_output_events(&config, &runtime_events);
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].event_type, "partial");
+        assert_eq!(events[0].channel, config.speaker_labels.mic);
+        assert_eq!(events[1].event_type, "final");
+        assert_eq!(events[1].channel, config.speaker_labels.system);
+        assert_eq!(events[2].event_type, "reconciled_final");
+        assert_eq!(events[2].segment_id, "seg-c-reconciled");
+        assert_eq!(events[2].source_final_segment_id.as_deref(), Some("seg-c"));
+    }
+
+    #[test]
+    fn live_stream_chunk_queue_telemetry_maps_runtime_and_pool_counts() {
+        let mut config = TranscribeConfig::default();
+        config.live_stream = true;
+        config.chunk_queue_cap = 3;
+
+        let runtime_summary = LiveRuntimeSummary {
+            final_phase: LiveRuntimePhase::Shutdown,
+            ready_for_transcripts: true,
+            transition_count: 4,
+            capture_chunks_seen: 20,
+            capture_events_seen: 2,
+            asr_jobs_queued: 7,
+            asr_results_emitted: 6,
+            pending_jobs: 0,
+            pending_final_jobs: 0,
+            shutdown_abandoned_jobs: 0,
+            shutdown_abandoned_final_jobs: 0,
+        };
+        let pool = LiveAsrPoolTelemetry {
+            prewarm_ok: true,
+            submitted: 7,
+            enqueued: 6,
+            dropped_queue_full: 1,
+            processed: 6,
+            succeeded: 6,
+            failed: 1,
+            retry_attempts: 0,
+            temp_audio_deleted: 0,
+            temp_audio_retained: 0,
+        };
+
+        let telemetry = live_stream_chunk_queue_telemetry(&config, &runtime_summary, &pool);
+        assert!(telemetry.enabled);
+        assert_eq!(telemetry.max_queue, 3);
+        assert_eq!(telemetry.submitted, 7);
+        assert_eq!(telemetry.enqueued, 6);
+        assert_eq!(telemetry.dropped_oldest, 1);
+        assert_eq!(telemetry.processed, 6);
+        assert_eq!(telemetry.pending, 0);
+        assert!(telemetry.drain_completed);
+    }
+
+    #[test]
     fn continuity_telemetry_candidates_prefer_out_wav_with_input_fallback() {
         let mut config = TranscribeConfig::default();
         config.live_chunked = true;
@@ -7573,12 +9154,16 @@ mod tests {
 
         let candidates = live_capture_telemetry_path_candidates(&config);
         assert_eq!(candidates.len(), 2);
-        assert!(candidates[0]
-            .to_string_lossy()
-            .ends_with("artifacts/live-output.telemetry.json"));
-        assert!(candidates[1]
-            .to_string_lossy()
-            .ends_with("artifacts/live-input.telemetry.json"));
+        assert!(
+            candidates[0]
+                .to_string_lossy()
+                .ends_with("artifacts/live-output.telemetry.json")
+        );
+        assert!(
+            candidates[1]
+                .to_string_lossy()
+                .ends_with("artifacts/live-input.telemetry.json")
+        );
     }
 
     #[test]
@@ -7999,6 +9584,7 @@ mod tests {
                 temp_audio_deleted: 1,
                 temp_audio_retained: 1,
             },
+            final_buffering: FinalBufferingTelemetry::default(),
             chunk_queue: LiveChunkQueueTelemetry::disabled(&config),
             cleanup_queue: CleanupQueueTelemetry::disabled(&config),
             benchmark: BenchmarkSummary {
@@ -8135,12 +9721,16 @@ mod tests {
         );
 
         assert!(!reconciliation.is_empty());
-        assert!(reconciliation
-            .iter()
-            .all(|event| event.event_type == "reconciled_final"));
-        assert!(reconciliation
-            .iter()
-            .all(|event| event.segment_id.ends_with("-reconciled")));
+        assert!(
+            reconciliation
+                .iter()
+                .all(|event| event.event_type == "reconciled_final")
+        );
+        assert!(
+            reconciliation
+                .iter()
+                .all(|event| event.segment_id.ends_with("-reconciled"))
+        );
     }
 
     #[test]
@@ -8275,9 +9865,11 @@ mod tests {
         );
 
         assert_eq!(events.len(), 2);
-        assert!(events
-            .iter()
-            .all(|event| event.event_type == "reconciled_final"));
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type == "reconciled_final")
+        );
         assert!(events.iter().all(|event| event.start_ms == 1_700));
         let lineage = events
             .iter()
@@ -8363,14 +9955,18 @@ mod tests {
         let merged = merge_transcript_events(merged);
         let reconciled_text = reconstruct_transcript(&merged);
 
-        assert!(merged
-            .iter()
-            .any(|event| event.event_type == "reconciled_final"));
+        assert!(
+            merged
+                .iter()
+                .any(|event| event.event_type == "reconciled_final")
+        );
         assert!(merged.iter().any(|event| event.event_type == "final"));
-        assert!(merged
-            .iter()
-            .filter(|event| event.event_type == "reconciled_final")
-            .all(|event| event.source_final_segment_id.is_some()));
+        assert!(
+            merged
+                .iter()
+                .filter(|event| event.event_type == "reconciled_final")
+                .all(|event| event.source_final_segment_id.is_some())
+        );
         assert!(reconciled_text.len() >= baseline_text.len());
         assert!(reconciled_text.contains("mic complete transcript"));
         assert!(reconciled_text.contains("system complete transcript"));
@@ -8499,6 +10095,127 @@ mod tests {
     }
 
     #[test]
+    fn live_capture_output_path_uses_input_wav_for_live_stream() {
+        let mut config = TranscribeConfig::default();
+        config.live_stream = true;
+        config.live_chunked = true;
+        config.input_wav = PathBuf::from("artifacts/live-stream.input.wav");
+        config.out_wav = PathBuf::from("artifacts/live-stream.out.wav");
+
+        assert_eq!(
+            live_capture_output_path(&config),
+            Path::new("artifacts/live-stream.input.wav")
+        );
+    }
+
+    #[test]
+    fn live_capture_materialization_paths_follow_runtime_mode_semantics() {
+        let mut live_stream = TranscribeConfig::default();
+        live_stream.live_stream = true;
+        live_stream.live_chunked = true;
+        live_stream.input_wav = PathBuf::from("artifacts/stream.input.wav");
+        live_stream.out_wav = PathBuf::from("artifacts/stream.out.wav");
+
+        let (stream_from, stream_to) = live_capture_materialization_paths(&live_stream);
+        assert_eq!(stream_from, Path::new("artifacts/stream.input.wav"));
+        assert_eq!(stream_to, Path::new("artifacts/stream.out.wav"));
+
+        let mut chunked = TranscribeConfig::default();
+        chunked.live_stream = false;
+        chunked.live_chunked = true;
+        chunked.input_wav = PathBuf::from("artifacts/chunked.input.wav");
+        chunked.out_wav = PathBuf::from("artifacts/chunked.out.wav");
+
+        let (chunked_from, chunked_to) = live_capture_materialization_paths(&chunked);
+        assert_eq!(chunked_from, Path::new("artifacts/chunked.out.wav"));
+        assert_eq!(chunked_to, Path::new("artifacts/chunked.input.wav"));
+    }
+
+    #[test]
+    fn streaming_capture_session_grows_live_stream_input_wav_during_runtime() {
+        let temp_dir = write_temp_dir("recordit-live-stream-input-growth");
+        let fixture = temp_dir.join("fixture.wav");
+        let input_wav = temp_dir.join("runtime.input.wav");
+        write_test_stereo_wav(&fixture, 200, 600);
+
+        let capture_config = LiveCaptureConfig {
+            duration_secs: 3,
+            output: input_wav.clone(),
+            target_rate_hz: 200,
+            mismatch_policy: LiveCaptureSampleRateMismatchPolicy::AdaptStreamRate,
+            callback_contract_mode: LiveCaptureCallbackMode::Warn,
+        };
+
+        let _guard = env_lock().lock().unwrap();
+        let original_fixture = env::var("RECORDIT_FAKE_CAPTURE_FIXTURE").ok();
+        let original_realtime = env::var("RECORDIT_FAKE_CAPTURE_REALTIME").ok();
+        let original_restart = env::var("RECORDIT_FAKE_CAPTURE_RESTART_COUNT").ok();
+        unsafe {
+            env::set_var("RECORDIT_FAKE_CAPTURE_FIXTURE", &fixture);
+            env::set_var("RECORDIT_FAKE_CAPTURE_REALTIME", "1");
+            env::set_var("RECORDIT_FAKE_CAPTURE_RESTART_COUNT", "0");
+        }
+
+        let worker = std::thread::spawn({
+            let config = capture_config.clone();
+            move || {
+                let mut sink = NoopCaptureSink;
+                run_streaming_capture_session(&config, &mut sink)
+            }
+        });
+
+        let mut observed_growth = false;
+        for _ in 0..120 {
+            if let Ok(metadata) = fs::metadata(&input_wav) {
+                if metadata.len() > 44 {
+                    observed_growth = true;
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        let capture_result = worker.join().unwrap().unwrap();
+        restore_optional_env("RECORDIT_FAKE_CAPTURE_FIXTURE", original_fixture);
+        restore_optional_env("RECORDIT_FAKE_CAPTURE_REALTIME", original_realtime);
+        restore_optional_env("RECORDIT_FAKE_CAPTURE_RESTART_COUNT", original_restart);
+
+        assert!(
+            observed_growth,
+            "expected input WAV growth during active capture"
+        );
+        assert!(input_wav.is_file());
+        assert!(fs::metadata(&input_wav).unwrap().len() > 44);
+        assert_eq!(capture_result.progressive_output_path, input_wav);
+
+        let telemetry_path = super::live_capture_telemetry_path(&input_wav);
+        let _ = fs::remove_file(telemetry_path);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn input_wav_semantics_describes_mode_roles() {
+        let mut config = TranscribeConfig::default();
+
+        assert_eq!(
+            input_wav_semantics(&config),
+            "representative offline fixture input path"
+        );
+
+        config.live_chunked = true;
+        assert_eq!(
+            input_wav_semantics(&config),
+            "representative live scratch artifact mirrored from canonical out_wav after capture"
+        );
+
+        config.live_stream = true;
+        assert_eq!(
+            input_wav_semantics(&config),
+            "progressive live capture scratch artifact (materialized into canonical out_wav on success)"
+        );
+    }
+
+    #[test]
     fn cleanup_queue_drops_when_full_without_blocking() {
         let mut config = TranscribeConfig::default();
         config.llm_cleanup = true;
@@ -8529,6 +10246,57 @@ mod tests {
         assert_eq!(telemetry.processed, telemetry.enqueued);
         assert!(telemetry.failed >= telemetry.processed);
         assert!(telemetry.drain_completed);
+    }
+
+    #[test]
+    fn final_buffering_retries_without_queue_drop() {
+        let temp_dir = write_temp_dir("recordit-final-buffering");
+        let executor = Arc::new(MockLiveAsrExecutor {
+            prewarm_calls: AtomicUsize::new(0),
+            transcribe_calls: AtomicUsize::new(0),
+            sleep_ms: 20,
+        });
+        let jobs = (0..4)
+            .map(|idx| {
+                let audio_path = temp_dir.join(format!("job-{idx}.wav"));
+                fs::write(&audio_path, b"tmp").unwrap();
+                LiveAsrJob {
+                    job_id: idx,
+                    class: LiveAsrJobClass::Final,
+                    role: if idx % 2 == 0 { "mic" } else { "system" },
+                    label: format!("chan-{idx}"),
+                    segment_id: format!("seg-{idx}"),
+                    audio_path,
+                    is_temp_audio: true,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let (results, telemetry, final_buffering) = run_live_asr_pool_with_final_buffering(
+            executor.clone(),
+            jobs,
+            LiveAsrPoolConfig {
+                worker_count: 1,
+                queue_capacity: 1,
+                retries: 0,
+                temp_audio_policy: TempAudioPolicy::RetainOnFailure,
+            },
+        );
+
+        assert_eq!(results.len(), 4);
+        assert!(results.iter().all(|result| result.success()));
+        assert_eq!(telemetry.submitted, 4);
+        assert_eq!(telemetry.succeeded, 4);
+        assert_eq!(telemetry.failed, 0);
+        assert_eq!(telemetry.dropped_queue_full, 0);
+        assert_eq!(telemetry.temp_audio_deleted, 4);
+        assert_eq!(final_buffering.submit_window, 1);
+        assert_eq!(final_buffering.deferred_final_submissions, 3);
+        assert_eq!(final_buffering.max_pending_final_backlog, 3);
+        assert_eq!(executor.prewarm_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(executor.transcribe_calls.load(Ordering::Relaxed), 4);
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[test]
@@ -8813,6 +10581,7 @@ mod tests {
                 temp_audio_deleted: 1,
                 temp_audio_retained: 1,
             },
+            final_buffering: FinalBufferingTelemetry::default(),
             chunk_queue,
             cleanup_queue: CleanupQueueTelemetry::disabled(&config),
             benchmark: BenchmarkSummary {
@@ -8831,6 +10600,10 @@ mod tests {
         assert!(manifest.contains("\"events\": ["));
         assert!(manifest.contains("\"event_type\":\"final\""));
         assert!(manifest.contains("\"segment_id\":\"mic-0\""));
+        assert!(
+            manifest
+                .contains("\"input_wav_semantics\": \"representative offline fixture input path\"")
+        );
         assert!(manifest.contains("\"out_wav_materialized\": true"));
         assert!(manifest.contains("\"out_wav_bytes\": 0"));
         assert!(manifest.contains("\"runtime_mode\": \"representative-offline\""));
@@ -8848,8 +10621,19 @@ mod tests {
         assert!(manifest.contains("\"temp_audio_deleted\":1"));
         assert!(manifest.contains("\"temp_audio_retained\":1"));
         assert!(manifest.contains("\"terminal_summary\": {"));
+        assert!(manifest.contains("\"render_mode\":\"deterministic-non-tty\""));
+        assert!(manifest.contains("\"stable_line_policy\":\"final-only\""));
         assert!(manifest.contains("\"stable_line_count\":1"));
         assert!(manifest.contains("\"stable_lines_replayed\":false"));
+        assert!(manifest.contains("\"first_emit_timing_ms\": {"));
+        assert!(manifest.contains("\"first_any\":100"));
+        assert!(manifest.contains("\"first_partial\":null"));
+        assert!(manifest.contains("\"first_final\":100"));
+        assert!(manifest.contains("\"first_stable\":100"));
+        assert!(manifest.contains("\"queue_defer\": {"));
+        assert!(manifest.contains("\"deferred_final_submissions\":0"));
+        assert!(manifest.contains("\"ordering_metadata\": {"));
+        assert!(manifest.contains("\"event_sort_key\":\"start_ms,end_ms,event_type,channel,segment_id,source_final_segment_id,text\""));
         assert!(manifest.contains("\"event_counts\": {"));
         assert!(manifest.contains("\"partial\":0"));
         assert!(manifest.contains("\"final\":1"));
@@ -8895,6 +10679,11 @@ mod tests {
         write_preflight_manifest(&config, &report).unwrap();
 
         let manifest = fs::read_to_string(out_manifest).unwrap();
+        assert!(manifest.contains("\"input_wav\": \""));
+        assert!(manifest.contains("tts_phrase.wav"));
+        assert!(manifest.contains(
+            "\"input_wav_semantics\": \"representative live scratch artifact mirrored from canonical out_wav after capture\""
+        ));
         assert!(manifest.contains("\"runtime_mode\": \"live-chunked\""));
         assert!(manifest.contains("\"runtime_mode_taxonomy\": \"representative-chunked\""));
         assert!(manifest.contains("\"runtime_mode_selector\": \"--live-chunked\""));
@@ -8915,6 +10704,7 @@ mod tests {
                 true,
                 false,
                 false,
+                "representative offline fixture input path",
             ),
             (
                 "live-chunked",
@@ -8924,6 +10714,7 @@ mod tests {
                 true,
                 true,
                 false,
+                "representative live scratch artifact mirrored from canonical out_wav after capture",
             ),
             (
                 "live-stream",
@@ -8933,6 +10724,7 @@ mod tests {
                 false,
                 false,
                 true,
+                "progressive live capture scratch artifact (materialized into canonical out_wav on success)",
             ),
         ];
 
@@ -8944,6 +10736,7 @@ mod tests {
             stable_lines_replayed,
             live_chunked,
             live_stream,
+            expected_input_wav_semantics,
         ) in cases
         {
             let mode_slug = runtime_mode.replace('-', "_");
@@ -8997,6 +10790,7 @@ mod tests {
                 lifecycle: sample_lifecycle(),
                 reconciliation: ReconciliationMatrix::none(),
                 asr_worker_pool: LiveAsrPoolTelemetry::default(),
+                final_buffering: FinalBufferingTelemetry::default(),
                 chunk_queue,
                 cleanup_queue: CleanupQueueTelemetry::disabled(&config),
                 benchmark: BenchmarkSummary {
@@ -9026,6 +10820,10 @@ mod tests {
             assert!(manifest.contains(&format!("\"live_mode\":{terminal_live_mode}")));
             assert!(manifest.contains(&format!(
                 "\"stable_lines_replayed\":{stable_lines_replayed}"
+            )));
+            assert!(manifest.contains(&format!(
+                "\"input_wav_semantics\": \"{}\"",
+                expected_input_wav_semantics
             )));
             assert!(manifest.contains("\"event_type\":\"final\""));
             assert!(manifest.contains("\"session_summary\": {"));
@@ -9096,6 +10894,7 @@ mod tests {
                 temp_audio_deleted: 2,
                 temp_audio_retained: 1,
             },
+            final_buffering: FinalBufferingTelemetry::default(),
             chunk_queue,
             cleanup_queue: CleanupQueueTelemetry::disabled(&config),
             benchmark: BenchmarkSummary {
@@ -9176,6 +10975,7 @@ mod tests {
             lifecycle: sample_lifecycle(),
             reconciliation: ReconciliationMatrix::none(),
             asr_worker_pool: LiveAsrPoolTelemetry::default(),
+            final_buffering: FinalBufferingTelemetry::default(),
             chunk_queue: LiveChunkQueueTelemetry::disabled(&config),
             cleanup_queue: CleanupQueueTelemetry::disabled(&config),
             benchmark: BenchmarkSummary {
@@ -9204,6 +11004,188 @@ mod tests {
         assert!(lifecycle_lines[1].contains("\"ready_for_transcripts\":true"));
         assert!(lifecycle_lines[2].contains("\"phase\":\"draining\""));
         assert!(lifecycle_lines[3].contains("\"phase\":\"shutdown\""));
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn runtime_jsonl_places_active_phase_before_first_transcript_event() {
+        let temp_dir = write_temp_dir("recordit-runtime-jsonl-active-before-transcript");
+        let input_wav = temp_dir.join("input.wav");
+        let out_wav = temp_dir.join("session.wav");
+        let out_jsonl = temp_dir.join("session.jsonl");
+        File::create(&input_wav).unwrap();
+        File::create(&out_wav).unwrap();
+
+        let mut config = TranscribeConfig::default();
+        config.input_wav = input_wav.clone();
+        config.out_wav = out_wav.clone();
+        config.out_jsonl = out_jsonl.clone();
+
+        let report = LiveRunReport {
+            generated_at_utc: "2026-02-28T00:00:00Z".to_string(),
+            backend_id: "whispercpp",
+            resolved_model_path: temp_dir.join("model.bin"),
+            resolved_model_source: "test".to_string(),
+            channel_mode: ChannelMode::Separate,
+            active_channel_mode: ChannelMode::Separate,
+            transcript_text: "hello".to_string(),
+            channel_transcripts: vec![super::ChannelTranscriptSummary {
+                role: "mic",
+                label: "mic".to_string(),
+                text: "hello".to_string(),
+            }],
+            vad_boundaries: vec![VadBoundary {
+                id: 0,
+                start_ms: 0,
+                end_ms: 100,
+                source: "energy_threshold",
+            }],
+            events: vec![final_event("mic-0", "mic", "hello world")],
+            degradation_events: Vec::new(),
+            trust_notices: Vec::new(),
+            lifecycle: sample_lifecycle(),
+            reconciliation: ReconciliationMatrix::none(),
+            asr_worker_pool: LiveAsrPoolTelemetry::default(),
+            final_buffering: FinalBufferingTelemetry::default(),
+            chunk_queue: LiveChunkQueueTelemetry::disabled(&config),
+            cleanup_queue: CleanupQueueTelemetry::disabled(&config),
+            benchmark: BenchmarkSummary {
+                run_count: 1,
+                wall_ms_p50: 1.0,
+                wall_ms_p95: 1.0,
+                partial_slo_met: true,
+                final_slo_met: true,
+            },
+            benchmark_summary_csv: temp_dir.join("summary.csv"),
+            benchmark_runs_csv: temp_dir.join("runs.csv"),
+        };
+
+        write_runtime_jsonl(&config, &report).unwrap();
+        let lines = fs::read_to_string(&out_jsonl)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let active_idx = lines
+            .iter()
+            .position(|line| {
+                line.contains("\"event_type\":\"lifecycle_phase\"")
+                    && line.contains("\"phase\":\"active\"")
+            })
+            .expect("active lifecycle line missing");
+        let first_transcript_idx = lines
+            .iter()
+            .position(|line| {
+                line.contains("\"event_type\":\"partial\"")
+                    || line.contains("\"event_type\":\"final\"")
+                    || line.contains("\"event_type\":\"reconciled_final\"")
+            })
+            .expect("transcript line missing");
+        assert!(
+            active_idx < first_transcript_idx,
+            "expected active lifecycle before first transcript event (active_idx={active_idx}, first_transcript_idx={first_transcript_idx})"
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn incremental_runtime_sink_emits_stable_transcript_during_active_phase() {
+        let temp_dir = write_temp_dir("recordit-live-stream-runtime-jsonl-growth");
+        let out_jsonl = temp_dir.join("runtime.jsonl");
+        let mut config = TranscribeConfig::default();
+        config.out_jsonl = out_jsonl.clone();
+
+        let mut sink = CollectingRuntimeOutputSink::with_incremental_jsonl(
+            super::LiveStreamIncrementalJsonlWriter::open(&config).unwrap(),
+        );
+        RuntimeOutputSink::emit(
+            &mut sink,
+            RuntimeOutputEvent::Lifecycle {
+                emit_seq: 1,
+                phase: LiveRuntimePhase::Warmup,
+                detail: "warmup".to_string(),
+            },
+        )
+        .unwrap();
+        let warmup_size = fs::metadata(&out_jsonl).unwrap().len();
+        RuntimeOutputSink::emit(
+            &mut sink,
+            RuntimeOutputEvent::Lifecycle {
+                emit_seq: 2,
+                phase: LiveRuntimePhase::Active,
+                detail: "active".to_string(),
+            },
+        )
+        .unwrap();
+        RuntimeOutputSink::emit(
+            &mut sink,
+            RuntimeOutputEvent::AsrCompleted {
+                emit_seq: 3,
+                result: RuntimeAsrResult {
+                    job: RuntimeAsrJobSpec {
+                        emit_seq: 3,
+                        job_class: RuntimeAsrJobClass::Final,
+                        channel: "microphone".to_string(),
+                        segment_id: "microphone-seg-0001".to_string(),
+                        segment_ord: 1,
+                        window_ord: 1,
+                        start_ms: 200,
+                        end_ms: 900,
+                    },
+                    transcript_text: "stable text".to_string(),
+                },
+            },
+        )
+        .unwrap();
+        let stable_size = fs::metadata(&out_jsonl).unwrap().len();
+        RuntimeOutputSink::emit(
+            &mut sink,
+            RuntimeOutputEvent::Lifecycle {
+                emit_seq: 4,
+                phase: LiveRuntimePhase::Draining,
+                detail: "draining".to_string(),
+            },
+        )
+        .unwrap();
+        sink.finalize_incremental_jsonl().unwrap();
+
+        assert!(
+            stable_size > warmup_size,
+            "expected JSONL to grow after stable transcript emission"
+        );
+        let lines = fs::read_to_string(&out_jsonl)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let active_idx = lines
+            .iter()
+            .position(|line| {
+                line.contains("\"event_type\":\"lifecycle_phase\"")
+                    && line.contains("\"phase\":\"active\"")
+            })
+            .unwrap();
+        let first_stable_idx = lines
+            .iter()
+            .position(|line| {
+                line.contains("\"event_type\":\"final\"")
+                    || line.contains("\"event_type\":\"llm_final\"")
+                    || line.contains("\"event_type\":\"reconciled_final\"")
+            })
+            .unwrap();
+        let draining_idx = lines
+            .iter()
+            .position(|line| {
+                line.contains("\"event_type\":\"lifecycle_phase\"")
+                    && line.contains("\"phase\":\"draining\"")
+            })
+            .unwrap();
+        assert!(
+            active_idx < first_stable_idx && first_stable_idx < draining_idx,
+            "stable transcript emit should occur during active phase"
+        );
 
         let _ = fs::remove_dir_all(temp_dir);
     }
@@ -9347,6 +11329,7 @@ mod tests {
             lifecycle: sample_lifecycle(),
             reconciliation: ReconciliationMatrix::none(),
             asr_worker_pool: LiveAsrPoolTelemetry::default(),
+            final_buffering: FinalBufferingTelemetry::default(),
             chunk_queue,
             cleanup_queue: CleanupQueueTelemetry::disabled(&config),
             benchmark: BenchmarkSummary {
@@ -9376,9 +11359,11 @@ mod tests {
                 && line.contains("\"segment_id\":\"mic-reconciled-0000\"")
                 && line.contains("\"source_final_segment_id\":\"mic-chunk-0000-0-4000\"")
         }));
-        assert!(jsonl
-            .lines()
-            .any(|line| line.contains("\"event_type\":\"chunk_queue\"")));
+        assert!(
+            jsonl
+                .lines()
+                .any(|line| line.contains("\"event_type\":\"chunk_queue\""))
+        );
 
         let manifest = fs::read_to_string(&out_manifest).unwrap();
         assert!(manifest.contains("\"events\": ["));
@@ -9556,6 +11541,22 @@ mod tests {
         }
         writer.finalize().unwrap();
         path
+    }
+
+    fn write_test_stereo_wav(path: &Path, sample_rate_hz: u32, frame_count: usize) {
+        let spec = WavSpec {
+            channels: 2,
+            sample_rate: sample_rate_hz,
+            bits_per_sample: 32,
+            sample_format: SampleFormat::Float,
+        };
+        let mut writer = WavWriter::create(path, spec).unwrap();
+        for idx in 0..frame_count {
+            let sample = ((idx % 48) as f32 / 24.0) - 1.0;
+            writer.write_sample(sample).unwrap(); // microphone
+            writer.write_sample(-sample).unwrap(); // system audio
+        }
+        writer.finalize().unwrap();
     }
 
     fn write_temp_dir(prefix: &str) -> PathBuf {

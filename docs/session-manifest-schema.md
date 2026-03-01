@@ -56,7 +56,7 @@ Top-level required fields:
   - `benchmark` (`wall_ms_p50/p95`, SLO booleans, summary/runs artifact paths)
   - `reconciliation` (`required`, `applied`, `trigger_count`, `trigger_codes`)
   - `asr_worker_pool` (prewarm status, bounded queue counters, temp-audio cleanup/retention counters)
-  - `chunk_queue` (near-live chunk queue pressure + drop-oldest semantics + lag stats: `lag_sample_count`, `lag_p50_ms`, `lag_p95_ms`, `lag_max_ms`)
+  - `chunk_queue` (live-runtime chunk queue pressure + drop/defer semantics + lag stats: `lag_sample_count`, `lag_p50_ms`, `lag_p95_ms`, `lag_max_ms`)
   - `cleanup_queue` (queue pressure + drain semantics)
   - `degradation_events`
   - `trust` (structured trust notices)
@@ -124,7 +124,7 @@ Current status values:
 
 `terminal_summary` captures how the operator-facing transcript summary behaved without requiring terminal replay:
 
-- `live_mode` (bool; `true` for live/near-live runtime selectors)
+- `live_mode` (bool; `true` for `--live-chunked` or `--live-stream` runtime selectors)
 - `stable_line_count` (int; number of deterministic stable transcript lines available at close)
 - `stable_lines_replayed` (bool; `false` when live runtime already emitted stable lines during execution, `true` for non-live summary replay)
 - `stable_lines` (ordered string array; exact stable transcript lines in deterministic summary order)
@@ -184,7 +184,7 @@ Use these in order:
   - any non-empty trust notices should be treated as a calibrated degraded run, not a silent pass
   - interpret `trust.notices[].code` together with `reconciliation.trigger_codes` when deciding whether `final` or `reconciled_final` is the canonical review surface
 4. Queue isolation:
-  - inspect near-live `chunk_queue` counters (`dropped_oldest`, `high_water`, `lag_p95_ms`) for backlog pressure severity
+  - inspect live-runtime `chunk_queue` counters (`dropped_oldest`, `high_water`, `lag_p95_ms`) for backlog pressure severity
   - inspect `cleanup_queue` counters (`dropped_queue_full`, `failed`, `timed_out`, `pending`, `drain_completed`)
 5. Terminal/operator parity:
   - inspect `terminal_summary` to determine whether stable transcript lines were shown during runtime or replayed only at shutdown
@@ -210,7 +210,7 @@ For cross-run comparisons, prefer:
 
 1. Invalid harness runs (for example loader-context failures) can show misleadingly low latency/RSS and must be excluded.
 2. Cleanup-enabled runs may maintain ASR SLO while still producing degraded trust state; trust notices are part of pass/fail interpretation.
-3. Near-live reconciliation can improve post-session transcript completeness after queue pressure; interpret `reconciled_final` coverage with `chunk_queue` degradation counters rather than treating live-path drops as silent success.
+3. Live-runtime reconciliation can improve post-session transcript completeness after queue pressure; interpret `reconciled_final` coverage with `chunk_queue` degradation counters rather than treating live-path drops as silent success.
 4. Warm-up effects can skew early samples; inspect per-run series when p95 tails diverge.
 
 ## Event Timeline Notes

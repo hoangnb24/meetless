@@ -18,17 +18,17 @@ usage() {
   cat <<USAGE
 Usage: $0 [options]
 
-Runs a deterministic near-live backlog-pressure gate scenario by exercising
-the live-chunked queue contract with a deterministic fake capture harness.
+Runs a deterministic live-stream backlog-pressure gate scenario by exercising
+the true live queue contract with a deterministic fake capture harness.
 
 Options:
   --out-dir PATH            Output directory (default: artifacts/bench/gate_backlog_pressure/<utc-stamp>)
   --model PATH              ASR model path (default: artifacts/bench/models/whispercpp/ggml-tiny.en.bin)
   --fixture PATH            Deterministic stereo fixture for fake capture (default: artifacts/bench/corpus/gate_c/tts_phrase_stereo.wav)
   --duration-sec N          Runtime duration passed to capture contract (default: 3)
-  --chunk-window-ms N       Near-live chunk window for pressure scenario (default: 1200)
-  --chunk-stride-ms N       Near-live chunk stride for pressure scenario (default: 120)
-  --chunk-queue-cap N       Near-live queue capacity for pressure scenario (default: 2)
+  --chunk-window-ms N       Live-stream chunk window for pressure scenario (default: 1200)
+  --chunk-stride-ms N       Live-stream chunk stride for pressure scenario (default: 120)
+  --chunk-queue-cap N       Live-stream queue capacity for pressure scenario (default: 2)
   --min-drop-ratio F        Minimum acceptable dropped_oldest/submitted ratio (default: 0.15)
   --max-drop-ratio F        Maximum acceptable dropped_oldest/submitted ratio (default: 0.80)
   --min-lag-p95-ms N        Minimum acceptable lag_p95_ms (default: 240)
@@ -135,7 +135,7 @@ set +e
   cd "$ROOT"
   /usr/bin/time -l env DYLD_LIBRARY_PATH=/usr/lib/swift RECORDIT_FAKE_CAPTURE_FIXTURE="$FIXTURE" "$BIN" \
     --duration-sec "$DURATION_SEC" \
-    --live-chunked \
+    --live-stream \
     --input-wav "$RUN_INPUT_WAV" \
     --out-wav "$RUN_OUT_WAV" \
     --out-jsonl "$RUN_JSONL" \

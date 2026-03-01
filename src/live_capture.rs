@@ -1,20 +1,21 @@
 use crate::capture_api::{
-    capture_telemetry_path_for_output, CallbackContractSummary, CaptureCallbackAuditSummary,
-    CaptureChunk, CaptureChunkKind, CaptureChunkSummary, CaptureDegradationEvent, CaptureEvent,
-    CaptureEventCode, CaptureRecoveryAction, CaptureResampleSummary, CaptureRunSummary,
+    CallbackContractSummary, CaptureCallbackAuditSummary, CaptureChunk, CaptureChunkKind,
+    CaptureChunkSummary, CaptureDegradationEvent, CaptureEvent, CaptureEventCode,
+    CaptureRecoveryAction, CaptureResampleSummary, CaptureRunSummary,
     CaptureSampleRatePolicySummary, CaptureSink, CaptureStream, CaptureStreamSummary,
     CaptureSummary, CaptureTransportSummary, ResampleSummary, StreamingCaptureResult,
+    capture_telemetry_path_for_output,
 };
-use crate::rt_transport::{preallocated_spsc, PreallocatedProducer};
-use anyhow::{bail, Context, Result};
+use crate::rt_transport::{PreallocatedProducer, preallocated_spsc};
+use anyhow::{Context, Result, bail};
 use crossbeam_channel::RecvTimeoutError;
 use hound::{SampleFormat, WavSpec, WavWriter};
 use screencapturekit::prelude::*;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -2033,15 +2034,17 @@ pub fn run_capture_session(config: &LiveCaptureConfig) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_capture_run_summary, build_degradation_events, callback_recovery_breakdown,
-        can_restart_capture, config_from_cli_args, emit_runtime_event_deltas,
-        enforce_callback_contract, materialize_progressive_wav_snapshot, paint_chunks_timeline,
-        recovery_action_for_callback_violation, recovery_action_for_interruption,
-        resample_linear_mono, resolve_output_sample_rate, run_fake_capture_session,
-        should_materialize_progressive_snapshot, telemetry_path_for_output, write_run_telemetry,
         CallbackAuditSnapshot, CallbackContractMode, CallbackContractViolation,
+        FAKE_CAPTURE_FIXTURE_ENV, FAKE_CAPTURE_REALTIME_ENV, FAKE_CAPTURE_RESTART_COUNT_ENV,
         InterruptionPolicy, LiveCaptureConfig, RecoveryAction, ResampleStats, RunTelemetry,
-        RuntimeEventCursor, SampleRateMismatchPolicy, TimedChunk,
+        RuntimeEventCursor, SampleRateMismatchPolicy, TimedChunk, build_capture_run_summary,
+        build_degradation_events, callback_recovery_breakdown, can_restart_capture,
+        config_from_cli_args, emit_runtime_event_deltas, enforce_callback_contract,
+        materialize_progressive_wav_snapshot, maybe_sleep_for_replay, paint_chunks_timeline,
+        recovery_action_for_callback_violation, recovery_action_for_interruption,
+        resample_linear_mono, resolve_output_sample_rate, run_capture_session,
+        run_fake_capture_session, run_streaming_capture_session,
+        should_materialize_progressive_snapshot, telemetry_path_for_output, write_run_telemetry,
     };
     use crate::capture_api::{
         CaptureChunk, CaptureChunkKind, CaptureEvent, CaptureEventCode, CaptureRecoveryAction,
@@ -2049,9 +2052,11 @@ mod tests {
     };
     use crate::rt_transport::TransportStatsSnapshot;
     use screencapturekit::prelude::SCStreamOutputType;
+    use std::ffi::OsString;
     use std::fs;
-    use std::path::PathBuf;
-    use std::time::Duration;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
 
     #[derive(Default)]
     struct RecordingSink {
@@ -2072,6 +2077,66 @@ mod tests {
             self.event_sequence.push("event");
             Ok(())
         }
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        prior: Option<OsString>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let prior = std::env::var_os(key);
+            // SAFETY: test helper scopes environment changes and restores on drop.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, prior }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let prior = std::env::var_os(key);
+            // SAFETY: test helper scopes environment changes and restores on drop.
+            unsafe { std::env::remove_var(key) };
+            Self { key, prior }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(value) = self.prior.take() {
+                // SAFETY: test helper restores prior value captured before mutation.
+                unsafe { std::env::set_var(self.key, value) };
+            } else {
+                // SAFETY: test helper restores prior unset state captured before mutation.
+                unsafe { std::env::remove_var(self.key) };
+            }
+        }
+    }
+
+    fn write_fixture_stereo_wav(path: &Path, sample_rate: u32, frame_count: usize) {
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut writer = hound::WavWriter::create(path, spec)
+            .expect("fixture wav should be writable for deterministic test");
+        for idx in 0..frame_count {
+            writer
+                .write_sample(idx as f32) // mic
+                .expect("fixture mic sample write should succeed");
+            writer
+                .write_sample(-(idx as f32)) // system
+                .expect("fixture system sample write should succeed");
+        }
+        writer
+            .finalize()
+            .expect("fixture wav finalize should succeed");
     }
 
     #[test]
@@ -2118,23 +2183,7 @@ mod tests {
         let output = root.join("runtime.wav");
 
         fs::create_dir_all(&root).expect("temp test root should be creatable");
-        let spec = hound::WavSpec {
-            channels: 2,
-            sample_rate: 16_000,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
-        };
-        let mut writer = hound::WavWriter::create(&fixture, spec)
-            .expect("fixture wav should be writable for test");
-        for idx in 0..16 {
-            let sample = (idx as f32 / 16.0) * 0.5;
-            writer
-                .write_sample(sample)
-                .expect("fixture sample write should succeed");
-        }
-        writer
-            .finalize()
-            .expect("fixture wav finalize should succeed");
+        write_fixture_stereo_wav(&fixture, 16_000, 8);
 
         let config = LiveCaptureConfig {
             duration_secs: 3,
@@ -2144,6 +2193,12 @@ mod tests {
             callback_contract_mode: CallbackContractMode::Warn,
         };
 
+        let _lock = env_lock()
+            .lock()
+            .expect("fake capture env lock should not be poisoned");
+        let _fixture_env = ScopedEnvVar::unset(FAKE_CAPTURE_FIXTURE_ENV);
+        let _restart_env = ScopedEnvVar::unset(FAKE_CAPTURE_RESTART_COUNT_ENV);
+        let _realtime_env = ScopedEnvVar::unset(FAKE_CAPTURE_REALTIME_ENV);
         let mut sink = RecordingSink::default();
         let result = run_fake_capture_session(&config, &fixture, 2, &mut sink)
             .expect("fake capture harness should materialize fixture and telemetry");
@@ -2206,25 +2261,7 @@ mod tests {
         let output = root.join("runtime.wav");
 
         fs::create_dir_all(&root).expect("temp test root should be creatable");
-        let spec = hound::WavSpec {
-            channels: 2,
-            sample_rate: 200,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
-        };
-        let mut writer = hound::WavWriter::create(&fixture, spec)
-            .expect("fixture wav should be writable for test");
-        for idx in 0..16 {
-            writer
-                .write_sample(idx as f32) // mic
-                .expect("fixture mic sample write should succeed");
-            writer
-                .write_sample(-(idx as f32)) // system
-                .expect("fixture system sample write should succeed");
-        }
-        writer
-            .finalize()
-            .expect("fixture wav finalize should succeed");
+        write_fixture_stereo_wav(&fixture, 200, 16);
 
         let config = LiveCaptureConfig {
             duration_secs: 1,
@@ -2234,6 +2271,12 @@ mod tests {
             callback_contract_mode: CallbackContractMode::Warn,
         };
 
+        let _lock = env_lock()
+            .lock()
+            .expect("fake capture env lock should not be poisoned");
+        let _fixture_env = ScopedEnvVar::unset(FAKE_CAPTURE_FIXTURE_ENV);
+        let _restart_env = ScopedEnvVar::unset(FAKE_CAPTURE_RESTART_COUNT_ENV);
+        let _realtime_env = ScopedEnvVar::unset(FAKE_CAPTURE_REALTIME_ENV);
         let mut sink = RecordingSink::default();
         let result = run_fake_capture_session(&config, &fixture, 0, &mut sink)
             .expect("fake capture replay should emit deterministic chunks");
@@ -2267,6 +2310,97 @@ mod tests {
         let _ = fs::remove_file(output);
         let _ = fs::remove_file(fixture);
         let _ = fs::remove_file(telemetry_path);
+        let _ = fs::remove_dir(root);
+    }
+
+    #[test]
+    fn maybe_sleep_for_replay_respects_realtime_toggle() {
+        let accelerated_start = Instant::now();
+        maybe_sleep_for_replay(false, accelerated_start, 0.05)
+            .expect("accelerated replay sleep helper should succeed");
+        assert!(
+            accelerated_start.elapsed() < Duration::from_millis(25),
+            "accelerated mode should not add meaningful delay"
+        );
+
+        let realtime_start = Instant::now();
+        maybe_sleep_for_replay(true, realtime_start, 0.05)
+            .expect("realtime replay sleep helper should succeed");
+        assert!(
+            realtime_start.elapsed() >= Duration::from_millis(35),
+            "realtime mode should wait close to target PTS"
+        );
+    }
+
+    #[test]
+    fn run_capture_session_wrapper_matches_streaming_fake_summary_counts() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "recordit-capture-wrapper-parity-{}-{}",
+            std::process::id(),
+            stamp
+        ));
+        let fixture = root.join("fixture.wav");
+        let output_stream = root.join("streaming.wav");
+        let output_wrapper = root.join("wrapper.wav");
+        fs::create_dir_all(&root).expect("temp test root should be creatable");
+        write_fixture_stereo_wav(&fixture, 200, 40);
+
+        let stream_config = LiveCaptureConfig {
+            duration_secs: 1,
+            output: output_stream.clone(),
+            target_rate_hz: 200,
+            mismatch_policy: SampleRateMismatchPolicy::AdaptStreamRate,
+            callback_contract_mode: CallbackContractMode::Warn,
+        };
+        let wrapper_config = LiveCaptureConfig {
+            duration_secs: 1,
+            output: output_wrapper.clone(),
+            target_rate_hz: 200,
+            mismatch_policy: SampleRateMismatchPolicy::AdaptStreamRate,
+            callback_contract_mode: CallbackContractMode::Warn,
+        };
+
+        let _lock = env_lock()
+            .lock()
+            .expect("fake capture env lock should not be poisoned");
+        let _fixture_env = ScopedEnvVar::set(FAKE_CAPTURE_FIXTURE_ENV, fixture.as_os_str());
+        let _restart_env = ScopedEnvVar::set(FAKE_CAPTURE_RESTART_COUNT_ENV, "2");
+        let _realtime_env = ScopedEnvVar::set(FAKE_CAPTURE_REALTIME_ENV, "0");
+
+        let mut sink = RecordingSink::default();
+        let streaming = run_streaming_capture_session(&stream_config, &mut sink)
+            .expect("streaming capture wrapper should succeed");
+        run_capture_session(&wrapper_config).expect("compatibility wrapper should succeed");
+
+        let wrapper_telemetry_path = telemetry_path_for_output(&output_wrapper);
+        let wrapper_telemetry = fs::read_to_string(&wrapper_telemetry_path)
+            .expect("wrapper telemetry should be readable UTF-8");
+        assert!(wrapper_telemetry.contains(&format!(
+            "\"restart_count\": {}",
+            streaming.summary.restart_count
+        )));
+        assert!(wrapper_telemetry.contains(&format!(
+            "\"mic_chunks\": {}",
+            streaming.summary.microphone.chunk_count
+        )));
+        assert!(wrapper_telemetry.contains(&format!(
+            "\"system_chunks\": {}",
+            streaming.summary.system_audio.chunk_count
+        )));
+        assert_eq!(streaming.summary.restart_count, 2);
+        assert!(!sink.chunks.is_empty());
+        assert!(output_wrapper.is_file(), "wrapper output WAV should exist");
+
+        let stream_telemetry_path = telemetry_path_for_output(&output_stream);
+        let _ = fs::remove_file(output_stream);
+        let _ = fs::remove_file(stream_telemetry_path);
+        let _ = fs::remove_file(output_wrapper);
+        let _ = fs::remove_file(wrapper_telemetry_path);
+        let _ = fs::remove_file(fixture);
         let _ = fs::remove_dir(root);
     }
 
@@ -2620,15 +2754,21 @@ mod tests {
 
         let events = build_degradation_events(&telemetry, 1_700_000_000);
         assert!(!events.is_empty());
-        assert!(events
-            .iter()
-            .any(|event| event.generated_unix == 1_700_000_000));
-        assert!(events
-            .iter()
-            .any(|event| event.recovery_action == CaptureRecoveryAction::RestartStream));
-        assert!(events
-            .iter()
-            .any(|event| event.source == "missing_format_description"));
+        assert!(
+            events
+                .iter()
+                .any(|event| event.generated_unix == 1_700_000_000)
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event.recovery_action == CaptureRecoveryAction::RestartStream)
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event.source == "missing_format_description")
+        );
     }
 
     #[test]
@@ -2771,10 +2911,11 @@ mod tests {
             .events
             .iter()
             .any(|event| event.code == CaptureEventCode::StreamInterruption && event.count == 1));
-        assert!(sink
-            .events
-            .iter()
-            .any(|event| event.code == CaptureEventCode::QueueFullDrops && event.count == 2));
+        assert!(
+            sink.events
+                .iter()
+                .any(|event| event.code == CaptureEventCode::QueueFullDrops && event.count == 2)
+        );
         assert!(sink.events.iter().any(|event| event.code
             == CaptureEventCode::MissingFormatDescription
             && event.count == 1));
@@ -2796,10 +2937,11 @@ mod tests {
         emit_runtime_event_deltas(&mut sink, &mut cursor, 1, transport_b, callback_b)
             .expect("incremental update should succeed");
         assert_eq!(sink.events.len(), 5);
-        assert!(sink
-            .events
-            .iter()
-            .any(|event| event.code == CaptureEventCode::QueueFullDrops && event.count == 3));
+        assert!(
+            sink.events
+                .iter()
+                .any(|event| event.code == CaptureEventCode::QueueFullDrops && event.count == 3)
+        );
         assert!(sink.events.iter().any(|event| event.code
             == CaptureEventCode::MissingFormatDescription
             && event.count == 3));

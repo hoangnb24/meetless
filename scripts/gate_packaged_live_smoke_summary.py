@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 TRANSCRIPT_EVENT_TYPES = {"partial", "final", "llm_final", "reconciled_final"}
+STABLE_TRANSCRIPT_EVENT_TYPES = {"final", "llm_final", "reconciled_final"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -98,6 +99,8 @@ def first_emit_analysis(events: list[dict[str, Any]]) -> dict[str, Any]:
     draining_idx = None
     first_emit_idx = None
     first_emit_event: dict[str, Any] | None = None
+    first_stable_idx = None
+    first_stable_event: dict[str, Any] | None = None
 
     for idx, event in enumerate(events):
         event_type = str(event.get("event_type", ""))
@@ -110,6 +113,9 @@ def first_emit_analysis(events: list[dict[str, Any]]) -> dict[str, Any]:
         if event_type in TRANSCRIPT_EVENT_TYPES and first_emit_idx is None:
             first_emit_idx = idx
             first_emit_event = event
+        if event_type in STABLE_TRANSCRIPT_EVENT_TYPES and first_stable_idx is None:
+            first_stable_idx = idx
+            first_stable_event = event
 
     if draining_idx is None:
         draining_idx = len(events)
@@ -118,6 +124,11 @@ def first_emit_analysis(events: list[dict[str, Any]]) -> dict[str, Any]:
         active_idx is not None
         and first_emit_idx is not None
         and active_idx < first_emit_idx < draining_idx
+    )
+    first_stable_during_active = (
+        active_idx is not None
+        and first_stable_idx is not None
+        and active_idx < first_stable_idx < draining_idx
     )
 
     return {
@@ -130,6 +141,12 @@ def first_emit_analysis(events: list[dict[str, Any]]) -> dict[str, Any]:
         "first_emit_channel": "" if first_emit_event is None else str(first_emit_event.get("channel", "")),
         "first_emit_segment_id": "" if first_emit_event is None else str(first_emit_event.get("segment_id", "")),
         "first_emit_start_ms": 0 if first_emit_event is None else as_int(first_emit_event.get("start_ms")),
+        "first_stable_idx": -1 if first_stable_idx is None else first_stable_idx,
+        "first_stable_during_active": first_stable_during_active,
+        "first_stable_type": "" if first_stable_event is None else str(first_stable_event.get("event_type", "")),
+        "first_stable_channel": "" if first_stable_event is None else str(first_stable_event.get("channel", "")),
+        "first_stable_segment_id": "" if first_stable_event is None else str(first_stable_event.get("segment_id", "")),
+        "first_stable_start_ms": 0 if first_stable_event is None else as_int(first_stable_event.get("start_ms")),
     }
 
 
@@ -144,6 +161,9 @@ def main() -> None:
     runtime_manifest = load_json(args.runtime_manifest)
     runtime_events = load_jsonl(args.runtime_jsonl)
     emit = first_emit_analysis(runtime_events)
+    first_emit_timing = runtime_manifest.get("first_emit_timing_ms")
+    if not isinstance(first_emit_timing, dict):
+        first_emit_timing = {}
 
     runtime_manifest_exists = args.runtime_manifest.is_file()
     runtime_jsonl_exists = args.runtime_jsonl.is_file()
@@ -164,6 +184,11 @@ def main() -> None:
         and runtime_mode_selector == "--live-stream"
     )
     runtime_mode_status_ok = runtime_mode_status == "implemented"
+    runtime_active_phase_present = emit["active_idx"] >= 0
+    runtime_first_stable_timing_ms = as_int(first_emit_timing.get("first_stable"))
+    runtime_first_stable_emit_ok = runtime_active_phase_present and (
+        runtime_first_stable_timing_ms > 0 or emit["first_stable_idx"] >= 0
+    )
 
     out_wav = Path(str(runtime_manifest.get("out_wav", "")))
     out_wav_exists = out_wav.is_file()
@@ -249,7 +274,7 @@ def main() -> None:
             runtime_mode_ok,
             runtime_mode_status_ok,
             runtime_out_wav_truth_ok,
-            emit["first_emit_during_active"],
+            runtime_first_stable_emit_ok,
             terminal_live_mode_ok,
             terminal_replay_suppressed_ok,
             trust_surface_ok,
@@ -296,12 +321,21 @@ def main() -> None:
         writer.writerow(["runtime_out_wav_truth_ok", bool_text(runtime_out_wav_truth_ok)])
         writer.writerow(["runtime_event_count", emit["event_count"]])
         writer.writerow(["runtime_active_idx", emit["active_idx"]])
+        writer.writerow(["runtime_active_phase_present", bool_text(runtime_active_phase_present)])
         writer.writerow(["runtime_first_emit_idx", emit["first_emit_idx"]])
         writer.writerow(["runtime_first_emit_type", emit["first_emit_type"]])
         writer.writerow(["runtime_first_emit_channel", emit["first_emit_channel"]])
         writer.writerow(["runtime_first_emit_segment_id", emit["first_emit_segment_id"]])
         writer.writerow(["runtime_first_emit_start_ms", emit["first_emit_start_ms"]])
         writer.writerow(["runtime_first_emit_during_active_ok", bool_text(emit["first_emit_during_active"])])
+        writer.writerow(["runtime_first_stable_idx", emit["first_stable_idx"]])
+        writer.writerow(["runtime_first_stable_type", emit["first_stable_type"]])
+        writer.writerow(["runtime_first_stable_channel", emit["first_stable_channel"]])
+        writer.writerow(["runtime_first_stable_segment_id", emit["first_stable_segment_id"]])
+        writer.writerow(["runtime_first_stable_start_ms", emit["first_stable_start_ms"]])
+        writer.writerow(["runtime_first_stable_during_active_ok", bool_text(emit["first_stable_during_active"])])
+        writer.writerow(["runtime_first_stable_timing_ms", runtime_first_stable_timing_ms])
+        writer.writerow(["runtime_first_stable_emit_ok", bool_text(runtime_first_stable_emit_ok)])
         writer.writerow(["runtime_jsonl_transcript_event_count", jsonl_transcript_event_count])
         writer.writerow(["runtime_jsonl_transcript_surface_ok", bool_text(jsonl_transcript_surface_ok)])
         writer.writerow(["runtime_manifest_transcript_surface_ok", bool_text(manifest_transcript_surface_ok)])

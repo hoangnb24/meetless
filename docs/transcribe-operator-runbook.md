@@ -14,6 +14,7 @@ Debug commands in this runbook are troubleshooting/development surfaces, not the
 - Signed app path: `dist/SequoiaTranscribe.app`
 - Signed app sandbox artifact root: `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/`
 - Default packaged session artifacts:
+  - `session.input.wav` (progressive capture scratch artifact for `--live-stream`)
   - `session.wav`
   - `session.jsonl`
   - `session.manifest.json`
@@ -163,6 +164,7 @@ The packaged smoke gate writes deterministic evidence under:
 
 Use `summary.csv` as the canonical packaged live evidence artifact when deciding whether downstream deprecation/review work can proceed.
 If `summary.csv` reports `runtime_helper_exec_blocked=true`, treat packaged live runtime as not ready in the current signed build and keep representative-chunk mode in service.
+Key packaged live pass fields should report `true`: `runtime_first_stable_emit_ok`, `runtime_transcript_surface_ok`, and `runtime_terminal_live_mode_ok`.
 
 ### Debug fallback command (engineering-only)
 
@@ -197,13 +199,13 @@ jq '.trust, .degradation_events, .reconciliation, .chunk_queue, .session_summary
   ~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/session.manifest.json
 ```
 
-Primary near-live trust/degradation codes and what to do:
+Primary live runtime trust/degradation codes and what to do:
 
 - `mode_degradation`
   - Meaning: requested channel behavior degraded (for example stereo assumptions were not met).
   - Immediate action: verify input channel assumptions and re-run `make run-transcribe-preflight-app`.
 - `chunk_queue_backpressure`
-  - Meaning: near-live queue saturation dropped oldest queued ASR work (`chunk_queue.dropped_oldest > 0`).
+  - Meaning: live runtime queue saturation dropped oldest queued ASR work (`chunk_queue.dropped_oldest > 0`).
   - Immediate action: treat live transcript as degraded; tune `--chunk-queue-cap` or reduce load, then review `reconciled_final`/manifest output for canonical completeness.
 - `chunk_queue_backpressure_severe`
   - Meaning: sustained queue pressure materially reduced incremental transcript fidelity/timeliness.

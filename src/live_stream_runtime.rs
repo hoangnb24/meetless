@@ -41,6 +41,8 @@ pub struct LiveRuntimeState {
     pub capture_events_seen: u64,
     pub asr_jobs_queued: u64,
     pub asr_results_emitted: u64,
+    pub shutdown_abandoned_jobs: u64,
+    pub shutdown_abandoned_final_jobs: u64,
     next_emit_seq: u64,
 }
 
@@ -58,6 +60,8 @@ impl LiveRuntimeState {
             capture_events_seen: 0,
             asr_jobs_queued: 0,
             asr_results_emitted: 0,
+            shutdown_abandoned_jobs: 0,
+            shutdown_abandoned_final_jobs: 0,
             next_emit_seq: 1,
         }
     }
@@ -70,11 +74,31 @@ pub enum LiveAsrJobClass {
     Reconcile,
 }
 
+impl LiveAsrJobClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Partial => "partial",
+            Self::Final => "final",
+            Self::Reconcile => "reconcile",
+        }
+    }
+
+    const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Partial => 0,
+            Self::Final => 1,
+            Self::Reconcile => 2,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveAsrJobDraft {
-    pub class: LiveAsrJobClass,
+    pub job_class: LiveAsrJobClass,
     pub channel: String,
     pub segment_id: String,
+    pub segment_ord: u64,
+    pub window_ord: u64,
     pub start_ms: u64,
     pub end_ms: u64,
 }
@@ -82,9 +106,11 @@ pub struct LiveAsrJobDraft {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveAsrJobSpec {
     pub emit_seq: u64,
-    pub class: LiveAsrJobClass,
+    pub job_class: LiveAsrJobClass,
     pub channel: String,
     pub segment_id: String,
+    pub segment_ord: u64,
+    pub window_ord: u64,
     pub start_ms: u64,
     pub end_ms: u64,
 }
@@ -431,6 +457,7 @@ struct SegmentKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PartialCursor {
     last_partial_emit_end_ms: u64,
+    next_window_ord: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -490,15 +517,22 @@ impl StreamingVadScheduler {
             VadBoundaryKind::Open => {
                 self.partial_cursors.entry(key).or_insert(PartialCursor {
                     last_partial_emit_end_ms: boundary.start_ms,
+                    next_window_ord: 1,
                 });
             }
             VadBoundaryKind::Close | VadBoundaryKind::Flush => {
-                self.partial_cursors.remove(&key);
+                let next_window_ord = self
+                    .partial_cursors
+                    .remove(&key)
+                    .map(|cursor| cursor.next_window_ord)
+                    .unwrap_or(1);
                 if allow_job_emit {
                     out_jobs.push(LiveAsrJobDraft {
-                        class: LiveAsrJobClass::Final,
+                        job_class: LiveAsrJobClass::Final,
                         channel: boundary.channel,
                         segment_id: boundary.segment_id,
+                        segment_ord: boundary.segment_ord,
+                        window_ord: next_window_ord,
                         start_ms: boundary.start_ms,
                         end_ms: boundary.end_ms.max(boundary.start_ms),
                     });
@@ -517,13 +551,14 @@ impl StreamingVadScheduler {
             return;
         }
 
-        let (segment_id, segment_start_ms, segment_end_ms) = match (
+        let (segment_id, segment_ord, segment_start_ms, segment_end_ms) = match (
             snapshot.open_segment_id.as_ref(),
+            snapshot.open_segment_ord,
             snapshot.open_segment_start_ms,
             snapshot.open_segment_end_ms,
         ) {
-            (Some(segment_id), Some(start_ms), Some(end_ms)) => {
-                (segment_id.clone(), start_ms, end_ms)
+            (Some(segment_id), Some(segment_ord), Some(start_ms), Some(end_ms)) => {
+                (segment_id.clone(), segment_ord, start_ms, end_ms)
             }
             _ => return,
         };
@@ -538,6 +573,7 @@ impl StreamingVadScheduler {
         };
         let cursor = self.partial_cursors.entry(key).or_insert(PartialCursor {
             last_partial_emit_end_ms: segment_start_ms,
+            next_window_ord: 1,
         });
         let stride_ready = segment_end_ms
             >= cursor
@@ -556,18 +592,43 @@ impl StreamingVadScheduler {
         }
 
         out_jobs.push(LiveAsrJobDraft {
-            class: LiveAsrJobClass::Partial,
+            job_class: LiveAsrJobClass::Partial,
             channel: snapshot.channel.clone(),
             segment_id,
+            segment_ord,
+            window_ord: cursor.next_window_ord,
             start_ms: window_start,
             end_ms: segment_end_ms,
         });
         cursor.last_partial_emit_end_ms = segment_end_ms;
+        cursor.next_window_ord = cursor.next_window_ord.saturating_add(1);
     }
 
     fn drain_pending_reconcile_jobs(&mut self, out_jobs: &mut Vec<LiveAsrJobDraft>) {
         out_jobs.extend(self.pending_reconcile_jobs.drain(..));
     }
+}
+
+pub fn merge_live_asr_results(mut results: Vec<LiveAsrResult>) -> Vec<LiveAsrResult> {
+    results.sort_by(|a, b| {
+        a.job
+            .segment_ord
+            .cmp(&b.job.segment_ord)
+            .then_with(|| a.job.window_ord.cmp(&b.job.window_ord))
+            .then_with(|| {
+                a.job
+                    .job_class
+                    .sort_rank()
+                    .cmp(&b.job.job_class.sort_rank())
+            })
+            .then_with(|| a.job.channel.cmp(&b.job.channel))
+            .then_with(|| a.job.segment_id.cmp(&b.job.segment_id))
+            .then_with(|| a.job.start_ms.cmp(&b.job.start_ms))
+            .then_with(|| a.job.end_ms.cmp(&b.job.end_ms))
+            .then_with(|| a.transcript_text.cmp(&b.transcript_text))
+            .then_with(|| a.job.emit_seq.cmp(&b.job.emit_seq))
+    });
+    results
 }
 
 impl CaptureScheduler for StreamingVadScheduler {
@@ -653,6 +714,10 @@ pub struct LiveRuntimeSummary {
     pub capture_events_seen: u64,
     pub asr_jobs_queued: u64,
     pub asr_results_emitted: u64,
+    pub pending_jobs: u64,
+    pub pending_final_jobs: u64,
+    pub shutdown_abandoned_jobs: u64,
+    pub shutdown_abandoned_final_jobs: u64,
 }
 
 pub trait CaptureScheduler {
@@ -766,6 +831,7 @@ where
     }
 
     pub fn summary_snapshot(&self) -> LiveRuntimeSummary {
+        let (pending_jobs, pending_final_jobs) = self.pending_job_counts();
         LiveRuntimeSummary {
             final_phase: self.state.current_phase,
             ready_for_transcripts: self.state.ready_for_transcripts,
@@ -774,15 +840,40 @@ where
             capture_events_seen: self.state.capture_events_seen,
             asr_jobs_queued: self.state.asr_jobs_queued,
             asr_results_emitted: self.state.asr_results_emitted,
+            pending_jobs,
+            pending_final_jobs,
+            shutdown_abandoned_jobs: self.state.shutdown_abandoned_jobs,
+            shutdown_abandoned_final_jobs: self.state.shutdown_abandoned_final_jobs,
         }
     }
 
     pub fn finalize(mut self) -> Result<(S, O, F, LiveRuntimeSummary), String> {
+        if matches!(
+            self.state.current_phase,
+            LiveRuntimePhase::Warmup | LiveRuntimePhase::Active
+        ) {
+            self.transition_to(
+                LiveRuntimePhase::Draining,
+                "runtime finalizing; entering drain phase",
+            )?;
+        }
         if self.state.current_phase != LiveRuntimePhase::Shutdown {
             self.transition_to(
                 LiveRuntimePhase::Shutdown,
                 "runtime finalized; coordinator is shutting down",
             )?;
+        }
+        let (pending_jobs, pending_final_jobs) = self.pending_job_counts();
+        if pending_jobs > 0 {
+            self.state.shutdown_abandoned_jobs = self
+                .state
+                .shutdown_abandoned_jobs
+                .saturating_add(pending_jobs);
+            self.state.shutdown_abandoned_final_jobs = self
+                .state
+                .shutdown_abandoned_final_jobs
+                .saturating_add(pending_final_jobs);
+            self.pending_jobs.clear();
         }
         let summary = self.summary_snapshot();
         self.finalizer.finalize(&summary)?;
@@ -794,9 +885,11 @@ where
             let emit_seq = self.next_emit_seq();
             let spec = LiveAsrJobSpec {
                 emit_seq,
-                class: job.class,
+                job_class: job.job_class,
                 channel: job.channel,
                 segment_id: job.segment_id,
+                segment_ord: job.segment_ord,
+                window_ord: job.window_ord,
                 start_ms: job.start_ms,
                 end_ms: job.end_ms,
             };
@@ -814,6 +907,16 @@ where
         let seq = self.state.next_emit_seq;
         self.state.next_emit_seq += 1;
         seq
+    }
+
+    fn pending_job_counts(&self) -> (u64, u64) {
+        let pending_total = self.pending_jobs.len() as u64;
+        let pending_final = self
+            .pending_jobs
+            .iter()
+            .filter(|job| job.job_class == LiveAsrJobClass::Final)
+            .count() as u64;
+        (pending_total, pending_final)
     }
 }
 
@@ -834,11 +937,7 @@ fn frames_to_millis(frame_count: usize, sample_rate_hz: u32) -> u64 {
     }
     let rounded = (frame_count as u128 * 1_000) + (sample_rate_hz as u128 / 2);
     let ms = (rounded / sample_rate_hz as u128) as u64;
-    if ms == 0 {
-        1
-    } else {
-        ms
-    }
+    if ms == 0 { 1 } else { ms }
 }
 
 fn average_abs_level_per_mille(samples: &[f32]) -> u16 {
@@ -898,11 +997,41 @@ mod tests {
             }
             self.queued_on_capture += 1;
             vec![LiveAsrJobDraft {
-                class: LiveAsrJobClass::Partial,
+                job_class: LiveAsrJobClass::Partial,
                 channel: input.channel,
                 segment_id: format!("seg-{}", self.queued_on_capture),
+                segment_ord: self.queued_on_capture as u64,
+                window_ord: 1,
                 start_ms: input.pts_ms,
                 end_ms: input.pts_ms + 500,
+            }]
+        }
+    }
+
+    #[derive(Default)]
+    struct DrainFinalScheduler;
+
+    impl CaptureScheduler for DrainFinalScheduler {
+        fn on_capture(
+            &mut self,
+            _input: SchedulingInput,
+            _phase: LiveRuntimePhase,
+        ) -> Vec<LiveAsrJobDraft> {
+            Vec::new()
+        }
+
+        fn on_phase_change(&mut self, phase: LiveRuntimePhase) -> Vec<LiveAsrJobDraft> {
+            if phase != LiveRuntimePhase::Draining {
+                return Vec::new();
+            }
+            vec![LiveAsrJobDraft {
+                job_class: LiveAsrJobClass::Final,
+                channel: "microphone".to_string(),
+                segment_id: "microphone-seg-0001".to_string(),
+                segment_ord: 1,
+                window_ord: 1,
+                start_ms: 0,
+                end_ms: 120,
             }]
         }
     }
@@ -1087,6 +1216,59 @@ mod tests {
         assert_eq!(summary.capture_chunks_seen, 1);
         assert_eq!(summary.capture_events_seen, 1);
         assert_eq!(summary.asr_jobs_queued, 1);
+        assert_eq!(summary.pending_jobs, 0);
+        assert_eq!(summary.pending_final_jobs, 0);
+        assert_eq!(summary.shutdown_abandoned_jobs, 1);
+        assert_eq!(summary.shutdown_abandoned_final_jobs, 0);
+    }
+
+    #[test]
+    fn finalize_from_active_emits_draining_then_shutdown_transitions() {
+        let mut coordinator = LiveStreamCoordinator::new(
+            TestScheduler::default(),
+            TestOutput::default(),
+            TestFinalizer::default(),
+        );
+        coordinator
+            .transition_to(LiveRuntimePhase::Active, "active")
+            .expect("transition should succeed");
+
+        let (_, output, _, _) = coordinator.finalize().expect("finalize should succeed");
+        let phases: Vec<LiveRuntimePhase> = output
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                RuntimeOutputEvent::Lifecycle { phase, .. } => Some(*phase),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            phases,
+            vec![
+                LiveRuntimePhase::Active,
+                LiveRuntimePhase::Draining,
+                LiveRuntimePhase::Shutdown
+            ]
+        );
+    }
+
+    #[test]
+    fn finalize_marks_pending_final_jobs_as_abandoned_when_not_drained() {
+        let mut coordinator = LiveStreamCoordinator::new(
+            DrainFinalScheduler,
+            TestOutput::default(),
+            TestFinalizer::default(),
+        );
+        coordinator
+            .transition_to(LiveRuntimePhase::Active, "active")
+            .expect("transition should succeed");
+
+        let (_, _, _, summary) = coordinator.finalize().expect("finalize should succeed");
+        assert_eq!(summary.pending_jobs, 0);
+        assert_eq!(summary.pending_final_jobs, 0);
+        assert_eq!(summary.shutdown_abandoned_jobs, 1);
+        assert_eq!(summary.shutdown_abandoned_final_jobs, 1);
+        assert_eq!(summary.final_phase, LiveRuntimePhase::Shutdown);
     }
 
     #[test]
@@ -1189,9 +1371,11 @@ mod tests {
 
         let draining_jobs = scheduler.on_phase_change(LiveRuntimePhase::Draining);
         assert_eq!(draining_jobs.len(), 1);
-        assert_eq!(draining_jobs[0].class, LiveAsrJobClass::Final);
+        assert_eq!(draining_jobs[0].job_class, LiveAsrJobClass::Final);
         assert_eq!(draining_jobs[0].channel, "microphone");
         assert_eq!(draining_jobs[0].segment_id, "microphone-seg-0001");
+        assert_eq!(draining_jobs[0].segment_ord, 1);
+        assert_eq!(draining_jobs[0].window_ord, 1);
     }
 
     #[test]
@@ -1215,7 +1399,9 @@ mod tests {
             LiveRuntimePhase::Active,
         );
         assert_eq!(jobs_2.len(), 1);
-        assert_eq!(jobs_2[0].class, LiveAsrJobClass::Partial);
+        assert_eq!(jobs_2[0].job_class, LiveAsrJobClass::Partial);
+        assert_eq!(jobs_2[0].segment_ord, 1);
+        assert_eq!(jobs_2[0].window_ord, 1);
         assert_eq!(jobs_2[0].start_ms, 0);
         assert_eq!(jobs_2[0].end_ms, 40);
 
@@ -1230,7 +1416,9 @@ mod tests {
             LiveRuntimePhase::Active,
         );
         assert_eq!(jobs_4.len(), 1);
-        assert_eq!(jobs_4[0].class, LiveAsrJobClass::Partial);
+        assert_eq!(jobs_4[0].job_class, LiveAsrJobClass::Partial);
+        assert_eq!(jobs_4[0].segment_ord, 1);
+        assert_eq!(jobs_4[0].window_ord, 2);
         assert_eq!(jobs_4[0].start_ms, 40);
         assert_eq!(jobs_4[0].end_ms, 80);
     }
@@ -1268,9 +1456,11 @@ mod tests {
             LiveRuntimePhase::Active,
         );
         assert_eq!(silence_2.len(), 1);
-        assert_eq!(silence_2[0].class, LiveAsrJobClass::Final);
+        assert_eq!(silence_2[0].job_class, LiveAsrJobClass::Final);
         assert_eq!(silence_2[0].channel, "microphone");
         assert_eq!(silence_2[0].segment_id, "microphone-seg-0001");
+        assert_eq!(silence_2[0].segment_ord, 1);
+        assert_eq!(silence_2[0].window_ord, 1);
         assert_eq!(silence_2[0].start_ms, 0);
         assert_eq!(silence_2[0].end_ms, 60);
     }
@@ -1282,21 +1472,27 @@ mod tests {
         assert!(none.is_empty());
 
         scheduler.queue_reconcile_job(LiveAsrJobDraft {
-            class: LiveAsrJobClass::Reconcile,
+            job_class: LiveAsrJobClass::Reconcile,
             channel: "microphone".to_string(),
             segment_id: "microphone-seg-0001".to_string(),
+            segment_ord: 1,
+            window_ord: 2,
             start_ms: 0,
             end_ms: 120,
         });
 
         let reconciles = scheduler.on_phase_change(LiveRuntimePhase::Active);
         assert_eq!(reconciles.len(), 1);
-        assert_eq!(reconciles[0].class, LiveAsrJobClass::Reconcile);
+        assert_eq!(reconciles[0].job_class, LiveAsrJobClass::Reconcile);
         assert_eq!(reconciles[0].channel, "microphone");
         assert_eq!(reconciles[0].segment_id, "microphone-seg-0001");
-        assert!(scheduler
-            .on_phase_change(LiveRuntimePhase::Active)
-            .is_empty());
+        assert_eq!(reconciles[0].segment_ord, 1);
+        assert_eq!(reconciles[0].window_ord, 2);
+        assert!(
+            scheduler
+                .on_phase_change(LiveRuntimePhase::Active)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1313,16 +1509,155 @@ mod tests {
             LiveRuntimePhase::Active,
         );
         scheduler.queue_reconcile_job(LiveAsrJobDraft {
-            class: LiveAsrJobClass::Reconcile,
+            job_class: LiveAsrJobClass::Reconcile,
             channel: "microphone".to_string(),
             segment_id: "microphone-seg-0001".to_string(),
+            segment_ord: 1,
+            window_ord: 2,
             start_ms: 0,
             end_ms: 20,
         });
 
         let jobs = scheduler.on_phase_change(LiveRuntimePhase::Draining);
         assert_eq!(jobs.len(), 2);
-        assert_eq!(jobs[0].class, LiveAsrJobClass::Final);
-        assert_eq!(jobs[1].class, LiveAsrJobClass::Reconcile);
+        assert_eq!(jobs[0].job_class, LiveAsrJobClass::Final);
+        assert_eq!(jobs[0].window_ord, 1);
+        assert_eq!(jobs[1].job_class, LiveAsrJobClass::Reconcile);
+        assert_eq!(jobs[1].window_ord, 2);
+    }
+
+    #[test]
+    fn merge_live_asr_results_orders_by_segment_window_and_job_class() {
+        let merged = merge_live_asr_results(vec![
+            LiveAsrResult {
+                job: LiveAsrJobSpec {
+                    emit_seq: 9,
+                    job_class: LiveAsrJobClass::Final,
+                    channel: "system-audio".to_string(),
+                    segment_id: "system-audio-seg-0002".to_string(),
+                    segment_ord: 2,
+                    window_ord: 2,
+                    start_ms: 100,
+                    end_ms: 200,
+                },
+                transcript_text: "final".to_string(),
+            },
+            LiveAsrResult {
+                job: LiveAsrJobSpec {
+                    emit_seq: 12,
+                    job_class: LiveAsrJobClass::Reconcile,
+                    channel: "system-audio".to_string(),
+                    segment_id: "system-audio-seg-0002".to_string(),
+                    segment_ord: 2,
+                    window_ord: 3,
+                    start_ms: 100,
+                    end_ms: 220,
+                },
+                transcript_text: "reconcile".to_string(),
+            },
+            LiveAsrResult {
+                job: LiveAsrJobSpec {
+                    emit_seq: 3,
+                    job_class: LiveAsrJobClass::Partial,
+                    channel: "microphone".to_string(),
+                    segment_id: "microphone-seg-0001".to_string(),
+                    segment_ord: 1,
+                    window_ord: 1,
+                    start_ms: 0,
+                    end_ms: 40,
+                },
+                transcript_text: "partial-a".to_string(),
+            },
+            LiveAsrResult {
+                job: LiveAsrJobSpec {
+                    emit_seq: 7,
+                    job_class: LiveAsrJobClass::Partial,
+                    channel: "microphone".to_string(),
+                    segment_id: "microphone-seg-0001".to_string(),
+                    segment_ord: 1,
+                    window_ord: 2,
+                    start_ms: 40,
+                    end_ms: 80,
+                },
+                transcript_text: "partial-b".to_string(),
+            },
+        ]);
+
+        let ordering: Vec<(u64, u64, &str)> = merged
+            .iter()
+            .map(|result| {
+                (
+                    result.job.segment_ord,
+                    result.job.window_ord,
+                    result.job.job_class.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            ordering,
+            vec![
+                (1, 1, "partial"),
+                (1, 2, "partial"),
+                (2, 2, "final"),
+                (2, 3, "reconcile"),
+            ]
+        );
+    }
+
+    #[test]
+    fn late_partials_do_not_block_final_result_emission() {
+        let mut coordinator = LiveStreamCoordinator::new(
+            TestScheduler::default(),
+            TestOutput::default(),
+            TestFinalizer::default(),
+        );
+        coordinator
+            .transition_to(LiveRuntimePhase::Active, "active")
+            .expect("transition should succeed");
+
+        coordinator
+            .on_asr_result(LiveAsrResult {
+                job: LiveAsrJobSpec {
+                    emit_seq: 3,
+                    job_class: LiveAsrJobClass::Final,
+                    channel: "microphone".to_string(),
+                    segment_id: "microphone-seg-0001".to_string(),
+                    segment_ord: 1,
+                    window_ord: 2,
+                    start_ms: 0,
+                    end_ms: 80,
+                },
+                transcript_text: "final".to_string(),
+            })
+            .expect("final result should emit immediately");
+        coordinator
+            .on_asr_result(LiveAsrResult {
+                job: LiveAsrJobSpec {
+                    emit_seq: 2,
+                    job_class: LiveAsrJobClass::Partial,
+                    channel: "microphone".to_string(),
+                    segment_id: "microphone-seg-0001".to_string(),
+                    segment_ord: 1,
+                    window_ord: 1,
+                    start_ms: 0,
+                    end_ms: 40,
+                },
+                transcript_text: "partial".to_string(),
+            })
+            .expect("late partial should still emit");
+
+        let (_, output, _, _) = coordinator.finalize().expect("finalize should succeed");
+        let completed_classes: Vec<LiveAsrJobClass> = output
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                RuntimeOutputEvent::AsrCompleted { result, .. } => Some(result.job.job_class),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            completed_classes,
+            vec![LiveAsrJobClass::Final, LiveAsrJobClass::Partial]
+        );
     }
 }

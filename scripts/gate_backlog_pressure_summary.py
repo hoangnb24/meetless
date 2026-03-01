@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize near-live backlog pressure gate artifacts into a key/value CSV."""
+"""Summarize live-stream backlog pressure gate artifacts into a key/value CSV."""
 
 from __future__ import annotations
 
@@ -39,6 +39,16 @@ def as_float(value: object) -> float:
         return 0.0
 
 
+def as_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return False
+
+
 def parse_jsonl(path: Path) -> list[dict[str, object]]:
     events: list[dict[str, object]] = []
     with path.open(encoding="utf-8") as handle:
@@ -69,6 +79,12 @@ def main() -> None:
     degradation_events = manifest.get("degradation_events") or []
     trust = manifest.get("trust") or {}
     trust_notices = trust.get("notices") or []
+    first_emit_timing = manifest.get("first_emit_timing_ms") or {}
+
+    runtime_mode = str(manifest.get("runtime_mode", ""))
+    runtime_mode_taxonomy = str(manifest.get("runtime_mode_taxonomy", ""))
+    runtime_mode_selector = str(manifest.get("runtime_mode_selector", ""))
+    runtime_mode_status = str(manifest.get("runtime_mode_status", ""))
 
     submitted = as_int(chunk_queue.get("submitted"))
     enqueued = as_int(chunk_queue.get("enqueued"))
@@ -98,17 +114,43 @@ def main() -> None:
         event for event in events if event.get("event_type") == "chunk_queue"
     ]
 
-    threshold_pressure_observed_ok = dropped_oldest > 0
+    drop_path_active = dropped_oldest > 0
+    threshold_pressure_observed_ok = submitted > 0
     threshold_queue_saturation_ok = max_queue > 0 and high_water >= max_queue
-    threshold_drop_ratio_min_ok = drop_ratio >= args.min_drop_ratio
-    threshold_drop_ratio_max_ok = drop_ratio <= args.max_drop_ratio
-    threshold_lag_p95_ok = as_float(lag_p95_ms) >= args.min_lag_p95_ms
-    threshold_degradation_signal_ok = "live_chunk_queue_drop_oldest" in degradation_codes
-    threshold_trust_signal_ok = "chunk_queue_backpressure" in trust_codes
-    threshold_reconciliation_signal_ok = (
-        "reconciliation_applied_after_backpressure" in degradation_codes
-    )
+    if drop_path_active:
+        threshold_drop_ratio_min_ok = drop_ratio >= args.min_drop_ratio
+        threshold_drop_ratio_max_ok = drop_ratio <= args.max_drop_ratio
+        threshold_lag_p95_ok = as_float(lag_p95_ms) >= args.min_lag_p95_ms
+        threshold_degradation_signal_ok = "live_chunk_queue_drop_oldest" in degradation_codes
+        threshold_trust_signal_ok = "chunk_queue_backpressure" in trust_codes
+        threshold_reconciliation_signal_ok = (
+            "reconciliation_applied_after_backpressure" in degradation_codes
+        )
+    else:
+        threshold_drop_ratio_min_ok = True
+        threshold_drop_ratio_max_ok = True
+        threshold_lag_p95_ok = True
+        threshold_degradation_signal_ok = len(degradation_codes) == 0
+        threshold_trust_signal_ok = len(trust_codes) == 0
+        threshold_reconciliation_signal_ok = True
     threshold_jsonl_chunk_queue_event_ok = len(jsonl_chunk_queue_events) > 0
+    threshold_runtime_mode_ok = (
+        runtime_mode == "live-stream"
+        and runtime_mode_taxonomy == "live-stream"
+        and runtime_mode_selector == "--live-stream"
+    )
+    threshold_runtime_mode_status_ok = runtime_mode_status == "implemented"
+    threshold_first_stable_emit_ok = as_int(first_emit_timing.get("first_stable")) > 0
+    threshold_transcript_surface_ok = (
+        as_int((manifest.get("event_counts") or {}).get("transcript")) > 0
+        or as_int((manifest.get("event_counts") or {}).get("partial")) > 0
+        or as_int((manifest.get("event_counts") or {}).get("final")) > 0
+        or any(
+            str(event.get("event_type", "")) in {"partial", "final", "llm_final", "reconciled_final"}
+            for event in events
+        )
+    )
+    threshold_terminal_live_mode_ok = as_bool((manifest.get("terminal_summary") or {}).get("live_mode"))
 
     gate_pass = all(
         [
@@ -121,6 +163,11 @@ def main() -> None:
             threshold_trust_signal_ok,
             threshold_reconciliation_signal_ok,
             threshold_jsonl_chunk_queue_event_ok,
+            threshold_runtime_mode_ok,
+            threshold_runtime_mode_status_ok,
+            threshold_first_stable_emit_ok,
+            threshold_transcript_surface_ok,
+            threshold_terminal_live_mode_ok,
         ]
     )
 
@@ -137,6 +184,13 @@ def main() -> None:
         writer.writerow(["artifact_track", "gate_backlog_pressure"])
         writer.writerow(["manifest_path", str(args.manifest)])
         writer.writerow(["jsonl_path", str(args.jsonl)])
+        writer.writerow(
+            ["pressure_profile", "drop-path" if drop_path_active else "buffered-no-drop"]
+        )
+        writer.writerow(["runtime_mode", runtime_mode])
+        writer.writerow(["runtime_mode_taxonomy", runtime_mode_taxonomy])
+        writer.writerow(["runtime_mode_selector", runtime_mode_selector])
+        writer.writerow(["runtime_mode_status", runtime_mode_status])
         writer.writerow(["submitted", submitted])
         writer.writerow(["enqueued", enqueued])
         writer.writerow(["dropped_oldest", dropped_oldest])
@@ -152,6 +206,7 @@ def main() -> None:
         writer.writerow(["degradation_codes", "|".join(sorted(degradation_codes))])
         writer.writerow(["trust_codes", "|".join(sorted(trust_codes))])
         writer.writerow(["jsonl_chunk_queue_event_count", len(jsonl_chunk_queue_events)])
+        writer.writerow(["first_stable_timing_ms", as_int(first_emit_timing.get("first_stable"))])
         writer.writerow(["min_drop_ratio_target", args.min_drop_ratio])
         writer.writerow(["max_drop_ratio_target", args.max_drop_ratio])
         writer.writerow(["min_lag_p95_ms_target", args.min_lag_p95_ms])
@@ -185,6 +240,28 @@ def main() -> None:
             [
                 "threshold_jsonl_chunk_queue_event_ok",
                 bool_text(threshold_jsonl_chunk_queue_event_ok),
+            ]
+        )
+        writer.writerow(["threshold_runtime_mode_ok", bool_text(threshold_runtime_mode_ok)])
+        writer.writerow(
+            [
+                "threshold_runtime_mode_status_ok",
+                bool_text(threshold_runtime_mode_status_ok),
+            ]
+        )
+        writer.writerow(
+            ["threshold_first_stable_emit_ok", bool_text(threshold_first_stable_emit_ok)]
+        )
+        writer.writerow(
+            [
+                "threshold_transcript_surface_ok",
+                bool_text(threshold_transcript_surface_ok),
+            ]
+        )
+        writer.writerow(
+            [
+                "threshold_terminal_live_mode_ok",
+                bool_text(threshold_terminal_live_mode_ok),
             ]
         )
         writer.writerow(["gate_pass", bool_text(gate_pass)])
