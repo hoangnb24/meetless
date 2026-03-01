@@ -33,8 +33,7 @@ TRANSCRIBE_APP_LIVE_STREAM_INPUT_WAV ?= $(TRANSCRIBE_APP_ARTIFACT_ROOT)/$(TRANSC
 TRANSCRIBE_APP_LIVE_STREAM_ARGS ?=
 TRANSCRIBE_APP_SHOW_LIVE_INPUT ?= 0
 WHISPERCPP_HELPER_BIN ?= /opt/homebrew/bin/whisper-cli
-WHISPERCPP_HELPER_LIB_DIR ?= /opt/homebrew/lib
-WHISPERCPP_HELPER_LIBS ?= libwhisper.1.dylib libggml.0.dylib libggml-cpu.0.dylib libggml-blas.0.dylib libggml-metal.0.dylib libggml-base.0.dylib
+WHISPERCPP_HELPER_LIB_GLOBS ?= libwhisper*.dylib libggml*.dylib
 TRANSCRIBE_APP_HELPER_BIN_DIR ?= $(TRANSCRIBE_APP_DIR)/Contents/Resources/bin
 TRANSCRIBE_APP_HELPER_LIB_DIR ?= $(TRANSCRIBE_APP_DIR)/Contents/Resources/lib
 WHISPERCPP_MODEL_DEFAULT ?= artifacts/bench/models/whispercpp/ggml-tiny.en.bin
@@ -214,10 +213,13 @@ bundle-transcribe: build-release
 	@if [ -x "$(WHISPERCPP_HELPER_BIN)" ]; then \
 		cp "$(WHISPERCPP_HELPER_BIN)" "$(TRANSCRIBE_APP_HELPER_BIN_DIR)/whisper-cli"; \
 		chmod +x "$(TRANSCRIBE_APP_HELPER_BIN_DIR)/whisper-cli"; \
-		for lib in $(WHISPERCPP_HELPER_LIBS); do \
-			if [ -f "$(WHISPERCPP_HELPER_LIB_DIR)/$$lib" ]; then \
-				cp "$(WHISPERCPP_HELPER_LIB_DIR)/$$lib" "$(TRANSCRIBE_APP_HELPER_LIB_DIR)/$$lib"; \
-			fi; \
+		helper_real_bin="$$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve(strict=False))' "$(WHISPERCPP_HELPER_BIN)")"; \
+		helper_lib_dir="$$(python3 -c 'from pathlib import Path; import sys; print((Path(sys.argv[1]).parent / ".." / "lib").resolve(strict=False))' "$$helper_real_bin")"; \
+		for pattern in $(WHISPERCPP_HELPER_LIB_GLOBS); do \
+			for lib_path in "$$helper_lib_dir"/$$pattern; do \
+				[ -f "$$lib_path" ] || continue; \
+				cp "$$lib_path" "$(TRANSCRIBE_APP_HELPER_LIB_DIR)/$$(basename "$$lib_path")"; \
+			done; \
 		done; \
 	else \
 		echo "warning: whispercpp helper binary not found at $(WHISPERCPP_HELPER_BIN); signed-app live runtime may fail helper prewarm"; \

@@ -150,7 +150,7 @@ mkdir -p "$DOCTOR_DIR" "$RUNTIME_DIR" "$STAGED_INPUT_DIR" "$SHARED_STAGE_DIR"
 
 STAGED_MODEL="$SHARED_STAGE_DIR/$(basename "$MODEL")"
 STAGED_FIXTURE="$STAGED_INPUT_DIR/$(basename "$FIXTURE")"
-STAGED_HELPER="$STAGED_INPUT_DIR/whisper-cli"
+STAGED_HELPER="$SHARED_STAGE_DIR/whisper-cli"
 
 if [[ ! -f "$STAGED_MODEL" ]]; then
   EXISTING_STAGED_MODEL="$(find "$PACKAGED_ROOT/gates/gate_packaged_live_smoke" -path "*/staged_inputs/$(basename "$MODEL")" -type f -print -quit 2>/dev/null || true)"
@@ -162,7 +162,9 @@ if [[ ! -f "$STAGED_MODEL" ]]; then
 fi
 
 cp "$FIXTURE" "$STAGED_FIXTURE"
-cp "$WHISPER_HELPER" "$STAGED_HELPER"
+if [[ ! -f "$STAGED_HELPER" ]]; then
+  cp "$WHISPER_HELPER" "$STAGED_HELPER"
+fi
 chmod +x "$STAGED_HELPER"
 
 (
@@ -193,7 +195,7 @@ RUNTIME_MANIFEST="$RUNTIME_DIR/session.manifest.json"
 set +e
 (
   cd "$ROOT"
-  /usr/bin/time -l env RECORDIT_WHISPERCPP_CLI_PATH="$STAGED_HELPER" "$APP_BIN" \
+  /usr/bin/time -l "$APP_BIN" \
     --duration-sec "$DURATION_SEC" \
     --live-stream \
     --model-doctor \
@@ -208,7 +210,7 @@ DOCTOR_EXIT_CODE=$?
 
 (
   cd "$ROOT"
-  /usr/bin/time -l env RECORDIT_FAKE_CAPTURE_FIXTURE="$STAGED_FIXTURE" RECORDIT_WHISPERCPP_CLI_PATH="$STAGED_HELPER" "$APP_BIN" \
+  /usr/bin/time -l env RECORDIT_FAKE_CAPTURE_FIXTURE="$STAGED_FIXTURE" "$APP_BIN" \
     --duration-sec "$DURATION_SEC" \
     --live-stream \
     --input-wav "$RUNTIME_INPUT_WAV" \

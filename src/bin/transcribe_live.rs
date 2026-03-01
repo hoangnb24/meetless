@@ -1362,7 +1362,6 @@ struct AsrRequest<'a> {
 }
 
 trait AsrAdapter {
-    fn backend_id(&self) -> &'static str;
     fn transcribe(&self, request: &AsrRequest<'_>) -> Result<String, CliError>;
 }
 
@@ -1382,6 +1381,28 @@ fn backend_helper_env_var(backend: AsrBackend) -> Option<&'static str> {
     }
 }
 
+fn bundled_backend_program_from_exe(backend: AsrBackend, current_exe: &Path) -> Option<String> {
+    let helper_name = backend_helper_program_label(backend);
+    let macos_dir = current_exe.parent()?;
+    let contents_dir = macos_dir.parent()?;
+    let candidates = [
+        contents_dir.join("Resources").join("bin").join(helper_name),
+        contents_dir.join("Helpers").join(helper_name),
+    ];
+
+    for candidate in candidates {
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
+fn resolve_bundled_backend_program(backend: AsrBackend) -> Option<String> {
+    let current_exe = env::current_exe().ok()?;
+    bundled_backend_program_from_exe(backend, &current_exe)
+}
+
 fn resolve_backend_program(backend: AsrBackend, model_path: &Path) -> String {
     if let Some(env_name) = backend_helper_env_var(backend) {
         if let Ok(value) = env::var(env_name) {
@@ -1390,6 +1411,10 @@ fn resolve_backend_program(backend: AsrBackend, model_path: &Path) -> String {
                 return trimmed.to_string();
             }
         }
+    }
+
+    if let Some(program) = resolve_bundled_backend_program(backend) {
+        return program;
     }
 
     let helper_name = backend_helper_program_label(backend);
@@ -1413,10 +1438,6 @@ struct WhisperCppAdapter {
 }
 
 impl AsrAdapter for WhisperCppAdapter {
-    fn backend_id(&self) -> &'static str {
-        "whispercpp"
-    }
-
     fn transcribe(&self, request: &AsrRequest<'_>) -> Result<String, CliError> {
         let output = Command::new(&self.program)
             .args([
@@ -1461,10 +1482,6 @@ struct WhisperKitAdapter {
 }
 
 impl AsrAdapter for WhisperKitAdapter {
-    fn backend_id(&self) -> &'static str {
-        "whisperkit"
-    }
-
     fn transcribe(&self, request: &AsrRequest<'_>) -> Result<String, CliError> {
         let output = Command::new(&self.program)
             .args([
@@ -6391,6 +6408,7 @@ mod tests {
         build_reconciliation_matrix, build_rolling_chunk_windows,
         build_targeted_reconciliation_events,
         build_terminal_render_actions, build_transcript_events, build_trust_notices,
+        bundled_backend_program_from_exe,
         chunk_queue_backpressure_is_severe, collect_live_capture_continuity_events,
         detect_per_channel_vad_boundaries, detect_vad_boundaries,
         emit_latest_lifecycle_transition_jsonl,
@@ -6399,6 +6417,7 @@ mod tests {
         parse_replay_transcript_event, parse_trust_notice, prepare_channel_inputs,
         reconstruct_transcript, reconstruct_transcript_per_channel, replay_timeline,
         resolve_model_path, run_cleanup_queue_with, run_live_chunk_queue,
+        resolve_backend_program,
         runtime_mode_compatibility_matrix, write_preflight_manifest, write_runtime_jsonl,
         write_runtime_manifest, AsrBackend, AsrWorkClass, AsrWorkItem, BenchmarkSummary,
         ChannelMode, ChannelVadBoundary, CheckStatus, CleanupAttemptOutcome, CleanupQueueTelemetry, CleanupTaskStatus,
@@ -9285,6 +9304,106 @@ mod tests {
         let _ = fs::remove_dir_all(temp_dir);
     }
 
+    #[test]
+    fn bundled_backend_program_resolution_prefers_resources_bin() {
+        let temp_dir = write_temp_dir("recordit-bundled-backend-program");
+        let exe_path = temp_dir
+            .join("SequoiaTranscribe.app")
+            .join("Contents")
+            .join("MacOS")
+            .join("SequoiaTranscribe");
+        fs::create_dir_all(exe_path.parent().unwrap()).unwrap();
+        File::create(&exe_path).unwrap();
+
+        let resources_bin = temp_dir
+            .join("SequoiaTranscribe.app")
+            .join("Contents")
+            .join("Resources")
+            .join("bin");
+        fs::create_dir_all(&resources_bin).unwrap();
+        let resources_helper = resources_bin.join("whisper-cli");
+        File::create(&resources_helper).unwrap();
+
+        let helpers_dir = temp_dir
+            .join("SequoiaTranscribe.app")
+            .join("Contents")
+            .join("Helpers");
+        fs::create_dir_all(&helpers_dir).unwrap();
+        File::create(helpers_dir.join("whisper-cli")).unwrap();
+
+        let resolved =
+            bundled_backend_program_from_exe(AsrBackend::WhisperCpp, &exe_path).unwrap();
+        assert_eq!(resolved, resources_helper.to_string_lossy().to_string());
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn resolve_backend_program_prefers_env_override() {
+        let _guard = env_lock().lock().unwrap();
+        let original_env = env::var("RECORDIT_WHISPERCPP_CLI_PATH").ok();
+        unsafe {
+            env::set_var("RECORDIT_WHISPERCPP_CLI_PATH", "/tmp/custom-whisper-cli");
+        }
+
+        let temp_dir = write_temp_dir("recordit-backend-program-env");
+        let model_path = temp_dir.join("ggml.bin");
+        File::create(&model_path).unwrap();
+
+        let resolved = resolve_backend_program(AsrBackend::WhisperCpp, &model_path);
+        assert_eq!(resolved, "/tmp/custom-whisper-cli");
+
+        restore_optional_env("RECORDIT_WHISPERCPP_CLI_PATH", original_env);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn resolve_backend_program_uses_model_sibling_helper() {
+        let _guard = env_lock().lock().unwrap();
+        let original_env = env::var("RECORDIT_WHISPERCPP_CLI_PATH").ok();
+        unsafe {
+            env::remove_var("RECORDIT_WHISPERCPP_CLI_PATH");
+        }
+
+        let temp_dir = write_temp_dir("recordit-backend-program-model-sibling");
+        let model_dir = temp_dir.join("models");
+        fs::create_dir_all(&model_dir).unwrap();
+        let model_path = model_dir.join("ggml.bin");
+        File::create(&model_path).unwrap();
+        let helper_path = model_dir.join("whisper-cli");
+        File::create(&helper_path).unwrap();
+
+        let resolved = resolve_backend_program(AsrBackend::WhisperCpp, &model_path);
+        assert_eq!(resolved, helper_path.to_string_lossy().to_string());
+
+        restore_optional_env("RECORDIT_WHISPERCPP_CLI_PATH", original_env);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn resolve_backend_program_uses_model_bin_helper_fallback() {
+        let _guard = env_lock().lock().unwrap();
+        let original_env = env::var("RECORDIT_WHISPERCPP_CLI_PATH").ok();
+        unsafe {
+            env::remove_var("RECORDIT_WHISPERCPP_CLI_PATH");
+        }
+
+        let temp_dir = write_temp_dir("recordit-backend-program-model-bin");
+        let model_dir = temp_dir.join("models");
+        let model_bin_dir = model_dir.join("bin");
+        fs::create_dir_all(&model_bin_dir).unwrap();
+        let model_path = model_dir.join("ggml.bin");
+        File::create(&model_path).unwrap();
+        let helper_path = model_bin_dir.join("whisper-cli");
+        File::create(&helper_path).unwrap();
+
+        let resolved = resolve_backend_program(AsrBackend::WhisperCpp, &model_path);
+        assert_eq!(resolved, helper_path.to_string_lossy().to_string());
+
+        restore_optional_env("RECORDIT_WHISPERCPP_CLI_PATH", original_env);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
     fn final_event(segment_id: &str, channel: &str, text: &str) -> TranscriptEvent {
         TranscriptEvent {
             event_type: "final",
@@ -9338,12 +9457,16 @@ mod tests {
 
     fn restore_env_state(original_cwd: PathBuf, original_env: Option<String>) {
         env::set_current_dir(original_cwd).unwrap();
-        match original_env {
+        restore_optional_env("RECORDIT_ASR_MODEL", original_env);
+    }
+
+    fn restore_optional_env(name: &str, original_value: Option<String>) {
+        match original_value {
             Some(value) => unsafe {
-                env::set_var("RECORDIT_ASR_MODEL", value);
+                env::set_var(name, value);
             },
             None => unsafe {
-                env::remove_var("RECORDIT_ASR_MODEL");
+                env::remove_var(name);
             },
         }
     }
