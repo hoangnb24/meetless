@@ -18,7 +18,8 @@ usage() {
   cat <<'USAGE'
 Runs a transcript-completeness gate under intentionally induced near-live backlog.
 The gate reuses the deterministic backlog-pressure scenario, then compares replay
-readability before/after reconciliation (`reconciled_final` events).
+readability before/after reconciliation (`reconciled_final` events) when
+reconciliation is applied, or validates parity when the run stayed buffered.
 
 Options:
   --out-dir PATH                 Output directory (default: artifacts/bench/gate_transcript_completeness/<utc-stamp>)
@@ -96,6 +97,7 @@ fi
 mkdir -p "$OUT_DIR"
 
 BACKLOG_OUT="$OUT_DIR/backlog_pressure"
+BACKLOG_SUMMARY="$BACKLOG_OUT/summary.csv"
 PRE_JSONL="$OUT_DIR/pre_reconciliation.jsonl"
 PRE_REPLAY="$OUT_DIR/pre_replay.txt"
 POST_REPLAY="$OUT_DIR/post_replay.txt"
@@ -128,6 +130,7 @@ grep -v '"event_type":"reconciled_final"' "$BACKLOG_OUT/runtime.jsonl" >"$PRE_JS
 
 python3 "$ROOT/scripts/gate_transcript_completeness_summary.py" \
   --runtime-jsonl "$BACKLOG_OUT/runtime.jsonl" \
+  --backlog-summary-csv "$BACKLOG_SUMMARY" \
   --pre-replay "$PRE_REPLAY" \
   --post-replay "$POST_REPLAY" \
   --summary-csv "$SUMMARY_CSV" \

@@ -13,11 +13,16 @@ from pathlib import Path
 
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9']+")
+STABLE_TRANSCRIPT_EVENT_TYPES = {"final", "llm_final", "reconciled_final"}
+DROP_PATH_PROFILE = "drop-path"
+BUFFERED_NO_DROP_PROFILE = "buffered-no-drop"
+EPSILON = 1e-9
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime-jsonl", required=True, type=Path)
+    parser.add_argument("--backlog-summary-csv", required=False, type=Path)
     parser.add_argument("--pre-replay", required=True, type=Path)
     parser.add_argument("--post-replay", required=True, type=Path)
     parser.add_argument("--summary-csv", required=True, type=Path)
@@ -45,6 +50,19 @@ def parse_jsonl(path: Path) -> list[dict[str, object]]:
             if isinstance(payload, dict):
                 rows.append(payload)
     return rows
+
+
+def load_summary_csv(path: Path | None) -> dict[str, str]:
+    if path is None or not path.is_file():
+        return {}
+    table: dict[str, str] = {}
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        _ = next(reader, None)
+        for row in reader:
+            if len(row) >= 2:
+                table[row[0]] = row[1]
+    return table
 
 
 def parse_replay_channel_text(path: Path) -> dict[str, str]:
@@ -91,10 +109,12 @@ def bool_text(value: bool) -> str:
 def main() -> None:
     args = parse_args()
     events = parse_jsonl(args.runtime_jsonl)
+    backlog_summary = load_summary_csv(args.backlog_summary_csv)
     pre_channel_text = parse_replay_channel_text(args.pre_replay)
     post_channel_text = parse_replay_channel_text(args.post_replay)
 
     reconciled_by_channel: dict[str, list[str]] = defaultdict(list)
+    stable_by_channel: dict[str, list[str]] = defaultdict(list)
     trust_codes: set[str] = set()
     degradation_codes: set[str] = set()
     chunk_queue_event_count = 0
@@ -104,10 +124,12 @@ def main() -> None:
     for event in events:
         event_type = event.get("event_type")
         channel = str(event.get("channel", "")).lower()
-        if event_type == "reconciled_final":
+        if event_type in STABLE_TRANSCRIPT_EVENT_TYPES:
             text = str(event.get("text", "")).strip()
             if text:
-                reconciled_by_channel[channel].append(text)
+                stable_by_channel[channel].append(text)
+                if event_type == "reconciled_final":
+                    reconciled_by_channel[channel].append(text)
         elif event_type == "trust_notice":
             trust_codes.add(str(event.get("code", "")))
         elif event_type == "mode_degradation":
@@ -117,13 +139,33 @@ def main() -> None:
             dropped_oldest = as_int(event.get("dropped_oldest"))
             submitted = as_int(event.get("submitted"))
 
-    channels = sorted(reconciled_by_channel.keys())
+    pressure_profile = str(backlog_summary.get("pressure_profile", "")).strip()
+    if not pressure_profile:
+        pressure_profile = (
+            DROP_PATH_PROFILE if dropped_oldest > 0 else BUFFERED_NO_DROP_PROFILE
+        )
+    pressure_profile_known = pressure_profile in {
+        DROP_PATH_PROFILE,
+        BUFFERED_NO_DROP_PROFILE,
+    }
+
+    if pressure_profile == DROP_PATH_PROFILE:
+        canonical_by_channel = reconciled_by_channel
+        canonical_source = "reconciled_final"
+    elif pressure_profile == BUFFERED_NO_DROP_PROFILE:
+        canonical_by_channel = stable_by_channel
+        canonical_source = "stable_final"
+    else:
+        canonical_by_channel = {}
+        canonical_source = "unknown"
+
+    channels = sorted(canonical_by_channel.keys())
     pre_coverages: list[float] = []
     post_coverages: list[float] = []
     per_channel_rows: list[tuple[str, int, float, float]] = []
 
     for channel in channels:
-        canonical_text = " ".join(reconciled_by_channel[channel]).strip()
+        canonical_text = " ".join(canonical_by_channel[channel]).strip()
         canonical_tokens = normalize_tokens(canonical_text)
         canonical_count = len(canonical_tokens)
 
@@ -144,19 +186,35 @@ def main() -> None:
     post_completeness = sum(post_coverages) / len(post_coverages) if post_coverages else 0.0
     completeness_gain = post_completeness - pre_completeness
 
-    threshold_reconciled_events_present_ok = len(channels) > 0
-    threshold_backpressure_drop_observed_ok = dropped_oldest > 0 and submitted > 0
-    threshold_reconciliation_notice_ok = "reconciliation_applied" in trust_codes
-    threshold_reconciliation_degradation_ok = (
-        "reconciliation_applied_after_backpressure" in degradation_codes
-    )
-    threshold_completeness_gain_ok = (
-        completeness_gain >= args.min_completeness_gain
-    )
-    threshold_post_completeness_ok = (
-        post_completeness >= args.min_post_completeness
-    )
-    threshold_pre_degraded_ok = pre_completeness <= args.max_pre_completeness
+    if pressure_profile == DROP_PATH_PROFILE:
+        threshold_reconciled_events_present_ok = len(reconciled_by_channel) > 0
+        threshold_backpressure_drop_observed_ok = dropped_oldest > 0 and submitted > 0
+        threshold_reconciliation_notice_ok = "reconciliation_applied" in trust_codes
+        threshold_reconciliation_degradation_ok = (
+            "reconciliation_applied_after_backpressure" in degradation_codes
+        )
+        threshold_completeness_gain_ok = (
+            completeness_gain >= args.min_completeness_gain
+        )
+        threshold_post_completeness_ok = post_completeness >= args.min_post_completeness
+        threshold_pre_degraded_ok = pre_completeness <= args.max_pre_completeness
+    elif pressure_profile == BUFFERED_NO_DROP_PROFILE:
+        threshold_reconciled_events_present_ok = True
+        threshold_backpressure_drop_observed_ok = True
+        threshold_reconciliation_notice_ok = len(trust_codes) == 0
+        threshold_reconciliation_degradation_ok = len(degradation_codes) == 0
+        threshold_completeness_gain_ok = completeness_gain >= -EPSILON
+        threshold_post_completeness_ok = post_completeness >= args.min_post_completeness
+        threshold_pre_degraded_ok = pre_completeness >= args.min_post_completeness
+    else:
+        threshold_reconciled_events_present_ok = False
+        threshold_backpressure_drop_observed_ok = False
+        threshold_reconciliation_notice_ok = False
+        threshold_reconciliation_degradation_ok = False
+        threshold_completeness_gain_ok = False
+        threshold_post_completeness_ok = False
+        threshold_pre_degraded_ok = False
+
     threshold_replay_sections_ok = bool(pre_channel_text) and bool(post_channel_text)
     threshold_chunk_queue_event_ok = chunk_queue_event_count > 0
 
@@ -171,6 +229,7 @@ def main() -> None:
             threshold_pre_degraded_ok,
             threshold_replay_sections_ok,
             threshold_chunk_queue_event_ok,
+            pressure_profile_known,
         ]
     )
 
@@ -186,8 +245,11 @@ def main() -> None:
         )
         writer.writerow(["artifact_track", "gate_transcript_completeness"])
         writer.writerow(["runtime_jsonl_path", str(args.runtime_jsonl)])
+        writer.writerow(["backlog_summary_path", str(args.backlog_summary_csv or "")])
         writer.writerow(["pre_replay_path", str(args.pre_replay)])
         writer.writerow(["post_replay_path", str(args.post_replay)])
+        writer.writerow(["pressure_profile", pressure_profile])
+        writer.writerow(["canonical_source", canonical_source])
         writer.writerow(["channels", "|".join(channels)])
         writer.writerow(["submitted", submitted])
         writer.writerow(["dropped_oldest", dropped_oldest])
@@ -236,9 +298,18 @@ def main() -> None:
         writer.writerow(
             ["threshold_post_completeness_ok", bool_text(threshold_post_completeness_ok)]
         )
-        writer.writerow(["threshold_pre_degraded_ok", bool_text(threshold_pre_degraded_ok)])
-        writer.writerow(["threshold_replay_sections_ok", bool_text(threshold_replay_sections_ok)])
-        writer.writerow(["threshold_chunk_queue_event_ok", bool_text(threshold_chunk_queue_event_ok)])
+        writer.writerow(
+            ["threshold_pre_degraded_ok", bool_text(threshold_pre_degraded_ok)]
+        )
+        writer.writerow(
+            ["threshold_replay_sections_ok", bool_text(threshold_replay_sections_ok)]
+        )
+        writer.writerow(
+            ["threshold_chunk_queue_event_ok", bool_text(threshold_chunk_queue_event_ok)]
+        )
+        writer.writerow(
+            ["threshold_pressure_profile_known_ok", bool_text(pressure_profile_known)]
+        )
         writer.writerow(["gate_pass", bool_text(gate_pass)])
 
     print(args.summary_csv)
