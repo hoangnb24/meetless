@@ -4,3 +4,4 @@
 
 # bv (beads viewer) local config and caches
 .bv/
+__pycache__
