@@ -819,7 +819,10 @@ fn print_contract_text(name: ContractName) {
         ContractName::ExitCodes => {
             println!("contract: exit-codes");
             println!("source: {EXIT_CODE_CONTRACT_PATH}");
-            println!("published: {}", Path::new(EXIT_CODE_CONTRACT_PATH).is_file());
+            println!(
+                "published: {}",
+                Path::new(EXIT_CODE_CONTRACT_PATH).is_file()
+            );
         }
     }
 }

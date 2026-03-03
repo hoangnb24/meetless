@@ -25,11 +25,15 @@ fn inspect_contract_exit_codes_json_returns_canonical_contract() {
         Some("recordit.exit-code-contract")
     );
     assert_eq!(
-        payload.get("default_success_exit_code").and_then(Value::as_i64),
+        payload
+            .get("default_success_exit_code")
+            .and_then(Value::as_i64),
         Some(0)
     );
     assert_eq!(
-        payload.get("default_failure_exit_code").and_then(Value::as_i64),
+        payload
+            .get("default_failure_exit_code")
+            .and_then(Value::as_i64),
         Some(2)
     );
 

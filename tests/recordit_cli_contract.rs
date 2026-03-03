@@ -42,10 +42,7 @@ fn inspect_contract_json(name: &str) -> Value {
         .unwrap_or_else(|err| panic!("inspect-contract {name} returned invalid JSON: {err}"))
 }
 
-fn as_object<'a>(
-    value: &'a Value,
-    ctx: &str,
-) -> &'a serde_json::Map<String, Value> {
+fn as_object<'a>(value: &'a Value, ctx: &str) -> &'a serde_json::Map<String, Value> {
     value
         .as_object()
         .unwrap_or_else(|| panic!("expected object at {ctx}"))
@@ -71,22 +68,14 @@ fn recordit_cli_contract_exposes_canonical_top_level_surface() {
     assert_eq!(contract["contract"], "recordit-cli");
     assert_eq!(contract["version"], "v1");
     assert_eq!(contract["published"], true);
-    assert_eq!(
-        contract["source"],
-        "docs/recordit-cli-grammar-contract.md"
-    );
+    assert_eq!(contract["source"], "docs/recordit-cli-grammar-contract.md");
     assert_eq!(contract["binary"], "recordit");
 
-    let expected_verbs: BTreeSet<String> = [
-        "run",
-        "doctor",
-        "preflight",
-        "replay",
-        "inspect-contract",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect();
+    let expected_verbs: BTreeSet<String> =
+        ["run", "doctor", "preflight", "replay", "inspect-contract"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
     let verbs = as_string_set(&contract["top_level_verbs"], "top_level_verbs");
     assert_eq!(verbs, expected_verbs);
 
@@ -109,9 +98,7 @@ fn recordit_cli_contract_exposes_canonical_top_level_surface() {
 fn recordit_cli_contract_pins_mode_and_option_rules() {
     let contract = load_contract();
     let commands = as_object(
-        contract
-            .get("commands")
-            .expect("missing commands object"),
+        contract.get("commands").expect("missing commands object"),
         "commands",
     );
 
@@ -216,8 +203,14 @@ fn recordit_cli_contract_pins_mode_and_option_rules() {
 fn inspect_contract_artifact_payloads_match_published_contract_files() {
     for (name, contract_path) in [
         ("jsonl-schema", "contracts/runtime-jsonl.schema.v1.json"),
-        ("manifest-schema", "contracts/session-manifest.schema.v1.json"),
-        ("exit-codes", "contracts/recordit-exit-code-contract.v1.json"),
+        (
+            "manifest-schema",
+            "contracts/session-manifest.schema.v1.json",
+        ),
+        (
+            "exit-codes",
+            "contracts/recordit-exit-code-contract.v1.json",
+        ),
     ] {
         let actual = inspect_contract_json(name);
         let expected = load_json(contract_path);
@@ -267,12 +260,18 @@ fn inspect_contract_runtime_modes_remains_consistent_with_runtime_mode_matrix() 
         live_expected.get("runtime_mode").and_then(Value::as_str)
     );
     assert_eq!(
-        live_actual.get("runtime_mode_taxonomy").and_then(Value::as_str),
-        live_expected.get("runtime_mode_taxonomy").and_then(Value::as_str)
+        live_actual
+            .get("runtime_mode_taxonomy")
+            .and_then(Value::as_str),
+        live_expected
+            .get("runtime_mode_taxonomy")
+            .and_then(Value::as_str)
     );
     assert_eq!(
         live_actual.get("status").and_then(Value::as_str),
-        live_expected.get("runtime_mode_status").and_then(Value::as_str)
+        live_expected
+            .get("runtime_mode_status")
+            .and_then(Value::as_str)
     );
 
     assert_eq!(
@@ -299,9 +298,7 @@ fn inspect_contract_runtime_modes_remains_consistent_with_runtime_mode_matrix() 
 fn all_published_inspect_contract_names_are_machine_readable() {
     let contract = load_contract();
     let commands = as_object(
-        contract
-            .get("commands")
-            .expect("missing commands object"),
+        contract.get("commands").expect("missing commands object"),
         "commands",
     );
     let inspect = as_object(

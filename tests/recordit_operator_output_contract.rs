@@ -1,7 +1,7 @@
+use serde_json::Value;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde_json::Value;
 
 fn run_recordit(args: &[String]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_recordit"))
@@ -18,7 +18,11 @@ fn temp_output_root() -> PathBuf {
     std::env::temp_dir().join(format!("recordit-operator-output-{nanos}"))
 }
 
-fn assert_manifest_runtime_mode_fields(manifest: &Value, expected_mode: &str, expected_selector: &str) {
+fn assert_manifest_runtime_mode_fields(
+    manifest: &Value,
+    expected_mode: &str,
+    expected_selector: &str,
+) {
     let config = manifest
         .get("config")
         .and_then(Value::as_object)
@@ -29,7 +33,9 @@ fn assert_manifest_runtime_mode_fields(manifest: &Value, expected_mode: &str, ex
         Some(expected_mode)
     );
     assert_eq!(
-        manifest.get("runtime_mode_taxonomy").and_then(Value::as_str),
+        manifest
+            .get("runtime_mode_taxonomy")
+            .and_then(Value::as_str),
         Some(expected_mode)
     );
     assert_eq!(
@@ -39,9 +45,7 @@ fn assert_manifest_runtime_mode_fields(manifest: &Value, expected_mode: &str, ex
         Some(expected_selector)
     );
     assert_eq!(
-        manifest
-            .get("runtime_mode_status")
-            .and_then(Value::as_str),
+        manifest.get("runtime_mode_status").and_then(Value::as_str),
         Some("implemented")
     );
 
@@ -50,21 +54,15 @@ fn assert_manifest_runtime_mode_fields(manifest: &Value, expected_mode: &str, ex
         Some(expected_mode)
     );
     assert_eq!(
-        config
-            .get("runtime_mode_taxonomy")
-            .and_then(Value::as_str),
+        config.get("runtime_mode_taxonomy").and_then(Value::as_str),
         Some(expected_mode)
     );
     assert_eq!(
-        config
-            .get("runtime_mode_selector")
-            .and_then(Value::as_str),
+        config.get("runtime_mode_selector").and_then(Value::as_str),
         Some(expected_selector)
     );
     assert_eq!(
-        config
-            .get("runtime_mode_status")
-            .and_then(Value::as_str),
+        config.get("runtime_mode_status").and_then(Value::as_str),
         Some("implemented")
     );
 }
@@ -161,9 +159,5 @@ fn recordit_preflight_manifest_exposes_mode_labels_for_live_and_offline() {
             .expect("offline preflight should write a manifest");
     let offline_manifest: Value =
         serde_json::from_str(&offline_manifest).expect("offline preflight manifest should parse");
-    assert_manifest_runtime_mode_fields(
-        &offline_manifest,
-        "representative-offline",
-        "<default>",
-    );
+    assert_manifest_runtime_mode_fields(&offline_manifest, "representative-offline", "<default>");
 }

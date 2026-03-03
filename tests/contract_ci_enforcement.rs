@@ -49,8 +49,14 @@ fn inspect_contract_artifacts_match_published_files() {
     let root = project_root();
     let contracts = [
         ("jsonl-schema", "contracts/runtime-jsonl.schema.v1.json"),
-        ("manifest-schema", "contracts/session-manifest.schema.v1.json"),
-        ("exit-codes", "contracts/recordit-exit-code-contract.v1.json"),
+        (
+            "manifest-schema",
+            "contracts/session-manifest.schema.v1.json",
+        ),
+        (
+            "exit-codes",
+            "contracts/recordit-exit-code-contract.v1.json",
+        ),
     ];
 
     for (name, relative_path) in contracts {
@@ -87,7 +93,12 @@ fn inspect_contract_name_inventory_is_consistent_across_sources() {
             .get("commands")
             .and_then(|commands| commands.get("inspect-contract"))
             .and_then(|command| command.get("name_values"))
-            .unwrap_or_else(|| panic!("{} missing inspect-contract name_values", cli_contract_path.display())),
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} missing inspect-contract name_values",
+                    cli_contract_path.display()
+                )
+            }),
         "contracts/recordit-cli-contract.v1.json commands.inspect-contract.name_values",
     );
     assert_eq!(
@@ -161,7 +172,8 @@ fn published_contract_files_are_versioned_and_machine_readable() {
         let payload = read_json(&path);
         if let Some(schema_uri) = payload.get("$schema").and_then(Value::as_str) {
             assert_eq!(
-                schema_uri, "https://json-schema.org/draft/2020-12/schema",
+                schema_uri,
+                "https://json-schema.org/draft/2020-12/schema",
                 "{} has unexpected $schema URI",
                 path.display()
             );

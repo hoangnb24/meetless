@@ -60,7 +60,10 @@ fn session_manifest_schema_declares_runtime_and_preflight_variants() {
         schema_obj.get("$schema").and_then(Value::as_str),
         Some("https://json-schema.org/draft/2020-12/schema")
     );
-    assert_eq!(schema_obj.get("type").and_then(Value::as_str), Some("object"));
+    assert_eq!(
+        schema_obj.get("type").and_then(Value::as_str),
+        Some("object")
+    );
     assert_eq!(
         schema_obj
             .get("oneOf")
@@ -95,8 +98,14 @@ fn session_manifest_schema_declares_runtime_and_preflight_variants() {
     }
 
     let preflight_required = required_keys(preflight, "preflight_manifest");
-    for key in ["schema_version", "kind", "generated_at_utc", "overall_status", "config", "checks"]
-    {
+    for key in [
+        "schema_version",
+        "kind",
+        "generated_at_utc",
+        "overall_status",
+        "config",
+        "checks",
+    ] {
         assert!(
             preflight_required.contains(key),
             "preflight_manifest.required missing `{key}`"
@@ -175,10 +184,7 @@ fn schema_required_fields_match_frozen_manifest_shapes() {
 
         let trust = object_field(&manifest, "trust", &context);
         for key in &trust_required {
-            assert!(
-                trust.contains_key(key),
-                "{context}: trust missing `{key}`"
-            );
+            assert!(trust.contains_key(key), "{context}: trust missing `{key}`");
         }
 
         let session_summary = object_field(&manifest, "session_summary", &context);

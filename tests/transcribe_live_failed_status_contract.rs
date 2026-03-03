@@ -24,10 +24,7 @@ fn parse_failures_emit_failed_status_with_operator_remediation_hint() {
 
 #[test]
 fn replay_failures_emit_failed_status_with_replay_specific_remediation_hint() {
-    let output = run_transcribe_live(&[
-        "--replay-jsonl",
-        "artifacts/does-not-exist/runtime.jsonl",
-    ]);
+    let output = run_transcribe_live(&["--replay-jsonl", "artifacts/does-not-exist/runtime.jsonl"]);
     assert_eq!(output.status.code(), Some(2));
 
     let stderr = String::from_utf8_lossy(&output.stderr);

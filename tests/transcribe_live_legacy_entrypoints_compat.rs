@@ -22,7 +22,8 @@ fn run_transcribe_live(args: &[&str]) -> Output {
 }
 
 fn read_text(path: &Path) -> String {
-    fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
+    fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
 }
 
 fn help_text() -> String {
@@ -60,8 +61,13 @@ fn help_surface_keeps_legacy_entrypoints_and_flags_used_by_automation() {
 
 #[test]
 fn replay_entrypoint_still_replays_frozen_runtime_jsonl() {
-    let fixture = project_root().join("artifacts/validation/bd-1qfx/live-stream-cold.runtime.jsonl");
-    assert!(fixture.is_file(), "missing replay fixture {}", fixture.display());
+    let fixture =
+        project_root().join("artifacts/validation/bd-1qfx/live-stream-cold.runtime.jsonl");
+    assert!(
+        fixture.is_file(),
+        "missing replay fixture {}",
+        fixture.display()
+    );
 
     let output = run_transcribe_live(&["--replay-jsonl", fixture.to_str().unwrap()]);
     assert!(
@@ -78,8 +84,13 @@ fn replay_entrypoint_still_replays_frozen_runtime_jsonl() {
 
 #[test]
 fn conflicting_legacy_entrypoints_still_fail_fast_with_contract_message() {
-    let fixture = project_root().join("artifacts/validation/bd-1qfx/live-stream-cold.runtime.jsonl");
-    let output = run_transcribe_live(&["--model-doctor", "--replay-jsonl", fixture.to_str().unwrap()]);
+    let fixture =
+        project_root().join("artifacts/validation/bd-1qfx/live-stream-cold.runtime.jsonl");
+    let output = run_transcribe_live(&[
+        "--model-doctor",
+        "--replay-jsonl",
+        fixture.to_str().unwrap(),
+    ]);
     assert_eq!(
         output.status.code(),
         Some(2),
