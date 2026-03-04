@@ -18,6 +18,9 @@ Primary evidence inputs:
 - `artifacts/bench/gate_backlog_pressure/20260301T130103Z/status.txt`
 - `artifacts/bench/gate_backlog_pressure/20260301T130103Z/summary.csv`
 
+Related baseline freeze:
+- `docs/phase1-baseline-anchors.md` defines how the frozen runtime examples here are consumed by Phase 1 and post-opt benchmark comparisons.
+
 ## Frozen Matrix Rows
 
 | Row ID | Path type | Manifest | JSONL | Key expectations |

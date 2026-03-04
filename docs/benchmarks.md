@@ -61,3 +61,18 @@ Each run writes:
 - `runs.csv`: one row per sample execution
 
 Both files include `generated_at_utc` and `git_commit` linkage so later ADRs and follow-up tasks can cite exact evidence.
+
+## Frozen Comparison Baselines
+
+Phase 1 and post-optimization benchmark work should use the frozen anchor set in `docs/phase1-baseline-anchors.md`.
+
+That document defines:
+- canonical baseline artifact paths
+- exact comparison formulas
+- lane classification rules for compatibility, default pressure, and induced drop-path runs
+
+For downstream benchmark execution beads (`B1.02-B1.07`), use
+`docs/post-opt-benchmark-baseline-rules.md` as the operational contract that maps
+lane commands, evidence bundle expectations, and formula consumption rules.
+
+Benchmark beads should cite that baseline document rather than restating timing/drop thresholds locally.

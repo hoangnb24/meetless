@@ -134,6 +134,61 @@ Compatibility note:
    - Gate A/B decision: `docs/adr-001-backend-decision.md`
    - Gate C stress + cleanup thresholds: `docs/gate-c-report.md`, `docs/cleanup-benchmark-report.md`
 
+## Phase 3 Module Ownership (Transcribe Runtime)
+
+Phase 3 modularization moved high-change concerns out of `src/bin/transcribe_live/app.rs` into focused modules.
+
+### `app.rs` responsibility statement
+
+`app.rs` is the compatibility and composition boundary for `transcribe-live`:
+- declare and wire transcribe runtime modules
+- own compatibility-sensitive runtime/CLI contract surfaces
+- keep thin delegating wrappers for extracted module entrypoints where tests/contracts depend on stable call surfaces
+
+`app.rs` should not re-centralize concern-specific implementation logic once a dedicated module owns it.
+
+### Module ownership map
+
+| Concern | Primary module | Notes |
+|---|---|---|
+| CLI argument parsing + validation | `src/bin/transcribe_live/cli_parse.rs` | Keeps parse grammar and config guards isolated from runtime execution code. |
+| Backend/model resolution | `src/bin/transcribe_live/asr_backend.rs` | Centralizes backend binary/model path semantics and diagnostics. |
+| Representative runtime orchestration | `src/bin/transcribe_live/runtime_representative.rs` | Owns representative-offline/chunked runtime execution pipeline. |
+| Live-stream runtime orchestration | `src/bin/transcribe_live/runtime_live_stream.rs` | Owns live-stream execution, pressure handling, and event production flow. |
+| Cleanup queue + worker logic | `src/bin/transcribe_live/cleanup.rs` | Extracted from `app.rs`; `app.rs` keeps wrapper entrypoints. |
+| Preflight + model-doctor checks | `src/bin/transcribe_live/preflight.rs` | Extracted from `app.rs`; preserves CLI-visible diagnostics behavior. |
+| Reporting/close-summary rendering | `src/bin/transcribe_live/reporting.rs` | Extracted from `app.rs`; preserves terminal/output wording contracts. |
+| Reconciliation matrix/targeted reconcile logic | `src/bin/transcribe_live/reconciliation.rs` | Extracted from `app.rs`; preserves `reconciled_final` event semantics. |
+| Artifact serialization/writes | `src/bin/transcribe_live/artifacts.rs` | JSONL/manifest/preflight-manifest emission and formatting bridges. |
+| Runtime event conversion helpers | `src/bin/transcribe_live/runtime_events.rs` | Runtime-output to transcript-contract event conversion seam. |
+| Transcript ordering/reconstruction/terminal actions | `src/bin/transcribe_live/transcript_flow.rs` | Deterministic event merge and readable transcript rendering helpers. |
+| Typed runtime contract models | `src/bin/transcribe_live/contracts_models.rs`, `src/bin/transcribe_live/runtime_manifest_models.rs` | Contract/schema models for replay and manifest boundaries. |
+
+### Legacy-to-module cross-reference
+
+| Legacy responsibility cluster (formerly concentrated in `app.rs`) | Current owner |
+|---|---|
+| Preflight + model-doctor flow | `preflight.rs` |
+| Cleanup queue orchestration and endpoint worker flow | `cleanup.rs` |
+| Close-summary lines, remediation hints, and failure breadcrumbs | `reporting.rs` |
+| Reconciliation trigger matrix and targeted reconciliation event construction | `reconciliation.rs` |
+
+### Contract-sensitive boundaries
+
+Internal modularization is allowed, but these user/tool-facing surfaces must remain stable unless an explicit contract change is approved:
+- CLI grammar and runtime mode taxonomy labels
+- runtime JSONL event names and stable key semantics
+- runtime manifest schema/field semantics and ordering assumptions used by gates
+- trust/degradation codes and close-summary interpretation semantics
+
+Supporting evidence:
+- `docs/phase3-preflight-extraction-evidence.md`
+- `docs/phase3-cleanup-extraction-evidence.md`
+- `docs/phase3-reporting-extraction-evidence.md`
+- `docs/phase3-reconciliation-extraction-evidence.md`
+- `docs/phase3-app-wiring-reduction-evidence.md`
+- `docs/phase3-architecture-boundaries-refresh.md`
+
 ## Target State (Near-Term)
 
 1. Promote telemetry and readability defaults into release gates

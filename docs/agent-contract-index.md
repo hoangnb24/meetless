@@ -53,6 +53,13 @@ Minimum validation anchors in test suite:
 - `tests/runtime_mode_matrix_contract.rs`
 - `tests/recordit_exit_contract.rs`
 
+## 4a. Current No-Drift Checklist
+
+Use [`docs/contract-no-drift-checklist.md`](./contract-no-drift-checklist.md) when you need:
+- the current `pass|fail|unknown` status for each public contract surface
+- the exact `make contracts-ci` evidence set behind that status
+- the mapping from modernization beads/gates to the contract checks they must keep green
+
 ## 5. Versioning and Breaking-Change Rules
 
 Contract evolution policy is defined in `docs/schema-versioning-policy.md`.

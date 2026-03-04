@@ -82,6 +82,10 @@ Use this lightweight mapping:
 - Task completion note links to files changed and validation commands run.
 - ADRs link to the exact issue ids and benchmark artifacts used as authority.
 - Benchmark docs include timestamp and commit linkage.
+- Session handoff/checkpoint notes should use the evidence ledger in
+  [`docs/session-end-hygiene-checklist.md`](./session-end-hygiene-checklist.md) so
+  validation, artifact roots, residual risks, and follow-up issue ids are always linked
+  in the same shape.
 
 ## 7) ADR Escalation Policy
 
@@ -134,3 +138,7 @@ Before ending a session:
 3. Update issue statuses (`in_progress` to `closed` where complete).
 4. Run `br sync --flush-only`.
 5. Post handoff summary in the issue thread (scope, evidence, risks, next steps).
+
+Use the operational checklist and templates in
+[`docs/session-end-hygiene-checklist.md`](./session-end-hygiene-checklist.md) when
+the session touches modernization work, benchmarks, gate evidence, or closeout docs.

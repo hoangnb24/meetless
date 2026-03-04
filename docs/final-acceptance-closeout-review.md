@@ -117,12 +117,26 @@ The canonical documentation set for operators and agents is present and aligned:
 - `docs/rollout-migration-deprecation-checklist.md`
 - `docs/runtime-compatibility-boundary-policy.md`
 - `docs/runtime-public-contract-inventory.md`
+- `docs/security-privacy-modernization-signoff.md`
 
 Coherence conclusion:
 
 - `recordit` is the canonical operator shell
 - `transcribe-live` is still clearly documented as compatibility/debug/expert surface
 - compatibility boundaries and rollout/deprecation conditions are explicit rather than implicit
+
+### 5. Security/Privacy Addendum: pass-with-residuals
+
+Focused modernization sign-off is documented at:
+
+- `docs/security-privacy-modernization-signoff.md`
+
+Summary:
+
+- scratch/temp-audio safety controls are in place (policy matrix + unsafe target safeguards)
+- replay ingestion now runs with typed parse path, bounded line/text limits, and line-level mismatch diagnostics
+- no blocker-grade security/privacy regression was identified in this addendum review
+- residual medium risks remain explicitly tracked (retained failed temp artifacts, artifact-retention continuity)
 
 ## Remaining Non-Blocking Reality
 

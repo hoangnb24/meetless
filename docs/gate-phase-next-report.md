@@ -65,6 +65,10 @@ Observed (`20260228T153738Z`):
 - all threshold booleans true
 - `gate_pass=true`
 
+Historical baseline note:
+- this observation is the frozen induced-pressure reference used by `docs/phase1-baseline-anchors.md`
+- current accepted default profile is `buffered-no-drop`, so do not reuse this row as a default-pressure expectation
+
 ### Transcript completeness under backlog
 
 Source: `docs/gate-transcript-completeness.md`
@@ -97,8 +101,21 @@ Observed (`20260228T154530Z`):
 - all threshold booleans true
 - `gate_pass=true`
 
+Post-opt observed (`20260304T034759Z`):
+- `run_count=483`, `failure_count=0`
+- all threshold booleans true
+- `gate_pass=true`
+- drift ratios from summary metrics:
+  - latency drift ratio `1.095201` (`<= 1.25`)
+  - memory growth ratio `1.002526` (`<= 1.30`)
+  - lag drift ratio `1.000000` (`<= 1.50`)
+
+Baseline-vs-post-opt interpretation (`bd-1ady`):
+- baseline-comparable soak verdict surfaces remain parity-green (no reliability or threshold regression)
+- numeric baseline-vs-post-opt drift deltas are partially unavailable because the historical baseline `summary.csv` referenced by `docs/gate-d-report.md` is not retained locally
+- canonical synthesis: `docs/gate-near-live-soak-drift-deltas.md`
+
 ## Pass/Fail Interpretation
 
 - If any gate summary reports a failing pass field, phase reliability is failing and should block downstream packaging decisions.
 - On failure, first investigate the failing gate's local `status.txt` / `summary.csv` and linked runtime artifacts before changing global thresholds.
-

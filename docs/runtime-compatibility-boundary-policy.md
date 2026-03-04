@@ -227,7 +227,11 @@ Required:
 
 ## 7. Mechanical Decision Checklist
 
-Use this checklist for every contract-touching PR:
+Use the canonical status/evidence board in
+[`docs/contract-no-drift-checklist.md`](./contract-no-drift-checklist.md)
+for current `pass|fail|unknown` state and bead/gate mapping.
+
+Use this mechanical checklist for every contract-touching PR:
 
 1. Does this touch any `S0` surface listed in Section 3?
 2. If yes, is there an explicit migration/version plan attached?

@@ -203,6 +203,14 @@ jq '.trust, .degradation_events, .reconciliation, .chunk_queue, .session_summary
   ~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/session.manifest.json
 ```
 
+For schema-tolerant trust/degradation code extraction (handles both
+`trust.notices[]` and fallback `session_summary.trust_notices.top_codes[]`):
+
+```bash
+python3 scripts/manifest_signal_extract.py \
+  --manifest ~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/session.manifest.json
+```
+
 Primary live runtime trust/degradation codes and what to do:
 
 - `mode_degradation`
@@ -224,6 +232,23 @@ Primary live runtime trust/degradation codes and what to do:
   - Meaning: continuity telemetry was missing/unreadable, so continuity confidence is reduced.
   - Immediate action: verify writable artifact paths and rerun packaged preflight/model-doctor before trusting continuity-sensitive outcomes.
 
+Adaptive backpressure burn-in and kill-switch guidance:
+
+- Default posture: keep adaptive backpressure enabled during normal Phase 1 operation.
+- Operator kill-switch: pass `--disable-adaptive-backpressure` in live modes to pin behavior to normal mode when adaptive behavior appears to regress.
+- Enter kill-switch mode when any of these conditions holds across two consecutive runs:
+  - trust/degradation includes `chunk_queue_backpressure_severe`
+  - `session_summary.chunk_queue.drop_ratio` exceeds the induced-lane guardrail (`0.326667`)
+  - first stable timing regresses above `2332ms` versus the frozen Phase 1 anchor
+- Exit kill-switch mode only after burn-in evidence shows all of the following for at least three consecutive runs:
+  - no `chunk_queue_backpressure_severe` trust/degradation signals
+  - bounded queue pressure with stable lag (`lag_p95_ms` not worsening versus current lane baseline)
+  - first stable timing at or below the `2332ms` guardrail
+- Evidence location requirements for each burn-in decision:
+  - manifest: `session_summary`, `chunk_queue`, `trust`, `degradation_events`
+  - runtime JSONL: `chunk_queue` control events and lifecycle/trust context
+  - baseline comparison source: `docs/phase1-baseline-anchors.md`
+
 Manifest interpretation checklist for degraded runs:
 
 1. If `trust.degraded_mode_active=true`, treat run as degraded even when command exit status is success.
@@ -232,7 +257,67 @@ Manifest interpretation checklist for degraded runs:
 4. If trust code includes `continuity_*`, treat continuity-sensitive conclusions as provisional until a rerun verifies clean continuity telemetry.
 5. Use `terminal_summary` versus `session_summary` to separate what operators actually saw live from machine-normalized close-summary aggregates.
 
-## 6) Tested Failure Signatures and Fixes
+Hot-path observability breadcrumbs (runtime output, schema-safe):
+
+- `close_summary` now includes deterministic `diagnostics_*` lines for:
+  - transport input mode usage (`path` vs `pcm_window`)
+  - worker scratch write/reuse estimates
+  - backpressure mode/transition reason + per-channel processed/pending/drop estimates
+  - pump trigger counts (chunk cadence decisions vs forced drains)
+- `Runtime result` also emits `diagnostics_breadcrumbs` with artifact paths plus the same counter snapshot in one line for copy/paste incident triage.
+- These breadcrumbs are additive log output only and do not change runtime JSONL/manifest schema fields.
+
+## 6) Incident Triage Workflow (Pressure and Kill-Switch)
+
+Use this workflow for live-runtime pressure incidents where transcript trust or continuity is degraded.
+
+### Step 1: Classify incident state from manifest + close summary
+
+Primary evidence fields:
+- `trust.degraded_mode_active`
+- `trust.codes[]`
+- `degradation_events.codes[]`
+- `chunk_queue` counters (`dropped_oldest`, `drop_ratio`, `lag_p95_ms`)
+- close-summary diagnostics lines (`diagnostics_backpressure`, `diagnostics_pump`, `diagnostics_transport`)
+
+### Step 2: Map signal to operator action
+
+| Signal | Threshold / trigger | Classification | Immediate action |
+|---|---|---|---|
+| `chunk_queue_backpressure_severe` in trust/degradation codes | present | `SEVERE_PRESSURE` | Move run to degraded handling; evaluate kill-switch for next run. |
+| `chunk_queue.drop_ratio` | `> 0.326667` | `DROP_PATH_REGRESSION` | Treat as rollback candidate; collect artifacts and compare with baseline anchors. |
+| first stable emit timing | `> 2332ms` | `LATENCY_GUARDRAIL_BREACH` | Reduce load and evaluate kill-switch before accepting run quality. |
+| continuity code (`continuity_*`) | present | `CONTINUITY_RISK` | Treat continuity-sensitive conclusions as provisional until clean rerun. |
+| `reconciliation.applied=true` | true | `POST_RECOVERY_ACTIVE` | Use `reconciled_final` as canonical output for review. |
+
+Threshold anchors:
+- `docs/phase1-baseline-anchors.md`
+- `docs/optimization-readiness-decision.md`
+
+### Step 3: Decide kill-switch or rollback path
+
+Decision path:
+1. If two consecutive runs classify as `SEVERE_PRESSURE` or `DROP_PATH_REGRESSION`, enable kill-switch (`--disable-adaptive-backpressure`) for next validation run.
+2. If kill-switch run still breaches thresholds, follow rollback path from:
+   - `docs/phase1-rollback-killswitch-playbook.md`
+3. Do not return to adaptive mode until burn-in criteria are met for three consecutive runs.
+
+### Step 4: Collect and hand off incident packet
+
+Required artifact bundle:
+- session manifest path
+- session JSONL path
+- startup/close-summary logs
+- trust/degradation code list
+- chunk queue counters and lag metrics
+- command invocation (including whether kill-switch was enabled)
+
+Handoff requirements (on-call continuity):
+1. incident classification (`SEVERE_PRESSURE`, `DROP_PATH_REGRESSION`, etc.)
+2. actions already taken (retune, kill-switch, rollback candidate)
+3. explicit next action owner and deadline
+
+## 7) Tested Failure Signatures and Fixes
 
 ### A) Unwritable output path
 
@@ -289,7 +374,7 @@ Evidence:
 - `artifacts/ops/bd-1yp/preflight-moonshine.log`
 - `artifacts/ops/bd-1yp/preflight-moonshine.manifest.json`
 
-## 7) Important Model-Resolution Behavior
+## 8) Important Model-Resolution Behavior
 
 Current packaged/debug behavior is strict for explicit model overrides:
 
@@ -307,7 +392,7 @@ Operator verification path:
 - inspect `model_path` detail and `via <source>` note in preflight/model-doctor output
 - confirm manifest fields `asr_model_resolved` and `asr_model_source` match expectation
 
-## 8) Escalation Checklist
+## 9) Escalation Checklist
 
 1. Re-run preflight and capture manifest/log path.
 2. Confirm model bootstrap completed (`make setup-whispercpp-model`).
