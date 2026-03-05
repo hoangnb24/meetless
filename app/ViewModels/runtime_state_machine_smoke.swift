@@ -30,6 +30,14 @@ private actor DelayingRuntimeService: RuntimeService {
         stopInvocations += 1
         return RuntimeControlResult(accepted: true, detail: "stopped")
     }
+
+    func startInvocationCount() -> Int {
+        startInvocations
+    }
+
+    func stopInvocationCount() -> Int {
+        stopInvocations
+    }
 }
 
 private struct StaticManifestService: ManifestService {
@@ -103,11 +111,13 @@ private func runSmoke() async {
 
     await firstStart.value
     assertStateIsRunning(viewModel, message: "first launch should eventually transition to running")
-    check(await runtimeService.startInvocations == 1, "only one launch should be executed")
+    let startCount = await runtimeService.startInvocationCount()
+    check(startCount == 1, "only one launch should be executed")
 
     await viewModel.stopCurrentRun()
     check(viewModel.state == .finalizing, "successful stop should transition to finalizing")
-    check(await runtimeService.stopInvocations == 1, "exactly one stop control should run")
+    let stopCount = await runtimeService.stopInvocationCount()
+    check(stopCount == 1, "exactly one stop control should run")
 
     await viewModel.stopCurrentRun()
     check(viewModel.lastRejectedActionError?.code == .invalidInput, "stop during finalizing should be rejected")
