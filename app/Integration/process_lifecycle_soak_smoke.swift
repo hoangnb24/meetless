@@ -133,7 +133,9 @@ private func writeReadyPendingSidecar(
 }
 
 private func manifestStatus(at manifestURL: URL) throws -> String {
-    let data = try Data(contentsOf: manifestURL)
+    let handle = try FileHandle(forReadingFrom: manifestURL)
+    defer { try? handle.close() }
+    let data = try handle.readToEnd() ?? Data()
     let object = try JSONSerialization.jsonObject(with: data)
     guard
         let payload = object as? [String: Any],
