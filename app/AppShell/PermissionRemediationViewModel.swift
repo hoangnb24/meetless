@@ -2,7 +2,37 @@ import Foundation
 import AVFoundation
 import CoreGraphics
 
+func uiTestNativePermissionStatusOverride(
+    _ permission: RemediablePermission,
+    environment: [String: String] = ProcessInfo.processInfo.environment
+) -> Bool? {
+    let key: String
+    switch permission {
+    case .screenRecording:
+        key = "RECORDIT_UI_TEST_NATIVE_SCREEN_PERMISSION"
+    case .microphone:
+        key = "RECORDIT_UI_TEST_NATIVE_MICROPHONE_PERMISSION"
+    }
+
+    guard let rawValue = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+          !rawValue.isEmpty else {
+        return nil
+    }
+
+    switch rawValue {
+    case "1", "true", "yes", "granted", "authorized":
+        return true
+    case "0", "false", "no", "denied", "unauthorized":
+        return false
+    default:
+        return nil
+    }
+}
+
 private func defaultNativePermissionStatus(_ permission: RemediablePermission) -> Bool {
+    if let override = uiTestNativePermissionStatusOverride(permission) {
+        return override
+    }
     // Keep UI automation deterministic by honoring fixture-only outcomes.
     if ProcessInfo.processInfo.environment["RECORDIT_UI_TEST_MODE"] == "1" {
         return false
@@ -259,12 +289,11 @@ public final class PermissionRemediationViewModel {
             ),
         ]
 
-        if let displayItem = buildDisplayItem(
+        let displayItem = buildDisplayItem(
             checks: displayChecks,
             nativeScreenPermissionGranted: resolvedNativePermissionStatus(.screenRecording)
-        ) {
-            items.insert(displayItem, at: 1)
-        }
+        )
+        items.insert(displayItem, at: 1)
 
         return items
     }
@@ -277,7 +306,6 @@ public final class PermissionRemediationViewModel {
         defaultDetail: String,
         defaultRemediation: String
     ) -> PermissionRemediationItem {
-        let allowNativeOverride = ProcessInfo.processInfo.environment["RECORDIT_UI_TEST_MODE"] == "1"
         let nativePermissionGranted = nativePermissionStatus(permission)
         let checkIDs = checks.map(\.id)
         guard !checks.isEmpty else {
@@ -295,15 +323,6 @@ public final class PermissionRemediationViewModel {
         }
 
         if let failing = checks.first(where: { $0.status == .fail }) {
-            if nativePermissionGranted, allowNativeOverride {
-                return PermissionRemediationItem(
-                    surface: surface,
-                    status: .granted,
-                    checkIDs: checkIDs,
-                    detail: "macOS permission is granted. Runtime preflight reported: \(failing.detail)",
-                    remediation: failing.remediation ?? defaultRemediation
-                )
-            }
             if nativePermissionGranted {
                 return PermissionRemediationItem(
                     surface: surface,
@@ -335,9 +354,19 @@ public final class PermissionRemediationViewModel {
     private static func buildDisplayItem(
         checks: [PreflightCheckDTO],
         nativeScreenPermissionGranted: Bool
-    ) -> PermissionRemediationItem? {
+    ) -> PermissionRemediationItem {
         guard !checks.isEmpty else {
-            return nil
+            return PermissionRemediationItem(
+                surface: .activeDisplay,
+                status: .diagnosticsUnavailable,
+                checkIDs: [],
+                detail: nativeScreenPermissionGranted
+                    ? "Display availability diagnostics are unavailable. Run preflight again to verify an active display is ready."
+                    : "Display diagnostics are blocked until Screen Recording access is granted.",
+                remediation: nativeScreenPermissionGranted
+                    ? "Run preflight again and ensure at least one display is connected, awake, and available to Recordit."
+                    : "Grant Screen Recording access, then Re-check to confirm an active display is available."
+            )
         }
 
         let checkIDs = checks.map(\.id)

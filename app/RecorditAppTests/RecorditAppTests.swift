@@ -463,6 +463,41 @@ final class RecorditAppTests: XCTestCase {
     }
 
     @MainActor
+    func testPreflightUITestNormalizationDoesNotHideGrantedMicrophoneRuntimeFailures() {
+        setenv("RECORDIT_UI_TEST_MODE", "1", 1)
+        defer {
+            unsetenv("RECORDIT_UI_TEST_MODE")
+            unsetenv("RECORDIT_UI_TEST_NATIVE_MICROPHONE_PERMISSION")
+        }
+        setenv("RECORDIT_UI_TEST_NATIVE_MICROPHONE_PERMISSION", "granted", 1)
+
+        let payload = preflightPayloadData(checks: [
+            ["id": ReadinessContractID.modelPath.rawValue, "status": "PASS", "detail": "model ready", "remediation": ""],
+            ["id": ReadinessContractID.outWav.rawValue, "status": "PASS", "detail": "wav ready", "remediation": ""],
+            ["id": ReadinessContractID.outJsonl.rawValue, "status": "PASS", "detail": "jsonl ready", "remediation": ""],
+            ["id": ReadinessContractID.outManifest.rawValue, "status": "PASS", "detail": "manifest ready", "remediation": ""],
+            ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "screen permission granted", "remediation": ""],
+            ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "active display available", "remediation": ""],
+            ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "FAIL", "detail": "microphone stream unavailable", "remediation": "Verify the active input device and retry."],
+        ])
+        let viewModel = makePreflightViewModel(
+            payload: payload,
+            nativePermissionStatus: { _ in true }
+        )
+
+        viewModel.runLivePreflight()
+
+        guard case let .completed(envelope) = viewModel.state else {
+            XCTFail("Expected preflight to complete")
+            return
+        }
+        let microphoneCheck = envelope.checks.first(where: { $0.id == ReadinessContractID.microphoneAccess.rawValue })
+        XCTAssertEqual(microphoneCheck?.status, .fail)
+        XCTAssertEqual(viewModel.primaryBlockingDomain, .tccCapture)
+        XCTAssertFalse(viewModel.canProceedToLiveTranscribe)
+    }
+
+    @MainActor
     func testPreflightUITestNormalizationDoesNotHideActiveDisplayFailures() {
         setenv("RECORDIT_UI_TEST_MODE", "1", 1)
         defer { unsetenv("RECORDIT_UI_TEST_MODE") }
@@ -515,6 +550,42 @@ final class RecorditAppTests: XCTestCase {
     }
 
     @MainActor
+    func testPermissionRemediationDoesNotDowngradeGrantedRuntimeFailuresInUITestMode() throws {
+        setenv("RECORDIT_UI_TEST_MODE", "1", 1)
+        defer { unsetenv("RECORDIT_UI_TEST_MODE") }
+
+        let items = try makePermissionRemediationItems(
+            checks: [
+                ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "screen access granted", "remediation": ""],
+                ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "FAIL", "detail": "microphone stream unavailable", "remediation": "Verify the active input device and retry."],
+            ],
+            nativePermissionStatus: { _ in true }
+        )
+
+        let microphone = try XCTUnwrap(items.first(where: { $0.surface == .microphone }))
+        XCTAssertEqual(microphone.status, .runtimeFailure)
+        XCTAssertTrue(microphone.detail.contains("macOS permission appears granted") == true)
+    }
+
+    @MainActor
+    func testPermissionRemediationMarksGrantedButFailingScreenCheckAsRuntimeFailure() throws {
+        let items = try makePermissionRemediationItems(
+            checks: [
+                ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "FAIL", "detail": "screen capture helper unavailable", "remediation": "Quit and reopen Recordit, then Re-check."],
+                ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "active display available", "remediation": ""],
+                ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "mic ready", "remediation": ""],
+            ],
+            nativePermissionStatus: { _ in true }
+        )
+
+        let screen = try XCTUnwrap(items.first(where: { $0.surface == .screenRecording }))
+        XCTAssertEqual(screen.status, .runtimeFailure)
+        XCTAssertTrue(screen.detail.contains("macOS permission appears granted") == true)
+        XCTAssertEqual(screen.remediation, "Quit and reopen Recordit, then Re-check.")
+        XCTAssertFalse(items.contains { $0.surface.settingsPermission == .screenRecording && $0.status == .missingPermission })
+    }
+
+    @MainActor
     func testPermissionRemediationMarksGrantedButFailingMicrophoneCheckAsRuntimeFailure() throws {
         let items = try makePermissionRemediationItems(
             checks: [
@@ -538,10 +609,13 @@ final class RecorditAppTests: XCTestCase {
         )
 
         let screen = try XCTUnwrap(items.first(where: { $0.surface == .screenRecording }))
+        let display = try XCTUnwrap(items.first(where: { $0.surface == .activeDisplay }))
         let microphone = try XCTUnwrap(items.first(where: { $0.surface == .microphone }))
         XCTAssertEqual(screen.status, .missingPermission)
+        XCTAssertEqual(display.status, .diagnosticsUnavailable)
         XCTAssertEqual(microphone.status, .missingPermission)
         XCTAssertTrue(screen.remediation.contains("Open System Settings") == true)
+        XCTAssertTrue(display.detail.contains("Screen Recording access") == true)
         XCTAssertTrue(microphone.remediation.contains("Open System Settings") == true)
     }
 

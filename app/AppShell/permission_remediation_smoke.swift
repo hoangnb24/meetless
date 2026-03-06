@@ -137,6 +137,7 @@ private func runSmoke() {
             ],
         ])
     )
+    let missingChecksPayload = encodeEnvelopeJSON(fixtureEnvelope(checks: []))
 
     let commandRunner = SequenceCommandRunner(payloads: [missingScreenPayload, passingPayload])
     let runner = RecorditPreflightRunner(
@@ -254,6 +255,16 @@ private func runSmoke() {
         "runtime-only permission failures should not offer TCC settings deep-links as missing permissions"
     )
     check(nativeGrantedViewModel.hasBlockingIssues, "runtime-only permission failures should still block progression")
+
+    let missingChecksEnvelope = try! PreflightEnvelopeParser().parse(data: missingChecksPayload)
+    let missingChecksItems = PermissionRemediationViewModel.mapPermissionItems(
+        from: missingChecksEnvelope,
+        nativePermissionStatus: { _ in false }
+    )
+    check(
+        missingChecksItems.contains(where: { $0.surface == .activeDisplay && $0.status == .diagnosticsUnavailable }),
+        "missing display diagnostics should surface an explicit diagnostics-unavailable blocker"
+    )
 
     let noDisplayRunner = RecorditPreflightRunner(
         executable: "/usr/bin/env",

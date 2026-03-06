@@ -3,6 +3,10 @@ import AVFoundation
 import CoreGraphics
 
 private func defaultPreflightNativePermissionStatus(_ permission: RemediablePermission) -> Bool {
+    if let override = uiTestNativePermissionStatusOverride(permission) {
+        return override
+    }
+
     // Keep UI automation deterministic by honoring fixture-only outcomes.
     if ProcessInfo.processInfo.environment["RECORDIT_UI_TEST_MODE"] == "1" {
         return false
@@ -140,7 +144,6 @@ public final class PreflightViewModel {
         nativePermissionStatus: (RemediablePermission) -> Bool
     ) -> PreflightManifestEnvelopeDTO {
         let nativeScreenGranted = nativePermissionStatus(.screenRecording)
-        let nativeMicrophoneGranted = nativePermissionStatus(.microphone)
 
         var normalizedChecks = [PreflightCheckDTO]()
         normalizedChecks.reserveCapacity(envelope.checks.count)
@@ -159,20 +162,6 @@ public final class PreflightViewModel {
                 )
                 continue
             }
-            if check.id == ReadinessContract.microphonePermissionID,
-               check.status == .fail,
-               nativeMicrophoneGranted {
-                normalizedChecks.append(
-                    PreflightCheckDTO(
-                        id: check.id,
-                        status: .pass,
-                        detail: "App-level Microphone permission is granted. Runtime check reported: \(check.detail)",
-                        remediation: "If runtime capture still fails, verify active input device and re-run preflight."
-                    )
-                )
-                continue
-            }
-
             normalizedChecks.append(check)
         }
 
