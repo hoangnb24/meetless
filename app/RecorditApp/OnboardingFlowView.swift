@@ -422,7 +422,7 @@ struct OnboardingFlowView: View {
                     id: "microphone",
                     title: "Microphone",
                     status: "Missing",
-                    detail: "Permission diagnostics unavailable. \(error.remediation)",
+                    detail: "Permission diagnostics unavailable. \(error.userMessage)",
                     identifierID: "microphone",
                     identifierStatus: "missing"
                 ),
