@@ -156,9 +156,9 @@ public protocol RuntimeBinaryResolving: Sendable {
 public struct RuntimeBinaryResolver: RuntimeBinaryResolving {
     public static let recorditEnvKey = "RECORDIT_RUNTIME_BINARY"
     public static let sequoiaCaptureEnvKey = "SEQUOIA_CAPTURE_BINARY"
+    public static let allowPathLookupEnvKey = "RECORDIT_ALLOW_PATH_BINARY_LOOKUP"
     private static let bundledRuntimeRelativeDirectories = [
         "runtime/bin",
-        "bin",
     ]
 
     private let environment: [String: String]
@@ -209,15 +209,17 @@ public struct RuntimeBinaryResolver: RuntimeBinaryResolving {
             return bundled
         }
 
-        let pathComponents = (environment["PATH"] ?? "")
-            .split(separator: ":")
-            .map(String.init)
-        for component in pathComponents where component.hasPrefix("/") {
-            let candidate = URL(fileURLWithPath: component)
-                .appendingPathComponent(name)
-                .standardizedFileURL
-            if fileManager.isExecutableFile(atPath: candidate.path) {
-                return candidate
+        if Self.pathLookupEnabled(in: environment) {
+            let pathComponents = (environment["PATH"] ?? "")
+                .split(separator: ":")
+                .map(String.init)
+            for component in pathComponents where component.hasPrefix("/") {
+                let candidate = URL(fileURLWithPath: component)
+                    .appendingPathComponent(name)
+                    .standardizedFileURL
+                if fileManager.isExecutableFile(atPath: candidate.path) {
+                    return candidate
+                }
             }
         }
 
@@ -301,22 +303,24 @@ public struct RuntimeBinaryResolver: RuntimeBinaryResolving {
             )
         }
 
-        let pathComponents = (environment["PATH"] ?? "")
-            .split(separator: ":")
-            .map(String.init)
-        for component in pathComponents where component.hasPrefix("/") {
-            let candidate = URL(fileURLWithPath: component)
-                .appendingPathComponent(name)
-                .standardizedFileURL
-            if fileManager.isExecutableFile(atPath: candidate.path) {
-                return RuntimeBinaryReadinessCheck(
-                    binaryName: name,
-                    overrideEnvKey: overrideEnvKey,
-                    status: .ready,
-                    resolvedPath: candidate.path,
-                    userMessage: "\(name) is available.",
-                    remediation: ""
-                )
+        if Self.pathLookupEnabled(in: environment) {
+            let pathComponents = (environment["PATH"] ?? "")
+                .split(separator: ":")
+                .map(String.init)
+            for component in pathComponents where component.hasPrefix("/") {
+                let candidate = URL(fileURLWithPath: component)
+                    .appendingPathComponent(name)
+                    .standardizedFileURL
+                if fileManager.isExecutableFile(atPath: candidate.path) {
+                    return RuntimeBinaryReadinessCheck(
+                        binaryName: name,
+                        overrideEnvKey: overrideEnvKey,
+                        status: .ready,
+                        resolvedPath: candidate.path,
+                        userMessage: "\(name) is available.",
+                        remediation: ""
+                    )
+                }
             }
         }
 
@@ -327,7 +331,7 @@ public struct RuntimeBinaryResolver: RuntimeBinaryResolving {
             resolvedPath: nil,
             userMessage: "Required runtime binary is missing.",
             remediation: "Reinstall Recordit.app or set \(overrideEnvKey) to an absolute executable path.",
-            debugDetail: "bundled_and_PATH_search_failed"
+            debugDetail: "bundled_resolution_failed expected_paths=\(expectedBundledBinaryPaths(named: name).joined(separator: ";"))"
         )
     }
 
@@ -351,6 +355,14 @@ public struct RuntimeBinaryResolver: RuntimeBinaryResolving {
                 .appendingPathComponent(name)
                 .standardizedFileURL
         }
+    }
+
+    private func expectedBundledBinaryPaths(named name: String) -> [String] {
+        bundledBinaryCandidates(named: name).map(\.path)
+    }
+
+    private static func pathLookupEnabled(in environment: [String: String]) -> Bool {
+        environment[allowPathLookupEnvKey] == "1"
     }
 }
 

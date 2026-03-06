@@ -73,9 +73,9 @@ private func preflightPassPayload() -> Data {
             "sample_rate_hz": 48_000,
         ],
         "checks": [
-            ["id": "model_path", "status": "PASS", "detail": "ok", "remediation": ""],
-            ["id": "screen_capture_access", "status": "PASS", "detail": "ok", "remediation": ""],
-            ["id": "microphone_access", "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.modelPath.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
         ],
     ]
     return (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
@@ -93,28 +93,30 @@ private func runSmoke() {
     try? FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempRoot) }
 
-    let binDir = tempRoot.appendingPathComponent("bin", isDirectory: true)
+    let binDir = tempRoot
+        .appendingPathComponent("runtime", isDirectory: true)
+        .appendingPathComponent("bin", isDirectory: true)
     try? FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
     let recorditPath = binDir.appendingPathComponent("recordit").path
     let sequoiaPath = binDir.appendingPathComponent("sequoia_capture").path
     makeExecutable(at: recorditPath)
     makeExecutable(at: sequoiaPath)
 
-    let readyService = RuntimeBinaryReadinessService(
-        environment: [
-            "PATH": binDir.path,
-        ]
+    let readyResolver = RuntimeBinaryResolver(
+        environment: ["PATH": "/usr/bin:/bin"],
+        bundleResourceURL: tempRoot
     )
+    let readyService = RuntimeBinaryReadinessService(resolver: readyResolver)
     let readyReport = readyService.evaluateStartupReadiness()
-    check(readyReport.isReady, "PATH binaries should pass startup readiness")
+    check(readyReport.isReady, "bundled runtime binaries should pass startup readiness")
     check(readyReport.resolvedBinarySet?.recordit.path == recorditPath, "recordit binary path should resolve")
     check(readyService.startupBlockingError(from: readyReport) == nil, "ready report should not return a blocking error")
 
     let invalidOverrideService = RuntimeBinaryReadinessService(
-        environment: [
-            RuntimeBinaryResolver.recorditEnvKey: "relative/recordit",
-            "PATH": binDir.path,
-        ]
+        resolver: RuntimeBinaryResolver(
+            environment: [RuntimeBinaryResolver.recorditEnvKey: "relative/recordit"],
+            bundleResourceURL: tempRoot
+        )
     )
     let invalidOverrideReport = invalidOverrideService.evaluateStartupReadiness()
     check(!invalidOverrideReport.isReady, "relative override should block readiness")
@@ -124,10 +126,10 @@ private func runSmoke() {
     FileManager.default.createFile(atPath: nonExecutablePath, contents: Data("echo nope\n".utf8))
     _ = chmod(nonExecutablePath, 0o644)
     let nonExecutableService = RuntimeBinaryReadinessService(
-        environment: [
-            RuntimeBinaryResolver.recorditEnvKey: nonExecutablePath,
-            "PATH": binDir.path,
-        ]
+        resolver: RuntimeBinaryResolver(
+            environment: [RuntimeBinaryResolver.recorditEnvKey: nonExecutablePath],
+            bundleResourceURL: tempRoot
+        )
     )
     let nonExecutableReport = nonExecutableService.evaluateStartupReadiness()
     check(!nonExecutableReport.isReady, "non-executable override should block readiness")

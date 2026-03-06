@@ -486,8 +486,10 @@
 			);
 			inputPaths = (
 				"$(SRCROOT)/scripts/embed_recordit_runtime_binaries.sh",
-				"$(SRCROOT)/Cargo.toml",
-				"$(SRCROOT)/Cargo.lock",
+				"$(SRCROOT)/scripts/prepare_recordit_runtime_inputs.sh",
+				"$(SRCROOT)/.build/recordit-runtime-inputs/$(CONFIGURATION)/runtime/bin/recordit",
+				"$(SRCROOT)/.build/recordit-runtime-inputs/$(CONFIGURATION)/runtime/bin/sequoia_capture",
+				"$(SRCROOT)/.build/recordit-runtime-inputs/$(CONFIGURATION)/runtime/models/whispercpp",
 			);
 			name = "Embed Runtime Binaries";
 			outputFileListPaths = (

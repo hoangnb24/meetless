@@ -13,6 +13,7 @@ RECORDIT_XCODE_PROJECT ?= Recordit.xcodeproj
 RECORDIT_XCODE_SCHEME ?= RecorditApp
 RECORDIT_XCODE_CONFIGURATION ?= Release
 RECORDIT_DERIVED_DATA ?= .build/recordit-derived-data
+RECORDIT_RUNTIME_INPUT_DIR ?= .build/recordit-runtime-inputs/$(RECORDIT_XCODE_CONFIGURATION)
 RECORDIT_XCODE_DESTINATION ?= platform=macOS,arch=arm64
 RECORDIT_DMG_NAME ?= Recordit.dmg
 RECORDIT_DMG_VOLNAME ?= Recordit
@@ -73,7 +74,7 @@ SMOKE_NEAR_LIVE_DETERMINISTIC_DIR ?= artifacts/smoke/near-live-deterministic
 SMOKE_NEAR_LIVE_INPUT_WAV ?= $(SMOKE_NEAR_LIVE_DIR)/capture.input.wav
 SMOKE_NEAR_LIVE_DETERMINISTIC_INPUT_WAV ?= artifacts/bench/corpus/gate_c/tts_phrase_stereo.wav
 
-.PHONY: help build build-release build-recordit-app bundle-recordit-app sign-recordit-app verify-recordit-app run-recordit-app create-recordit-dmg probe capture transcribe-live transcribe-live-stream capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic contracts-ci setup-whispercpp-model run-transcribe-app run-transcribe-live-stream-app run-transcribe-preflight-app run-transcribe-model-doctor-app bench-harness gate-backlog-pressure gate-transcript-completeness gate-v1-acceptance gate-packaged-live-smoke gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
+.PHONY: help build build-release prepare-recordit-runtime-inputs build-recordit-app bundle-recordit-app sign-recordit-app verify-recordit-app run-recordit-app create-recordit-dmg probe capture transcribe-live transcribe-live-stream capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic contracts-ci setup-whispercpp-model run-transcribe-app run-transcribe-live-stream-app run-transcribe-preflight-app run-transcribe-model-doctor-app bench-harness gate-backlog-pressure gate-transcript-completeness gate-v1-acceptance gate-packaged-live-smoke gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
 
 help:
 	@echo "Targets:"
@@ -92,6 +93,7 @@ help:
 	@echo "  smoke-near-live-deterministic - CI-safe near-live fallback smoke using deterministic stereo fixture"
 	@echo "  contracts-ci  - Run machine-readable contract/schema enforcement suite"
 	@echo "  setup-whispercpp-model - Bootstrap default local whispercpp model asset"
+	@echo "  prepare-recordit-runtime-inputs - Build/stage prebuilt runtime assets consumed by Xcode embed phase"
 	@echo "  build-recordit-app - Build Recordit.app via xcodebuild (default user-facing app path)"
 	@echo "  bundle-recordit-app - Copy built Recordit.app into dist/"
 	@echo "  sign-recordit-app - Codesign dist/Recordit.app"
@@ -121,8 +123,13 @@ build:
 build-release:
 	cargo build --release --bin $(BIN_NAME) --bin $(TRANSCRIBE_BIN)
 
-build-recordit-app:
-	xcodebuild -project "$(RECORDIT_XCODE_PROJECT)" -scheme "$(RECORDIT_XCODE_SCHEME)" -configuration "$(RECORDIT_XCODE_CONFIGURATION)" -destination '$(RECORDIT_XCODE_DESTINATION)' -derivedDataPath "$(abspath $(RECORDIT_DERIVED_DATA))" CODE_SIGNING_ALLOWED=NO build
+prepare-recordit-runtime-inputs:
+	@echo "[recordit-app][rust-build] preparing runtime inputs for $(RECORDIT_XCODE_CONFIGURATION)"
+	RECORDIT_RUNTIME_CONFIGURATION="$(RECORDIT_XCODE_CONFIGURATION)" RECORDIT_RUNTIME_INPUT_DIR="$(abspath $(RECORDIT_RUNTIME_INPUT_DIR))" scripts/prepare_recordit_runtime_inputs.sh
+
+build-recordit-app: prepare-recordit-runtime-inputs
+	@echo "[recordit-app][xcodebuild] bundling Recordit.app with prebuilt runtime inputs from $(abspath $(RECORDIT_RUNTIME_INPUT_DIR))"
+	RECORDIT_RUNTIME_INPUT_DIR="$(abspath $(RECORDIT_RUNTIME_INPUT_DIR))" xcodebuild -project "$(RECORDIT_XCODE_PROJECT)" -scheme "$(RECORDIT_XCODE_SCHEME)" -configuration "$(RECORDIT_XCODE_CONFIGURATION)" -destination '$(RECORDIT_XCODE_DESTINATION)' -derivedDataPath "$(abspath $(RECORDIT_DERIVED_DATA))" CODE_SIGNING_ALLOWED=NO build
 
 bundle-recordit-app: build-recordit-app
 	rm -rf "$(RECORDIT_APP_DIR)"
@@ -134,6 +141,9 @@ sign-recordit-app: bundle-recordit-app
 verify-recordit-app:
 	codesign --verify --deep --strict --verbose=2 "$(RECORDIT_APP_DIR)"
 	codesign -d --entitlements :- --verbose=2 "$(RECORDIT_APP_DIR)"
+	@test -x "$(RECORDIT_APP_DIR)/Contents/Resources/runtime/bin/recordit" || (echo "error: missing executable runtime binary: $(RECORDIT_APP_DIR)/Contents/Resources/runtime/bin/recordit" >&2; exit 1)
+	@test -x "$(RECORDIT_APP_DIR)/Contents/Resources/runtime/bin/sequoia_capture" || (echo "error: missing executable runtime binary: $(RECORDIT_APP_DIR)/Contents/Resources/runtime/bin/sequoia_capture" >&2; exit 1)
+	@echo "[verify-recordit-app] runtime binaries present and executable under Contents/Resources/runtime/bin"
 
 run-recordit-app: sign-recordit-app
 	open -W "$(RECORDIT_APP_DIR)"

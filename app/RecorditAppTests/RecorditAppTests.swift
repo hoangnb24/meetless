@@ -175,6 +175,62 @@ final class RecorditAppTests: XCTestCase {
         XCTAssertEqual(binaries.sequoiaCapture.path, bundledCapture.path)
     }
 
+    func testRuntimeBinaryResolverDoesNotFallbackToPathWithoutExplicitOptIn() throws {
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("recordit-path-fallback-\(UUID().uuidString)", isDirectory: true)
+        let pathBinDir = tempRoot.appendingPathComponent("path-bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: pathBinDir, withIntermediateDirectories: true)
+
+        let pathRecordit = pathBinDir.appendingPathComponent("recordit")
+        let pathCapture = pathBinDir.appendingPathComponent("sequoia_capture")
+        try makeExecutableStubBinary(at: pathRecordit)
+        try makeExecutableStubBinary(at: pathCapture)
+        defer {
+            try? FileManager.default.removeItem(at: tempRoot)
+        }
+
+        let resolver = RuntimeBinaryResolver(
+            environment: ["PATH": pathBinDir.path],
+            bundleResourceURL: nil
+        )
+        let report = resolver.startupReadinessReport()
+
+        XCTAssertFalse(report.isReady)
+        XCTAssertEqual(report.firstBlockingCheck?.status, .missing)
+        XCTAssertThrowsError(try resolver.resolve())
+    }
+
+    func testRuntimeBinaryResolverAllowsPathFallbackWhenExplicitlyEnabled() throws {
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("recordit-path-opt-in-\(UUID().uuidString)", isDirectory: true)
+        let pathBinDir = tempRoot.appendingPathComponent("path-bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: pathBinDir, withIntermediateDirectories: true)
+
+        let pathRecordit = pathBinDir.appendingPathComponent("recordit")
+        let pathCapture = pathBinDir.appendingPathComponent("sequoia_capture")
+        try makeExecutableStubBinary(at: pathRecordit)
+        try makeExecutableStubBinary(at: pathCapture)
+        defer {
+            try? FileManager.default.removeItem(at: tempRoot)
+        }
+
+        let resolver = RuntimeBinaryResolver(
+            environment: [
+                "PATH": pathBinDir.path,
+                RuntimeBinaryResolver.allowPathLookupEnvKey: "1",
+            ],
+            bundleResourceURL: nil
+        )
+        let report = resolver.startupReadinessReport()
+
+        XCTAssertTrue(report.isReady)
+        XCTAssertEqual(report.checks.first(where: { $0.binaryName == "recordit" })?.resolvedPath, pathRecordit.path)
+        XCTAssertEqual(report.checks.first(where: { $0.binaryName == "sequoia_capture" })?.resolvedPath, pathCapture.path)
+        let binaries = try resolver.resolve()
+        XCTAssertEqual(binaries.recordit.path, pathRecordit.path)
+        XCTAssertEqual(binaries.sequoiaCapture.path, pathCapture.path)
+    }
+
     @MainActor
     func testRuntimeViewModelStartStopFinalizationCompletes() async {
         let runtimeService = DelayingRuntimeService()

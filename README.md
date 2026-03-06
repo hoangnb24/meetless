@@ -65,9 +65,21 @@ make build
 ```
 Builds debug binaries.
 
-`Recordit.app` builds (Xcode or `make build-recordit-app`) now embed `recordit` and `sequoia_capture` into:
+`Recordit.app` builds use a two-stage runtime handoff:
+- `scripts/prepare_recordit_runtime_inputs.sh` performs the Rust build/staging step outside Xcode and writes prebuilt runtime inputs under `.build/recordit-runtime-inputs/<Configuration>/...`.
+- Xcode's `Embed Runtime Binaries` phase (`scripts/embed_recordit_runtime_binaries.sh`) is copy-only and consumes those prebuilt inputs via `RECORDIT_RUNTIME_INPUT_DIR` (defaulting to the same `.build` path).
+
+`make build-recordit-app` runs both stages in order, with explicit stage-prefixed logs:
+- `[recordit-app][rust-build] ...`
+- `[recordit-app][xcodebuild] ...`
+
+Embedded runtime paths inside `Recordit.app`:
 - `Recordit.app/Contents/Resources/runtime/bin/recordit`
 - `Recordit.app/Contents/Resources/runtime/bin/sequoia_capture`
+
+Runtime resolution contract:
+- app runtime resolution expects bundled executables in `Contents/Resources/runtime/bin` (plus explicit absolute-path overrides via `RECORDIT_RUNTIME_BINARY` / `SEQUOIA_CAPTURE_BINARY` when intentionally set)
+- implicit PATH fallback is disabled by default for startup/readiness so missing bundled payloads fail explicitly
 
 This keeps the GUI-first flow terminal-free for end users (no external PATH setup required).
 
