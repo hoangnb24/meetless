@@ -170,6 +170,34 @@ public enum SessionStatus: String, Codable, Sendable {
     case failed
 }
 
+public enum SessionOutcomeClassification: String, Codable, Sendable {
+    case emptyRoot = "empty_root"
+    case partialArtifact = "partial_artifact"
+    case finalizedFailure = "finalized_failure"
+    case finalizedSuccess = "finalized_success"
+
+    public func canonicalCode(manifestStatus: SessionStatus?) -> SessionOutcomeCode {
+        switch self {
+        case .emptyRoot:
+            return .emptySessionRoot
+        case .partialArtifact:
+            return .partialArtifactSession
+        case .finalizedFailure:
+            return .finalizedFailure
+        case .finalizedSuccess:
+            return manifestStatus == .degraded ? .finalizedDegradedSuccess : .finalizedSuccess
+        }
+    }
+}
+
+public enum SessionOutcomeCode: String, Codable, Sendable {
+    case emptySessionRoot = "empty_session_root"
+    case partialArtifactSession = "partial_artifact_session"
+    case finalizedFailure = "finalized_failure"
+    case finalizedSuccess = "finalized_success"
+    case finalizedDegradedSuccess = "finalized_degraded_success"
+}
+
 public enum SessionIngestSource: String, Codable, Sendable {
     case canonicalDirectory = "canonical_directory"
     case legacyFlatImport = "legacy_flat_import"
@@ -186,6 +214,9 @@ public struct SessionSummaryDTO: Equatable, Sendable {
     public var readyToTranscribe: Bool
     public var ingestSource: SessionIngestSource
     public var ingestDiagnostics: [String: String]
+    public var outcomeClassification: SessionOutcomeClassification
+    public var outcomeCode: SessionOutcomeCode
+    public var outcomeDiagnostics: [String: String]
 
     public init(
         sessionID: String,
@@ -197,7 +228,10 @@ public struct SessionSummaryDTO: Equatable, Sendable {
         pendingTranscriptionState: PendingTranscriptionState? = nil,
         readyToTranscribe: Bool = false,
         ingestSource: SessionIngestSource = .canonicalDirectory,
-        ingestDiagnostics: [String: String] = [:]
+        ingestDiagnostics: [String: String] = [:],
+        outcomeClassification: SessionOutcomeClassification,
+        outcomeCode: SessionOutcomeCode? = nil,
+        outcomeDiagnostics: [String: String] = [:]
     ) {
         self.sessionID = sessionID
         self.startedAt = startedAt
@@ -209,6 +243,9 @@ public struct SessionSummaryDTO: Equatable, Sendable {
         self.readyToTranscribe = readyToTranscribe
         self.ingestSource = ingestSource
         self.ingestDiagnostics = ingestDiagnostics
+        self.outcomeClassification = outcomeClassification
+        self.outcomeCode = outcomeCode ?? outcomeClassification.canonicalCode(manifestStatus: status)
+        self.outcomeDiagnostics = outcomeDiagnostics
     }
 }
 
@@ -344,17 +381,27 @@ public struct SessionArtifactIntegrityReportDTO: Equatable, Sendable {
     public var rootPath: URL
     public var state: ArtifactIntegrityState
     public var findings: [ArtifactIntegrityFindingDTO]
+    public var outcomeClassification: SessionOutcomeClassification
+    public var outcomeCode: SessionOutcomeCode
+    public var outcomeDiagnostics: [String: String]
 
     public init(
         sessionID: String,
         rootPath: URL,
         state: ArtifactIntegrityState,
-        findings: [ArtifactIntegrityFindingDTO]
+        findings: [ArtifactIntegrityFindingDTO],
+        outcomeClassification: SessionOutcomeClassification,
+        outcomeCode: SessionOutcomeCode? = nil,
+        outcomeDiagnostics: [String: String] = [:]
     ) {
         self.sessionID = sessionID
         self.rootPath = rootPath
         self.state = state
         self.findings = findings
+        self.outcomeClassification = outcomeClassification
+        let manifestStatus = outcomeDiagnostics["manifest_status"].flatMap { SessionStatus(rawValue: $0.lowercased()) }
+        self.outcomeCode = outcomeCode ?? outcomeClassification.canonicalCode(manifestStatus: manifestStatus)
+        self.outcomeDiagnostics = outcomeDiagnostics
     }
 }
 

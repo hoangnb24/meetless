@@ -92,7 +92,8 @@ private func pendingSummary(sessionRoot: URL, state: PendingTranscriptionState) 
         status: .pending,
         rootPath: sessionRoot,
         pendingTranscriptionState: state,
-        readyToTranscribe: state == .readyToTranscribe
+        readyToTranscribe: state == .readyToTranscribe,
+        outcomeClassification: .partialArtifact
     )
 }
 

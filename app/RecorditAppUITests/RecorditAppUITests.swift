@@ -67,6 +67,31 @@ final class RecorditAppUITests: XCTestCase {
         )
     }
 
+    func testRuntimeRetryStopRecoversToCompletedSummary() {
+        let app = launchApp(runtimeScenario: "stop_failure_then_recover")
+        completeOnboardingHappyPath(app)
+
+        let runtimeStatus = app.staticTexts["runtime_status"]
+        XCTAssertTrue(runtimeStatus.waitForExistence(timeout: 5))
+
+        let startButton = app.buttons["start_live_transcribe"]
+        XCTAssertTrue(startButton.waitForExistence(timeout: 5))
+        activate(startButton)
+        XCTAssertTrue(waitForLabelContains(runtimeStatus, text: "Running", timeout: 8))
+
+        let stopButton = app.buttons["stop_live_transcribe"]
+        XCTAssertTrue(stopButton.waitForExistence(timeout: 5))
+        activate(stopButton)
+
+        let retryStopButton = app.buttons["retry_stop_action"]
+        XCTAssertTrue(retryStopButton.waitForExistence(timeout: 15))
+        activate(retryStopButton)
+
+        XCTAssertTrue(waitForLabelContains(runtimeStatus, text: "Completed", timeout: 15))
+        XCTAssertTrue(app.staticTexts["Session Summary"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Open Session Detail"].waitForExistence(timeout: 5))
+    }
+
     private func completeOnboardingHappyPath(_ app: XCUIApplication) {
         XCTAssertTrue(app.staticTexts["onboarding_title"].waitForExistence(timeout: 5))
 

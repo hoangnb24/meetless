@@ -1,5 +1,137 @@
 import Foundation
 
+struct ReadinessRemediationRoute: Equatable, Sendable {
+    var checkID: String
+    var errorCode: AppServiceErrorCode
+    var userMessage: String
+    var actionSteps: [String]
+    var includesRecordOnlyFallback: Bool
+
+    init(
+        checkID: String,
+        errorCode: AppServiceErrorCode,
+        userMessage: String,
+        actionSteps: [String],
+        includesRecordOnlyFallback: Bool = false
+    ) {
+        self.checkID = checkID
+        self.errorCode = errorCode
+        self.userMessage = userMessage
+        self.actionSteps = actionSteps
+        self.includesRecordOnlyFallback = includesRecordOnlyFallback
+    }
+
+    func remediationText(
+        checkRemediation: String?,
+        includeRecordOnlyFallback: Bool
+    ) -> String {
+        var parts = [String]()
+        if let normalizedCheckRemediation = Self.normalizedSentence(checkRemediation) {
+            parts.append(normalizedCheckRemediation)
+        }
+        parts.append(contentsOf: actionSteps)
+        if includesRecordOnlyFallback && includeRecordOnlyFallback {
+            parts.append("Record Only remains available while Live Transcribe is blocked.")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private static func normalizedSentence(_ text: String?) -> String? {
+        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        if trimmed.hasSuffix(".") || trimmed.hasSuffix("!") || trimmed.hasSuffix("?") {
+            return trimmed
+        }
+        return "\(trimmed)."
+    }
+}
+
+enum ReadinessRemediationMatrix {
+    private static let routesByCheckID: [String: ReadinessRemediationRoute] = [
+        ReadinessContractID.screenCaptureAccess.rawValue: ReadinessRemediationRoute(
+            checkID: ReadinessContractID.screenCaptureAccess.rawValue,
+            errorCode: .permissionDenied,
+            userMessage: "Live Transcribe is blocked because Screen Recording access is not ready.",
+            actionSteps: [
+                "Click Check for Permissions.",
+                "Open Screen Recording Settings and enable Recordit.",
+                "Quit and reopen Recordit, then click Run Preflight again.",
+            ]
+        ),
+        ReadinessContractID.displayAvailability.rawValue: ReadinessRemediationRoute(
+            checkID: ReadinessContractID.displayAvailability.rawValue,
+            errorCode: .permissionDenied,
+            userMessage: "Live Transcribe is blocked because no active display is available for capture.",
+            actionSteps: [
+                "Ensure at least one display is connected, awake, and available to Recordit.",
+                "Click Check for Permissions, then click Run Preflight again.",
+            ]
+        ),
+        ReadinessContractID.microphoneAccess.rawValue: ReadinessRemediationRoute(
+            checkID: ReadinessContractID.microphoneAccess.rawValue,
+            errorCode: .permissionDenied,
+            userMessage: "Live Transcribe is blocked because Microphone access is not ready.",
+            actionSteps: [
+                "Click Check for Permissions.",
+                "Open Microphone Settings and enable Recordit.",
+                "Click Run Preflight again.",
+            ]
+        ),
+        ReadinessContractID.modelPath.rawValue: ReadinessRemediationRoute(
+            checkID: ReadinessContractID.modelPath.rawValue,
+            errorCode: .modelUnavailable,
+            userMessage: "Live Transcribe is blocked because the selected model is not ready.",
+            actionSteps: [
+                "Choose a compatible local model path for the selected backend.",
+                "Click Validate Model Setup, then click Run Preflight again.",
+            ],
+            includesRecordOnlyFallback: true
+        ),
+        ReadinessContractID.outWav.rawValue: ReadinessRemediationRoute(
+            checkID: ReadinessContractID.outWav.rawValue,
+            errorCode: .preflightFailed,
+            userMessage: "Live Transcribe is blocked because Recordit cannot prepare session audio output.",
+            actionSteps: [
+                "Verify Recordit can write its session artifacts and output files.",
+                "Click Run Preflight again.",
+            ]
+        ),
+        ReadinessContractID.outJsonl.rawValue: ReadinessRemediationRoute(
+            checkID: ReadinessContractID.outJsonl.rawValue,
+            errorCode: .preflightFailed,
+            userMessage: "Live Transcribe is blocked because Recordit cannot prepare transcript output.",
+            actionSteps: [
+                "Verify Recordit can write its session artifacts and transcript files.",
+                "Click Run Preflight again.",
+            ]
+        ),
+        ReadinessContractID.outManifest.rawValue: ReadinessRemediationRoute(
+            checkID: ReadinessContractID.outManifest.rawValue,
+            errorCode: .preflightFailed,
+            userMessage: "Live Transcribe is blocked because Recordit cannot prepare the session manifest.",
+            actionSteps: [
+                "Verify Recordit can write its session artifacts and manifest files.",
+                "Click Run Preflight again.",
+            ]
+        ),
+        ReadinessContractID.backendRuntime.rawValue: ReadinessRemediationRoute(
+            checkID: ReadinessContractID.backendRuntime.rawValue,
+            errorCode: .preflightFailed,
+            userMessage: "Live Transcribe is blocked because the backend runtime is not ready.",
+            actionSteps: [
+                "Review runtime diagnostics and backend installation state.",
+                "Click Run Preflight again.",
+            ],
+            includesRecordOnlyFallback: true
+        ),
+    ]
+
+    static func route(for blockingCheck: MappedPreflightCheck) -> ReadinessRemediationRoute? {
+        routesByCheckID[blockingCheck.check.id]
+    }
+}
+
 @MainActor
 public final class AppShellViewModel {
     public private(set) var navigationState: NavigationState
@@ -94,10 +226,43 @@ public final class AppShellViewModel {
         return sessionID
     }
 
+    private static func preferredBlockingCheck(from preflight: PreflightViewModel) -> MappedPreflightCheck? {
+        guard let evaluation = preflight.gatingEvaluation else {
+            return nil
+        }
+
+        if let primaryDomain = evaluation.primaryBlockingDomain,
+           let prioritizedFailure = evaluation.blockingFailures.first(where: { $0.domain == primaryDomain }) {
+            return prioritizedFailure
+        }
+
+        return evaluation.blockingFailures.first
+    }
+
     private static func preflightGateFailure(for preflight: PreflightViewModel) -> AppServiceError {
         let fallbackRemediationSuffix = preflight.canOfferRecordOnlyFallback
             ? " Record Only remains available while Live Transcribe is blocked."
             : ""
+
+        if preflight.requiresWarningAcknowledgement {
+            return AppServiceError(
+                code: .preflightFailed,
+                userMessage: "Live Transcribe warnings must be acknowledged before finishing setup.",
+                remediation: "Review the preflight warning details, click Acknowledge Warnings, then complete onboarding."
+            )
+        }
+
+        if let blockingCheck = preferredBlockingCheck(from: preflight),
+           let route = ReadinessRemediationMatrix.route(for: blockingCheck) {
+            return AppServiceError(
+                code: route.errorCode,
+                userMessage: route.userMessage,
+                remediation: route.remediationText(
+                    checkRemediation: blockingCheck.check.remediation,
+                    includeRecordOnlyFallback: preflight.canOfferRecordOnlyFallback
+                )
+            )
+        }
 
         switch preflight.primaryBlockingDomain {
         case .tccCapture:

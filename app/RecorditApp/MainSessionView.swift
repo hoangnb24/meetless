@@ -1,6 +1,4 @@
 import AppKit
-import AVFoundation
-import CoreGraphics
 import SwiftUI
 
 @MainActor
@@ -145,30 +143,6 @@ final class MainSessionController: ObservableObject {
         case .live:
             PermissionPromptRequester.requestAccessIfNeeded(for: .screenRecording)
             PermissionPromptRequester.requestAccessIfNeeded(for: .microphone)
-            guard CGPreflightScreenCaptureAccess() else {
-                let error = AppServiceError(
-                    code: .permissionDenied,
-                    userMessage: "Screen Recording permission is not granted for Recordit.",
-                    remediation: "Open Screen Recording settings, enable Recordit, then quit and reopen the app before retrying."
-                )
-                runtimeState = .failed(error)
-                lastServiceError = error
-                appendTranscript("Live start blocked: \(error.userMessage)")
-                stopTimer(reset: false)
-                return
-            }
-            guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
-                let error = AppServiceError(
-                    code: .permissionDenied,
-                    userMessage: "Microphone permission is not granted for Recordit.",
-                    remediation: "Open Microphone settings, enable Recordit, then retry."
-                )
-                runtimeState = .failed(error)
-                lastServiceError = error
-                appendTranscript("Live start blocked: \(error.userMessage)")
-                stopTimer(reset: false)
-                return
-            }
             runtimeState = .preparing
             Task {
                 await runtimeViewModel.startLive(outputRoot: outputRoot, explicitModelPath: nil)
@@ -312,6 +286,24 @@ final class MainSessionController: ObservableObject {
             runtimeViewModel.safeFinalizeInterruptedSession()
             await MainActor.run {
                 syncFromRuntimeViewModel(eventPrefix: "Safe finalize")
+            }
+        }
+    }
+
+    func retryStopFailedLiveSession() {
+        Task {
+            await runtimeViewModel.retryStopAfterFailure()
+            await MainActor.run {
+                syncFromRuntimeViewModel(eventPrefix: "Retry stop")
+            }
+        }
+    }
+
+    func retryFinalizeFailedSession() {
+        Task {
+            runtimeViewModel.retryFinalizeAfterFailure()
+            await MainActor.run {
+                syncFromRuntimeViewModel(eventPrefix: "Retry finalize")
             }
         }
     }

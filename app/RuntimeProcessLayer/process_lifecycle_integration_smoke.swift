@@ -89,6 +89,14 @@ private func makeRuntimeService(
     )
 }
 
+private func waitForFile(at url: URL, timeoutSeconds: TimeInterval, message: String) async {
+    let deadline = Date().addingTimeInterval(timeoutSeconds)
+    while !FileManager.default.fileExists(atPath: url.path) && Date() < deadline {
+        try? await Task.sleep(nanoseconds: 50_000_000)
+    }
+    check(FileManager.default.fileExists(atPath: url.path), message)
+}
+
 @MainActor
 private func runSmoke() async throws {
     let tempRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -130,7 +138,60 @@ private func runSmoke() async throws {
         at: stubbornScript,
         body: """
         #!/bin/sh
-        trap '' INT TERM
+        out_root=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --output-root) out_root="$2"; shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        if [ -n "$out_root" ]; then
+          mkdir -p "$out_root"
+        fi
+        exec /usr/bin/perl -e 'my $ready = shift; if (defined $ready && length $ready) { open my $fh, ">", $ready or die $!; close $fh; } $SIG{INT}="IGNORE"; $SIG{TERM}="IGNORE"; while (1) { select undef, undef, undef, 0.1 }' "$out_root/stubborn.ready"
+        """
+    )
+
+    let gracefulStopScript = binDir.appendingPathComponent("recordit-graceful-stop.sh")
+    try makeExecutableScript(
+        at: gracefulStopScript,
+        body: """
+        #!/bin/sh
+        out_root=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --output-root) out_root="$2"; shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        [ -n "$out_root" ] && mkdir -p "$out_root"
+        : > "$out_root/graceful.ready"
+        trap 'printf INT > "$out_root/stop-signal.txt"; exit 0' INT
+        while :; do
+          if [ -f "$out_root/session.stop.request" ]; then
+            printf REQUEST > "$out_root/stop-signal.txt"
+            exit 0
+          fi
+        done
+        """
+    )
+
+    let interruptFallbackScript = binDir.appendingPathComponent("recordit-interrupt-fallback.sh")
+    try makeExecutableScript(
+        at: interruptFallbackScript,
+        body: """
+        #!/bin/sh
+        out_root=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --output-root) out_root="$2"; shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        [ -n "$out_root" ] && mkdir -p "$out_root"
+        : > "$out_root/interrupt.ready"
+        trap '' TERM
+        trap 'printf INT > "$out_root/stop-signal.txt"; exit 0' INT
         while :; do :; done
         """
     )
@@ -207,6 +268,8 @@ private func runSmoke() async throws {
             return
         }
         check(error.code == .processExitedUnexpectedly, "failed manifest status should classify as processExitedUnexpectedly")
+        check(viewModel.suggestedRecoveryActions == [.openSessionArtifacts, .startNewSession], "finalized failed manifest should not advertise interruption recovery")
+        check(viewModel.interruptionRecoveryContext?.classification == .finalizedFailure, "failed manifest should classify as finalized failure")
         _ = try? await processService.controlSession(processIdentifier: processID, action: .cancel)
     }
 
@@ -236,6 +299,67 @@ private func runSmoke() async throws {
             action: .cancel
         )
         check(control.accepted, "record-only cancel should be accepted")
+    }
+
+    // Launch should clear stale graceful-stop markers before runtime starts.
+    do {
+        let service = makeRuntimeService(recorditPath: gracefulStopScript, sequoiaPath: captureScript, stopTimeoutSeconds: 0.4)
+        let outputRoot = tempRoot.appendingPathComponent("live-graceful-stop-stale-marker", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
+        let requestPath = outputRoot.appendingPathComponent("session.stop.request")
+        try Data("stale\n".utf8).write(to: requestPath, options: .atomic)
+        let launch = try await service.startSession(
+            request: RuntimeStartRequest(mode: .live, outputRoot: outputRoot)
+        )
+        let readyPath = outputRoot.appendingPathComponent("graceful.ready")
+        await waitForFile(at: readyPath, timeoutSeconds: 2, message: "launch should still reach graceful-stop readiness after clearing stale markers")
+        check(!FileManager.default.fileExists(atPath: requestPath.path), "launch should clear stale graceful stop request markers")
+        let signalPath = outputRoot.appendingPathComponent("stop-signal.txt")
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        check(!FileManager.default.fileExists(atPath: signalPath.path), "stale graceful stop markers should not trigger shutdown before explicit stop")
+        let control = try await service.controlSession(processIdentifier: launch.processIdentifier, action: .stop)
+        check(control.accepted, "stop after stale-marker cleanup should be accepted")
+        await waitForFile(at: signalPath, timeoutSeconds: 1, message: "graceful stop helper should write stop signal after explicit stop")
+        let signal = try String(contentsOf: signalPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        check(signal == "REQUEST", "graceful stop should still honor the stop-request handshake after stale-marker cleanup")
+    }
+
+    // Graceful stop should prefer the drain/finalization handshake before interrupt fallback.
+    do {
+        let service = makeRuntimeService(recorditPath: gracefulStopScript, sequoiaPath: captureScript, stopTimeoutSeconds: 0.4)
+        let outputRoot = tempRoot.appendingPathComponent("live-graceful-stop", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
+        let launch = try await service.startSession(
+            request: RuntimeStartRequest(mode: .live, outputRoot: outputRoot)
+        )
+        let readyPath = outputRoot.appendingPathComponent("graceful.ready")
+        await waitForFile(at: readyPath, timeoutSeconds: 2, message: "graceful stop helper should signal readiness before stop")
+        let control = try await service.controlSession(processIdentifier: launch.processIdentifier, action: .stop)
+        check(control.accepted, "graceful stop should be accepted")
+        let signalPath = outputRoot.appendingPathComponent("stop-signal.txt")
+        await waitForFile(at: signalPath, timeoutSeconds: 1, message: "graceful stop helper should write stop signal")
+        let signal = try String(contentsOf: signalPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        check(signal == "REQUEST", "stop should honor the graceful stop-request handshake before forced fallback")
+        let requestPath = outputRoot.appendingPathComponent("session.stop.request")
+        check(!FileManager.default.fileExists(atPath: requestPath.path), "stop handling should clean up the graceful stop request marker once control settles")
+    }
+
+    // Stop should fall back to interrupt when the graceful handshake does not complete.
+    do {
+        let service = makeRuntimeService(recorditPath: interruptFallbackScript, sequoiaPath: captureScript, stopTimeoutSeconds: 0.4)
+        let outputRoot = tempRoot.appendingPathComponent("live-interrupt-fallback", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
+        let launch = try await service.startSession(
+            request: RuntimeStartRequest(mode: .live, outputRoot: outputRoot)
+        )
+        let readyPath = outputRoot.appendingPathComponent("interrupt.ready")
+        await waitForFile(at: readyPath, timeoutSeconds: 2, message: "interrupt fallback helper should signal readiness before stop")
+        let control = try await service.controlSession(processIdentifier: launch.processIdentifier, action: .stop)
+        check(control.accepted, "interrupt fallback stop should be accepted")
+        let signalPath = outputRoot.appendingPathComponent("stop-signal.txt")
+        await waitForFile(at: signalPath, timeoutSeconds: 1, message: "interrupt fallback helper should write stop signal")
+        let signal = try String(contentsOf: signalPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        check(signal == "INT", "stop should fall back to INT when graceful TERM handshake stalls")
     }
 
     // Crash branch should map to processExitedUnexpectedly.
@@ -268,6 +392,12 @@ private func runSmoke() async throws {
         let launch = try await service.startSession(
             request: RuntimeStartRequest(mode: .live, outputRoot: outputRoot)
         )
+        let stubbornReady = outputRoot.appendingPathComponent("stubborn.ready")
+        let readyDeadline = Date().addingTimeInterval(2)
+        while !FileManager.default.fileExists(atPath: stubbornReady.path) && Date() < readyDeadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        check(FileManager.default.fileExists(atPath: stubbornReady.path), "timeout helper should signal readiness before stop")
 
         do {
             _ = try await service.controlSession(processIdentifier: launch.processIdentifier, action: .stop)

@@ -23,7 +23,9 @@ public final class RuntimeViewModel {
     }
 
     public enum InterruptionRecoveryClassification: String, Equatable, Sendable {
-        case recoverableInterruption = "recoverable_interruption"
+        case emptySessionFailure = "empty_session_failure"
+        case partialArtifactFailure = "partial_artifact_failure"
+        case finalizedFailure = "finalized_failure"
     }
 
     public struct InterruptionRecoveryContext: Equatable, Sendable {
@@ -127,6 +129,7 @@ public final class RuntimeViewModel {
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (UInt64) async -> Void
     private var activeSessionRoot: URL?
+    private var activeLiveProcessID: Int32?
 
     public init(
         runtimeService: RuntimeService,
@@ -175,6 +178,7 @@ public final class RuntimeViewModel {
                 )
             )
             activeSessionRoot = result.sessionRoot
+            activeLiveProcessID = result.processIdentifier
             _ = transition(
                 to: .running(processID: result.processIdentifier),
                 allowedFrom: [.preparing],
@@ -331,6 +335,77 @@ public final class RuntimeViewModel {
         loadFinalStatus(manifestPath: sessionRoot.appendingPathComponent("session.manifest.json"))
     }
 
+    public func retryStopAfterFailure() async {
+        guard let processID = activeLiveProcessID else {
+            rejectAction(
+                action: "retryStopAfterFailure",
+                userMessage: "No active runtime process is available to stop again.",
+                remediation: "Open session artifacts if present, or start a new session."
+            )
+            return
+        }
+        guard transition(
+            to: .stopping(processID: processID),
+            allowedFrom: [.failed],
+            action: "retryStopAfterFailure",
+            invalidUserMessage: "Retry Stop is only available after a failed runtime stop.",
+            invalidRemediation: "Wait for the current runtime transition to finish before retrying Stop."
+        ) else {
+            return
+        }
+        do {
+            _ = try await runtimeService.controlSession(processIdentifier: processID, action: .stop)
+            guard transition(
+                to: .finalizing,
+                allowedFrom: [.stopping],
+                action: "retryStopAfterFailure",
+                invalidUserMessage: "Runtime state changed unexpectedly during retry stop finalization.",
+                invalidRemediation: "Load final status to recover state."
+            ) else {
+                return
+            }
+            await finalizeStopBounded()
+        } catch let serviceError as AppServiceError {
+            _ = transitionToFailure(
+                serviceError,
+                allowedFrom: [.stopping],
+                action: "retryStopAfterFailure",
+                invalidUserMessage: "Runtime state changed unexpectedly while retrying Stop.",
+                invalidRemediation: "Refresh runtime state and retry the control action again.",
+                recoveryActions: interruptionRecoveryActions(
+                    for: serviceError,
+                    fallback: [.retryStop, .openSessionArtifacts]
+                )
+            )
+        } catch {
+            _ = transitionToFailure(
+                AppServiceError(
+                    code: .unknown,
+                    userMessage: "Could not stop session cleanly.",
+                    remediation: "Wait a few seconds and try Stop again.",
+                    debugDetail: String(describing: error)
+                ),
+                allowedFrom: [.stopping],
+                action: "retryStopAfterFailure",
+                invalidUserMessage: "Runtime state changed unexpectedly while retrying Stop.",
+                invalidRemediation: "Refresh runtime state and retry the control action again.",
+                recoveryActions: [.retryStop, .openSessionArtifacts]
+            )
+        }
+    }
+
+    public func retryFinalizeAfterFailure() {
+        guard let sessionRoot = activeSessionRoot else {
+            rejectAction(
+                action: "retryFinalizeAfterFailure",
+                userMessage: "No failed session is available to finalize again.",
+                remediation: "Open session artifacts if present, or start a new session."
+            )
+            return
+        }
+        loadFinalStatus(manifestPath: sessionRoot.appendingPathComponent("session.manifest.json"))
+    }
+
     private enum RunPhase: String {
         case idle
         case preparing
@@ -384,8 +459,10 @@ public final class RuntimeViewModel {
         if case .completed = next {
             suggestedRecoveryActions = []
             activeSessionRoot = nil
+            activeLiveProcessID = nil
             interruptionRecoveryContext = nil
         } else if case .preparing = next {
+            activeLiveProcessID = nil
             interruptionRecoveryContext = nil
         } else if case .running = next {
             suggestedRecoveryActions = []
@@ -459,62 +536,123 @@ public final class RuntimeViewModel {
             return
         }
 
-        let diagnostics = finalizationTimeoutDiagnostics(
+        let snapshot = inspectSessionArtifacts(sessionRoot: sessionRoot, manifestPath: manifestPath)
+        let diagnostics = snapshot.diagnosticSummary
+        let timeoutActions: [RecoveryAction] = snapshot.hasPrimaryArtifacts
+            ? [.safeFinalize, .retryFinalize, .openSessionArtifacts, .startNewSession]
+            : (snapshot.hasAnyDiagnostics ? [.openSessionArtifacts, .startNewSession] : [.startNewSession])
+        let timeoutContext = makeArtifactAwareRecoveryContext(
+            error: AppServiceError(
+                code: .timeout,
+                userMessage: snapshot.hasPrimaryArtifacts
+                    ? "Session finalization timed out after partial artifacts were written."
+                    : "Session ended before final artifacts were created.",
+                remediation: snapshot.hasPrimaryArtifacts
+                    ? "Open session details to inspect artifacts, then retry finalization or safe finalize."
+                    : "Inspect retained diagnostics if needed, then start a new session.",
+                debugDetail: "timeout_seconds=\(finalizationTimeoutSeconds), \(diagnostics)"
+            ),
+            actions: timeoutActions,
             sessionRoot: sessionRoot,
             manifestPath: manifestPath
         )
-        _ = transitionToFailure(
-            AppServiceError(
-                code: .timeout,
-                userMessage: "Session finalization timed out.",
-                remediation: "Open session details to inspect artifacts, then retry finalization.",
-                debugDetail: "timeout_seconds=\(finalizationTimeoutSeconds), \(diagnostics)"
-            ),
+        let timeoutError = timeoutContext.error
+        let transitioned = transitionToFailure(
+            timeoutError,
             allowedFrom: [.finalizing],
             action: "stopCurrentRun.finalize",
             invalidUserMessage: "Finalization timed out after runtime state changed unexpectedly.",
             invalidRemediation: "Refresh runtime state and retry finalization.",
-            recoveryActions: [.safeFinalize, .retryFinalize, .openSessionArtifacts, .startNewSession]
+            recoveryActions: timeoutContext.actions
         )
+        if transitioned {
+            suggestedRecoveryActions = timeoutContext.actions
+            interruptionRecoveryContext = timeoutContext.context
+        }
     }
 
-    private func finalizationTimeoutDiagnostics(sessionRoot: URL, manifestPath: URL) -> String {
+    private struct SessionArtifactSnapshot: Equatable {
+        let sessionRoot: URL
+        let manifestPath: URL
+        let manifestExists: Bool
+        let jsonlPath: URL
+        let jsonlExists: Bool
+        let wavPath: URL
+        let wavExists: Bool
+        let stderrPath: URL
+        let stderrExists: Bool
+
+        var hasPrimaryArtifacts: Bool {
+            manifestExists || jsonlExists || wavExists
+        }
+
+        var hasAnyDiagnostics: Bool {
+            hasPrimaryArtifacts || stderrExists
+        }
+
+        var diagnosticSummary: String {
+            [
+                "session_root=\(sessionRoot.path)",
+                "manifest_path=\(manifestPath.path)",
+                "manifest_exists=\(manifestExists)",
+                "jsonl_exists=\(jsonlExists)",
+                "wav_exists=\(wavExists)",
+                "stderr_exists=\(stderrExists)",
+            ].joined(separator: ", ")
+        }
+    }
+
+    private func inspectSessionArtifacts(sessionRoot: URL, manifestPath: URL) -> SessionArtifactSnapshot {
         let fileManager = FileManager.default
         let jsonlPath = sessionRoot.appendingPathComponent("session.jsonl")
         let wavPath = sessionRoot.appendingPathComponent("session.wav")
         let stderrPath = sessionRoot.appendingPathComponent("runtime.stderr.log")
+        return SessionArtifactSnapshot(
+            sessionRoot: sessionRoot,
+            manifestPath: manifestPath,
+            manifestExists: fileManager.fileExists(atPath: manifestPath.path),
+            jsonlPath: jsonlPath,
+            jsonlExists: fileManager.fileExists(atPath: jsonlPath.path),
+            wavPath: wavPath,
+            wavExists: fileManager.fileExists(atPath: wavPath.path),
+            stderrPath: stderrPath,
+            stderrExists: fileManager.fileExists(atPath: stderrPath.path)
+        )
+    }
 
-        return [
-            "session_root=\(sessionRoot.path)",
-            "manifest_path=\(manifestPath.path)",
-            "manifest_exists=\(fileManager.fileExists(atPath: manifestPath.path))",
-            "jsonl_exists=\(fileManager.fileExists(atPath: jsonlPath.path))",
-            "wav_exists=\(fileManager.fileExists(atPath: wavPath.path))",
-            "stderr_exists=\(fileManager.fileExists(atPath: stderrPath.path))",
-        ].joined(separator: ", ")
+    private func finalizationTimeoutDiagnostics(sessionRoot: URL, manifestPath: URL) -> String {
+        inspectSessionArtifacts(sessionRoot: sessionRoot, manifestPath: manifestPath).diagnosticSummary
     }
 
     private func applyManifestFinalStatus(_ manifest: SessionManifestDTO, action: String) {
         let mappedStatus = finalStatusMapper.mapStatus(manifest)
         switch mappedStatus {
         case .failed:
-            let interruptedFailure = AppServiceError(
+            let finalizedFailure = AppServiceError(
                 code: .processExitedUnexpectedly,
-                userMessage: "Session ended with a failure.",
-                remediation: "Open details and retry after fixing reported issues.",
+                userMessage: "Session finalized with a failure status.",
+                remediation: "Open session artifacts to inspect the finalized failure, then start a new session after fixing reported issues.",
                 debugDetail: "manifest status=failed"
             )
-            _ = transitionToFailure(
-                interruptedFailure,
+            let actions: [RecoveryAction] = [.openSessionArtifacts, .startNewSession]
+            let transitioned = transitionToFailure(
+                finalizedFailure,
                 allowedFrom: [.finalizing],
                 action: action,
                 invalidUserMessage: "Runtime state changed unexpectedly while mapping final failure status.",
                 invalidRemediation: "Refresh runtime state and reopen the session detail.",
-                recoveryActions: interruptionRecoveryActions(
-                    for: interruptedFailure,
-                    fallback: [.openSessionArtifacts, .startNewSession]
-                )
+                recoveryActions: actions
             )
+            if transitioned, let sessionRoot = activeSessionRoot {
+                suggestedRecoveryActions = actions
+                interruptionRecoveryContext = InterruptionRecoveryContext(
+                    classification: .finalizedFailure,
+                    sessionRoot: sessionRoot,
+                    summary: "Session finalized with a failed outcome.",
+                    guidance: "Inspect the retained artifacts for the finalized failure, then start a new session once the root cause is addressed.",
+                    actions: actions
+                )
+            }
         case .ok, .degraded, .pending:
             _ = transition(
                 to: .completed,
@@ -543,11 +681,12 @@ public final class RuntimeViewModel {
         )
         if transitioned {
             let normalizedActions = normalizedRecoveryActions(recoveryActions)
-            suggestedRecoveryActions = normalizedActions
-            interruptionRecoveryContext = makeInterruptionRecoveryContext(
+            let recoveryContext = makeInterruptionRecoveryContext(
                 error: error,
                 actions: normalizedActions
             )
+            suggestedRecoveryActions = recoveryContext?.actions ?? normalizedActions
+            interruptionRecoveryContext = recoveryContext
         }
         return transitioned
     }
@@ -597,6 +736,55 @@ public final class RuntimeViewModel {
         }
     }
 
+
+    private struct ArtifactAwareRecoveryPresentation {
+        let error: AppServiceError
+        let actions: [RecoveryAction]
+        let context: InterruptionRecoveryContext?
+    }
+
+    private func makeArtifactAwareRecoveryContext(
+        error: AppServiceError,
+        actions: [RecoveryAction],
+        sessionRoot: URL,
+        manifestPath: URL
+    ) -> ArtifactAwareRecoveryPresentation {
+        let snapshot = inspectSessionArtifacts(sessionRoot: sessionRoot, manifestPath: manifestPath)
+        if snapshot.hasPrimaryArtifacts {
+            let normalizedActions = normalizedRecoveryActions(actions)
+            return ArtifactAwareRecoveryPresentation(
+                error: error,
+                actions: normalizedActions,
+                context: InterruptionRecoveryContext(
+                    classification: .partialArtifactFailure,
+                    sessionRoot: sessionRoot,
+                    summary: "Session was interrupted after partial artifacts were captured.",
+                    guidance: "Use Resume to continue the interrupted session, or Safe Finalize to preserve the partial artifacts for review before retrying.",
+                    actions: normalizedActions
+                )
+            )
+        }
+
+        let normalizedActions = normalizedRecoveryActions(
+            snapshot.hasAnyDiagnostics
+                ? actions.filter { $0 != .resumeSession && $0 != .safeFinalize && $0 != .retryStop }
+                : actions.filter { $0 != .resumeSession && $0 != .openSessionArtifacts && $0 != .safeFinalize && $0 != .retryStop }
+        )
+        return ArtifactAwareRecoveryPresentation(
+            error: error,
+            actions: normalizedActions,
+            context: InterruptionRecoveryContext(
+                classification: .emptySessionFailure,
+                sessionRoot: sessionRoot,
+                summary: "Session ended before any primary artifacts were created.",
+                guidance: snapshot.hasAnyDiagnostics
+                    ? "Inspect the retained diagnostics for the failed run, then start a new session."
+                    : "No primary session artifacts were created; start a new session after checking runtime readiness.",
+                actions: normalizedActions
+            )
+        )
+    }
+
     private func makeInterruptionRecoveryContext(
         error: AppServiceError,
         actions: [RecoveryAction]
@@ -604,13 +792,13 @@ public final class RuntimeViewModel {
         guard isRecoverableInterruption(error), let sessionRoot = activeSessionRoot else {
             return nil
         }
-        return InterruptionRecoveryContext(
-            classification: .recoverableInterruption,
+        let presentation = makeArtifactAwareRecoveryContext(
+            error: error,
+            actions: normalizedRecoveryActions([.resumeSession, .safeFinalize] + actions),
             sessionRoot: sessionRoot,
-            summary: "Session was interrupted before clean finalization.",
-            guidance: "Choose Resume to continue this session or Safe Finalize to preserve partial artifacts for review.",
-            actions: normalizedRecoveryActions([.resumeSession, .safeFinalize] + actions)
+            manifestPath: sessionRoot.appendingPathComponent("session.manifest.json")
         )
+        return presentation.context
     }
 
     private func normalizedRecoveryActions(_ actions: [RecoveryAction]) -> [RecoveryAction] {

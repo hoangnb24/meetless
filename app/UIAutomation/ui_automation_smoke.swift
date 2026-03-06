@@ -215,8 +215,20 @@ private func makeSession(
         durationMs: 12_000,
         mode: mode,
         status: status,
-        rootPath: URL(fileURLWithPath: "/tmp/\(id)", isDirectory: true)
+        rootPath: URL(fileURLWithPath: "/tmp/\(id)", isDirectory: true),
+        outcomeClassification: outcomeClassification(for: status)
     )
+}
+
+private func outcomeClassification(for status: SessionStatus) -> SessionOutcomeClassification {
+    switch status {
+    case .pending:
+        return .partialArtifact
+    case .ok, .degraded:
+        return .finalizedSuccess
+    case .failed:
+        return .finalizedFailure
+    }
 }
 
 @MainActor

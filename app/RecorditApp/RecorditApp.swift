@@ -23,6 +23,7 @@ private struct LaunchConfiguration {
     }
     private enum UITestRuntimeScenario: String {
         case stopFailure = "stop_failure"
+        case stopFailureThenRecover = "stop_failure_then_recover"
     }
 
     let environment: AppEnvironment
@@ -103,10 +104,17 @@ private struct LaunchConfiguration {
             }
         }
 
-        if runtimeScenario == .stopFailure {
-            environment = environment.replacing(
-                runtimeService: ScriptedUITestRuntimeService(failStop: true)
-            )
+        if let runtimeScenario {
+            switch runtimeScenario {
+            case .stopFailure:
+                environment = environment.replacing(
+                    runtimeService: ScriptedUITestRuntimeService(stopBehavior: .alwaysFail)
+                )
+            case .stopFailureThenRecover:
+                environment = environment.replacing(
+                    runtimeService: ScriptedUITestRuntimeService(stopBehavior: .failThenRecover)
+                )
+            }
         }
 
         return environment
@@ -221,11 +229,18 @@ private struct ScriptedFailingPreflightCommandRunner: CommandRunning {
 }
 
 private actor ScriptedUITestRuntimeService: RuntimeService {
-    private let failStop: Bool
+    enum StopBehavior {
+        case alwaysSucceed
+        case alwaysFail
+        case failThenRecover
+    }
+
+    private let stopBehavior: StopBehavior
+    private var hasIssuedRecoverableStopFailure = false
     private var nextProcessIdentifier: Int32 = 5100
 
-    init(failStop: Bool) {
-        self.failStop = failStop
+    init(stopBehavior: StopBehavior = .alwaysSucceed) {
+        self.stopBehavior = stopBehavior
     }
 
     func startSession(request: RuntimeStartRequest) async throws -> RuntimeLaunchResult {
@@ -242,13 +257,27 @@ private actor ScriptedUITestRuntimeService: RuntimeService {
         processIdentifier _: Int32,
         action: RuntimeControlAction
     ) async throws -> RuntimeControlResult {
-        if failStop, action == .stop {
-            throw AppServiceError(
-                code: .runtimeUnavailable,
-                userMessage: "Runtime stop failed in UI test fixture.",
-                remediation: "Use recovery actions to retry stop or inspect artifacts."
-            )
+        if action == .stop {
+            switch stopBehavior {
+            case .alwaysSucceed:
+                break
+            case .alwaysFail:
+                throw stopFailure()
+            case .failThenRecover:
+                if !hasIssuedRecoverableStopFailure {
+                    hasIssuedRecoverableStopFailure = true
+                    throw stopFailure()
+                }
+            }
         }
         return RuntimeControlResult(accepted: true, detail: "scripted")
+    }
+
+    private func stopFailure() -> AppServiceError {
+        AppServiceError(
+            code: .runtimeUnavailable,
+            userMessage: "Runtime stop failed in UI test fixture.",
+            remediation: "Use recovery actions to retry stop or inspect artifacts."
+        )
     }
 }

@@ -41,7 +41,8 @@ private func session(
         mode: .recordOnly,
         status: .pending,
         rootPath: rootPath,
-        ingestSource: source
+        ingestSource: source,
+        outcomeClassification: .partialArtifact
     )
 }
 

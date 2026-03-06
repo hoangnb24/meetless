@@ -226,7 +226,8 @@ private func writeReadyPendingSidecar(
         status: .pending,
         rootPath: sessionRoot,
         pendingTranscriptionState: .readyToTranscribe,
-        readyToTranscribe: true
+        readyToTranscribe: true,
+        outcomeClassification: .partialArtifact
     )
 }
 

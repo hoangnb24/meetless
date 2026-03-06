@@ -148,7 +148,107 @@ private func preflightModelBlockedPayload() -> Data {
     return (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
 }
 
+private func preflightPermissionBlockedPayload() -> Data {
+    let payload: [String: Any] = [
+        "schema_version": "1",
+        "kind": "transcribe-live-preflight",
+        "generated_at_utc": "2026-03-05T00:00:00Z",
+        "overall_status": "FAIL",
+        "config": [
+            "out_wav": "/tmp/out.wav",
+            "out_jsonl": "/tmp/out.jsonl",
+            "out_manifest": "/tmp/out.manifest.json",
+            "asr_backend": "whispercpp",
+            "asr_model_requested": "/tmp/model.bin",
+            "asr_model_resolved": "/tmp/model.bin",
+            "asr_model_source": "fixture",
+            "sample_rate_hz": 48_000,
+        ],
+        "checks": [
+            ["id": ReadinessContractID.modelPath.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            [
+                "id": ReadinessContractID.screenCaptureAccess.rawValue,
+                "status": "FAIL",
+                "detail": "screen access denied",
+                "remediation": "Grant Screen Recording in System Settings."
+            ],
+            ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+        ],
+    ]
+    return (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
+}
+
+private func preflightWarnRequiresAcknowledgementPayload() -> Data {
+    let payload: [String: Any] = [
+        "schema_version": "1",
+        "kind": "transcribe-live-preflight",
+        "generated_at_utc": "2026-03-05T00:00:00Z",
+        "overall_status": "WARN",
+        "config": [
+            "out_wav": "/tmp/out.wav",
+            "out_jsonl": "/tmp/out.jsonl",
+            "out_manifest": "/tmp/out.manifest.json",
+            "asr_backend": "whispercpp",
+            "asr_model_requested": "/tmp/model.bin",
+            "asr_model_resolved": "/tmp/model.bin",
+            "asr_model_source": "fixture",
+            "sample_rate_hz": 48_000,
+        ],
+        "checks": [
+            ["id": ReadinessContractID.modelPath.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.outWav.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.outJsonl.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.outManifest.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            [
+                "id": ReadinessContractID.sampleRate.rawValue,
+                "status": "WARN",
+                "detail": "non-default sample rate",
+                "remediation": "Acknowledge this warning to continue."
+            ],
+        ],
+    ]
+    return (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
+}
+
+private func preflightPermissionWinsOverModelPayload() -> Data {
+    let payload: [String: Any] = [
+        "schema_version": "1",
+        "kind": "transcribe-live-preflight",
+        "generated_at_utc": "2026-03-05T00:00:00Z",
+        "overall_status": "FAIL",
+        "config": [
+            "out_wav": "/tmp/out.wav",
+            "out_jsonl": "/tmp/out.jsonl",
+            "out_manifest": "/tmp/out.manifest.json",
+            "asr_backend": "whispercpp",
+            "asr_model_requested": "/tmp/model.bin",
+            "asr_model_resolved": "/tmp/model.bin",
+            "asr_model_source": "fixture",
+            "sample_rate_hz": 48_000,
+        ],
+        "checks": [
+            [
+                "id": ReadinessContractID.modelPath.rawValue,
+                "status": "FAIL",
+                "detail": "model path missing",
+                "remediation": "Provide a compatible model."
+            ],
+            [
+                "id": ReadinessContractID.screenCaptureAccess.rawValue,
+                "status": "FAIL",
+                "detail": "screen access denied",
+                "remediation": "Grant Screen Recording in System Settings."
+            ],
+            ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+        ],
+    ]
+    return (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
+}
+
 private func preflightRuntimeBlockedPayload() -> Data {
+
     let payload: [String: Any] = [
         "schema_version": "1",
         "kind": "transcribe-live-preflight",
@@ -262,6 +362,41 @@ private func runSmoke() {
     )
     check(relaunch.onboardingGateFailure?.code == .preflightFailed, "preflight failure should map to preflightFailed")
 
+    let warningOnlyPreflight = PreflightViewModel(
+        runner: RecorditPreflightRunner(
+            executable: "/usr/bin/env",
+            commandRunner: StubCommandRunner(payload: preflightWarnRequiresAcknowledgementPayload()),
+            parser: PreflightEnvelopeParser(),
+            environment: [:]
+        ),
+        gatingPolicy: PreflightGatingPolicy()
+    )
+    warningOnlyPreflight.runLivePreflight()
+    check(
+        warningOnlyPreflight.requiresWarningAcknowledgement,
+        "warning-only preflight should require explicit warning acknowledgement before completion"
+    )
+    check(
+        !relaunch.completeOnboardingIfReady(modelSetup: validModel, preflight: warningOnlyPreflight),
+        "completion should fail until warning-only preflight results are acknowledged"
+    )
+    check(
+        relaunch.onboardingGateFailure?.code == .preflightFailed,
+        "warning-only preflight without acknowledgement should map to preflightFailed"
+    )
+    check(
+        relaunch.onboardingGateFailure?.userMessage == "Live Transcribe warnings must be acknowledged before finishing setup.",
+        "warning-only preflight should surface the dedicated warning acknowledgement message"
+    )
+    check(
+        relaunch.onboardingGateFailure?.remediation.contains("Acknowledge Warnings") == true,
+        "warning-only preflight should route users to the acknowledgement action"
+    )
+    check(
+        relaunch.onboardingGateFailure?.remediation.contains("Run preflight checks") == false,
+        "warning-only preflight should not tell users to rerun preflight when warnings are the only remaining gate"
+    )
+
     let backendBlockedPreflight = PreflightViewModel(
         runner: RecorditPreflightRunner(
             executable: "/usr/bin/env",
@@ -281,10 +416,79 @@ private func runSmoke() {
         "backend/model readiness blockers should map to modelUnavailable"
     )
     check(
+        relaunch.onboardingGateFailure?.remediation.contains("Provide a compatible model.") == true,
+        "backend/model readiness blockers should preserve check-specific remediation detail"
+    )
+    check(
+        relaunch.onboardingGateFailure?.remediation.contains("Validate Model Setup") == true,
+        "backend/model readiness blockers should route users to model validation action copy"
+    )
+    check(
         relaunch.onboardingGateFailure?.remediation.contains("Record Only remains available") == true,
         "backend/model readiness blockers should surface Record Only fallback guidance"
     )
 
+    let permissionBlockedPreflight = PreflightViewModel(
+        runner: RecorditPreflightRunner(
+            executable: "/usr/bin/env",
+            commandRunner: StubCommandRunner(payload: preflightPermissionBlockedPayload()),
+            parser: PreflightEnvelopeParser(),
+            environment: [:]
+        ),
+        gatingPolicy: PreflightGatingPolicy()
+    )
+    permissionBlockedPreflight.runLivePreflight()
+    check(
+        !relaunch.completeOnboardingIfReady(modelSetup: validModel, preflight: permissionBlockedPreflight),
+        "completion should fail when capture permission readiness blocks live preflight"
+    )
+    check(
+        relaunch.onboardingGateFailure?.code == .permissionDenied,
+        "screen permission blocker should map to permissionDenied"
+    )
+    check(
+        relaunch.onboardingGateFailure?.remediation.contains("Open Screen Recording Settings") == true,
+        "screen permission blocker should route users to screen settings action copy"
+    )
+    check(
+        relaunch.onboardingGateFailure?.remediation.contains("Grant Screen Recording in System Settings.") == true,
+        "screen permission blocker should preserve check-specific remediation detail"
+    )
+
+    let mixedOrderBlockedPreflight = PreflightViewModel(
+        runner: RecorditPreflightRunner(
+            executable: "/usr/bin/env",
+            commandRunner: StubCommandRunner(payload: preflightPermissionWinsOverModelPayload()),
+            parser: PreflightEnvelopeParser(),
+            environment: [:]
+        ),
+        gatingPolicy: PreflightGatingPolicy()
+    )
+    mixedOrderBlockedPreflight.runLivePreflight()
+    check(
+        mixedOrderBlockedPreflight.primaryBlockingDomain == .tccCapture,
+        "capture blockers should remain the primary blocking domain even when model blockers appear first in the payload"
+    )
+    check(
+        !relaunch.completeOnboardingIfReady(modelSetup: validModel, preflight: mixedOrderBlockedPreflight),
+        "completion should fail when a capture blocker is present even if model blockers appear earlier in the payload"
+    )
+    check(
+        relaunch.onboardingGateFailure?.code == .permissionDenied,
+        "mixed-order blockers should still map to permissionDenied when capture blockers outrank model blockers"
+    )
+    check(
+        relaunch.onboardingGateFailure?.remediation.contains("Open Screen Recording Settings") == true,
+        "mixed-order blockers should preserve the screen-permission action copy"
+    )
+    check(
+        relaunch.onboardingGateFailure?.remediation.contains("Validate Model Setup") == false,
+        "mixed-order blockers should not leak backend-model remediation when capture blockers win"
+    )
+    check(
+        relaunch.onboardingGateFailure?.remediation.contains("Record Only remains available") == false,
+        "mixed-order blockers should not advertise Record Only fallback when capture blockers are present"
+    )
     let runtimeBlockedPreflight = PreflightViewModel(
         runner: RecorditPreflightRunner(
             executable: "/usr/bin/env",
@@ -302,6 +506,14 @@ private func runSmoke() {
     check(
         relaunch.onboardingGateFailure?.code == .preflightFailed,
         "runtime preflight blockers should map to preflightFailed"
+    )
+    check(
+        relaunch.onboardingGateFailure?.remediation.contains("Choose writable output path.") == true,
+        "runtime preflight blockers should preserve check-specific remediation detail"
+    )
+    check(
+        relaunch.onboardingGateFailure?.remediation.contains("Click Run Preflight again.") == true,
+        "runtime preflight blockers should route users to rerun preflight action copy"
     )
     check(
         relaunch.onboardingGateFailure?.remediation.contains("Record Only remains available") == false,

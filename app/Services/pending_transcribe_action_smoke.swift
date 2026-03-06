@@ -75,7 +75,8 @@ private func writeReadyPendingFixture(
         status: .pending,
         rootPath: root,
         pendingTranscriptionState: .readyToTranscribe,
-        readyToTranscribe: true
+        readyToTranscribe: true,
+        outcomeClassification: .partialArtifact
     )
 }
 

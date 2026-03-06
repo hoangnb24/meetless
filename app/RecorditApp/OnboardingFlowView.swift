@@ -25,6 +25,8 @@ private struct PermissionStatusRow: Identifiable {
     let title: String
     let status: String
     let detail: String
+    let identifierID: String
+    let identifierStatus: String
 }
 
 private struct PreflightDiagnosticRow: Identifiable {
@@ -84,7 +86,7 @@ struct OnboardingFlowView: View {
 
     private var permissionsStep: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Run dedicated permission remediation checks for Screen Recording and Microphone access.")
+            Text("Run dedicated permission remediation checks for Screen Recording, Microphone, active display availability, and capture readiness.")
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 10) {
@@ -112,11 +114,11 @@ struct OnboardingFlowView: View {
                 .padding(8)
                 .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
                 .accessibilityIdentifier(
-                    "permission_row_\(row.id)_\(identifierFragment(row.status))"
+                    "permission_row_\(row.identifierID)_\(row.identifierStatus)"
                 )
             }
 
-            if controller.snapshot.missingPermissions.contains(.screenRecording) {
+            if shouldOfferSettingsButton(for: .screenRecording) {
                 Button("Open Screen Recording Settings") {
                     controller.openSettings(for: .screenRecording)
                 }
@@ -124,7 +126,7 @@ struct OnboardingFlowView: View {
                 .accessibilityIdentifier("onboarding_open_screen_settings")
             }
 
-            if controller.snapshot.missingPermissions.contains(.microphone) {
+            if shouldOfferSettingsButton(for: .microphone) {
                 Button("Open Microphone Settings") {
                     controller.openSettings(for: .microphone)
                 }
@@ -306,10 +308,7 @@ struct OnboardingFlowView: View {
         case .welcome:
             return true
         case .permissions:
-            guard case .ready = controller.snapshot.permissionState else {
-                return false
-            }
-            return controller.snapshot.missingPermissions.isEmpty
+            return permissionStepCanAdvance(from: controller.snapshot.permissionState)
         case .modelSetup:
             return controller.snapshot.modelCanStart && controller.snapshot.preflightCanProceed
         case .ready:
@@ -329,6 +328,54 @@ struct OnboardingFlowView: View {
             .replacingOccurrences(of: "-", with: "_")
     }
 
+    private func permissionSurfaceIdentifier(_ surface: PermissionRemediationSurface) -> String {
+        switch surface {
+        case .screenRecording:
+            return "screen"
+        case .activeDisplay:
+            return "display"
+        case .microphone:
+            return "microphone"
+        }
+    }
+
+    private func permissionStatusIdentifier(_ status: PermissionReadiness) -> String {
+        switch status {
+        case .granted:
+            return "granted"
+        case .missingPermission:
+            return "missing"
+        case .noActiveDisplay:
+            return "no_active_display"
+        case .runtimeFailure:
+            return "runtime_failure"
+        case .diagnosticsUnavailable:
+            return "diagnostics_unavailable"
+        }
+    }
+
+    private func permissionStepCanAdvance(from state: PermissionRemediationViewModel.State) -> Bool {
+        switch state {
+        case .ready(let items):
+            return items.allSatisfy { !$0.status.isBlocking }
+        case .idle, .checking, .failed:
+            return false
+        }
+    }
+
+    private func shouldOfferSettingsButton(for permission: RemediablePermission) -> Bool {
+        switch controller.snapshot.permissionState {
+        case .ready(let items):
+            return items.contains {
+                $0.surface.settingsPermission == permission && $0.status == .missingPermission
+            }
+        case .failed:
+            return true
+        case .idle, .checking:
+            return false
+        }
+    }
+
     private func permissionRows(from state: PermissionRemediationViewModel.State) -> [PermissionStatusRow] {
         switch state {
         case .idle:
@@ -337,13 +384,17 @@ struct OnboardingFlowView: View {
                     id: "screen",
                     title: "Screen Recording",
                     status: "Unknown",
-                    detail: "Run permission checks to detect access state."
+                    detail: "Run permission checks to detect access state.",
+                    identifierID: "screen",
+                    identifierStatus: "unknown"
                 ),
                 PermissionStatusRow(
                     id: "microphone",
                     title: "Microphone",
                     status: "Unknown",
-                    detail: "Run permission checks to detect access state."
+                    detail: "Run permission checks to detect access state.",
+                    identifierID: "microphone",
+                    identifierStatus: "unknown"
                 ),
             ]
         case .checking:
@@ -352,7 +403,9 @@ struct OnboardingFlowView: View {
                     id: "running",
                     title: "Permission Checks",
                     status: "Running",
-                    detail: "Collecting screen and microphone diagnostics."
+                    detail: "Collecting screen and microphone diagnostics.",
+                    identifierID: "running",
+                    identifierStatus: "running"
                 ),
             ]
         case .failed(let error):
@@ -361,22 +414,28 @@ struct OnboardingFlowView: View {
                     id: "screen",
                     title: "Screen Recording",
                     status: "Missing",
-                    detail: "Permission diagnostics unavailable. \(error.userMessage)"
+                    detail: "Permission diagnostics unavailable. \(error.userMessage)",
+                    identifierID: "screen",
+                    identifierStatus: "missing"
                 ),
                 PermissionStatusRow(
                     id: "microphone",
                     title: "Microphone",
                     status: "Missing",
-                    detail: "Permission diagnostics unavailable. \(error.remediation)"
+                    detail: "Permission diagnostics unavailable. \(error.remediation)",
+                    identifierID: "microphone",
+                    identifierStatus: "missing"
                 ),
             ]
         case .ready(let items):
             return items.map { item in
                 PermissionStatusRow(
-                    id: item.permission.rawValue,
-                    title: item.permission == .screenRecording ? "Screen Recording" : "Microphone",
-                    status: item.status == .granted ? "Granted" : "Missing",
-                    detail: item.detail
+                    id: item.surface.rawValue,
+                    title: item.surface.title,
+                    status: item.status.statusLabel,
+                    detail: item.detail,
+                    identifierID: permissionSurfaceIdentifier(item.surface),
+                    identifierStatus: permissionStatusIdentifier(item.status)
                 )
             }
         }

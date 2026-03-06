@@ -38,21 +38,69 @@ public struct FileSystemArtifactIntegrityService: ArtifactIntegrityService {
             return report(
                 sessionID: resolvedSessionID,
                 rootPath: root,
-                findings: findings
+                findings: findings,
+                outcomeClassification: .emptyRoot,
+                outcomeCode: .emptySessionRoot,
+                outcomeDiagnostics: [
+                    "root_path": root.path,
+                    "root_exists": String(false),
+                    "outcome_classification": SessionOutcomeClassification.emptyRoot.rawValue,
+                    "outcome_code": SessionOutcomeClassification.emptyRoot.canonicalCode(manifestStatus: nil).rawValue
+                ]
             )
         }
 
         let manifestURL = root.appendingPathComponent("session.manifest.json")
         let pendingURL = root.appendingPathComponent("session.pending.json")
+        let retryContextURL = root.appendingPathComponent("session.pending.retry.json")
         let wavURL = root.appendingPathComponent("session.wav")
         let jsonlURL = root.appendingPathComponent("session.jsonl")
 
         let hasManifest = FileManager.default.fileExists(atPath: manifestURL.path)
         let hasPending = FileManager.default.fileExists(atPath: pendingURL.path)
+        let hasRetryContext = FileManager.default.fileExists(atPath: retryContextURL.path)
         let hasWav = FileManager.default.fileExists(atPath: wavURL.path)
         let hasJsonl = FileManager.default.fileExists(atPath: jsonlURL.path)
+        let manifestStatus = manifestSessionStatus(at: manifestURL)
+        let outcomeClassification = classifySessionOutcome(
+            manifestStatus: manifestStatus,
+            hasManifest: hasManifest,
+            hasPending: hasPending,
+            hasWav: hasWav,
+            hasJsonl: hasJsonl,
+            hasRetryContext: hasRetryContext
+        )
+        let outcomeDiagnostics = outcomeDiagnostics(
+            rootPath: root,
+            manifestURL: manifestURL,
+            pendingURL: pendingURL,
+            retryContextURL: retryContextURL,
+            wavURL: wavURL,
+            jsonlURL: jsonlURL,
+            hasManifest: hasManifest,
+            hasPending: hasPending,
+            hasRetryContext: hasRetryContext,
+            hasWav: hasWav,
+            hasJsonl: hasJsonl,
+            manifestStatus: manifestStatus,
+            outcomeClassification: outcomeClassification
+        )
+        let outcomeCode = outcomeClassification.canonicalCode(manifestStatus: manifestStatus)
+        let hasAnyArtifacts = hasManifest || hasPending || hasRetryContext || hasWav || hasJsonl
 
-        if !hasManifest && !hasPending {
+        if !hasAnyArtifacts {
+            findings.append(
+                finding(
+                    code: "empty_session_root",
+                    summary: "Session folder exists but contains no retained runtime artifacts.",
+                    remediation: "Review runtime logs for launch or stop failures, then retry the session.",
+                    disposition: .terminal,
+                    diagnostics: outcomeDiagnostics
+                )
+            )
+        }
+
+        if hasAnyArtifacts && !hasManifest && !hasPending {
             findings.append(
                 finding(
                     code: "missing_manifest_and_pending_sidecar",
@@ -149,14 +197,20 @@ public struct FileSystemArtifactIntegrityService: ArtifactIntegrityService {
         return report(
             sessionID: resolvedSessionID,
             rootPath: root,
-            findings: findings
+            findings: findings,
+            outcomeClassification: outcomeClassification,
+            outcomeCode: outcomeCode,
+            outcomeDiagnostics: outcomeDiagnostics
         )
     }
 
     private func report(
         sessionID: String,
         rootPath: URL,
-        findings: [ArtifactIntegrityFindingDTO]
+        findings: [ArtifactIntegrityFindingDTO],
+        outcomeClassification: SessionOutcomeClassification,
+        outcomeCode: SessionOutcomeCode,
+        outcomeDiagnostics: [String: String]
     ) -> SessionArtifactIntegrityReportDTO {
         let state: ArtifactIntegrityState
         if findings.isEmpty {
@@ -170,8 +224,112 @@ public struct FileSystemArtifactIntegrityService: ArtifactIntegrityService {
             sessionID: sessionID,
             rootPath: rootPath,
             state: state,
-            findings: findings
+            findings: findings,
+            outcomeClassification: outcomeClassification,
+            outcomeCode: outcomeCode,
+            outcomeDiagnostics: outcomeDiagnostics
         )
+    }
+
+    private func manifestSessionStatus(at manifestURL: URL) -> SessionStatus? {
+        do {
+            let data = try dataReader(manifestURL)
+            guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return nil
+            }
+            let summary = payload["session_summary"] as? [String: Any]
+            let raw = summary?["session_status"] as? String
+            let sessionRoot = manifestURL.deletingLastPathComponent()
+            let manifest = SessionManifestDTO(
+                sessionID: payload["session_id"] as? String ?? sessionRoot.lastPathComponent,
+                status: raw ?? SessionStatus.ok.rawValue,
+                runtimeMode: payload["runtime_mode"] as? String ?? RuntimeMode.live.rawValue,
+                trustNoticeCount: parseTrustNoticeCount(payload),
+                artifacts: SessionArtifactsDTO(
+                    wavPath: sessionRoot.appendingPathComponent("session.wav"),
+                    jsonlPath: sessionRoot.appendingPathComponent("session.jsonl"),
+                    manifestPath: manifestURL
+                )
+            )
+            return ManifestFinalStatusMapper().mapStatus(manifest)
+        } catch {
+            return nil
+        }
+    }
+
+    private func parseTrustNoticeCount(_ payload: [String: Any]) -> Int {
+        guard let trust = payload["trust"] as? [String: Any] else {
+            return 0
+        }
+        if let count = trust["notice_count"] as? Int {
+            return max(0, count)
+        }
+        if let count = trust["notice_count"] as? NSNumber {
+            return max(0, count.intValue)
+        }
+        if let notices = trust["notices"] as? [[String: Any]] {
+            return notices.count
+        }
+        return 0
+    }
+
+    private func classifySessionOutcome(
+        manifestStatus: SessionStatus?,
+        hasManifest: Bool,
+        hasPending: Bool,
+        hasWav: Bool,
+        hasJsonl: Bool,
+        hasRetryContext: Bool
+    ) -> SessionOutcomeClassification {
+        if let manifestStatus {
+            switch manifestStatus {
+            case .failed:
+                return .finalizedFailure
+            case .ok, .degraded:
+                return hasWav ? .finalizedSuccess : .partialArtifact
+            case .pending:
+                return .partialArtifact
+            }
+        }
+
+        let hasAnyArtifacts = hasManifest || hasPending || hasRetryContext || hasWav || hasJsonl
+        return hasAnyArtifacts ? .partialArtifact : .emptyRoot
+    }
+
+    private func outcomeDiagnostics(
+        rootPath: URL,
+        manifestURL: URL,
+        pendingURL: URL,
+        retryContextURL: URL,
+        wavURL: URL,
+        jsonlURL: URL,
+        hasManifest: Bool,
+        hasPending: Bool,
+        hasRetryContext: Bool,
+        hasWav: Bool,
+        hasJsonl: Bool,
+        manifestStatus: SessionStatus?,
+        outcomeClassification: SessionOutcomeClassification
+    ) -> [String: String] {
+        var diagnostics: [String: String] = [
+            "root_path": rootPath.path,
+            "manifest_path": manifestURL.path,
+            "pending_path": pendingURL.path,
+            "retry_context_path": retryContextURL.path,
+            "wav_path": wavURL.path,
+            "jsonl_path": jsonlURL.path,
+            "has_manifest": String(hasManifest),
+            "has_pending": String(hasPending),
+            "has_retry_context": String(hasRetryContext),
+            "has_wav": String(hasWav),
+            "has_jsonl": String(hasJsonl),
+            "outcome_classification": outcomeClassification.rawValue,
+            "outcome_code": outcomeClassification.canonicalCode(manifestStatus: manifestStatus).rawValue
+        ]
+        if let manifestStatus {
+            diagnostics["manifest_status"] = manifestStatus.rawValue
+        }
+        return diagnostics
     }
 
     private func directoryExists(at url: URL) -> Bool {

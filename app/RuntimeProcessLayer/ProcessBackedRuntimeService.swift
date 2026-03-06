@@ -4,17 +4,20 @@ public actor ProcessBackedRuntimeService: RuntimeService {
     private let processManager: RuntimeProcessManager
     private let pendingSidecarService: any PendingSessionSidecarService
     private let stopTimeoutSeconds: TimeInterval
+    private let gracefulStopTimeoutSeconds: TimeInterval
     private let pendingSidecarStopTimeoutSeconds: TimeInterval
 
     public init(
         processManager: RuntimeProcessManager = RuntimeProcessManager(),
         pendingSidecarService: any PendingSessionSidecarService = FileSystemPendingSessionSidecarService(),
         stopTimeoutSeconds: TimeInterval = 15,
+        gracefulStopTimeoutSeconds: TimeInterval = 2,
         pendingSidecarStopTimeoutSeconds: TimeInterval = 2
     ) {
         self.processManager = processManager
         self.pendingSidecarService = pendingSidecarService
         self.stopTimeoutSeconds = stopTimeoutSeconds
+        self.gracefulStopTimeoutSeconds = gracefulStopTimeoutSeconds
         self.pendingSidecarStopTimeoutSeconds = pendingSidecarStopTimeoutSeconds
     }
 
@@ -76,52 +79,150 @@ public actor ProcessBackedRuntimeService: RuntimeService {
 
     public func controlSession(processIdentifier: Int32, action: RuntimeControlAction) async throws -> RuntimeControlResult {
         do {
-            let outcome = try await processManager.control(
+            if let settledOutcome = await processManager.pollControlOutcome(
                 processIdentifier: processIdentifier,
-                action: action,
-                timeoutSeconds: stopTimeoutSeconds
-            )
-            switch outcome.classification {
-            case .success:
-                return RuntimeControlResult(accepted: true, detail: "Process finished cleanly.")
-            case .nonZeroExit(let code):
-                let stderrDetail = Self.runtimeStderrDetail(sessionRoot: outcome.sessionRoot)
-                let debugDetail: String
-                if let stderrDetail, !stderrDetail.isEmpty {
-                    debugDetail = "exit_code=\(code), \(stderrDetail)"
-                } else {
-                    debugDetail = "exit_code=\(code)"
+                action: action
+            ) {
+                return try mapControlOutcome(settledOutcome, requestedAction: action)
+            }
+
+            let outcome: RuntimeProcessControlOutcome
+            if action == .stop {
+                let graceTimeout = boundedGracefulStopTimeout()
+                let forcedTimeout = max(0.05, stopTimeoutSeconds - graceTimeout)
+                let gracefulStopRequestURL = await gracefulStopRequestURL(processIdentifier: processIdentifier)
+                defer {
+                    removeGracefulStopRequest(at: gracefulStopRequestURL)
                 }
-                throw AppServiceError(
-                    code: .processExitedUnexpectedly,
-                    userMessage: "Runtime process ended with an error.",
-                    remediation: "Open diagnostics and retry the session.",
-                    debugDetail: debugDetail
-                )
-            case .crashed(let signal):
-                throw AppServiceError(
-                    code: .processExitedUnexpectedly,
-                    userMessage: "Runtime process crashed.",
-                    remediation: "Retry the session. If this repeats, run preflight diagnostics.",
-                    debugDetail: "signal=\(signal)"
-                )
-            case .timedOut:
-                throw AppServiceError(
-                    code: .timeout,
-                    userMessage: "Runtime did not stop in time.",
-                    remediation: "Retry stop, then use Cancel if needed.",
-                    debugDetail: "control_timeout_seconds=\(stopTimeoutSeconds)"
-                )
-            case .launchFailure(let detail):
-                throw AppServiceError(
-                    code: .processLaunchFailed,
-                    userMessage: "Runtime control failed.",
-                    remediation: "Retry the action.",
-                    debugDetail: detail
+                try? writeGracefulStopRequest(at: gracefulStopRequestURL)
+                if let gracefulOutcome = try await waitForNaturalStopOutcome(
+                    processIdentifier: processIdentifier,
+                    requestedAction: action,
+                    timeoutSeconds: graceTimeout
+                ) {
+                    outcome = gracefulOutcome
+                } else {
+                    outcome = try await processManager.control(
+                        processIdentifier: processIdentifier,
+                        action: .stop,
+                        timeoutSeconds: forcedTimeout
+                    )
+                }
+            } else {
+                outcome = try await processManager.control(
+                    processIdentifier: processIdentifier,
+                    action: action,
+                    timeoutSeconds: stopTimeoutSeconds
                 )
             }
+            return try mapControlOutcome(outcome, requestedAction: action)
         } catch let managerError as RuntimeProcessManagerError {
             throw Self.mapManagerError(managerError)
+        }
+    }
+
+    private func waitForNaturalStopOutcome(
+        processIdentifier: Int32,
+        requestedAction: RuntimeControlAction,
+        timeoutSeconds: TimeInterval
+    ) async throws -> RuntimeProcessControlOutcome? {
+        let deadline = Date().addingTimeInterval(max(0.05, timeoutSeconds))
+        while Date() < deadline {
+            if let outcome = await processManager.pollControlOutcome(
+                processIdentifier: processIdentifier,
+                action: requestedAction
+            ) {
+                return outcome
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return await processManager.pollControlOutcome(
+            processIdentifier: processIdentifier,
+            action: requestedAction
+        )
+    }
+
+    private func gracefulStopRequestURL(processIdentifier: Int32) async -> URL? {
+        guard let sessionRoot = await processManager.sessionRoot(processIdentifier: processIdentifier) else {
+            return nil
+        }
+        return sessionRoot
+            .appendingPathComponent("session.stop.request", isDirectory: false)
+            .standardizedFileURL
+    }
+
+    private func writeGracefulStopRequest(at requestURL: URL?) throws {
+        guard let requestURL else {
+            return
+        }
+        try FileManager.default.createDirectory(
+            at: requestURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("stop\n".utf8).write(to: requestURL, options: .atomic)
+    }
+
+    private func removeGracefulStopRequest(at requestURL: URL?) {
+        guard let requestURL else {
+            return
+        }
+        try? FileManager.default.removeItem(at: requestURL)
+    }
+
+    private func boundedGracefulStopTimeout() -> TimeInterval {
+        let boundedTotal = max(0.1, stopTimeoutSeconds)
+        let requestedGrace = max(0.05, gracefulStopTimeoutSeconds)
+        return min(requestedGrace, boundedTotal * 0.5)
+    }
+
+    private func mapControlOutcome(
+        _ outcome: RuntimeProcessControlOutcome,
+        requestedAction: RuntimeControlAction
+    ) throws -> RuntimeControlResult {
+        switch outcome.classification {
+        case .success:
+            return RuntimeControlResult(accepted: true, detail: "Process finished cleanly.")
+        case .nonZeroExit(let code):
+            let stderrDetail = Self.runtimeStderrDetail(sessionRoot: outcome.sessionRoot)
+            let debugDetail: String
+            if let stderrDetail, !stderrDetail.isEmpty {
+                debugDetail = "exit_code=\(code), \(stderrDetail)"
+            } else {
+                debugDetail = "exit_code=\(code)"
+            }
+            throw AppServiceError(
+                code: .processExitedUnexpectedly,
+                userMessage: "Runtime process ended with an error.",
+                remediation: "Open diagnostics and retry the session.",
+                debugDetail: debugDetail
+            )
+        case .crashed(let signal):
+            throw AppServiceError(
+                code: .processExitedUnexpectedly,
+                userMessage: "Runtime process crashed.",
+                remediation: "Retry the session. If this repeats, run preflight diagnostics.",
+                debugDetail: "signal=\(signal)"
+            )
+        case .timedOut:
+            let detail: String
+            if requestedAction == .stop {
+                detail = "graceful_stop_timeout_seconds=\(boundedGracefulStopTimeout()), forced_stop_timeout_seconds=\(max(0.05, stopTimeoutSeconds - boundedGracefulStopTimeout()))"
+            } else {
+                detail = "control_timeout_seconds=\(stopTimeoutSeconds)"
+            }
+            throw AppServiceError(
+                code: .timeout,
+                userMessage: "Runtime did not stop in time.",
+                remediation: "Retry stop, then use Cancel if needed.",
+                debugDetail: detail
+            )
+        case .launchFailure(let detail):
+            throw AppServiceError(
+                code: .processLaunchFailed,
+                userMessage: "Runtime control failed.",
+                remediation: "Retry the action.",
+                debugDetail: detail
+            )
         }
     }
 

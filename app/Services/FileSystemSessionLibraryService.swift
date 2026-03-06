@@ -225,7 +225,9 @@ public struct FileSystemSessionLibraryService: SessionLibraryService {
     ) -> SessionSummaryDTO? {
         let manifestURL = sessionRoot.appendingPathComponent("session.manifest.json")
         let pendingURL = sessionRoot.appendingPathComponent("session.pending.json")
+        let retryContextURL = sessionRoot.appendingPathComponent("session.pending.retry.json")
         let wavURL = sessionRoot.appendingPathComponent("session.wav")
+        let jsonlURL = sessionRoot.appendingPathComponent("session.jsonl")
 
         let manifest = Self.parseManifest(at: manifestURL)
         let pending = loadPendingSidecar(
@@ -234,16 +236,51 @@ public struct FileSystemSessionLibraryService: SessionLibraryService {
             wavURL: wavURL,
             modelAvailable: modelAvailable
         )
+        let hasManifest = fileManager.fileExists(atPath: manifestURL.path)
         let hasWav = fileManager.fileExists(atPath: wavURL.path)
+        let hasJsonl = fileManager.fileExists(atPath: jsonlURL.path)
         let hasPendingFile = fileManager.fileExists(atPath: pendingURL.path)
-        let hasPendingItem = hasPendingFile && hasWav
-        guard manifest != nil || hasPendingItem else {
+        let hasRetryContext = fileManager.fileExists(atPath: retryContextURL.path)
+        let hasKnownArtifacts = hasManifest || hasPendingFile || hasWav || hasJsonl || hasRetryContext
+        guard manifest != nil
+            || hasKnownArtifacts
+            || Self.resemblesSessionDirectoryName(sessionRoot.lastPathComponent)
+        else {
             return nil
         }
 
+        let outcomeClassification = Self.classifySessionOutcome(
+            manifestStatus: manifest?.status,
+            hasManifest: hasManifest,
+            hasPending: hasPendingFile,
+            hasWav: hasWav,
+            hasJsonl: hasJsonl,
+            hasRetryContext: hasRetryContext
+        )
+        let outcomeDiagnostics = Self.outcomeDiagnostics(
+            rootPath: sessionRoot,
+            manifestURL: manifestURL,
+            pendingURL: pendingURL,
+            retryContextURL: retryContextURL,
+            wavURL: wavURL,
+            jsonlURL: jsonlURL,
+            hasManifest: hasManifest,
+            hasPending: hasPendingFile,
+            hasWav: hasWav,
+            hasJsonl: hasJsonl,
+            hasRetryContext: hasRetryContext,
+            manifestStatus: manifest?.status,
+            pendingState: pending?.transcriptionState,
+            outcomeClassification: outcomeClassification
+        )
+
         let sessionID = manifest?.sessionID ?? pending?.sessionID ?? sessionRoot.lastPathComponent
         let mode = manifest?.mode ?? pending?.mode ?? Self.inferMode(from: sessionRoot.lastPathComponent)
-        let status = manifest?.status ?? pending.map(Self.status(from:)) ?? .pending
+        let status = Self.resolveStatus(
+            manifestStatus: manifest?.status,
+            pending: pending,
+            outcomeClassification: outcomeClassification
+        )
         let durationMs = manifest?.durationMs ?? 0
         let startedAt = manifest?.startedAt
             ?? pending.flatMap { Self.parseISO8601($0.createdAtUTC) }
@@ -260,7 +297,10 @@ public struct FileSystemSessionLibraryService: SessionLibraryService {
             rootPath: sessionRoot.standardizedFileURL,
             pendingTranscriptionState: pendingState,
             readyToTranscribe: pendingState.map(pendingTransitionService.isReadyToTranscribe) ?? false,
-            ingestSource: .canonicalDirectory
+            ingestSource: .canonicalDirectory,
+            outcomeClassification: outcomeClassification,
+            outcomeCode: outcomeClassification.canonicalCode(manifestStatus: status),
+            outcomeDiagnostics: outcomeDiagnostics
         )
     }
 
@@ -280,7 +320,19 @@ public struct FileSystemSessionLibraryService: SessionLibraryService {
         dedupeTokens.formUnion(candidateDedupeTokens)
 
         let mode = manifest?.mode ?? pending?.mode ?? Self.inferMode(from: artifactSet.stem)
-        let status = manifest?.status ?? pending.map(Self.status(from:)) ?? .pending
+        let outcomeClassification = Self.classifySessionOutcome(
+            manifestStatus: manifest?.status,
+            hasManifest: artifactSet.manifestURL != nil,
+            hasPending: artifactSet.pendingURL != nil,
+            hasWav: artifactSet.preferredAudioURL != nil,
+            hasJsonl: artifactSet.jsonlURL != nil,
+            hasRetryContext: false
+        )
+        let status = Self.resolveStatus(
+            manifestStatus: manifest?.status,
+            pending: pending,
+            outcomeClassification: outcomeClassification
+        )
         let durationMs = manifest?.durationMs ?? 0
         let startedAt = manifest?.startedAt
             ?? pending.flatMap { Self.parseISO8601($0.createdAtUTC) }
@@ -300,7 +352,16 @@ public struct FileSystemSessionLibraryService: SessionLibraryService {
             pendingTranscriptionState: pendingState,
             readyToTranscribe: pendingState.map(pendingTransitionService.isReadyToTranscribe) ?? false,
             ingestSource: .legacyFlatImport,
-            ingestDiagnostics: Self.legacyIngestDiagnostics(artifactSet: artifactSet)
+            ingestDiagnostics: Self.legacyIngestDiagnostics(artifactSet: artifactSet),
+            outcomeClassification: outcomeClassification,
+            outcomeCode: outcomeClassification.canonicalCode(manifestStatus: manifest?.status),
+            outcomeDiagnostics: Self.legacyOutcomeDiagnostics(
+                sessionsRoot: sessionsRoot,
+                artifactSet: artifactSet,
+                manifestStatus: manifest?.status,
+                pendingState: pending?.transcriptionState,
+                outcomeClassification: outcomeClassification
+            )
         )
     }
 
@@ -316,12 +377,24 @@ public struct FileSystemSessionLibraryService: SessionLibraryService {
         let startedAt = parseISO8601(payload["generated_at_utc"] as? String)
         let modeRaw = payload["runtime_mode"] as? String
         let sessionID = payload["session_id"] as? String
+        let sessionRoot = manifestURL.deletingLastPathComponent()
+        let manifest = SessionManifestDTO(
+            sessionID: sessionID ?? sessionRoot.lastPathComponent,
+            status: statusRaw ?? SessionStatus.ok.rawValue,
+            runtimeMode: modeRaw ?? RuntimeMode.live.rawValue,
+            trustNoticeCount: parseTrustNoticeCount(payload),
+            artifacts: SessionArtifactsDTO(
+                wavPath: sessionRoot.appendingPathComponent("session.wav"),
+                jsonlPath: sessionRoot.appendingPathComponent("session.jsonl"),
+                manifestPath: manifestURL
+            )
+        )
 
         return IndexedManifest(
             sessionID: sessionID,
             startedAt: startedAt,
             mode: runtimeMode(from: modeRaw),
-            status: sessionStatus(from: statusRaw) ?? .ok,
+            status: ManifestFinalStatusMapper().mapStatus(manifest),
             durationMs: durationSec.map { UInt64(max($0, 0) * 1000) } ?? 0
         )
     }
@@ -453,6 +526,139 @@ public struct FileSystemSessionLibraryService: SessionLibraryService {
     private static func sessionStatus(from raw: String?) -> SessionStatus? {
         guard let raw = raw?.lowercased() else { return nil }
         return SessionStatus(rawValue: raw)
+    }
+
+    private static func parseTrustNoticeCount(_ payload: [String: Any]) -> Int {
+        guard let trust = payload["trust"] as? [String: Any] else {
+            return 0
+        }
+        if let count = trust["notice_count"] as? Int {
+            return max(0, count)
+        }
+        if let count = trust["notice_count"] as? NSNumber {
+            return max(0, count.intValue)
+        }
+        if let notices = trust["notices"] as? [[String: Any]] {
+            return notices.count
+        }
+        return 0
+    }
+
+    private static func resolveStatus(
+        manifestStatus: SessionStatus?,
+        pending: PendingSessionSidecarDTO?,
+        outcomeClassification: SessionOutcomeClassification
+    ) -> SessionStatus {
+        switch outcomeClassification {
+        case .finalizedSuccess:
+            return manifestStatus ?? pending.map(Self.status(from:)) ?? .ok
+        case .partialArtifact:
+            if manifestStatus == .pending {
+                return .pending
+            }
+            if manifestStatus == nil, let pending {
+                let pendingStatus = Self.status(from: pending)
+                return pendingStatus == .pending ? .pending : .failed
+            }
+            return .failed
+        case .finalizedFailure, .emptyRoot:
+            return .failed
+        }
+    }
+
+    private static func classifySessionOutcome(
+        manifestStatus: SessionStatus?,
+        hasManifest: Bool,
+        hasPending: Bool,
+        hasWav: Bool,
+        hasJsonl: Bool,
+        hasRetryContext: Bool
+    ) -> SessionOutcomeClassification {
+        if let manifestStatus {
+            switch manifestStatus {
+            case .failed:
+                return .finalizedFailure
+            case .ok, .degraded:
+                return hasWav ? .finalizedSuccess : .partialArtifact
+            case .pending:
+                return .partialArtifact
+            }
+        }
+
+        let hasAnyArtifacts = hasManifest || hasPending || hasWav || hasJsonl || hasRetryContext
+        return hasAnyArtifacts ? .partialArtifact : .emptyRoot
+    }
+
+    private static func outcomeDiagnostics(
+        rootPath: URL,
+        manifestURL: URL,
+        pendingURL: URL,
+        retryContextURL: URL,
+        wavURL: URL,
+        jsonlURL: URL,
+        hasManifest: Bool,
+        hasPending: Bool,
+        hasWav: Bool,
+        hasJsonl: Bool,
+        hasRetryContext: Bool,
+        manifestStatus: SessionStatus?,
+        pendingState: PendingTranscriptionState?,
+        outcomeClassification: SessionOutcomeClassification
+    ) -> [String: String] {
+        var diagnostics: [String: String] = [
+            "root_path": rootPath.path,
+            "manifest_path": manifestURL.path,
+            "pending_path": pendingURL.path,
+            "retry_context_path": retryContextURL.path,
+            "wav_path": wavURL.path,
+            "jsonl_path": jsonlURL.path,
+            "has_manifest": String(hasManifest),
+            "has_pending": String(hasPending),
+            "has_retry_context": String(hasRetryContext),
+            "has_wav": String(hasWav),
+            "has_jsonl": String(hasJsonl),
+            "outcome_classification": outcomeClassification.rawValue,
+            "outcome_code": outcomeClassification.canonicalCode(manifestStatus: manifestStatus).rawValue
+        ]
+        if let manifestStatus {
+            diagnostics["manifest_status"] = manifestStatus.rawValue
+        }
+        if let pendingState {
+            diagnostics["pending_transcription_state"] = pendingState.rawValue
+        }
+        return diagnostics
+    }
+
+    private static func legacyOutcomeDiagnostics(
+        sessionsRoot: URL,
+        artifactSet: LegacyFlatArtifactSet,
+        manifestStatus: SessionStatus?,
+        pendingState: PendingTranscriptionState?,
+        outcomeClassification: SessionOutcomeClassification
+    ) -> [String: String] {
+        let rootPath = sessionsRoot
+            .appendingPathComponent(artifactSet.stem, isDirectory: true)
+            .standardizedFileURL
+        return outcomeDiagnostics(
+            rootPath: rootPath,
+            manifestURL: artifactSet.manifestURL
+                ?? rootPath.appendingPathComponent("session.manifest.json"),
+            pendingURL: artifactSet.pendingURL
+                ?? rootPath.appendingPathComponent("session.pending.json"),
+            retryContextURL: rootPath.appendingPathComponent("session.pending.retry.json"),
+            wavURL: artifactSet.preferredAudioURL
+                ?? rootPath.appendingPathComponent("session.wav"),
+            jsonlURL: artifactSet.jsonlURL
+                ?? rootPath.appendingPathComponent("session.jsonl"),
+            hasManifest: artifactSet.manifestURL != nil,
+            hasPending: artifactSet.pendingURL != nil,
+            hasWav: artifactSet.preferredAudioURL != nil,
+            hasJsonl: artifactSet.jsonlURL != nil,
+            hasRetryContext: false,
+            manifestStatus: manifestStatus,
+            pendingState: pendingState,
+            outcomeClassification: outcomeClassification
+        )
     }
 
     private static func status(from pending: PendingSessionSidecarDTO) -> SessionStatus {
@@ -638,8 +844,20 @@ public struct FileSystemSessionLibraryService: SessionLibraryService {
     }
 
     private static func looksLikeSessionDirectory(_ url: URL, fileManager: FileManager) -> Bool {
+        hasKnownSessionArtifacts(at: url, fileManager: fileManager)
+            || resemblesSessionDirectoryName(url.lastPathComponent)
+    }
+
+    private static func hasKnownSessionArtifacts(at url: URL, fileManager: FileManager) -> Bool {
         fileManager.fileExists(atPath: url.appendingPathComponent("session.manifest.json").path)
             || fileManager.fileExists(atPath: url.appendingPathComponent("session.pending.json").path)
+            || fileManager.fileExists(atPath: url.appendingPathComponent("session.pending.retry.json").path)
+            || fileManager.fileExists(atPath: url.appendingPathComponent("session.wav").path)
+            || fileManager.fileExists(atPath: url.appendingPathComponent("session.jsonl").path)
+    }
+
+    private static func resemblesSessionDirectoryName(_ name: String) -> Bool {
+        inferTimestampFromStem(name) != nil
     }
 
     private static func isDirectory(_ url: URL, fileManager: FileManager) -> Bool {

@@ -93,6 +93,90 @@ final class RecorditAppTests: XCTestCase {
         func startupBlockingError(from _: RuntimeBinaryReadinessReport) -> AppServiceError? { blockingError }
     }
 
+    private struct StaticPreflightCommandRunner: CommandRunning {
+        let payload: Data
+
+        func run(
+            executable _: String,
+            arguments _: [String],
+            environment _: [String: String]
+        ) throws -> CommandExecutionResult {
+            CommandExecutionResult(exitCode: 0, stdout: payload, stderr: Data())
+        }
+    }
+
+    private func readyRuntimeReadinessReport() -> RuntimeBinaryReadinessReport {
+        RuntimeBinaryReadinessReport(
+            checks: [
+                RuntimeBinaryReadinessCheck(
+                    binaryName: "recordit",
+                    overrideEnvKey: RuntimeBinaryResolver.recorditEnvKey,
+                    status: .ready,
+                    resolvedPath: "/usr/local/bin/recordit",
+                    userMessage: "ready",
+                    remediation: ""
+                ),
+                RuntimeBinaryReadinessCheck(
+                    binaryName: "sequoia_capture",
+                    overrideEnvKey: RuntimeBinaryResolver.sequoiaCaptureEnvKey,
+                    status: .ready,
+                    resolvedPath: "/usr/local/bin/sequoia_capture",
+                    userMessage: "ready",
+                    remediation: ""
+                ),
+            ]
+        )
+    }
+
+    private func preflightPayloadData(checks: [[String: Any]], overallStatus: String = "FAIL") -> Data {
+        let payload: [String: Any] = [
+            "schema_version": "1",
+            "kind": "transcribe-live-preflight",
+            "generated_at_utc": "2026-03-05T00:00:00Z",
+            "overall_status": overallStatus,
+            "config": [
+                "out_wav": "/tmp/out.wav",
+                "out_jsonl": "/tmp/out.jsonl",
+                "out_manifest": "/tmp/out.manifest.json",
+                "asr_backend": "whispercpp",
+                "asr_model_requested": "/tmp/model.bin",
+                "asr_model_resolved": "/tmp/model.bin",
+                "asr_model_source": "fixture",
+                "sample_rate_hz": 48_000,
+            ],
+            "checks": checks,
+        ]
+        return (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
+    }
+
+    @MainActor
+    private func makePreflightViewModel(payload: Data) -> PreflightViewModel {
+        PreflightViewModel(
+            runner: RecorditPreflightRunner(
+                executable: "/usr/bin/env",
+                commandRunner: StaticPreflightCommandRunner(payload: payload),
+                parser: PreflightEnvelopeParser(),
+                environment: [:]
+            ),
+            gatingPolicy: PreflightGatingPolicy()
+        )
+    }
+
+    @MainActor
+    private func makePermissionRemediationItems(
+        checks: [[String: Any]],
+        overallStatus: String = "FAIL",
+        nativePermissionStatus: @escaping (RemediablePermission) -> Bool
+    ) throws -> [PermissionRemediationItem] {
+        let envelope = try PreflightEnvelopeParser().parse(
+            data: preflightPayloadData(checks: checks, overallStatus: overallStatus)
+        )
+        return PermissionRemediationViewModel.mapPermissionItems(
+            from: envelope,
+            nativePermissionStatus: nativePermissionStatus
+        )
+    }
+
     private func fixtureManifest(status: String, trustNoticeCount: Int = 0) -> SessionManifestDTO {
         SessionManifestDTO(
             sessionID: "xctest-session",
@@ -142,6 +226,32 @@ final class RecorditAppTests: XCTestCase {
         XCTAssertFalse(report.isReady)
         XCTAssertEqual(report.firstBlockingCheck?.status, .invalidOverride)
         XCTAssertEqual(service.startupBlockingError(from: report)?.code, .runtimeUnavailable)
+    }
+
+    func testRuntimeBinaryReadinessReportResolvedBinarySetRequiresReadyChecks() {
+        let report = RuntimeBinaryReadinessReport(
+            checks: [
+                RuntimeBinaryReadinessCheck(
+                    binaryName: "recordit",
+                    overrideEnvKey: RuntimeBinaryResolver.recorditEnvKey,
+                    status: .missing,
+                    resolvedPath: "/tmp/recordit",
+                    userMessage: "missing",
+                    remediation: "install"
+                ),
+                RuntimeBinaryReadinessCheck(
+                    binaryName: "sequoia_capture",
+                    overrideEnvKey: RuntimeBinaryResolver.sequoiaCaptureEnvKey,
+                    status: .missing,
+                    resolvedPath: "/tmp/sequoia_capture",
+                    userMessage: "missing",
+                    remediation: "install"
+                ),
+            ]
+        )
+
+        XCTAssertFalse(report.isReady)
+        XCTAssertNil(report.resolvedBinarySet)
     }
 
     func testRuntimeBinaryResolverPrefersBundledRuntimeBinaries() throws {
@@ -259,6 +369,37 @@ final class RecorditAppTests: XCTestCase {
     }
 
     @MainActor
+    func testPermissionPromptRequesterSkipsNativePromptsForUITestAndXCTestEnvironments() {
+        XCTAssertTrue(PermissionPromptRequester.shouldSkipNativePermissionPrompts(environment: ["RECORDIT_UI_TEST_MODE": "1"]))
+        XCTAssertTrue(PermissionPromptRequester.shouldSkipNativePermissionPrompts(environment: ["XCTestConfigurationFilePath": "/tmp/xctest.xctestconfiguration"]))
+        XCTAssertFalse(PermissionPromptRequester.shouldSkipNativePermissionPrompts(environment: [:]))
+    }
+
+    
+    @MainActor
+    func testMainSessionLiveStartDoesNotHardGateOnNativePermissionChecks() async throws {
+        let runtimeService = DelayingRuntimeService()
+        let environment = AppEnvironment.preview().replacing(
+            runtimeService: runtimeService,
+            manifestService: StaticManifestService(manifest: fixtureManifest(status: "ok")),
+            modelService: StaticModelService()
+        )
+        let controller = MainSessionController(environment: environment)
+
+        controller.startSession()
+        try await waitForRuntimeRunning(controller: controller)
+
+        let startCount = await runtimeService.startInvocationCount()
+        XCTAssertEqual(startCount, 1)
+        XCTAssertNil(controller.lastServiceError)
+        XCTAssertTrue(
+            controller.transcriptEntries.contains(where: {
+                $0.text.localizedCaseInsensitiveContains("runtime running")
+            })
+        )
+    }
+
+    @MainActor
     func testAppLevelResponsivenessBudgetsForLiveRun() async throws {
         let runtimeService = DelayingRuntimeService(
             startDelayNanoseconds: 35_000_000,
@@ -315,6 +456,183 @@ final class RecorditAppTests: XCTestCase {
             failedMetrics: report.violations.map { $0.metric.rawValue }.joined(separator: ",")
         )
         try persistResponsivenessGateSnapshotIfRequested(snapshot)
+    }
+
+    @MainActor
+    func testPermissionRemediationSeparatesDisplayAvailabilityFromScreenPermission() throws {
+        let items = try makePermissionRemediationItems(
+            checks: [
+                ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "screen access granted", "remediation": ""],
+                ["id": ReadinessContractID.displayAvailability.rawValue, "status": "FAIL", "detail": "no active display available", "remediation": "Wake a display and retry."],
+                ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "mic ready", "remediation": ""],
+            ],
+            nativePermissionStatus: { _ in true }
+        )
+
+        let screen = try XCTUnwrap(items.first(where: { $0.surface == .screenRecording }))
+        let display = try XCTUnwrap(items.first(where: { $0.surface == .activeDisplay }))
+        XCTAssertEqual(screen.status, .granted)
+        XCTAssertEqual(display.status, .noActiveDisplay)
+        XCTAssertEqual(display.detail, "no active display available")
+        XCTAssertEqual(display.remediation, "Wake a display and retry.")
+        XCTAssertNil(display.surface.settingsPermission)
+        XCTAssertFalse(items.contains { $0.surface.settingsPermission == .screenRecording && $0.status == .missingPermission })
+    }
+
+    @MainActor
+    func testPermissionRemediationMarksGrantedButFailingMicrophoneCheckAsRuntimeFailure() throws {
+        let items = try makePermissionRemediationItems(
+            checks: [
+                ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "screen access granted", "remediation": ""],
+                ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "FAIL", "detail": "microphone stream unavailable", "remediation": "Verify the active input device and retry."],
+            ],
+            nativePermissionStatus: { _ in true }
+        )
+
+        let microphone = try XCTUnwrap(items.first(where: { $0.surface == .microphone }))
+        XCTAssertEqual(microphone.status, .runtimeFailure)
+        XCTAssertTrue(microphone.detail.contains("macOS permission appears granted") == true)
+        XCTAssertEqual(microphone.remediation, "Verify the active input device and retry.")
+    }
+
+    @MainActor
+    func testPermissionRemediationUsesNativePermissionSignalWhenChecksAreMissing() throws {
+        let items = try makePermissionRemediationItems(
+            checks: [],
+            nativePermissionStatus: { _ in false }
+        )
+
+        let screen = try XCTUnwrap(items.first(where: { $0.surface == .screenRecording }))
+        let microphone = try XCTUnwrap(items.first(where: { $0.surface == .microphone }))
+        XCTAssertEqual(screen.status, .missingPermission)
+        XCTAssertEqual(microphone.status, .missingPermission)
+        XCTAssertTrue(screen.remediation.contains("Open System Settings") == true)
+        XCTAssertTrue(microphone.remediation.contains("Open System Settings") == true)
+    }
+
+    @MainActor
+    func testOnboardingGateFailureUsesReadinessIDRemediationForModelPath() {
+        let shell = AppShellViewModel(
+            firstRun: true,
+            onboardingCompletionStore: StubOnboardingCompletionStore(completed: false),
+            runtimeReadinessChecker: StubRuntimeReadinessChecker(
+                report: readyRuntimeReadinessReport(),
+                blockingError: nil
+            )
+        )
+        let modelSetup = ModelSetupViewModel(modelResolutionService: StaticModelService())
+        modelSetup.validateCurrentSelection()
+
+        let payload = preflightPayloadData(checks: [
+            ["id": ReadinessContractID.modelPath.rawValue, "status": "FAIL", "detail": "model path missing", "remediation": "Provide a compatible model."],
+            ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+        ])
+        let preflight = makePreflightViewModel(payload: payload)
+        preflight.runLivePreflight()
+
+        XCTAssertFalse(shell.completeOnboardingIfReady(modelSetup: modelSetup, preflight: preflight))
+        XCTAssertEqual(shell.onboardingGateFailure?.code, .modelUnavailable)
+        XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Provide a compatible model.") == true)
+        XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Validate Model Setup") == true)
+        XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Record Only remains available") == true)
+    }
+
+    @MainActor
+    func testOnboardingGateFailureUsesReadinessIDRemediationForScreenPermission() {
+        let shell = AppShellViewModel(
+            firstRun: true,
+            onboardingCompletionStore: StubOnboardingCompletionStore(completed: false),
+            runtimeReadinessChecker: StubRuntimeReadinessChecker(
+                report: readyRuntimeReadinessReport(),
+                blockingError: nil
+            )
+        )
+        let modelSetup = ModelSetupViewModel(modelResolutionService: StaticModelService())
+        modelSetup.validateCurrentSelection()
+
+        let payload = preflightPayloadData(checks: [
+            ["id": ReadinessContractID.modelPath.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "FAIL", "detail": "screen access denied", "remediation": "Grant Screen Recording in System Settings."],
+            ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+        ])
+        let preflight = makePreflightViewModel(payload: payload)
+        preflight.runLivePreflight()
+
+        XCTAssertFalse(shell.completeOnboardingIfReady(modelSetup: modelSetup, preflight: preflight))
+        XCTAssertEqual(shell.onboardingGateFailure?.code, .permissionDenied)
+        XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Grant Screen Recording in System Settings.") == true)
+        XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Open Screen Recording Settings") == true)
+        XCTAssertFalse(shell.onboardingGateFailure?.remediation.contains("Record Only remains available") == true)
+    }
+
+    @MainActor
+    func testOnboardingGateFailurePrefersPrimaryBlockingDomainOverEnvelopeOrder() {
+        let shell = AppShellViewModel(
+            firstRun: true,
+            onboardingCompletionStore: StubOnboardingCompletionStore(completed: false),
+            runtimeReadinessChecker: StubRuntimeReadinessChecker(
+                report: readyRuntimeReadinessReport(),
+                blockingError: nil
+            )
+        )
+        let modelSetup = ModelSetupViewModel(modelResolutionService: StaticModelService())
+        modelSetup.validateCurrentSelection()
+
+        let payload = preflightPayloadData(checks: [
+            ["id": ReadinessContractID.modelPath.rawValue, "status": "FAIL", "detail": "model path missing", "remediation": "Provide a compatible model."],
+            ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "FAIL", "detail": "screen access denied", "remediation": "Grant Screen Recording in System Settings."],
+            ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+        ])
+        let preflight = makePreflightViewModel(payload: payload)
+        preflight.runLivePreflight()
+
+        XCTAssertEqual(preflight.primaryBlockingDomain, .tccCapture)
+        XCTAssertFalse(shell.completeOnboardingIfReady(modelSetup: modelSetup, preflight: preflight))
+        XCTAssertEqual(shell.onboardingGateFailure?.code, .permissionDenied)
+        XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Grant Screen Recording in System Settings.") == true)
+        XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Open Screen Recording Settings") == true)
+        XCTAssertFalse(shell.onboardingGateFailure?.remediation.contains("Validate Model Setup") == true)
+        XCTAssertFalse(shell.onboardingGateFailure?.remediation.contains("Record Only remains available") == true)
+    }
+
+    @MainActor
+    func testOnboardingGateFailureRequiresWarningAcknowledgementBeforeCompletion() {
+        let shell = AppShellViewModel(
+            firstRun: true,
+            onboardingCompletionStore: StubOnboardingCompletionStore(completed: false),
+            runtimeReadinessChecker: StubRuntimeReadinessChecker(
+                report: readyRuntimeReadinessReport(),
+                blockingError: nil
+            )
+        )
+        let modelSetup = ModelSetupViewModel(modelResolutionService: StaticModelService())
+        modelSetup.validateCurrentSelection()
+
+        let payload = preflightPayloadData(
+            checks: [
+                ["id": ReadinessContractID.modelPath.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+                ["id": ReadinessContractID.outWav.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+                ["id": ReadinessContractID.outJsonl.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+                ["id": ReadinessContractID.outManifest.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+                ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+                ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+                ["id": ReadinessContractID.sampleRate.rawValue, "status": "WARN", "detail": "non-default sample rate", "remediation": "Acknowledge this warning to continue."],
+            ],
+            overallStatus: "WARN"
+        )
+        let preflight = makePreflightViewModel(payload: payload)
+        preflight.runLivePreflight()
+
+        XCTAssertTrue(preflight.requiresWarningAcknowledgement)
+        XCTAssertFalse(shell.completeOnboardingIfReady(modelSetup: modelSetup, preflight: preflight))
+        XCTAssertEqual(shell.onboardingGateFailure?.code, .preflightFailed)
+        XCTAssertEqual(
+            shell.onboardingGateFailure?.userMessage,
+            "Live Transcribe warnings must be acknowledged before finishing setup."
+        )
+        XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Acknowledge Warnings") == true)
+        XCTAssertFalse(shell.onboardingGateFailure?.remediation.contains("Run preflight checks") == true)
     }
 
     @MainActor

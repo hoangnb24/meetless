@@ -26,8 +26,20 @@ private func makeSession(
         status: status,
         rootPath: URL(fileURLWithPath: "/tmp/\(id)", isDirectory: true),
         pendingTranscriptionState: pendingState,
-        readyToTranscribe: readyToTranscribe
+        readyToTranscribe: readyToTranscribe,
+        outcomeClassification: outcomeClassification(for: status)
     )
+}
+
+private func outcomeClassification(for status: SessionStatus) -> SessionOutcomeClassification {
+    switch status {
+    case .pending:
+        return .partialArtifact
+    case .ok, .degraded:
+        return .finalizedSuccess
+    case .failed:
+        return .finalizedFailure
+    }
 }
 
 private actor MockPendingSessionTranscriptionService: PendingSessionTranscribing {

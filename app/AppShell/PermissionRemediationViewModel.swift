@@ -21,26 +21,76 @@ public enum RemediablePermission: String, Equatable, Sendable {
     case microphone
 }
 
+public enum PermissionRemediationSurface: String, Equatable, Sendable {
+    case screenRecording = "screen_recording"
+    case activeDisplay = "active_display"
+    case microphone
+
+    public var title: String {
+        switch self {
+        case .screenRecording:
+            return "Screen Recording"
+        case .activeDisplay:
+            return "Active Display"
+        case .microphone:
+            return "Microphone"
+        }
+    }
+
+    public var settingsPermission: RemediablePermission? {
+        switch self {
+        case .screenRecording:
+            return .screenRecording
+        case .microphone:
+            return .microphone
+        case .activeDisplay:
+            return nil
+        }
+    }
+}
+
 public enum PermissionReadiness: String, Equatable, Sendable {
     case granted
-    case missing
+    case missingPermission = "missing_permission"
+    case noActiveDisplay = "no_active_display"
+    case runtimeFailure = "runtime_failure"
+    case diagnosticsUnavailable = "diagnostics_unavailable"
+
+    public var isBlocking: Bool {
+        self != .granted
+    }
+
+    public var statusLabel: String {
+        switch self {
+        case .granted:
+            return "Granted"
+        case .missingPermission:
+            return "Permission Needed"
+        case .noActiveDisplay:
+            return "No Active Display"
+        case .runtimeFailure:
+            return "Runtime Check Failed"
+        case .diagnosticsUnavailable:
+            return "Diagnostics Unavailable"
+        }
+    }
 }
 
 public struct PermissionRemediationItem: Equatable, Sendable {
-    public var permission: RemediablePermission
+    public var surface: PermissionRemediationSurface
     public var status: PermissionReadiness
     public var checkIDs: [String]
     public var detail: String
     public var remediation: String
 
     public init(
-        permission: RemediablePermission,
+        surface: PermissionRemediationSurface,
         status: PermissionReadiness,
         checkIDs: [String],
         detail: String,
         remediation: String
     ) {
-        self.permission = permission
+        self.surface = surface
         self.status = status
         self.checkIDs = checkIDs
         self.detail = detail
@@ -88,15 +138,29 @@ public final class PermissionRemediationViewModel {
     public var missingPermissions: [RemediablePermission] {
         switch state {
         case .ready(let items):
-            return items
-                .filter { $0.status == .missing }
-                .map(\.permission)
+            return items.compactMap { item in
+                guard item.status == .missingPermission else {
+                    return nil
+                }
+                return item.surface.settingsPermission
+            }
         case .failed:
             // Fail-open for remediation affordances so onboarding never strands users
             // without the direct privacy deep-links.
             return [.screenRecording, .microphone]
         case .idle, .checking:
             return []
+        }
+    }
+
+    public var hasBlockingIssues: Bool {
+        switch state {
+        case .ready(let items):
+            return items.contains { $0.status.isBlocking }
+        case .failed:
+            return true
+        case .idle, .checking:
+            return true
         }
     }
 
@@ -172,18 +236,21 @@ public final class PermissionRemediationViewModel {
         nativePermissionStatus: ((RemediablePermission) -> Bool)? = nil
     ) -> [PermissionRemediationItem] {
         let resolvedNativePermissionStatus = nativePermissionStatus ?? defaultNativePermissionStatus
-        let screenChecks = envelope.checks.filter { ReadinessContract.screenPermissionIDs.contains($0.id) }
+        let screenPermissionChecks = envelope.checks.filter { $0.id == ReadinessContractID.screenCaptureAccess.rawValue }
+        let displayChecks = envelope.checks.filter { $0.id == ReadinessContractID.displayAvailability.rawValue }
         let microphoneChecks = envelope.checks.filter { $0.id == ReadinessContract.microphonePermissionID }
 
-        return [
-            buildItem(
+        var items = [
+            buildPermissionItem(
+                surface: .screenRecording,
                 permission: .screenRecording,
-                checks: screenChecks,
+                checks: screenPermissionChecks,
                 nativePermissionStatus: resolvedNativePermissionStatus,
                 defaultDetail: "Screen Recording access is required to capture system audio.",
                 defaultRemediation: "Open System Settings, grant Screen Recording access, then Re-check."
             ),
-            buildItem(
+            buildPermissionItem(
+                surface: .microphone,
                 permission: .microphone,
                 checks: microphoneChecks,
                 nativePermissionStatus: resolvedNativePermissionStatus,
@@ -191,9 +258,19 @@ public final class PermissionRemediationViewModel {
                 defaultRemediation: "Open System Settings, grant Microphone access, then Re-check."
             ),
         ]
+
+        if let displayItem = buildDisplayItem(
+            checks: displayChecks,
+            nativeScreenPermissionGranted: resolvedNativePermissionStatus(.screenRecording)
+        ) {
+            items.insert(displayItem, at: 1)
+        }
+
+        return items
     }
 
-    private static func buildItem(
+    private static func buildPermissionItem(
+        surface: PermissionRemediationSurface,
         permission: RemediablePermission,
         checks: [PreflightCheckDTO],
         nativePermissionStatus: (RemediablePermission) -> Bool,
@@ -205,44 +282,86 @@ public final class PermissionRemediationViewModel {
         let checkIDs = checks.map(\.id)
         guard !checks.isEmpty else {
             return PermissionRemediationItem(
-                permission: permission,
-                status: nativePermissionGranted ? .granted : .missing,
+                surface: surface,
+                status: nativePermissionGranted ? .granted : .missingPermission,
                 checkIDs: [],
                 detail: nativePermissionGranted
                     ? "macOS permission is granted. Run preflight again to refresh diagnostics."
-                    : defaultDetail,
-                remediation: "Run preflight again and verify permission diagnostics are present."
+                    : "Permission diagnostics are unavailable. \(defaultDetail)",
+                remediation: nativePermissionGranted
+                    ? "Run preflight again and verify permission diagnostics are present."
+                    : defaultRemediation
             )
         }
 
         if let failing = checks.first(where: { $0.status == .fail }) {
             if nativePermissionGranted, allowNativeOverride {
                 return PermissionRemediationItem(
-                    permission: permission,
+                    surface: surface,
                     status: .granted,
                     checkIDs: checkIDs,
                     detail: "macOS permission is granted. Runtime preflight reported: \(failing.detail)",
                     remediation: failing.remediation ?? defaultRemediation
                 )
             }
+            if nativePermissionGranted {
+                return PermissionRemediationItem(
+                    surface: surface,
+                    status: .runtimeFailure,
+                    checkIDs: checkIDs,
+                    detail: "macOS permission appears granted, but runtime checks still fail: \(failing.detail)",
+                    remediation: failing.remediation ?? defaultRemediation
+                )
+            }
             return PermissionRemediationItem(
-                permission: permission,
-                status: .missing,
+                surface: surface,
+                status: .missingPermission,
                 checkIDs: checkIDs,
-                detail: nativePermissionGranted
-                    ? "macOS permission appears granted, but runtime checks still fail: \(failing.detail)"
-                    : failing.detail,
+                detail: failing.detail,
                 remediation: failing.remediation ?? defaultRemediation
             )
         }
 
         let representative = checks[0]
         return PermissionRemediationItem(
-            permission: permission,
+            surface: surface,
             status: .granted,
             checkIDs: checkIDs,
             detail: representative.detail,
             remediation: representative.remediation ?? defaultRemediation
+        )
+    }
+
+    private static func buildDisplayItem(
+        checks: [PreflightCheckDTO],
+        nativeScreenPermissionGranted: Bool
+    ) -> PermissionRemediationItem? {
+        guard !checks.isEmpty else {
+            return nil
+        }
+
+        let checkIDs = checks.map(\.id)
+        if let failing = checks.first(where: { $0.status == .fail }) {
+            let status: PermissionReadiness = nativeScreenPermissionGranted ? .noActiveDisplay : .diagnosticsUnavailable
+            let detail = nativeScreenPermissionGranted
+                ? failing.detail
+                : "Display diagnostics are blocked until Screen Recording access is granted. \(failing.detail)"
+            return PermissionRemediationItem(
+                surface: .activeDisplay,
+                status: status,
+                checkIDs: checkIDs,
+                detail: detail,
+                remediation: failing.remediation ?? "Ensure at least one display is connected, awake, and available to Recordit, then Re-check."
+            )
+        }
+
+        let representative = checks[0]
+        return PermissionRemediationItem(
+            surface: .activeDisplay,
+            status: .granted,
+            checkIDs: checkIDs,
+            detail: representative.detail,
+            remediation: representative.remediation ?? "Re-check if display availability changes."
         )
     }
 
@@ -252,6 +371,7 @@ public final class PermissionRemediationViewModel {
     ) -> [PermissionRemediationItem] {
         [
             fallbackItem(
+                surface: .screenRecording,
                 permission: .screenRecording,
                 nativePermissionStatus: nativePermissionStatus,
                 defaultDetail: "Screen Recording access is required to capture system audio.",
@@ -259,6 +379,7 @@ public final class PermissionRemediationViewModel {
                 failureDetail: preflightFailure.userMessage
             ),
             fallbackItem(
+                surface: .microphone,
                 permission: .microphone,
                 nativePermissionStatus: nativePermissionStatus,
                 defaultDetail: "Microphone access is required to capture your voice.",
@@ -269,6 +390,7 @@ public final class PermissionRemediationViewModel {
     }
 
     private static func fallbackItem(
+        surface: PermissionRemediationSurface,
         permission: RemediablePermission,
         nativePermissionStatus: (RemediablePermission) -> Bool,
         defaultDetail: String,
@@ -278,17 +400,17 @@ public final class PermissionRemediationViewModel {
         let nativeGranted = nativePermissionStatus(permission)
         if nativeGranted {
             return PermissionRemediationItem(
-                permission: permission,
-                status: .granted,
+                surface: surface,
+                status: .diagnosticsUnavailable,
                 checkIDs: [],
                 detail: "macOS permission is granted. Preflight diagnostics unavailable: \(failureDetail)",
-                remediation: "You can proceed; rerun checks after runtime diagnostics recover."
+                remediation: "Rerun checks after runtime diagnostics recover."
             )
         }
 
         return PermissionRemediationItem(
-            permission: permission,
-            status: .missing,
+            surface: surface,
+            status: .missingPermission,
             checkIDs: [],
             detail: "\(defaultDetail) Preflight diagnostics unavailable: \(failureDetail)",
             remediation: defaultRemediation

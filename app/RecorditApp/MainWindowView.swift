@@ -204,9 +204,13 @@ final class RootCompositionController: ObservableObject {
 }
 
 enum PermissionPromptRequester {
+    static func shouldSkipNativePermissionPrompts(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        environment["RECORDIT_UI_TEST_MODE"] == "1" || environment["XCTestConfigurationFilePath"] != nil
+    }
+
     static func requestAccessIfNeeded(for permission: RemediablePermission) {
-        // Keep UI automation deterministic by skipping native permission prompts.
-        guard ProcessInfo.processInfo.environment["RECORDIT_UI_TEST_MODE"] != "1" else {
+        // Keep automation and XCTest lanes deterministic by skipping native permission prompts.
+        guard !shouldSkipNativePermissionPrompts() else {
             return
         }
 
@@ -1306,8 +1310,10 @@ struct MainWindowView: View {
             mainSessionController.resumeInterruptedSession()
         case .safeFinalize:
             mainSessionController.safeFinalizeInterruptedSession()
-        case .retryStop, .retryFinalize:
-            mainSessionController.stopSession()
+        case .retryStop:
+            mainSessionController.retryStopFailedLiveSession()
+        case .retryFinalize:
+            mainSessionController.retryFinalizeFailedSession()
         case .openSessionArtifacts:
             mainSessionController.openCurrentSessionArtifacts()
         case .runPreflight:

@@ -328,7 +328,8 @@ private struct PreviewFixtures {
         sessionID: "preview-session",
         rootPath: URL(fileURLWithPath: "/tmp/preview-session"),
         state: .healthy,
-        findings: []
+        findings: [],
+        outcomeClassification: .finalizedSuccess
     )
 }
 

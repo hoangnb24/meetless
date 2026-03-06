@@ -136,8 +136,12 @@ public struct RuntimeBinaryReadinessReport: Equatable, Sendable {
 
     public var resolvedBinarySet: RuntimeBinarySet? {
         guard
-            let recorditPath = checks.first(where: { $0.binaryName == "recordit" })?.resolvedPath,
-            let sequoiaPath = checks.first(where: { $0.binaryName == "sequoia_capture" })?.resolvedPath
+            let recorditCheck = checks.first(where: { $0.binaryName == "recordit" }),
+            recorditCheck.isReady,
+            let recorditPath = recorditCheck.resolvedPath,
+            let sequoiaCheck = checks.first(where: { $0.binaryName == "sequoia_capture" }),
+            sequoiaCheck.isReady,
+            let sequoiaPath = sequoiaCheck.resolvedPath
         else {
             return nil
         }
@@ -426,6 +430,8 @@ public actor RuntimeProcessManager {
             .appendingPathComponent("runtime.stderr.log", isDirectory: false)
             .standardizedFileURL
 
+        try prepareSessionRootForLaunch(sessionRoot)
+
         let process = Process()
         process.executableURL = command.executableURL
         process.arguments = command.arguments
@@ -471,7 +477,8 @@ public actor RuntimeProcessManager {
     public func control(
         processIdentifier: Int32,
         action: RuntimeControlAction,
-        timeoutSeconds: TimeInterval = 10
+        timeoutSeconds: TimeInterval = 10,
+        killOnTimeout: Bool = true
     ) async throws -> RuntimeProcessControlOutcome {
         guard let managed = managedProcesses[processIdentifier] else {
             throw RuntimeProcessManagerError.unknownProcess(processIdentifier: processIdentifier)
@@ -491,19 +498,29 @@ public actor RuntimeProcessManager {
         }
 
         let didExit = await waitUntilExit(process: process, timeoutSeconds: timeoutSeconds)
-        let classification: RuntimeExitClassification
+        let rawClassification: RuntimeExitClassification
+        let shouldRetainManagedProcess: Bool
         if didExit {
-            classification = classifyTermination(process: process, timedOut: false)
+            rawClassification = classifyTermination(process: process, timedOut: false)
+            shouldRetainManagedProcess = false
         } else {
-            if process.isRunning {
-                _ = kill(process.processIdentifier, SIGKILL)
-                _ = await waitUntilExit(process: process, timeoutSeconds: 1)
+            if killOnTimeout {
+                if process.isRunning {
+                    _ = kill(process.processIdentifier, SIGKILL)
+                    _ = await waitUntilExit(process: process, timeoutSeconds: 1)
+                }
+                shouldRetainManagedProcess = false
+            } else {
+                shouldRetainManagedProcess = process.isRunning
             }
-            classification = .timedOut
+            rawClassification = .timedOut
         }
+        let classification = normalizeRequestedTermination(rawClassification, action: action)
 
-        closeLogHandles(stdoutHandle: managed.stdoutHandle, stderrHandle: managed.stderrHandle)
-        managedProcesses.removeValue(forKey: processIdentifier)
+        if !shouldRetainManagedProcess {
+            closeLogHandles(stdoutHandle: managed.stdoutHandle, stderrHandle: managed.stderrHandle)
+            managedProcesses.removeValue(forKey: processIdentifier)
+        }
         return RuntimeProcessControlOutcome(
             action: action,
             classification: classification,
@@ -512,7 +529,14 @@ public actor RuntimeProcessManager {
         )
     }
 
-    public func pollTermination(processIdentifier: Int32) -> RuntimeExitClassification? {
+    public func sessionRoot(processIdentifier: Int32) -> URL? {
+        managedProcesses[processIdentifier]?.sessionRoot
+    }
+
+    public func pollControlOutcome(
+        processIdentifier: Int32,
+        action: RuntimeControlAction
+    ) -> RuntimeProcessControlOutcome? {
         guard let managed = managedProcesses[processIdentifier] else {
             return nil
         }
@@ -525,7 +549,36 @@ public actor RuntimeProcessManager {
         let classification = classifyTermination(process: process, timedOut: false)
         closeLogHandles(stdoutHandle: managed.stdoutHandle, stderrHandle: managed.stderrHandle)
         managedProcesses.removeValue(forKey: processIdentifier)
-        return classification
+        return RuntimeProcessControlOutcome(
+            action: action,
+            classification: classification,
+            sessionRoot: managed.sessionRoot,
+            finishedAt: now()
+        )
+    }
+
+    public func pollTermination(processIdentifier: Int32) -> RuntimeExitClassification? {
+        pollControlOutcome(processIdentifier: processIdentifier, action: .stop)?.classification
+    }
+
+    private func prepareSessionRootForLaunch(_ sessionRoot: URL) throws {
+        let fileManager = FileManager.default
+        do {
+            try fileManager.createDirectory(at: sessionRoot, withIntermediateDirectories: true)
+            let staleControlMarkers = ["session.stop.request"]
+            for marker in staleControlMarkers {
+                let markerURL = sessionRoot
+                    .appendingPathComponent(marker, isDirectory: false)
+                    .standardizedFileURL
+                if fileManager.fileExists(atPath: markerURL.path) {
+                    try fileManager.removeItem(at: markerURL)
+                }
+            }
+        } catch {
+            throw RuntimeProcessManagerError.launchFailed(
+                detail: "failed preparing runtime session root in \(sessionRoot.path): \(error)"
+            )
+        }
     }
 
     private func makeRuntimeLogHandles(
@@ -622,6 +675,22 @@ public actor RuntimeProcessManager {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         return true
+    }
+
+    private func normalizeRequestedTermination(
+        _ classification: RuntimeExitClassification,
+        action: RuntimeControlAction
+    ) -> RuntimeExitClassification {
+        guard case let .crashed(signal) = classification else {
+            return classification
+        }
+
+        switch action {
+        case .cancel where signal == SIGTERM:
+            return .success
+        default:
+            return classification
+        }
     }
 
     private func classifyTermination(process: Process, timedOut: Bool) -> RuntimeExitClassification {
