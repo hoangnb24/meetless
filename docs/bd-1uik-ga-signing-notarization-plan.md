@@ -63,9 +63,9 @@ mkdir -p "${EVIDENCE_ROOT}"/{logs,packaging,notary,gates,release}
 ## Gate A - Build and Sign App Bundle
 
 ```bash
-make sign-transcribe SIGN_IDENTITY="${SIGN_IDENTITY}" | tee "${EVIDENCE_ROOT}/logs/sign-transcribe.log"
-codesign --verify --deep --strict --verbose=2 dist/SequoiaTranscribe.app | tee "${EVIDENCE_ROOT}/logs/codesign-verify-app.log"
-codesign -d --entitlements :- --verbose=2 dist/SequoiaTranscribe.app > "${EVIDENCE_ROOT}/logs/codesign-entitlements-app.plist" 2>&1
+make sign-recordit-app SIGN_IDENTITY="${SIGN_IDENTITY}" | tee "${EVIDENCE_ROOT}/logs/sign-recordit-app.log"
+codesign --verify --deep --strict --verbose=2 dist/Recordit.app | tee "${EVIDENCE_ROOT}/logs/codesign-verify-app.log"
+codesign -d --entitlements :- --verbose=2 dist/Recordit.app > "${EVIDENCE_ROOT}/logs/codesign-entitlements-app.plist" 2>&1
 ```
 
 Pass criteria:
@@ -79,7 +79,7 @@ Pass criteria:
 DMG_NAME="Recordit-${RELEASE_TAG}.dmg"
 hdiutil create \
   -volname "Recordit" \
-  -srcfolder dist/SequoiaTranscribe.app \
+  -srcfolder dist/Recordit.app \
   -ov -format UDZO \
   "dist/${DMG_NAME}" | tee "${EVIDENCE_ROOT}/packaging/hdiutil-create.log"
 

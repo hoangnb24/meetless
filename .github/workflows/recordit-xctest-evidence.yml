@@ -1,0 +1,33 @@
+name: recordit-xctest-evidence
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "app/**"
+      - "Recordit.xcodeproj/**"
+      - "scripts/ci_recordit_xctest_evidence.sh"
+      - ".github/workflows/recordit-xctest-evidence.yml"
+
+jobs:
+  xctest-evidence:
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run XCTest/XCUITest evidence lane
+        env:
+          XCTEST_EVIDENCE_STAMP: gha-${{ github.run_id }}-${{ github.run_attempt }}
+          CI_STRICT_UI_TESTS: 0
+        run: scripts/ci_recordit_xctest_evidence.sh
+
+      - name: Upload XCTest evidence artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xctest-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/ci/xctest_evidence/gha-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: warn

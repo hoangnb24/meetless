@@ -20,7 +20,9 @@ Sequoia Capture is a macOS 15+ Rust project that records:
 - `src/bin/sck_probe.rs`: engineering probe binary (stream/output/timestamp inspection)
 - `src/bin/sequoia_capture.rs`: WAV recorder binary
 - `src/bin/transcribe_live.rs`: transcription CLI contract and config validation entrypoint
-- `packaging/Info.plist`: bundle metadata and privacy usage descriptions
+- `Recordit.xcodeproj`: macOS app project containing the `RecorditApp` target/scheme
+- `app/RecorditApp/`: SwiftUI `@main` app entrypoint and initial window scene
+- `app/RecorditApp/Info.plist`: Recordit.app bundle metadata and privacy usage descriptions
 - `packaging/entitlements.plist`: sandbox and privacy entitlements
 - `docs/research.md`: API/TCC/platform research
 - `docs/architecture.md`: real-time pipeline and interleave spec
@@ -29,36 +31,33 @@ Sequoia Capture is a macOS 15+ Rust project that records:
 - `docs/adr-001-backend-decision.md`: backend decision and explicit fallback triggers
 - `docs/adr-002-lock-free-transport.md`: callback transport architecture decision
 - `docs/adr-003-cleanup-boundary-policy.md`: cleanup isolation and policy decision
-- `docs/adr-004-packaged-entrypoint.md`: packaged beta entrypoint decision and rationale
+- `docs/adr-004-packaged-entrypoint.md`: historical packaged entrypoint decision (superseded for user-facing default policy)
+- `docs/adr-005-recordit-default-entrypoint.md`: canonical user-facing default entrypoint policy (`Recordit.app`) and fallback boundary
+- `docs/bd-dk69-product-contract-matrix.md`: spec-clause product contract matrix with implementation/app-validation/release-evidence obligations
+- `docs/bd-1nqb-build-system-strategy.md`: accepted build-system strategy decision for `Recordit.app` (`xcodebuild`/Xcode app-target first)
+- `docs/bd-3vwh-recordit-app-target.md`: evidence doc for `Recordit.xcodeproj` + `@main` app-target creation/build/launch
+- `docs/bd-1gx5-recordit-makefile-packaging.md`: Makefile packaging cutover evidence for Recordit-first build/bundle/sign/verify targets
+- `docs/bd-1msp-packaged-gate-retarget.md`: packaged gate retarget evidence for Recordit-default launch semantics + runtime compatibility checks
+- `docs/bd-yu7n-recordit-signing-notary-paths.md`: signing/notarization/gatekeeper path retarget evidence for `Recordit.app`
+- `docs/bd-14y4-sequoiatranscribe-fallback-policy.md`: strict non-default fallback policy for legacy `SequoiaTranscribe` usage
 - `docs/beads-governance.md`: issue decomposition and traceability governance
 
 ## Commands
 
 ### Operator Quickstart (canonical)
-Use the short happy path in [docs/operator-quickstart.md](docs/operator-quickstart.md).
+Canonical default is the GUI-first `Recordit.app` user journey. Follow [docs/operator-quickstart.md](docs/operator-quickstart.md) for the full install/launch/first-run validation flow.
 
-New machine (one-time permission bootstrap on macOS):
-1. Run a short probe to trigger TCC prompts:
+Minimal GUI-first sequence:
 ```bash
-make probe CAPTURE_SECS=3
-```
-2. Grant permissions when prompted:
-   - Screen Recording (or Screen & System Audio Recording on newer macOS UI)
-   - Microphone
-3. If macOS does not auto-prompt, open System Settings and enable access for the terminal app you use (`Terminal`, `iTerm`, `Warp`, etc.), then re-run the probe command.
-
-Fast path:
-```bash
-make setup-whispercpp-model
-cargo run --bin recordit -- preflight --mode live --json
-cargo run --bin recordit -- run --mode live --model artifacts/bench/models/whispercpp/ggml-tiny.en.bin --json
-cargo run --bin recordit -- replay --jsonl <session-root>/session.jsonl --format json
+make create-recordit-dmg RECORDIT_DMG_NAME=Recordit-local.dmg RECORDIT_DMG_VOLNAME='Recordit'
+open dist/Recordit-local.dmg
 ```
 
-Deterministic local fallback:
-```bash
-cargo run --bin recordit -- run --mode offline --input-wav artifacts/bench/corpus/gate_c/tts_phrase_stereo.wav --model artifacts/bench/models/whispercpp/ggml-tiny.en.bin --json
-```
+Then drag `Recordit.app` to `Applications`, launch it, complete onboarding (permissions + model setup), and validate first live start/stop in-window.
+
+Fallback diagnostics are non-default and should be labeled as compatibility/support workflows:
+- `make run-transcribe-app ...` (`SequoiaTranscribe.app` compatibility lane)
+- direct CLI commands (`cargo run --bin recordit -- ...`)
 
 ### Build
 ```bash
@@ -66,11 +65,39 @@ make build
 ```
 Builds debug binaries.
 
+`Recordit.app` builds (Xcode or `make build-recordit-app`) now embed `recordit` and `sequoia_capture` into:
+- `Recordit.app/Contents/Resources/runtime/bin/recordit`
+- `Recordit.app/Contents/Resources/runtime/bin/sequoia_capture`
+
+This keeps the GUI-first flow terminal-free for end users (no external PATH setup required).
+
 ### Contract/Schema Enforcement Suite
 ```bash
 make contracts-ci
 ```
 Runs the machine-readable contract/schema enforcement suite used by CI (`scripts/ci_contracts.sh`).
+
+### XCTest/XCUITest Evidence Lane (CI/Local)
+```bash
+scripts/ci_recordit_xctest_evidence.sh
+```
+Runs app-level `xcodebuild` test lanes, captures per-step logs + `.xcresult` bundles, and writes deterministic status summaries under:
+- `artifacts/ci/xctest_evidence/<stamp>/status.csv`
+- `artifacts/ci/xctest_evidence/<stamp>/summary.csv`
+- `artifacts/ci/xctest_evidence/<stamp>/responsiveness_budget_summary.csv` (app-level responsiveness gate evidence)
+
+Relevant controls:
+- `XCTEST_EVIDENCE_STAMP` (artifact folder name)
+- `XCTEST_DESTINATION` (default: `platform=macOS`)
+- `CI_STRICT_UI_TESTS` (`1` makes UI-test execution failures required-fail)
+- `XCTEST_RESPONSIVENESS_SUMMARY_PATH` (override path for responsiveness gate key/value artifact)
+
+`summary.csv` includes responsiveness threshold rows emitted from app-level XCTest gating:
+- `threshold_first_stable_transcript_budget_ok`
+- `threshold_stop_to_summary_budget_ok`
+- `responsiveness_gate_pass`
+
+GitHub Actions workflow: `.github/workflows/recordit-xctest-evidence.yml`.
 
 ### Probe (debug)
 ```bash
@@ -209,12 +236,18 @@ Runs deterministic cold/warm near-live checks plus backlog/trust checks and writ
 ```bash
 make gate-packaged-live-smoke
 ```
-Runs the signed transcribe app executable in `--live-stream` mode with deterministic fake capture input and writes machine-readable evidence under:
+Runs the packaged smoke gate with two layers of validation:
+- `Recordit.app` remains the GUI-default packaged launch path (`run-recordit-app` plan semantics)
+- signed compatibility runtime (`SequoiaTranscribe.app`) still satisfies live-stream artifact/trust/timing contracts
+
+Machine-readable evidence is written under:
 
 - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<timestamp>/summary.csv`
 - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<timestamp>/status.txt`
+- `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<timestamp>/recordit_run_plan.log`
 
 Key packaged live checks:
+- `recordit_launch_semantics_ok=true`: default packaged launch plan resolves to `dist/Recordit.app` via `run-recordit-app`
 - `runtime_first_stable_emit_ok=true`: first stable transcript evidence is present during active runtime
 - `runtime_transcript_surface_ok=true`: manifest/JSONL transcript surfaces are populated
 - `runtime_terminal_live_mode_ok=true`: terminal contract stayed in live mode without replay fallback
@@ -223,19 +256,34 @@ Key packaged live checks:
 Reference: `docs/gate-packaged-live-smoke.md`.
 Post-implementation verification checklist and evidence index: `docs/post-implementation-verification-checklist.md`.
 
-### Run Packaged Beta Entrypoint (signed app mode, recommended)
+### Build Recordit DMG (Drag-to-Applications UX)
+```bash
+make create-recordit-dmg
+```
+Builds `dist/Recordit.dmg` from `dist/Recordit.app` and stages an `Applications` alias/symlink in the DMG root so install UX is explicit.
+
+Optional overrides:
+- `RECORDIT_DMG_NAME` (default: `Recordit.dmg`)
+- `RECORDIT_DMG_VOLNAME` (default: `Recordit`)
+
+### Run Packaged Beta Entrypoint (signed app mode, compatibility/fallback)
 ```bash
 make run-transcribe-app ASR_MODEL=models/ggml-base.en.bin
 ```
+Superseded-default context:
+- `docs/adr-005-recordit-default-entrypoint.md` makes `Recordit.app` the canonical user-facing default.
+- this `run-transcribe-app` / `SequoiaTranscribe.app` path remains a legacy compatibility and fallback lane for internal runtime continuity while cutover work completes.
+- fallback policy guardrails (scope/escalation/timeline): `docs/bd-14y4-sequoiatranscribe-fallback-policy.md`
+
 Builds/signs `dist/SequoiaTranscribe.app` (signed app mode for `transcribe-live`).
 Default packaged runs launch via `open -W`; live selectors such as `--live-stream` and `--live-chunked` run the signed executable directly so terminal transcript output remains attached to the invoking shell.
 For those attached live runs, the explicit `--asr-model` asset is staged into the app container before launch so the signed runtime can read it under sandbox rules.
-This is the recommended packaged beta launch path and should be treated as the primary operator entrypoint.
+This is a compatibility/fallback packaged launch path, not the primary user-facing default.
 The target prints absolute container-scoped artifact destinations before launch and prints a concise post-run session summary after the signed app exits.
 
 For packaged diagnostics on the same path, use `make run-transcribe-preflight-app`.
 For engineering-only development flows, keep using debug targets such as `make transcribe-live`, `make capture-transcribe`, and direct `cargo run`.
-Decision record: `docs/adr-004-packaged-entrypoint.md`.
+Decision records: `docs/adr-005-recordit-default-entrypoint.md` (current default policy), `docs/adr-004-packaged-entrypoint.md` (historical/superseded for default policy).
 
 Packaged artifact destination defaults:
 - root: `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/`

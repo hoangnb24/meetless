@@ -2,10 +2,20 @@ APP_NAME := SequoiaCapture
 BIN_NAME := sequoia_capture
 TRANSCRIBE_BIN := transcribe-live
 TRANSCRIBE_APP_NAME := SequoiaTranscribe
+RECORDIT_APP_NAME := Recordit
 APP_DIR := dist/$(APP_NAME).app
 APP_EXE := $(APP_DIR)/Contents/MacOS/$(APP_NAME)
 TRANSCRIBE_APP_DIR := dist/$(TRANSCRIBE_APP_NAME).app
 TRANSCRIBE_APP_EXE := $(TRANSCRIBE_APP_DIR)/Contents/MacOS/$(TRANSCRIBE_APP_NAME)
+RECORDIT_APP_DIR := dist/$(RECORDIT_APP_NAME).app
+RECORDIT_APP_EXE := $(RECORDIT_APP_DIR)/Contents/MacOS/$(RECORDIT_APP_NAME)
+RECORDIT_XCODE_PROJECT ?= Recordit.xcodeproj
+RECORDIT_XCODE_SCHEME ?= RecorditApp
+RECORDIT_XCODE_CONFIGURATION ?= Release
+RECORDIT_DERIVED_DATA ?= .build/recordit-derived-data
+RECORDIT_XCODE_DESTINATION ?= platform=macOS,arch=arm64
+RECORDIT_DMG_NAME ?= Recordit.dmg
+RECORDIT_DMG_VOLNAME ?= Recordit
 INFO_PLIST := packaging/Info.plist
 ENTITLEMENTS := packaging/entitlements.plist
 SIGN_IDENTITY ?= -
@@ -63,7 +73,7 @@ SMOKE_NEAR_LIVE_DETERMINISTIC_DIR ?= artifacts/smoke/near-live-deterministic
 SMOKE_NEAR_LIVE_INPUT_WAV ?= $(SMOKE_NEAR_LIVE_DIR)/capture.input.wav
 SMOKE_NEAR_LIVE_DETERMINISTIC_INPUT_WAV ?= artifacts/bench/corpus/gate_c/tts_phrase_stereo.wav
 
-.PHONY: help build build-release probe capture transcribe-live transcribe-live-stream capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic contracts-ci setup-whispercpp-model run-transcribe-app run-transcribe-live-stream-app run-transcribe-preflight-app run-transcribe-model-doctor-app bench-harness gate-backlog-pressure gate-transcript-completeness gate-v1-acceptance gate-packaged-live-smoke gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
+.PHONY: help build build-release build-recordit-app bundle-recordit-app sign-recordit-app verify-recordit-app run-recordit-app create-recordit-dmg probe capture transcribe-live transcribe-live-stream capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic contracts-ci setup-whispercpp-model run-transcribe-app run-transcribe-live-stream-app run-transcribe-preflight-app run-transcribe-model-doctor-app bench-harness gate-backlog-pressure gate-transcript-completeness gate-v1-acceptance gate-packaged-live-smoke gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
 
 help:
 	@echo "Targets:"
@@ -82,10 +92,16 @@ help:
 	@echo "  smoke-near-live-deterministic - CI-safe near-live fallback smoke using deterministic stereo fixture"
 	@echo "  contracts-ci  - Run machine-readable contract/schema enforcement suite"
 	@echo "  setup-whispercpp-model - Bootstrap default local whispercpp model asset"
-	@echo "  run-transcribe-app - Run signed transcribe-live app bundle (recommended packaged beta entrypoint)"
-	@echo "  run-transcribe-live-stream-app - Run signed transcribe-live app bundle with explicit --live-stream selector"
-	@echo "  run-transcribe-preflight-app - Run signed transcribe-live preflight diagnostics (packaged companion path)"
-	@echo "  run-transcribe-model-doctor-app - Run signed transcribe-live model/backend diagnostics (packaged companion path)"
+	@echo "  build-recordit-app - Build Recordit.app via xcodebuild (default user-facing app path)"
+	@echo "  bundle-recordit-app - Copy built Recordit.app into dist/"
+	@echo "  sign-recordit-app - Codesign dist/Recordit.app"
+	@echo "  verify-recordit-app - Verify signature and entitlements for dist/Recordit.app"
+	@echo "  run-recordit-app - Launch signed dist/Recordit.app (recommended packaged default)"
+	@echo "  create-recordit-dmg - Build DMG with Recordit.app + Applications alias install surface"
+	@echo "  run-transcribe-app - Run signed SequoiaTranscribe.app (legacy compatibility/fallback path)"
+	@echo "  run-transcribe-live-stream-app - Legacy compatibility/fallback: SequoiaTranscribe.app with --live-stream"
+	@echo "  run-transcribe-preflight-app - Legacy compatibility/fallback: SequoiaTranscribe preflight diagnostics"
+	@echo "  run-transcribe-model-doctor-app - Legacy compatibility/fallback: SequoiaTranscribe model diagnostics"
 	@echo "  bench-harness - Run benchmark harness and emit machine-readable artifacts"
 	@echo "  gate-backlog-pressure - Run deterministic near-live backlog pressure gate harness"
 	@echo "  gate-transcript-completeness - Run reconciliation completeness gate harness under induced backlog"
@@ -104,6 +120,26 @@ build:
 
 build-release:
 	cargo build --release --bin $(BIN_NAME) --bin $(TRANSCRIBE_BIN)
+
+build-recordit-app:
+	xcodebuild -project "$(RECORDIT_XCODE_PROJECT)" -scheme "$(RECORDIT_XCODE_SCHEME)" -configuration "$(RECORDIT_XCODE_CONFIGURATION)" -destination '$(RECORDIT_XCODE_DESTINATION)' -derivedDataPath "$(abspath $(RECORDIT_DERIVED_DATA))" CODE_SIGNING_ALLOWED=NO build
+
+bundle-recordit-app: build-recordit-app
+	rm -rf "$(RECORDIT_APP_DIR)"
+	cp -R "$(abspath $(RECORDIT_DERIVED_DATA))/Build/Products/$(RECORDIT_XCODE_CONFIGURATION)/$(RECORDIT_APP_NAME).app" "$(RECORDIT_APP_DIR)"
+
+sign-recordit-app: bundle-recordit-app
+	codesign --force --deep --options runtime --entitlements $(ENTITLEMENTS) --sign "$(SIGN_IDENTITY)" "$(RECORDIT_APP_DIR)"
+
+verify-recordit-app:
+	codesign --verify --deep --strict --verbose=2 "$(RECORDIT_APP_DIR)"
+	codesign -d --entitlements :- --verbose=2 "$(RECORDIT_APP_DIR)"
+
+run-recordit-app: sign-recordit-app
+	open -W "$(RECORDIT_APP_DIR)"
+
+create-recordit-dmg: sign-recordit-app
+	DMG_VOLNAME="$(RECORDIT_DMG_VOLNAME)" scripts/create_recordit_dmg.sh --app "$(RECORDIT_APP_DIR)" --output "dist/$(RECORDIT_DMG_NAME)"
 
 probe: build
 	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin sck_probe -- $(CAPTURE_SECS)
@@ -246,6 +282,7 @@ run-app:
 	open -W $(APP_DIR) --args $(CAPTURE_SECS) $(OUT) $(SAMPLE_RATE)
 
 run-transcribe-app: sign-transcribe
+	@echo "Legacy compatibility/fallback lane: SequoiaTranscribe.app (non-default user-facing path)."
 	@mkdir -p "$(dir $(TRANSCRIBE_APP_OUT_WAV))"
 	@echo "Signed app transcribe-live absolute artifact paths:"
 	@echo "  Root:     $(TRANSCRIBE_APP_ARTIFACT_ROOT)"

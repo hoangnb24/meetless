@@ -123,7 +123,8 @@ Confirmed requirements:
 - For sandboxed distribution, include entitlements for audio input and screen recording access.
 
 Implemented artifacts:
-- `packaging/Info.plist`
+- `app/RecorditApp/Info.plist` (Recordit.app privacy usage descriptions)
+- `packaging/Info.plist` (legacy SequoiaCapture metadata)
 - `packaging/entitlements.plist`
 - `Makefile` targets to build `.app`, add Swift runtime `rpath`, sign, verify, run via bundle context, and reset TCC grants (`reset-perms`).
 

@@ -3,6 +3,15 @@
 Date: 2026-03-05  
 Status: active checklist for beta release operations (`bd-twiz`)
 
+## Superseded Entrypoint Context (2026-03-05)
+
+Canonical user-facing default is now `Recordit.app` per
+`docs/adr-005-recordit-default-entrypoint.md`.
+
+This checklist uses `Recordit.app` artifact paths for canonical packaging/signing/
+Gatekeeper checks. Compatibility `SequoiaTranscribe.app` runtime lanes remain
+available for fallback diagnostics only.
+
 ## 1. Purpose
 
 Define a deterministic, auditable beta release checklist for publishing Recordit via GitHub Releases as a DMG artifact.
@@ -10,6 +19,9 @@ Define a deterministic, auditable beta release checklist for publishing Recordit
 This checklist is the required input for:
 1. `bd-3b1j` (rollback/support runbook)
 2. `bd-1uik` (GA signing/notarization hardening)
+
+Contract mapping reference:
+- `docs/bd-dk69-product-contract-matrix.md`
 
 ## 2. Policy Summary (Beta vs GA)
 
@@ -49,12 +61,12 @@ Pass criteria:
 1. command exits `0`
 2. model path/sha/size emitted
 
-## Step B - Signed App Packaging and Verification
+## Step B - Signed Recordit App Packaging and Verification
 
 ```bash
-make sign-transcribe SIGN_IDENTITY=- | tee "${EVIDENCE_ROOT}/logs/sign-transcribe.log"
-codesign --verify --deep --strict --verbose=2 dist/SequoiaTranscribe.app | tee "${EVIDENCE_ROOT}/logs/codesign-verify.log"
-codesign -d --entitlements :- --verbose=2 dist/SequoiaTranscribe.app > "${EVIDENCE_ROOT}/logs/codesign-entitlements.plist" 2>&1
+make sign-recordit-app SIGN_IDENTITY=- | tee "${EVIDENCE_ROOT}/logs/sign-recordit-app.log"
+codesign --verify --deep --strict --verbose=2 dist/Recordit.app | tee "${EVIDENCE_ROOT}/logs/codesign-verify.log"
+codesign -d --entitlements :- --verbose=2 dist/Recordit.app > "${EVIDENCE_ROOT}/logs/codesign-entitlements.plist" 2>&1
 ```
 
 Pass criteria:
@@ -71,10 +83,11 @@ cp "${PACKAGED_GATE_DIR}/status.txt" "${EVIDENCE_ROOT}/gates/packaged-live-smoke
 ```
 
 Pass criteria from `packaged-live-smoke.summary.csv`:
-1. `runtime_first_stable_emit_ok=true`
-2. `runtime_transcript_surface_ok=true`
-3. `runtime_terminal_live_mode_ok=true`
-4. `gate_pass=true`
+1. `recordit_launch_semantics_ok=true`
+2. `runtime_first_stable_emit_ok=true`
+3. `runtime_transcript_surface_ok=true`
+4. `runtime_terminal_live_mode_ok=true`
+5. `gate_pass=true`
 
 ## Step D - Contract/Reliability Gates
 
@@ -108,7 +121,7 @@ Pass criteria:
 DMG_NAME="Recordit-${RELEASE_TAG}.dmg"
 hdiutil create \
   -volname "Recordit Beta" \
-  -srcfolder dist/SequoiaTranscribe.app \
+  -srcfolder dist/Recordit.app \
   -ov -format UDZO \
   "dist/${DMG_NAME}" | tee "${EVIDENCE_ROOT}/packaging/hdiutil-create.log"
 ```
@@ -158,7 +171,7 @@ All rows must be completed before publishing from draft to public:
 
 | Area | Owner | Required status | Evidence |
 |---|---|---|---|
-| Packaging/signing | Release owner | PASS | `logs/sign-transcribe.log`, `logs/codesign-verify.log` |
+| Packaging/signing | Release owner | PASS | `logs/sign-recordit-app.log`, `logs/codesign-verify.log` |
 | Runtime gate health | QA owner | PASS | `gates/*.summary.csv`, `gates/*.status.txt` |
 | Soak dependency (`bd-2n4m`) | Reliability owner | PASS | `gates/bd-2n4m-status.json` + soak report link |
 | GitHub release asset integrity | Release owner | PASS | `packaging/*.sha256`, `release/gh-release-view.json` |

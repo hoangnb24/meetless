@@ -1,97 +1,88 @@
-# Operator Quickstart (`bd-1nzn`)
+# Operator Quickstart (`bd-1zru`)
 
-Date: 2026-03-02  
-Status: canonical happy-path quickstart for the human-first `recordit` CLI
+Date: 2026-03-05  
+Status: canonical GUI-first quickstart for `Recordit.app`
 
 ## Goal
 
-Get a new operator from zero to a successful session in four commands, without needing to learn legacy `transcribe-live` flags first.
+Take a non-terminal operator from install to a validated first live session through the windowed `Recordit.app` path.
 
 ## Prerequisites
 
-- macOS host with Screen Recording and Microphone permissions available
-- a local whisper.cpp model at `artifacts/bench/models/whispercpp/ggml-tiny.en.bin`
+- macOS 15+
+- Xcode command line tools
+- local model assets available (`make setup-whispercpp-model`)
 
-Bootstrap the default local model if needed:
+## GUI-First Path (Default)
 
-```bash
-make setup-whispercpp-model
-```
-
-## Happy Path
-
-### 1. Check the machine and planned artifact root
+### 1. Build the packaged app and DMG
 
 ```bash
-cargo run --bin recordit -- preflight --mode live --json
+make create-recordit-dmg RECORDIT_DMG_NAME=Recordit-local.dmg RECORDIT_DMG_VOLNAME='Recordit'
 ```
 
-What success looks like:
+Expected output:
+- `dist/Recordit.app`
+- `dist/Recordit-local.dmg`
 
-- `overall_status: PASS`
-- session-scoped artifact root under `artifacts/sessions/<date>/<timestamp>-live/`
-- top-level manifest mode labels:
-  - `runtime_mode=live-stream`
-  - `runtime_mode_taxonomy=live-stream`
-  - `runtime_mode_selector=--live-stream`
+### 2. Install from DMG (drag-to-Applications)
 
-### 2. Run the primary live operator path
+1. Open `dist/Recordit-local.dmg`.
+2. Confirm the mounted view contains:
+   - `Recordit.app`
+   - `Applications` alias/symlink.
+3. Drag `Recordit.app` into `Applications`.
+
+Optional terminal verification:
 
 ```bash
-cargo run --bin recordit -- run --mode live --model artifacts/bench/models/whispercpp/ggml-tiny.en.bin --json
+MOUNT_POINT="$(mktemp -d /tmp/recordit-dmg-XXXX)"
+hdiutil attach dist/Recordit-local.dmg -nobrowse -readonly -mountpoint "$MOUNT_POINT"
+ls -la "$MOUNT_POINT"
+readlink "$MOUNT_POINT/Applications"
+hdiutil detach "$MOUNT_POINT"
 ```
 
-What to look for:
+### 3. Launch `Recordit.app` and complete first-run onboarding
 
-- a concise `Startup banner`
-- `run_status: ok|degraded`
-- `remediation_hints: ...`
-- trailing JSON output with the session artifact paths
+1. Launch `Recordit.app` from `Applications`.
+2. On first run, complete onboarding in order:
+   - Permission checks (Screen Recording + Microphone)
+   - Model setup/readiness
+   - Ready/complete step
+3. If permission prompts do not appear automatically, grant access in System Settings and retry preflight from onboarding.
 
-Default live artifact layout:
+Validation target:
+- onboarding transitions to main runtime screen only after required gates are green.
 
+### 4. Run and validate first live session
+
+1. In main runtime view, choose `Live Transcribe`.
+2. Click `Start`.
+3. Verify runtime status transitions to running and transcript/status activity appears.
+4. Click `Stop`.
+5. Verify summary/recovery UI appears with manifest-backed final status and artifact actions.
+
+### 5. Validate artifacts
+
+Confirm latest session contains:
 - `session.input.wav`
 - `session.wav`
 - `session.jsonl`
 - `session.manifest.json`
 
-All of those land under the session root printed in the trailing JSON envelope.
+If using terminal checks, inspect the latest session under `artifacts/sessions/<date>/<timestamp>-live/`.
 
-### 3. Replay the session if you want machine-readable review
+## Fallback Diagnostics (Non-Default)
 
-```bash
-cargo run --bin recordit -- replay --jsonl <session-root>/session.jsonl --format json
-```
+The paths below are for engineering/support diagnostics only and are not the primary user journey:
 
-Use replay when you want:
+- `make run-transcribe-app ...` (compatibility `SequoiaTranscribe.app` lane)
+- `cargo run --bin recordit -- ...` direct CLI flows
+- legacy `transcribe-live` debug flows
 
-- deterministic event inspection
-- transcript review without rerunning capture
-- a machine-readable payload for automation
+Policy references:
+- `docs/adr-005-recordit-default-entrypoint.md`
+- `docs/bd-14y4-sequoiatranscribe-fallback-policy.md`
 
-### 4. Use the offline fallback when you want deterministic local validation
-
-```bash
-cargo run --bin recordit -- run --mode offline --input-wav artifacts/bench/corpus/gate_c/tts_phrase_stereo.wav --model artifacts/bench/models/whispercpp/ggml-tiny.en.bin --json
-```
-
-Use offline mode when:
-
-- you want a reproducible local sanity check
-- you do not need live capture
-- you want to validate artifact output without permission/capture variables
-
-## How To Read Results
-
-- `run_status=ok`: session completed without trust notices
-- `run_status=degraded`: session completed, but trust/degradation signals need operator review
-- `run_status=failed`: command exited non-zero; read `remediation_hint=...` first
-
-For degraded sessions:
-
-- prefer `reconciled_final` over raw `final` output when reconciliation was applied
-- inspect `trust`, `degradation_events`, and `session_summary` in `session.manifest.json`
-
-## Legacy Note
-
-`transcribe-live` remains supported for legacy scripts, gates, and expert workflows, but the normal operator path is now `recordit`.
+When documenting user guidance, always present `Recordit.app` as default and label fallback lanes explicitly as compatibility/diagnostic only.

@@ -67,6 +67,7 @@ Expected envelope (`status.txt`):
 - `detail=packaged_live_smoke_thresholds_satisfied`
 
 Required summary checks (`summary.csv`):
+- `recordit_launch_semantics_ok=true`
 - `runtime_first_stable_emit_ok=true`
 - `runtime_transcript_surface_ok=true`
 - `runtime_terminal_live_mode_ok=true`
@@ -101,6 +102,7 @@ V1 acceptance artifacts:
 Packaged smoke artifacts:
 - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<timestamp>/status.txt`
 - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<timestamp>/summary.csv`
+- `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<timestamp>/recordit_run_plan.log`
 - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<timestamp>/runtime/session.manifest.json`
 - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<timestamp>/runtime/session.jsonl`
 - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<timestamp>/runtime/session.input.wav`
@@ -121,7 +123,7 @@ V1 acceptance pass:
 Packaged smoke:
 - `/Users/themrb/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/20260301T130815Z/status.txt`
 - `/Users/themrb/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/20260301T130815Z/summary.csv`
-- key rows: `runtime_first_stable_emit_ok=true`, `runtime_transcript_surface_ok=true`, `runtime_terminal_live_mode_ok=true`, `gate_pass=true`
+- key rows: `recordit_launch_semantics_ok=true`, `runtime_first_stable_emit_ok=true`, `runtime_transcript_surface_ok=true`, `runtime_terminal_live_mode_ok=true`, `gate_pass=true`
 
 ## Fast Failure Classification
 
