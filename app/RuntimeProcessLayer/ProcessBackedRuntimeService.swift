@@ -237,7 +237,7 @@ public actor ProcessBackedRuntimeService: RuntimeService {
             return "stderr_log_missing=\(stderrPath.path)"
         }
 
-        guard let data = try? Data(contentsOf: stderrPath), !data.isEmpty else {
+        guard let data = FileManager.default.contents(atPath: stderrPath.path), !data.isEmpty else {
             return "stderr_log=\(stderrPath.path) (empty)"
         }
 

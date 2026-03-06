@@ -97,6 +97,24 @@ private func waitForFile(at url: URL, timeoutSeconds: TimeInterval, message: Str
     check(FileManager.default.fileExists(atPath: url.path), message)
 }
 
+private func readFileData(_ url: URL, message: String) throws -> Data {
+    guard let data = FileManager.default.contents(atPath: url.path) else {
+        throw AppServiceError(
+            code: .artifactMissing,
+            userMessage: message,
+            remediation: "Re-run the smoke and inspect the generated session directory.",
+            debugDetail: url.path
+        )
+    }
+    return data
+}
+
+private func readTrimmedUTF8File(_ url: URL, message: String) throws -> String {
+    let data = try readFileData(url, message: message)
+    return String(decoding: data, as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
 @MainActor
 private func runSmoke() async throws {
     let tempRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -289,7 +307,7 @@ private func runSmoke() async throws {
         )
         let sidecarPath = outputRoot.appendingPathComponent("session.pending.json")
         check(FileManager.default.fileExists(atPath: sidecarPath.path), "record-only launch should write pending sidecar")
-        let sidecarData = try Data(contentsOf: sidecarPath)
+        let sidecarData = try readFileData(sidecarPath, message: "record-only launch should write readable pending sidecar data")
         let sidecarJson = try JSONSerialization.jsonObject(with: sidecarData) as? [String: Any]
         check(sidecarJson?["mode"] as? String == "record_only", "pending sidecar mode should be record_only")
         check(sidecarJson?["transcription_state"] as? String == "pending_model", "pending sidecar should default to pending_model without explicit model path")
@@ -320,7 +338,7 @@ private func runSmoke() async throws {
         let control = try await service.controlSession(processIdentifier: launch.processIdentifier, action: .stop)
         check(control.accepted, "stop after stale-marker cleanup should be accepted")
         await waitForFile(at: signalPath, timeoutSeconds: 1, message: "graceful stop helper should write stop signal after explicit stop")
-        let signal = try String(contentsOf: signalPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let signal = try readTrimmedUTF8File(signalPath, message: "graceful stop helper should write readable stop signal")
         check(signal == "REQUEST", "graceful stop should still honor the stop-request handshake after stale-marker cleanup")
     }
 
@@ -338,7 +356,7 @@ private func runSmoke() async throws {
         check(control.accepted, "graceful stop should be accepted")
         let signalPath = outputRoot.appendingPathComponent("stop-signal.txt")
         await waitForFile(at: signalPath, timeoutSeconds: 1, message: "graceful stop helper should write stop signal")
-        let signal = try String(contentsOf: signalPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let signal = try readTrimmedUTF8File(signalPath, message: "graceful stop helper should write readable stop signal")
         check(signal == "REQUEST", "stop should honor the graceful stop-request handshake before forced fallback")
         let requestPath = outputRoot.appendingPathComponent("session.stop.request")
         check(!FileManager.default.fileExists(atPath: requestPath.path), "stop handling should clean up the graceful stop request marker once control settles")
@@ -358,7 +376,7 @@ private func runSmoke() async throws {
         check(control.accepted, "interrupt fallback stop should be accepted")
         let signalPath = outputRoot.appendingPathComponent("stop-signal.txt")
         await waitForFile(at: signalPath, timeoutSeconds: 1, message: "interrupt fallback helper should write stop signal")
-        let signal = try String(contentsOf: signalPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let signal = try readTrimmedUTF8File(signalPath, message: "interrupt fallback helper should write readable stop signal")
         check(signal == "INT", "stop should fall back to INT when graceful TERM handshake stalls")
     }
 
