@@ -1,0 +1,7 @@
+status=pass
+scenario_id=recorditapp-xctest-smoke
+lane_type=xctest-evidence
+generated_at_utc=2026-03-06T12:15:00Z
+summary_csv=summary.csv
+summary_json=summary.json
+manifest=evidence_contract.json

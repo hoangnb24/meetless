@@ -1,0 +1,3 @@
+scenario_id,lane_type,phase_id,required,status,exit_classification,started_at_utc,ended_at_utc,log_path,primary_artifact
+recorditapp-xctest-smoke,xctest-evidence,build_for_testing,true,pass,success,2026-03-06T12:10:00Z,2026-03-06T12:12:00Z,logs/build_for_testing.log,artifacts/build-for-testing.txt
+recorditapp-xctest-smoke,xctest-evidence,run_xctest,true,pass,success,2026-03-06T12:12:05Z,2026-03-06T12:14:30Z,logs/run_xctest.log,artifacts/xctest-summary.txt

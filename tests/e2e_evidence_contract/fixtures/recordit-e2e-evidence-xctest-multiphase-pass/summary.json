@@ -1,0 +1,13 @@
+{
+  "scenario_id": "recorditapp-xctest-smoke",
+  "lane_type": "xctest-evidence",
+  "contract_version": "1",
+  "overall_status": "pass",
+  "phase_count": 2,
+  "required_phase_count": 2,
+  "failed_phase_count": 0,
+  "warn_phase_count": 0,
+  "skipped_phase_count": 0,
+  "generated_at_utc": "2026-03-06T12:15:00Z",
+  "manifest_relpath": "evidence_contract.json"
+}

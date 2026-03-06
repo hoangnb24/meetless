@@ -52,7 +52,7 @@ This is the canonical manifest for the root. It must include:
   - `xcuitest-evidence`
   - `hybrid-e2e`
 - `generated_at_utc` — UTC timestamp in RFC 3339 / ISO 8601 `...Z` form
-- `artifact_root_relpath` — usually `.`
+- `artifact_root_relpath` — usually `artifacts` or `.`, and it must resolve inside the evidence root
 - `overall_status` — one of `pass`, `warn`, `fail`, `skipped`
 - `paths_env_relpath` — relative path to `paths.env`
 - `status_txt_relpath` — relative path to `status.txt`
@@ -137,7 +137,7 @@ Each `phases[]` entry in `evidence_contract.json` must include:
 - `stderr_relpath` — retained stderr log if split
 - `primary_artifact_relpath` — the main resulting file artifact for the phase when applicable
 - `extra_artifact_relpaths` — optional extra retained files / bundles
-- `notes` — optional explanatory note for warns/skips
+- `notes` — optional explanatory note for warns/skips, and required when `exit_classification=flake_retried`
 
 `ended_at_utc` must not be earlier than `started_at_utc`.
 
@@ -182,10 +182,15 @@ Optional lane assertion:
 python3 scripts/validate_e2e_evidence_contract.py --root <evidence-root> --expect-lane-type packaged-e2e
 ```
 
-Canonical minimal passing example fixture:
+Canonical example fixtures:
 
 ```bash
 python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-minimal-pass --expect-lane-type packaged-e2e
+python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-minimal-warn --expect-lane-type packaged-e2e
+python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-minimal-fail --expect-lane-type packaged-e2e
+python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-minimal-skipped --expect-lane-type shell-e2e
+python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-xctest-multiphase-pass --expect-lane-type xctest-evidence
+python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-xcuitest-multiphase-pass --expect-lane-type xcuitest-evidence
 ```
 
 The validator enforces:

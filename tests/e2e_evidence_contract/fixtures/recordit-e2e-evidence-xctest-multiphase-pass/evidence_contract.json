@@ -1,0 +1,63 @@
+{
+  "contract_name": "recordit-e2e-evidence",
+  "contract_version": "1",
+  "scenario_id": "recorditapp-xctest-smoke",
+  "lane_type": "xctest-evidence",
+  "generated_at_utc": "2026-03-06T12:15:00Z",
+  "artifact_root_relpath": "artifacts",
+  "overall_status": "pass",
+  "paths_env_relpath": "paths.env",
+  "status_txt_relpath": "status.txt",
+  "summary_csv_relpath": "summary.csv",
+  "summary_json_relpath": "summary.json",
+  "phases": [
+    {
+      "phase_id": "build_for_testing",
+      "title": "Build tests",
+      "required": true,
+      "status": "pass",
+      "exit_classification": "success",
+      "started_at_utc": "2026-03-06T12:10:00Z",
+      "ended_at_utc": "2026-03-06T12:12:00Z",
+      "command_display": "xcodebuild -project Recordit.xcodeproj -scheme RecorditApp build-for-testing",
+      "command_argv": [
+        "xcodebuild",
+        "-project",
+        "Recordit.xcodeproj",
+        "-scheme",
+        "RecorditApp",
+        "build-for-testing"
+      ],
+      "log_relpath": "logs/build_for_testing.log",
+      "stdout_relpath": "logs/build_for_testing.stdout",
+      "stderr_relpath": "logs/build_for_testing.stderr",
+      "primary_artifact_relpath": "artifacts/build-for-testing.txt"
+    },
+    {
+      "phase_id": "run_xctest",
+      "title": "Run focused XCTest lane",
+      "required": true,
+      "status": "pass",
+      "exit_classification": "success",
+      "started_at_utc": "2026-03-06T12:12:05Z",
+      "ended_at_utc": "2026-03-06T12:14:30Z",
+      "command_display": "xcodebuild -project Recordit.xcodeproj -scheme RecorditApp test",
+      "command_argv": [
+        "xcodebuild",
+        "-project",
+        "Recordit.xcodeproj",
+        "-scheme",
+        "RecorditApp",
+        "test"
+      ],
+      "log_relpath": "logs/run_xctest.log",
+      "stdout_relpath": "logs/run_xctest.stdout",
+      "stderr_relpath": "logs/run_xctest.stderr",
+      "primary_artifact_relpath": "artifacts/xctest-summary.txt",
+      "extra_artifact_relpaths": [
+        "artifacts/xctest-report.json"
+      ],
+      "result_bundle_relpath": "bundles/RecorditAppTests.xcresult"
+    }
+  ]
+}

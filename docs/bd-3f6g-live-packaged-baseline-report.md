@@ -57,7 +57,7 @@ Matched baseline values:
 Status file verdict:
 
 - `status=pass`
-- `detail=v1_acceptance_thresholds_satisfied`
+- `detail=v1_acceptance_and_handoff_thresholds_satisfied`
 
 ### Packaged Smoke (`gate_packaged_live_smoke`)
 

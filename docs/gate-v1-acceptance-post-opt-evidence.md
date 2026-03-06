@@ -24,7 +24,7 @@ Primary status files:
 
 ## Deterministic Verdict
 
-- root gate status: `pass` (`detail=v1_acceptance_thresholds_satisfied`)
+- root gate status: `pass` (`detail=v1_acceptance_and_handoff_thresholds_satisfied`)
 - root `gate_pass`: `true`
 - backlog gate status: `pass` (`detail=backlog_pressure_thresholds_satisfied`)
 - backlog `gate_pass`: `true`

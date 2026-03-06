@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -173,6 +174,53 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["scenario_id"], "packaged-live-pass")
 
+    def test_warn_example_fixture_passes_validator(self) -> None:
+        root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-minimal-warn"
+        result = self.run_validator(root, "--expect-lane-type", "packaged-e2e")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scenario_id"], "packaged-live-warn")
+        self.assertEqual(payload["overall_status"], "warn")
+
+    def test_skipped_example_fixture_passes_validator(self) -> None:
+        root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-minimal-skipped"
+        result = self.run_validator(root, "--expect-lane-type", "shell-e2e")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scenario_id"], "packaged-live-skipped")
+        self.assertEqual(payload["overall_status"], "skipped")
+
+    def test_fail_example_fixture_passes_validator(self) -> None:
+        root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-minimal-fail"
+        result = self.run_validator(root, "--expect-lane-type", "packaged-e2e")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scenario_id"], "packaged-live-fail")
+        self.assertEqual(payload["overall_status"], "fail")
+
+    def test_multiphase_xctest_example_fixture_passes_validator(self) -> None:
+        root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-xctest-multiphase-pass"
+        result = self.run_validator(root, "--expect-lane-type", "xctest-evidence")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scenario_id"], "recorditapp-xctest-smoke")
+        self.assertEqual(payload["phase_count"], 2)
+        self.assertEqual(payload["overall_status"], "pass")
+
+    def test_multiphase_xcuitest_example_fixture_passes_validator(self) -> None:
+        root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-xcuitest-multiphase-pass"
+        result = self.run_validator(root, "--expect-lane-type", "xcuitest-evidence")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scenario_id"], "recorditapp-xcuitest-happy-path")
+        self.assertEqual(payload["phase_count"], 2)
+        self.assertEqual(payload["overall_status"], "pass")
+
     def test_valid_minimal_packaged_evidence_root_passes(self) -> None:
         root = self.make_evidence_root()
         result = self.run_validator(root, "--expect-lane-type", "packaged-e2e")
@@ -226,6 +274,64 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["overall_status"], "warn")
         self.assertEqual(payload["phase_count"], 2)
+
+    def test_fail_lane_accepts_required_failed_phase(self) -> None:
+        root = self.make_evidence_root(
+            scenario_id="fail-lane",
+            overall_status="fail",
+            phases=[
+                {
+                    "phase_id": "prepare",
+                    "title": "Prepare runtime inputs",
+                    "required": True,
+                    "status": "fail",
+                    "exit_classification": "product_failure",
+                    "started_at_utc": "2026-03-06T12:00:00Z",
+                    "ended_at_utc": "2026-03-06T12:00:02Z",
+                    "command_display": "prepare runtime",
+                    "command_argv": ["prepare"],
+                    "log_relpath": "logs/prepare.log",
+                    "stdout_relpath": "logs/prepare.stdout",
+                    "stderr_relpath": "logs/prepare.stderr",
+                    "primary_artifact_relpath": "artifacts/prepare.txt",
+                    "notes": "runtime preflight failed with a required blocker",
+                }
+            ],
+        )
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["overall_status"], "fail")
+
+    def test_skipped_lane_accepts_skip_requested_phase_with_notes(self) -> None:
+        root = self.make_evidence_root(
+            scenario_id="skipped-lane",
+            overall_status="skipped",
+            phases=[
+                {
+                    "phase_id": "gate_skip",
+                    "title": "Skip before execution",
+                    "required": True,
+                    "status": "skipped",
+                    "exit_classification": "skip_requested",
+                    "started_at_utc": "2026-03-06T12:00:00Z",
+                    "ended_at_utc": "2026-03-06T12:00:00Z",
+                    "command_display": "skip lane",
+                    "command_argv": ["skip"],
+                    "log_relpath": "logs/gate_skip.log",
+                    "stdout_relpath": "logs/gate_skip.stdout",
+                    "stderr_relpath": "logs/gate_skip.stderr",
+                    "primary_artifact_relpath": "",
+                    "notes": "lane skipped because the caller requested record-only mode",
+                }
+            ],
+        )
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["overall_status"], "skipped")
 
     def test_bool_count_in_summary_json_is_rejected(self) -> None:
         root = self.make_evidence_root(scenario_id="bool-count")
@@ -528,6 +634,23 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertFalse(payload["ok"])
         self.assertIn("must stay within the evidence root", payload["error"])
+
+
+    def test_symlinked_artifact_root_cannot_escape_evidence_root(self) -> None:
+        root = self.make_evidence_root(scenario_id="symlink-artifact-root-escape")
+        external_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(external_dir.cleanup)
+        external_artifacts = Path(external_dir.name) / "artifacts"
+        external_artifacts.mkdir()
+        artifact_root = root / "artifacts"
+        shutil.rmtree(artifact_root)
+        artifact_root.symlink_to(external_artifacts, target_is_directory=True)
+
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("artifact_root_relpath must stay within the evidence root", payload["error"])
 
 
 if __name__ == "__main__":

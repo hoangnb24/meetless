@@ -1,0 +1,2 @@
+scenario_id,lane_type,phase_id,required,status,exit_classification,started_at_utc,ended_at_utc,log_path,primary_artifact
+packaged-live-fail,packaged-e2e,launch_app,true,fail,product_failure,2026-03-06T12:00:00Z,2026-03-06T12:00:05Z,logs/launch_app.log,artifacts/launch.txt

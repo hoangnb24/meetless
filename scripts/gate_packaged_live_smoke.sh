@@ -13,6 +13,7 @@ DURATION_SEC="${DURATION_SEC:-3}"
 CHUNK_WINDOW_MS="${CHUNK_WINDOW_MS:-1800}"
 CHUNK_STRIDE_MS="${CHUNK_STRIDE_MS:-300}"
 CHUNK_QUEUE_CAP="${CHUNK_QUEUE_CAP:-4}"
+RECORDIT_HANDOFF_INJECT_FAILURE="${RECORDIT_HANDOFF_INJECT_FAILURE:-}"
 WHISPER_HELPER="${WHISPER_HELPER:-$(command -v whisper-cli || true)}"
 RECORDIT_BUNDLE_CONFIGURATION="${RECORDIT_XCODE_CONFIGURATION:-Release}"
 
@@ -42,6 +43,7 @@ Options:
 
 Environment:
   RECORDIT_XCODE_CONFIGURATION  Configuration used for prebuilt handoff/embed probe (default: Release)
+  RECORDIT_HANDOFF_INJECT_FAILURE  Optional seam failure injection for validation. Supported values: runtime_prepare_missing_manifest, runtime_prepare_missing_handoff_env, artifact_compare_manifest, artifact_compare_recordit, artifact_compare_capture, artifact_compare_model, manifest_parity_recordit
 USAGE
 }
 
@@ -203,6 +205,8 @@ COPY_ONLY_EMBED_CAPTURE_MATCH=0
 COPY_ONLY_EMBED_MODEL_MATCH=0
 COPY_ONLY_EMBED_PARITY_OK=0
 HANDOFF_INTEGRATION_OK=0
+HANDOFF_FAILURE_STAGE="pending"
+HANDOFF_FAILURE_DETAIL="pending"
 
 set +e
 (
@@ -225,6 +229,24 @@ if [[ -f "$PREBUILT_RUNTIME_HANDOFF_ENV" ]]; then
   PREBUILT_RUNTIME_HANDOFF_ENV_PRESENT=1
 fi
 
+case "$RECORDIT_HANDOFF_INJECT_FAILURE" in
+  ""|artifact_compare_manifest|artifact_compare_recordit|artifact_compare_capture|artifact_compare_model|manifest_parity_recordit|runtime_prepare_missing_manifest|runtime_prepare_missing_handoff_env)
+    ;;
+  *)
+    echo "error: unsupported RECORDIT_HANDOFF_INJECT_FAILURE value: $RECORDIT_HANDOFF_INJECT_FAILURE" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$RECORDIT_HANDOFF_INJECT_FAILURE" == "runtime_prepare_missing_manifest" ]]; then
+  rm -f "$PREBUILT_RUNTIME_MANIFEST"
+  PREBUILT_RUNTIME_MANIFEST_PRESENT=0
+fi
+if [[ "$RECORDIT_HANDOFF_INJECT_FAILURE" == "runtime_prepare_missing_handoff_env" ]]; then
+  rm -f "$PREBUILT_RUNTIME_HANDOFF_ENV"
+  PREBUILT_RUNTIME_HANDOFF_ENV_PRESENT=0
+fi
+
 rm -rf "$COPY_ONLY_EMBED_ROOT"
 mkdir -p "$COPY_ONLY_EMBED_ROOT"
 set +e
@@ -244,34 +266,49 @@ if [[ "$COPY_ONLY_EMBED_EXIT_CODE" -eq 0 ]]; then
   COPY_ONLY_EMBED_OK=1
 fi
 
-: >"$COPY_ONLY_EMBED_COMPARE_LOG"
 if [[ "$COPY_ONLY_EMBED_OK" -eq 1 ]]; then
+  case "$RECORDIT_HANDOFF_INJECT_FAILURE" in
+    artifact_compare_manifest)
+      python3 - "$COPY_ONLY_RUNTIME_ROOT/artifact-manifest.json" <<'PY_INJECT_MANIFEST'
+import json
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+with path.open(encoding="utf-8") as handle:
+    data = json.load(handle)
+if isinstance(data.get("entries"), list) and data["entries"]:
+    data["entries"][0]["sha256"] = "0" * 64
+path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY_INJECT_MANIFEST
+      ;;
+    artifact_compare_recordit)
+      printf "__bd_3jd2_artifact_compare_recordit__\n" >>"$COPY_ONLY_RUNTIME_ROOT/bin/recordit"
+      ;;
+    artifact_compare_capture)
+      printf "__bd_3jd2_artifact_compare_capture__\n" >>"$COPY_ONLY_RUNTIME_ROOT/bin/sequoia_capture"
+      ;;
+    artifact_compare_model)
+      printf "__bd_3jd2_artifact_compare_model__\n" >>"$COPY_ONLY_RUNTIME_ROOT/models/whispercpp/ggml-tiny.en.bin"
+      ;;
+  esac
   if [[ -f "$PREBUILT_RUNTIME_MANIFEST" && -f "$COPY_ONLY_RUNTIME_ROOT/artifact-manifest.json" ]] && cmp -s "$PREBUILT_RUNTIME_MANIFEST" "$COPY_ONLY_RUNTIME_ROOT/artifact-manifest.json"; then
     COPY_ONLY_EMBED_MANIFEST_MATCH=1
-    echo "manifest_copy_match=true" >>"$COPY_ONLY_EMBED_COMPARE_LOG"
-  else
-    echo "manifest_copy_match=false" >>"$COPY_ONLY_EMBED_COMPARE_LOG"
   fi
 
   if [[ -f "$PREBUILT_RUNTIME_INPUT_DIR/runtime/bin/recordit" && -f "$COPY_ONLY_RUNTIME_ROOT/bin/recordit" ]] && cmp -s "$PREBUILT_RUNTIME_INPUT_DIR/runtime/bin/recordit" "$COPY_ONLY_RUNTIME_ROOT/bin/recordit"; then
     COPY_ONLY_EMBED_RECORDIT_MATCH=1
-    echo "recordit_copy_match=true" >>"$COPY_ONLY_EMBED_COMPARE_LOG"
-  else
-    echo "recordit_copy_match=false" >>"$COPY_ONLY_EMBED_COMPARE_LOG"
   fi
 
   if [[ -f "$PREBUILT_RUNTIME_INPUT_DIR/runtime/bin/sequoia_capture" && -f "$COPY_ONLY_RUNTIME_ROOT/bin/sequoia_capture" ]] && cmp -s "$PREBUILT_RUNTIME_INPUT_DIR/runtime/bin/sequoia_capture" "$COPY_ONLY_RUNTIME_ROOT/bin/sequoia_capture"; then
     COPY_ONLY_EMBED_CAPTURE_MATCH=1
-    echo "capture_copy_match=true" >>"$COPY_ONLY_EMBED_COMPARE_LOG"
-  else
-    echo "capture_copy_match=false" >>"$COPY_ONLY_EMBED_COMPARE_LOG"
   fi
 
   if [[ -f "$PREBUILT_RUNTIME_INPUT_DIR/runtime/models/whispercpp/ggml-tiny.en.bin" && -f "$COPY_ONLY_RUNTIME_ROOT/models/whispercpp/ggml-tiny.en.bin" ]] && cmp -s "$PREBUILT_RUNTIME_INPUT_DIR/runtime/models/whispercpp/ggml-tiny.en.bin" "$COPY_ONLY_RUNTIME_ROOT/models/whispercpp/ggml-tiny.en.bin"; then
     COPY_ONLY_EMBED_MODEL_MATCH=1
-    echo "model_copy_match=true" >>"$COPY_ONLY_EMBED_COMPARE_LOG"
-  else
-    echo "model_copy_match=false" >>"$COPY_ONLY_EMBED_COMPARE_LOG"
+  fi
+
+  if [[ "$RECORDIT_HANDOFF_INJECT_FAILURE" == "manifest_parity_recordit" ]]; then
+    printf "__bd_3jd2_manifest_parity_recordit__\n" >>"$COPY_ONLY_RUNTIME_ROOT/bin/recordit"
   fi
 
   set +e
@@ -347,8 +384,47 @@ PY_PARITY
   fi
 fi
 
+cat >"$COPY_ONLY_EMBED_COMPARE_LOG" <<COMPARE
+manifest_copy_match=$(bool_text "$COPY_ONLY_EMBED_MANIFEST_MATCH")
+recordit_copy_match=$(bool_text "$COPY_ONLY_EMBED_RECORDIT_MATCH")
+capture_copy_match=$(bool_text "$COPY_ONLY_EMBED_CAPTURE_MATCH")
+model_copy_match=$(bool_text "$COPY_ONLY_EMBED_MODEL_MATCH")
+COMPARE
+
 if [[ "$PREBUILT_RUNTIME_PREPARE_OK" -eq 1 && "$PREBUILT_RUNTIME_MANIFEST_PRESENT" -eq 1 && "$PREBUILT_RUNTIME_HANDOFF_ENV_PRESENT" -eq 1 && "$COPY_ONLY_EMBED_OK" -eq 1 && "$COPY_ONLY_EMBED_MANIFEST_MATCH" -eq 1 && "$COPY_ONLY_EMBED_RECORDIT_MATCH" -eq 1 && "$COPY_ONLY_EMBED_CAPTURE_MATCH" -eq 1 && "$COPY_ONLY_EMBED_MODEL_MATCH" -eq 1 && "$COPY_ONLY_EMBED_PARITY_OK" -eq 1 ]]; then
   HANDOFF_INTEGRATION_OK=1
+  HANDOFF_FAILURE_STAGE="none"
+  HANDOFF_FAILURE_DETAIL="none"
+elif [[ "$PREBUILT_RUNTIME_PREPARE_OK" -ne 1 ]]; then
+  HANDOFF_FAILURE_STAGE="runtime_prepare"
+  HANDOFF_FAILURE_DETAIL="prepare_script_exit_${PREBUILT_RUNTIME_PREPARE_EXIT_CODE}"
+elif [[ "$PREBUILT_RUNTIME_MANIFEST_PRESENT" -ne 1 || "$PREBUILT_RUNTIME_HANDOFF_ENV_PRESENT" -ne 1 ]]; then
+  HANDOFF_FAILURE_STAGE="runtime_prepare_artifacts"
+  if [[ "$PREBUILT_RUNTIME_MANIFEST_PRESENT" -ne 1 && "$PREBUILT_RUNTIME_HANDOFF_ENV_PRESENT" -ne 1 ]]; then
+    HANDOFF_FAILURE_DETAIL="missing_manifest_and_handoff_env"
+  elif [[ "$PREBUILT_RUNTIME_MANIFEST_PRESENT" -ne 1 ]]; then
+    HANDOFF_FAILURE_DETAIL="missing_manifest"
+  else
+    HANDOFF_FAILURE_DETAIL="missing_handoff_env"
+  fi
+elif [[ "$COPY_ONLY_EMBED_OK" -ne 1 ]]; then
+  HANDOFF_FAILURE_STAGE="bundle_copy_assembly"
+  HANDOFF_FAILURE_DETAIL="embed_script_exit_${COPY_ONLY_EMBED_EXIT_CODE}"
+elif [[ "$COPY_ONLY_EMBED_MANIFEST_MATCH" -ne 1 || "$COPY_ONLY_EMBED_RECORDIT_MATCH" -ne 1 || "$COPY_ONLY_EMBED_CAPTURE_MATCH" -ne 1 || "$COPY_ONLY_EMBED_MODEL_MATCH" -ne 1 ]]; then
+  HANDOFF_FAILURE_STAGE="artifact_compare"
+  mismatch_fields=()
+  [[ "$COPY_ONLY_EMBED_MANIFEST_MATCH" -ne 1 ]] && mismatch_fields+=(manifest)
+  [[ "$COPY_ONLY_EMBED_RECORDIT_MATCH" -ne 1 ]] && mismatch_fields+=(recordit)
+  [[ "$COPY_ONLY_EMBED_CAPTURE_MATCH" -ne 1 ]] && mismatch_fields+=(sequoia_capture)
+  [[ "$COPY_ONLY_EMBED_MODEL_MATCH" -ne 1 ]] && mismatch_fields+=(default_model)
+  IFS=, HANDOFF_FAILURE_DETAIL="mismatch:${mismatch_fields[*]}"
+  unset IFS
+elif [[ "$COPY_ONLY_EMBED_PARITY_OK" -ne 1 ]]; then
+  HANDOFF_FAILURE_STAGE="manifest_parity"
+  HANDOFF_FAILURE_DETAIL="manifest_parity_check_failed"
+else
+  HANDOFF_FAILURE_STAGE="unknown"
+  HANDOFF_FAILURE_DETAIL="unclassified_handoff_failure"
 fi
 
 (
@@ -487,6 +563,9 @@ PY_REWRITE_GATE_PASS
   printf 'copy_only_embed_model_match,%s\n' "$(bool_text "$COPY_ONLY_EMBED_MODEL_MATCH")"
   printf 'copy_only_embed_manifest_parity_ok,%s\n' "$(bool_text "$COPY_ONLY_EMBED_PARITY_OK")"
   printf 'handoff_integration_ok,%s\n' "$(bool_text "$HANDOFF_INTEGRATION_OK")"
+  printf 'handoff_failure_stage,%s\n' "$HANDOFF_FAILURE_STAGE"
+  printf 'handoff_failure_detail,%s\n' "$HANDOFF_FAILURE_DETAIL"
+  printf 'handoff_inject_failure,%s\n' "$RECORDIT_HANDOFF_INJECT_FAILURE"
 } >>"$SUMMARY_CSV"
 
 if [[ "$BASE_GATE_PASS" == "true" && "$HANDOFF_INTEGRATION_OK" -eq 1 ]]; then
@@ -541,6 +620,9 @@ copy_only_embed_root=$COPY_ONLY_EMBED_ROOT
 copy_only_embed_log=$COPY_ONLY_EMBED_LOG
 copy_only_embed_compare_log=$COPY_ONLY_EMBED_COMPARE_LOG
 copy_only_embed_parity_log=$COPY_ONLY_EMBED_PARITY_LOG
+handoff_failure_stage=$HANDOFF_FAILURE_STAGE
+handoff_failure_detail=$HANDOFF_FAILURE_DETAIL
+handoff_inject_failure=$RECORDIT_HANDOFF_INJECT_FAILURE
 generated_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 STATUS
 

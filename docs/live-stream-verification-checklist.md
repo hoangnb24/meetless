@@ -42,7 +42,7 @@ Run these in order.
      ```
    - Required result:
      - `status=pass`
-     - `detail=v1_acceptance_thresholds_satisfied`
+     - `detail=v1_acceptance_and_handoff_thresholds_satisfied`
      - `gate_pass=true`
      - cold/warm `runtime_mode_ok=true`
      - cold/warm `first_stable_emit_ok=true`

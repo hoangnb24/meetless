@@ -97,7 +97,7 @@ def ensure(condition: bool, message: str) -> None:
 
 def load_json(path: Path) -> dict[str, Any]:
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ValidationError(f"missing JSON file: {path}") from exc
     except json.JSONDecodeError as exc:
@@ -130,7 +130,7 @@ def require_nonnegative_int(value: Any, field: str) -> int:
 def parse_key_value_file(path: Path) -> dict[str, str]:
     data: dict[str, str] = {}
     try:
-        lines = path.read_text().splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as exc:
         raise ValidationError(f"unable to read key/value file {path}: {exc}") from exc
     for raw in lines:
@@ -185,10 +185,7 @@ def validate_manifest(root: Path, manifest: dict[str, Any], expect_lane_type: st
 
     artifact_root = manifest.get("artifact_root_relpath")
     ensure(isinstance(artifact_root, str) and artifact_root, "artifact_root_relpath must be present")
-    ensure(is_relative_safe(artifact_root), "artifact_root_relpath must be a safe relative path")
-    artifact_root_path = root / artifact_root
-    ensure(artifact_root_path.exists(), f"artifact_root_relpath does not exist: {artifact_root}")
-    ensure(artifact_root_path.is_dir(), f"artifact_root_relpath must resolve to a directory: {artifact_root}")
+    require_relpath(root, artifact_root, "artifact_root_relpath", path_kind="dir")
 
     for field in [
         "paths_env_relpath",
