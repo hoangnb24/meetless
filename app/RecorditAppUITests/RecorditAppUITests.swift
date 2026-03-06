@@ -172,11 +172,15 @@ final class RecorditAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["permission_row_microphone_missing"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["onboarding_open_screen_settings"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["onboarding_open_microphone_settings"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["onboarding_open_main_runtime"].exists)
         XCTAssertFalse(nextButton.isEnabled)
     }
 
     func testModelPathBlockKeepsLiveOnboardingBlockedButRecordOnlyStillWorks() {
-        let app = launchApp(preflightScenario: "model_path_blocked")
+        let app = launchApp(
+            preflightScenario: "model_path_blocked",
+            defaultRuntimeMode: "record_only"
+        )
 
         XCTAssertTrue(app.staticTexts["onboarding_title"].waitForExistence(timeout: 5))
         let nextButton = app.buttons["onboarding_next"]
@@ -206,11 +210,6 @@ final class RecorditAppUITests: XCTestCase {
 
         let runtimeStatus = app.staticTexts["runtime_status"]
         XCTAssertTrue(runtimeStatus.waitForExistence(timeout: 5))
-        let modeControl = app.segmentedControls.firstMatch
-        XCTAssertTrue(modeControl.waitForExistence(timeout: 5))
-        let recordOnlyButton = modeControl.buttons["Record Only"]
-        XCTAssertTrue(recordOnlyButton.waitForExistence(timeout: 5))
-        activate(recordOnlyButton)
 
         let startButton = app.buttons["start_live_transcribe"]
         XCTAssertTrue(startButton.waitForExistence(timeout: 5))
@@ -246,6 +245,7 @@ final class RecorditAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["permission_row_microphone_granted"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["onboarding_open_screen_settings"].exists)
         XCTAssertFalse(app.buttons["onboarding_open_microphone_settings"].exists)
+        XCTAssertFalse(app.buttons["onboarding_open_main_runtime"].exists)
         XCTAssertFalse(nextButton.isEnabled)
     }
 
@@ -271,6 +271,7 @@ final class RecorditAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["permission_row_microphone_runtime_failure"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["onboarding_open_screen_settings"].exists)
         XCTAssertFalse(app.buttons["onboarding_open_microphone_settings"].exists)
+        XCTAssertFalse(app.buttons["onboarding_open_main_runtime"].exists)
         XCTAssertFalse(nextButton.isEnabled)
     }
 
@@ -296,6 +297,7 @@ final class RecorditAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["permission_row_microphone_granted"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["onboarding_open_screen_settings"].exists)
         XCTAssertFalse(app.buttons["onboarding_open_microphone_settings"].exists)
+        XCTAssertFalse(app.buttons["onboarding_open_main_runtime"].exists)
         XCTAssertFalse(nextButton.isEnabled)
     }
 
@@ -303,7 +305,8 @@ final class RecorditAppUITests: XCTestCase {
         preflightScenario: String? = nil,
         runtimeScenario: String? = nil,
         nativeScreenPermissionGranted: Bool? = nil,
-        nativeMicrophonePermissionGranted: Bool? = nil
+        nativeMicrophonePermissionGranted: Bool? = nil,
+        defaultRuntimeMode: String? = nil
     ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments += ["--ui-test-mode"]
@@ -322,6 +325,9 @@ final class RecorditAppUITests: XCTestCase {
         }
         if let nativeMicrophonePermissionGranted {
             app.launchEnvironment["RECORDIT_UI_TEST_NATIVE_MICROPHONE_PERMISSION"] = nativeMicrophonePermissionGranted ? "granted" : "denied"
+        }
+        if let defaultRuntimeMode {
+            app.launchEnvironment["RECORDIT_UI_TEST_DEFAULT_RUNTIME_MODE"] = defaultRuntimeMode
         }
         app.launch()
         app.activate()

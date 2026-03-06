@@ -60,6 +60,9 @@ final class MainSessionController: ObservableObject {
         self.environment = environment
         self.runtimeViewModel = environment.makeRuntimeViewModel()
         self.runtimeState = runtimeViewModel.state
+        if ProcessInfo.processInfo.environment["RECORDIT_UI_TEST_DEFAULT_RUNTIME_MODE"] == "record_only" {
+            self.selectedMode = .recordOnly
+        }
     }
 
     deinit {
