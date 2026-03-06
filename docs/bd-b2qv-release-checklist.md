@@ -119,16 +119,15 @@ Pass criteria:
 
 ```bash
 DMG_NAME="Recordit-${RELEASE_TAG}.dmg"
-hdiutil create \
-  -volname "Recordit Beta" \
-  -srcfolder dist/Recordit.app \
-  -ov -format UDZO \
-  "dist/${DMG_NAME}" | tee "${EVIDENCE_ROOT}/packaging/hdiutil-create.log"
+scripts/create_recordit_dmg.sh \
+  --app "dist/Recordit.app" \
+  --output "dist/${DMG_NAME}" \
+  --volname "Recordit Beta" | tee "${EVIDENCE_ROOT}/packaging/create-recordit-dmg.log"
 ```
 
 Pass criteria:
 1. DMG file exists at `dist/${DMG_NAME}`
-2. `hdiutil create` exits `0`
+2. `scripts/create_recordit_dmg.sh` exits `0`
 
 ## Step G - Hash and Gatekeeper Assessment
 

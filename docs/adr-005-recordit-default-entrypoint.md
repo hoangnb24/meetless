@@ -5,6 +5,7 @@
 - Related bead: `bd-3egg`
 - Parent decision lane: `bd-jd2x`
 - Supersedes: `docs/adr-004-packaged-entrypoint.md`
+- Related release posture: `docs/bd-1mep-v1-release-posture.md`
 
 ## Context
 
@@ -55,6 +56,8 @@ Even in those cases, user-facing release notes and quickstart guidance must keep
 ## Consequences
 
 - Build/package/sign/notarize/release scripts should target `Recordit.app` first.
+- Release-posture disputes about sandboxing, notarization scope, or DMG-vs-local
+  proof should defer to `docs/bd-1mep-v1-release-posture.md`.
 - README/operator docs should describe GUI-first validation via `Recordit.app`.
 - Traceability matrices should reference this ADR when mapping shipped entrypoint
   obligations and deprecating `SequoiaTranscribe` default language.

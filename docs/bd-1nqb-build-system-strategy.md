@@ -4,6 +4,7 @@ Date: 2026-03-05
 Status: Accepted
 Related bead: `bd-1nqb`
 Superseding policy context: `docs/adr-005-recordit-default-entrypoint.md`
+Release posture context: `docs/bd-1mep-v1-release-posture.md`
 
 ## Decision
 
@@ -13,12 +14,16 @@ Use an **Xcode project/app-target workflow** as the canonical build system for
 `SwiftPM` remains useful for package/module reuse and non-app smoke tooling, but
 is not the primary app packaging workflow.
 
+This build-system decision does **not** imply App Sandbox as the v1 release
+posture. Xcode is the canonical app build/test toolchain; the v1 release posture
+is defined separately by `docs/bd-1mep-v1-release-posture.md`.
+
 ## Why This Decision
 
 Current repository reality:
-- no checked-in `.xcodeproj` / `.xcworkspace` app target yet
-- no `Package.swift` app-packaging workflow for a signed GUI target
-- current packaging path is Makefile-driven Rust app bundling (`SequoiaTranscribe.app`)
+- checked-in `Recordit.xcodeproj` now exists for the app target and scheme-driven workflow
+- there is still no `Package.swift`-based app-packaging workflow for a signed GUI target
+- transitional packaging history still includes Makefile-driven Rust bundling surfaces (especially `SequoiaTranscribe.app`) that must remain non-default
 
 Product-direction requirement:
 - `docs/adr-005-recordit-default-entrypoint.md` defines `Recordit.app` as the
@@ -48,6 +53,9 @@ Given those constraints, Xcode app targets are the shortest path to reliable:
    smoke binaries (`bd-8du2`, `bd-3sko`).
 5. Legacy `SequoiaTranscribe.app` scripts remain compatibility/fallback-only and
    must stay explicitly non-default per ADR-005.
+6. Xcode-based app packaging must be interpreted in the release context defined by
+   `docs/bd-1mep-v1-release-posture.md`, not as implicit proof that the product
+   should ship with App Sandbox enabled.
 
 ## Required Follow-On Work
 

@@ -8,6 +8,8 @@ DERIVED_DATA_PATH="${XCTEST_DERIVED_DATA_PATH:-$OUT_DIR/derived_data}"
 DESTINATION="${XCTEST_DESTINATION:-platform=macOS}"
 STRICT_UI_TESTS="${CI_STRICT_UI_TESTS:-0}"
 UI_BOOTSTRAP_RETRIES="${XCTEST_UI_BOOTSTRAP_RETRIES:-1}"
+XCTEST_CONFIGURATION="${XCTEST_CONFIGURATION:-Debug}"
+RUNTIME_INPUT_DIR="${XCTEST_RUNTIME_INPUT_DIR:-$ROOT/.build/recordit-runtime-inputs/$XCTEST_CONFIGURATION}"
 
 LOG_DIR="$OUT_DIR/logs"
 RESULT_DIR="$OUT_DIR/xcresult"
@@ -74,9 +76,12 @@ run_xcodebuild_step() {
 
   if [[ -n "$result_bundle_path" ]]; then
     run_step "$step_name" "$required" "$result_bundle_path" \
+      env RECORDIT_RUNTIME_INPUT_DIR="$RUNTIME_INPUT_DIR" \
       xcodebuild "$@" -resultBundlePath "$result_bundle_path"
   else
-    run_step "$step_name" "$required" "" xcodebuild "$@"
+    run_step "$step_name" "$required" "" \
+      env RECORDIT_RUNTIME_INPUT_DIR="$RUNTIME_INPUT_DIR" \
+      xcodebuild "$@"
   fi
 }
 
@@ -115,7 +120,8 @@ run_xcodebuild_ui_step_with_bootstrap_retry() {
     rm -rf "$result_bundle_path"
 
     set +e
-    xcodebuild "$@" -resultBundlePath "$result_bundle_path" >"$attempt_log" 2>&1
+    env RECORDIT_RUNTIME_INPUT_DIR="$RUNTIME_INPUT_DIR" \
+      xcodebuild "$@" -resultBundlePath "$result_bundle_path" >"$attempt_log" 2>&1
     rc=$?
     set -e
 
@@ -139,6 +145,13 @@ run_xcodebuild_ui_step_with_bootstrap_retry() {
   record_step "$step_name" "$required" "$rc" "$log_path" "$result_bundle_path"
 }
 
+run_step \
+  prepare_runtime_inputs \
+  1 \
+  "" \
+  env RECORDIT_RUNTIME_CONFIGURATION="$XCTEST_CONFIGURATION" RECORDIT_RUNTIME_INPUT_DIR="$RUNTIME_INPUT_DIR" \
+  "$ROOT/scripts/prepare_recordit_runtime_inputs.sh"
+
 run_xcodebuild_step \
   build_for_testing \
   1 \
@@ -146,6 +159,7 @@ run_xcodebuild_step \
   build-for-testing \
   -project "$ROOT/Recordit.xcodeproj" \
   -scheme RecorditApp \
+  -configuration "$XCTEST_CONFIGURATION" \
   -destination "$DESTINATION" \
   -derivedDataPath "$DERIVED_DATA_PATH"
 
@@ -156,6 +170,7 @@ run_xcodebuild_step \
   test \
   -project "$ROOT/Recordit.xcodeproj" \
   -scheme RecorditApp \
+  -configuration "$XCTEST_CONFIGURATION" \
   -destination "$DESTINATION" \
   -derivedDataPath "$DERIVED_DATA_PATH" \
   -only-testing:RecorditAppTests
@@ -164,11 +179,12 @@ run_step \
   responsiveness_budget_gate \
   1 \
   "$RESULT_DIR/responsiveness_budget_gate.xcresult" \
-  env RECORDIT_RESPONSIVENESS_ARTIFACT_PATH="$RESPONSIVENESS_SUMMARY_CSV" \
+  env RECORDIT_RESPONSIVENESS_ARTIFACT_PATH="$RESPONSIVENESS_SUMMARY_CSV" RECORDIT_RUNTIME_INPUT_DIR="$RUNTIME_INPUT_DIR" \
   xcodebuild \
   test \
   -project "$ROOT/Recordit.xcodeproj" \
   -scheme RecorditApp \
+  -configuration "$XCTEST_CONFIGURATION" \
   -destination "$DESTINATION" \
   -derivedDataPath "$DERIVED_DATA_PATH" \
   -resultBundlePath "$RESULT_DIR/responsiveness_budget_gate.xcresult" \

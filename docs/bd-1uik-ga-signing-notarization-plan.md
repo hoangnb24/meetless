@@ -77,11 +77,10 @@ Pass criteria:
 
 ```bash
 DMG_NAME="Recordit-${RELEASE_TAG}.dmg"
-hdiutil create \
-  -volname "Recordit" \
-  -srcfolder dist/Recordit.app \
-  -ov -format UDZO \
-  "dist/${DMG_NAME}" | tee "${EVIDENCE_ROOT}/packaging/hdiutil-create.log"
+scripts/create_recordit_dmg.sh \
+  --app "dist/Recordit.app" \
+  --output "dist/${DMG_NAME}" \
+  --volname "Recordit" | tee "${EVIDENCE_ROOT}/packaging/create-recordit-dmg.log"
 
 codesign --force --sign "${SIGN_IDENTITY}" "dist/${DMG_NAME}" | tee "${EVIDENCE_ROOT}/packaging/codesign-dmg.log"
 codesign --verify --verbose=2 "dist/${DMG_NAME}" | tee "${EVIDENCE_ROOT}/packaging/codesign-verify-dmg.log"
