@@ -5,6 +5,8 @@ Source inputs:
 - `docs/bd-39i6-critical-surface-coverage-matrix.md`
 - `docs/bd-39i6-canonical-downstream-matrix.md`
 - `docs/bd-39i6-canonical-downstream-matrix.csv`
+- `docs/bd-5cz8-test-surface-inventory.csv`
+- `docs/bd-39jy-mock-fixture-census.csv`
 
 ## Purpose
 
@@ -23,7 +25,7 @@ From the current canonical matrix seed:
 
 Interpretation rules:
 
-- `covered-with-seams` means the repo has meaningful proof, but simulation seams materially limit what can be claimed.
+- `covered-with-seams` means the repo has meaningful proof, but simulation seams materially limit what can be claimed. This is the gap-report form of **simulation-only coverage**, not real-environment verification.
 - `partial` means some evidence exists, but the strongest user-facing or release-facing claim is still incomplete.
 - `uncovered` means no canonical lane currently proves the surface.
 

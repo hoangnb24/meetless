@@ -7,13 +7,13 @@ src/bin/transcribe_live/contracts_models.rs,primary,rust-inline-tests,unit,src/b
 src/bin/transcribe_live/preflight.rs,primary,rust-inline-tests,unit,src/bin/transcribe_live,rust-transcribe-live,live-real,2,none detected,preflight
 src/bin/transcribe_live/runtime_live_stream.rs,primary,rust-inline-tests,unit,src/bin/transcribe_live,rust-transcribe-live,live-real,7,none detected,runtime live stream
 src/bin/transcribe_live/runtime_manifest_models.rs,primary,rust-inline-tests,unit,src/bin/transcribe_live,rust-transcribe-live,fixture,3,fixture/replay/sample-driven inputs,runtime manifest models
-src/capture_api.rs,primary,rust-inline-tests,unit,src/capture_api.rs,rust-core,live-real,6,none detected,capture api
-src/live_asr_pool.rs,primary,rust-inline-tests,unit,src/live_asr_pool.rs,rust-core,mock,18,explicit Mock* service doubles,live asr pool
-src/live_capture.rs,primary,rust-inline-tests,unit,src/live_capture.rs,rust-core,fixture,26,fixture/replay/sample-driven inputs; deterministic fake-capture env seam,live capture
-src/live_stream_runtime.rs,primary,rust-inline-tests,unit,src/live_stream_runtime.rs,rust-core,live-real,24,none detected,live stream runtime
-src/recordit_cli.rs,primary,rust-inline-tests,unit,src/recordit_cli.rs,rust-cli,fixture,12,fixture/replay/sample-driven inputs,recordit cli
-src/rt_transport.rs,primary,rust-inline-tests,unit,src/rt_transport.rs,rust-core,live-real,2,none detected,rt transport
-src/storage_roots.rs,primary,rust-inline-tests,unit,src/storage_roots.rs,rust-core,live-real,4,none detected,storage roots
+src/capture_api.rs,primary,rust-inline-tests,unit,src,rust-core,live-real,6,none detected,capture api
+src/live_asr_pool.rs,primary,rust-inline-tests,unit,src,rust-core,mock,18,explicit Mock* service doubles,live asr pool
+src/live_capture.rs,primary,rust-inline-tests,unit,src,rust-core,fixture,26,fixture/replay/sample-driven inputs; deterministic fake-capture env seam,live capture
+src/live_stream_runtime.rs,primary,rust-inline-tests,unit,src,rust-core,live-real,24,none detected,live stream runtime
+src/recordit_cli.rs,primary,rust-inline-tests,unit,src,rust-cli,fixture,12,fixture/replay/sample-driven inputs,recordit cli
+src/rt_transport.rs,primary,rust-inline-tests,unit,src,rust-core,live-real,2,none detected,rt transport
+src/storage_roots.rs,primary,rust-inline-tests,unit,src,rust-core,live-real,4,none detected,storage roots
 tests/bd_1n5v_contract_regression.rs,primary,rust-tests,integration,tests,session-services,fixture,2,fixture/replay/sample-driven inputs; deterministic fake-capture env seam,runtime diagnostics contract regression for bd-1n5v
 tests/bd_26pm_refactor_stability.rs,primary,rust-tests,integration,tests,session-services,fixture,2,fixture/replay/sample-driven inputs,refactor stability regression for bd-26pm
 tests/contract_baseline_matrix.rs,primary,rust-tests,integration,tests,session-services,fixture,2,fixture/replay/sample-driven inputs,baseline contract matrix coverage

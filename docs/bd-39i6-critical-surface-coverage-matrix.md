@@ -9,7 +9,7 @@ Related backlog: `bd-2elo`, `bd-5cz8`, `bd-11vg`, `bd-2ph4`, `bd-10ou`, `bd-2grd
 
 Identify the **current strongest test or verification lane** for each critical Recordit surface, classify the realism of that lane, and call out where the project still relies on mocks, fixtures, UI-test-mode bypasses, temp filesystems, or manual/document-only proof.
 
-This document is intentionally **critical-path scoped**, not a full exhaustive index of every single test file. The exhaustive catalog belongs downstream in `bd-5cz8`. Here the point is to answer the harder question: **what user-visible or runtime-visible surface is actually covered by something credible today, and where is the strongest claim still simulated?**
+This document is intentionally **critical-path scoped**, not a full exhaustive index of every single test file. The exhaustive catalog now lives in `docs/bd-5cz8-test-surface-inventory.md`, and the seam-policy companion now lives in `docs/bd-39jy-mock-fixture-census.md`. Here the point is to answer the harder question: **what user-visible or runtime-visible surface is actually covered by something credible today, and where is the strongest claim still simulated?**
 
 ## Evidence Basis
 
@@ -17,10 +17,11 @@ This matrix was built from repository evidence on 2026-03-06 by scanning:
 
 Repo-wide counts from the supporting inventory pass:
 
-- Rust `#[test]` in `src/`: **341 tests** across **16** files
+- Rust `#[test]` in `src/`: **249 tests** across **15** files
 - Rust `tests/*.rs`: **69 tests** across **26** files
 - Swift `*_smoke.swift`: **29** standalone smoke files
 - XCTest/XCUITest suites: **2** primary files
+- Primary shell/Python verification harnesses in the new exhaustive inventory: **11** files
 
 - Rust tests under `tests/*.rs`
 - Rust inline test modules in `src/bin/transcribe_live/preflight.rs` and `src/live_capture.rs`
@@ -32,6 +33,10 @@ Repo-wide counts from the supporting inventory pass:
 Machine-readable companion inventory: `docs/bd-39i6-critical-surface-coverage-matrix.csv`
 
 Downstream normalized handoff: `docs/bd-39i6-canonical-downstream-matrix.md` and `docs/bd-39i6-canonical-downstream-matrix.csv`
+
+Supporting exhaustive inventory: `docs/bd-5cz8-test-surface-inventory.md` and `docs/bd-5cz8-test-surface-inventory.csv`
+
+Supporting seam census / claim policy: `docs/bd-39jy-mock-fixture-census.md` and `docs/bd-39jy-mock-fixture-census.csv`
 
 ## Critical Findings
 
@@ -56,6 +61,14 @@ Downstream normalized handoff: `docs/bd-39i6-canonical-downstream-matrix.md` and
 6. **Some stronger-sounding runtime tests still degrade to skip-on-missing-prerequisite behavior.**
    - For example, `tests/live_stream_true_live_integration.rs` and `tests/bd_1n5v_contract_regression.rs` can skip when fixture/model prerequisites are unavailable.
    - That protects portability, but it also means green runs can overstate host-level readiness unless prerequisite presence is tracked explicitly in evidence.
+
+## Coverage Status Interpretation
+
+For downstream QA/policy work, treat **`covered-with-seams` as the canonical equivalent of simulation-only coverage**: a meaningful lane exists, but it still depends on mocks, fixtures, fake capture, UI-test-mode, preview DI, temp-filesystem assumptions, or packaged-only checks that prevent a real-environment claim.
+
+This terminology is now aligned with:
+- `docs/bd-5cz8-test-surface-inventory.csv` for exhaustive file-level evidence
+- `docs/bd-39jy-mock-fixture-census.csv` for seam vocabulary and allowed-use policy
 
 ## Realism Legend
 

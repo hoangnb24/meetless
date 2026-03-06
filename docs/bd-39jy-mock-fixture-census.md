@@ -33,6 +33,18 @@ Turn the raw test-surface inventory into two things downstream work can actually
 | `temp_filesystem` | service/process boundary checks and retained-artifact logic in isolated local runs | installed app behavior, DMG install/open proof, or production filesystem assumptions |
 | `runtime_override` | automation bootstrapping where the override is explicit and separately audited | claims that bundled runtime/model lookup works in the shipped app posture |
 | `packaged_checks` | signing, payload inventory, release-context parity, and packaged-artifact shape claims | live capture success, first-run onboarding, or installed-app journey claims by itself |
+## Layer-Level Claim Policy
+| layer | seam use that is acceptable | claim ceiling with seams still present | requires real-environment evidence for |
+|---|---|---|---|
+| `unit` | mocks, stubs, fixtures, temp filesystems | logic correctness inside the bounded module | any product-journey or packaged-runtime claim |
+| `integration` | fixtures, fake capture, temp filesystems when the seam is explicit | service/boundary confidence and contract stability | true device/TCC behavior, installed-app behavior, or “full integration coverage” language |
+| `scripted-e2e` | deterministic fixtures and fake capture if retained evidence is explicit | bounded end-to-end regression proof with seams named | live-real app journey, real capture hardware paths, or install/open truth claims |
+| `smoke` | mocks/stubs/fixtures for fast local branch validation | smoke confidence only; never certification-level proof | readiness authority, release readiness, or final coverage claims |
+| `xctest` | injected services and preview DI for deterministic SwiftUI behavior | app-logic and state-presentation confidence | production app/runtime parity or retained real-session evidence claims |
+| `xcuitest` | UI-test-mode and scripted runtime only when called out explicitly | deterministic UI flow coverage | production environment readiness/live-run proof |
+| `release-script` | packaged checks plus fixture-driven runtime probes | signing, entitlements, payload shape, and packaged parity proof | installed-user journey, live capture success, or DMG-open truth by itself |
+| `contract-test` / `contract-harness` | fixtures and frozen artifacts | schema/format compatibility and parser stability | user-real product behavior or critical-path completeness claims |
+
 ## Interpretation Rules
 1. **Any seam-bearing lane must be named as such in docs and reviews.** If a row depends on mocks, fixtures, preview DI, fake capture, or UI-test-mode, the claim must carry that seam explicitly.
 2. **Layer names do not override seam reality.** A file living under `integration`, `xcuitest`, or a packaged script is still simulation-bound if its primary proof depends on fixtures, overrides, or scripted runtime behavior.
