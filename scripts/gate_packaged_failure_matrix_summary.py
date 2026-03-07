@@ -148,6 +148,14 @@ def classify_failure(
     if "model_path" in preflight_fail_ids or "model_readability" in preflight_fail_ids:
         return ("missing_or_invalid_model", sorted(set(tcc_fail_ids)), sorted(set(preflight_fail_ids)))
 
+    if (
+        "model_path\tFAIL" in combined
+        or "model_path FAIL" in combined
+        or "explicit `--asr-model` path does not exist" in combined
+        or "model_path did not validate" in combined
+    ):
+        return ("missing_or_invalid_model", sorted(set(tcc_fail_ids)), sorted(set(preflight_fail_ids)))
+
     if any(check_id in RUNTIME_PREFLIGHT_IDS for check_id in preflight_fail_ids):
         return ("runtime_preflight_failure", sorted(set(tcc_fail_ids)), sorted(set(preflight_fail_ids)))
 
