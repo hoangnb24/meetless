@@ -21,7 +21,7 @@ jobs:
       - name: Run XCTest/XCUITest evidence lane
         env:
           XCTEST_EVIDENCE_STAMP: gha-${{ github.run_id }}-${{ github.run_attempt }}
-          CI_STRICT_UI_TESTS: 0
+          CI_STRICT_UI_TESTS: 1
         run: scripts/ci_recordit_xctest_evidence.sh
 
       - name: Upload XCTest evidence artifacts

@@ -103,6 +103,23 @@ Pass criteria:
 1. each gate status file reports `status=pass`
 2. each summary reports `gate_pass=true`
 
+## Step D2 - Strict UI XCTest/XCUITest Evidence Gate (RC Required)
+
+```bash
+RC_XCTEST_STAMP="rc-${RELEASE_TAG}-strict-ui"
+XCTEST_EVIDENCE_STAMP="${RC_XCTEST_STAMP}" CI_STRICT_UI_TESTS=1 scripts/ci_recordit_xctest_evidence.sh \
+  | tee "${EVIDENCE_ROOT}/logs/ci-recordit-xctest-evidence-strict.log"
+cp "artifacts/ci/xctest_evidence/${RC_XCTEST_STAMP}/summary.csv" "${EVIDENCE_ROOT}/gates/xctest-evidence-strict.summary.csv"
+cp "artifacts/ci/xctest_evidence/${RC_XCTEST_STAMP}/status.csv" "${EVIDENCE_ROOT}/gates/xctest-evidence-strict.status.csv"
+cp "artifacts/ci/xctest_evidence/${RC_XCTEST_STAMP}/contracts/xcuitest/summary.json" "${EVIDENCE_ROOT}/gates/xctest-evidence-strict.xcuitest-summary.json"
+```
+
+Pass criteria:
+1. `xctest-evidence-strict.summary.csv` reports `strict_ui_tests=1`
+2. `xctest-evidence-strict.summary.csv` reports `overall_status=pass`
+3. `xctest-evidence-strict.status.csv` reports `required_failed=0`
+4. `xctest-evidence-strict.xcuitest-summary.json` reports `overall_status=pass`
+
 ## Step E - Soak Gate Dependency Closure (`bd-2n4m`)
 
 This beta lane cannot be marked release-ready until the 10-session no-restart soak dependency is closed.
