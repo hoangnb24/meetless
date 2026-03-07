@@ -53,15 +53,12 @@ public enum RemediablePermission: String, Equatable, Sendable {
 
 public enum PermissionRemediationSurface: String, Equatable, Sendable {
     case screenRecording = "screen_recording"
-    case activeDisplay = "active_display"
     case microphone
 
     public var title: String {
         switch self {
         case .screenRecording:
             return "Screen Recording"
-        case .activeDisplay:
-            return "Active Display"
         case .microphone:
             return "Microphone"
         }
@@ -73,8 +70,6 @@ public enum PermissionRemediationSurface: String, Equatable, Sendable {
             return .screenRecording
         case .microphone:
             return .microphone
-        case .activeDisplay:
-            return nil
         }
     }
 }
@@ -82,7 +77,6 @@ public enum PermissionRemediationSurface: String, Equatable, Sendable {
 public enum PermissionReadiness: String, Equatable, Sendable {
     case granted
     case missingPermission = "missing_permission"
-    case noActiveDisplay = "no_active_display"
     case runtimeFailure = "runtime_failure"
     case diagnosticsUnavailable = "diagnostics_unavailable"
 
@@ -96,8 +90,6 @@ public enum PermissionReadiness: String, Equatable, Sendable {
             return "Granted"
         case .missingPermission:
             return "Permission Needed"
-        case .noActiveDisplay:
-            return "No Active Display"
         case .runtimeFailure:
             return "Runtime Check Failed"
         case .diagnosticsUnavailable:
@@ -267,10 +259,9 @@ public final class PermissionRemediationViewModel {
     ) -> [PermissionRemediationItem] {
         let resolvedNativePermissionStatus = nativePermissionStatus ?? defaultNativePermissionStatus
         let screenPermissionChecks = envelope.checks.filter { $0.id == ReadinessContractID.screenCaptureAccess.rawValue }
-        let displayChecks = envelope.checks.filter { $0.id == ReadinessContractID.displayAvailability.rawValue }
         let microphoneChecks = envelope.checks.filter { $0.id == ReadinessContract.microphonePermissionID }
 
-        var items = [
+        return [
             buildPermissionItem(
                 surface: .screenRecording,
                 permission: .screenRecording,
@@ -288,14 +279,6 @@ public final class PermissionRemediationViewModel {
                 defaultRemediation: "Open System Settings, grant Microphone access, then Re-check."
             ),
         ]
-
-        let displayItem = buildDisplayItem(
-            checks: displayChecks,
-            nativeScreenPermissionGranted: resolvedNativePermissionStatus(.screenRecording)
-        )
-        items.insert(displayItem, at: 1)
-
-        return items
     }
 
     private static func buildPermissionItem(
@@ -351,48 +334,6 @@ public final class PermissionRemediationViewModel {
         )
     }
 
-    private static func buildDisplayItem(
-        checks: [PreflightCheckDTO],
-        nativeScreenPermissionGranted: Bool
-    ) -> PermissionRemediationItem {
-        guard !checks.isEmpty else {
-            return PermissionRemediationItem(
-                surface: .activeDisplay,
-                status: .diagnosticsUnavailable,
-                checkIDs: [],
-                detail: nativeScreenPermissionGranted
-                    ? "Display availability diagnostics are unavailable. Run preflight again to verify an active display is ready."
-                    : "Display diagnostics are blocked until Screen Recording access is granted.",
-                remediation: nativeScreenPermissionGranted
-                    ? "Run preflight again and ensure at least one display is connected, awake, and available to Recordit."
-                    : "Grant Screen Recording access, then Re-check to confirm an active display is available."
-            )
-        }
-
-        let checkIDs = checks.map(\.id)
-        if let failing = checks.first(where: { $0.status == .fail }) {
-            let status: PermissionReadiness = nativeScreenPermissionGranted ? .noActiveDisplay : .diagnosticsUnavailable
-            let detail = nativeScreenPermissionGranted
-                ? failing.detail
-                : "Display diagnostics are blocked until Screen Recording access is granted. \(failing.detail)"
-            return PermissionRemediationItem(
-                surface: .activeDisplay,
-                status: status,
-                checkIDs: checkIDs,
-                detail: detail,
-                remediation: failing.remediation ?? "Ensure at least one display is connected, awake, and available to Recordit, then Re-check."
-            )
-        }
-
-        let representative = checks[0]
-        return PermissionRemediationItem(
-            surface: .activeDisplay,
-            status: .granted,
-            checkIDs: checkIDs,
-            detail: representative.detail,
-            remediation: representative.remediation ?? "Re-check if display availability changes."
-        )
-    }
 
     private static func nativePermissionFallbackItems(
         nativePermissionStatus: (RemediablePermission) -> Bool,

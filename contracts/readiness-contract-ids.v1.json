@@ -48,13 +48,6 @@
       "notes": "ScreenCaptureKit permission/access check."
     },
     {
-      "id": "display_availability",
-      "class": "blocking",
-      "domain": "tcc_capture",
-      "source": "rust_preflight",
-      "notes": "Active display requirement for capture runtime."
-    },
-    {
       "id": "microphone_access",
       "class": "blocking",
       "domain": "tcc_capture",
@@ -122,7 +115,6 @@
     "lanes": {
       "tcc_capture_check_ids": [
         "screen_capture_access",
-        "display_availability",
         "microphone_access"
       ],
       "backend_model_check_ids": [

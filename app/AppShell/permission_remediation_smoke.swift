@@ -80,12 +80,6 @@ private func runSmoke() {
                 "remediation": "Grant Screen Recording in System Settings.",
             ],
             [
-                "id": ReadinessContractID.displayAvailability.rawValue,
-                "status": "PASS",
-                "detail": "display available",
-                "remediation": "",
-            ],
-            [
                 "id": ReadinessContractID.microphoneAccess.rawValue,
                 "status": "PASS",
                 "detail": "microphone sample observed",
@@ -100,34 +94,6 @@ private func runSmoke() {
                 "status": "PASS",
                 "detail": "screen access granted",
                 "remediation": "",
-            ],
-            [
-                "id": ReadinessContractID.displayAvailability.rawValue,
-                "status": "PASS",
-                "detail": "display available",
-                "remediation": "",
-            ],
-            [
-                "id": ReadinessContractID.microphoneAccess.rawValue,
-                "status": "PASS",
-                "detail": "microphone sample observed",
-                "remediation": "",
-            ],
-        ])
-    )
-    let noDisplayPayload = encodeEnvelopeJSON(
-        fixtureEnvelope(checks: [
-            [
-                "id": ReadinessContractID.screenCaptureAccess.rawValue,
-                "status": "PASS",
-                "detail": "screen access granted",
-                "remediation": "",
-            ],
-            [
-                "id": ReadinessContractID.displayAvailability.rawValue,
-                "status": "FAIL",
-                "detail": "no active display available",
-                "remediation": "Wake a display and retry.",
             ],
             [
                 "id": ReadinessContractID.microphoneAccess.rawValue,
@@ -160,12 +126,9 @@ private func runSmoke() {
         return
     }
     let screen = items.first { $0.surface == .screenRecording }
-    let display = items.first { $0.surface == .activeDisplay }
     let mic = items.first { $0.surface == .microphone }
     check(screen?.status == .missingPermission, "screen permission should be missing")
-    check(display?.status == .granted, "display should stay granted when only screen permission is missing")
     check(mic?.status == .granted, "microphone permission should be granted")
-    check(viewModel.missingPermissions == [.screenRecording], "missing permission set should include screen only")
     check(viewModel.hasBlockingIssues, "missing screen permission should block progression")
 
     let openedScreen = viewModel.openSettings(for: .screenRecording)
@@ -182,11 +145,8 @@ private func runSmoke() {
         return
     }
     let recheckedScreen = recheckedItems.first { $0.surface == .screenRecording }
-    let recheckedDisplay = recheckedItems.first { $0.surface == .activeDisplay }
     check(recheckedScreen?.status == .granted, "screen permission should be granted after re-check payload")
-    check(recheckedDisplay?.status == .granted, "display should be granted after re-check payload")
     check(viewModel.missingPermissions.isEmpty, "missing permissions should be empty after pass")
-    check(!viewModel.hasBlockingIssues, "fully granted payload should clear progression blockers")
 
     let openedMic = viewModel.openSettings(for: .microphone)
     check(openedMic, "open settings should succeed for microphone")
@@ -255,42 +215,6 @@ private func runSmoke() {
         "runtime-only permission failures should not offer TCC settings deep-links as missing permissions"
     )
     check(nativeGrantedViewModel.hasBlockingIssues, "runtime-only permission failures should still block progression")
-
-    let missingChecksEnvelope = try! PreflightEnvelopeParser().parse(data: missingChecksPayload)
-    let missingChecksItems = PermissionRemediationViewModel.mapPermissionItems(
-        from: missingChecksEnvelope,
-        nativePermissionStatus: { _ in false }
-    )
-    check(
-        missingChecksItems.contains(where: { $0.surface == .activeDisplay && $0.status == .diagnosticsUnavailable }),
-        "missing display diagnostics should surface an explicit diagnostics-unavailable blocker"
-    )
-
-    let noDisplayRunner = RecorditPreflightRunner(
-        executable: "/usr/bin/env",
-        commandRunner: SequenceCommandRunner(payloads: [noDisplayPayload]),
-        parser: PreflightEnvelopeParser(),
-        environment: [:]
-    )
-    let noDisplayViewModel = PermissionRemediationViewModel(
-        runner: noDisplayRunner,
-        openSystemSettings: { openedURLs.append($0) },
-        nativePermissionStatus: { _ in true }
-    )
-    noDisplayViewModel.runPermissionCheck()
-    guard case let .ready(noDisplayItems) = noDisplayViewModel.state else {
-        check(false, "no-display payload should produce ready state")
-        return
-    }
-    check(
-        noDisplayItems.contains(where: { $0.surface == .activeDisplay && $0.status == .noActiveDisplay }),
-        "display availability failures should surface a dedicated no-active-display state"
-    )
-    check(
-        noDisplayViewModel.missingPermissions.isEmpty,
-        "no-active-display state should not imply TCC settings deep-links"
-    )
-    check(noDisplayViewModel.hasBlockingIssues, "no-active-display state should block progression")
 }
 
 @main

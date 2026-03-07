@@ -1027,7 +1027,6 @@ final class RecorditAppTests: XCTestCase {
             ["id": ReadinessContractID.outJsonl.rawValue, "status": "PASS", "detail": "jsonl ready", "remediation": ""],
             ["id": ReadinessContractID.outManifest.rawValue, "status": "PASS", "detail": "manifest ready", "remediation": ""],
             ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "screen permission granted", "remediation": ""],
-            ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "active display available", "remediation": ""],
             ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "FAIL", "detail": "microphone stream unavailable", "remediation": "Verify the active input device and retry."],
         ])
         let viewModel = makePreflightViewModel(
@@ -1047,36 +1046,7 @@ final class RecorditAppTests: XCTestCase {
         XCTAssertFalse(viewModel.canProceedToLiveTranscribe)
     }
 
-    @MainActor
-    func testPreflightUITestNormalizationDoesNotHideActiveDisplayFailures() {
-        setenv("RECORDIT_UI_TEST_MODE", "1", 1)
-        defer { unsetenv("RECORDIT_UI_TEST_MODE") }
 
-        let payload = preflightPayloadData(checks: [
-            ["id": ReadinessContractID.modelPath.rawValue, "status": "PASS", "detail": "model ready", "remediation": ""],
-            ["id": ReadinessContractID.outWav.rawValue, "status": "PASS", "detail": "wav ready", "remediation": ""],
-            ["id": ReadinessContractID.outJsonl.rawValue, "status": "PASS", "detail": "jsonl ready", "remediation": ""],
-            ["id": ReadinessContractID.outManifest.rawValue, "status": "PASS", "detail": "manifest ready", "remediation": ""],
-            ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "screen permission granted", "remediation": ""],
-            ["id": ReadinessContractID.displayAvailability.rawValue, "status": "FAIL", "detail": "no active display available", "remediation": "Wake a display and retry."],
-            ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "microphone granted", "remediation": ""],
-        ])
-        let viewModel = makePreflightViewModel(
-            payload: payload,
-            nativePermissionStatus: { _ in true }
-        )
-
-        viewModel.runLivePreflight()
-
-        guard case let .completed(envelope) = viewModel.state else {
-            XCTFail("Expected preflight to complete")
-            return
-        }
-        let displayCheck = envelope.checks.first(where: { $0.id == ReadinessContractID.displayAvailability.rawValue })
-        XCTAssertEqual(displayCheck?.status, .fail)
-        XCTAssertEqual(viewModel.primaryBlockingDomain, .tccCapture)
-        XCTAssertFalse(viewModel.canProceedToLiveTranscribe)
-    }
 
     @MainActor
     func testReadinessObservabilityScenariosCaptureStructuredGateDecisions() throws {
@@ -1098,7 +1068,6 @@ final class RecorditAppTests: XCTestCase {
                     ["id": ReadinessContractID.outJsonl.rawValue, "status": "PASS", "detail": "jsonl ready", "remediation": ""],
                     ["id": ReadinessContractID.outManifest.rawValue, "status": "PASS", "detail": "manifest ready", "remediation": ""],
                     ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "screen access granted", "remediation": ""],
-                    ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "display ready", "remediation": ""],
                     ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "microphone ready", "remediation": ""],
                 ],
                 expectedBlockingDomain: "none",
@@ -1111,7 +1080,6 @@ final class RecorditAppTests: XCTestCase {
                 checks: [
                     ["id": ReadinessContractID.modelPath.rawValue, "status": "FAIL", "detail": "model path missing", "remediation": "Provide a compatible model."],
                     ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "screen access granted", "remediation": ""],
-                    ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "display ready", "remediation": ""],
                     ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "microphone ready", "remediation": ""],
                 ],
                 expectedBlockingDomain: ReadinessDomain.backendModel.rawValue,
@@ -1124,7 +1092,6 @@ final class RecorditAppTests: XCTestCase {
                 checks: [
                     ["id": ReadinessContractID.modelPath.rawValue, "status": "PASS", "detail": "model ready", "remediation": ""],
                     ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "FAIL", "detail": "screen denied", "remediation": "Grant Screen Recording in System Settings."],
-                    ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "display ready", "remediation": ""],
                     ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "microphone ready", "remediation": ""],
                 ],
                 expectedBlockingDomain: ReadinessDomain.tccCapture.rawValue,
@@ -1138,7 +1105,6 @@ final class RecorditAppTests: XCTestCase {
                     ["id": ReadinessContractID.modelPath.rawValue, "status": "PASS", "detail": "model ready", "remediation": ""],
                     ["id": ReadinessContractID.outManifest.rawValue, "status": "FAIL", "detail": "manifest path unavailable", "remediation": "Fix manifest output path."],
                     ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "screen access granted", "remediation": ""],
-                    ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "display ready", "remediation": ""],
                     ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "microphone ready", "remediation": ""],
                 ],
                 expectedBlockingDomain: ReadinessDomain.runtimePreflight.rawValue,
@@ -1154,7 +1120,6 @@ final class RecorditAppTests: XCTestCase {
                     ["id": ReadinessContractID.outJsonl.rawValue, "status": "PASS", "detail": "jsonl ready", "remediation": ""],
                     ["id": ReadinessContractID.outManifest.rawValue, "status": "PASS", "detail": "manifest ready", "remediation": ""],
                     ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "screen access granted", "remediation": ""],
-                    ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "display ready", "remediation": ""],
                     ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "microphone ready", "remediation": ""],
                     ["id": ReadinessContractID.sampleRate.rawValue, "status": "WARN", "detail": "non-default sample rate", "remediation": "Acknowledge warning to continue."],
                 ],
@@ -1225,26 +1190,7 @@ final class RecorditAppTests: XCTestCase {
         XCTAssertFalse(screenBlockedController.snapshot.preflightCanOfferRecordOnlyFallback)
     }
 
-    @MainActor
-    func testPermissionRemediationSeparatesDisplayAvailabilityFromScreenPermission() throws {
-        let items = try makePermissionRemediationItems(
-            checks: [
-                ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "screen access granted", "remediation": ""],
-                ["id": ReadinessContractID.displayAvailability.rawValue, "status": "FAIL", "detail": "no active display available", "remediation": "Wake a display and retry."],
-                ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "mic ready", "remediation": ""],
-            ],
-            nativePermissionStatus: { _ in true }
-        )
 
-        let screen = try XCTUnwrap(items.first(where: { $0.surface == .screenRecording }))
-        let display = try XCTUnwrap(items.first(where: { $0.surface == .activeDisplay }))
-        XCTAssertEqual(screen.status, .granted)
-        XCTAssertEqual(display.status, .noActiveDisplay)
-        XCTAssertEqual(display.detail, "no active display available")
-        XCTAssertEqual(display.remediation, "Wake a display and retry.")
-        XCTAssertNil(display.surface.settingsPermission)
-        XCTAssertFalse(items.contains { $0.surface.settingsPermission == .screenRecording && $0.status == .missingPermission })
-    }
 
     @MainActor
     func testPermissionRemediationDoesNotDowngradeGrantedRuntimeFailuresInUITestMode() throws {
@@ -1269,7 +1215,6 @@ final class RecorditAppTests: XCTestCase {
         let items = try makePermissionRemediationItems(
             checks: [
                 ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "FAIL", "detail": "screen capture helper unavailable", "remediation": "Quit and reopen Recordit, then Re-check."],
-                ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "active display available", "remediation": ""],
                 ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "mic ready", "remediation": ""],
             ],
             nativePermissionStatus: { _ in true }
@@ -1306,13 +1251,10 @@ final class RecorditAppTests: XCTestCase {
         )
 
         let screen = try XCTUnwrap(items.first(where: { $0.surface == .screenRecording }))
-        let display = try XCTUnwrap(items.first(where: { $0.surface == .activeDisplay }))
         let microphone = try XCTUnwrap(items.first(where: { $0.surface == .microphone }))
         XCTAssertEqual(screen.status, .missingPermission)
-        XCTAssertEqual(display.status, .diagnosticsUnavailable)
         XCTAssertEqual(microphone.status, .missingPermission)
         XCTAssertTrue(screen.remediation.contains("Open System Settings") == true)
-        XCTAssertTrue(display.detail.contains("Screen Recording access") == true)
         XCTAssertTrue(microphone.remediation.contains("Open System Settings") == true)
     }
 
@@ -1363,7 +1305,6 @@ final class RecorditAppTests: XCTestCase {
             ["id": ReadinessContractID.outJsonl.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
             ["id": ReadinessContractID.outManifest.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
             ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
-            ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
             ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
             ["id": ReadinessContractID.backendRuntime.rawValue, "status": "FAIL", "detail": "runtime missing", "remediation": "Install or repair the live backend."],
         ])
@@ -1404,7 +1345,6 @@ final class RecorditAppTests: XCTestCase {
             ["id": ReadinessContractID.outJsonl.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
             ["id": ReadinessContractID.outManifest.rawValue, "status": "FAIL", "detail": "manifest path unavailable", "remediation": "Fix the manifest output path before retrying."],
             ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
-            ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
             ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
         ])
         let preflight = makePreflightViewModel(payload: payload)
@@ -1655,7 +1595,7 @@ final class RecorditAppTests: XCTestCase {
               preflight)
                 manifest_path="$out_root/preflight.manifest.json"
                 cat > "$manifest_path" <<EOF
-            {"schema_version":"1","kind":"transcribe-live-preflight","generated_at_utc":"2026-03-06T00:00:00Z","overall_status":"PASS","config":{"out_wav":"$out_root/preflight.wav","out_jsonl":"$out_root/preflight.jsonl","out_manifest":"$manifest_path","asr_backend":"whispercpp","asr_model_requested":"$RECORDIT_ASR_MODEL","asr_model_resolved":"$RECORDIT_ASR_MODEL","asr_model_source":"RECORDIT_ASR_MODEL","sample_rate_hz":48000},"checks":[{"id":"model_path","status":"PASS","detail":"model ready","remediation":""},{"id":"screen_capture_access","status":"PASS","detail":"screen ready","remediation":""},{"id":"display_availability","status":"PASS","detail":"display ready","remediation":""},{"id":"microphone_access","status":"PASS","detail":"microphone ready","remediation":""}]}
+            {"schema_version":"1","kind":"transcribe-live-preflight","generated_at_utc":"2026-03-06T00:00:00Z","overall_status":"PASS","config":{"out_wav":"$out_root/preflight.wav","out_jsonl":"$out_root/preflight.jsonl","out_manifest":"$manifest_path","asr_backend":"whispercpp","asr_model_requested":"$RECORDIT_ASR_MODEL","asr_model_resolved":"$RECORDIT_ASR_MODEL","asr_model_source":"RECORDIT_ASR_MODEL","sample_rate_hz":48000},"checks":[{"id":"model_path","status":"PASS","detail":"model ready","remediation":""},{"id":"screen_capture_access","status":"PASS","detail":"screen ready","remediation":""},{"id":"microphone_access","status":"PASS","detail":"microphone ready","remediation":""}]}
             EOF
                 printf '{"command":"preflight","session":{"manifest":"%s"}}\n' "$manifest_path"
                 ;;

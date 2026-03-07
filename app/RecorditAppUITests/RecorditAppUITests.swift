@@ -358,7 +358,6 @@ final class RecorditAppUITests: XCTestCase {
         activate(runPermissionChecksButton)
 
         XCTAssertTrue(app.staticTexts["permission_row_screen_runtime_failure"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["permission_row_display_granted"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["permission_row_microphone_granted"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["onboarding_open_screen_settings"].exists)
         XCTAssertFalse(app.buttons["onboarding_open_microphone_settings"].exists)
@@ -386,7 +385,6 @@ final class RecorditAppUITests: XCTestCase {
         activate(runPermissionChecksButton)
 
         XCTAssertTrue(app.staticTexts["permission_row_screen_granted"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["permission_row_display_granted"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["permission_row_microphone_runtime_failure"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["onboarding_open_screen_settings"].exists)
         XCTAssertFalse(app.buttons["onboarding_open_microphone_settings"].exists)
@@ -395,33 +393,7 @@ final class RecorditAppUITests: XCTestCase {
         XCTAssertFalse(nextButton.isEnabled)
     }
 
-    func testActiveDisplayFailureShowsDedicatedBlockerWithoutPermissionDeepLinks() {
-        let app = launchApp(
-            preflightScenario: "active_display_unavailable",
-            nativeScreenPermissionGranted: true,
-            nativeMicrophonePermissionGranted: true,
-            defaultRuntimeMode: "record_only"
-        )
 
-        XCTAssertTrue(app.staticTexts["onboarding_title"].waitForExistence(timeout: 5))
-        let nextButton = app.buttons["onboarding_next"]
-        XCTAssertTrue(nextButton.waitForExistence(timeout: 5))
-        advanceOnboardingStep(app, nextButton: nextButton, expectedStepTitle: "Permissions")
-        ensurePermissionsStep(app)
-
-        let runPermissionChecksButton = app.buttons["onboarding_run_permission_checks"]
-        XCTAssertTrue(runPermissionChecksButton.waitForExistence(timeout: 5))
-        activate(runPermissionChecksButton)
-
-        XCTAssertTrue(app.staticTexts["permission_row_screen_granted"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["permission_row_display_no_active_display"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["permission_row_microphone_granted"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["onboarding_open_screen_settings"].exists)
-        XCTAssertFalse(app.buttons["onboarding_open_microphone_settings"].exists)
-        XCTAssertFalse(app.buttons["onboarding_open_main_runtime"].exists)
-        XCTAssertFalse(app.buttons["start_live_transcribe"].exists)
-        XCTAssertFalse(nextButton.isEnabled)
-    }
 
     private func launchApp(
         preflightScenario: String? = nil,

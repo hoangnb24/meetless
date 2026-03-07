@@ -20,7 +20,6 @@ private struct LaunchConfiguration {
     private enum UITestPreflightScenario: String {
         case permissionRecovery = "permission_recovery"
         case permissionCheckFailure = "permission_check_failure"
-        case activeDisplayUnavailable = "active_display_unavailable"
         case microphoneRuntimeFailure = "microphone_runtime_failure"
         case screenRuntimeFailure = "screen_runtime_failure"
         case modelPathBlocked = "model_path_blocked"
@@ -107,16 +106,7 @@ private struct LaunchConfiguration {
                     environment: [:]
                 )
                 environment = environment.replacing(preflightRunner: runner)
-            case .activeDisplayUnavailable:
-                let runner = RecorditPreflightRunner(
-                    executable: "/usr/bin/env",
-                    commandRunner: ScriptedPreflightCommandRunner(
-                        payloads: [activeDisplayUnavailablePayloadData()]
-                    ),
-                    parser: PreflightEnvelopeParser(),
-                    environment: [:]
-                )
-                environment = environment.replacing(preflightRunner: runner)
+
             case .microphoneRuntimeFailure:
                 let runner = RecorditPreflightRunner(
                     executable: "/usr/bin/env",
@@ -192,9 +182,6 @@ private struct LaunchConfiguration {
             screenStatus: "FAIL",
             screenDetail: "Screen Recording permission denied.",
             screenRemediation: "Open System Settings and grant Screen Recording access, then Re-check.",
-            displayStatus: "FAIL",
-            displayDetail: "Display diagnostics unavailable until Screen Recording access is granted.",
-            displayRemediation: "Grant Screen Recording access, then Re-check to confirm an active display is available.",
             microphoneStatus: "FAIL",
             microphoneDetail: "Microphone permission denied.",
             microphoneRemediation: "Open System Settings and grant Microphone access, then Re-check."
@@ -207,29 +194,13 @@ private struct LaunchConfiguration {
             screenStatus: "PASS",
             screenDetail: "Screen Recording access granted.",
             screenRemediation: "",
-            displayStatus: "PASS",
-            displayDetail: "Active display available.",
-            displayRemediation: "",
             microphoneStatus: "PASS",
             microphoneDetail: "Microphone access granted.",
             microphoneRemediation: ""
         )
     }
 
-    private static func activeDisplayUnavailablePayloadData() -> Data {
-        preflightPayloadData(
-            overallStatus: "FAIL",
-            screenStatus: "PASS",
-            screenDetail: "Screen Recording access granted.",
-            screenRemediation: "",
-            displayStatus: "FAIL",
-            displayDetail: "No active display available for capture.",
-            displayRemediation: "Ensure at least one display is connected, awake, and available to Recordit, then Re-check.",
-            microphoneStatus: "PASS",
-            microphoneDetail: "Microphone access granted.",
-            microphoneRemediation: ""
-        )
-    }
+
 
     private static func microphoneRuntimeFailurePayloadData() -> Data {
         preflightPayloadData(
@@ -237,9 +208,6 @@ private struct LaunchConfiguration {
             screenStatus: "PASS",
             screenDetail: "Screen Recording access granted.",
             screenRemediation: "",
-            displayStatus: "PASS",
-            displayDetail: "Active display available.",
-            displayRemediation: "",
             microphoneStatus: "FAIL",
             microphoneDetail: "Microphone stream unavailable.",
             microphoneRemediation: "Verify the active input device and retry."
@@ -252,9 +220,6 @@ private struct LaunchConfiguration {
             screenStatus: "FAIL",
             screenDetail: "Screen capture helper unavailable.",
             screenRemediation: "Quit and reopen Recordit, then Re-check.",
-            displayStatus: "PASS",
-            displayDetail: "Active display available.",
-            displayRemediation: "",
             microphoneStatus: "PASS",
             microphoneDetail: "Microphone access granted.",
             microphoneRemediation: ""
@@ -314,12 +279,7 @@ private struct LaunchConfiguration {
                     "detail": "Screen Recording access granted.",
                     "remediation": "",
                 ],
-                [
-                    "id": ReadinessContractID.displayAvailability.rawValue,
-                    "status": "PASS",
-                    "detail": "Active display available.",
-                    "remediation": "",
-                ],
+
                 [
                     "id": ReadinessContractID.microphoneAccess.rawValue,
                     "status": "PASS",
@@ -384,12 +344,7 @@ private struct LaunchConfiguration {
                     "detail": "Screen Recording access granted.",
                     "remediation": "",
                 ],
-                [
-                    "id": ReadinessContractID.displayAvailability.rawValue,
-                    "status": "PASS",
-                    "detail": "Active display available.",
-                    "remediation": "",
-                ],
+
                 [
                     "id": ReadinessContractID.microphoneAccess.rawValue,
                     "status": "PASS",
@@ -448,12 +403,7 @@ private struct LaunchConfiguration {
                     "detail": "Screen Recording access granted.",
                     "remediation": "",
                 ],
-                [
-                    "id": ReadinessContractID.displayAvailability.rawValue,
-                    "status": "PASS",
-                    "detail": "Active display available.",
-                    "remediation": "",
-                ],
+
                 [
                     "id": ReadinessContractID.microphoneAccess.rawValue,
                     "status": "PASS",
@@ -470,9 +420,6 @@ private struct LaunchConfiguration {
         screenStatus: String,
         screenDetail: String,
         screenRemediation: String,
-        displayStatus: String,
-        displayDetail: String,
-        displayRemediation: String,
         microphoneStatus: String,
         microphoneDetail: String,
         microphoneRemediation: String
@@ -504,12 +451,6 @@ private struct LaunchConfiguration {
                     "status": screenStatus,
                     "detail": screenDetail,
                     "remediation": screenRemediation,
-                ],
-                [
-                    "id": ReadinessContractID.displayAvailability.rawValue,
-                    "status": displayStatus,
-                    "detail": displayDetail,
-                    "remediation": displayRemediation,
                 ],
                 [
                     "id": ReadinessContractID.microphoneAccess.rawValue,

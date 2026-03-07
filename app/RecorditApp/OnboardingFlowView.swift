@@ -86,7 +86,7 @@ struct OnboardingFlowView: View {
 
     private var permissionsStep: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Run dedicated permission remediation checks for Screen Recording, Microphone, active display availability, and capture readiness.")
+            Text("Run dedicated permission remediation checks for Screen Recording, Microphone, and capture readiness.")
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 10) {
@@ -334,8 +334,6 @@ struct OnboardingFlowView: View {
         switch surface {
         case .screenRecording:
             return "screen"
-        case .activeDisplay:
-            return "display"
         case .microphone:
             return "microphone"
         }
@@ -347,8 +345,6 @@ struct OnboardingFlowView: View {
             return "granted"
         case .missingPermission:
             return "missing"
-        case .noActiveDisplay:
-            return "no_active_display"
         case .runtimeFailure:
             return "runtime_failure"
         case .diagnosticsUnavailable:

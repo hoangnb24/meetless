@@ -7,7 +7,6 @@ public enum ReadinessContractID: String, CaseIterable, Sendable {
     case outManifest = "out_manifest"
     case sampleRate = "sample_rate"
     case screenCaptureAccess = "screen_capture_access"
-    case displayAvailability = "display_availability"
     case microphoneAccess = "microphone_access"
     case backendRuntime = "backend_runtime"
     case modelReadability = "model_readability"
@@ -31,7 +30,6 @@ public enum ReadinessContract {
         ReadinessContractID.outJsonl.rawValue,
         ReadinessContractID.outManifest.rawValue,
         ReadinessContractID.screenCaptureAccess.rawValue,
-        ReadinessContractID.displayAvailability.rawValue,
         ReadinessContractID.microphoneAccess.rawValue,
     ]
 
@@ -48,14 +46,12 @@ public enum ReadinessContract {
 
     public static let screenPermissionIDs: Set<String> = [
         ReadinessContractID.screenCaptureAccess.rawValue,
-        ReadinessContractID.displayAvailability.rawValue,
     ]
 
     public static let microphonePermissionID = ReadinessContractID.microphoneAccess.rawValue
 
     public static let tccCaptureIDs: Set<String> = [
         ReadinessContractID.screenCaptureAccess.rawValue,
-        ReadinessContractID.displayAvailability.rawValue,
         ReadinessContractID.microphoneAccess.rawValue,
     ]
 

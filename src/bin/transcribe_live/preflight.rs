@@ -7,18 +7,16 @@ const CHECK_ID_OUT_JSONL: &str = "out_jsonl";
 const CHECK_ID_OUT_MANIFEST: &str = "out_manifest";
 const CHECK_ID_SAMPLE_RATE: &str = "sample_rate";
 const CHECK_ID_SCREEN_CAPTURE_ACCESS: &str = "screen_capture_access";
-const CHECK_ID_DISPLAY_AVAILABILITY: &str = "display_availability";
 const CHECK_ID_MICROPHONE_ACCESS: &str = "microphone_access";
 const CHECK_ID_BACKEND_RUNTIME: &str = "backend_runtime";
 
 #[cfg(test)]
-const PREFLIGHT_BLOCKING_CHECK_IDS: [&str; 7] = [
+const PREFLIGHT_BLOCKING_CHECK_IDS: [&str; 6] = [
     CHECK_ID_MODEL_PATH,
     CHECK_ID_OUT_WAV,
     CHECK_ID_OUT_JSONL,
     CHECK_ID_OUT_MANIFEST,
     CHECK_ID_SCREEN_CAPTURE_ACCESS,
-    CHECK_ID_DISPLAY_AVAILABILITY,
     CHECK_ID_MICROPHONE_ACCESS,
 ];
 
@@ -29,9 +27,8 @@ const PREFLIGHT_WARN_ACK_CHECK_IDS: [&str; 2] = [CHECK_ID_SAMPLE_RATE, CHECK_ID_
 const MODEL_DOCTOR_DIAGNOSTIC_ONLY_CHECK_IDS: [&str; 1] = [CHECK_ID_MODEL_READABILITY];
 
 #[cfg(test)]
-const PREFLIGHT_TCC_CAPTURE_CHECK_IDS: [&str; 3] = [
+const PREFLIGHT_TCC_CAPTURE_CHECK_IDS: [&str; 2] = [
     CHECK_ID_SCREEN_CAPTURE_ACCESS,
-    CHECK_ID_DISPLAY_AVAILABILITY,
     CHECK_ID_MICROPHONE_ACCESS,
 ];
 
@@ -252,7 +249,7 @@ fn check_screen_capture_access() -> PreflightCheck {
     let displays = content.displays();
     if displays.is_empty() {
         return PreflightCheck::fail(
-            CHECK_ID_DISPLAY_AVAILABILITY,
+            CHECK_ID_SCREEN_CAPTURE_ACCESS,
             "ScreenCaptureKit returned no displays".to_string(),
             "Connect/enable a display and retry. Closed-lid headless mode is unsupported.",
         );
@@ -613,7 +610,6 @@ mod tests {
             ("out_manifest", CheckStatus::Pass),
             ("sample_rate", CheckStatus::Pass),
             ("screen_capture_access", CheckStatus::Pass),
-            ("display_availability", CheckStatus::Pass),
             ("microphone_access", CheckStatus::Pass),
             ("backend_runtime", CheckStatus::Pass),
         ]

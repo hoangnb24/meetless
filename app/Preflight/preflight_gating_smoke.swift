@@ -155,14 +155,7 @@ private func runPolicyChecks() {
             warnRequiresAcknowledgement: false,
             fallbackOnFail: false
         ),
-        PolicyMatrixExpectation(
-            id: .displayAvailability,
-            domain: .tccCapture,
-            failBlocks: true,
-            failWarns: false,
-            warnRequiresAcknowledgement: false,
-            fallbackOnFail: false
-        ),
+
         PolicyMatrixExpectation(
             id: .microphoneAccess,
             domain: .tccCapture,
@@ -312,7 +305,6 @@ private func runViewModelChecks() {
         fixtureCheck(ReadinessContractID.outWav.rawValue, .pass),
         fixtureCheck(ReadinessContractID.outJsonl.rawValue, .pass),
         fixtureCheck(ReadinessContractID.outManifest.rawValue, .pass),
-        fixtureCheck(ReadinessContractID.displayAvailability.rawValue, .pass),
         fixtureCheck(ReadinessContractID.microphoneAccess.rawValue, .pass),
         fixtureCheck(ReadinessContractID.sampleRate.rawValue, .warn),
     ])
@@ -364,7 +356,6 @@ private func runViewModelChecks() {
             fixtureCheck(ReadinessContractID.outJsonl.rawValue, .pass),
             fixtureCheck(ReadinessContractID.outManifest.rawValue, .pass),
             fixtureCheck(ReadinessContractID.screenCaptureAccess.rawValue, .fail),
-            fixtureCheck(ReadinessContractID.displayAvailability.rawValue, .pass),
             fixtureCheck(ReadinessContractID.microphoneAccess.rawValue, .pass),
         ],
         overallStatus: .fail

@@ -703,12 +703,7 @@ private struct PreviewPreflightCommandRunner: CommandRunning {
                     "detail": "screen access granted",
                     "remediation": "",
                 ],
-                [
-                    "id": ReadinessContractID.displayAvailability.rawValue,
-                    "status": "PASS",
-                    "detail": "active display available",
-                    "remediation": "",
-                ],
+
                 [
                     "id": ReadinessContractID.microphoneAccess.rawValue,
                     "status": "PASS",

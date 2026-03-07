@@ -59,15 +59,6 @@ enum ReadinessRemediationMatrix {
                 "Quit and reopen Recordit, then click Run Preflight again.",
             ]
         ),
-        ReadinessContractID.displayAvailability.rawValue: ReadinessRemediationRoute(
-            checkID: ReadinessContractID.displayAvailability.rawValue,
-            errorCode: .permissionDenied,
-            userMessage: "Live Transcribe is blocked because no active display is available for capture.",
-            actionSteps: [
-                "Ensure at least one display is connected, awake, and available to Recordit.",
-                "Click Check for Permissions, then click Run Preflight again.",
-            ]
-        ),
         ReadinessContractID.microphoneAccess.rawValue: ReadinessRemediationRoute(
             checkID: ReadinessContractID.microphoneAccess.rawValue,
             errorCode: .permissionDenied,
