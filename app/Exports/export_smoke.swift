@@ -50,6 +50,15 @@ private func fixtureManifestData() -> Data {
         "schema_version": "1",
         "kind": "transcribe-live-runtime",
         "generated_at_utc": "2026-03-05T00:00:00Z",
+        "runtime_mode": "live-stream",
+        "session_summary": [
+            "session_status": "degraded",
+            "duration_sec": 8.5
+        ],
+        "trust": [
+            "notice_count": 2,
+            "degradation_codes": ["queue_pressure"]
+        ],
         "transcript": "top-level transcript fallback",
         "terminal_summary": [
             "stable_lines": [
@@ -199,6 +208,9 @@ private func runSmoke() {
         let redactionContract = redactedDiagnosticsMetadata["redaction_contract"] as? [String: Any]
         check(redactionContract?["mode"] as? String == "redact_default", "default diagnostics should record redact_default mode")
         check(redactionContract?["transcript_text_included"] as? Bool == false, "default diagnostics should mark transcript_text_included=false")
+        check(redactedDiagnosticsMetadata["outcome_classification"] as? String == SessionOutcomeClassification.finalizedSuccess.rawValue, "diagnostics metadata should include finalized_success classification")
+        check(redactedDiagnosticsMetadata["outcome_code"] as? String == SessionOutcomeCode.finalizedDegradedSuccess.rawValue, "diagnostics metadata should include canonical degraded-success outcome code")
+        check(redactedDiagnosticsMetadata["manifest_status"] as? String == SessionStatus.degraded.rawValue, "diagnostics metadata should include normalized manifest status")
         let supportSnapshot = redactedDiagnosticsMetadata["support_snapshot"] as? [String: Any]
         check(supportSnapshot?["schema_version"] as? String == "1", "support snapshot should include schema version marker")
         let counters = supportSnapshot?["counters"] as? [String: Any]
@@ -207,7 +219,11 @@ private func runSmoke() {
         check((eventCounts?["reconciled_final"] as? NSNumber)?.intValue == 1, "support snapshot should include event type counts")
         let manifestSummary = supportSnapshot?["manifest_summary"] as? [String: Any]
         check(manifestSummary?["manifest_valid"] as? Bool == true, "support snapshot should capture manifest validity")
-        check(manifestSummary?["trust_notice_count"] as? Int == 0, "support snapshot should include trust notice count")
+        check(manifestSummary?["trust_notice_count"] as? Int == 2, "support snapshot should include trust notice count")
+        let supportOutcome = supportSnapshot?["outcome"] as? [String: Any]
+        check(supportOutcome?["classification"] as? String == SessionOutcomeClassification.finalizedSuccess.rawValue, "support snapshot should include outcome classification")
+        check(supportOutcome?["code"] as? String == SessionOutcomeCode.finalizedDegradedSuccess.rawValue, "support snapshot should include outcome code")
+        check(supportOutcome?["manifest_status"] as? String == SessionStatus.degraded.rawValue, "support snapshot should include outcome manifest status")
 
         let diagnosticsOptInResult = try service.exportSession(
             SessionExportRequest(
@@ -248,6 +264,47 @@ private func runSmoke() {
             optInRedactionContract?["transcript_text_included"] as? Bool == true,
             "opt-in diagnostics should mark transcript_text_included=true"
         )
+
+        let manifestlessRoot = sessionsRoot.appendingPathComponent("20260305T010000Z-live", isDirectory: true)
+        try fm.createDirectory(at: manifestlessRoot, withIntermediateDirectories: true, attributes: nil)
+        try Data(fixtureJsonlText().utf8).write(
+            to: manifestlessRoot.appendingPathComponent("session.jsonl"),
+            options: .atomic
+        )
+        try Data("runtime stderr".utf8).write(
+            to: manifestlessRoot.appendingPathComponent("runtime.stderr.log"),
+            options: .atomic
+        )
+
+        let manifestlessDiagnostics = try service.exportSession(
+            SessionExportRequest(
+                sessionID: "sess-2",
+                sessionRoot: manifestlessRoot,
+                outputDirectory: exportDirectory,
+                kind: .diagnostics,
+                includeTranscriptTextInDiagnostics: false,
+                includeAudioInDiagnostics: false
+            )
+        )
+        check(manifestlessDiagnostics.redacted, "manifestless diagnostics should still redact transcript text by default")
+        guard let manifestlessSnapshot = archiveCapture.lastSnapshotDirectory else {
+            check(false, "archive builder snapshot missing for manifestless diagnostics export")
+            return
+        }
+        check(!fm.fileExists(atPath: manifestlessSnapshot.appendingPathComponent("session.manifest.json").path), "manifestless diagnostics should not stage a manifest file")
+        check(fm.fileExists(atPath: manifestlessSnapshot.appendingPathComponent("runtime.stderr.log").path), "manifestless diagnostics should include stderr log when available")
+        let manifestlessMetadata = try readJSONFile(
+            manifestlessSnapshot.appendingPathComponent("diagnostics.json")
+        )
+        check(manifestlessMetadata["outcome_classification"] as? String == SessionOutcomeClassification.partialArtifact.rawValue, "manifestless diagnostics should classify as partial_artifact")
+        check(manifestlessMetadata["outcome_code"] as? String == SessionOutcomeCode.partialArtifactSession.rawValue, "manifestless diagnostics should emit partial_artifact_session outcome code")
+        check(manifestlessMetadata["manifest_status"] as? String == "unknown", "manifestless diagnostics should report unknown manifest status")
+        let manifestlessSupport = manifestlessMetadata["support_snapshot"] as? [String: Any]
+        let manifestlessArtifactPresence = manifestlessSupport?["artifact_presence"] as? [String: Any]
+        check(manifestlessArtifactPresence?["has_manifest"] as? Bool == false, "manifestless diagnostics should record has_manifest=false")
+        check(manifestlessArtifactPresence?["has_stderr"] as? Bool == true, "manifestless diagnostics should record stderr presence")
+        let manifestlessSummary = manifestlessSupport?["manifest_summary"] as? [String: Any]
+        check(manifestlessSummary?["manifest_valid"] as? Bool == false, "manifestless diagnostics should record manifest_valid=false")
 
         let outsideDestination = tempRoot.appendingPathComponent("outside", isDirectory: true)
         try fm.createDirectory(at: outsideDestination, withIntermediateDirectories: true, attributes: nil)

@@ -105,6 +105,12 @@ public struct FileSystemSessionExportService: SessionExportService {
     private let environment: [String: String]
     private let workingDirectoryProvider: () throws -> URL
 
+    private struct OutcomeSnapshot {
+        var classification: SessionOutcomeClassification
+        var code: SessionOutcomeCode
+        var manifestStatus: SessionStatus?
+    }
+
     public init(
         fileManager: FileManager = .default,
         nowProvider: @escaping () -> Date = Date.init,
@@ -292,19 +298,31 @@ public struct FileSystemSessionExportService: SessionExportService {
             .appendingPathExtension("zip")
 
         let manifestURL = sessionRoot.appendingPathComponent("session.manifest.json")
-        guard fileManager.fileExists(atPath: manifestURL.path) else {
+        let pendingURL = sessionRoot.appendingPathComponent("session.pending.json")
+        let retryContextURL = sessionRoot.appendingPathComponent("session.pending.retry.json")
+        let stderrURL = sessionRoot.appendingPathComponent("runtime.stderr.log")
+        let jsonlSource = sessionRoot.appendingPathComponent("session.jsonl")
+        let audioSource = sessionRoot.appendingPathComponent("session.wav")
+
+        let hasManifest = fileManager.fileExists(atPath: manifestURL.path)
+        let hasPending = fileManager.fileExists(atPath: pendingURL.path)
+        let hasRetryContext = fileManager.fileExists(atPath: retryContextURL.path)
+        let hasStderr = fileManager.fileExists(atPath: stderrURL.path)
+        let hasJsonl = fileManager.fileExists(atPath: jsonlSource.path)
+        let hasWav = fileManager.fileExists(atPath: audioSource.path)
+
+        guard hasManifest || hasPending || hasRetryContext || hasStderr || hasJsonl || hasWav else {
             throw AppServiceError(
                 code: .artifactMissing,
-                userMessage: "Session diagnostics require a manifest.",
-                remediation: "Retry after session finalization has produced session.manifest.json."
+                userMessage: "No diagnostics artifacts are available for this session.",
+                remediation: "Run a session first, then retry diagnostics export."
             )
         }
 
-        let manifestData = try readData(at: manifestURL)
-        let redactedManifestData = try redactManifestDataIfNeeded(
-            manifestData,
-            includeTranscript: includeTranscript
-        )
+        let manifestData = hasManifest ? try readData(at: manifestURL) : nil
+        let redactedManifestData = try manifestData.map {
+            try redactManifestDataIfNeeded($0, includeTranscript: includeTranscript)
+        }
 
         let tempRoot = try createTemporaryDirectory(prefix: "recordit-export-diagnostics")
         defer { try? fileManager.removeItem(at: tempRoot) }
@@ -312,14 +330,15 @@ public struct FileSystemSessionExportService: SessionExportService {
         let stageDirectory = tempRoot.appendingPathComponent(archiveName, isDirectory: true)
         try fileManager.createDirectory(at: stageDirectory, withIntermediateDirectories: true)
 
-        let stageManifest = stageDirectory.appendingPathComponent("session.manifest.json")
-        try writeDataAtomically(redactedManifestData, to: stageManifest)
-
-        var included = ["session.manifest.json"]
+        var included: [String] = []
+        if let redactedManifestData {
+            let stageManifest = stageDirectory.appendingPathComponent("session.manifest.json")
+            try writeDataAtomically(redactedManifestData, to: stageManifest)
+            included.append("session.manifest.json")
+        }
         var sourceJsonlData: Data?
 
-        let jsonlSource = sessionRoot.appendingPathComponent("session.jsonl")
-        if fileManager.fileExists(atPath: jsonlSource.path) {
+        if hasJsonl {
             let jsonlData = try readData(at: jsonlSource)
             sourceJsonlData = jsonlData
             let diagnosticsJsonlData = includeTranscript
@@ -330,18 +349,47 @@ public struct FileSystemSessionExportService: SessionExportService {
             included.append("session.jsonl")
         }
 
-        if includeAudio {
-            let audioSource = sessionRoot.appendingPathComponent("session.wav")
-            if fileManager.fileExists(atPath: audioSource.path) {
-                let stageAudio = stageDirectory.appendingPathComponent("session.wav")
-                try fileManager.copyItem(at: audioSource, to: stageAudio)
-                included.append("session.wav")
-            }
+        if hasPending {
+            let stagePending = stageDirectory.appendingPathComponent("session.pending.json")
+            try fileManager.copyItem(at: pendingURL, to: stagePending)
+            included.append("session.pending.json")
         }
 
+        if hasRetryContext {
+            let stageRetryContext = stageDirectory.appendingPathComponent("session.pending.retry.json")
+            try fileManager.copyItem(at: retryContextURL, to: stageRetryContext)
+            included.append("session.pending.retry.json")
+        }
+
+        if hasStderr {
+            let stageStderr = stageDirectory.appendingPathComponent("runtime.stderr.log")
+            try fileManager.copyItem(at: stderrURL, to: stageStderr)
+            included.append("runtime.stderr.log")
+        }
+
+        if includeAudio, hasWav {
+            let stageAudio = stageDirectory.appendingPathComponent("session.wav")
+            try fileManager.copyItem(at: audioSource, to: stageAudio)
+            included.append("session.wav")
+        }
+
+        let outcome = deriveOutcomeSnapshot(
+            manifestData: manifestData,
+            hasManifest: hasManifest,
+            hasPending: hasPending,
+            hasWav: hasWav,
+            hasJsonl: hasJsonl,
+            hasRetryContext: hasRetryContext
+        )
         let supportSnapshot = buildDiagnosticsSupportSnapshot(
             manifestData: manifestData,
-            jsonlData: sourceJsonlData
+            jsonlData: sourceJsonlData,
+            hasManifest: hasManifest,
+            hasPending: hasPending,
+            hasRetryContext: hasRetryContext,
+            hasWav: hasWav,
+            hasJsonl: hasJsonl,
+            hasStderr: hasStderr
         )
 
         let diagnosticsMetadata: [String: Any] = [
@@ -349,6 +397,9 @@ public struct FileSystemSessionExportService: SessionExportService {
             "kind": "recordit-diagnostics",
             "generated_at_utc": Self.iso8601(now),
             "session_id": sessionID,
+            "outcome_classification": outcome.classification.rawValue,
+            "outcome_code": outcome.code.rawValue,
+            "manifest_status": outcome.manifestStatus?.rawValue ?? "unknown",
             "include_transcript_text": includeTranscript,
             "include_audio": includeAudio,
             "redaction_contract": diagnosticsRedactionContract(includeTranscript: includeTranscript),
@@ -535,20 +586,64 @@ public struct FileSystemSessionExportService: SessionExportService {
     }
 
     private func buildDiagnosticsSupportSnapshot(
-        manifestData: Data,
-        jsonlData: Data?
+        manifestData: Data?,
+        jsonlData: Data?,
+        hasManifest: Bool,
+        hasPending: Bool,
+        hasRetryContext: Bool,
+        hasWav: Bool,
+        hasJsonl: Bool,
+        hasStderr: Bool
     ) -> [String: Any] {
         let manifestSummary = parseManifestSupportSummary(manifestData)
         let jsonlCounters = parseJsonlCounters(jsonlData)
+        let outcome = deriveOutcomeSnapshot(
+            manifestData: manifestData,
+            hasManifest: hasManifest,
+            hasPending: hasPending,
+            hasWav: hasWav,
+            hasJsonl: hasJsonl,
+            hasRetryContext: hasRetryContext
+        )
+        let artifactPresence: [String: Any] = [
+            "has_manifest": hasManifest,
+            "has_pending": hasPending,
+            "has_retry_context": hasRetryContext,
+            "has_wav": hasWav,
+            "has_jsonl": hasJsonl,
+            "has_stderr": hasStderr,
+        ]
 
         return [
             "schema_version": "1",
             "manifest_summary": manifestSummary,
             "counters": jsonlCounters,
+            "artifact_presence": artifactPresence,
+            "outcome": [
+                "classification": outcome.classification.rawValue,
+                "code": outcome.code.rawValue,
+                "manifest_status": outcome.manifestStatus?.rawValue ?? "unknown",
+            ],
         ]
     }
 
-    private func parseManifestSupportSummary(_ data: Data) -> [String: Any] {
+    private func parseManifestSupportSummary(_ data: Data?) -> [String: Any] {
+        guard let data else {
+            let fallbackFailureContext: [String: Any] = [
+                "code": NSNull(),
+                "message": NSNull(),
+            ]
+            return [
+                "manifest_valid": false,
+                "runtime_mode": "unknown",
+                "session_status": "unknown",
+                "duration_sec": 0,
+                "trust_notice_count": 0,
+                "degradation_codes": [],
+                "failure_context": fallbackFailureContext,
+            ]
+        }
+
         guard let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             let fallbackFailureContext: [String: Any] = [
                 "code": NSNull(),
@@ -593,6 +688,75 @@ public struct FileSystemSessionExportService: SessionExportService {
             "degradation_codes": degradationCodes,
             "failure_context": failureContext,
         ]
+    }
+
+    private func deriveOutcomeSnapshot(
+        manifestData: Data?,
+        hasManifest: Bool,
+        hasPending: Bool,
+        hasWav: Bool,
+        hasJsonl: Bool,
+        hasRetryContext: Bool
+    ) -> OutcomeSnapshot {
+        let manifestStatus = parseManifestStatus(manifestData)
+        let classification: SessionOutcomeClassification
+
+        if let manifestStatus {
+            switch manifestStatus {
+            case .failed:
+                classification = .finalizedFailure
+            case .ok, .degraded:
+                classification = hasWav ? .finalizedSuccess : .partialArtifact
+            case .pending:
+                classification = .partialArtifact
+            }
+        } else {
+            let hasAnyArtifacts = hasManifest || hasPending || hasWav || hasJsonl || hasRetryContext
+            classification = hasAnyArtifacts ? .partialArtifact : .emptyRoot
+        }
+
+        return OutcomeSnapshot(
+            classification: classification,
+            code: classification.canonicalCode(manifestStatus: manifestStatus),
+            manifestStatus: manifestStatus
+        )
+    }
+
+    private func parseManifestStatus(_ data: Data?) -> SessionStatus? {
+        guard let data,
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        let trustNoticeCount = parseTrustNoticeCount(payload)
+        let summary = payload["session_summary"] as? [String: Any]
+        let rawStatus = ((summary?["session_status"] as? String) ?? (payload["status"] as? String))
+            ?.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard let rawStatus, let status = SessionStatus(rawValue: rawStatus) else {
+            return nil
+        }
+        if status == .ok, trustNoticeCount > 0 {
+            return .degraded
+        }
+        return status
+    }
+
+    private func parseTrustNoticeCount(_ payload: [String: Any]) -> Int {
+        guard let trust = payload["trust"] as? [String: Any] else {
+            return 0
+        }
+
+        if let count = trust["notice_count"] as? Int {
+            return max(0, count)
+        }
+        if let count = trust["notice_count"] as? NSNumber {
+            return max(0, count.intValue)
+        }
+        if let notices = trust["notices"] as? [[String: Any]] {
+            return notices.count
+        }
+        return 0
     }
 
     private func parseJsonlCounters(_ data: Data?) -> [String: Any] {

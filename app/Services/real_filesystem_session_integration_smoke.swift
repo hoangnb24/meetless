@@ -309,6 +309,18 @@ private func runSmoke() throws {
 
     let diagnosticsMetadata = try readJSONObject(extractedDiagnosticsRoot.appendingPathComponent("diagnostics.json"))
     try require(diagnosticsMetadata["include_transcript_text"] as? Bool == false, "diagnostics metadata should record transcript redaction default")
+    try require(
+        diagnosticsMetadata["outcome_classification"] as? String == SessionOutcomeClassification.finalizedSuccess.rawValue,
+        "diagnostics metadata should include finalized_success outcome classification"
+    )
+    try require(
+        diagnosticsMetadata["outcome_code"] as? String == SessionOutcomeCode.finalizedSuccess.rawValue,
+        "diagnostics metadata should include finalized_success outcome code"
+    )
+    try require(
+        diagnosticsMetadata["manifest_status"] as? String == SessionStatus.ok.rawValue,
+        "diagnostics metadata should include normalized manifest status"
+    )
     let redactionContract = diagnosticsMetadata["redaction_contract"] as? [String: Any]
     try require(redactionContract?["mode"] as? String == "redact_default", "diagnostics metadata should record redact_default mode")
     let supportSnapshot = diagnosticsMetadata["support_snapshot"] as? [String: Any]
@@ -316,6 +328,19 @@ private func runSmoke() throws {
     try require(counters?["jsonl_present"] as? Bool == true, "diagnostics support snapshot should report jsonl presence")
     let eventTypeCounts = counters?["event_type_counts"] as? [String: Any]
     try require((eventTypeCounts?["reconciled_final"] as? NSNumber)?.intValue == 1, "diagnostics support snapshot should preserve event counts")
+    let supportOutcome = supportSnapshot?["outcome"] as? [String: Any]
+    try require(
+        supportOutcome?["classification"] as? String == SessionOutcomeClassification.finalizedSuccess.rawValue,
+        "support snapshot should include outcome classification"
+    )
+    try require(
+        supportOutcome?["code"] as? String == SessionOutcomeCode.finalizedSuccess.rawValue,
+        "support snapshot should include outcome code"
+    )
+    let artifactPresence = supportSnapshot?["artifact_presence"] as? [String: Any]
+    try require(artifactPresence?["has_manifest"] as? Bool == true, "support snapshot should report manifest presence")
+    try require(artifactPresence?["has_jsonl"] as? Bool == true, "support snapshot should report jsonl presence")
+    try require(artifactPresence?["has_wav"] as? Bool == true, "support snapshot should report wav presence")
 }
 
 @main
