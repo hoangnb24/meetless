@@ -66,7 +66,7 @@ final class MainSessionController: ObservableObject {
     @Published private(set) var runtimeState: RuntimeViewModel.RunState
     @Published private(set) var elapsedLabel = "00:00"
     @Published private(set) var liveTranscriptLines: [LiveTranscriptLine] = []
-    @Published private(set) var currentPartials: [LiveTranscriptLine] = []
+    @Published private(set) var activePartialPreview: (channel: String, text: String)? = nil
     @Published private(set) var statusLog: [StatusLogEntry] = []
     @Published private(set) var diagnosticSignals: [RuntimeDiagnosticSurfaceSignal] = []
     @Published private(set) var lastServiceError: AppServiceError?
@@ -173,7 +173,7 @@ final class MainSessionController: ObservableObject {
         lastServiceError = nil
         latestFinalizationSummary = nil
         liveTranscriptLines = []
-        currentPartials = []
+        activePartialPreview = nil
         diagnosticSignals = []
         tailCursor = .start
         appendStatusLog("Start requested for \(selectedMode.title).")
@@ -443,7 +443,7 @@ final class MainSessionController: ObservableObject {
     private func stopTranscriptPoller() {
         pollerTask?.cancel()
         pollerTask = nil
-        currentPartials = []
+        activePartialPreview = nil
     }
 
     private func pollTranscriptOnce(jsonlPath: URL) {
@@ -481,22 +481,14 @@ final class MainSessionController: ObservableObject {
                 }
             }
 
-            // Partials are ephemeral — replace previous with latest
-            if !snapshot.partialLines.isEmpty {
-                currentPartials = snapshot.partialLines.map {
-                    LiveTranscriptLine(
-                        eventType: $0.eventType,
-                        channel: $0.channel,
-                        startMs: $0.startMs,
-                        endMs: $0.endMs,
-                        text: $0.text
-                    )
-                }
+            // When finals arrive, they are the "system messages" — clear the partial preview
+            if !snapshot.transcriptLines.isEmpty {
+                activePartialPreview = nil
             }
 
-            // When we receive finals, clear the partials they supersede
-            if !snapshot.transcriptLines.isEmpty {
-                currentPartials = []
+            // Partials: keep only the latest as a single rolling preview
+            if let latestPartial = snapshot.partialLines.last {
+                activePartialPreview = (channel: latestPartial.channel, text: latestPartial.text)
             }
         } catch {
             // Tailer may throw before file exists; silently retry next poll.
@@ -605,95 +597,7 @@ struct MainSessionView: View {
             }
 
             // MARK: - Live Transcript
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Transcript")
-                    .font(.headline)
-
-                if controller.liveTranscriptLines.isEmpty && controller.currentPartials.isEmpty {
-                    VStack(spacing: 6) {
-                        Text(controller.selectedMode == .recordOnly
-                             ? "Transcript pending — record-only mode"
-                             : "Waiting for transcript…")
-                            .font(.subheadline)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 180)
-                    .background(.quinary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-                } else {
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 4) {
-                                ForEach(controller.liveTranscriptLines) { line in
-                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                        Text(line.formattedTimestamp)
-                                            .font(.system(.caption, design: .monospaced))
-                                            .foregroundStyle(.secondary)
-
-                                        Text(line.channel)
-                                            .font(.system(.caption, design: .monospaced))
-                                            .foregroundStyle(line.channel == "mic" ? .blue : .orange)
-                                            .fontWeight(.semibold)
-
-                                        Text(line.text)
-                                            .font(.body)
-                                            .foregroundStyle(.primary)
-                                            .textSelection(.enabled)
-                                    }
-                                    .id(line.id)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                }
-
-                                // Live partials — ephemeral, visually distinct
-                                ForEach(controller.currentPartials) { partial in
-                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                        Text(partial.formattedTimestamp)
-                                            .font(.system(.caption, design: .monospaced))
-                                            .foregroundStyle(.tertiary)
-
-                                        Text(partial.channel)
-                                            .font(.system(.caption, design: .monospaced))
-                                            .foregroundStyle(partial.channel == "mic" ? .blue.opacity(0.6) : .orange.opacity(0.6))
-                                            .fontWeight(.medium)
-
-                                        HStack(spacing: 4) {
-                                            Text("◉")
-                                                .font(.caption2)
-                                                .foregroundStyle(.green)
-                                            Text(partial.text)
-                                                .font(.body)
-                                                .italic()
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    .id(partial.id)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(Color.green.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-                                }
-                            }
-                        }
-                        .frame(minHeight: 220)
-                        .background(.quinary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-                        .onChange(of: controller.liveTranscriptLines.count) {
-                            if let lastLine = controller.liveTranscriptLines.last {
-                                withAnimation {
-                                    proxy.scrollTo(lastLine.id, anchor: .bottom)
-                                }
-                            }
-                        }
-                        .onChange(of: controller.currentPartials.count) {
-                            if let lastPartial = controller.currentPartials.last {
-                                withAnimation {
-                                    proxy.scrollTo(lastPartial.id, anchor: .bottom)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            transcriptPanel
 
             // MARK: - Session Health
             if !controller.diagnosticSignals.isEmpty {
@@ -754,5 +658,133 @@ struct MainSessionView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Transcript Panel (extracted for type-checker)
+
+    @ViewBuilder
+    private var transcriptPanel: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Transcript")
+                .font(.headline)
+
+            if controller.liveTranscriptLines.isEmpty && controller.activePartialPreview == nil {
+                VStack(spacing: 6) {
+                    Text(controller.selectedMode == .recordOnly
+                         ? "Transcript pending — record-only mode"
+                         : "Waiting for transcript…")
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 180)
+                .background(.quinary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            // System messages — finalized transcript entries
+                            ForEach(controller.liveTranscriptLines) { line in
+                                transcriptMessageCard(line: line)
+                            }
+
+                            // Live partial preview — single rolling "listening" indicator
+                            if let preview = controller.activePartialPreview {
+                                partialPreviewBubble(channel: preview.channel, text: preview.text)
+                            }
+                        }
+                        .padding(4)
+                    }
+                    .frame(minHeight: 220)
+                    .background(.quinary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                    .onChange(of: controller.liveTranscriptLines.count) {
+                        if let lastLine = controller.liveTranscriptLines.last {
+                            withAnimation {
+                                proxy.scrollTo(lastLine.id, anchor: .bottom)
+                            }
+                        }
+                    }
+                    .onChange(of: controller.activePartialPreview?.text) {
+                        if controller.activePartialPreview != nil {
+                            withAnimation {
+                                proxy.scrollTo("active-partial-preview", anchor: .bottom)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func transcriptMessageCard(line: MainSessionController.LiveTranscriptLine) -> some View {
+        let isMic = line.channel == "mic"
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: isMic ? "mic.fill" : "speaker.wave.2.fill")
+                    .font(.caption2)
+                    .foregroundStyle(isMic ? .blue : .orange)
+
+                Text(isMic ? "Microphone" : "System Audio")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(isMic ? .blue : .orange)
+
+                Text(line.formattedTimestamp)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+
+            Text(line.text)
+                .font(.body)
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .id(line.id)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isMic ? Color.blue.opacity(0.06) : Color.orange.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(isMic ? Color.blue.opacity(0.12) : Color.orange.opacity(0.12),
+                              lineWidth: 0.5)
+        )
+    }
+
+    @ViewBuilder
+    private func partialPreviewBubble(channel: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "waveform")
+                .font(.caption)
+                .foregroundStyle(.green)
+                .symbolEffect(.variableColor.iterative, isActive: true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(channel == "mic" ? "Listening…" : "Hearing…")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.green)
+
+                Text(text)
+                    .font(.body)
+                    .italic()
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .id("active-partial-preview")
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.green.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.green.opacity(0.15), lineWidth: 0.5)
+        )
     }
 }
