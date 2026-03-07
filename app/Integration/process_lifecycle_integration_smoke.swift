@@ -85,8 +85,16 @@ private func makeManifest(status: String, trustNoticeCount: Int = 0) -> SessionM
 }
 
 @MainActor
-private func runLiveLifecycleScenarios() async throws {
+private func makeScenarioRoot(tempRoot: URL, name: String) throws -> URL {
+    let root = tempRoot.appendingPathComponent(name, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    return root
+}
+
+@MainActor
+private func runLiveLifecycleScenarios(tempRoot: URL) async throws {
     let modelService = StaticModelService()
+    let liveSuccessRoot = try makeScenarioRoot(tempRoot: tempRoot, name: "live-success")
 
     let liveSuccess = RuntimeViewModel(
         runtimeService: LiveRuntimeService(stopBehavior: .success),
@@ -95,10 +103,11 @@ private func runLiveLifecycleScenarios() async throws {
         finalizationTimeoutSeconds: 1,
         finalizationPollIntervalNanoseconds: 10_000_000
     )
-    await liveSuccess.startLive(outputRoot: URL(fileURLWithPath: "/tmp/live-success"), explicitModelPath: nil)
+    await liveSuccess.startLive(outputRoot: liveSuccessRoot, explicitModelPath: nil)
     await liveSuccess.stopCurrentRun()
     try require(liveSuccess.state == .completed, "live success should complete after bounded finalization")
 
+    let liveInterruptedRoot = try makeScenarioRoot(tempRoot: tempRoot, name: "live-interrupted")
     let liveInterrupted = RuntimeViewModel(
         runtimeService: LiveRuntimeService(
             stopBehavior: .throwError(
@@ -114,7 +123,12 @@ private func runLiveLifecycleScenarios() async throws {
         finalizationTimeoutSeconds: 1,
         finalizationPollIntervalNanoseconds: 10_000_000
     )
-    await liveInterrupted.startLive(outputRoot: URL(fileURLWithPath: "/tmp/live-interrupted"), explicitModelPath: nil)
+    await liveInterrupted.startLive(outputRoot: liveInterruptedRoot, explicitModelPath: nil)
+    try "partial transcript\n".write(
+        to: liveInterruptedRoot.appendingPathComponent("session.jsonl"),
+        atomically: true,
+        encoding: .utf8
+    )
     await liveInterrupted.stopCurrentRun()
     guard case let .failed(interruptedError) = liveInterrupted.state else {
         throw LifecycleIntegrationSmokeError.assertionFailed("live interruption should transition to failed")
@@ -124,6 +138,7 @@ private func runLiveLifecycleScenarios() async throws {
     try require(liveInterrupted.suggestedRecoveryActions.contains(.safeFinalize), "live interruption should suggest safe finalize")
     try require(liveInterrupted.suggestedRecoveryActions.contains(.retryStop), "live interruption should suggest retry stop")
 
+    let liveTimeoutRoot = try makeScenarioRoot(tempRoot: tempRoot, name: "live-timeout")
     let liveTimeout = RuntimeViewModel(
         runtimeService: LiveRuntimeService(stopBehavior: .success),
         manifestService: AlwaysMissingManifestService(),
@@ -131,7 +146,12 @@ private func runLiveLifecycleScenarios() async throws {
         finalizationTimeoutSeconds: 0.12,
         finalizationPollIntervalNanoseconds: 10_000_000
     )
-    await liveTimeout.startLive(outputRoot: URL(fileURLWithPath: "/tmp/live-timeout"), explicitModelPath: nil)
+    await liveTimeout.startLive(outputRoot: liveTimeoutRoot, explicitModelPath: nil)
+    try "partial transcript\n".write(
+        to: liveTimeoutRoot.appendingPathComponent("session.jsonl"),
+        atomically: true,
+        encoding: .utf8
+    )
     await liveTimeout.stopCurrentRun()
     guard case let .failed(timeoutError) = liveTimeout.state else {
         throw LifecycleIntegrationSmokeError.assertionFailed("live timeout should transition to failed")
@@ -139,6 +159,7 @@ private func runLiveLifecycleScenarios() async throws {
     try require(timeoutError.code == .timeout, "live timeout should map to timeout error")
     try require(liveTimeout.suggestedRecoveryActions.contains(.retryFinalize), "live timeout should suggest retry finalize")
 
+    let liveFailedManifestRoot = try makeScenarioRoot(tempRoot: tempRoot, name: "live-failed-manifest")
     let liveFailedManifest = RuntimeViewModel(
         runtimeService: LiveRuntimeService(stopBehavior: .success),
         manifestService: StaticManifestService(manifest: makeManifest(status: "failed")),
@@ -146,7 +167,7 @@ private func runLiveLifecycleScenarios() async throws {
         finalizationTimeoutSeconds: 1,
         finalizationPollIntervalNanoseconds: 10_000_000
     )
-    await liveFailedManifest.startLive(outputRoot: URL(fileURLWithPath: "/tmp/live-failed-manifest"), explicitModelPath: nil)
+    await liveFailedManifest.startLive(outputRoot: liveFailedManifestRoot, explicitModelPath: nil)
     await liveFailedManifest.stopCurrentRun()
     guard case let .failed(failedManifestError) = liveFailedManifest.state else {
         throw LifecycleIntegrationSmokeError.assertionFailed("failed manifest should transition to failed")
@@ -337,15 +358,22 @@ private func runRecordOnlyLifecycleScenarios(tempRoot: URL) async throws {
 @main
 struct ProcessLifecycleIntegrationSmokeMain {
     static func main() async throws {
-        try await runLiveLifecycleScenarios()
-
-        let tempRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("process-lifecycle-integration-\(UUID().uuidString)", isDirectory: true)
+        let envRoot = ProcessInfo.processInfo.environment["RECORDIT_PROCESS_LIFECYCLE_SMOKE_ROOT"]
+        let keepArtifacts = envRoot?.isEmpty == false
+        let tempRoot = keepArtifacts
+            ? URL(fileURLWithPath: envRoot!, isDirectory: true)
+            : FileManager.default.temporaryDirectory
+                .appendingPathComponent("process-lifecycle-integration-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.removeItem(at: tempRoot)
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        if !keepArtifacts {
+            defer { try? FileManager.default.removeItem(at: tempRoot) }
+        }
 
+        try await runLiveLifecycleScenarios(tempRoot: tempRoot)
         try await runRecordOnlyLifecycleScenarios(tempRoot: tempRoot)
 
+        print("process_lifecycle_integration_smoke_root: \(tempRoot.path)")
         print("process_lifecycle_integration_smoke: PASS")
     }
 }

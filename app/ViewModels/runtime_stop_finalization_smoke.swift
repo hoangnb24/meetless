@@ -216,13 +216,19 @@ private func makeManifest(status: String, trustNoticeCount: Int = 0) -> SessionM
 }
 
 @MainActor
-private func runSmoke() async {
+private func runSmoke() async -> URL {
     let runtime = StubRuntimeService()
     let model = StaticModelService()
-    let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-stop-finalization-smoke-\(UUID().uuidString)", isDirectory: true)
+    let envRoot = ProcessInfo.processInfo.environment["RECORDIT_RUNTIME_STOP_FINALIZATION_SMOKE_ROOT"]
+    let keepArtifacts = envRoot?.isEmpty == false
+    let tempRoot = keepArtifacts
+        ? URL(fileURLWithPath: envRoot!, isDirectory: true)
+        : FileManager.default.temporaryDirectory.appendingPathComponent("runtime-stop-finalization-smoke-\(UUID().uuidString)", isDirectory: true)
     try? FileManager.default.removeItem(at: tempRoot)
     try? FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: tempRoot) }
+    if !keepArtifacts {
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+    }
 
     let pendingThenSuccess = RuntimeViewModel(
         runtimeService: runtime,
@@ -471,12 +477,14 @@ private func runSmoke() async {
     interruptionRecovery.safeFinalizeInterruptedSession()
     check(interruptionRecovery.state == .completed, "safe finalize should complete via manifest final status load")
     check(interruptionRecovery.interruptionRecoveryContext == nil, "successful safe finalize should clear interruption context")
+    return tempRoot
 }
 
 @main
 struct RuntimeStopFinalizationSmokeMain {
     static func main() async {
-        await runSmoke()
+        let root = await runSmoke()
+        print("runtime_stop_finalization_smoke_root: \(root.path)")
         print("runtime_stop_finalization_smoke: PASS")
     }
 }
