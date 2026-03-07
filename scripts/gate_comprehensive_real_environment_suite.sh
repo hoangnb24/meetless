@@ -652,6 +652,9 @@ REFS
 
 PIPELINE_BLOCKED=0
 CAPABILITY_GATED=0
+if [[ "$SKIP_DEFAULT_JOURNEY_PHASE" == "1" || "$SKIP_STOP_TAXONOMY_PHASE" == "1" || "$SKIP_RELEASE_CONTEXT_PHASE" == "1" || "$SKIP_ANTI_BYPASS_PHASE" == "1" || "$SKIP_MOCK_EXCEPTION_PHASE" == "1" ]]; then
+  CAPABILITY_GATED=1
+fi
 
 preflight_command_display="internal preflight capability scanner"
 preflight_command_argv_json="$(json_array_from_args internal preflight capability scanner)"
@@ -691,6 +694,11 @@ if [[ "$DRY_RUN" == "1" ]]; then
   preflight_required="false"
   preflight_notes="dry-run requested; capability report captured without executing child lanes"
   CAPABILITY_GATED=1
+elif [[ "$CAPABILITY_GATED" == "1" ]]; then
+  preflight_status="skipped"
+  preflight_exit_classification="skip_requested"
+  preflight_required="false"
+  preflight_notes="capability-gated execution requested via explicit skip flags"
 elif [[ -n "$preflight_failure_note" ]]; then
   if [[ "$ALLOW_CAPABILITY_GATED" == "1" ]]; then
     preflight_status="skipped"
@@ -805,29 +813,26 @@ execute_or_skip_phase() {
   local explicit_skip_flag="$5"
   local capability_note="$6"
 
-  if [[ "$DRY_RUN" == "1" ]]; then
-    record_skipped_phase "$phase_id" "$title" "false" "dry-run requested" "$script_body"
-    CAPABILITY_GATED=1
-    return
-  fi
-
-  if [[ "$explicit_skip_flag" == "1" ]]; then
-    record_skipped_phase "$phase_id" "$title" "false" "skip flag requested" "$script_body"
-    CAPABILITY_GATED=1
-    return
-  fi
-
   if [[ "$PIPELINE_BLOCKED" == "1" ]]; then
     record_skipped_phase "$phase_id" "$title" "true" "blocked by prior required failure" "$script_body"
     return
   fi
 
-  if [[ -n "$capability_note" ]]; then
-    if [[ "$ALLOW_CAPABILITY_GATED" == "1" ]]; then
-      record_skipped_phase "$phase_id" "$title" "false" "capability-gated: $capability_note" "$script_body"
-      CAPABILITY_GATED=1
-      return
+  if [[ "$DRY_RUN" == "1" || "$CAPABILITY_GATED" == "1" ]]; then
+    local skip_reason="capability-gated suite mode requested"
+    if [[ "$DRY_RUN" == "1" ]]; then
+      skip_reason="dry-run requested"
+    elif [[ "$explicit_skip_flag" == "1" ]]; then
+      skip_reason="skip flag requested"
+    elif [[ -n "$capability_note" ]]; then
+      skip_reason="capability-gated: $capability_note"
     fi
+    record_skipped_phase "$phase_id" "$title" "false" "$skip_reason" "$script_body"
+    CAPABILITY_GATED=1
+    return
+  fi
+
+  if [[ -n "$capability_note" ]]; then
     record_skipped_phase "$phase_id" "$title" "true" "blocked by missing capability: $capability_note" "$script_body" "precondition_failure"
     PIPELINE_BLOCKED=1
     return
@@ -933,28 +938,28 @@ PY_INNER
 RUN_SUITE_SUMMARY
 )
 
-summary_required="true"
-if [[ "$CAPABILITY_GATED" == "1" || "$DRY_RUN" == "1" ]]; then
-  summary_required="false"
-fi
-
 if [[ "$PIPELINE_BLOCKED" == "1" ]]; then
   record_skipped_phase \
     "suite_summary_checks" \
     "Comprehensive suite summary and contract checks" \
-    "$summary_required" \
+    "true" \
     "blocked by prior required failure" \
+    "$run_suite_summary_script"
+elif [[ "$CAPABILITY_GATED" == "1" || "$DRY_RUN" == "1" ]]; then
+  record_skipped_phase \
+    "suite_summary_checks" \
+    "Comprehensive suite summary and contract checks" \
+    "false" \
+    "capability-gated suite mode requested" \
     "$run_suite_summary_script"
 else
   if ! run_phase_script \
       "suite_summary_checks" \
       "Comprehensive suite summary and contract checks" \
-      "$summary_required" \
+      "true" \
       "contract_failure" \
       "$run_suite_summary_script"; then
-    if [[ "$summary_required" == "true" ]]; then
-      PIPELINE_BLOCKED=1
-    fi
+    PIPELINE_BLOCKED=1
   fi
 fi
 
@@ -1002,3 +1007,4 @@ action_status="$(awk -F= '$1=="status" {print $2}' "$OUT_DIR/status.txt" | tail 
 if [[ "$action_status" == "fail" ]]; then
   exit 1
 fi
+exit 0
