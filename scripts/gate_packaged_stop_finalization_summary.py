@@ -93,6 +93,11 @@ def scenario_rows(scenarios_root: Path) -> list[dict[str, str]]:
 
         manifest = load_json(manifest_path)
         runtime_mode = str(manifest.get("runtime_mode") or "")
+        if not runtime_mode:
+            if mode == "live":
+                runtime_mode = "live-stream"
+            elif mode == "offline":
+                runtime_mode = "representative-offline"
         outcome_classification, outcome_code, session_status, degraded_mode_active = canonical_outcome(
             manifest,
             manifest_exists=manifest_exists,
