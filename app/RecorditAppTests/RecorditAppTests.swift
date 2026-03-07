@@ -778,13 +778,147 @@ final class RecorditAppTests: XCTestCase {
         }
         XCTAssertEqual(error.code, .timeout)
         XCTAssertFalse(viewModel.suggestedRecoveryActions.contains(.retryStop))
-        XCTAssertTrue(viewModel.suggestedRecoveryActions.contains(.openSessionArtifacts))
+        XCTAssertTrue(viewModel.suggestedRecoveryActions.contains(.startNewSession))
+        XCTAssertEqual(viewModel.interruptionRecoveryContext?.outcomeClassification, .emptyRoot)
 
         await viewModel.retryStopAfterFailure()
         XCTAssertEqual(viewModel.lastRejectedActionError?.code, .invalidInput)
         XCTAssertEqual(
             viewModel.lastRejectedActionError?.debugDetail,
             "action=retryStopAfterFailure, state=failed"
+        )
+    }
+
+    @MainActor
+    func testArtifactIntegrityDiagnosticsSchemaCoversAllSessionOutcomeClasses() throws {
+        let tempRoot = try makeTemporaryDirectory(prefix: "recordit-outcome-diagnostics-schema")
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let service = FileSystemArtifactIntegrityService()
+        let requiredKeys = [
+            "root_path",
+            "manifest_path",
+            "pending_path",
+            "retry_context_path",
+            "wav_path",
+            "jsonl_path",
+            "has_manifest",
+            "has_pending",
+            "has_retry_context",
+            "has_wav",
+            "has_jsonl",
+            "outcome_classification",
+            "outcome_code",
+        ]
+
+        func writeManifest(at root: URL, status: SessionStatus) throws {
+            let manifestURL = root.appendingPathComponent("session.manifest.json")
+            let payload: [String: Any] = [
+                "session_id": root.lastPathComponent,
+                "runtime_mode": RuntimeMode.live.rawValue,
+                "artifacts": [
+                    "out_wav": root.appendingPathComponent("session.wav").path,
+                    "out_jsonl": root.appendingPathComponent("session.jsonl").path,
+                    "out_manifest": manifestURL.path,
+                ],
+                "session_summary": [
+                    "session_status": status.rawValue,
+                ],
+                "trust": [
+                    "notice_count": 0,
+                ],
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            try data.write(to: manifestURL, options: .atomic)
+        }
+
+        func assertSchema(
+            _ report: SessionArtifactIntegrityReportDTO,
+            expectedClassification: SessionOutcomeClassification,
+            expectedCode: SessionOutcomeCode,
+            expectedManifestStatus: SessionStatus? = nil,
+            file: StaticString = #filePath,
+            line: UInt = #line
+        ) {
+            for key in requiredKeys {
+                XCTAssertNotNil(
+                    report.outcomeDiagnostics[key],
+                    "missing required outcome diagnostic key: \(key)",
+                    file: file,
+                    line: line
+                )
+            }
+            XCTAssertEqual(report.outcomeClassification, expectedClassification, file: file, line: line)
+            XCTAssertEqual(report.outcomeCode, expectedCode, file: file, line: line)
+            XCTAssertEqual(report.outcomeDiagnostics["outcome_classification"], expectedClassification.rawValue, file: file, line: line)
+            XCTAssertEqual(report.outcomeDiagnostics["outcome_code"], expectedCode.rawValue, file: file, line: line)
+            XCTAssertEqual(
+                report.outcomeDiagnostics["manifest_status"],
+                expectedManifestStatus?.rawValue,
+                file: file,
+                line: line
+            )
+        }
+
+        let finalizedSuccessRoot = tempRoot.appendingPathComponent("finalized-success", isDirectory: true)
+        try FileManager.default.createDirectory(at: finalizedSuccessRoot, withIntermediateDirectories: true)
+        try Data("wav".utf8).write(to: finalizedSuccessRoot.appendingPathComponent("session.wav"), options: .atomic)
+        try Data("{\"event\":\"final\"}\n".utf8).write(
+            to: finalizedSuccessRoot.appendingPathComponent("session.jsonl"),
+            options: .atomic
+        )
+        try writeManifest(at: finalizedSuccessRoot, status: .ok)
+
+        let finalizedFailureRoot = tempRoot.appendingPathComponent("finalized-failure", isDirectory: true)
+        try FileManager.default.createDirectory(at: finalizedFailureRoot, withIntermediateDirectories: true)
+        try Data("wav".utf8).write(to: finalizedFailureRoot.appendingPathComponent("session.wav"), options: .atomic)
+        try writeManifest(at: finalizedFailureRoot, status: .failed)
+
+        let partialArtifactRoot = tempRoot.appendingPathComponent("partial-artifact", isDirectory: true)
+        try FileManager.default.createDirectory(at: partialArtifactRoot, withIntermediateDirectories: true)
+        try Data("wav".utf8).write(to: partialArtifactRoot.appendingPathComponent("session.wav"), options: .atomic)
+
+        let emptyRoot = tempRoot.appendingPathComponent("empty-root", isDirectory: true)
+        try FileManager.default.createDirectory(at: emptyRoot, withIntermediateDirectories: true)
+
+        let finalizedSuccessReport = try service.evaluateSessionArtifacts(
+            sessionID: finalizedSuccessRoot.lastPathComponent,
+            rootPath: finalizedSuccessRoot
+        )
+        let finalizedFailureReport = try service.evaluateSessionArtifacts(
+            sessionID: finalizedFailureRoot.lastPathComponent,
+            rootPath: finalizedFailureRoot
+        )
+        let partialArtifactReport = try service.evaluateSessionArtifacts(
+            sessionID: partialArtifactRoot.lastPathComponent,
+            rootPath: partialArtifactRoot
+        )
+        let emptyRootReport = try service.evaluateSessionArtifacts(
+            sessionID: emptyRoot.lastPathComponent,
+            rootPath: emptyRoot
+        )
+
+        assertSchema(
+            finalizedSuccessReport,
+            expectedClassification: .finalizedSuccess,
+            expectedCode: .finalizedSuccess,
+            expectedManifestStatus: .ok
+        )
+        assertSchema(
+            finalizedFailureReport,
+            expectedClassification: .finalizedFailure,
+            expectedCode: .finalizedFailure,
+            expectedManifestStatus: .failed
+        )
+        assertSchema(
+            partialArtifactReport,
+            expectedClassification: .partialArtifact,
+            expectedCode: .partialArtifactSession
+        )
+        assertSchema(
+            emptyRootReport,
+            expectedClassification: .emptyRoot,
+            expectedCode: .emptySessionRoot
         )
     }
 
