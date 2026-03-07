@@ -112,7 +112,7 @@ See `docs/bd-1ff5-xctest-xcuitest-retained-artifact-contract.md` for the truthfu
 Relevant controls:
 - `XCTEST_EVIDENCE_STAMP` (artifact folder name)
 - `XCTEST_DESTINATION` (default: `platform=macOS`)
-- `CI_STRICT_UI_TESTS` (`1` makes UI-test execution failures required-fail)
+- `CI_STRICT_UI_TESTS` (`1` makes UI-test execution failures required-fail; lane script default is `0`, CI workflow pins this to `1`)
 - `XCTEST_RESPONSIVENESS_SUMMARY_PATH` (override path for responsiveness gate key/value artifact)
 
 `summary.csv` includes responsiveness threshold rows emitted from app-level XCTest gating:

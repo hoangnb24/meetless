@@ -5,8 +5,15 @@ on:
   pull_request:
     paths:
       - "app/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "Recordit.xcodeproj/**"
       - "scripts/ci_recordit_xctest_evidence.sh"
+      - "scripts/e2e_evidence_lib.sh"
+      - "scripts/prepare_recordit_runtime_inputs.sh"
+      - "scripts/render_xctest_evidence_contract.py"
+      - "scripts/validate_e2e_evidence_contract.py"
       - ".github/workflows/recordit-xctest-evidence.yml"
 
 jobs:
@@ -21,7 +28,7 @@ jobs:
       - name: Run XCTest/XCUITest evidence lane
         env:
           XCTEST_EVIDENCE_STAMP: gha-${{ github.run_id }}-${{ github.run_attempt }}
-          CI_STRICT_UI_TESTS: 1
+          CI_STRICT_UI_TESTS: "1"
         run: scripts/ci_recordit_xctest_evidence.sh
 
       - name: Upload XCTest evidence artifacts

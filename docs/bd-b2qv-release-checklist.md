@@ -117,8 +117,9 @@ cp "artifacts/ci/xctest_evidence/${RC_XCTEST_STAMP}/contracts/xcuitest/summary.j
 Pass criteria:
 1. `xctest-evidence-strict.summary.csv` reports `strict_ui_tests=1`
 2. `xctest-evidence-strict.summary.csv` reports `overall_status=pass`
-3. `xctest-evidence-strict.status.csv` reports `required_failed=0`
-4. `xctest-evidence-strict.xcuitest-summary.json` reports `overall_status=pass`
+3. `xctest-evidence-strict.summary.csv` reports `required_failed=0`
+4. `xctest-evidence-strict.status.csv` has no rows where `required=1` and `result=fail`
+5. `xctest-evidence-strict.xcuitest-summary.json` reports `overall_status=pass`
 
 ## Step D3 - Comprehensive Real-Environment Suite Policy Gate (RC Required)
 
@@ -207,7 +208,7 @@ All rows must be completed before publishing from draft to public:
 | Area | Owner | Required status | Evidence |
 |---|---|---|---|
 | Packaging/signing | Release owner | PASS | `logs/sign-recordit-app.log`, `logs/codesign-verify.log` |
-| Runtime gate health | QA owner | PASS | `gates/*.summary.csv`, `gates/*.status.txt` |
+| Runtime gate health | QA owner | PASS | `gates/*.summary.csv`, `gates/*.status.txt`, `gates/*.status.csv` |
 | Soak dependency (`bd-2n4m`) | Reliability owner | PASS | `gates/bd-2n4m-status.json` + soak report link |
 | GitHub release asset integrity | Release owner | PASS | `packaging/*.sha256`, `release/gh-release-view.json` |
 | Support handoff readiness | Support owner | PASS | release notes include support path |
