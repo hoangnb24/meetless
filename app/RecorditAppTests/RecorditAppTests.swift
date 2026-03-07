@@ -93,6 +93,111 @@ final class RecorditAppTests: XCTestCase {
         }
     }
 
+    private actor ImmediateRuntimeService: RuntimeService {
+        private(set) var stopInvocations = 0
+
+        func startSession(request: RuntimeStartRequest) async throws -> RuntimeLaunchResult {
+            RuntimeLaunchResult(
+                processIdentifier: 9100,
+                sessionRoot: request.outputRoot,
+                startedAt: Date()
+            )
+        }
+
+        func controlSession(processIdentifier _: Int32, action _: RuntimeControlAction) async throws -> RuntimeControlResult {
+            stopInvocations += 1
+            return RuntimeControlResult(accepted: true, detail: "stopped")
+        }
+    }
+
+    private actor TimeoutStopRuntimeService: RuntimeService {
+        func startSession(request: RuntimeStartRequest) async throws -> RuntimeLaunchResult {
+            RuntimeLaunchResult(
+                processIdentifier: 9200,
+                sessionRoot: request.outputRoot,
+                startedAt: Date()
+            )
+        }
+
+        func controlSession(processIdentifier _: Int32, action _: RuntimeControlAction) async throws -> RuntimeControlResult {
+            throw AppServiceError(
+                code: .timeout,
+                userMessage: "Runtime did not stop in time.",
+                remediation: "Retry stop and inspect session diagnostics."
+            )
+        }
+    }
+
+    private final class SequencedManifestService: ManifestService, @unchecked Sendable {
+        private let lock = NSLock()
+        private var queuedResults: [Result<SessionManifestDTO, AppServiceError>]
+        private(set) var loadCount = 0
+
+        init(queuedResults: [Result<SessionManifestDTO, AppServiceError>]) {
+            self.queuedResults = queuedResults
+        }
+
+        func loadManifest(at _: URL) throws -> SessionManifestDTO {
+            lock.lock()
+            defer { lock.unlock() }
+            loadCount += 1
+            guard !queuedResults.isEmpty else {
+                throw AppServiceError(
+                    code: .artifactMissing,
+                    userMessage: "manifest missing",
+                    remediation: "retry"
+                )
+            }
+            let result: Result<SessionManifestDTO, AppServiceError>
+            if queuedResults.count > 1 {
+                result = queuedResults.removeFirst()
+            } else {
+                result = queuedResults[0]
+            }
+            switch result {
+            case .success(let manifest):
+                return manifest
+            case .failure(let error):
+                throw error
+            }
+        }
+
+        func observedLoadCount() -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return loadCount
+        }
+    }
+
+    private final class DeterministicClock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var current: Date
+        private var sleepCallCount = 0
+
+        init(start: Date = Date(timeIntervalSince1970: 0)) {
+            current = start
+        }
+
+        func now() -> Date {
+            lock.lock()
+            defer { lock.unlock() }
+            return current
+        }
+
+        func sleep(_ nanoseconds: UInt64) {
+            lock.lock()
+            sleepCallCount += 1
+            current = current.addingTimeInterval(TimeInterval(nanoseconds) / 1_000_000_000)
+            lock.unlock()
+        }
+
+        func observedSleepCallCount() -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return sleepCallCount
+        }
+    }
+
     private final class StubOnboardingCompletionStore: OnboardingCompletionStore {
         private let completed: Bool
 
@@ -530,6 +635,157 @@ final class RecorditAppTests: XCTestCase {
         let stopCount = await runtimeService.stopInvocationCount()
         XCTAssertEqual(startCount, 1)
         XCTAssertEqual(stopCount, 1)
+    }
+
+    @MainActor
+    func testRuntimeViewModelFinalizationPendingStatusUsesBoundedPollingBeforeCompletion() async {
+        let runtimeService = ImmediateRuntimeService()
+        let manifestService = SequencedManifestService(
+            queuedResults: [
+                .success(fixtureManifest(status: "pending")),
+                .success(fixtureManifest(status: "pending")),
+                .success(fixtureManifest(status: "ok")),
+            ]
+        )
+        let clock = DeterministicClock()
+        let viewModel = RuntimeViewModel(
+            runtimeService: runtimeService,
+            manifestService: manifestService,
+            modelService: StaticModelService(),
+            finalizationTimeoutSeconds: 1,
+            finalizationPollIntervalNanoseconds: 100_000_000,
+            now: { clock.now() },
+            sleep: { nanoseconds in
+                clock.sleep(nanoseconds)
+            }
+        )
+
+        let outputRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("recordit-bounded-finalization-\(UUID().uuidString)", isDirectory: true)
+        await viewModel.startLive(outputRoot: outputRoot, explicitModelPath: nil)
+        await viewModel.stopCurrentRun()
+
+        XCTAssertEqual(viewModel.state, .completed)
+        XCTAssertEqual(clock.observedSleepCallCount(), 2, "pending manifests must consume bounded poll intervals before terminal completion")
+        XCTAssertGreaterThanOrEqual(manifestService.observedLoadCount(), 3)
+        let stopCount = await runtimeService.stopInvocations
+        XCTAssertEqual(stopCount, 1)
+    }
+
+    @MainActor
+    func testRuntimeViewModelStopFinalizationTimeoutWithoutArtifactsMapsToEmptyRootOutcome() async {
+        let runtimeService = ImmediateRuntimeService()
+        let manifestService = SequencedManifestService(
+            queuedResults: [
+                .failure(
+                    AppServiceError(
+                        code: .artifactMissing,
+                        userMessage: "manifest missing",
+                        remediation: "retry"
+                    )
+                ),
+            ]
+        )
+        let clock = DeterministicClock()
+        let viewModel = RuntimeViewModel(
+            runtimeService: runtimeService,
+            manifestService: manifestService,
+            modelService: StaticModelService(),
+            finalizationTimeoutSeconds: 0.5,
+            finalizationPollIntervalNanoseconds: 100_000_000,
+            now: { clock.now() },
+            sleep: { nanoseconds in
+                clock.sleep(nanoseconds)
+            }
+        )
+
+        let outputRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("recordit-finalize-timeout-empty-\(UUID().uuidString)", isDirectory: true)
+        await viewModel.startLive(outputRoot: outputRoot, explicitModelPath: nil)
+        await viewModel.stopCurrentRun()
+
+        guard case let .failed(error) = viewModel.state else {
+            XCTFail("Expected stop finalization timeout to enter failed state")
+            return
+        }
+        XCTAssertEqual(error.code, .timeout)
+        XCTAssertEqual(viewModel.suggestedRecoveryActions, [.startNewSession])
+        XCTAssertTrue(error.debugDetail?.contains("timeout_seconds=0.5") == true)
+        XCTAssertTrue(error.debugDetail?.contains("manifest_exists=false") == true)
+
+        guard let context = viewModel.interruptionRecoveryContext else {
+            XCTFail("Expected timeout failure to publish interruption recovery context")
+            return
+        }
+        XCTAssertEqual(context.outcomeClassification, .emptyRoot)
+        XCTAssertEqual(context.outcomeCode, .emptySessionRoot)
+        XCTAssertEqual(context.outcomeDiagnostics["outcome_code"], SessionOutcomeCode.emptySessionRoot.rawValue)
+        XCTAssertGreaterThanOrEqual(clock.observedSleepCallCount(), 4, "timeout path should consume bounded wait budget before failure")
+    }
+
+    @MainActor
+    func testRuntimeViewModelFailedManifestMapsToCanonicalFinalizedFailureDiagnostics() async {
+        let runtimeService = ImmediateRuntimeService()
+        let viewModel = RuntimeViewModel(
+            runtimeService: runtimeService,
+            manifestService: StaticManifestService(manifest: fixtureManifest(status: "failed")),
+            modelService: StaticModelService(),
+            finalizationTimeoutSeconds: 1,
+            finalizationPollIntervalNanoseconds: 100_000_000
+        )
+
+        let outputRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("recordit-finalized-failure-\(UUID().uuidString)", isDirectory: true)
+        await viewModel.startLive(outputRoot: outputRoot, explicitModelPath: nil)
+        await viewModel.stopCurrentRun()
+
+        guard case let .failed(error) = viewModel.state else {
+            XCTFail("Expected failed manifest status to map to failure state")
+            return
+        }
+        XCTAssertEqual(error.code, .processExitedUnexpectedly)
+        XCTAssertEqual(viewModel.suggestedRecoveryActions, [.openSessionArtifacts, .startNewSession])
+        XCTAssertEqual(viewModel.interruptionRecoveryContext?.outcomeClassification, .finalizedFailure)
+        XCTAssertEqual(viewModel.interruptionRecoveryContext?.outcomeCode, .finalizedFailure)
+        XCTAssertEqual(
+            viewModel.interruptionRecoveryContext?.outcomeDiagnostics["manifest_status"],
+            SessionStatus.failed.rawValue
+        )
+        XCTAssertEqual(
+            viewModel.interruptionRecoveryContext?.outcomeDiagnostics["outcome_code"],
+            SessionOutcomeCode.finalizedFailure.rawValue
+        )
+    }
+
+    @MainActor
+    func testRuntimeViewModelTimedOutStopClearsProcessAndRejectsRetryStop() async {
+        let viewModel = RuntimeViewModel(
+            runtimeService: TimeoutStopRuntimeService(),
+            manifestService: StaticManifestService(manifest: fixtureManifest(status: "ok")),
+            modelService: StaticModelService(),
+            finalizationTimeoutSeconds: 1,
+            finalizationPollIntervalNanoseconds: 100_000_000
+        )
+
+        let outputRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("recordit-stop-timeout-\(UUID().uuidString)", isDirectory: true)
+        await viewModel.startLive(outputRoot: outputRoot, explicitModelPath: nil)
+        await viewModel.stopCurrentRun()
+
+        guard case let .failed(error) = viewModel.state else {
+            XCTFail("Expected runtime stop timeout to enter failed state")
+            return
+        }
+        XCTAssertEqual(error.code, .timeout)
+        XCTAssertFalse(viewModel.suggestedRecoveryActions.contains(.retryStop))
+        XCTAssertTrue(viewModel.suggestedRecoveryActions.contains(.openSessionArtifacts))
+
+        await viewModel.retryStopAfterFailure()
+        XCTAssertEqual(viewModel.lastRejectedActionError?.code, .invalidInput)
+        XCTAssertEqual(
+            viewModel.lastRejectedActionError?.debugDetail,
+            "action=retryStopAfterFailure, state=failed"
+        )
     }
 
     @MainActor
