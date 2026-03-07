@@ -23,6 +23,37 @@ def write_csv(path: Path, header: list[str], rows: list[list[str]]) -> None:
 
 
 class GateCoverageCertificationTests(unittest.TestCase):
+    def _write_evidence_root(self, root: Path, malformed: bool) -> None:
+        root.mkdir(parents=True, exist_ok=True)
+        logs = root / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "phase.log").write_text("phase-log\n", encoding="utf-8")
+
+        if malformed:
+            (root / "status.txt").write_text("status=pass\n", encoding="utf-8")
+            (root / "summary.csv").write_text("key,value\nstatus,pass\n", encoding="utf-8")
+            (root / "evidence_contract.json").write_text("{\"phases\": []}\n", encoding="utf-8")
+            return
+
+        (root / "status.txt").write_text("status=pass\nscenario_id=nm\n", encoding="utf-8")
+        (root / "summary.csv").write_text(
+            "scenario_id,lane_type,phase_id,required,status,exit_classification,started_at_utc,ended_at_utc,log_path,primary_artifact\n"
+            "nm,packaged-e2e,phase_a,true,pass,success,2026-03-07T00:00:00Z,2026-03-07T00:00:01Z,logs/phase.log,artifacts/a.txt\n",
+            encoding="utf-8",
+        )
+        (root / "summary.json").write_text("{\"overall_status\":\"pass\"}\n", encoding="utf-8")
+        (root / "paths.env").write_text("EVIDENCE_ROOT=/tmp/example\n", encoding="utf-8")
+        (root / "evidence_contract.json").write_text(
+            json.dumps(
+                {
+                    "contract_name": "recordit-e2e-evidence",
+                    "phases": [{"phase_id": "phase_a", "status": "pass"}],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
     def _run_gate(
         self,
         downstream_rows: list[list[str]],
@@ -31,6 +62,7 @@ class GateCoverageCertificationTests(unittest.TestCase):
         anti_bypass_exit: int,
         bead_statuses: dict[str, str],
         required_beads: str,
+        required_evidence_layouts: dict[str, str] | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], dict, list[list[str]], list[str]]:
         with tempfile.TemporaryDirectory(prefix="gate_coverage_cert_") as tmp:
             root = Path(tmp)
@@ -41,6 +73,7 @@ class GateCoverageCertificationTests(unittest.TestCase):
             summary_csv = root / "summary.csv"
             status_json = root / "status.json"
             status_txt = root / "status.txt"
+            required_root_specs: list[str] = []
 
             write_csv(
                 downstream_csv,
@@ -56,33 +89,44 @@ class GateCoverageCertificationTests(unittest.TestCase):
             anti_json.write_text(json.dumps(anti_bypass_payload), encoding="utf-8")
             bead_json.write_text(json.dumps(bead_statuses), encoding="utf-8")
 
-            proc = subprocess.run(
-                [
-                    "python3",
-                    str(SCRIPT),
-                    "--downstream-matrix-csv",
-                    str(downstream_csv),
-                    "--critical-matrix-csv",
-                    str(critical_csv),
-                    "--anti-bypass-status-json",
-                    str(anti_json),
-                    "--anti-bypass-exit-code",
-                    str(anti_bypass_exit),
-                    "--required-beads",
-                    required_beads,
-                    "--bead-status-json",
-                    str(bead_json),
-                    "--summary-csv",
-                    str(summary_csv),
-                    "--status-json",
-                    str(status_json),
-                    "--status-txt",
-                    str(status_txt),
-                ],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
+            if required_evidence_layouts:
+                for lane_id, mode in required_evidence_layouts.items():
+                    evidence_root = root / f"evidence_{lane_id}"
+                    if mode == "valid":
+                        self._write_evidence_root(evidence_root, malformed=False)
+                    elif mode == "malformed":
+                        self._write_evidence_root(evidence_root, malformed=True)
+                    elif mode == "missing":
+                        pass
+                    else:
+                        raise ValueError(f"unknown evidence mode: {mode}")
+                    required_root_specs.append(f"{lane_id}={evidence_root}")
+            cmd = [
+                "python3",
+                str(SCRIPT),
+                "--downstream-matrix-csv",
+                str(downstream_csv),
+                "--critical-matrix-csv",
+                str(critical_csv),
+                "--anti-bypass-status-json",
+                str(anti_json),
+                "--anti-bypass-exit-code",
+                str(anti_bypass_exit),
+                "--required-beads",
+                required_beads,
+                "--bead-status-json",
+                str(bead_json),
+                "--summary-csv",
+                str(summary_csv),
+                "--status-json",
+                str(status_json),
+                "--status-txt",
+                str(status_txt),
+            ]
+            for spec in required_root_specs:
+                cmd.extend(["--required-evidence-root", spec])
+
+            proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
 
             payload = json.loads(status_json.read_text(encoding="utf-8"))
             with summary_csv.open(encoding="utf-8", newline="") as handle:
@@ -155,6 +199,36 @@ class GateCoverageCertificationTests(unittest.TestCase):
         self.assertEqual(payload["verdict"], "false")
         self.assertFalse(payload["certifying_claim_allowed"])
         self.assertTrue(payload["open_required_beads"])
+
+    def test_false_verdict_when_required_evidence_root_is_missing(self) -> None:
+        proc, payload, _, _ = self._run_gate(
+            downstream_rows=[["packaged-local-app-path", "covered", "", ""]],
+            critical_rows=[["dmg-install-open", "covered", "", ""]],
+            anti_bypass_payload={"gate_pass": True, "violation_count": 0, "violations": []},
+            anti_bypass_exit=0,
+            bead_statuses={"bd-tr8z": "closed"},
+            required_beads="bd-tr8z",
+            required_evidence_layouts={"nm06": "missing"},
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(payload["verdict"], "false")
+        self.assertIn("required_evidence_missing_or_malformed", payload["hard_blockers"])
+
+    def test_false_verdict_when_required_evidence_root_is_malformed(self) -> None:
+        proc, payload, _, _ = self._run_gate(
+            downstream_rows=[["packaged-local-app-path", "covered", "", ""]],
+            critical_rows=[["dmg-install-open", "covered", "", ""]],
+            anti_bypass_payload={"gate_pass": True, "violation_count": 0, "violations": []},
+            anti_bypass_exit=0,
+            bead_statuses={"bd-tr8z": "closed"},
+            required_beads="bd-tr8z",
+            required_evidence_layouts={"nm07": "malformed"},
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(payload["verdict"], "false")
+        evidence = payload["required_evidence"]
+        self.assertTrue(evidence)
+        self.assertFalse(evidence[0]["valid"])
 
 
 if __name__ == "__main__":
