@@ -272,6 +272,8 @@ Key packaged live checks:
 - `recordit_launch_semantics_ok=true`: default packaged launch plan resolves to `dist/Recordit.app` via `run-recordit-app`
 - `runtime_first_stable_emit_ok=true`: first stable transcript evidence is present during active runtime
 - `runtime_transcript_surface_ok=true`: manifest/JSONL transcript surfaces are populated
+- `runtime_manifest_out_wav_match_ok=true`: manifest `session_summary.artifacts.out_wav` matches the canonical runtime `out_wav` path
+- `runtime_manifest_out_jsonl_match_ok=true`: manifest `session_summary.artifacts.out_jsonl` matches the canonical runtime JSONL path
 - `runtime_terminal_live_mode_ok=true`: terminal contract stayed in live mode without replay fallback
 - `gate_pass=true`: packaged live-stream operator path satisfies the current acceptance bar
 
@@ -283,27 +285,6 @@ Post-implementation verification checklist and evidence index: `docs/post-implem
 make create-recordit-dmg
 ```
 Builds `dist/Recordit.dmg` from `dist/Recordit.app` and stages an `Applications` alias/symlink in the DMG root so install UX is explicit.
-
-### Notarize + Staple + Gatekeeper Assess (Release Candidate DMG)
-```bash
-NOTARY_KEYCHAIN_PROFILE=recordit-notary \
-scripts/notarize_recordit_dmg.sh --dmg dist/Recordit.dmg
-```
-Runs the release-finalization lane for the distributable DMG artifact:
-- `xcrun notarytool submit --wait`
-- `xcrun notarytool log`
-- `xcrun stapler staple`
-- `xcrun stapler validate`
-- `spctl --assess --type open --context context:primary-signature --verbose=4`
-
-Default retained evidence root:
-- `artifacts/releases/ga/<timestamp>/summary.csv`
-- `artifacts/releases/ga/<timestamp>/summary.json`
-- `artifacts/releases/ga/<timestamp>/status.txt`
-- `artifacts/releases/ga/<timestamp>/notary/notary_submit.json`
-- `artifacts/releases/ga/<timestamp>/notary/notary_log.json`
-- `artifacts/releases/ga/<timestamp>/notary/failure_signatures.json`
-- `artifacts/releases/ga/<timestamp>/logs/*.log`
 
 ### Inspect Release Artifacts (Xcode + dist + DMG evidence bundle)
 ```bash

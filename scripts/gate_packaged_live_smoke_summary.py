@@ -250,6 +250,8 @@ def main() -> None:
     if not isinstance(session_artifacts, dict):
         session_artifacts = {}
     manifest_jsonl_path = Path(str(runtime_manifest.get("jsonl_path", "")))
+    manifest_out_wav_path = Path(str(session_artifacts.get("out_wav", "")))
+    manifest_out_jsonl_path = Path(str(session_artifacts.get("out_jsonl", "")))
     manifest_out_manifest_path = Path(str(session_artifacts.get("out_manifest", "")))
     artifact_root_ok = all(
         [
@@ -258,10 +260,14 @@ def main() -> None:
             path_within_root(args.runtime_jsonl, args.expected_artifact_root),
             path_within_root(out_wav, args.expected_artifact_root),
             path_within_root(manifest_jsonl_path, args.expected_artifact_root),
+            path_within_root(manifest_out_wav_path, args.expected_artifact_root),
+            path_within_root(manifest_out_jsonl_path, args.expected_artifact_root),
             path_within_root(manifest_out_manifest_path, args.expected_artifact_root),
         ]
     )
     manifest_jsonl_match_ok = manifest_jsonl_path == args.runtime_jsonl
+    manifest_out_wav_match_ok = manifest_out_wav_path == out_wav
+    manifest_out_jsonl_match_ok = manifest_out_jsonl_path == args.runtime_jsonl
     manifest_out_manifest_match_ok = manifest_out_manifest_path == args.runtime_manifest
 
     event_counts = runtime_manifest.get("event_counts")
@@ -310,6 +316,8 @@ def main() -> None:
             degradation_surface_ok,
             artifact_root_ok,
             manifest_jsonl_match_ok,
+            manifest_out_wav_match_ok,
+            manifest_out_jsonl_match_ok,
             manifest_out_manifest_match_ok,
             transcript_surface_ok,
         ]
@@ -386,6 +394,12 @@ def main() -> None:
         writer.writerow(["runtime_degradation_surface_ok", bool_text(degradation_surface_ok)])
         writer.writerow(["runtime_manifest_jsonl_path", str(manifest_jsonl_path)])
         writer.writerow(["runtime_manifest_jsonl_match_ok", bool_text(manifest_jsonl_match_ok)])
+        writer.writerow(["runtime_manifest_out_wav_path", str(manifest_out_wav_path)])
+        writer.writerow(["runtime_manifest_out_wav_match_ok", bool_text(manifest_out_wav_match_ok)])
+        writer.writerow(["runtime_manifest_out_jsonl_path", str(manifest_out_jsonl_path)])
+        writer.writerow(
+            ["runtime_manifest_out_jsonl_match_ok", bool_text(manifest_out_jsonl_match_ok)]
+        )
         writer.writerow(["runtime_manifest_out_manifest_path", str(manifest_out_manifest_path)])
         writer.writerow(
             ["runtime_manifest_out_manifest_match_ok", bool_text(manifest_out_manifest_match_ok)]
