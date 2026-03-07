@@ -730,8 +730,10 @@ public struct FileSystemSessionExportService: SessionExportService {
 
         let trustNoticeCount = parseTrustNoticeCount(payload)
         let summary = payload["session_summary"] as? [String: Any]
-        let rawStatus = ((summary?["session_status"] as? String) ?? (payload["status"] as? String))
-            ?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawStatusValue = (summary?["session_status"] as? String)
+            ?? (payload["status"] as? String)
+        let rawStatus = rawStatusValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         guard let rawStatus, let status = SessionStatus(rawValue: rawStatus) else {
             return nil
