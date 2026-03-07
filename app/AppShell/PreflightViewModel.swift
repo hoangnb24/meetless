@@ -110,8 +110,9 @@ public final class PreflightViewModel {
         warningAcknowledged = false
         do {
             let envelope = try runner.runLivePreflight()
-            // Production preflight must reflect helper-runtime truth. Keep native
-            // permission normalization only for deterministic UI automation fixtures.
+            // Production preflight must reflect helper-runtime truth. In UI-test
+            // mode we may enrich permission diagnostics from fixture overrides, but
+            // we must never downgrade a helper-reported blocker into a pass.
             let effectiveEnvelope: PreflightManifestEnvelopeDTO
             if ProcessInfo.processInfo.environment["RECORDIT_UI_TEST_MODE"] == "1" {
                 effectiveEnvelope = Self.normalizePermissionChecks(
@@ -155,9 +156,9 @@ public final class PreflightViewModel {
                 normalizedChecks.append(
                     PreflightCheckDTO(
                         id: check.id,
-                        status: .pass,
-                        detail: "App-level Screen Recording permission is granted. Runtime check reported: \(check.detail)",
-                        remediation: "If runtime capture still fails, quit and reopen Recordit, then re-run preflight."
+                        status: .fail,
+                        detail: "App-level Screen Recording permission is granted, but runtime capture still failed: \(check.detail)",
+                        remediation: check.remediation ?? "If runtime capture still fails, quit and reopen Recordit, then re-run preflight."
                     )
                 )
                 continue

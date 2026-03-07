@@ -17,6 +17,8 @@ public struct PendingSessionNotificationIntent: Equatable, Sendable {
     public var title: String
     public var detail: String
     public var deepLinkSessionID: String
+    public var outcomeCode: SessionOutcomeCode?
+    public var outcomeDiagnostics: [String: String]
     public var primaryAction: PendingSessionNotificationAction
     public var secondaryAction: PendingSessionNotificationAction?
 
@@ -26,6 +28,8 @@ public struct PendingSessionNotificationIntent: Equatable, Sendable {
         title: String,
         detail: String,
         deepLinkSessionID: String,
+        outcomeCode: SessionOutcomeCode? = nil,
+        outcomeDiagnostics: [String: String] = [:],
         primaryAction: PendingSessionNotificationAction,
         secondaryAction: PendingSessionNotificationAction? = nil
     ) {
@@ -34,6 +38,8 @@ public struct PendingSessionNotificationIntent: Equatable, Sendable {
         self.title = title
         self.detail = detail
         self.deepLinkSessionID = deepLinkSessionID
+        self.outcomeCode = outcomeCode
+        self.outcomeDiagnostics = outcomeDiagnostics
         self.primaryAction = primaryAction
         self.secondaryAction = secondaryAction
     }
@@ -72,6 +78,8 @@ public struct PendingSessionNotificationService: PendingSessionNotificationDetec
                         title: "Deferred session is ready.",
                         detail: "Session \(session.sessionID) can now be transcribed.",
                         deepLinkSessionID: session.sessionID,
+                        outcomeCode: session.outcomeCode,
+                        outcomeDiagnostics: session.outcomeDiagnostics,
                         primaryAction: .openSessionDetail(sessionID: session.sessionID)
                     )
                 )
@@ -86,6 +94,8 @@ public struct PendingSessionNotificationService: PendingSessionNotificationDetec
                         title: "Deferred transcription completed.",
                         detail: "Session \(session.sessionID) is now finalized.",
                         deepLinkSessionID: session.sessionID,
+                        outcomeCode: session.outcomeCode,
+                        outcomeDiagnostics: session.outcomeDiagnostics,
                         primaryAction: .openSessionDetail(sessionID: session.sessionID)
                     )
                 )
@@ -100,6 +110,8 @@ public struct PendingSessionNotificationService: PendingSessionNotificationDetec
                         title: "Deferred transcription failed.",
                         detail: "Session \(session.sessionID) needs a retry.",
                         deepLinkSessionID: session.sessionID,
+                        outcomeCode: session.outcomeCode,
+                        outcomeDiagnostics: session.outcomeDiagnostics,
                         primaryAction: .retryDeferredTranscription(sessionID: session.sessionID),
                         secondaryAction: .openSessionDetail(sessionID: session.sessionID)
                     )
@@ -117,6 +129,7 @@ public struct PendingSessionNotificationService: PendingSessionNotificationDetec
         prior.pendingTranscriptionState != .readyToTranscribe
             && current.pendingTranscriptionState == .readyToTranscribe
             && current.readyToTranscribe
+            && current.outcomeCode == .partialArtifactSession
     }
 
     private func transitionedToCompleted(
@@ -127,7 +140,7 @@ public struct PendingSessionNotificationService: PendingSessionNotificationDetec
             return false
         }
         return current.pendingTranscriptionState == nil
-            && (current.status == .ok || current.status == .degraded)
+            && (current.outcomeCode == .finalizedSuccess || current.outcomeCode == .finalizedDegradedSuccess)
     }
 
     private func transitionedToFailed(
@@ -135,6 +148,10 @@ public struct PendingSessionNotificationService: PendingSessionNotificationDetec
         current: SessionSummaryDTO
     ) -> Bool {
         prior.pendingTranscriptionState != .failed
-            && (current.pendingTranscriptionState == .failed || current.status == .failed)
+            && (
+                current.pendingTranscriptionState == .failed
+                    || current.outcomeCode == .finalizedFailure
+                    || current.status == .failed
+            )
     }
 }

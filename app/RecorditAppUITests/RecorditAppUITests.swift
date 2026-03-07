@@ -176,6 +176,121 @@ final class RecorditAppUITests: XCTestCase {
         XCTAssertFalse(nextButton.isEnabled)
     }
 
+
+    func testBackendRuntimeWarningRequiresAcknowledgementWithoutOfferingFallback() {
+        let app = launchApp(
+            preflightScenario: "backend_runtime_warning",
+            nativeScreenPermissionGranted: true,
+            nativeMicrophonePermissionGranted: true
+        )
+
+        XCTAssertTrue(app.staticTexts["onboarding_title"].waitForExistence(timeout: 5))
+        let nextButton = app.buttons["onboarding_next"]
+        XCTAssertTrue(nextButton.waitForExistence(timeout: 5))
+
+        advanceOnboardingStep(app, nextButton: nextButton, expectedStepTitle: "Permissions")
+        ensurePermissionsStep(app)
+        let runPermissionChecksButton = app.buttons["onboarding_run_permission_checks"]
+        XCTAssertTrue(runPermissionChecksButton.waitForExistence(timeout: 5))
+        activate(runPermissionChecksButton)
+        XCTAssertTrue(waitForEnabled(nextButton, timeout: 8))
+
+        advanceOnboardingStep(app, nextButton: nextButton, expectedStepTitle: "Model Setup")
+        let validateModelSetupButton = app.buttons["onboarding_validate_model_setup"]
+        XCTAssertTrue(validateModelSetupButton.waitForExistence(timeout: 5))
+        activate(validateModelSetupButton)
+
+        let runPreflightButton = app.buttons["onboarding_run_preflight"]
+        XCTAssertTrue(runPreflightButton.waitForExistence(timeout: 5))
+        activate(runPreflightButton)
+
+        XCTAssertTrue(app.staticTexts["preflight_row_backend_runtime_warn"].waitForExistence(timeout: 5))
+        XCTAssertFalse(nextButton.isEnabled)
+        XCTAssertFalse(app.buttons["onboarding_open_main_runtime"].exists)
+
+        let acknowledgeWarningsButton = app.buttons["onboarding_ack_warnings"]
+        XCTAssertTrue(acknowledgeWarningsButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForEnabled(acknowledgeWarningsButton, timeout: 5))
+        activate(acknowledgeWarningsButton)
+
+        XCTAssertTrue(waitForEnabled(nextButton, timeout: 8))
+        XCTAssertFalse(app.buttons["onboarding_open_main_runtime"].exists)
+
+        advanceOnboardingStep(app, nextButton: nextButton, expectedStepTitle: "Ready")
+        let completeOnboardingButton = app.buttons["onboarding_complete"]
+        XCTAssertTrue(completeOnboardingButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForEnabled(completeOnboardingButton, timeout: 5))
+        XCTAssertFalse(app.buttons["onboarding_open_main_runtime"].exists)
+        activate(completeOnboardingButton)
+
+        let runtimeStatus = app.staticTexts["runtime_status"]
+        XCTAssertTrue(runtimeStatus.waitForExistence(timeout: 5))
+
+        let startButton = app.buttons["start_live_transcribe"]
+        XCTAssertTrue(startButton.waitForExistence(timeout: 5))
+        activate(startButton)
+        XCTAssertTrue(waitForLabelContains(runtimeStatus, text: "Running", timeout: 8))
+
+        let stopButton = app.buttons["stop_live_transcribe"]
+        XCTAssertTrue(stopButton.waitForExistence(timeout: 5))
+        activate(stopButton)
+        XCTAssertTrue(waitForLabelContains(runtimeStatus, text: "Completed", timeout: 10))
+        XCTAssertTrue(app.staticTexts["Session Summary"].waitForExistence(timeout: 5))
+    }
+
+
+    func testBackendRuntimeBlockOffersRecordOnlyFallback() {
+        let app = launchApp(
+            preflightScenario: "backend_runtime_blocked",
+            nativeScreenPermissionGranted: true,
+            nativeMicrophonePermissionGranted: true,
+            defaultRuntimeMode: "record_only"
+        )
+
+        XCTAssertTrue(app.staticTexts["onboarding_title"].waitForExistence(timeout: 5))
+        let nextButton = app.buttons["onboarding_next"]
+        XCTAssertTrue(nextButton.waitForExistence(timeout: 5))
+
+        advanceOnboardingStep(app, nextButton: nextButton, expectedStepTitle: "Permissions")
+        ensurePermissionsStep(app)
+        let runPermissionChecksButton = app.buttons["onboarding_run_permission_checks"]
+        XCTAssertTrue(runPermissionChecksButton.waitForExistence(timeout: 5))
+        activate(runPermissionChecksButton)
+        XCTAssertTrue(waitForEnabled(nextButton, timeout: 8))
+
+        advanceOnboardingStep(app, nextButton: nextButton, expectedStepTitle: "Model Setup")
+        let validateModelSetupButton = app.buttons["onboarding_validate_model_setup"]
+        XCTAssertTrue(validateModelSetupButton.waitForExistence(timeout: 5))
+        activate(validateModelSetupButton)
+
+        let runPreflightButton = app.buttons["onboarding_run_preflight"]
+        XCTAssertTrue(runPreflightButton.waitForExistence(timeout: 5))
+        activate(runPreflightButton)
+
+        XCTAssertTrue(app.staticTexts["preflight_row_backend_runtime_fail"].waitForExistence(timeout: 5))
+        XCTAssertFalse(nextButton.isEnabled)
+
+        let openMainRuntimeButton = app.buttons["onboarding_open_main_runtime"]
+        XCTAssertTrue(openMainRuntimeButton.waitForExistence(timeout: 5))
+        activate(openMainRuntimeButton)
+
+        let runtimeStatus = app.staticTexts["runtime_status"]
+        XCTAssertTrue(runtimeStatus.waitForExistence(timeout: 5))
+
+        let startButton = app.buttons["start_live_transcribe"]
+        XCTAssertTrue(startButton.waitForExistence(timeout: 5))
+        activate(startButton)
+        XCTAssertTrue(waitForLabelContains(runtimeStatus, text: "Running", timeout: 8))
+        XCTAssertTrue(waitForStaticTextContains(app, text: "record_only", timeout: 5))
+
+        let stopButton = app.buttons["stop_live_transcribe"]
+        XCTAssertTrue(stopButton.waitForExistence(timeout: 5))
+        activate(stopButton)
+        XCTAssertTrue(waitForLabelContains(runtimeStatus, text: "Completed", timeout: 10))
+        XCTAssertTrue(app.staticTexts["Session Summary"].waitForExistence(timeout: 5))
+    }
+
+
     func testModelPathBlockKeepsLiveOnboardingBlockedButRecordOnlyStillWorks() {
         let app = launchApp(
             preflightScenario: "model_path_blocked",
@@ -215,6 +330,7 @@ final class RecorditAppUITests: XCTestCase {
         XCTAssertTrue(startButton.waitForExistence(timeout: 5))
         activate(startButton)
         XCTAssertTrue(waitForLabelContains(runtimeStatus, text: "Running", timeout: 8))
+        XCTAssertTrue(waitForStaticTextContains(app, text: "record_only", timeout: 5))
 
         let stopButton = app.buttons["stop_live_transcribe"]
         XCTAssertTrue(stopButton.waitForExistence(timeout: 5))
@@ -227,7 +343,8 @@ final class RecorditAppUITests: XCTestCase {
         let app = launchApp(
             preflightScenario: "screen_runtime_failure",
             nativeScreenPermissionGranted: true,
-            nativeMicrophonePermissionGranted: true
+            nativeMicrophonePermissionGranted: true,
+            defaultRuntimeMode: "record_only"
         )
 
         XCTAssertTrue(app.staticTexts["onboarding_title"].waitForExistence(timeout: 5))
@@ -246,6 +363,7 @@ final class RecorditAppUITests: XCTestCase {
         XCTAssertFalse(app.buttons["onboarding_open_screen_settings"].exists)
         XCTAssertFalse(app.buttons["onboarding_open_microphone_settings"].exists)
         XCTAssertFalse(app.buttons["onboarding_open_main_runtime"].exists)
+        XCTAssertFalse(app.buttons["start_live_transcribe"].exists)
         XCTAssertFalse(nextButton.isEnabled)
     }
 
@@ -253,7 +371,8 @@ final class RecorditAppUITests: XCTestCase {
         let app = launchApp(
             preflightScenario: "microphone_runtime_failure",
             nativeScreenPermissionGranted: true,
-            nativeMicrophonePermissionGranted: true
+            nativeMicrophonePermissionGranted: true,
+            defaultRuntimeMode: "record_only"
         )
 
         XCTAssertTrue(app.staticTexts["onboarding_title"].waitForExistence(timeout: 5))
@@ -272,6 +391,7 @@ final class RecorditAppUITests: XCTestCase {
         XCTAssertFalse(app.buttons["onboarding_open_screen_settings"].exists)
         XCTAssertFalse(app.buttons["onboarding_open_microphone_settings"].exists)
         XCTAssertFalse(app.buttons["onboarding_open_main_runtime"].exists)
+        XCTAssertFalse(app.buttons["start_live_transcribe"].exists)
         XCTAssertFalse(nextButton.isEnabled)
     }
 
@@ -279,7 +399,8 @@ final class RecorditAppUITests: XCTestCase {
         let app = launchApp(
             preflightScenario: "active_display_unavailable",
             nativeScreenPermissionGranted: true,
-            nativeMicrophonePermissionGranted: true
+            nativeMicrophonePermissionGranted: true,
+            defaultRuntimeMode: "record_only"
         )
 
         XCTAssertTrue(app.staticTexts["onboarding_title"].waitForExistence(timeout: 5))
@@ -298,6 +419,7 @@ final class RecorditAppUITests: XCTestCase {
         XCTAssertFalse(app.buttons["onboarding_open_screen_settings"].exists)
         XCTAssertFalse(app.buttons["onboarding_open_microphone_settings"].exists)
         XCTAssertFalse(app.buttons["onboarding_open_main_runtime"].exists)
+        XCTAssertFalse(app.buttons["start_live_transcribe"].exists)
         XCTAssertFalse(nextButton.isEnabled)
     }
 
@@ -396,6 +518,16 @@ final class RecorditAppUITests: XCTestCase {
         )
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
         return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func waitForStaticTextContains(_ app: XCUIApplication, text: String, timeout: TimeInterval) -> Bool {
+        let predicate = NSPredicate(
+            format: "(label CONTAINS[c] %@) OR (value CONTAINS[c] %@)",
+            text,
+            text
+        )
+        let matchingText = app.staticTexts.containing(predicate).firstMatch
+        return matchingText.waitForExistence(timeout: timeout)
     }
 
     private func textValue(for element: XCUIElement) -> String {

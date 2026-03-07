@@ -249,7 +249,9 @@ public struct PreflightGatingPolicy {
                     blockingFailures.append(mapped)
                 }
             case .warnRequiresAcknowledgement:
-                if check.status != .pass {
+                if check.status == .fail, domain == .backendRuntime {
+                    blockingFailures.append(mapped)
+                } else if check.status != .pass {
                     warningContinuations.append(mapped)
                 }
             case .informational:

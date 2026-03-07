@@ -44,7 +44,13 @@ fn temp_dir(prefix: &str) -> PathBuf {
 fn contains_active_lifecycle(jsonl_path: &Path) -> bool {
     fs::read_to_string(jsonl_path)
         .ok()
-        .map(|contents| contents.contains("\"event_type\":\"lifecycle_phase\"") && contents.contains("\"phase\":\"active\""))
+        .map(|contents| runtime_events_from_jsonl(&contents))
+        .map(|events| {
+            events.iter().any(|value| {
+                value.get("event_type").and_then(Value::as_str) == Some("lifecycle_phase")
+                    && value.get("phase").and_then(Value::as_str) == Some("active")
+            })
+        })
         .unwrap_or(false)
 }
 

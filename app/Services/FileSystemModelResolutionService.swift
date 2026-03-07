@@ -67,8 +67,8 @@ public struct FileSystemModelResolutionService: ModelResolutionService {
             return (absolutize(URL(fileURLWithPath: envValue)), "RECORDIT_ASR_MODEL")
         }
 
-        for defaultPath in defaultCandidates(for: backend) {
-            let absolute = absolutize(defaultPath)
+        let attemptedDefaults = defaultCandidates(for: backend).map(absolutize)
+        for absolute in attemptedDefaults {
             if FileManager.default.fileExists(atPath: absolute.path) {
                 return (absolute, "backend default")
             }
@@ -77,8 +77,8 @@ public struct FileSystemModelResolutionService: ModelResolutionService {
         throw AppServiceError(
             code: .modelUnavailable,
             userMessage: "No compatible local model was found.",
-            remediation: "Choose an existing model path or set RECORDIT_ASR_MODEL.",
-            debugDetail: "backend=\(backend.rawValue)"
+            remediation: missingModelRemediation(for: backend),
+            debugDetail: missingModelDebugDetail(for: backend, attemptedDefaults: attemptedDefaults)
         )
     }
 
@@ -173,6 +173,10 @@ public struct FileSystemModelResolutionService: ModelResolutionService {
             candidates.append(bundled)
         }
 
+        guard bundleResourceURL == nil else {
+            return candidates
+        }
+
         switch backend {
         case .whispercpp:
             candidates.append(contentsOf: [
@@ -209,6 +213,20 @@ public struct FileSystemModelResolutionService: ModelResolutionService {
                 )
                 .standardizedFileURL
         }
+    }
+
+    private func missingModelRemediation(for backend: BackendKind) -> String {
+        switch backend {
+        case .whispercpp:
+            return "Choose an existing model path, ensure the bundled default model exists at runtime/models/whispercpp/ggml-tiny.en.bin, or set RECORDIT_ASR_MODEL."
+        case .whisperkit:
+            return "Choose an existing model path or set RECORDIT_ASR_MODEL to the WhisperKit model directory."
+        }
+    }
+
+    private func missingModelDebugDetail(for backend: BackendKind, attemptedDefaults: [URL]) -> String {
+        let attemptedPaths = attemptedDefaults.map(\.path).joined(separator: ";")
+        return "backend=\(backend.rawValue) attempted=\(attemptedPaths)"
     }
 }
 

@@ -1865,7 +1865,10 @@ pub fn run_streaming_capture_session(
 ) -> Result<StreamingCaptureResult> {
     if let Some(fixture) = non_empty_env_path(FAKE_CAPTURE_FIXTURE_ENV) {
         let restart_count = env_u64_or_default(FAKE_CAPTURE_RESTART_COUNT_ENV, 0)?;
-        return run_fake_capture_session(config, &fixture, restart_count, sink);
+        STOP_CAPTURE_REQUESTED.store(false, Ordering::Relaxed);
+        let result = run_fake_capture_session(config, &fixture, restart_count, sink);
+        STOP_CAPTURE_REQUESTED.store(false, Ordering::Relaxed);
+        return result;
     }
 
     let duration_secs = config.duration_secs;
@@ -2619,6 +2622,98 @@ mod tests {
         let _ = fs::remove_file(output);
         let _ = fs::remove_file(fixture);
         let _ = fs::remove_file(telemetry_path);
+        let _ = fs::remove_dir(root);
+        STOP_CAPTURE_REQUESTED.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn fake_stop_marker_does_not_poison_next_streaming_fake_run() {
+        struct StopMarkerSink {
+            marker: PathBuf,
+            chunk_count: usize,
+        }
+
+        impl CaptureSink for StopMarkerSink {
+            fn on_chunk(&mut self, _chunk: CaptureChunk) -> std::result::Result<(), String> {
+                self.chunk_count += 1;
+                if self.chunk_count == 1 {
+                    fs::write(&self.marker, b"stop\n")
+                        .map_err(|err| format!("failed to write stop marker: {err}"))?;
+                }
+                Ok(())
+            }
+
+            fn on_event(&mut self, _event: CaptureEvent) -> std::result::Result<(), String> {
+                Ok(())
+            }
+        }
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "recordit-fake-capture-stop-reset-{}-{}",
+            std::process::id(),
+            stamp
+        ));
+        let fixture = root.join("fixture.wav");
+        let output_first = root.join("first.wav");
+        let output_second = root.join("second.wav");
+        let marker = root.join("session.stop.request");
+
+        fs::create_dir_all(&root).expect("temp test root should be creatable");
+        write_fixture_stereo_wav(&fixture, 200, 40);
+
+        let first_config = LiveCaptureConfig {
+            duration_secs: 1,
+            output: output_first.clone(),
+            target_rate_hz: 200,
+            mismatch_policy: SampleRateMismatchPolicy::AdaptStreamRate,
+            callback_contract_mode: CallbackContractMode::Warn,
+            stop_request_path: Some(marker.clone()),
+        };
+        let second_config = LiveCaptureConfig {
+            duration_secs: 1,
+            output: output_second.clone(),
+            target_rate_hz: 200,
+            mismatch_policy: SampleRateMismatchPolicy::AdaptStreamRate,
+            callback_contract_mode: CallbackContractMode::Warn,
+            stop_request_path: None,
+        };
+
+        let _lock = env_lock()
+            .lock()
+            .expect("fake capture env lock should not be poisoned");
+        let _fixture_env = ScopedEnvVar::set(FAKE_CAPTURE_FIXTURE_ENV, fixture.as_os_str());
+        let _restart_env = ScopedEnvVar::unset(FAKE_CAPTURE_RESTART_COUNT_ENV);
+        let _realtime_env = ScopedEnvVar::set(FAKE_CAPTURE_REALTIME_ENV, "0");
+
+        let mut stop_sink = StopMarkerSink {
+            marker: marker.clone(),
+            chunk_count: 0,
+        };
+        run_streaming_capture_session(&first_config, &mut stop_sink)
+            .expect("first fake streaming run should stop cleanly when marker appears");
+        assert!(
+            !STOP_CAPTURE_REQUESTED.load(Ordering::Relaxed),
+            "marker-driven fake stop should not leave the global stop flag set"
+        );
+
+        let mut clean_sink = RecordingSink::default();
+        let second = run_streaming_capture_session(&second_config, &mut clean_sink)
+            .expect("second fake streaming run should not inherit the prior stop request");
+        assert!(second.summary.system_audio.chunk_count > 0);
+        assert!(second.summary.microphone.chunk_count > 0);
+        assert!(clean_sink.chunks.len() >= 2, "second fake run should deliver chunk data for both channels");
+        assert_eq!(clean_sink.chunks.len() % 2, 0, "second fake run should preserve paired channel delivery");
+
+        let _ = fs::remove_file(marker);
+        let _ = fs::remove_file(output_first.clone());
+        let _ = fs::remove_file(output_second.clone());
+        let _ = fs::remove_file(fixture.clone());
+        let _ = fs::remove_file(telemetry_path_for_output(&output_first));
+        let _ = fs::remove_file(telemetry_path_for_output(&output_second));
         let _ = fs::remove_dir(root);
         STOP_CAPTURE_REQUESTED.store(false, Ordering::Relaxed);
     }

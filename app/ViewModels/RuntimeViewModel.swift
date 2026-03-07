@@ -22,27 +22,27 @@ public final class RuntimeViewModel {
         case startNewSession = "start_new_session"
     }
 
-    public enum InterruptionRecoveryClassification: String, Equatable, Sendable {
-        case emptySessionFailure = "empty_session_failure"
-        case partialArtifactFailure = "partial_artifact_failure"
-        case finalizedFailure = "finalized_failure"
-    }
-
     public struct InterruptionRecoveryContext: Equatable, Sendable {
-        public var classification: InterruptionRecoveryClassification
+        public var outcomeClassification: SessionOutcomeClassification
+        public var outcomeCode: SessionOutcomeCode
+        public var outcomeDiagnostics: [String: String]
         public var sessionRoot: URL
         public var summary: String
         public var guidance: String
         public var actions: [RecoveryAction]
 
         public init(
-            classification: InterruptionRecoveryClassification,
+            outcomeClassification: SessionOutcomeClassification,
+            outcomeCode: SessionOutcomeCode? = nil,
+            outcomeDiagnostics: [String: String] = [:],
             sessionRoot: URL,
             summary: String,
             guidance: String,
             actions: [RecoveryAction]
         ) {
-            self.classification = classification
+            self.outcomeClassification = outcomeClassification
+            self.outcomeCode = outcomeCode ?? outcomeClassification.canonicalCode(manifestStatus: nil)
+            self.outcomeDiagnostics = outcomeDiagnostics
             self.sessionRoot = sessionRoot
             self.summary = summary
             self.guidance = guidance
@@ -496,6 +496,10 @@ public final class RuntimeViewModel {
         while now() <= deadline {
             do {
                 let manifest = try manifestService.loadManifest(at: manifestPath)
+                if finalStatusMapper.mapStatus(manifest) == .pending, now() < deadline {
+                    await sleep(finalizationPollIntervalNanoseconds)
+                    continue
+                }
                 applyManifestFinalStatus(manifest, action: "stopCurrentRun.finalize")
                 return
             } catch let serviceError as AppServiceError {
@@ -533,7 +537,8 @@ public final class RuntimeViewModel {
 
         // One final read attempt reduces deadline-edge races where the manifest lands
         // right after the loop's last transient read failure.
-        if let manifest = try? manifestService.loadManifest(at: manifestPath) {
+        if let manifest = try? manifestService.loadManifest(at: manifestPath),
+           finalStatusMapper.mapStatus(manifest) != .pending {
             applyManifestFinalStatus(manifest, action: "stopCurrentRun.finalize")
             return
         }
@@ -626,6 +631,30 @@ public final class RuntimeViewModel {
         inspectSessionArtifacts(sessionRoot: sessionRoot, manifestPath: manifestPath).diagnosticSummary
     }
 
+    private func recoveryOutcomeDiagnostics(
+        snapshot: SessionArtifactSnapshot,
+        outcomeClassification: SessionOutcomeClassification,
+        manifestStatus: SessionStatus? = nil
+    ) -> [String: String] {
+        var diagnostics: [String: String] = [
+            "root_path": snapshot.sessionRoot.path,
+            "manifest_path": snapshot.manifestPath.path,
+            "jsonl_path": snapshot.jsonlPath.path,
+            "wav_path": snapshot.wavPath.path,
+            "stderr_path": snapshot.stderrPath.path,
+            "has_manifest": String(snapshot.manifestExists),
+            "has_jsonl": String(snapshot.jsonlExists),
+            "has_wav": String(snapshot.wavExists),
+            "stderr_exists": String(snapshot.stderrExists),
+            "outcome_classification": outcomeClassification.rawValue,
+            "outcome_code": outcomeClassification.canonicalCode(manifestStatus: manifestStatus).rawValue,
+        ]
+        if let manifestStatus {
+            diagnostics["manifest_status"] = manifestStatus.rawValue
+        }
+        return diagnostics
+    }
+
     private func applyManifestFinalStatus(_ manifest: SessionManifestDTO, action: String) {
         let mappedStatus = finalStatusMapper.mapStatus(manifest)
         switch mappedStatus {
@@ -646,9 +675,19 @@ public final class RuntimeViewModel {
                 recoveryActions: actions
             )
             if transitioned, let sessionRoot = activeSessionRoot {
+                let snapshot = inspectSessionArtifacts(
+                    sessionRoot: sessionRoot,
+                    manifestPath: sessionRoot.appendingPathComponent("session.manifest.json")
+                )
                 suggestedRecoveryActions = actions
                 interruptionRecoveryContext = InterruptionRecoveryContext(
-                    classification: .finalizedFailure,
+                    outcomeClassification: .finalizedFailure,
+                    outcomeCode: .finalizedFailure,
+                    outcomeDiagnostics: recoveryOutcomeDiagnostics(
+                        snapshot: snapshot,
+                        outcomeClassification: .finalizedFailure,
+                        manifestStatus: .failed
+                    ),
                     sessionRoot: sessionRoot,
                     summary: "Session finalized with a failed outcome.",
                     guidance: "Inspect the retained artifacts for the finalized failure, then start a new session once the root cause is addressed.",
@@ -769,7 +808,12 @@ public final class RuntimeViewModel {
                 error: error,
                 actions: normalizedActions,
                 context: InterruptionRecoveryContext(
-                    classification: .partialArtifactFailure,
+                    outcomeClassification: .partialArtifact,
+                    outcomeCode: .partialArtifactSession,
+                    outcomeDiagnostics: recoveryOutcomeDiagnostics(
+                        snapshot: snapshot,
+                        outcomeClassification: .partialArtifact
+                    ),
                     sessionRoot: sessionRoot,
                     summary: "Session was interrupted after partial artifacts were captured.",
                     guidance: "Use Resume to continue the interrupted session, or Safe Finalize to preserve the partial artifacts for review before retrying.",
@@ -787,7 +831,12 @@ public final class RuntimeViewModel {
             error: error,
             actions: normalizedActions,
             context: InterruptionRecoveryContext(
-                classification: .emptySessionFailure,
+                outcomeClassification: .emptyRoot,
+                outcomeCode: .emptySessionRoot,
+                outcomeDiagnostics: recoveryOutcomeDiagnostics(
+                    snapshot: snapshot,
+                    outcomeClassification: .emptyRoot
+                ),
                 sessionRoot: sessionRoot,
                 summary: "Session ended before any primary artifacts were created.",
                 guidance: snapshot.hasAnyDiagnostics

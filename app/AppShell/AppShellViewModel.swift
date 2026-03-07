@@ -139,6 +139,7 @@ public final class AppShellViewModel {
     public private(set) var onboardingGateFailure: AppServiceError?
     public private(set) var startupRuntimeReadinessReport: RuntimeBinaryReadinessReport
     public private(set) var startupRuntimeReadinessFailure: AppServiceError?
+    public private(set) var startupRuntimeSelfCheckRecord: StartupSelfCheckLogRecord?
 
     private let onboardingCompletionStore: any OnboardingCompletionStore
     private let runtimeReadinessChecker: any RuntimeBinaryReadinessChecking
@@ -151,8 +152,16 @@ public final class AppShellViewModel {
         self.onboardingCompletionStore = onboardingCompletionStore
         self.runtimeReadinessChecker = runtimeReadinessChecker
         let readinessReport = runtimeReadinessChecker.evaluateStartupReadiness()
+        let startupBlockingError = runtimeReadinessChecker.startupBlockingError(from: readinessReport)
         startupRuntimeReadinessReport = readinessReport
-        startupRuntimeReadinessFailure = runtimeReadinessChecker.startupBlockingError(from: readinessReport)
+        startupRuntimeSelfCheckRecord = Self.startupSelfCheckRecord(
+            from: readinessReport,
+            failure: startupBlockingError
+        )
+        startupRuntimeReadinessFailure = Self.enrichedStartupReadinessFailure(
+            startupBlockingError,
+            startupSelfCheckRecord: startupRuntimeSelfCheckRecord
+        )
         let resolvedFirstRun = firstRun ?? !onboardingCompletionStore.isOnboardingComplete()
         let coordinator = AppNavigationCoordinator(firstRun: resolvedFirstRun)
         self.navigationCoordinator = coordinator
@@ -200,8 +209,16 @@ public final class AppShellViewModel {
     @discardableResult
     public func refreshStartupRuntimeReadiness() -> Bool {
         let report = runtimeReadinessChecker.evaluateStartupReadiness()
+        let startupBlockingError = runtimeReadinessChecker.startupBlockingError(from: report)
         startupRuntimeReadinessReport = report
-        startupRuntimeReadinessFailure = runtimeReadinessChecker.startupBlockingError(from: report)
+        startupRuntimeSelfCheckRecord = Self.startupSelfCheckRecord(
+            from: report,
+            failure: startupBlockingError
+        )
+        startupRuntimeReadinessFailure = Self.enrichedStartupReadinessFailure(
+            startupBlockingError,
+            startupSelfCheckRecord: startupRuntimeSelfCheckRecord
+        )
         return startupRuntimeReadinessFailure == nil
     }
 
@@ -224,6 +241,44 @@ public final class AppShellViewModel {
             return nil
         }
         return sessionID
+    }
+
+    private static func enrichedStartupReadinessFailure(
+        _ failure: AppServiceError?,
+        startupSelfCheckRecord: StartupSelfCheckLogRecord?
+    ) -> AppServiceError? {
+        guard var failure else {
+            return nil
+        }
+        if failure.debugDetail?.contains("\"event_type\":\"startup_self_check\"") == true {
+            return failure
+        }
+        failure.debugDetail = startupSelfCheckRecord?.debugDetailJSONString()
+        return failure
+    }
+
+    private static func startupSelfCheckRecord(
+        from report: RuntimeBinaryReadinessReport,
+        failure: AppServiceError?
+    ) -> StartupSelfCheckLogRecord? {
+        if let record = StartupSelfCheckLogRecord.fromDebugDetailJSONString(failure?.debugDetail) {
+            return record
+        }
+        guard let failure else {
+            return nil
+        }
+        return StartupSelfCheckLogRecord.runtimeBlockedRecord(
+            runtimeReadinessReport: report,
+            blockingErrorCode: failure.code,
+            generatedAtUTC: iso8601UTC(Date())
+        )
+    }
+
+    private static func iso8601UTC(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
     }
 
     private static func preferredBlockingCheck(from preflight: PreflightViewModel) -> MappedPreflightCheck? {

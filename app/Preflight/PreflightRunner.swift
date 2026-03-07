@@ -116,6 +116,16 @@ public struct PreflightEnvelopeParser {
 
     public init() {}
 
+    public static func derivedOverallStatus(for checks: [PreflightCheckDTO]) -> PreflightStatus {
+        if checks.contains(where: { $0.status == .fail }) {
+            return .fail
+        }
+        if checks.contains(where: { $0.status == .warn }) {
+            return .warn
+        }
+        return .pass
+    }
+
     public func parse(data: Data) throws -> PreflightManifestEnvelopeDTO {
         let decoder = JSONDecoder()
         let envelope: PreflightManifestEnvelopeDTO
@@ -144,6 +154,16 @@ public struct PreflightEnvelopeParser {
                 userMessage: "Preflight schema version is not supported.",
                 remediation: "Update parser compatibility for the manifest schema version in use.",
                 debugDetail: "schema_version=\(envelope.schemaVersion)"
+            )
+        }
+
+        let derivedOverallStatus = Self.derivedOverallStatus(for: envelope.checks)
+        guard envelope.overallStatus == derivedOverallStatus else {
+            throw AppServiceError(
+                code: .manifestInvalid,
+                userMessage: "Preflight overall status does not match check statuses.",
+                remediation: "Re-run preflight and verify overall_status matches the retained check results.",
+                debugDetail: "overall_status=\(envelope.overallStatus.rawValue) derived=\(derivedOverallStatus.rawValue)"
             )
         }
         return envelope

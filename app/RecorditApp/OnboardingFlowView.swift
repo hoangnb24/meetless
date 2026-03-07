@@ -295,11 +295,13 @@ struct OnboardingFlowView: View {
 
             Spacer()
 
-            Button("Open Main Runtime") {
-                controller.send(.openMainRuntime)
+            if controller.snapshot.preflightCanOfferRecordOnlyFallback {
+                Button("Open Main Runtime") {
+                    controller.send(.openMainRuntime)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("onboarding_open_main_runtime")
             }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("onboarding_open_main_runtime")
         }
     }
 

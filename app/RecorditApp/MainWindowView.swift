@@ -17,6 +17,7 @@ final class RootCompositionController: ObservableObject {
         var preflightSummary: String
         var preflightCanProceed: Bool
         var preflightRequiresWarningAck: Bool
+        var preflightCanOfferRecordOnlyFallback: Bool
         var permissionState: PermissionRemediationViewModel.State
         var missingPermissions: [RemediablePermission]
         var shouldShowScreenRecordingRestartAdvisory: Bool
@@ -147,6 +148,7 @@ final class RootCompositionController: ObservableObject {
             preflightSummary: preflightSummary(preflightViewModel.state),
             preflightCanProceed: preflightViewModel.canProceedToLiveTranscribe,
             preflightRequiresWarningAck: preflightViewModel.requiresWarningAcknowledgement,
+            preflightCanOfferRecordOnlyFallback: preflightViewModel.canOfferRecordOnlyFallback,
             permissionState: permissionRemediationViewModel.state,
             missingPermissions: permissionRemediationViewModel.missingPermissions,
             shouldShowScreenRecordingRestartAdvisory: permissionRemediationViewModel.shouldShowScreenRecordingRestartAdvisory,

@@ -44,7 +44,7 @@ private func validEnvelopeData() -> Data {
         "schema_version": "1",
         "kind": "transcribe-live-preflight",
         "generated_at_utc": "2026-03-05T00:00:00Z",
-        "overall_status": "PASS",
+        "overall_status": "WARN",
         "config": [
             "out_wav": "/tmp/session.wav",
             "out_jsonl": "/tmp/session.jsonl",
@@ -132,6 +132,39 @@ private func runSmoke() {
         check(error.code == .manifestInvalid, "wrong kind should map to manifestInvalid")
     } catch {
         check(false, "wrong kind emitted unexpected error type")
+    }
+
+    let inconsistentOverallStatusData = encodedData([
+        "schema_version": "1",
+        "kind": "transcribe-live-preflight",
+        "generated_at_utc": "2026-03-05T00:00:00Z",
+        "overall_status": "PASS",
+        "config": [
+            "out_wav": "/tmp/session.wav",
+            "out_jsonl": "/tmp/session.jsonl",
+            "out_manifest": "/tmp/session.manifest.json",
+            "asr_backend": "whispercpp",
+            "asr_model_requested": "/tmp/model.bin",
+            "asr_model_resolved": "/tmp/model.bin",
+            "asr_model_source": "cli",
+            "sample_rate_hz": 48000
+        ],
+        "checks": [
+            [
+                "id": "backend_runtime",
+                "status": "WARN",
+                "detail": "backend helper missing",
+                "remediation": "install helper"
+            ]
+        ]
+    ])
+    do {
+        _ = try parser.parse(data: inconsistentOverallStatusData)
+        check(false, "inconsistent overall_status should fail envelope validation")
+    } catch let error as AppServiceError {
+        check(error.code == .manifestInvalid, "inconsistent overall_status should map to manifestInvalid")
+    } catch {
+        check(false, "inconsistent overall_status emitted unexpected error type")
     }
 
     let malformedChecksData = encodedData([

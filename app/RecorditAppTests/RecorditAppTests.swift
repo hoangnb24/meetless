@@ -149,18 +149,22 @@ final class RecorditAppTests: XCTestCase {
         return (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
     }
 
+    private func makePreflightRunner(payload: Data) -> RecorditPreflightRunner {
+        RecorditPreflightRunner(
+            executable: "/usr/bin/env",
+            commandRunner: StaticPreflightCommandRunner(payload: payload),
+            parser: PreflightEnvelopeParser(),
+            environment: [:]
+        )
+    }
+
     @MainActor
     private func makePreflightViewModel(
         payload: Data,
         nativePermissionStatus: ((RemediablePermission) -> Bool)? = nil
     ) -> PreflightViewModel {
         PreflightViewModel(
-            runner: RecorditPreflightRunner(
-                executable: "/usr/bin/env",
-                commandRunner: StaticPreflightCommandRunner(payload: payload),
-                parser: PreflightEnvelopeParser(),
-                environment: [:]
-            ),
+            runner: makePreflightRunner(payload: payload),
             gatingPolicy: PreflightGatingPolicy(),
             nativePermissionStatus: nativePermissionStatus
         )
@@ -169,11 +173,22 @@ final class RecorditAppTests: XCTestCase {
     @MainActor
     private func makePermissionRemediationItems(
         checks: [[String: Any]],
-        overallStatus: String = "FAIL",
+        overallStatus: String? = nil,
         nativePermissionStatus: @escaping (RemediablePermission) -> Bool
     ) throws -> [PermissionRemediationItem] {
+        let resolvedOverallStatus: String
+        if let overallStatus {
+            resolvedOverallStatus = overallStatus
+        } else if checks.contains(where: { (($0["status"] as? String) ?? "").uppercased() == "FAIL" }) {
+            resolvedOverallStatus = "FAIL"
+        } else if checks.contains(where: { (($0["status"] as? String) ?? "").uppercased() == "WARN" }) {
+            resolvedOverallStatus = "WARN"
+        } else {
+            resolvedOverallStatus = "PASS"
+        }
+
         let envelope = try PreflightEnvelopeParser().parse(
-            data: preflightPayloadData(checks: checks, overallStatus: overallStatus)
+            data: preflightPayloadData(checks: checks, overallStatus: resolvedOverallStatus)
         )
         return PermissionRemediationViewModel.mapPermissionItems(
             from: envelope,
@@ -529,6 +544,39 @@ final class RecorditAppTests: XCTestCase {
     }
 
     @MainActor
+    func testRootSnapshotOnlyOffersMainRuntimeShortcutForRecordOnlyEligiblePreflightBlockers() {
+        let modelBlockedController = RootCompositionController(
+            environment: AppEnvironment.preview().replacing(
+                preflightRunner: makePreflightRunner(
+                    payload: preflightPayloadData(checks: [
+                        ["id": ReadinessContractID.modelPath.rawValue, "status": "FAIL", "detail": "model path missing", "remediation": "Provide a compatible model."],
+                        ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "screen access granted", "remediation": ""],
+                        ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "microphone access granted", "remediation": ""],
+                    ])
+                )
+            ),
+            firstRun: true
+        )
+        modelBlockedController.runPreflight()
+        XCTAssertTrue(modelBlockedController.snapshot.preflightCanOfferRecordOnlyFallback)
+
+        let screenBlockedController = RootCompositionController(
+            environment: AppEnvironment.preview().replacing(
+                preflightRunner: makePreflightRunner(
+                    payload: preflightPayloadData(checks: [
+                        ["id": ReadinessContractID.modelPath.rawValue, "status": "PASS", "detail": "model ready", "remediation": ""],
+                        ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "FAIL", "detail": "screen access denied", "remediation": "Grant Screen Recording in System Settings."],
+                        ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "microphone access granted", "remediation": ""],
+                    ])
+                )
+            ),
+            firstRun: true
+        )
+        screenBlockedController.runPreflight()
+        XCTAssertFalse(screenBlockedController.snapshot.preflightCanOfferRecordOnlyFallback)
+    }
+
+    @MainActor
     func testPermissionRemediationSeparatesDisplayAvailabilityFromScreenPermission() throws {
         let items = try makePermissionRemediationItems(
             checks: [
@@ -645,6 +693,87 @@ final class RecorditAppTests: XCTestCase {
         XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Provide a compatible model.") == true)
         XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Validate Model Setup") == true)
         XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Record Only remains available") == true)
+    }
+
+    @MainActor
+    func testOnboardingGateFailureUsesReadinessIDRemediationForBackendRuntime() {
+        let shell = AppShellViewModel(
+            firstRun: true,
+            onboardingCompletionStore: StubOnboardingCompletionStore(completed: false),
+            runtimeReadinessChecker: StubRuntimeReadinessChecker(
+                report: readyRuntimeReadinessReport(),
+                blockingError: nil
+            )
+        )
+        let modelSetup = ModelSetupViewModel(modelResolutionService: StaticModelService())
+        modelSetup.validateCurrentSelection()
+
+        let payload = preflightPayloadData(checks: [
+            ["id": ReadinessContractID.modelPath.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.outWav.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.outJsonl.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.outManifest.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.backendRuntime.rawValue, "status": "FAIL", "detail": "runtime missing", "remediation": "Install or repair the live backend."],
+        ])
+        let preflight = makePreflightViewModel(payload: payload)
+        preflight.runLivePreflight()
+
+        XCTAssertEqual(preflight.primaryBlockingDomain, .backendRuntime)
+        XCTAssertTrue(preflight.canOfferRecordOnlyFallback)
+        XCTAssertFalse(shell.completeOnboardingIfReady(modelSetup: modelSetup, preflight: preflight))
+        XCTAssertEqual(shell.onboardingGateFailure?.code, .preflightFailed)
+        XCTAssertEqual(
+            shell.onboardingGateFailure?.userMessage,
+            "Live Transcribe is blocked because the backend runtime is not ready."
+        )
+        XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Install or repair the live backend.") == true)
+        XCTAssertTrue(
+            shell.onboardingGateFailure?.remediation.contains("Review runtime diagnostics and backend installation state.") == true
+        )
+        XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Record Only remains available") == true)
+    }
+
+    @MainActor
+    func testOnboardingGateFailureUsesReadinessIDRemediationForManifestOutput() {
+        let shell = AppShellViewModel(
+            firstRun: true,
+            onboardingCompletionStore: StubOnboardingCompletionStore(completed: false),
+            runtimeReadinessChecker: StubRuntimeReadinessChecker(
+                report: readyRuntimeReadinessReport(),
+                blockingError: nil
+            )
+        )
+        let modelSetup = ModelSetupViewModel(modelResolutionService: StaticModelService())
+        modelSetup.validateCurrentSelection()
+
+        let payload = preflightPayloadData(checks: [
+            ["id": ReadinessContractID.modelPath.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.outWav.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.outJsonl.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.outManifest.rawValue, "status": "FAIL", "detail": "manifest path unavailable", "remediation": "Fix the manifest output path before retrying."],
+            ["id": ReadinessContractID.screenCaptureAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.displayAvailability.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+            ["id": ReadinessContractID.microphoneAccess.rawValue, "status": "PASS", "detail": "ok", "remediation": ""],
+        ])
+        let preflight = makePreflightViewModel(payload: payload)
+        preflight.runLivePreflight()
+
+        XCTAssertEqual(preflight.primaryBlockingDomain, .runtimePreflight)
+        XCTAssertFalse(preflight.canOfferRecordOnlyFallback)
+        XCTAssertFalse(shell.completeOnboardingIfReady(modelSetup: modelSetup, preflight: preflight))
+        XCTAssertEqual(shell.onboardingGateFailure?.code, .preflightFailed)
+        XCTAssertEqual(
+            shell.onboardingGateFailure?.userMessage,
+            "Live Transcribe is blocked because Recordit cannot prepare the session manifest."
+        )
+        XCTAssertTrue(shell.onboardingGateFailure?.remediation.contains("Fix the manifest output path before retrying.") == true)
+        XCTAssertTrue(
+            shell.onboardingGateFailure?.remediation.contains("Verify Recordit can write its session artifacts and manifest files.") == true
+        )
+        XCTAssertFalse(shell.onboardingGateFailure?.remediation.contains("Record Only remains available") == true)
     }
 
     @MainActor
@@ -772,6 +901,457 @@ final class RecorditAppTests: XCTestCase {
     }
 
     @MainActor
+    func testProductionStartupReadinessRoutesReturningUsersToRecoveryWithoutStubChecker() async throws {
+        let tempRoot = try makeTemporaryDirectory(prefix: "recordit-production-readiness")
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let binDirectory = tempRoot.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+
+        let invalidRecorditPath = binDirectory.appendingPathComponent("recordit-nonexec")
+        let sequoiaBinary = binDirectory.appendingPathComponent("sequoia_capture")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: invalidRecorditPath, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o644)], ofItemAtPath: invalidRecorditPath.path)
+        try makeExecutableStubBinary(at: sequoiaBinary)
+
+        let originalPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        try await withTemporaryEnvironment(
+            [
+                RuntimeBinaryResolver.recorditEnvKey: invalidRecorditPath.path,
+                RuntimeBinaryResolver.sequoiaCaptureEnvKey: sequoiaBinary.path,
+                "PATH": "\(binDirectory.path):\(originalPath)",
+            ]
+        ) {
+            let shell = AppShellViewModel(
+                firstRun: false,
+                onboardingCompletionStore: StubOnboardingCompletionStore(completed: true)
+            )
+
+            XCTAssertEqual(shell.activeRoot, .recovery)
+            XCTAssertEqual(shell.startupRuntimeReadinessFailure?.code, .runtimeUnavailable)
+            XCTAssertEqual(shell.startupRuntimeReadinessReport.firstBlockingCheck?.binaryName, "recordit")
+            XCTAssertEqual(shell.startupRuntimeReadinessReport.firstBlockingCheck?.status, .notExecutable)
+            XCTAssertEqual(shell.startupRuntimeReadinessReport.checks.first(where: { $0.binaryName == "sequoia_capture" })?.status, .ready)
+
+            let debugDetail = try XCTUnwrap(shell.startupRuntimeReadinessFailure?.debugDetail)
+            let debugData = try XCTUnwrap(debugDetail.data(using: .utf8))
+            let debugRecord = try JSONDecoder().decode(StartupSelfCheckLogRecord.self, from: debugData)
+            XCTAssertEqual(debugRecord.schemaVersion, "1")
+            XCTAssertEqual(debugRecord.eventType, "startup_self_check")
+            XCTAssertFalse(debugRecord.runtimeReady)
+            XCTAssertFalse(debugRecord.liveTranscribeAvailable)
+            XCTAssertTrue(debugRecord.recordOnlyAvailable)
+            XCTAssertEqual(debugRecord.readinessImplication, .liveBlockedRuntime)
+            XCTAssertEqual(debugRecord.modelSelection.status, .unavailable)
+            XCTAssertEqual(debugRecord.modelSelection.errorCode, AppServiceErrorCode.runtimeUnavailable.rawValue)
+            XCTAssertTrue(
+                debugRecord.runtimeChecks.contains(where: {
+                    $0.binaryName == "recordit"
+                        && $0.status == RuntimeBinaryReadinessStatus.notExecutable.rawValue
+                        && $0.resolvedPath == invalidRecorditPath.path
+                })
+            )
+            XCTAssertTrue(
+                debugRecord.runtimeChecks.contains(where: {
+                    $0.binaryName == "sequoia_capture" && $0.status == RuntimeBinaryReadinessStatus.ready.rawValue
+                })
+            )
+        }
+    }
+
+    @MainActor
+    func testProductionEnvironmentUsesRealRuntimeWiringWithoutMockServices() async throws {
+        let tempRoot = try makeTemporaryDirectory(prefix: "recordit-production-environment")
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let binDirectory = tempRoot.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+
+        let recorditBinary = binDirectory.appendingPathComponent("recordit")
+        let sequoiaBinary = binDirectory.appendingPathComponent("sequoia_capture")
+        let modelPath = tempRoot.appendingPathComponent("ggml-tiny.en.bin")
+        let sessionRoot = tempRoot.appendingPathComponent("live-session", isDirectory: true)
+
+        try Data("production-model".utf8).write(to: modelPath, options: .atomic)
+        try makeExecutableShellScript(
+            at: recorditBinary,
+            body: """
+            #!/bin/sh
+            command="$1"
+            shift
+            out_root=""
+            mode=""
+            model=""
+            while [ "$#" -gt 0 ]; do
+              case "$1" in
+                --output-root) out_root="$2"; shift 2 ;;
+                --mode) mode="$2"; shift 2 ;;
+                --model) model="$2"; shift 2 ;;
+                *) shift ;;
+              esac
+            done
+            [ -n "$out_root" ] && mkdir -p "$out_root"
+
+            finalize() {
+              session_id=$(basename "$out_root")
+              cat > "$out_root/session.manifest.json" <<EOF
+            {"session_id":"$session_id","runtime_mode":"live","artifacts":{"out_wav":"$out_root/session.wav","out_jsonl":"$out_root/session.jsonl","out_manifest":"$out_root/session.manifest.json"},"session_summary":{"session_status":"ok"},"trust":{"notice_count":0}}
+            EOF
+              printf 'runtime finalized\n' > "$out_root/session.jsonl"
+              : > "$out_root/session.wav"
+              exit 0
+            }
+
+            case "$command" in
+              preflight)
+                manifest_path="$out_root/preflight.manifest.json"
+                cat > "$manifest_path" <<EOF
+            {"schema_version":"1","kind":"transcribe-live-preflight","generated_at_utc":"2026-03-06T00:00:00Z","overall_status":"PASS","config":{"out_wav":"$out_root/preflight.wav","out_jsonl":"$out_root/preflight.jsonl","out_manifest":"$manifest_path","asr_backend":"whispercpp","asr_model_requested":"$RECORDIT_ASR_MODEL","asr_model_resolved":"$RECORDIT_ASR_MODEL","asr_model_source":"RECORDIT_ASR_MODEL","sample_rate_hz":48000},"checks":[{"id":"model_path","status":"PASS","detail":"model ready","remediation":""},{"id":"screen_capture_access","status":"PASS","detail":"screen ready","remediation":""},{"id":"display_availability","status":"PASS","detail":"display ready","remediation":""},{"id":"microphone_access","status":"PASS","detail":"microphone ready","remediation":""}]}
+            EOF
+                printf '{"command":"preflight","session":{"manifest":"%s"}}\n' "$manifest_path"
+                ;;
+              run)
+                printf '%s' "$mode" > "$out_root/runtime.mode"
+                printf '%s' "$model" > "$out_root/runtime.model"
+                printf '%s' "$RECORDIT_ASR_MODEL" > "$out_root/runtime.env_model"
+                : > "$out_root/runtime.started"
+                trap 'finalize' INT TERM
+                while :; do
+                  if [ -f "$out_root/session.stop.request" ]; then
+                    finalize
+                  fi
+                  sleep 0.05
+                done
+                ;;
+              *)
+                exit 64
+                ;;
+            esac
+            """
+        )
+        try makeExecutableStubBinary(at: sequoiaBinary)
+
+        let originalPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        try await withTemporaryEnvironment(
+            [
+                RuntimeBinaryResolver.recorditEnvKey: recorditBinary.path,
+                RuntimeBinaryResolver.sequoiaCaptureEnvKey: sequoiaBinary.path,
+                "RECORDIT_ASR_MODEL": modelPath.path,
+                "PATH": "\(binDirectory.path):\(originalPath)",
+            ]
+        ) {
+            let environment = AppEnvironment.production()
+
+            let preflightViewModel = environment.makePreflightViewModel()
+            preflightViewModel.runLivePreflight()
+            guard case let .completed(envelope) = preflightViewModel.state else {
+                XCTFail("Expected production preflight to complete through the real recordit command")
+                return
+            }
+            XCTAssertEqual(envelope.kind, "transcribe-live-preflight")
+            XCTAssertEqual(envelope.config.asrModelRequested, modelPath.path)
+            XCTAssertEqual(envelope.config.asrModelResolved, modelPath.path)
+            XCTAssertEqual(envelope.config.asrModelSource, "RECORDIT_ASR_MODEL")
+
+            let runtimeViewModel = environment.makeRuntimeViewModel()
+            await runtimeViewModel.startLive(outputRoot: sessionRoot, explicitModelPath: nil)
+            guard case .running = runtimeViewModel.state else {
+                XCTFail("Expected production runtime view model to reach running state")
+                return
+            }
+
+            await waitForFile(at: sessionRoot.appendingPathComponent("runtime.started"))
+            XCTAssertEqual(try readTrimmedTextFile(at: sessionRoot.appendingPathComponent("runtime.mode")), "live")
+            XCTAssertEqual(try readTrimmedTextFile(at: sessionRoot.appendingPathComponent("runtime.model")), modelPath.path)
+            XCTAssertEqual(try readTrimmedTextFile(at: sessionRoot.appendingPathComponent("runtime.env_model")), modelPath.path)
+
+            await runtimeViewModel.stopCurrentRun()
+            XCTAssertEqual(runtimeViewModel.state, .completed)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: sessionRoot.appendingPathComponent("session.manifest.json").path))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: sessionRoot.appendingPathComponent("session.jsonl").path))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: sessionRoot.appendingPathComponent("session.wav").path))
+        }
+    }
+
+    @MainActor
+    func testProductionEnvironmentMainSessionControllerLiveRunCompletesWithoutMockServices() async throws {
+        let tempRoot = try makeTemporaryDirectory(prefix: "recordit-production-controller-live")
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let binDirectory = tempRoot.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+
+        let recorditBinary = binDirectory.appendingPathComponent("recordit")
+        let sequoiaBinary = binDirectory.appendingPathComponent("sequoia_capture")
+        let modelPath = tempRoot.appendingPathComponent("ggml-base.en.bin")
+
+        try Data("controller-live-model".utf8).write(to: modelPath, options: .atomic)
+        try makeExecutableShellScript(
+            at: recorditBinary,
+            body: """
+            #!/bin/sh
+            command="$1"
+            shift
+            out_root=""
+            mode=""
+            model=""
+            while [ "$#" -gt 0 ]; do
+              case "$1" in
+                --output-root) out_root="$2"; shift 2 ;;
+                --mode) mode="$2"; shift 2 ;;
+                --model) model="$2"; shift 2 ;;
+                *) shift ;;
+              esac
+            done
+            [ -n "$out_root" ] && mkdir -p "$out_root"
+
+            finalize() {
+              session_id=$(basename "$out_root")
+              cat > "$out_root/session.manifest.json" <<EOF
+            {"session_id":"$session_id","runtime_mode":"live","artifacts":{"out_wav":"$out_root/session.wav","out_jsonl":"$out_root/session.jsonl","out_manifest":"$out_root/session.manifest.json"},"session_summary":{"session_status":"ok"},"trust":{"notice_count":0}}
+            EOF
+              printf 'live transcript line\n' > "$out_root/session.jsonl"
+              : > "$out_root/session.wav"
+              exit 0
+            }
+
+            case "$command" in
+              run)
+                printf '%s' "$mode" > "$out_root/runtime.mode"
+                printf '%s' "$model" > "$out_root/runtime.model"
+                : > "$out_root/runtime.started"
+                trap 'finalize' INT TERM
+                while :; do
+                  if [ -f "$out_root/session.stop.request" ]; then
+                    finalize
+                  fi
+                  sleep 0.05
+                done
+                ;;
+              *)
+                exit 64
+                ;;
+            esac
+            """
+        )
+        try makeExecutableStubBinary(at: sequoiaBinary)
+
+        let originalPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        try await withTemporaryEnvironment(
+            [
+                RuntimeBinaryResolver.recorditEnvKey: recorditBinary.path,
+                RuntimeBinaryResolver.sequoiaCaptureEnvKey: sequoiaBinary.path,
+                "RECORDIT_ASR_MODEL": modelPath.path,
+                "PATH": "\(binDirectory.path):\(originalPath)",
+            ]
+        ) {
+            let controller = MainSessionController(environment: AppEnvironment.production())
+
+            controller.startSession()
+            try await waitForRuntimeRunning(controller: controller)
+
+            let sessionRoot = try XCTUnwrap(controller.activeOutputRoot)
+            await waitForFile(at: sessionRoot.appendingPathComponent("runtime.started"))
+            XCTAssertEqual(try readTrimmedTextFile(at: sessionRoot.appendingPathComponent("runtime.mode")), "live")
+            XCTAssertEqual(try readTrimmedTextFile(at: sessionRoot.appendingPathComponent("runtime.model")), modelPath.path)
+            XCTAssertNil(controller.lastServiceError)
+
+            controller.stopSession()
+            try await waitForStopSummary(controller: controller)
+
+            XCTAssertEqual(controller.runtimeState, .completed)
+            XCTAssertEqual(controller.latestFinalizationSummary?.sessionID, sessionRoot.lastPathComponent)
+            XCTAssertEqual(controller.latestFinalizationSummary?.status, "ok")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: sessionRoot.appendingPathComponent("session.manifest.json").path))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: sessionRoot.appendingPathComponent("session.jsonl").path))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: sessionRoot.appendingPathComponent("session.wav").path))
+            XCTAssertTrue(
+                controller.transcriptEntries.contains(where: {
+                    $0.text.localizedCaseInsensitiveContains("runtime running")
+                })
+            )
+            XCTAssertTrue(
+                controller.transcriptEntries.contains(where: {
+                    $0.text.localizedCaseInsensitiveContains("completed successfully")
+                })
+            )
+        }
+    }
+
+    @MainActor
+    func testProductionEnvironmentRecordOnlyControllerWritesPendingSidecarWithoutMockServices() async throws {
+        let tempRoot = try makeTemporaryDirectory(prefix: "recordit-production-record-only")
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let binDirectory = tempRoot.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+
+        let recorditBinary = binDirectory.appendingPathComponent("recordit")
+        let sequoiaBinary = binDirectory.appendingPathComponent("sequoia_capture")
+        try makeExecutableStubBinary(at: recorditBinary)
+        try makeExecutableShellScript(
+            at: sequoiaBinary,
+            body: """
+            #!/bin/sh
+            wav_path="$2"
+            out_root=$(dirname "$wav_path")
+            mkdir -p "$out_root"
+            : > "$wav_path"
+            : > "$out_root/record-only.started"
+            trap 'exit 0' INT TERM
+            while :; do
+              if [ -f "$out_root/session.stop.request" ]; then
+                exit 0
+              fi
+              sleep 0.05
+            done
+            """
+        )
+
+        let originalPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        try await withTemporaryEnvironment(
+            [
+                RuntimeBinaryResolver.recorditEnvKey: recorditBinary.path,
+                RuntimeBinaryResolver.sequoiaCaptureEnvKey: sequoiaBinary.path,
+                "PATH": "\(binDirectory.path):\(originalPath)",
+            ]
+        ) {
+            let environment = AppEnvironment.production()
+            let controller = MainSessionController(environment: environment)
+            controller.selectedMode = .recordOnly
+
+            controller.startSession()
+            try await waitForRecordOnlyRunning(controller: controller)
+
+            let sessionRoot = try XCTUnwrap(controller.activeOutputRoot)
+            await waitForFile(at: sessionRoot.appendingPathComponent("record-only.started"))
+            let pendingURL = sessionRoot.appendingPathComponent("session.pending.json")
+            await waitForFile(at: pendingURL)
+
+            let sidecar = try FileSystemPendingSessionSidecarService().loadPendingSidecar(at: pendingURL)
+            XCTAssertEqual(sidecar.sessionID, sessionRoot.lastPathComponent)
+            XCTAssertEqual(sidecar.mode, .recordOnly)
+            XCTAssertEqual(sidecar.transcriptionState, .pendingModel)
+            XCTAssertEqual(sidecar.wavPath, sessionRoot.appendingPathComponent("session.wav").path)
+            XCTAssertNil(controller.lastServiceError)
+
+            controller.stopSession()
+            try await waitForStopSummary(controller: controller)
+
+            XCTAssertEqual(controller.runtimeState, .completed)
+            XCTAssertEqual(controller.latestFinalizationSummary?.sessionID, sessionRoot.lastPathComponent)
+            XCTAssertEqual(controller.latestFinalizationSummary?.status, "ok")
+            XCTAssertTrue(
+                controller.transcriptEntries.contains(where: {
+                    $0.text.localizedCaseInsensitiveContains("record-only session started")
+                })
+            )
+            XCTAssertTrue(
+                controller.transcriptEntries.contains(where: {
+                    $0.text.localizedCaseInsensitiveContains("record-only session stopped and finalized")
+                })
+            )
+        }
+    }
+
+
+    @MainActor
+    func testProductionBootstrapEmitsStructuredStartupSelfCheckRecordsWithoutMockServices() throws {
+        let productionRoot = try makeTemporaryDirectory(prefix: "recordit-production-startup-self-check")
+        defer { try? FileManager.default.removeItem(at: productionRoot) }
+
+        func makeBundleResources(name: String, includeRuntime: Bool, includeModel: Bool) throws -> URL {
+            let resources = productionRoot.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+
+            if includeRuntime {
+                let runtimeBin = resources.appendingPathComponent("runtime/bin", isDirectory: true)
+                try FileManager.default.createDirectory(at: runtimeBin, withIntermediateDirectories: true)
+                try makeExecutableStubBinary(at: runtimeBin.appendingPathComponent("recordit"))
+                try makeExecutableStubBinary(at: runtimeBin.appendingPathComponent("sequoia_capture"))
+            }
+
+            if includeModel {
+                let bundledModel = resources
+                    .appendingPathComponent("runtime/models/whispercpp", isDirectory: true)
+                    .appendingPathComponent("ggml-tiny.en.bin")
+                try FileManager.default.createDirectory(
+                    at: bundledModel.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try Data("bundled-model".utf8).write(to: bundledModel, options: .atomic)
+            }
+
+            return resources
+        }
+
+        func captureStartupLog(bundleResourceURL: URL) throws -> StartupSelfCheckLogRecord {
+            var logs: [StartupSelfCheckLogRecord] = []
+            _ = AppEnvironment.production(
+                processEnvironment: ["PATH": "/usr/bin:/bin"],
+                currentDirectoryURL: productionRoot,
+                bundleResourceURL: bundleResourceURL,
+                startupSelfCheckLogger: { logs.append($0) }
+            )
+            XCTAssertEqual(logs.count, 1)
+            return try XCTUnwrap(logs.first)
+        }
+
+        let readyLog = try captureStartupLog(
+            bundleResourceURL: try makeBundleResources(name: "ReadyResources", includeRuntime: true, includeModel: true)
+        )
+        XCTAssertEqual(readyLog.schemaVersion, "1")
+        XCTAssertEqual(readyLog.eventType, "startup_self_check")
+        XCTAssertEqual(readyLog.selectedBackend, "whispercpp")
+        XCTAssertEqual(readyLog.selectedBackendSource, "v1_default")
+        XCTAssertTrue(readyLog.runtimeReady)
+        XCTAssertTrue(readyLog.liveTranscribeAvailable)
+        XCTAssertTrue(readyLog.recordOnlyAvailable)
+        XCTAssertEqual(readyLog.readinessImplication, .liveReady)
+        XCTAssertEqual(readyLog.modelSelection.status, .ready)
+        XCTAssertEqual(readyLog.modelSelection.source, "backend default")
+        XCTAssertTrue(readyLog.preflightEnvironment.pathConfigured)
+        XCTAssertTrue(readyLog.preflightEnvironment.recorditASRModelConfigured)
+        XCTAssertTrue(
+            readyLog.runtimeChecks.contains(where: {
+                $0.binaryName == "recordit" && $0.status == "ready"
+            })
+        )
+        XCTAssertTrue(
+            readyLog.runtimeChecks.contains(where: {
+                $0.binaryName == "sequoia_capture" && $0.status == "ready"
+            })
+        )
+
+        let modelBlockedLog = try captureStartupLog(
+            bundleResourceURL: try makeBundleResources(name: "RuntimeOnlyResources", includeRuntime: true, includeModel: false)
+        )
+        XCTAssertTrue(modelBlockedLog.runtimeReady)
+        XCTAssertFalse(modelBlockedLog.liveTranscribeAvailable)
+        XCTAssertTrue(modelBlockedLog.recordOnlyAvailable)
+        XCTAssertEqual(modelBlockedLog.readinessImplication, .liveBlockedModel)
+        XCTAssertEqual(modelBlockedLog.modelSelection.status, .unavailable)
+        XCTAssertEqual(modelBlockedLog.modelSelection.errorCode, AppServiceErrorCode.modelUnavailable.rawValue)
+        XCTAssertFalse(modelBlockedLog.preflightEnvironment.recorditASRModelConfigured)
+
+        let runtimeBlockedLog = try captureStartupLog(
+            bundleResourceURL: try makeBundleResources(name: "ModelOnlyResources", includeRuntime: false, includeModel: true)
+        )
+        XCTAssertFalse(runtimeBlockedLog.runtimeReady)
+        XCTAssertFalse(runtimeBlockedLog.liveTranscribeAvailable)
+        XCTAssertFalse(runtimeBlockedLog.recordOnlyAvailable)
+        XCTAssertEqual(runtimeBlockedLog.readinessImplication, .liveBlockedRuntime)
+        XCTAssertEqual(runtimeBlockedLog.modelSelection.status, .ready)
+        XCTAssertTrue(runtimeBlockedLog.preflightEnvironment.pathConfigured)
+        XCTAssertTrue(runtimeBlockedLog.preflightEnvironment.recorditASRModelConfigured)
+        XCTAssertTrue(
+            runtimeBlockedLog.runtimeChecks.contains(where: {
+                $0.binaryName == "recordit" && $0.status == "missing"
+            })
+        )
+    }
+
+    @MainActor
     private func waitForRuntimeRunning(controller: MainSessionController) async throws {
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline {
@@ -782,6 +1362,19 @@ final class RecorditAppTests: XCTestCase {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         XCTFail("Timed out waiting for app-level runtime start transcript event")
+    }
+
+    @MainActor
+    private func waitForRecordOnlyRunning(controller: MainSessionController) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if case .running = controller.runtimeState,
+               controller.transcriptEntries.contains(where: { $0.text.localizedCaseInsensitiveContains("record-only session started") }) {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Timed out waiting for record-only runtime start")
     }
 
     @MainActor
@@ -800,6 +1393,59 @@ final class RecorditAppTests: XCTestCase {
     private func elapsedMilliseconds(since start: Date) -> UInt64 {
         let elapsed = max(0, Date().timeIntervalSince(start) * 1_000)
         return UInt64(elapsed.rounded())
+    }
+
+    private func makeTemporaryDirectory(prefix: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private func makeExecutableShellScript(at url: URL, body: String) throws {
+        try body.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o755)], ofItemAtPath: url.path)
+    }
+
+    private func readTrimmedTextFile(at url: URL) throws -> String {
+        try String(contentsOf: url, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func withTemporaryEnvironment<T>(
+        _ overrides: [String: String],
+        perform operation: () async throws -> T
+    ) async throws -> T {
+        let originalValues = Dictionary(uniqueKeysWithValues: overrides.keys.map { key in
+            (key, ProcessInfo.processInfo.environment[key])
+        })
+
+        for (key, value) in overrides {
+            setenv(key, value, 1)
+        }
+        defer {
+            for (key, originalValue) in originalValues {
+                if let originalValue {
+                    setenv(key, originalValue, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+        }
+
+        return try await operation()
+    }
+
+    @MainActor
+    private func waitForFile(at url: URL, timeoutSeconds: TimeInterval = 5) async {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if FileManager.default.fileExists(atPath: url.path) {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTFail("Timed out waiting for file at \(url.path)")
     }
 
     private func makeExecutableStubBinary(at url: URL) throws {

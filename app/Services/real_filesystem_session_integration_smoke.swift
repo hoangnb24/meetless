@@ -203,6 +203,7 @@ private func runSmoke() throws {
     try require(liveSummary.status == .ok, "finalized session should surface ok status")
     try require(liveSummary.outcomeClassification == .finalizedSuccess, "finalized session should classify as finalized_success")
     try require(liveSummary.outcomeCode == .finalizedSuccess, "finalized session should expose finalized_success outcome code")
+    try require(liveSummary.outcomeDiagnostics["outcome_code"] == SessionOutcomeCode.finalizedSuccess.rawValue, "finalized session should expose finalized_success outcome_code")
     try require(liveSummary.outcomeDiagnostics["has_manifest"] == "true", "finalized session should report manifest presence")
     try require(liveSummary.outcomeDiagnostics["has_wav"] == "true", "finalized session should report wav presence")
 
@@ -211,6 +212,7 @@ private func runSmoke() throws {
     try require(pendingSummary.readyToTranscribe, "pending session should be ready to transcribe")
     try require(pendingSummary.outcomeClassification == .partialArtifact, "pending session should classify as partial_artifact")
     try require(pendingSummary.outcomeCode == .partialArtifactSession, "pending session should expose partial_artifact_session outcome code")
+    try require(pendingSummary.outcomeDiagnostics["outcome_code"] == SessionOutcomeCode.partialArtifactSession.rawValue, "pending session should expose partial_artifact_session outcome_code")
 
     let manifestSearch = try library.listSessions(query: SessionQuery(searchText: "acknowledgement"))
     try require(manifestSearch.map(\.sessionID) == ["live-session"], "manifest-backed transcript search should find live session")
@@ -242,11 +244,13 @@ private func runSmoke() throws {
     try require(liveReport.findings.isEmpty, "finalized session should have no integrity findings")
     try require(liveReport.outcomeClassification == liveSummary.outcomeClassification, "integrity outcome classification should match session summary")
     try require(liveReport.outcomeCode == liveSummary.outcomeCode, "integrity outcome code should match session summary")
+    try require(liveReport.outcomeDiagnostics["outcome_code"] == liveReport.outcomeCode.rawValue, "integrity live report should preserve outcome_code diagnostics")
 
     let pendingReport = try integrity.evaluateSessionArtifacts(sessionID: pendingSummary.sessionID, rootPath: pendingRoot)
     try require(pendingReport.state == .healthy, "pending session with valid sidecar and audio should be healthy")
     try require(pendingReport.outcomeClassification == .partialArtifact, "pending session integrity should stay partial_artifact")
     try require(pendingReport.outcomeCode == .partialArtifactSession, "pending session integrity should expose partial_artifact_session")
+    try require(pendingReport.outcomeDiagnostics["outcome_code"] == pendingReport.outcomeCode.rawValue, "pending session integrity should preserve outcome_code diagnostics")
 
     let exportService = FileSystemSessionExportService(
         environment: [

@@ -81,6 +81,233 @@ public struct FileSystemManifestService: ManifestService {
     }
 }
 
+
+public enum StartupSelfCheckModelStatus: String, Codable, Sendable {
+    case ready
+    case unavailable
+}
+
+public enum StartupSelfCheckReadinessImplication: String, Codable, Sendable {
+    case liveReady = "live_ready"
+    case liveBlockedRuntime = "live_blocked_runtime"
+    case liveBlockedModel = "live_blocked_model"
+}
+
+public struct StartupSelfCheckRuntimeBinaryLog: Codable, Equatable, Sendable {
+    public var binaryName: String
+    public var overrideEnvKey: String
+    public var status: String
+    public var resolvedPath: String?
+    public var debugDetail: String?
+
+    public init(
+        binaryName: String,
+        overrideEnvKey: String,
+        status: String,
+        resolvedPath: String?,
+        debugDetail: String? = nil
+    ) {
+        self.binaryName = binaryName
+        self.overrideEnvKey = overrideEnvKey
+        self.status = status
+        self.resolvedPath = resolvedPath
+        self.debugDetail = debugDetail
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case binaryName = "binary_name"
+        case overrideEnvKey = "override_env_key"
+        case status
+        case resolvedPath = "resolved_path"
+        case debugDetail = "debug_detail"
+    }
+}
+
+public struct StartupSelfCheckModelLog: Codable, Equatable, Sendable {
+    public var status: StartupSelfCheckModelStatus
+    public var resolvedPath: String?
+    public var source: String?
+    public var checksumStatus: String?
+    public var errorCode: String?
+    public var debugDetail: String?
+
+    public init(
+        status: StartupSelfCheckModelStatus,
+        resolvedPath: String?,
+        source: String?,
+        checksumStatus: String?,
+        errorCode: String? = nil,
+        debugDetail: String? = nil
+    ) {
+        self.status = status
+        self.resolvedPath = resolvedPath
+        self.source = source
+        self.checksumStatus = checksumStatus
+        self.errorCode = errorCode
+        self.debugDetail = debugDetail
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case resolvedPath = "resolved_path"
+        case source
+        case checksumStatus = "checksum_status"
+        case errorCode = "error_code"
+        case debugDetail = "debug_detail"
+    }
+}
+
+public struct StartupSelfCheckPreflightEnvironmentLog: Codable, Equatable, Sendable {
+    public var pathConfigured: Bool
+    public var recorditASRModelConfigured: Bool
+
+    public init(pathConfigured: Bool, recorditASRModelConfigured: Bool) {
+        self.pathConfigured = pathConfigured
+        self.recorditASRModelConfigured = recorditASRModelConfigured
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case pathConfigured = "path_configured"
+        case recorditASRModelConfigured = "recordit_asr_model_configured"
+    }
+}
+
+public struct StartupSelfCheckLogRecord: Codable, Equatable, Sendable {
+    public var schemaVersion: String
+    public var eventType: String
+    public var generatedAtUTC: String
+    public var selectedBackend: String
+    public var selectedBackendSource: String
+    public var runtimeReady: Bool
+    public var liveTranscribeAvailable: Bool
+    public var recordOnlyAvailable: Bool
+    public var readinessImplication: StartupSelfCheckReadinessImplication
+    public var runtimeChecks: [StartupSelfCheckRuntimeBinaryLog]
+    public var modelSelection: StartupSelfCheckModelLog
+    public var preflightEnvironment: StartupSelfCheckPreflightEnvironmentLog
+
+    public init(
+        schemaVersion: String = "1",
+        eventType: String = "startup_self_check",
+        generatedAtUTC: String,
+        selectedBackend: String,
+        selectedBackendSource: String,
+        runtimeReady: Bool,
+        liveTranscribeAvailable: Bool,
+        recordOnlyAvailable: Bool,
+        readinessImplication: StartupSelfCheckReadinessImplication,
+        runtimeChecks: [StartupSelfCheckRuntimeBinaryLog],
+        modelSelection: StartupSelfCheckModelLog,
+        preflightEnvironment: StartupSelfCheckPreflightEnvironmentLog
+    ) {
+        self.schemaVersion = schemaVersion
+        self.eventType = eventType
+        self.generatedAtUTC = generatedAtUTC
+        self.selectedBackend = selectedBackend
+        self.selectedBackendSource = selectedBackendSource
+        self.runtimeReady = runtimeReady
+        self.liveTranscribeAvailable = liveTranscribeAvailable
+        self.recordOnlyAvailable = recordOnlyAvailable
+        self.readinessImplication = readinessImplication
+        self.runtimeChecks = runtimeChecks
+        self.modelSelection = modelSelection
+        self.preflightEnvironment = preflightEnvironment
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case eventType = "event_type"
+        case generatedAtUTC = "generated_at_utc"
+        case selectedBackend = "selected_backend"
+        case selectedBackendSource = "selected_backend_source"
+        case runtimeReady = "runtime_ready"
+        case liveTranscribeAvailable = "live_transcribe_available"
+        case recordOnlyAvailable = "record_only_available"
+        case readinessImplication = "readiness_implication"
+        case runtimeChecks = "runtime_checks"
+        case modelSelection = "model_selection"
+        case preflightEnvironment = "preflight_environment"
+    }
+
+    public func debugDetailJSONString() -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(self) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    public static func fromDebugDetailJSONString(_ jsonString: String?) -> StartupSelfCheckLogRecord? {
+        guard let jsonString,
+              let data = jsonString.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(Self.self, from: data)
+    }
+
+    public static func bootstrapRecord(
+        runtimeReadinessReport: RuntimeBinaryReadinessReport,
+        modelSelection: StartupSelfCheckModelLog,
+        preflightEnvironment: [String: String],
+        generatedAtUTC: String,
+        selectedBackend: String = "whispercpp",
+        selectedBackendSource: String = "v1_default"
+    ) -> StartupSelfCheckLogRecord {
+        StartupSelfCheckLogRecord(
+            generatedAtUTC: generatedAtUTC,
+            selectedBackend: selectedBackend,
+            selectedBackendSource: selectedBackendSource,
+            runtimeReady: runtimeReadinessReport.isReady,
+            liveTranscribeAvailable: runtimeReadinessReport.isReady && modelSelection.status == .ready,
+            recordOnlyAvailable: runtimeReadinessReport.checks
+                .first(where: { $0.binaryName == "sequoia_capture" })?
+                .isReady ?? false,
+            readinessImplication: runtimeReadinessReport.isReady
+                ? (modelSelection.status == .ready ? .liveReady : .liveBlockedModel)
+                : .liveBlockedRuntime,
+            runtimeChecks: runtimeReadinessReport.checks.map {
+                StartupSelfCheckRuntimeBinaryLog(
+                    binaryName: $0.binaryName,
+                    overrideEnvKey: $0.overrideEnvKey,
+                    status: $0.status.rawValue,
+                    resolvedPath: $0.resolvedPath,
+                    debugDetail: $0.debugDetail
+                )
+            },
+            modelSelection: modelSelection,
+            preflightEnvironment: StartupSelfCheckPreflightEnvironmentLog(
+                pathConfigured: !(preflightEnvironment["PATH"]?.isEmpty ?? true),
+                recorditASRModelConfigured: !(preflightEnvironment["RECORDIT_ASR_MODEL"]?.isEmpty ?? true)
+            )
+        )
+    }
+
+    public static func runtimeBlockedRecord(
+        runtimeReadinessReport: RuntimeBinaryReadinessReport,
+        blockingErrorCode: AppServiceErrorCode,
+        generatedAtUTC: String,
+        selectedBackend: String = "whispercpp",
+        selectedBackendSource: String = "v1_default"
+    ) -> StartupSelfCheckLogRecord {
+        bootstrapRecord(
+            runtimeReadinessReport: runtimeReadinessReport,
+            modelSelection: StartupSelfCheckModelLog(
+                status: .unavailable,
+                resolvedPath: nil,
+                source: nil,
+                checksumStatus: nil,
+                errorCode: blockingErrorCode.rawValue,
+                debugDetail: nil
+            ),
+            preflightEnvironment: [:],
+            generatedAtUTC: generatedAtUTC,
+            selectedBackend: selectedBackend,
+            selectedBackendSource: selectedBackendSource
+        )
+    }
+}
+
 public struct AppEnvironment {
     private static let defaultPathSegments: [String] = [
         "/opt/homebrew/bin",
@@ -123,52 +350,33 @@ public struct AppEnvironment {
         self.preflightRunner = preflightRunner
     }
 
-    public static func production() -> AppEnvironment {
+    public static func production(
+        processEnvironment: [String: String] = ProcessInfo.processInfo.environment,
+        currentDirectoryURL: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+        bundleResourceURL: URL? = Bundle.main.resourceURL,
+        startupSelfCheckLogger: @escaping (StartupSelfCheckLogRecord) -> Void = AppEnvironment.defaultStartupSelfCheckLogger
+    ) -> AppEnvironment {
         let sessionLibraryService = FileSystemSessionLibraryService()
-        var runtimeEnvironment = normalizedProcessEnvironment(base: ProcessInfo.processInfo.environment)
-        let resolver = RuntimeBinaryResolver(environment: runtimeEnvironment)
-        let readinessReport = resolver.startupReadinessReport()
-
-        if let recorditPath = readinessReport.checks
-            .first(where: { $0.binaryName == "recordit" && $0.isReady })?
-            .resolvedPath {
-            let recorditDirectory = URL(fileURLWithPath: recorditPath)
-                .deletingLastPathComponent()
-                .path
-            runtimeEnvironment = normalizedProcessEnvironment(
-                base: runtimeEnvironment,
-                prependingPathSegments: [recorditDirectory]
-            )
-        }
-
-        var modelEnvironment = runtimeEnvironment
-
-        let bootstrapModelService = FileSystemModelResolutionService(environment: modelEnvironment)
-        if let resolvedDefaultModel = try? bootstrapModelService.resolveModel(
-            ModelResolutionRequest(explicitModelPath: nil, backend: "whispercpp")
-        ) {
-            let resolvedPath = resolvedDefaultModel.resolvedPath.path
-            modelEnvironment["RECORDIT_ASR_MODEL"] = resolvedPath
-            runtimeEnvironment["RECORDIT_ASR_MODEL"] = resolvedPath
-        }
-
-        var preflightEnvironment: [String: String] = [:]
-        if let resolvedModelPath = modelEnvironment["RECORDIT_ASR_MODEL"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !resolvedModelPath.isEmpty {
-            preflightEnvironment["RECORDIT_ASR_MODEL"] = resolvedModelPath
-        }
-        preflightEnvironment["PATH"] = runtimeEnvironment["PATH"]
+        let bootstrap = buildProductionBootstrap(
+            processEnvironment: processEnvironment,
+            currentDirectoryURL: currentDirectoryURL,
+            bundleResourceURL: bundleResourceURL,
+            startupSelfCheckLogger: startupSelfCheckLogger
+        )
 
         let processManager = RuntimeProcessManager(
-            binaryResolver: RuntimeBinaryResolver(environment: runtimeEnvironment),
-            processEnvironment: runtimeEnvironment
+            binaryResolver: bootstrap.runtimeResolver,
+            processEnvironment: bootstrap.runtimeEnvironment
         )
 
         return AppEnvironment(
             runtimeService: ProcessBackedRuntimeService(processManager: processManager),
             manifestService: FileSystemManifestService(),
-            modelService: FileSystemModelResolutionService(environment: modelEnvironment),
+            modelService: FileSystemModelResolutionService(
+                environment: bootstrap.modelEnvironment,
+                currentDirectoryURL: currentDirectoryURL,
+                bundleResourceURL: bundleResourceURL
+            ),
             jsonlTailService: FileSystemJsonlTailService(),
             sessionLibraryService: sessionLibraryService,
             artifactIntegrityService: FileSystemArtifactIntegrityService(),
@@ -176,7 +384,7 @@ public struct AppEnvironment {
             startupMigrationRepairService: StartupMigrationRepairService(
                 sessionLibraryService: sessionLibraryService
             ),
-            preflightRunner: RecorditPreflightRunner(environment: preflightEnvironment)
+            preflightRunner: RecorditPreflightRunner(environment: bootstrap.preflightEnvironment)
         )
     }
 
@@ -205,6 +413,138 @@ public struct AppEnvironment {
 
         environment["PATH"] = normalizedSegments.joined(separator: ":")
         return environment
+    }
+
+
+    private struct ProductionBootstrap {
+        var runtimeEnvironment: [String: String]
+        var modelEnvironment: [String: String]
+        var preflightEnvironment: [String: String]
+        var runtimeResolver: RuntimeBinaryResolver
+    }
+
+    private static func buildProductionBootstrap(
+        processEnvironment: [String: String],
+        currentDirectoryURL: URL,
+        bundleResourceURL: URL?,
+        startupSelfCheckLogger: @escaping (StartupSelfCheckLogRecord) -> Void
+    ) -> ProductionBootstrap {
+        var runtimeEnvironment = normalizedProcessEnvironment(base: processEnvironment)
+        let initialResolver = RuntimeBinaryResolver(
+            environment: runtimeEnvironment,
+            bundleResourceURL: bundleResourceURL
+        )
+        let initialReadinessReport = initialResolver.startupReadinessReport()
+
+        if let recorditPath = initialReadinessReport.checks
+            .first(where: { $0.binaryName == "recordit" && $0.isReady })?
+            .resolvedPath {
+            let recorditDirectory = URL(fileURLWithPath: recorditPath)
+                .deletingLastPathComponent()
+                .path
+            runtimeEnvironment = normalizedProcessEnvironment(
+                base: runtimeEnvironment,
+                prependingPathSegments: [recorditDirectory]
+            )
+        }
+
+        var modelEnvironment = runtimeEnvironment
+        let bootstrapModelService = FileSystemModelResolutionService(
+            environment: modelEnvironment,
+            currentDirectoryURL: currentDirectoryURL,
+            bundleResourceURL: bundleResourceURL
+        )
+        let modelSelection: StartupSelfCheckModelLog
+        do {
+            let resolvedDefaultModel = try bootstrapModelService.resolveModel(
+                ModelResolutionRequest(explicitModelPath: nil, backend: "whispercpp")
+            )
+            let resolvedPath = resolvedDefaultModel.resolvedPath.path
+            modelEnvironment["RECORDIT_ASR_MODEL"] = resolvedPath
+            runtimeEnvironment["RECORDIT_ASR_MODEL"] = resolvedPath
+            modelSelection = StartupSelfCheckModelLog(
+                status: .ready,
+                resolvedPath: resolvedPath,
+                source: resolvedDefaultModel.source,
+                checksumStatus: resolvedDefaultModel.checksumStatus
+            )
+        } catch let error as AppServiceError {
+            modelSelection = StartupSelfCheckModelLog(
+                status: .unavailable,
+                resolvedPath: nil,
+                source: nil,
+                checksumStatus: nil,
+                errorCode: error.code.rawValue,
+                debugDetail: error.debugDetail
+            )
+        } catch {
+            modelSelection = StartupSelfCheckModelLog(
+                status: .unavailable,
+                resolvedPath: nil,
+                source: nil,
+                checksumStatus: nil,
+                errorCode: AppServiceErrorCode.unknown.rawValue,
+                debugDetail: String(describing: error)
+            )
+        }
+
+        var preflightEnvironment: [String: String] = [:]
+        if let resolvedModelPath = modelEnvironment["RECORDIT_ASR_MODEL"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !resolvedModelPath.isEmpty {
+            preflightEnvironment["RECORDIT_ASR_MODEL"] = resolvedModelPath
+        }
+        preflightEnvironment["PATH"] = runtimeEnvironment["PATH"]
+
+        let runtimeResolver = RuntimeBinaryResolver(
+            environment: runtimeEnvironment,
+            bundleResourceURL: bundleResourceURL
+        )
+        let runtimeReadinessReport = runtimeResolver.startupReadinessReport()
+        startupSelfCheckLogger(
+            makeStartupSelfCheckLogRecord(
+                runtimeReadinessReport: runtimeReadinessReport,
+                modelSelection: modelSelection,
+                preflightEnvironment: preflightEnvironment
+            )
+        )
+
+        return ProductionBootstrap(
+            runtimeEnvironment: runtimeEnvironment,
+            modelEnvironment: modelEnvironment,
+            preflightEnvironment: preflightEnvironment,
+            runtimeResolver: runtimeResolver
+        )
+    }
+
+    private static func makeStartupSelfCheckLogRecord(
+        runtimeReadinessReport: RuntimeBinaryReadinessReport,
+        modelSelection: StartupSelfCheckModelLog,
+        preflightEnvironment: [String: String]
+    ) -> StartupSelfCheckLogRecord {
+        StartupSelfCheckLogRecord.bootstrapRecord(
+            runtimeReadinessReport: runtimeReadinessReport,
+            modelSelection: modelSelection,
+            preflightEnvironment: preflightEnvironment,
+            generatedAtUTC: iso8601UTC(Date())
+        )
+    }
+
+    private static func iso8601UTC(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
+    }
+
+    public static func defaultStartupSelfCheckLogger(_ record: StartupSelfCheckLogRecord) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(record) else {
+            return
+        }
+        FileHandle.standardError.write(data)
+        FileHandle.standardError.write(Data([0x0A]))
     }
 
     public static func preview() -> AppEnvironment {

@@ -256,7 +256,7 @@ struct SessionListSmoke {
                 id: "deferred-ready",
                 startedAt: transitioningReady.startedAt,
                 mode: .recordOnly,
-                status: .ok,
+                status: .degraded,
                 pendingState: nil,
                 readyToTranscribe: false
             ),
@@ -291,7 +291,16 @@ struct SessionListSmoke {
         let kinds = transitionNotices.map(\.kind)
         try require(kinds.contains(.readyToTranscribe), "expected ready transition notification")
         try require(kinds.contains(.failed), "expected failed transition notification")
+        let readyNotice = transitionNotices.first { $0.kind == .readyToTranscribe }
+        try require(
+            readyNotice?.outcomeCode == .partialArtifactSession,
+            "ready transition should preserve partial_artifact_session outcome code"
+        )
         let failedNotice = transitionNotices.first { $0.kind == .failed }
+        try require(
+            failedNotice?.outcomeCode == .finalizedFailure,
+            "failed transition should preserve finalized_failure outcome code"
+        )
         try require(
             failedNotice?.primaryAction == .retryDeferredTranscription(sessionID: "deferred-failed"),
             "failed transition should expose retry action"
@@ -305,6 +314,10 @@ struct SessionListSmoke {
         let completionNotices = sequenceVM.consumePendingNotifications()
         try require(completionNotices.count == 1, "expected one completion notification")
         try require(completionNotices.first?.kind == .completed, "expected completed transition kind")
+        try require(
+            completionNotices.first?.outcomeCode == .finalizedDegradedSuccess,
+            "completion notice should preserve finalized_degraded_success outcome code"
+        )
         try require(
             completionNotices.first?.deepLinkSessionID == "deferred-ready",
             "completion notice should deep-link to session detail"

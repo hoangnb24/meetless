@@ -409,6 +409,21 @@ private func runSmoke() async throws {
         check(signal == "REQUEST", "graceful stop should still honor the stop-request handshake after stale-marker cleanup")
     }
 
+    // Unknown-process stop should fail immediately instead of burning the graceful wait budget.
+    do {
+        let service = makeRuntimeService(recorditPath: gracefulStopScript, sequoiaPath: captureScript, stopTimeoutSeconds: 0.6)
+        let startedAt = Date()
+        do {
+            _ = try await service.controlSession(processIdentifier: 999_999, action: .stop)
+            check(false, "unknown-process stop should fail instead of succeeding")
+            return
+        } catch let error as AppServiceError {
+            let elapsed = Date().timeIntervalSince(startedAt)
+            check(error.code == .runtimeUnavailable, "unknown-process stop should surface runtimeUnavailable")
+            check(elapsed < 0.2, "unknown-process stop should not wait for graceful timeout budget before failing")
+        }
+    }
+
     // Graceful stop should prefer the drain/finalization handshake before interrupt fallback.
     do {
         let service = makeRuntimeService(recorditPath: gracefulStopScript, sequoiaPath: captureScript, stopTimeoutSeconds: 0.4)

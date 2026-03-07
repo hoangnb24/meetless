@@ -519,6 +519,50 @@ private func runSmoke() {
         relaunch.onboardingGateFailure?.remediation.contains("Record Only remains available") == false,
         "runtime preflight blockers should not advertise Record Only fallback"
     )
+
+    let blockedReport = RuntimeBinaryReadinessReport(
+        checks: [
+            RuntimeBinaryReadinessCheck(
+                binaryName: "recordit",
+                overrideEnvKey: RuntimeBinaryResolver.recorditEnvKey,
+                status: .missing,
+                resolvedPath: nil,
+                userMessage: "recordit missing",
+                remediation: "install recordit",
+                debugDetail: "bundled_resolution_failed expected_paths=/tmp/app/runtime/bin/recordit"
+            ),
+            RuntimeBinaryReadinessCheck(
+                binaryName: "sequoia_capture",
+                overrideEnvKey: RuntimeBinaryResolver.sequoiaCaptureEnvKey,
+                status: .ready,
+                resolvedPath: "/usr/local/bin/sequoia_capture",
+                userMessage: "sequoia_capture ready",
+                remediation: ""
+            ),
+        ]
+    )
+    let blockedShell = AppShellViewModel(
+        firstRun: false,
+        onboardingCompletionStore: store,
+        runtimeReadinessChecker: StubRuntimeReadinessChecker(
+            report: blockedReport,
+            blockingError: AppServiceError(
+                code: .runtimeUnavailable,
+                userMessage: "Runtime binary missing.",
+                remediation: "Reinstall Recordit.app."
+            )
+        )
+    )
+    check(blockedShell.activeRoot == .recovery, "returning users should route to recovery when startup runtime readiness fails")
+    check(blockedShell.startupRuntimeReadinessFailure?.code == .runtimeUnavailable, "blocked startup should preserve runtimeUnavailable code")
+    check(blockedShell.startupRuntimeSelfCheckRecord?.readinessImplication == .liveBlockedRuntime, "blocked startup should expose a typed live_blocked_runtime self-check record")
+    check(blockedShell.startupRuntimeSelfCheckRecord?.runtimeChecks.contains(where: { $0.binaryName == "recordit" && $0.status == "missing" }) == true, "blocked startup self-check record should name the missing runtime binary")
+    check(blockedShell.startupRuntimeSelfCheckRecord?.recordOnlyAvailable == true, "blocked startup self-check record should preserve Record Only availability")
+    check(blockedShell.startupRuntimeSelfCheckRecord?.debugDetailJSONString() == blockedShell.startupRuntimeReadinessFailure?.debugDetail, "blocked startup typed self-check record should match the exported debug detail JSON")
+    check(blockedShell.startupRuntimeReadinessFailure?.debugDetail?.contains("\"event_type\":\"startup_self_check\"") == true, "blocked startup should expose structured startup self-check JSON in debug detail")
+    check(blockedShell.startupRuntimeReadinessFailure?.debugDetail?.contains("\"readiness_implication\":\"live_blocked_runtime\"") == true, "blocked startup debug detail should classify live_blocked_runtime")
+    check(blockedShell.startupRuntimeReadinessFailure?.debugDetail?.contains("\"binary_name\":\"recordit\"") == true, "blocked startup debug detail should name the missing runtime binary")
+    check(blockedShell.startupRuntimeReadinessFailure?.debugDetail?.contains("\"record_only_available\":true") == true, "blocked startup debug detail should preserve Record Only availability")
 }
 
 @main

@@ -51,6 +51,15 @@ private struct StubCommandRunner: CommandRunning {
     }
 }
 
+private struct PolicyMatrixExpectation {
+    let id: ReadinessContractID
+    let domain: ReadinessDomain
+    let failBlocks: Bool
+    let failWarns: Bool
+    let warnRequiresAcknowledgement: Bool
+    let fallbackOnFail: Bool
+}
+
 private func runPolicyChecks() {
     let expectedKnown: Set<String> = ReadinessContract.knownContractIDs
 
@@ -97,21 +106,186 @@ private func runPolicyChecks() {
     }
 
     let policy = PreflightGatingPolicy()
+    let expectations: [PolicyMatrixExpectation] = [
+        PolicyMatrixExpectation(
+            id: .modelPath,
+            domain: .backendModel,
+            failBlocks: true,
+            failWarns: false,
+            warnRequiresAcknowledgement: false,
+            fallbackOnFail: true
+        ),
+        PolicyMatrixExpectation(
+            id: .outWav,
+            domain: .runtimePreflight,
+            failBlocks: true,
+            failWarns: false,
+            warnRequiresAcknowledgement: false,
+            fallbackOnFail: false
+        ),
+        PolicyMatrixExpectation(
+            id: .outJsonl,
+            domain: .runtimePreflight,
+            failBlocks: true,
+            failWarns: false,
+            warnRequiresAcknowledgement: false,
+            fallbackOnFail: false
+        ),
+        PolicyMatrixExpectation(
+            id: .outManifest,
+            domain: .runtimePreflight,
+            failBlocks: true,
+            failWarns: false,
+            warnRequiresAcknowledgement: false,
+            fallbackOnFail: false
+        ),
+        PolicyMatrixExpectation(
+            id: .sampleRate,
+            domain: .runtimePreflight,
+            failBlocks: false,
+            failWarns: true,
+            warnRequiresAcknowledgement: true,
+            fallbackOnFail: false
+        ),
+        PolicyMatrixExpectation(
+            id: .screenCaptureAccess,
+            domain: .tccCapture,
+            failBlocks: true,
+            failWarns: false,
+            warnRequiresAcknowledgement: false,
+            fallbackOnFail: false
+        ),
+        PolicyMatrixExpectation(
+            id: .displayAvailability,
+            domain: .tccCapture,
+            failBlocks: true,
+            failWarns: false,
+            warnRequiresAcknowledgement: false,
+            fallbackOnFail: false
+        ),
+        PolicyMatrixExpectation(
+            id: .microphoneAccess,
+            domain: .tccCapture,
+            failBlocks: true,
+            failWarns: false,
+            warnRequiresAcknowledgement: false,
+            fallbackOnFail: false
+        ),
+        PolicyMatrixExpectation(
+            id: .backendRuntime,
+            domain: .backendRuntime,
+            failBlocks: true,
+            failWarns: false,
+            warnRequiresAcknowledgement: true,
+            fallbackOnFail: true
+        ),
+        PolicyMatrixExpectation(
+            id: .modelReadability,
+            domain: .diagnosticOnly,
+            failBlocks: false,
+            failWarns: false,
+            warnRequiresAcknowledgement: false,
+            fallbackOnFail: false
+        ),
+    ]
 
-    let blockedEnvelope = fixtureEnvelope(checks: [
-        fixtureCheck(ReadinessContractID.modelPath.rawValue, .fail),
-        fixtureCheck(ReadinessContractID.backendRuntime.rawValue, .warn),
-    ])
-    let blocked = policy.evaluate(blockedEnvelope)
-    check(blocked.blockingFailures.count == 1, "model_path fail must block")
-    check(
-        blocked.blockingFailures[0].check.id == ReadinessContractID.modelPath.rawValue,
-        "unexpected blocking ID"
-    )
-    check(blocked.primaryBlockingDomain == .backendModel, "model_path fail should map to backend_model domain")
-    check(blocked.recordOnlyFallbackEligible, "backend/model blockers should keep Record Only fallback eligible")
-    check(!blocked.canProceed(acknowledgingWarnings: false), "blocking fail must prevent proceed")
-    check(!blocked.canProceed(acknowledgingWarnings: true), "blocking fail must prevent proceed even with warning ack")
+    for expectation in expectations {
+        let id = expectation.id.rawValue
+        let failEvaluation = policy.evaluate(
+            fixtureEnvelope(checks: [fixtureCheck(id, .fail)], overallStatus: .fail)
+        )
+
+        check(
+            failEvaluation.mappedChecks.count == 1,
+            "\(id) fail fixture should produce exactly one mapped check"
+        )
+        check(
+            failEvaluation.mappedChecks[0].domain == expectation.domain,
+            "\(id) should map to the expected readiness domain"
+        )
+        check(
+            failEvaluation.mappedChecks[0].isKnownContractID,
+            "\(id) should remain a known contract ID"
+        )
+        check(
+            failEvaluation.unknownCheckIDs.isEmpty,
+            "\(id) should not be reported as unknown"
+        )
+        check(
+            failEvaluation.recordOnlyFallbackEligible == expectation.fallbackOnFail,
+            "\(id) fail fallback eligibility drifted"
+        )
+
+        if expectation.failBlocks {
+            check(
+                failEvaluation.blockingFailures.map(\.check.id) == [id],
+                "\(id) fail should register as a blocking failure"
+            )
+            check(
+                failEvaluation.primaryBlockingDomain == expectation.domain,
+                "\(id) fail should drive the expected primary blocking domain"
+            )
+            check(
+                !failEvaluation.canProceed(acknowledgingWarnings: false),
+                "\(id) fail must block live proceed before warning acknowledgement"
+            )
+            check(
+                !failEvaluation.canProceed(acknowledgingWarnings: true),
+                "\(id) fail must stay blocked after warning acknowledgement"
+            )
+        } else {
+            check(
+                failEvaluation.blockingFailures.isEmpty,
+                "\(id) fail should not register as a blocking failure"
+            )
+        }
+
+        if expectation.failWarns {
+            check(
+                failEvaluation.warningContinuations.map(\.check.id) == [id],
+                "\(id) fail should require warning acknowledgement instead of blocking"
+            )
+            check(
+                !failEvaluation.canProceed(acknowledgingWarnings: false),
+                "\(id) fail must wait for warning acknowledgement"
+            )
+            check(
+                failEvaluation.canProceed(acknowledgingWarnings: true),
+                "\(id) fail should proceed after warning acknowledgement"
+            )
+        } else {
+            check(
+                failEvaluation.warningContinuations.isEmpty,
+                "\(id) fail should not remain in warning continuation state"
+            )
+        }
+
+        if expectation.warnRequiresAcknowledgement {
+            let warnEvaluation = policy.evaluate(
+                fixtureEnvelope(checks: [fixtureCheck(id, .warn)], overallStatus: .warn)
+            )
+            check(
+                warnEvaluation.blockingFailures.isEmpty,
+                "\(id) warn should not register as a blocking failure"
+            )
+            check(
+                warnEvaluation.warningContinuations.map(\.check.id) == [id],
+                "\(id) warn should require acknowledgement"
+            )
+            check(
+                !warnEvaluation.canProceed(acknowledgingWarnings: false),
+                "\(id) warn must wait for acknowledgement"
+            )
+            check(
+                warnEvaluation.canProceed(acknowledgingWarnings: true),
+                "\(id) warn should proceed after acknowledgement"
+            )
+            check(
+                !warnEvaluation.recordOnlyFallbackEligible,
+                "\(id) warn should not enable Record Only fallback"
+            )
+        }
+    }
 
     let warnOnlyEnvelope = fixtureEnvelope(checks: [
         fixtureCheck(ReadinessContractID.modelPath.rawValue, .pass),
@@ -129,35 +303,6 @@ private func runPolicyChecks() {
     check(!warnOnly.recordOnlyFallbackEligible, "warn-only envelope should not be treated as fallback-eligible")
     check(!warnOnly.canProceed(acknowledgingWarnings: false), "warn-only envelope must require explicit acknowledgment")
     check(warnOnly.canProceed(acknowledgingWarnings: true), "warn-only envelope should proceed after acknowledgment")
-
-    let runtimePreflightBlockedEnvelope = fixtureEnvelope(checks: [
-        fixtureCheck(ReadinessContractID.modelPath.rawValue, .pass),
-        fixtureCheck(ReadinessContractID.outWav.rawValue, .fail),
-        fixtureCheck(ReadinessContractID.screenCaptureAccess.rawValue, .pass),
-        fixtureCheck(ReadinessContractID.microphoneAccess.rawValue, .pass),
-    ])
-    let runtimePreflightBlocked = policy.evaluate(runtimePreflightBlockedEnvelope)
-    check(
-        runtimePreflightBlocked.primaryBlockingDomain == .runtimePreflight,
-        "out_wav fail should map to runtime_preflight domain"
-    )
-    check(
-        !runtimePreflightBlocked.recordOnlyFallbackEligible,
-        "runtime preflight blockers should not automatically mark Record Only fallback eligible"
-    )
-
-    let diagnosticOnlyEnvelope = fixtureEnvelope(checks: [
-        fixtureCheck(ReadinessContractID.modelReadability.rawValue, .fail),
-    ])
-    let diagnosticOnly = policy.evaluate(diagnosticOnlyEnvelope)
-    check(
-        diagnosticOnly.mappedChecks.first?.isKnownContractID == true,
-        "diagnostic-only IDs should be tracked as known contract IDs"
-    )
-    check(
-        diagnosticOnly.unknownCheckIDs.isEmpty,
-        "diagnostic-only IDs should not be reported as unknown"
-    )
 }
 
 @MainActor
@@ -211,6 +356,115 @@ private func runViewModelChecks() {
         fputs("preflight_gating_smoke failed: runtime failure fixture encode failed: \(error)\n", stderr)
         exit(1)
     }
+
+    let screenRuntimeFailureEnvelope = fixtureEnvelope(
+        checks: [
+            fixtureCheck(ReadinessContractID.modelPath.rawValue, .pass),
+            fixtureCheck(ReadinessContractID.outWav.rawValue, .pass),
+            fixtureCheck(ReadinessContractID.outJsonl.rawValue, .pass),
+            fixtureCheck(ReadinessContractID.outManifest.rawValue, .pass),
+            fixtureCheck(ReadinessContractID.screenCaptureAccess.rawValue, .fail),
+            fixtureCheck(ReadinessContractID.displayAvailability.rawValue, .pass),
+            fixtureCheck(ReadinessContractID.microphoneAccess.rawValue, .pass),
+        ],
+        overallStatus: .fail
+    )
+    let screenRuntimeFailureData: Data
+    do {
+        screenRuntimeFailureData = try encoder.encode(screenRuntimeFailureEnvelope)
+    } catch {
+        fputs("preflight_gating_smoke failed: screen runtime failure fixture encode failed: \(error)\n", stderr)
+        exit(1)
+    }
+
+    let backendRuntimeFailureEnvelope = fixtureEnvelope(
+        checks: [
+            fixtureCheck(ReadinessContractID.modelPath.rawValue, .pass),
+            fixtureCheck(ReadinessContractID.outWav.rawValue, .pass),
+            fixtureCheck(ReadinessContractID.outJsonl.rawValue, .pass),
+            fixtureCheck(ReadinessContractID.outManifest.rawValue, .pass),
+            fixtureCheck(ReadinessContractID.screenCaptureAccess.rawValue, .pass),
+            fixtureCheck(ReadinessContractID.microphoneAccess.rawValue, .pass),
+            fixtureCheck(ReadinessContractID.backendRuntime.rawValue, .fail),
+        ],
+        overallStatus: .fail
+    )
+    let backendRuntimeFailureData: Data
+    do {
+        backendRuntimeFailureData = try encoder.encode(backendRuntimeFailureEnvelope)
+    } catch {
+        fputs("preflight_gating_smoke failed: backend runtime failure fixture encode failed: \(error)\n", stderr)
+        exit(1)
+    }
+
+    setenv("RECORDIT_UI_TEST_MODE", "1", 1)
+    defer { unsetenv("RECORDIT_UI_TEST_MODE") }
+
+    let screenRuntimeFailureRunner = RecorditPreflightRunner(
+        executable: "/usr/bin/env",
+        commandRunner: StubCommandRunner(stdoutData: screenRuntimeFailureData),
+        parser: PreflightEnvelopeParser(),
+        environment: [:]
+    )
+    let screenRuntimeFailureViewModel = PreflightViewModel(
+        runner: screenRuntimeFailureRunner,
+        gatingPolicy: PreflightGatingPolicy(),
+        nativePermissionStatus: { _ in true }
+    )
+    screenRuntimeFailureViewModel.runLivePreflight()
+    if case let .completed(screenRuntimeEnvelope) = screenRuntimeFailureViewModel.state {
+        let screenCheck = screenRuntimeEnvelope.checks.first {
+            $0.id == ReadinessContractID.screenCaptureAccess.rawValue
+        }
+        check(screenCheck?.status == .fail, "screen runtime failures must remain failed in UI-test normalization")
+        check(
+            screenCheck?.detail.contains("App-level Screen Recording permission is granted") == true,
+            "screen runtime failures should preserve the enriched native-permission detail"
+        )
+    } else {
+        check(false, "screen runtime failure view model should complete with a runtime envelope")
+    }
+    check(
+        screenRuntimeFailureViewModel.primaryBlockingDomain == .tccCapture,
+        "screen runtime failures should remain tcc_capture blockers after UI-test normalization"
+    )
+    check(
+        !screenRuntimeFailureViewModel.canOfferRecordOnlyFallback,
+        "screen runtime failures should not offer Record Only fallback"
+    )
+    check(
+        !screenRuntimeFailureViewModel.canProceedToLiveTranscribe,
+        "screen runtime failures should keep live proceed blocked"
+    )
+
+    let backendRuntimeFailureRunner = RecorditPreflightRunner(
+        executable: "/usr/bin/env",
+        commandRunner: StubCommandRunner(stdoutData: backendRuntimeFailureData),
+        parser: PreflightEnvelopeParser(),
+        environment: [:]
+    )
+    let backendRuntimeFailureViewModel = PreflightViewModel(
+        runner: backendRuntimeFailureRunner,
+        gatingPolicy: PreflightGatingPolicy()
+    )
+    backendRuntimeFailureViewModel.runLivePreflight()
+    check(
+        backendRuntimeFailureViewModel.canOfferRecordOnlyFallback,
+        "backend runtime failures should offer Record Only fallback"
+    )
+    check(
+        !backendRuntimeFailureViewModel.requiresWarningAcknowledgement,
+        "backend runtime failures should not require warning acknowledgement"
+    )
+    check(
+        !backendRuntimeFailureViewModel.canProceedToLiveTranscribe,
+        "backend runtime failures should keep live proceed blocked"
+    )
+    backendRuntimeFailureViewModel.acknowledgeWarningsForLiveTranscribe()
+    check(
+        !backendRuntimeFailureViewModel.canProceedToLiveTranscribe,
+        "backend runtime failures should stay blocked even after acknowledgement"
+    )
 
     let runtimeFailureRunner = RecorditPreflightRunner(
         executable: "/usr/bin/env",

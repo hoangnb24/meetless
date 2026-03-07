@@ -94,8 +94,9 @@ public actor ProcessBackedRuntimeService: RuntimeService {
                 defer {
                     removeGracefulStopRequest(at: gracefulStopRequestURL)
                 }
-                try? writeGracefulStopRequest(at: gracefulStopRequestURL)
-                if let gracefulOutcome = try await waitForNaturalStopOutcome(
+                let wroteGracefulStopRequest = (try? writeGracefulStopRequest(at: gracefulStopRequestURL)) ?? false
+                if wroteGracefulStopRequest,
+                   let gracefulOutcome = try await waitForNaturalStopOutcome(
                     processIdentifier: processIdentifier,
                     requestedAction: action,
                     timeoutSeconds: graceTimeout
@@ -151,15 +152,16 @@ public actor ProcessBackedRuntimeService: RuntimeService {
             .standardizedFileURL
     }
 
-    private func writeGracefulStopRequest(at requestURL: URL?) throws {
+    private func writeGracefulStopRequest(at requestURL: URL?) throws -> Bool {
         guard let requestURL else {
-            return
+            return false
         }
         try FileManager.default.createDirectory(
             at: requestURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
         try Data("stop\n".utf8).write(to: requestURL, options: .atomic)
+        return true
     }
 
     private func removeGracefulStopRequest(at requestURL: URL?) {

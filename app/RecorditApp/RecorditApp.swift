@@ -24,6 +24,8 @@ private struct LaunchConfiguration {
         case microphoneRuntimeFailure = "microphone_runtime_failure"
         case screenRuntimeFailure = "screen_runtime_failure"
         case modelPathBlocked = "model_path_blocked"
+        case backendRuntimeBlocked = "backend_runtime_blocked"
+        case backendRuntimeWarning = "backend_runtime_warning"
     }
     private enum UITestRuntimeScenario: String {
         case stopFailure = "stop_failure"
@@ -145,6 +147,26 @@ private struct LaunchConfiguration {
                     environment: [:]
                 )
                 environment = environment.replacing(preflightRunner: runner)
+            case .backendRuntimeBlocked:
+                let runner = RecorditPreflightRunner(
+                    executable: "/usr/bin/env",
+                    commandRunner: ScriptedPreflightCommandRunner(
+                        payloads: [backendRuntimeBlockedPayloadData()]
+                    ),
+                    parser: PreflightEnvelopeParser(),
+                    environment: [:]
+                )
+                environment = environment.replacing(preflightRunner: runner)
+            case .backendRuntimeWarning:
+                let runner = RecorditPreflightRunner(
+                    executable: "/usr/bin/env",
+                    commandRunner: ScriptedPreflightCommandRunner(
+                        payloads: [backendRuntimeWarningPayloadData()]
+                    ),
+                    parser: PreflightEnvelopeParser(),
+                    environment: [:]
+                )
+                environment = environment.replacing(preflightRunner: runner)
             }
         }
 
@@ -237,6 +259,146 @@ private struct LaunchConfiguration {
             microphoneDetail: "Microphone access granted.",
             microphoneRemediation: ""
         )
+    }
+
+    private static func backendRuntimeBlockedPayloadData() -> Data {
+        let payload: [String: Any] = [
+            "schema_version": "1",
+            "kind": "transcribe-live-preflight",
+            "generated_at_utc": "2026-03-05T00:00:00Z",
+            "overall_status": "FAIL",
+            "config": [
+                "out_wav": "/tmp/recordit-uitest.wav",
+                "out_jsonl": "/tmp/recordit-uitest.jsonl",
+                "out_manifest": "/tmp/recordit-uitest.manifest.json",
+                "asr_backend": "whispercpp",
+                "asr_model_requested": "/tmp/mock-model.bin",
+                "asr_model_resolved": "/tmp/mock-model.bin",
+                "asr_model_source": "ui-test fixture",
+                "sample_rate_hz": 48_000,
+            ],
+            "checks": [
+                [
+                    "id": ReadinessContractID.modelPath.rawValue,
+                    "status": "PASS",
+                    "detail": "Model path resolved.",
+                    "remediation": "",
+                ],
+                [
+                    "id": ReadinessContractID.outWav.rawValue,
+                    "status": "PASS",
+                    "detail": "WAV output path ready.",
+                    "remediation": "",
+                ],
+                [
+                    "id": ReadinessContractID.outJsonl.rawValue,
+                    "status": "PASS",
+                    "detail": "JSONL output path ready.",
+                    "remediation": "",
+                ],
+                [
+                    "id": ReadinessContractID.outManifest.rawValue,
+                    "status": "PASS",
+                    "detail": "Manifest output path ready.",
+                    "remediation": "",
+                ],
+                [
+                    "id": ReadinessContractID.backendRuntime.rawValue,
+                    "status": "FAIL",
+                    "detail": "Backend runtime helper is unavailable.",
+                    "remediation": "Resolve the runtime helper issue, or continue with Record Only from Open Main Runtime.",
+                ],
+                [
+                    "id": ReadinessContractID.screenCaptureAccess.rawValue,
+                    "status": "PASS",
+                    "detail": "Screen Recording access granted.",
+                    "remediation": "",
+                ],
+                [
+                    "id": ReadinessContractID.displayAvailability.rawValue,
+                    "status": "PASS",
+                    "detail": "Active display available.",
+                    "remediation": "",
+                ],
+                [
+                    "id": ReadinessContractID.microphoneAccess.rawValue,
+                    "status": "PASS",
+                    "detail": "Microphone access granted.",
+                    "remediation": "",
+                ],
+            ],
+        ]
+        return (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
+    }
+
+    private static func backendRuntimeWarningPayloadData() -> Data {
+        let payload: [String: Any] = [
+            "schema_version": "1",
+            "kind": "transcribe-live-preflight",
+            "generated_at_utc": "2026-03-05T00:00:00Z",
+            "overall_status": "WARN",
+            "config": [
+                "out_wav": "/tmp/recordit-uitest.wav",
+                "out_jsonl": "/tmp/recordit-uitest.jsonl",
+                "out_manifest": "/tmp/recordit-uitest.manifest.json",
+                "asr_backend": "whispercpp",
+                "asr_model_requested": "/tmp/mock-model.bin",
+                "asr_model_resolved": "/tmp/mock-model.bin",
+                "asr_model_source": "ui-test fixture",
+                "sample_rate_hz": 48_000,
+            ],
+            "checks": [
+                [
+                    "id": ReadinessContractID.modelPath.rawValue,
+                    "status": "PASS",
+                    "detail": "Model path resolved.",
+                    "remediation": "",
+                ],
+                [
+                    "id": ReadinessContractID.outWav.rawValue,
+                    "status": "PASS",
+                    "detail": "WAV output path ready.",
+                    "remediation": "",
+                ],
+                [
+                    "id": ReadinessContractID.outJsonl.rawValue,
+                    "status": "PASS",
+                    "detail": "JSONL output path ready.",
+                    "remediation": "",
+                ],
+                [
+                    "id": ReadinessContractID.outManifest.rawValue,
+                    "status": "PASS",
+                    "detail": "Manifest output path ready.",
+                    "remediation": "",
+                ],
+                [
+                    "id": ReadinessContractID.backendRuntime.rawValue,
+                    "status": "WARN",
+                    "detail": "Backend runtime helper reported a recoverable warning.",
+                    "remediation": "Acknowledge this warning to continue.",
+                ],
+                [
+                    "id": ReadinessContractID.screenCaptureAccess.rawValue,
+                    "status": "PASS",
+                    "detail": "Screen Recording access granted.",
+                    "remediation": "",
+                ],
+                [
+                    "id": ReadinessContractID.displayAvailability.rawValue,
+                    "status": "PASS",
+                    "detail": "Active display available.",
+                    "remediation": "",
+                ],
+                [
+                    "id": ReadinessContractID.microphoneAccess.rawValue,
+                    "status": "PASS",
+                    "detail": "Microphone access granted.",
+                    "remediation": "",
+                ],
+            ],
+        ]
+        return (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
     }
 
     private static func modelPathBlockedPayloadData() -> Data {

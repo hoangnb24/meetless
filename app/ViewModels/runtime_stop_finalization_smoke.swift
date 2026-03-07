@@ -124,6 +124,27 @@ private struct StaticModelService: ModelResolutionService {
     }
 }
 
+private struct PendingThenSuccessManifestService: ManifestService {
+    private let startTime: Date
+    private let readyAfterSeconds: TimeInterval
+    private let pendingManifest: SessionManifestDTO
+    private let finalManifest: SessionManifestDTO
+
+    init(readyAfterSeconds: TimeInterval, pendingManifest: SessionManifestDTO, finalManifest: SessionManifestDTO) {
+        startTime = Date()
+        self.readyAfterSeconds = readyAfterSeconds
+        self.pendingManifest = pendingManifest
+        self.finalManifest = finalManifest
+    }
+
+    func loadManifest(at _: URL) throws -> SessionManifestDTO {
+        if Date().timeIntervalSince(startTime) < readyAfterSeconds {
+            return pendingManifest
+        }
+        return finalManifest
+    }
+}
+
 private struct DelayThenSuccessManifestService: ManifestService {
     private let startTime: Date
     private let readyAfterSeconds: TimeInterval
@@ -188,6 +209,23 @@ private func runSmoke() async {
     try? FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempRoot) }
 
+    let pendingThenSuccess = RuntimeViewModel(
+        runtimeService: runtime,
+        manifestService: PendingThenSuccessManifestService(
+            readyAfterSeconds: 0.05,
+            pendingManifest: makeManifest(status: "pending"),
+            finalManifest: makeManifest(status: "ok")
+        ),
+        modelService: model,
+        finalizationTimeoutSeconds: 1,
+        finalizationPollIntervalNanoseconds: 10_000_000
+    )
+    let pendingStopStartedAt = Date()
+    await pendingThenSuccess.startLive(outputRoot: tempRoot.appendingPathComponent("finalize-pending-then-ok", isDirectory: true), explicitModelPath: nil)
+    await pendingThenSuccess.stopCurrentRun()
+    check(pendingThenSuccess.state == .completed, "pending manifest should continue polling until final stop status completes")
+    check(Date().timeIntervalSince(pendingStopStartedAt) >= 0.05, "pending manifest should not be treated as a terminal stop-finalization success")
+
     let eventuallySuccess = RuntimeViewModel(
         runtimeService: runtime,
         manifestService: DelayThenSuccessManifestService(
@@ -222,7 +260,9 @@ private func runSmoke() async {
         check(false, "timeout failure should surface empty-session context")
         return
     }
-    check(timeoutContext.classification == .emptySessionFailure, "timeout without artifacts should classify as empty session")
+    check(timeoutContext.outcomeClassification == .emptyRoot, "timeout without artifacts should classify as empty root")
+    check(timeoutContext.outcomeCode == .emptySessionRoot, "timeout without artifacts should expose empty_session_root outcome code")
+    check(timeoutContext.outcomeDiagnostics["outcome_code"] == SessionOutcomeCode.emptySessionRoot.rawValue, "timeout diagnostics should include empty_session_root code")
 
     let failedManifest = RuntimeViewModel(
         runtimeService: runtime,
@@ -243,7 +283,9 @@ private func runSmoke() async {
         check(false, "failed manifest should surface finalized failure context")
         return
     }
-    check(failedContext.classification == .finalizedFailure, "failed manifest should classify as finalized failure")
+    check(failedContext.outcomeClassification == .finalizedFailure, "failed manifest should classify as finalized failure")
+    check(failedContext.outcomeCode == .finalizedFailure, "failed manifest should expose finalized_failure outcome code")
+    check(failedContext.outcomeDiagnostics["manifest_status"] == SessionStatus.failed.rawValue, "failed manifest diagnostics should record manifest_status=failed")
 
     let retryFinalizeManifestService = MutableManifestService()
     let retryFinalizeRuntime = StubRuntimeService()
@@ -341,7 +383,8 @@ private func runSmoke() async {
         check(false, "artifact-free interruption should surface empty-session context")
         return
     }
-    check(emptyContext.classification == .emptySessionFailure, "artifact-free interruption should classify as empty session")
+    check(emptyContext.outcomeClassification == .emptyRoot, "artifact-free interruption should classify as empty root")
+    check(emptyContext.outcomeCode == .emptySessionRoot, "artifact-free interruption should expose empty_session_root outcome code")
     check(!emptyContext.actions.contains(.resumeSession), "empty-session interruption should not offer resume")
     check(!emptyContext.actions.contains(.safeFinalize), "empty-session interruption should not offer safe finalize")
     check(!emptyContext.actions.contains(.retryStop), "empty-session interruption should not offer retry stop")
@@ -372,7 +415,8 @@ private func runSmoke() async {
         check(false, "interruption failure should surface recoverable interruption context")
         return
     }
-    check(context.classification == .partialArtifactFailure, "interruption with partial artifacts should classify separately")
+    check(context.outcomeClassification == .partialArtifact, "interruption with partial artifacts should classify as partial_artifact")
+    check(context.outcomeCode == .partialArtifactSession, "interruption with partial artifacts should expose partial_artifact_session outcome code")
     check(context.sessionRoot.path == interruptionRoot.path, "interruption context should keep active session root")
     check(context.actions.contains(.resumeSession), "context should include resume action")
     check(context.actions.contains(.safeFinalize), "context should include safe finalize action")
