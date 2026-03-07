@@ -89,7 +89,7 @@ Current validation semantics that are also part of the contract:
 
 - `--live-stream` and `--live-chunked` are mutually exclusive
 - chunk tuning flags require a live mode
-- `--preflight` is incompatible with both live selectors
+- `--preflight` is compatible with both live selectors
 - `--replay-jsonl` is incompatible with both live selectors
 - `--model-doctor` is incompatible with `--replay-jsonl`
 - `--model-doctor` is incompatible with `--preflight`

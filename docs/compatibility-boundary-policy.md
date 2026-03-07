@@ -52,7 +52,7 @@ The following parser rules are frozen:
 - `--live-stream` and `--live-chunked` must remain mutually exclusive
 - chunk tuning flags require a live selector
 - live selectors must remain incompatible with `--replay-jsonl`
-- live selectors must remain incompatible with `--preflight`
+- live selectors must remain compatible with `--preflight`
 
 ### 3.2 Runtime mode labels and compatibility tuple
 

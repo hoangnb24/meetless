@@ -24,8 +24,8 @@
       "stability_class": "S0"
     },
     {
-      "id": "preflight_incompatible_with_live_selectors",
-      "rule": "--preflight cannot be combined with --live-stream/--live-chunked",
+      "id": "preflight_compatible_with_live_selectors",
+      "rule": "--preflight is compatible with --live-stream/--live-chunked",
       "stability_class": "S0"
     }
   ],
@@ -50,7 +50,7 @@
       "runtime_mode_status": "implemented",
       "compatibility": {
         "replay_jsonl": "incompatible",
-        "preflight": "incompatible",
+        "preflight": "compatible",
         "chunk_tuning": "compatible"
       },
       "operator_meaning": "representative chunked path; runtime_mode label remains live-chunked for compatibility",
@@ -63,7 +63,7 @@
       "runtime_mode_status": "implemented",
       "compatibility": {
         "replay_jsonl": "incompatible",
-        "preflight": "incompatible",
+        "preflight": "compatible",
         "chunk_tuning": "compatible"
       },
       "operator_meaning": "primary true live-stream runtime path",

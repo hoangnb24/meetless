@@ -82,7 +82,7 @@ fn runtime_mode_matrix_contract_has_expected_rows_and_rules() {
         "live_selectors_mutually_exclusive",
         "chunk_tuning_requires_live_selector",
         "replay_incompatible_with_live_selectors",
-        "preflight_incompatible_with_live_selectors",
+        "preflight_compatible_with_live_selectors",
     ]
     .into_iter()
     .map(str::to_string)
@@ -144,6 +144,16 @@ fn runtime_mode_matrix_contract_has_expected_rows_and_rules() {
         ),
         "incompatible"
     );
+    assert_eq!(
+        str_field(
+            representative_chunked
+                .get("compatibility")
+                .unwrap_or_else(|| panic!("representative-chunked missing compatibility object")),
+            "preflight",
+            "representative-chunked preflight",
+        ),
+        "compatible"
+    );
 
     let live_stream = mode_by_taxonomy(&contract, "live-stream");
     assert_eq!(
@@ -165,6 +175,16 @@ fn runtime_mode_matrix_contract_has_expected_rows_and_rules() {
                 .unwrap_or_else(|| panic!("live-stream missing compatibility object")),
             "chunk_tuning",
             "live-stream chunk_tuning",
+        ),
+        "compatible"
+    );
+    assert_eq!(
+        str_field(
+            live_stream
+                .get("compatibility")
+                .unwrap_or_else(|| panic!("live-stream missing compatibility object")),
+            "preflight",
+            "live-stream preflight",
         ),
         "compatible"
     );

@@ -107,7 +107,7 @@ Legacy `transcribe-live` guards still apply after mapping and remain the source 
 
 - `--live-stream && --live-chunked`
 - live selectors combined with `--replay-jsonl`
-- live selectors combined with `--preflight`
+- `--model-doctor` combined with `--preflight`
 - chunk tuning flags without a live mode
 - `--llm-cleanup` without endpoint/model
 

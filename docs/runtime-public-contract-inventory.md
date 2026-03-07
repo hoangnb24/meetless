@@ -119,15 +119,15 @@ Compatibility rule:
 | Flags | Current meaning | Current default / notes | Class |
 |---|---|---|---|
 | `--model-doctor` | run model/backend diagnostics and exit | incompatible with `--replay-jsonl` | `Frozen` |
-| `--replay-jsonl` | replay readable transcript from prior JSONL | incompatible with live selectors and preflight | `Frozen` |
-| `--preflight` | run structured preflight diagnostics and write manifest | incompatible with live selectors and replay | `Frozen` |
+| `--replay-jsonl` | replay readable transcript from prior JSONL | incompatible with live selectors | `Frozen` |
+| `--preflight` | run structured preflight diagnostics and write manifest | compatible with live selectors; incompatible with replay | `Frozen` |
 | `-h`, `--help` | print contract help text | no positional args allowed | `Frozen` |
 
 ### Validation Rules That Are Part of the CLI Contract
 
 - `--live-stream` and `--live-chunked` are mutually exclusive.
 - `--live-stream` and `--live-chunked` are incompatible with `--replay-jsonl`.
-- `--live-stream` and `--live-chunked` are incompatible with `--preflight`.
+- `--live-stream` and `--live-chunked` are compatible with `--preflight`.
 - `--model-doctor` is incompatible with `--replay-jsonl`.
 - chunk-tuning flags are meaningful only for live selectors.
 - unknown flags and positional arguments fail with exit code `2` and point the user back to `--help`.

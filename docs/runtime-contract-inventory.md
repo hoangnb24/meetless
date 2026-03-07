@@ -108,7 +108,7 @@ Source of truth: `HELP_TEXT` and parse/validation in `src/bin/transcribe_live/ap
 | `--live-stream` and `--live-chunked` are mutually exclusive | S0 |
 | chunk tuning flags require a live selector (`--live-chunked` or `--live-stream`) | S0 |
 | live selectors are incompatible with `--replay-jsonl` | S0 |
-| live selectors are incompatible with `--preflight` | S0 |
+| live selectors are compatible with `--preflight` | S0 |
 
 ## 5. Runtime Mode Labels and Compatibility Matrix
 

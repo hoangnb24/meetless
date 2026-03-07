@@ -34,7 +34,7 @@ The following are `S0`:
 - parser invariants:
   - `--live-stream` and `--live-chunked` mutual exclusion
   - live selectors incompatible with `--replay-jsonl`
-  - live selectors incompatible with `--preflight`
+  - live selectors compatible with `--preflight`
   - chunk tuning flags require a live selector
 
 ### 3.2 CLI contract surfaces

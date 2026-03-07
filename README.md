@@ -375,7 +375,8 @@ make run-transcribe-model-doctor-app \
   ASR_MODEL=models/ggml-base.en.bin \
   TRANSCRIBE_ARGS=--live-stream
 ```
-Use this path for live-mode readiness checks; `--preflight` remains intentionally incompatible with `--live-stream`.
+Use this path for live-mode readiness checks when you want backend/model diagnostics only.  
+Canonical policy: `--preflight` is compatible with `--live-stream` and `--live-chunked`; use `--replay-jsonl` for post-run replay and keep it separate.
 
 ### Bundle + Sign
 ```bash
@@ -514,8 +515,8 @@ cargo run --bin transcribe-live -- [--asr-model <local-model-path>] [flags...]
     | Taxonomy mode | Current selector | `runtime_mode` artifact value | Primary operator intent | Transcript timing expectation | `--replay-jsonl` compatibility | `--preflight` compatibility |
     |---|---|---|---|---|---|---|
     | `representative-offline` | `<default>` | `representative-offline` | deterministic offline transcript contract validation | stable transcript lines are primarily end-of-run surfaces | compatible | compatible |
-    | `representative-chunked` | `--live-chunked` | `live-chunked` | near-live queue/scheduler behavior validation on captured WAV | runtime stable lines emit as boundaries close; summary closes out full session | incompatible | incompatible |
-    | `live-stream` | `--live-stream` | `live-stream` | true concurrent capture + transcription while recording | transcript emission starts after warmup enters `active` and continues during capture | incompatible | incompatible |
+    | `representative-chunked` | `--live-chunked` | `live-chunked` | near-live queue/scheduler behavior validation on captured WAV | runtime stable lines emit as boundaries close; summary closes out full session | incompatible | compatible |
+    | `live-stream` | `--live-stream` | `live-stream` | true concurrent capture + transcription while recording | transcript emission starts after warmup enters `active` and continues during capture | incompatible | compatible |
 
   - `--live-chunked` prepares runtime input via the shared in-process live capture runtime (`recordit::live_capture`) and then runs a rolling near-live scheduler over the captured WAV
   - rolling scheduler semantics: `2s` default window, `0.5s` default stride, deterministic chunk segment IDs, and tail-aligned final window coverage
@@ -531,7 +532,8 @@ cargo run --bin transcribe-live -- [--asr-model <local-model-path>] [flags...]
   - channel-slice temp WAVs default to `retain-on-failure` cleanup; add `--keep-temp-audio` to retain them on success for debugging
   - chunk tuning flags require `--live-chunked` or `--live-stream`
   - `--live-stream` and `--live-chunked` are mutually exclusive selectors
-  - `--live-chunked` and `--live-stream` are incompatible with `--replay-jsonl` and `--preflight`
+  - `--live-chunked` and `--live-stream` are incompatible with `--replay-jsonl`
+  - `--preflight` is compatible with both live selectors and should be used as a readiness diagnostic lane before live runtime execution
   - selector naming/deprecation guidance lives in [`docs/live-chunked-migration.md`](docs/live-chunked-migration.md)
 - mode/degradation artifact policy:
   - runtime manifest records both `channel_mode_requested` and active `channel_mode`

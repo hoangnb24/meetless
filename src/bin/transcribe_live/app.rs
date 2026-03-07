@@ -337,7 +337,7 @@ const REPRESENTATIVE_CHUNKED_COMPATIBILITY: RuntimeModeCompatibility = RuntimeMo
     selector: "--live-chunked",
     status: "implemented",
     replay_jsonl_compat: "incompatible",
-    preflight_compat: "incompatible",
+    preflight_compat: "compatible",
     chunk_tuning_compat: "compatible",
 };
 
@@ -347,7 +347,7 @@ const LIVE_STREAM_COMPATIBILITY: RuntimeModeCompatibility = RuntimeModeCompatibi
     selector: "--live-stream",
     status: "implemented",
     replay_jsonl_compat: "incompatible",
-    preflight_compat: "incompatible",
+    preflight_compat: "compatible",
     chunk_tuning_compat: "compatible",
 };
 
@@ -4060,6 +4060,31 @@ mod tests {
                 assert_eq!(config.runtime_mode_selector_label(), "--live-stream");
             }
         }
+    }
+
+    #[test]
+    fn parse_accepts_live_chunked_with_preflight() {
+        let args = vec!["--live-chunked".to_string(), "--preflight".to_string()];
+        match parse_args_from(args.into_iter()).unwrap() {
+            ParseOutcome::Help => panic!("expected config"),
+            ParseOutcome::Config(config) => {
+                assert!(config.preflight);
+                assert!(config.live_chunked);
+                assert_eq!(config.runtime_mode_label(), "live-chunked");
+                assert_eq!(config.runtime_mode_selector_label(), "--live-chunked");
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_mode_compatibility_matrix_marks_live_selectors_preflight_compatible() {
+        let matrix = runtime_mode_compatibility_matrix();
+        assert!(matrix
+            .iter()
+            .any(|row| row.selector == "--live-stream" && row.preflight_compat == "compatible"));
+        assert!(matrix
+            .iter()
+            .any(|row| row.selector == "--live-chunked" && row.preflight_compat == "compatible"));
     }
 
     #[test]
