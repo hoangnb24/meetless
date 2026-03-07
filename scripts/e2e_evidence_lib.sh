@@ -128,6 +128,56 @@ output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", enc
 PY
 }
 
+evidence_capture_command_logs() {
+  local combined_log_path="$1"
+  local stdout_log_path="$2"
+  local stderr_log_path="$3"
+  shift 3
+
+  python3 - "$combined_log_path" "$stdout_log_path" "$stderr_log_path" "$@" <<'PY'
+import selectors
+import subprocess
+import sys
+from pathlib import Path
+
+combined_log = Path(sys.argv[1])
+stdout_log = Path(sys.argv[2])
+stderr_log = Path(sys.argv[3])
+command = sys.argv[4:]
+
+for path in (combined_log, stdout_log, stderr_log):
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+with combined_log.open("a", encoding="utf-8") as combined_handle, stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open("w", encoding="utf-8") as stderr_handle:
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    selector = selectors.DefaultSelector()
+    if process.stdout is not None:
+        selector.register(process.stdout, selectors.EVENT_READ, ("stdout", stdout_handle))
+    if process.stderr is not None:
+        selector.register(process.stderr, selectors.EVENT_READ, ("stderr", stderr_handle))
+
+    while selector.get_map():
+        for key, _ in selector.select():
+            stream_name, stream_handle = key.data
+            chunk = key.fileobj.readline()
+            if chunk == "":
+                selector.unregister(key.fileobj)
+                continue
+            stream_handle.write(chunk)
+            stream_handle.flush()
+            combined_handle.write(f"[{stream_name}] {chunk}")
+            combined_handle.flush()
+
+    sys.exit(process.wait())
+PY
+}
+
 evidence_render_contract() {
   local evidence_root="$1"
   local scenario_id="$2"
@@ -143,5 +193,21 @@ evidence_render_contract() {
     --scenario-id "$scenario_id" \
     --lane-type "$lane_type" \
     --phase-manifest "$phase_manifest" \
+    "$@"
+}
+
+evidence_render_xctest_contract() {
+  local evidence_root="$1"
+  local scenario_id="$2"
+  local lane_type="$3"
+  shift 3
+
+  local lib_dir
+  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+  python3 "$lib_dir/render_xctest_evidence_contract.py" \
+    --root "$evidence_root" \
+    --scenario-id "$scenario_id" \
+    --lane-type "$lane_type" \
     "$@"
 }

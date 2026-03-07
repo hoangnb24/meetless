@@ -43,7 +43,7 @@ Options:
 
 Environment:
   RECORDIT_XCODE_CONFIGURATION  Configuration used for prebuilt handoff/embed probe (default: Release)
-  RECORDIT_HANDOFF_INJECT_FAILURE  Optional seam failure injection for validation. Supported values: runtime_prepare_missing_manifest, runtime_prepare_missing_handoff_env, artifact_compare_manifest, artifact_compare_recordit, artifact_compare_capture, artifact_compare_model, manifest_parity_recordit
+  RECORDIT_HANDOFF_INJECT_FAILURE  Optional seam failure injection for validation. Supported values: runtime_prepare_missing_manifest, runtime_prepare_missing_handoff_env, bundle_copy_assembly_missing_recordit, artifact_compare_manifest, artifact_compare_recordit, artifact_compare_capture, artifact_compare_model, manifest_parity_recordit
 USAGE
 }
 
@@ -157,7 +157,7 @@ if [[ -z "$WHISPER_HELPER" || ! -x "$WHISPER_HELPER" ]]; then
 fi
 
 case "$RECORDIT_HANDOFF_INJECT_FAILURE" in
-  ""|artifact_compare_manifest|artifact_compare_recordit|artifact_compare_capture|artifact_compare_model|manifest_parity_recordit|runtime_prepare_missing_manifest|runtime_prepare_missing_handoff_env)
+  ""|artifact_compare_manifest|artifact_compare_recordit|artifact_compare_capture|artifact_compare_model|manifest_parity_recordit|runtime_prepare_missing_manifest|runtime_prepare_missing_handoff_env|bundle_copy_assembly_missing_recordit)
     ;;
   *)
     echo "error: unsupported RECORDIT_HANDOFF_INJECT_FAILURE value: $RECORDIT_HANDOFF_INJECT_FAILURE" >&2
@@ -245,6 +245,9 @@ fi
 if [[ "$RECORDIT_HANDOFF_INJECT_FAILURE" == "runtime_prepare_missing_handoff_env" ]]; then
   rm -f "$PREBUILT_RUNTIME_HANDOFF_ENV"
   PREBUILT_RUNTIME_HANDOFF_ENV_PRESENT=0
+fi
+if [[ "$RECORDIT_HANDOFF_INJECT_FAILURE" == "bundle_copy_assembly_missing_recordit" ]]; then
+  rm -f "$PREBUILT_RUNTIME_INPUT_DIR/runtime/bin/recordit"
 fi
 
 rm -rf "$COPY_ONLY_EMBED_ROOT"
@@ -382,6 +385,8 @@ PY_PARITY
   if [[ "$COPY_ONLY_EMBED_PARITY_EXIT_CODE" -eq 0 ]]; then
     COPY_ONLY_EMBED_PARITY_OK=1
   fi
+else
+  echo "copy_only_manifest_parity_ok=false" >"$COPY_ONLY_EMBED_PARITY_LOG"
 fi
 
 cat >"$COPY_ONLY_EMBED_COMPARE_LOG" <<COMPARE
@@ -443,6 +448,29 @@ if [[ ! -d "$RECORDIT_APP_BUNDLE" ]]; then
   echo "error: expected Recordit app bundle not found: $RECORDIT_APP_BUNDLE" >&2
   exit 1
 fi
+
+VERIFY_RELEASE_CONTEXT_ROOT="$OUT_DIR/release_context_verification"
+VERIFY_RELEASE_CONTEXT_LOG="$LOG_DIR/release_context_verification.log"
+VERIFY_RELEASE_CONTEXT_SUMMARY_CSV="$VERIFY_RELEASE_CONTEXT_ROOT/summary.csv"
+VERIFY_RELEASE_CONTEXT_STATUS_TXT="$VERIFY_RELEASE_CONTEXT_ROOT/status.txt"
+VERIFY_RELEASE_CONTEXT_OK=0
+
+set +e
+(
+  cd "$ROOT"
+  echo "[gate-packaged-live-smoke] cmd=$ROOT/scripts/verify_recordit_release_context.sh --out-dir $VERIFY_RELEASE_CONTEXT_ROOT --recordit-app-bundle $RECORDIT_APP_BUNDLE --sign-identity $SIGN_IDENTITY --skip-build"
+  "$ROOT/scripts/verify_recordit_release_context.sh" \
+    --out-dir "$VERIFY_RELEASE_CONTEXT_ROOT" \
+    --recordit-app-bundle "$RECORDIT_APP_BUNDLE" \
+    --sign-identity "$SIGN_IDENTITY" \
+    --skip-build
+) >"$VERIFY_RELEASE_CONTEXT_LOG" 2>&1
+VERIFY_RELEASE_CONTEXT_EXIT_CODE=$?
+set -e
+if [[ "$VERIFY_RELEASE_CONTEXT_EXIT_CODE" -eq 0 ]]; then
+  VERIFY_RELEASE_CONTEXT_OK=1
+fi
+
 
 set +e
 (
@@ -566,16 +594,21 @@ PY_REWRITE_GATE_PASS
   printf 'handoff_failure_stage,%s\n' "$HANDOFF_FAILURE_STAGE"
   printf 'handoff_failure_detail,%s\n' "$HANDOFF_FAILURE_DETAIL"
   printf 'handoff_inject_failure,%s\n' "$RECORDIT_HANDOFF_INJECT_FAILURE"
+  printf 'release_context_verify_exit_code,%s\n' "$VERIFY_RELEASE_CONTEXT_EXIT_CODE"
+  printf 'release_context_verify_ok,%s\n' "$(bool_text "$VERIFY_RELEASE_CONTEXT_OK")"
+  printf 'release_context_verify_root,%s\n' "$VERIFY_RELEASE_CONTEXT_ROOT"
+  printf 'release_context_verify_summary_csv,%s\n' "$VERIFY_RELEASE_CONTEXT_SUMMARY_CSV"
+  printf 'release_context_verify_status_txt,%s\n' "$VERIFY_RELEASE_CONTEXT_STATUS_TXT"
 } >>"$SUMMARY_CSV"
 
-if [[ "$BASE_GATE_PASS" == "true" && "$HANDOFF_INTEGRATION_OK" -eq 1 ]]; then
+if [[ "$BASE_GATE_PASS" == "true" && "$HANDOFF_INTEGRATION_OK" -eq 1 && "$VERIFY_RELEASE_CONTEXT_OK" -eq 1 ]]; then
   GATE_PASS="true"
   status="pass"
-  detail="packaged_live_smoke_and_handoff_thresholds_satisfied"
+  detail="packaged_live_smoke_handoff_and_release_context_thresholds_satisfied"
 else
   GATE_PASS="false"
   status="failed"
-  detail="packaged_live_smoke_or_handoff_thresholds_failed"
+  detail="packaged_live_smoke_handoff_or_release_context_thresholds_failed"
 fi
 printf 'gate_pass,%s\n' "$GATE_PASS" >>"$SUMMARY_CSV"
 
@@ -597,6 +630,10 @@ logs_dir=$LOG_DIR
 recordit_run_plan_path=$RECORDIT_RUN_PLAN
 recordit_run_plan_compat_path=$RECORDIT_RUN_PLAN_COMPAT
 recordit_app_bundle_path=$RECORDIT_APP_BUNDLE
+release_context_verify_root=$VERIFY_RELEASE_CONTEXT_ROOT
+release_context_verify_log=$VERIFY_RELEASE_CONTEXT_LOG
+release_context_verify_summary_csv=$VERIFY_RELEASE_CONTEXT_SUMMARY_CSV
+release_context_verify_status_txt=$VERIFY_RELEASE_CONTEXT_STATUS_TXT
 signing_log_path=$SIGNING_LOG
 doctor_stdout_path=$DOCTOR_STDOUT
 doctor_stdout_compat_path=$DOCTOR_STDOUT_COMPAT

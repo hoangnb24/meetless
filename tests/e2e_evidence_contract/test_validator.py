@@ -70,12 +70,14 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(f"extra artifact for {phase['phase_id']}\n", encoding="utf-8")
 
+        generated_at_utc = "2026-03-06T12:00:06Z"
+
         manifest = {
             "contract_name": "recordit-e2e-evidence",
             "contract_version": "1",
             "scenario_id": scenario_id,
             "lane_type": lane_type,
-            "generated_at_utc": "2026-03-06T12:00:06Z",
+            "generated_at_utc": generated_at_utc,
             "artifact_root_relpath": "artifacts",
             "overall_status": overall_status,
             "paths_env_relpath": "paths.env",
@@ -89,7 +91,16 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         )
 
         (root / "paths.env").write_text(
-            "EVIDENCE_ROOT=artifacts\nSCENARIO_ID=" + scenario_id + "\n",
+            "\n".join([
+                "EVIDENCE_ROOT=.",
+                "ARTIFACT_ROOT=artifacts",
+                "STATUS_TXT=status.txt",
+                "SUMMARY_CSV=summary.csv",
+                "SUMMARY_JSON=summary.json",
+                "MANIFEST=evidence_contract.json",
+                f"SCENARIO_ID={scenario_id}",
+            ])
+            + "\n",
             encoding="utf-8",
         )
         (root / "status.txt").write_text(
@@ -98,7 +109,7 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
                     f"status={overall_status}",
                     f"scenario_id={scenario_id}",
                     f"lane_type={lane_type}",
-                    "generated_at_utc=2026-03-06T12:00:07Z",
+                    f"generated_at_utc={generated_at_utc}",
                     "summary_csv=summary.csv",
                     "summary_json=summary.json",
                     "manifest=evidence_contract.json",
@@ -150,7 +161,7 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
             "failed_phase_count": sum(1 for phase in phase_list if phase["status"] == "fail"),
             "warn_phase_count": sum(1 for phase in phase_list if phase["status"] == "warn"),
             "skipped_phase_count": sum(1 for phase in phase_list if phase["status"] == "skipped"),
-            "generated_at_utc": "2026-03-06T12:00:07Z",
+            "generated_at_utc": generated_at_utc,
             "manifest_relpath": "evidence_contract.json",
         }
         (root / "summary.json").write_text(
@@ -211,6 +222,26 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         self.assertEqual(payload["phase_count"], 2)
         self.assertEqual(payload["overall_status"], "pass")
 
+    def test_multiphase_xctest_warn_example_fixture_passes_validator(self) -> None:
+        root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-xctest-multiphase-warn"
+        result = self.run_validator(root, "--expect-lane-type", "xctest-evidence")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scenario_id"], "recorditapp-xctest-smoke-warn")
+        self.assertEqual(payload["phase_count"], 2)
+        self.assertEqual(payload["overall_status"], "warn")
+
+    def test_multiphase_xctest_fail_example_fixture_passes_validator(self) -> None:
+        root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-xctest-multiphase-fail"
+        result = self.run_validator(root, "--expect-lane-type", "xctest-evidence")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scenario_id"], "recorditapp-xctest-smoke-fail")
+        self.assertEqual(payload["phase_count"], 2)
+        self.assertEqual(payload["overall_status"], "fail")
+
     def test_multiphase_xcuitest_example_fixture_passes_validator(self) -> None:
         root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-xcuitest-multiphase-pass"
         result = self.run_validator(root, "--expect-lane-type", "xcuitest-evidence")
@@ -221,6 +252,26 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         self.assertEqual(payload["phase_count"], 2)
         self.assertEqual(payload["overall_status"], "pass")
 
+    def test_multiphase_xcuitest_fail_example_fixture_passes_validator(self) -> None:
+        root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-xcuitest-multiphase-fail"
+        result = self.run_validator(root, "--expect-lane-type", "xcuitest-evidence")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scenario_id"], "recorditapp-xcuitest-failure-path")
+        self.assertEqual(payload["phase_count"], 2)
+        self.assertEqual(payload["overall_status"], "fail")
+
+    def test_multiphase_xcuitest_warn_example_fixture_passes_validator(self) -> None:
+        root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-xcuitest-multiphase-warn"
+        result = self.run_validator(root, "--expect-lane-type", "xcuitest-evidence")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scenario_id"], "recorditapp-xcuitest-happy-path-warn")
+        self.assertEqual(payload["phase_count"], 2)
+        self.assertEqual(payload["overall_status"], "warn")
+
     def test_multiphase_hybrid_example_fixture_passes_validator(self) -> None:
         root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-hybrid-multiphase-pass"
         result = self.run_validator(root, "--expect-lane-type", "hybrid-e2e")
@@ -230,6 +281,26 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         self.assertEqual(payload["scenario_id"], "recordit-hybrid-smoke")
         self.assertEqual(payload["phase_count"], 2)
         self.assertEqual(payload["overall_status"], "pass")
+
+    def test_multiphase_hybrid_warn_example_fixture_passes_validator(self) -> None:
+        root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-hybrid-multiphase-warn"
+        result = self.run_validator(root, "--expect-lane-type", "hybrid-e2e")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scenario_id"], "recordit-hybrid-smoke-warn")
+        self.assertEqual(payload["phase_count"], 3)
+        self.assertEqual(payload["overall_status"], "warn")
+
+    def test_multiphase_hybrid_fail_example_fixture_passes_validator(self) -> None:
+        root = PROJECT_ROOT / "tests" / "e2e_evidence_contract" / "fixtures" / "recordit-e2e-evidence-hybrid-multiphase-fail"
+        result = self.run_validator(root, "--expect-lane-type", "hybrid-e2e")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scenario_id"], "recordit-hybrid-smoke-fail")
+        self.assertEqual(payload["phase_count"], 3)
+        self.assertEqual(payload["overall_status"], "fail")
 
     def test_valid_minimal_packaged_evidence_root_passes(self) -> None:
         root = self.make_evidence_root()
@@ -365,7 +436,7 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
                     "status=pass",
                     "scenario_id=bad-status-manifest",
                     "lane_type=packaged-e2e",
-                    "generated_at_utc=2026-03-06T12:00:07Z",
+                    "generated_at_utc=2026-03-06T12:00:06Z",
                     "summary_csv=summary.csv",
                     "summary_json=summary.json",
                     "manifest=other_manifest.json",
@@ -380,6 +451,66 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertFalse(payload["ok"])
         self.assertIn("status.txt manifest must match the validated manifest path", payload["error"])
+
+    def test_status_txt_rejects_duplicate_keys(self) -> None:
+        root = self.make_evidence_root(scenario_id="status-duplicate-key")
+        status_path = root / "status.txt"
+        status_path.write_text(
+            status_path.read_text(encoding="utf-8") + "status=warn\n",
+            encoding="utf-8",
+        )
+
+
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("duplicate key 'status' in status.txt", payload["error"])
+
+    def test_paths_env_rejects_non_shell_safe_key(self) -> None:
+        root = self.make_evidence_root(scenario_id="paths-env-bad-key")
+        paths_env = root / "paths.env"
+        paths_env.write_text(
+            paths_env.read_text(encoding="utf-8") + "bad-key=value\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_validator(root, "--expect-lane-type", "packaged-e2e")
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("paths.env key must be shell-safe", payload["error"])
+
+    def test_paths_env_requires_shared_base_entries(self) -> None:
+        root = self.make_evidence_root(scenario_id="paths-env-missing-base")
+        paths_env = root / "paths.env"
+        lines = [
+            line
+            for line in paths_env.read_text(encoding="utf-8").splitlines()
+            if not line.startswith("SUMMARY_JSON=")
+        ]
+        paths_env.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = self.run_validator(root, "--expect-lane-type", "packaged-e2e")
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("paths.env missing required base keys", payload["error"])
+
+    def test_paths_env_rejects_malformed_key_value_line(self) -> None:
+        root = self.make_evidence_root(scenario_id="paths-env-malformed-line")
+        paths_env = root / "paths.env"
+        paths_env.write_text(
+            paths_env.read_text(encoding="utf-8") + "BROKEN LINE WITHOUT EQUALS\n",
+            encoding="utf-8",
+        )
+
+
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("invalid key=value line in paths.env", payload["error"])
 
     def test_non_utf8_summary_csv_fails_cleanly(self) -> None:
         root = self.make_evidence_root(scenario_id="summary-csv-nonutf8")
@@ -404,6 +535,55 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertFalse(payload["ok"])
         self.assertIn("summary.csv row has unexpected extra columns", payload["error"])
+
+    def test_summary_csv_phase_order_must_match_manifest_order(self) -> None:
+        root = self.make_evidence_root(
+            scenario_id="summary-phase-order-mismatch",
+            lane_type="hybrid-e2e",
+            overall_status="pass",
+            phases=[
+                {
+                    "phase_id": "prepare_runtime",
+                    "title": "Prepare runtime",
+                    "required": True,
+                    "status": "pass",
+                    "exit_classification": "success",
+                    "started_at_utc": "2026-03-06T12:00:00Z",
+                    "ended_at_utc": "2026-03-06T12:02:00Z",
+                    "command_display": "prepare runtime",
+                    "command_argv": ["prepare-runtime"],
+                    "log_relpath": "logs/prepare_runtime.log",
+                    "stdout_relpath": "logs/prepare_runtime.stdout",
+                    "stderr_relpath": "logs/prepare_runtime.stderr",
+                    "primary_artifact_relpath": "artifacts/runtime.txt",
+                },
+                {
+                    "phase_id": "verify_app_state",
+                    "title": "Verify app state",
+                    "required": True,
+                    "status": "pass",
+                    "exit_classification": "success",
+                    "started_at_utc": "2026-03-06T12:02:05Z",
+                    "ended_at_utc": "2026-03-06T12:04:00Z",
+                    "command_display": "verify app",
+                    "command_argv": ["verify-app"],
+                    "log_relpath": "logs/verify_app_state.log",
+                    "stdout_relpath": "logs/verify_app_state.stdout",
+                    "stderr_relpath": "logs/verify_app_state.stderr",
+                    "primary_artifact_relpath": "artifacts/app-state.txt",
+                },
+            ],
+        )
+        summary_csv = root / "summary.csv"
+        rows = summary_csv.read_text(encoding="utf-8").splitlines()
+        rows[1], rows[2] = rows[2], rows[1]
+        summary_csv.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("summary.csv phase order must match manifest phases", payload["error"])
 
     def test_summary_csv_relpath_must_resolve_to_file(self) -> None:
         root = self.make_evidence_root(scenario_id="summary-csv-dir")
@@ -442,6 +622,33 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertFalse(payload["ok"])
         self.assertIn("generated_at_utc must be a string", payload["error"])
+
+    def test_manifest_generated_at_requires_real_calendar_time_value(self) -> None:
+        root = self.make_evidence_root(scenario_id="invalid-generated-at-value")
+        manifest_path = root / "evidence_contract.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["generated_at_utc"] = "2026-99-99T99:99:99Z"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+        status_path = root / "status.txt"
+        status_path.write_text(
+            status_path.read_text(encoding="utf-8").replace(
+                "generated_at_utc=2026-03-06T12:00:06Z",
+                "generated_at_utc=2026-99-99T99:99:99Z",
+            ),
+            encoding="utf-8",
+        )
+
+        summary_path = root / "summary.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["generated_at_utc"] = "2026-99-99T99:99:99Z"
+        summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("generated_at_utc must be a valid UTC RFC3339 timestamp with Z suffix", payload["error"])
 
     def test_phase_log_relpath_requires_string_type(self) -> None:
         root = self.make_evidence_root(scenario_id="null-log-relpath")
@@ -629,6 +836,94 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("exit_classification=flake_retried requires notes", payload["error"])
 
+    def test_pass_status_rejects_failure_exit_classification(self) -> None:
+        root = self.make_evidence_root(scenario_id="pass-with-product-failure")
+        manifest_path = root / "evidence_contract.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["phases"][0]["exit_classification"] = "product_failure"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("phase[0] status=pass requires exit_classification in ['success']", payload["error"])
+
+    def test_fail_status_rejects_success_exit_classification(self) -> None:
+        root = self.make_evidence_root(scenario_id="fail-with-success-classification", overall_status="fail")
+        manifest_path = root / "evidence_contract.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["phases"][0]["status"] = "fail"
+        manifest["phases"][0]["exit_classification"] = "success"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn(
+            "phase[0] status=fail requires exit_classification in ['contract_failure', 'infra_failure', 'product_failure']",
+            payload["error"],
+        )
+
+    def test_skipped_phase_rejects_whitespace_only_notes(self) -> None:
+        root = self.make_evidence_root(
+            scenario_id="skipped-whitespace-notes",
+            overall_status="skipped",
+            phases=[
+                {
+                    "phase_id": "gate_skip",
+                    "title": "Skip before execution",
+                    "required": True,
+                    "status": "skipped",
+                    "exit_classification": "skip_requested",
+                    "started_at_utc": "2026-03-06T12:00:00Z",
+                    "ended_at_utc": "2026-03-06T12:00:00Z",
+                    "command_display": "skip lane",
+                    "command_argv": ["skip"],
+                    "log_relpath": "logs/gate_skip.log",
+                    "stdout_relpath": "logs/gate_skip.stdout",
+                    "stderr_relpath": "logs/gate_skip.stderr",
+                    "primary_artifact_relpath": "",
+                    "notes": "   ",
+                }
+            ],
+        )
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("skipped phases must include notes", payload["error"])
+
+    def test_flake_retried_rejects_whitespace_only_notes(self) -> None:
+        root = self.make_evidence_root(
+            scenario_id="flake-retried-whitespace-notes",
+            overall_status="warn",
+            phases=[
+                {
+                    "phase_id": "retrying_probe",
+                    "title": "Retrying probe",
+                    "required": False,
+                    "status": "warn",
+                    "exit_classification": "flake_retried",
+                    "started_at_utc": "2026-03-06T12:00:00Z",
+                    "ended_at_utc": "2026-03-06T12:00:00Z",
+                    "command_display": "retrying probe",
+                    "command_argv": ["probe"],
+                    "log_relpath": "logs/retrying_probe.log",
+                    "stdout_relpath": "logs/retrying_probe.stdout",
+                    "stderr_relpath": "logs/retrying_probe.stderr",
+                    "primary_artifact_relpath": "",
+                    "notes": "   ",
+                }
+            ],
+        )
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("exit_classification=flake_retried requires notes", payload["error"])
+
     def test_symlinked_log_path_cannot_escape_evidence_root(self) -> None:
         root = self.make_evidence_root(scenario_id="symlink-log-escape")
         external_dir = tempfile.TemporaryDirectory()
@@ -662,6 +957,36 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("artifact_root_relpath must stay within the evidence root", payload["error"])
 
+
+    def test_status_generated_at_utc_must_match_manifest(self) -> None:
+        root = self.make_evidence_root(scenario_id="status-generated-at-mismatch")
+        status_path = root / "status.txt"
+        status_path.write_text(
+            status_path.read_text(encoding="utf-8").replace(
+                "generated_at_utc=2026-03-06T12:00:06Z",
+                "generated_at_utc=2026-03-06T12:09:59Z",
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("status.txt generated_at_utc must match manifest", payload["error"])
+
+    def test_summary_json_generated_at_utc_must_match_manifest(self) -> None:
+        root = self.make_evidence_root(scenario_id="summary-generated-at-mismatch")
+        summary_path = root / "summary.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["generated_at_utc"] = "2026-03-06T12:10:00Z"
+        summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("summary.json generated_at_utc must match manifest", payload["error"])
 
     def test_result_bundle_relpath_must_resolve_to_directory(self) -> None:
         root = self.make_evidence_root(scenario_id="result-bundle-file")

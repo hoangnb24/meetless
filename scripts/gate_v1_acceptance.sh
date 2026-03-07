@@ -44,7 +44,7 @@ Options:
 
 Environment:
   RECORDIT_XCODE_CONFIGURATION  Configuration used for prebuilt handoff/embed probe (default: Release)
-  RECORDIT_HANDOFF_INJECT_FAILURE  Optional seam failure injection for validation. Supported values: runtime_prepare_missing_manifest, runtime_prepare_missing_handoff_env, artifact_compare_manifest, artifact_compare_recordit, artifact_compare_capture, artifact_compare_model, manifest_parity_recordit
+  RECORDIT_HANDOFF_INJECT_FAILURE  Optional seam failure injection for validation. Supported values: runtime_prepare_missing_manifest, runtime_prepare_missing_handoff_env, bundle_copy_assembly_missing_recordit, artifact_compare_manifest, artifact_compare_recordit, artifact_compare_capture, artifact_compare_model, manifest_parity_recordit
 USAGE
 }
 
@@ -110,7 +110,7 @@ if [[ ! -f "$FIXTURE" ]]; then
 fi
 
 case "$RECORDIT_HANDOFF_INJECT_FAILURE" in
-  ""|artifact_compare_manifest|artifact_compare_recordit|artifact_compare_capture|artifact_compare_model|manifest_parity_recordit|runtime_prepare_missing_manifest|runtime_prepare_missing_handoff_env)
+  ""|artifact_compare_manifest|artifact_compare_recordit|artifact_compare_capture|artifact_compare_model|manifest_parity_recordit|runtime_prepare_missing_manifest|runtime_prepare_missing_handoff_env|bundle_copy_assembly_missing_recordit)
     ;;
   *)
     echo "error: unsupported RECORDIT_HANDOFF_INJECT_FAILURE value: $RECORDIT_HANDOFF_INJECT_FAILURE" >&2
@@ -178,6 +178,9 @@ fi
 if [[ "$RECORDIT_HANDOFF_INJECT_FAILURE" == "runtime_prepare_missing_handoff_env" ]]; then
   rm -f "$PREBUILT_RUNTIME_HANDOFF_ENV"
   PREBUILT_RUNTIME_HANDOFF_ENV_PRESENT=0
+fi
+if [[ "$RECORDIT_HANDOFF_INJECT_FAILURE" == "bundle_copy_assembly_missing_recordit" ]]; then
+  rm -f "$PREBUILT_RUNTIME_INPUT_DIR/runtime/bin/recordit"
 fi
 
 rm -rf "$COPY_ONLY_EMBED_ROOT"

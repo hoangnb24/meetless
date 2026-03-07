@@ -12,6 +12,7 @@ from typing import Any
 
 TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 SCENARIO_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+SHELL_SAFE_ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 LANE_TYPES = {"shell-e2e", "packaged-e2e", "hybrid-e2e"}
 PHASE_STATUS = {"pass", "warn", "fail", "skipped"}
 EXIT_CLASSIFICATIONS = {
@@ -246,18 +247,36 @@ def compute_overall_status(phases: list[PhaseRecord]) -> str:
     return "warn"
 
 
-def write_paths_env(path: Path, root: Path, artifact_root_relpath: str, entries: list[str]) -> None:
-    lines = [
-        f"EVIDENCE_ROOT={root}",
-        f"ARTIFACT_ROOT={root / artifact_root_relpath}",
-    ]
+def write_paths_env(
+    path: Path,
+    root: Path,
+    artifact_root_relpath: str,
+    status_txt_relpath: str,
+    summary_csv_relpath: str,
+    summary_json_relpath: str,
+    manifest_relpath: str,
+    entries: list[str],
+) -> None:
+    base_entries = {
+        "EVIDENCE_ROOT": str(root.resolve()),
+        "ARTIFACT_ROOT": str((root / artifact_root_relpath).resolve()),
+        "STATUS_TXT": str((root / status_txt_relpath).resolve()),
+        "SUMMARY_CSV": str((root / summary_csv_relpath).resolve()),
+        "SUMMARY_JSON": str((root / summary_json_relpath).resolve()),
+        "MANIFEST": str((root / manifest_relpath).resolve()),
+    }
+    ordered_entries = list(base_entries.items())
+    seen_keys = set(base_entries)
     for entry in entries:
         ensure("=" in entry, f"paths.env entry must be KEY=VALUE: {entry}")
         key, value = entry.split("=", 1)
         key = key.strip()
         ensure(key, f"paths.env entry has empty key: {entry}")
-        lines.append(f"{key}={value.strip()}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        ensure(SHELL_SAFE_ENV_KEY_RE.match(key) is not None, f"paths.env entry key must be shell-safe uppercase letters/digits/underscores: {key}")
+        ensure(key not in seen_keys, f"paths.env entry duplicates reserved key: {key}")
+        seen_keys.add(key)
+        ordered_entries.append((key, value.strip()))
+    path.write_text("\n".join(f"{key}={value}" for key, value in ordered_entries) + "\n", encoding="utf-8")
 
 
 def write_summary_csv(path: Path, scenario_id: str, lane_type: str, phases: list[PhaseRecord]) -> None:
@@ -348,7 +367,16 @@ def main() -> int:
         for target in [paths_env_path, status_txt_path, summary_csv_path, summary_json_path, manifest_path]:
             target.parent.mkdir(parents=True, exist_ok=True)
 
-        write_paths_env(paths_env_path, root, args.artifact_root_relpath, args.paths_env_entry)
+        write_paths_env(
+            paths_env_path,
+            root,
+            args.artifact_root_relpath,
+            args.status_txt_relpath,
+            args.summary_csv_relpath,
+            args.summary_json_relpath,
+            args.manifest_relpath,
+            args.paths_env_entry,
+        )
         write_summary_csv(summary_csv_path, args.scenario_id, args.lane_type, phases)
         write_summary_json(summary_json_path, args.scenario_id, args.lane_type, overall_status, args.generated_at_utc, args.manifest_relpath, phases)
         write_status_txt(status_txt_path, args.scenario_id, args.lane_type, overall_status, args.generated_at_utc, args.summary_csv_relpath, args.summary_json_relpath, args.manifest_relpath)

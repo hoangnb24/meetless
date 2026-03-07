@@ -26,12 +26,17 @@ SUMMARY_JSON="$OUT_DIR/summary.json"
 RESPONSIVENESS_SUMMARY_CSV="${XCTEST_RESPONSIVENESS_SUMMARY_PATH:-$OUT_DIR/responsiveness_budget_summary.csv}"
 RESPONSIVENESS_SUMMARY_JSON="$OUT_DIR/responsiveness_budget_summary.json"
 METADATA_JSON="$OUT_DIR/metadata.json"
+GENERATED_AT_UTC="${XCTEST_EVIDENCE_GENERATED_AT_UTC:-$(evidence_timestamp)}"
+CONTRACT_DIR="$OUT_DIR/contracts"
+XCTEST_CONTRACT_MANIFEST="$CONTRACT_DIR/xctest/evidence_contract.json"
+XCUITEST_CONTRACT_MANIFEST="$CONTRACT_DIR/xcuitest/evidence_contract.json"
+LANE_MATRIX_JSON="$CONTRACT_DIR/lane_matrix.json"
 
-mkdir -p "$LOG_DIR" "$RESULT_DIR"
+mkdir -p "$LOG_DIR" "$RESULT_DIR" "$CONTRACT_DIR"
 evidence_write_metadata_json "$METADATA_JSON" "ci_recordit_xctest_evidence" "ci_xctest_evidence" "$OUT_DIR" "$LOG_DIR" "$RESULT_DIR" "$SUMMARY_CSV" "$STATUS_CSV" "$0" "$SUMMARY_JSON" "$STATUS_JSON"
 
 cat >"$STATUS_CSV" <<'CSV'
-step,required,exit_code,result,log_path,result_bundle_path
+step,required,exit_code,result,log_path,stdout_path,stderr_path,result_bundle_path
 CSV
 
 overall_failure=0
@@ -44,7 +49,9 @@ record_step() {
   local required="$2"
   local exit_code="$3"
   local log_path="$4"
-  local result_bundle_path="$5"
+  local stdout_path="$5"
+  local stderr_path="$6"
+  local result_bundle_path="$7"
   local result="pass"
 
   steps_total=$((steps_total + 1))
@@ -57,8 +64,8 @@ record_step() {
     fi
   fi
 
-  printf '%s,%s,%s,%s,%s,%s\n' \
-    "$step_name" "$required" "$exit_code" "$result" "$log_path" "$result_bundle_path" >>"$STATUS_CSV"
+  printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    "$step_name" "$required" "$exit_code" "$result" "$log_path" "$stdout_path" "$stderr_path" "$result_bundle_path" >>"$STATUS_CSV"
 }
 
 run_step() {
@@ -68,15 +75,20 @@ run_step() {
   shift 3
 
   local log_path="$LOG_DIR/${step_name}.log"
-  echo "[ci-xctest] step=$step_name required=$required"
-  echo "[ci-xctest] cmd=$*"
+  local stdout_path="$LOG_DIR/${step_name}.stdout.log"
+  local stderr_path="$LOG_DIR/${step_name}.stderr.log"
+
+  {
+    echo "[ci-xctest] step=$step_name required=$required"
+    echo "[ci-xctest] cmd=$*"
+  } | tee "$log_path"
 
   set +e
-  "$@" >"$log_path" 2>&1
+  evidence_capture_command_logs "$log_path" "$stdout_path" "$stderr_path" "$@"
   local rc=$?
   set -e
 
-  record_step "$step_name" "$required" "$rc" "$log_path" "$result_bundle_path"
+  record_step "$step_name" "$required" "$rc" "$log_path" "$stdout_path" "$stderr_path" "$result_bundle_path"
 }
 
 run_xcodebuild_step() {
@@ -114,30 +126,43 @@ run_xcodebuild_ui_step_with_bootstrap_retry() {
   shift 3
 
   local log_path="$LOG_DIR/${step_name}.log"
+  local stdout_path="$LOG_DIR/${step_name}.stdout.log"
+  local stderr_path="$LOG_DIR/${step_name}.stderr.log"
   local attempt=0
   local max_attempts=$((UI_BOOTSTRAP_RETRIES + 1))
   local rc=0
 
   : >"$log_path"
+  : >"$stdout_path"
+  : >"$stderr_path"
   while [[ "$attempt" -lt "$max_attempts" ]]; do
     attempt=$((attempt + 1))
+
+    local attempt_log="${log_path}.attempt_${attempt}"
+    local attempt_stdout="${stdout_path}.attempt_${attempt}"
+    local attempt_stderr="${stderr_path}.attempt_${attempt}"
+
     {
       echo "[ci-xctest] step=$step_name required=$required attempt=$attempt/$max_attempts"
       echo "[ci-xctest] cmd=xcodebuild $* -resultBundlePath $result_bundle_path"
-    } | tee -a "$log_path"
+    } | tee "$attempt_log"
 
-    local attempt_log="${log_path}.attempt_${attempt}"
-    rm -f "$attempt_log"
+    rm -f "$attempt_stdout" "$attempt_stderr"
     rm -rf "$result_bundle_path"
 
     set +e
-    env RECORDIT_RUNTIME_INPUT_DIR="$RUNTIME_INPUT_DIR" \
-      xcodebuild "$@" -resultBundlePath "$result_bundle_path" >"$attempt_log" 2>&1
+    evidence_capture_command_logs "$attempt_log" "$attempt_stdout" "$attempt_stderr" \
+      env RECORDIT_RUNTIME_INPUT_DIR="$RUNTIME_INPUT_DIR" \
+      xcodebuild "$@" -resultBundlePath "$result_bundle_path"
     rc=$?
     set -e
 
     cat "$attempt_log" >>"$log_path"
+    cat "$attempt_stdout" >>"$stdout_path"
+    cat "$attempt_stderr" >>"$stderr_path"
     echo >>"$log_path"
+    echo >>"$stdout_path"
+    echo >>"$stderr_path"
 
     if [[ "$rc" -eq 0 ]]; then
       break
@@ -153,7 +178,7 @@ run_xcodebuild_ui_step_with_bootstrap_retry() {
     break
   done
 
-  record_step "$step_name" "$required" "$rc" "$log_path" "$result_bundle_path"
+  record_step "$step_name" "$required" "$rc" "$log_path" "$stdout_path" "$stderr_path" "$result_bundle_path"
 }
 
 run_step \
@@ -201,11 +226,25 @@ run_step \
   -resultBundlePath "$RESULT_DIR/responsiveness_budget_gate.xcresult" \
   -only-testing:RecorditAppTests/RecorditAppTests/testAppLevelResponsivenessBudgetsForLiveRun
 
+discover_xctestrun_log="$LOG_DIR/discover_xctestrun.log"
+discover_xctestrun_stdout="$LOG_DIR/discover_xctestrun.stdout.log"
+discover_xctestrun_stderr="$LOG_DIR/discover_xctestrun.stderr.log"
+{
+  echo "[ci-xctest] step=discover_xctestrun required=1"
+  echo "[ci-xctest] cmd=find $DERIVED_DATA_PATH/Build/Products -name '*.xctestrun' | head -n 1"
+} | tee "$discover_xctestrun_log"
+: >"$discover_xctestrun_stdout"
+: >"$discover_xctestrun_stderr"
+
 xctestrun_path="$(find "$DERIVED_DATA_PATH/Build/Products" -name '*.xctestrun' | head -n 1 || true)"
 if [[ -z "$xctestrun_path" ]]; then
-  echo "[ci-xctest] error: missing xctestrun file under $DERIVED_DATA_PATH/Build/Products"
-  record_step "discover_xctestrun" 1 1 "" ""
+  echo "[ci-xctest] error: missing xctestrun file under $DERIVED_DATA_PATH/Build/Products" | tee -a "$discover_xctestrun_log"
+  echo "[ci-xctest] error: missing xctestrun file under $DERIVED_DATA_PATH/Build/Products" >"$discover_xctestrun_stderr"
+  record_step "discover_xctestrun" 1 1 "$discover_xctestrun_log" "$discover_xctestrun_stdout" "$discover_xctestrun_stderr" ""
 else
+  printf '%s\n' "$xctestrun_path" | tee -a "$discover_xctestrun_log" >"$discover_xctestrun_stdout"
+  record_step "discover_xctestrun" 1 0 "$discover_xctestrun_log" "$discover_xctestrun_stdout" "$discover_xctestrun_stderr" ""
+
   ui_required=0
   if [[ "$STRICT_UI_TESTS" == "1" ]]; then
     ui_required=1
@@ -319,6 +358,65 @@ echo "[ci-xctest] status_csv=$STATUS_CSV"
 echo "[ci-xctest] status_json=$STATUS_JSON"
 echo "[ci-xctest] summary_csv=$SUMMARY_CSV"
 echo "[ci-xctest] summary_json=$SUMMARY_JSON"
+
+evidence_render_xctest_contract \
+  "$OUT_DIR" \
+  recorditapp-ci-xctest \
+  xctest-evidence \
+  --generated-at-utc "$GENERATED_AT_UTC" \
+  --artifact-root-relpath . \
+  --paths-env-relpath contracts/xctest/paths.env \
+  --status-txt-relpath contracts/xctest/status.txt \
+  --summary-csv-relpath contracts/xctest/summary.csv \
+  --summary-json-relpath contracts/xctest/summary.json \
+  --manifest-relpath contracts/xctest/evidence_contract.json \
+  --paths-env-entry "DERIVED_DATA_PATH=$DERIVED_DATA_PATH" \
+  --paths-env-entry "DESTINATION=$DESTINATION" \
+  --paths-env-entry "RUNTIME_INPUT_DIR=$RUNTIME_INPUT_DIR" \
+  --paths-env-entry "STRICT_UI_TESTS=$STRICT_UI_TESTS"
+
+evidence_render_xctest_contract \
+  "$OUT_DIR" \
+  recorditapp-ci-xcuitest \
+  xcuitest-evidence \
+  --generated-at-utc "$GENERATED_AT_UTC" \
+  --artifact-root-relpath . \
+  --paths-env-relpath contracts/xcuitest/paths.env \
+  --status-txt-relpath contracts/xcuitest/status.txt \
+  --summary-csv-relpath contracts/xcuitest/summary.csv \
+  --summary-json-relpath contracts/xcuitest/summary.json \
+  --manifest-relpath contracts/xcuitest/evidence_contract.json \
+  --paths-env-entry "DERIVED_DATA_PATH=$DERIVED_DATA_PATH" \
+  --paths-env-entry "DESTINATION=$DESTINATION" \
+  --paths-env-entry "RUNTIME_INPUT_DIR=$RUNTIME_INPUT_DIR" \
+  --paths-env-entry "STRICT_UI_TESTS=$STRICT_UI_TESTS"
+
+python3 - "$LANE_MATRIX_JSON" "$XCTEST_CONTRACT_MANIFEST" "$XCUITEST_CONTRACT_MANIFEST" <<'PYLANE'
+import json
+import sys
+from pathlib import Path
+
+output_path = Path(sys.argv[1])
+manifests = [Path(sys.argv[2]), Path(sys.argv[3])]
+payload = {"lanes": []}
+for manifest_path in manifests:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    summary_path = manifest_path.parent / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    payload["lanes"].append({
+        "scenario_id": manifest["scenario_id"],
+        "lane_type": manifest["lane_type"],
+        "overall_status": summary["overall_status"],
+        "phase_count": summary["phase_count"],
+        "manifest_relpath": manifest_path.relative_to(output_path.parent.parent).as_posix(),
+        "summary_relpath": summary_path.relative_to(output_path.parent.parent).as_posix(),
+    })
+output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PYLANE
+
+echo "[ci-xctest] xctest_contract=$XCTEST_CONTRACT_MANIFEST"
+echo "[ci-xctest] xcuitest_contract=$XCUITEST_CONTRACT_MANIFEST"
+echo "[ci-xctest] lane_matrix_json=$LANE_MATRIX_JSON"
 
 if [[ "$overall_failure" -ne 0 ]]; then
   echo "[ci-xctest] required steps failed"

@@ -6,11 +6,13 @@ import csv
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 SCENARIO_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+SHELL_SAFE_ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 ALLOWED_LANE_TYPES = {
     "shell-e2e",
     "packaged-e2e",
@@ -61,6 +63,21 @@ STATUS_KEYS = {
     "summary_json",
     "manifest",
 }
+
+STATUS_EXIT_CLASSIFICATIONS = {
+    "pass": {"success"},
+    "warn": {"flake_retried"},
+    "fail": {"product_failure", "infra_failure", "contract_failure"},
+    "skipped": {"skip_requested"},
+}
+REQUIRED_PATHS_ENV_BASE_KEYS = (
+    "EVIDENCE_ROOT",
+    "ARTIFACT_ROOT",
+    "STATUS_TXT",
+    "SUMMARY_CSV",
+    "SUMMARY_JSON",
+    "MANIFEST",
+)
 
 
 class ValidationError(Exception):
@@ -116,6 +133,10 @@ def is_relative_safe(relpath: str) -> bool:
 def require_timestamp(value: Any, field: str) -> None:
     ensure(isinstance(value, str), f"{field} must be a string")
     ensure(TIMESTAMP_RE.match(value) is not None, f"{field} must be UTC RFC3339 with Z suffix")
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as exc:
+        raise ValidationError(f"{field} must be a valid UTC RFC3339 timestamp with Z suffix") from exc
 
 
 def ensure_timestamp_order(started_at: str, ended_at: str, field_prefix: str) -> None:
@@ -127,18 +148,32 @@ def require_nonnegative_int(value: Any, field: str) -> int:
     return value
 
 
+
+def ensure_phase_status_classification_consistent(status: str, exit_classification: str, field_prefix: str) -> None:
+    allowed = STATUS_EXIT_CLASSIFICATIONS[status]
+    ensure(
+        exit_classification in allowed,
+        f"{field_prefix} status={status} requires exit_classification in {sorted(allowed)}",
+    )
+
+
 def parse_key_value_file(path: Path) -> dict[str, str]:
     data: dict[str, str] = {}
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as exc:
         raise ValidationError(f"unable to read key/value file {path}: {exc}") from exc
-    for raw in lines:
+    for line_number, raw in enumerate(lines, start=1):
         line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
+        if not line or line.startswith("#"):
             continue
+        ensure("=" in line, f"invalid key=value line in {path.name} at line {line_number}: {raw}")
         key, value = line.split("=", 1)
-        data[key.strip()] = value.strip()
+        key = key.strip()
+        value = value.strip()
+        ensure(key, f"invalid empty key in {path.name} at line {line_number}")
+        ensure(key not in data, f"duplicate key '{key}' in {path.name}")
+        data[key] = value
     return data
 
 
@@ -248,12 +283,17 @@ def validate_manifest(root: Path, manifest: dict[str, Any], expect_lane_type: st
             ensure(isinstance(notes, str), f"phase[{idx}].notes must be a string when present")
         if phase["status"] == "skipped":
             ensure(phase["exit_classification"] == "skip_requested", f"phase[{idx}] skipped phases must use exit_classification=skip_requested")
-            ensure(isinstance(notes, str) and notes, f"phase[{idx}] skipped phases must include notes")
+            ensure(isinstance(notes, str) and notes.strip(), f"phase[{idx}] skipped phases must include notes")
         if phase["exit_classification"] == "skip_requested":
             ensure(phase["status"] == "skipped", f"phase[{idx}] exit_classification=skip_requested requires status=skipped")
         if phase["exit_classification"] == "flake_retried":
             ensure(phase["status"] != "skipped", f"phase[{idx}] exit_classification=flake_retried is invalid for skipped phases")
-            ensure(isinstance(notes, str) and notes, f"phase[{idx}] exit_classification=flake_retried requires notes")
+            ensure(isinstance(notes, str) and notes.strip(), f"phase[{idx}] exit_classification=flake_retried requires notes")
+        ensure_phase_status_classification_consistent(
+            phase["status"],
+            phase["exit_classification"],
+            f"phase[{idx}]",
+        )
         if phase["required"] and phase["status"] == "fail":
             fail_required = True
 
@@ -282,6 +322,7 @@ def validate_status_file(root: Path, manifest: dict[str, Any], manifest_path: Pa
     ensure(status_map["scenario_id"] == manifest["scenario_id"], "status.txt scenario_id must match manifest")
     ensure(status_map["lane_type"] == manifest["lane_type"], "status.txt lane_type must match manifest")
     require_timestamp(status_map["generated_at_utc"], "status.txt generated_at_utc")
+    ensure(status_map["generated_at_utc"] == manifest["generated_at_utc"], "status.txt generated_at_utc must match manifest")
     summary_csv_path = require_relpath(root, status_map["summary_csv"], "status.txt summary_csv", path_kind="file")
     summary_json_path = require_relpath(root, status_map["summary_json"], "status.txt summary_json", path_kind="file")
     manifest_relpath = require_relpath(root, status_map["manifest"], "status.txt manifest", path_kind="file")
@@ -290,10 +331,54 @@ def validate_status_file(root: Path, manifest: dict[str, Any], manifest_path: Pa
     ensure(manifest_relpath == manifest_path, "status.txt manifest must match the validated manifest path")
 
 
-def validate_paths_env(root: Path, manifest: dict[str, Any]) -> None:
+def validate_paths_env_resolved_path(
+    root: Path,
+    value: str,
+    expected_path: Path,
+    field: str,
+) -> None:
+    ensure(value != "", f"paths.env {field} must not be empty")
+    candidate = Path(value)
+    if candidate.is_absolute():
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError as exc:
+            raise ValidationError(f"paths.env {field} absolute path could not be resolved: {value}") from exc
+    else:
+        ensure(is_relative_safe(value), f"paths.env {field} must be a safe relative path or absolute path: {value}")
+        try:
+            resolved = (root / value).resolve(strict=True)
+        except OSError as exc:
+            raise ValidationError(f"paths.env {field} relative path could not be resolved: {value}") from exc
+    ensure(resolved == expected_path, f"paths.env {field} must resolve to {expected_path}")
+
+
+def validate_paths_env(root: Path, manifest: dict[str, Any], manifest_path: Path) -> None:
     paths_env_path = root / manifest["paths_env_relpath"]
     values = parse_key_value_file(paths_env_path)
     ensure(values, "paths.env must contain at least one key=value entry")
+    for key in values:
+        ensure(
+            SHELL_SAFE_ENV_KEY_RE.match(key) is not None,
+            f"paths.env key must be shell-safe uppercase letters/digits/underscores: {key}",
+        )
+
+    missing = [key for key in REQUIRED_PATHS_ENV_BASE_KEYS if key not in values]
+    ensure(not missing, f"paths.env missing required base keys: {missing}")
+
+    artifact_root = require_relpath(
+        root,
+        manifest["artifact_root_relpath"],
+        "artifact_root_relpath",
+        allow_empty=True,
+        path_kind="dir",
+    ).resolve(strict=True)
+    validate_paths_env_resolved_path(root, values["EVIDENCE_ROOT"], root.resolve(strict=True), "EVIDENCE_ROOT")
+    validate_paths_env_resolved_path(root, values["ARTIFACT_ROOT"], artifact_root, "ARTIFACT_ROOT")
+    validate_paths_env_resolved_path(root, values["STATUS_TXT"], (root / manifest["status_txt_relpath"]).resolve(strict=True), "STATUS_TXT")
+    validate_paths_env_resolved_path(root, values["SUMMARY_CSV"], (root / manifest["summary_csv_relpath"]).resolve(strict=True), "SUMMARY_CSV")
+    validate_paths_env_resolved_path(root, values["SUMMARY_JSON"], (root / manifest["summary_json_relpath"]).resolve(strict=True), "SUMMARY_JSON")
+    validate_paths_env_resolved_path(root, values["MANIFEST"], manifest_path.resolve(strict=True), "MANIFEST")
 
 
 def validate_summary_json(root: Path, manifest: dict[str, Any], manifest_path: Path) -> None:
@@ -305,6 +390,7 @@ def validate_summary_json(root: Path, manifest: dict[str, Any], manifest_path: P
     ensure(summary["contract_version"] == manifest["contract_version"], "summary.json contract_version must match manifest")
     ensure(summary["overall_status"] == manifest["overall_status"], "summary.json overall_status must match manifest")
     require_timestamp(summary["generated_at_utc"], "summary.json generated_at_utc")
+    ensure(summary["generated_at_utc"] == manifest["generated_at_utc"], "summary.json generated_at_utc must match manifest")
     phase_count = len(manifest["phases"])
     summary_phase_count = require_nonnegative_int(summary["phase_count"], "summary.json phase_count")
     required_phase_count = sum(1 for phase in manifest["phases"] if phase["required"])
@@ -338,6 +424,8 @@ def validate_summary_csv(root: Path, manifest: dict[str, Any]) -> None:
     csv_phase_ids = [row["phase_id"] for row in rows]
     ensure(len(set(csv_phase_ids)) == len(csv_phase_ids), "summary.csv phase_id values must be unique")
     ensure(set(csv_phase_ids) == set(phase_map), f"summary.csv phase_id set must match manifest phases: expected {sorted(phase_map)}, found {sorted(set(csv_phase_ids))}")
+    manifest_phase_ids = [phase["phase_id"] for phase in manifest["phases"]]
+    ensure(csv_phase_ids == manifest_phase_ids, f"summary.csv phase order must match manifest phases: expected {manifest_phase_ids}, found {csv_phase_ids}")
     for row in rows:
         extra_columns = row.get(None)
         ensure(not extra_columns, f"summary.csv row has unexpected extra columns: {extra_columns}")
@@ -374,7 +462,7 @@ def main() -> int:
         ensure(root.is_dir(), f"root directory does not exist: {root}")
         manifest = load_json(manifest_path)
         validate_manifest(root, manifest, args.expect_lane_type)
-        validate_paths_env(root, manifest)
+        validate_paths_env(root, manifest, manifest_path)
         validate_status_file(root, manifest, manifest_path)
         validate_summary_json(root, manifest, manifest_path)
         validate_summary_csv(root, manifest)

@@ -51,7 +51,7 @@ This is the canonical manifest for the root. It must include:
   - `xctest-evidence`
   - `xcuitest-evidence`
   - `hybrid-e2e`
-- `generated_at_utc` — UTC timestamp in RFC 3339 / ISO 8601 `...Z` form
+- `generated_at_utc` — valid UTC timestamp in RFC 3339 / ISO 8601 `...Z` form
 - `artifact_root_relpath` — usually `artifacts` or `.`, and it must resolve inside the evidence root
 - `overall_status` — one of `pass`, `warn`, `fail`, `skipped`
 - `paths_env_relpath` — relative path to `paths.env`
@@ -75,9 +75,9 @@ This is the canonical manifest for the root. It must include:
 - `log_path`
 - `primary_artifact`
 
-`ended_at_utc` must not be earlier than `started_at_utc`.
+`ended_at_utc` must not be earlier than `started_at_utc`. Timestamps must be real UTC calendar/time values; shape-only strings such as `2026-99-99T99:99:99Z` are invalid.
 
-Each phase in `evidence_contract.json.phases[]` must have exactly one corresponding row in `summary.csv`, and `phase_id` values must remain unique in both places.
+Each phase in `evidence_contract.json.phases[]` must have exactly one corresponding row in `summary.csv`, `phase_id` values must remain unique in both places, and the CSV row order must match the manifest phase order exactly.
 
 ### `summary.json`
 
@@ -96,10 +96,11 @@ Each phase in `evidence_contract.json.phases[]` must have exactly one correspond
 - `manifest_relpath`
 
 `summary.json` counts must agree with the retained phase set in `evidence_contract.json`.
+`summary.json.generated_at_utc` must also match `evidence_contract.json.generated_at_utc`.
 
 ### `status.txt`
 
-`status.txt` is the human-quick-read file. It must contain shell-style `key=value` lines for at least:
+`status.txt` is the human-quick-read file. It must contain shell-style `key=value` lines for at least. Duplicate keys and malformed non-comment lines are invalid:
 
 - `status`
 - `scenario_id`
@@ -109,9 +110,20 @@ Each phase in `evidence_contract.json.phases[]` must have exactly one correspond
 - `summary_json`
 - `manifest`
 
+`status.txt.generated_at_utc` must match `evidence_contract.json.generated_at_utc`.
+
 ### `paths.env`
 
-`paths.env` records resolved paths that matter for triage. It must be a shell-style `key=value` file with at least one retained entry. Required keys vary by lane, but every lane should include enough resolved-path context to explain what artifact root and primary inputs/outputs were actually used.
+`paths.env` records resolved paths that matter for triage. It must be a shell-style `KEY=VALUE` file using shell-safe uppercase keys (`[A-Z][A-Z0-9_]*`). Duplicate keys and malformed non-comment lines are invalid. Every lane must include these shared base entries:
+
+- `EVIDENCE_ROOT`
+- `ARTIFACT_ROOT`
+- `STATUS_TXT`
+- `SUMMARY_CSV`
+- `SUMMARY_JSON`
+- `MANIFEST`
+
+Those values may be absolute resolved paths or safe relative paths, but they must resolve to the retained evidence root and the exact contract files named by the manifest. Lane-specific keys may add more context, but they must preserve the same shell-safe key format.
 
 ## Phase record requirements
 
@@ -144,11 +156,13 @@ Each `phases[]` entry in `evidence_contract.json` must include:
 
 ## Interpretation rules
 
-- `status=warn` means the phase produced usable evidence but did not fully satisfy the target expectation.
-- `status=skipped` requires `exit_classification=skip_requested` and a non-empty `notes` field.
+- `status=pass` requires `exit_classification=success`.
+- `status=warn` means the phase produced usable evidence but did not fully satisfy the target expectation, and it currently requires `exit_classification=flake_retried`.
+- `status=fail` requires an explicit failure classification: `product_failure`, `infra_failure`, or `contract_failure`.
+- `status=skipped` requires `exit_classification=skip_requested` and a non-blank `notes` field.
 - `exit_classification=skip_requested` is valid only when `status=skipped`.
 - `required=true` with `status=fail` means the lane-level `overall_status` must be `fail`.
-- `flake_retried` is allowed only when a retained log explains the retry, `notes` summarize the retry context, and the final `status` is not `skipped`.
+- `flake_retried` is allowed only when a retained log explains the retry, `notes` summarize the retry context with non-blank text, and the final `status` is `warn`.
 - All retained relative paths must resolve inside the evidence root; symlink escapes outside the root are invalid.
 - `primary_artifact_relpath` may be empty only for pure gating/check phases with no output artifact beyond logs. Directory-style bundles belong in `result_bundle_relpath`, which must resolve to a directory when present.
 
@@ -156,7 +170,13 @@ Each `phases[]` entry in `evidence_contract.json` must include:
 
 - `pass` — every retained phase has `status=pass`
 - `warn` — no required phase failed, and at least one retained phase is non-pass (`warn` or non-required `fail`)
+- The tracked `recordit-e2e-evidence-hybrid-multiphase-warn` fixture demonstrates that a non-required failed phase still aggregates to lane-level `warn` when every required phase passes.
+- The tracked `recordit-e2e-evidence-xctest-multiphase-warn` fixture demonstrates that an `xctest-evidence` lane can also aggregate to `warn` when a required phase completes with retained `flake_retried` evidence instead of a hard failure.
+- The tracked `recordit-e2e-evidence-xcuitest-multiphase-warn` fixture demonstrates the same `warn` aggregation pattern for an `xcuitest-evidence` lane.
 - `fail` — at least one required phase failed, or manifest/summary/log contract itself is invalid
+- The tracked `recordit-e2e-evidence-hybrid-multiphase-fail` fixture demonstrates a retained multi-phase lane where a required verification phase fails and forces lane-level `overall_status=fail`.
+- The tracked `recordit-e2e-evidence-xctest-multiphase-fail` fixture demonstrates required-failure aggregation for an `xctest-evidence` lane.
+- The tracked `recordit-e2e-evidence-xcuitest-multiphase-fail` fixture demonstrates the same required-failure aggregation for an `xcuitest-evidence` lane.
 - `skipped` — every retained phase is `status=skipped` because the lane was intentionally skipped before execution
 
 ## Why both CSV and JSON exist
@@ -191,8 +211,14 @@ python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_cont
 python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-minimal-fail --expect-lane-type packaged-e2e
 python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-minimal-skipped --expect-lane-type shell-e2e
 python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-xctest-multiphase-pass --expect-lane-type xctest-evidence
+python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-xctest-multiphase-warn --expect-lane-type xctest-evidence
+python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-xctest-multiphase-fail --expect-lane-type xctest-evidence
 python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-xcuitest-multiphase-pass --expect-lane-type xcuitest-evidence
+python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-xcuitest-multiphase-warn --expect-lane-type xcuitest-evidence
+python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-xcuitest-multiphase-fail --expect-lane-type xcuitest-evidence
 python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-hybrid-multiphase-pass --expect-lane-type hybrid-e2e
+python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-hybrid-multiphase-warn --expect-lane-type hybrid-e2e
+python3 scripts/validate_e2e_evidence_contract.py --root tests/e2e_evidence_contract/fixtures/recordit-e2e-evidence-hybrid-multiphase-fail --expect-lane-type hybrid-e2e
 ```
 
 The validator enforces:

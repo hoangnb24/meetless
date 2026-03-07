@@ -1,7 +1,7 @@
 status=fail
 scenario_id=packaged-live-fail
 lane_type=packaged-e2e
-generated_at_utc=2026-03-06T12:00:07Z
+generated_at_utc=2026-03-06T12:00:06Z
 summary_csv=summary.csv
 summary_json=summary.json
 manifest=evidence_contract.json
