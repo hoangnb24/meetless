@@ -626,14 +626,19 @@ struct MainWindowView: View {
 
     private enum RuntimeTerminalSheet: Identifiable {
         case sessionSummary(MainSessionController.FinalizationSummary)
-        case errorRecovery(AppServiceError, [RuntimeViewModel.RecoveryAction])
+        case errorRecovery(
+            AppServiceError,
+            [RuntimeViewModel.RecoveryAction],
+            RuntimeViewModel.InterruptionRecoveryContext?
+        )
 
         var id: String {
             switch self {
             case .sessionSummary(let summary):
                 return "summary-\(summary.sessionID)-\(summary.status)-\(summary.trustNoticeCount)"
-            case .errorRecovery(let error, let actions):
-                return "recovery-\(error.code.rawValue)-\(actions.map(\.rawValue).joined(separator: ","))"
+            case .errorRecovery(let error, let actions, let context):
+                let outcomeToken = context?.outcomeCode.rawValue ?? "none"
+                return "recovery-\(error.code.rawValue)-\(outcomeToken)-\(actions.map(\.rawValue).joined(separator: ","))"
             }
         }
     }
@@ -688,10 +693,11 @@ struct MainWindowView: View {
                         activeTerminalSheet = nil
                     }
                 )
-            case .errorRecovery(let error, let actions):
+            case .errorRecovery(let error, let actions, let context):
                 ErrorRecoverySheet(
                     error: error,
                     actions: actions,
+                    recoveryContext: context,
                     performAction: { action in
                         performRecoveryAction(action)
                     },
@@ -994,15 +1000,27 @@ struct MainWindowView: View {
                                 .bold()
                                 .lineLimit(1)
                             Spacer()
-                            Text(statusLabel(session.status))
-                                .font(.caption2)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(statusColor(session.status).opacity(0.15), in: Capsule())
-                                .foregroundStyle(statusColor(session.status))
+                            HStack(spacing: 6) {
+                                Text(statusLabel(session.status))
+                                    .font(.caption2)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(statusColor(session.status).opacity(0.15), in: Capsule())
+                                    .foregroundStyle(statusColor(session.status))
+
+                                Text(outcomeCodeLabel(session.outcomeCode))
+                                    .font(.caption2)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(outcomeColor(session.outcomeCode).opacity(0.15), in: Capsule())
+                                    .foregroundStyle(outcomeColor(session.outcomeCode))
+                            }
                         }
                         Text("\(modeLabel(session.mode)) · \(startedAtLabel(session.startedAt)) · \(durationLabel(session.durationMs))")
                             .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("Outcome: \(outcomeClassificationLabel(session.outcomeClassification))")
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
 
                         if session.mode == .recordOnly {
@@ -1048,6 +1066,7 @@ struct MainWindowView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
+                sessionOutcomePanel(for: detail.summary)
                 pendingTranscriptionPanel(for: detail.summary)
                 sessionActionsPanel(for: detail.summary)
 
@@ -1146,6 +1165,52 @@ struct MainWindowView: View {
                         (sessionActionNotice.isError ? Color.red : Color.secondary).opacity(0.08),
                         in: RoundedRectangle(cornerRadius: 8)
                     )
+            }
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func sessionOutcomePanel(for summary: SessionSummaryDTO) -> some View {
+        let diagnosticRows = prioritizedOutcomeDiagnostics(summary.outcomeDiagnostics)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Outcome Taxonomy")
+                .font(.subheadline)
+                .bold()
+
+            HStack(spacing: 8) {
+                Text(outcomeClassificationLabel(summary.outcomeClassification))
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(outcomeColor(summary.outcomeCode).opacity(0.12), in: Capsule())
+                    .foregroundStyle(outcomeColor(summary.outcomeCode))
+
+                Text(outcomeCodeLabel(summary.outcomeCode))
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(outcomeColor(summary.outcomeCode).opacity(0.2), in: Capsule())
+                    .foregroundStyle(outcomeColor(summary.outcomeCode))
+            }
+
+            if !diagnosticRows.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Diagnostics")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(Array(diagnosticRows.enumerated()), id: \.offset) { _, row in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("\(diagnosticLabel(row.0)):")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text(row.1)
+                                .font(.caption2)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
             }
         }
         .padding(10)
@@ -1300,7 +1365,11 @@ struct MainWindowView: View {
             controller.send(.showRuntimeError(errorCode: error.code))
             let actions = mainSessionController.recoveryActions
             let resolvedActions = actions.isEmpty ? [.startNewSession] : actions
-            activeTerminalSheet = .errorRecovery(error, resolvedActions)
+            activeTerminalSheet = .errorRecovery(
+                error,
+                resolvedActions,
+                mainSessionController.interruptionRecoveryContext
+            )
         case .idle, .preparing, .running, .stopping, .finalizing:
             break
         }
@@ -1452,6 +1521,59 @@ struct MainWindowView: View {
         case .recordOnly:
             return "Record Only"
         }
+    }
+
+    private func outcomeClassificationLabel(_ classification: SessionOutcomeClassification) -> String {
+        switch classification {
+        case .emptyRoot:
+            return "empty_root"
+        case .partialArtifact:
+            return "partial_artifact"
+        case .finalizedFailure:
+            return "finalized_failure"
+        case .finalizedSuccess:
+            return "finalized_success"
+        }
+    }
+
+    private func outcomeCodeLabel(_ code: SessionOutcomeCode) -> String {
+        code.rawValue
+    }
+
+    private func outcomeColor(_ code: SessionOutcomeCode) -> Color {
+        switch code {
+        case .emptySessionRoot, .finalizedFailure:
+            return .red
+        case .partialArtifactSession:
+            return .orange
+        case .finalizedSuccess:
+            return .green
+        case .finalizedDegradedSuccess:
+            return .yellow
+        }
+    }
+
+    private func prioritizedOutcomeDiagnostics(_ diagnostics: [String: String]) -> [(String, String)] {
+        let orderedKeys = [
+            "manifest_status",
+            "has_manifest",
+            "has_jsonl",
+            "has_wav",
+            "pending_transcription_state",
+            "stderr_exists",
+            "root_path",
+        ]
+        var rows: [(String, String)] = []
+        for key in orderedKeys {
+            if let value = diagnostics[key], !value.isEmpty {
+                rows.append((key, value))
+            }
+        }
+        return rows
+    }
+
+    private func diagnosticLabel(_ key: String) -> String {
+        key.replacingOccurrences(of: "_", with: " ")
     }
 
     private func statusLabel(_ status: SessionListViewModel.StatusFilter) -> String {
@@ -1659,6 +1781,7 @@ private struct SessionSummarySheet: View {
 private struct ErrorRecoverySheet: View {
     let error: AppServiceError
     let actions: [RuntimeViewModel.RecoveryAction]
+    let recoveryContext: RuntimeViewModel.InterruptionRecoveryContext?
     let performAction: (RuntimeViewModel.RecoveryAction) -> Void
     let dismiss: () -> Void
 
@@ -1675,6 +1798,49 @@ private struct ErrorRecoverySheet: View {
             Text(error.remediation)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+
+            if let recoveryContext {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Session Outcome")
+                        .font(.subheadline)
+                        .bold()
+
+                    HStack(spacing: 8) {
+                        Text(recoveryContext.outcomeClassification.rawValue)
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(outcomeColor(recoveryContext.outcomeCode).opacity(0.12), in: Capsule())
+                            .foregroundStyle(outcomeColor(recoveryContext.outcomeCode))
+
+                        Text(recoveryContext.outcomeCode.rawValue)
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(outcomeColor(recoveryContext.outcomeCode).opacity(0.2), in: Capsule())
+                            .foregroundStyle(outcomeColor(recoveryContext.outcomeCode))
+                    }
+
+                    Text(recoveryContext.summary)
+                        .font(.footnote)
+                    Text(recoveryContext.guidance)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(Array(diagnosticRows(recoveryContext.outcomeDiagnostics).enumerated()), id: \.offset) { _, row in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("\(row.0):")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text(row.1)
+                                .font(.caption2)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+                .padding(10)
+                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            }
 
             if let debugDetail = error.debugDetail, !debugDetail.isEmpty {
                 Text("Debug: \(debugDetail)")
@@ -1702,6 +1868,37 @@ private struct ErrorRecoverySheet: View {
         }
         .padding(20)
         .frame(minWidth: 560, minHeight: 260, alignment: .topLeading)
+    }
+
+    private func outcomeColor(_ code: SessionOutcomeCode) -> Color {
+        switch code {
+        case .emptySessionRoot, .finalizedFailure:
+            return .red
+        case .partialArtifactSession:
+            return .orange
+        case .finalizedSuccess:
+            return .green
+        case .finalizedDegradedSuccess:
+            return .yellow
+        }
+    }
+
+    private func diagnosticRows(_ diagnostics: [String: String]) -> [(String, String)] {
+        let orderedKeys = [
+            "manifest_status",
+            "has_manifest",
+            "has_jsonl",
+            "has_wav",
+            "stderr_exists",
+            "root_path",
+        ]
+        var rows: [(String, String)] = []
+        for key in orderedKeys {
+            if let value = diagnostics[key], !value.isEmpty {
+                rows.append((key, value))
+            }
+        }
+        return rows
     }
 
     private func recoveryActionLabel(_ action: RuntimeViewModel.RecoveryAction) -> String {

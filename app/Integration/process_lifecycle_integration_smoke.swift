@@ -366,8 +366,10 @@ struct ProcessLifecycleIntegrationSmokeMain {
                 .appendingPathComponent("process-lifecycle-integration-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.removeItem(at: tempRoot)
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
-        if !keepArtifacts {
-            defer { try? FileManager.default.removeItem(at: tempRoot) }
+        defer {
+            if !keepArtifacts {
+                try? FileManager.default.removeItem(at: tempRoot)
+            }
         }
 
         try await runLiveLifecycleScenarios(tempRoot: tempRoot)

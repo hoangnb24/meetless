@@ -131,6 +131,10 @@ final class MainSessionController: ObservableObject {
         runtimeViewModel.suggestedRecoveryActions
     }
 
+    var interruptionRecoveryContext: RuntimeViewModel.InterruptionRecoveryContext? {
+        runtimeViewModel.interruptionRecoveryContext
+    }
+
     func startSession() {
         guard canStart else { return }
 
