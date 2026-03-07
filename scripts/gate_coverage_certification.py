@@ -204,6 +204,27 @@ def normalize_status(raw: str) -> str:
     return raw.strip().lower()
 
 
+def parse_bool(value: object, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on", "pass"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", "fail"}:
+            return False
+    return default
+
+
+def safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
 def gather_downstream_gaps(rows: Iterable[dict[str, str]]) -> tuple[list[MatrixGap], list[MatrixGap]]:
     hard: list[MatrixGap] = []
     soft: list[MatrixGap] = []
@@ -252,12 +273,35 @@ def read_anti_bypass(path: Path) -> dict:
             "violation_count": -1,
             "violations": [],
             "missing_status_json": True,
+            "malformed_status_json": False,
         }
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "gate_pass": False,
+            "violation_count": -1,
+            "violations": [],
+            "missing_status_json": False,
+            "malformed_status_json": True,
+        }
+    if not isinstance(payload, dict):
+        return {
+            "gate_pass": False,
+            "violation_count": -1,
+            "violations": [],
+            "missing_status_json": False,
+            "malformed_status_json": True,
+        }
     payload.setdefault("gate_pass", False)
     payload.setdefault("violation_count", 0)
     payload.setdefault("violations", [])
+    payload["gate_pass"] = parse_bool(payload.get("gate_pass", False), default=False)
+    if not isinstance(payload.get("violations"), list):
+        payload["violations"] = []
+    payload["violation_count"] = safe_int(payload.get("violation_count", 0), default=0)
     payload["missing_status_json"] = False
+    payload["malformed_status_json"] = False
     return payload
 
 
@@ -283,7 +327,12 @@ def bead_status_from_br(bead_id: str) -> BeadStatus:
 
 def load_bead_statuses(required_beads: list[str], override_json: Path | None) -> list[BeadStatus]:
     if override_json is not None:
-        payload = json.loads(override_json.read_text(encoding="utf-8"))
+        payload: dict[str, object]
+        try:
+            parsed = json.loads(override_json.read_text(encoding="utf-8"))
+            payload = parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            payload = {}
         statuses: list[BeadStatus] = []
         for bead_id in required_beads:
             raw = str(payload.get(bead_id, "unknown"))
@@ -320,7 +369,7 @@ def main() -> None:
     critical_remaining = gather_critical_remaining_gaps(critical_rows)
 
     anti_bypass = read_anti_bypass(args.anti_bypass_status_json)
-    anti_bypass_pass = bool(anti_bypass.get("gate_pass", False)) and args.anti_bypass_exit_code == 0
+    anti_bypass_pass = parse_bool(anti_bypass.get("gate_pass", False), default=False) and args.anti_bypass_exit_code == 0
 
     bead_statuses = load_bead_statuses(required_beads, args.bead_status_json)
     open_required_beads = [b for b in bead_statuses if b.status != "closed"]
@@ -339,6 +388,8 @@ def main() -> None:
         hard_blockers.append("anti_bypass_certifying_claim_failed")
     if anti_bypass.get("missing_status_json"):
         hard_blockers.append("anti_bypass_status_missing")
+    if anti_bypass.get("malformed_status_json"):
+        hard_blockers.append("anti_bypass_status_malformed")
     if hard_gaps:
         hard_blockers.append("downstream_matrix_has_uncovered_surfaces")
     if open_required_beads:
@@ -370,7 +421,7 @@ def main() -> None:
         ("verdict", verdict),
         ("certifying_claim_allowed", certifying_claim_allowed),
         ("anti_bypass_pass", "true" if anti_bypass_pass else "false"),
-        ("anti_bypass_violation_count", str(int(anti_bypass.get("violation_count", 0)))),
+        ("anti_bypass_violation_count", str(safe_int(anti_bypass.get("violation_count", 0), default=0))),
         ("required_bead_count", str(len(required_beads))),
         ("required_bead_open_count", str(len(open_required_beads))),
         ("downstream_uncovered_count", str(len(hard_gaps))),
@@ -437,10 +488,11 @@ def main() -> None:
             for gap in critical_remaining
         ],
         "anti_bypass": {
-            "gate_pass": anti_bypass.get("gate_pass", False),
-            "violation_count": anti_bypass.get("violation_count", 0),
+            "gate_pass": parse_bool(anti_bypass.get("gate_pass", False), default=False),
+            "violation_count": safe_int(anti_bypass.get("violation_count", 0), default=0),
             "violations": anti_bypass.get("violations", []),
             "missing_status_json": anti_bypass.get("missing_status_json", False),
+            "malformed_status_json": anti_bypass.get("malformed_status_json", False),
         },
         "required_evidence": [
             {

@@ -63,6 +63,8 @@ class GateCoverageCertificationTests(unittest.TestCase):
         bead_statuses: dict[str, str],
         required_beads: str,
         required_evidence_layouts: dict[str, str] | None = None,
+        anti_bypass_raw: str | None = None,
+        bead_status_raw: str | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], dict, list[list[str]], list[str]]:
         with tempfile.TemporaryDirectory(prefix="gate_coverage_cert_") as tmp:
             root = Path(tmp)
@@ -86,8 +88,14 @@ class GateCoverageCertificationTests(unittest.TestCase):
                 critical_rows,
             )
             anti_json.parent.mkdir(parents=True, exist_ok=True)
-            anti_json.write_text(json.dumps(anti_bypass_payload), encoding="utf-8")
-            bead_json.write_text(json.dumps(bead_statuses), encoding="utf-8")
+            if anti_bypass_raw is not None:
+                anti_json.write_text(anti_bypass_raw, encoding="utf-8")
+            else:
+                anti_json.write_text(json.dumps(anti_bypass_payload), encoding="utf-8")
+            if bead_status_raw is not None:
+                bead_json.write_text(bead_status_raw, encoding="utf-8")
+            else:
+                bead_json.write_text(json.dumps(bead_statuses), encoding="utf-8")
 
             if required_evidence_layouts:
                 for lane_id, mode in required_evidence_layouts.items():
@@ -229,6 +237,62 @@ class GateCoverageCertificationTests(unittest.TestCase):
         evidence = payload["required_evidence"]
         self.assertTrue(evidence)
         self.assertFalse(evidence[0]["valid"])
+
+    def test_false_verdict_when_anti_bypass_status_json_is_malformed(self) -> None:
+        proc, payload, _, _ = self._run_gate(
+            downstream_rows=[["packaged-local-app-path", "covered", "", ""]],
+            critical_rows=[["dmg-install-open", "covered", "", ""]],
+            anti_bypass_payload={},
+            anti_bypass_exit=0,
+            bead_statuses={"bd-tr8z": "closed"},
+            required_beads="bd-tr8z",
+            anti_bypass_raw="{not-valid-json",
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(payload["verdict"], "false")
+        self.assertIn("anti_bypass_status_malformed", payload["hard_blockers"])
+
+    def test_false_verdict_when_bead_override_json_is_malformed(self) -> None:
+        proc, payload, _, _ = self._run_gate(
+            downstream_rows=[["packaged-local-app-path", "covered", "", ""]],
+            critical_rows=[["dmg-install-open", "covered", "", ""]],
+            anti_bypass_payload={"gate_pass": True, "violation_count": 0, "violations": []},
+            anti_bypass_exit=0,
+            bead_statuses={},
+            required_beads="bd-tr8z",
+            bead_status_raw="{not-valid-json",
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(payload["verdict"], "false")
+        open_beads = payload["open_required_beads"]
+        self.assertEqual(len(open_beads), 1)
+        self.assertEqual(open_beads[0]["bead_id"], "bd-tr8z")
+        self.assertEqual(open_beads[0]["status"], "unknown")
+
+    def test_false_verdict_when_gate_pass_is_string_false(self) -> None:
+        proc, payload, _, _ = self._run_gate(
+            downstream_rows=[["packaged-local-app-path", "covered", "", ""]],
+            critical_rows=[["dmg-install-open", "covered", "", ""]],
+            anti_bypass_payload={"gate_pass": "false", "violation_count": "0", "violations": []},
+            anti_bypass_exit=0,
+            bead_statuses={"bd-tr8z": "closed"},
+            required_beads="bd-tr8z",
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(payload["verdict"], "false")
+        self.assertIn("anti_bypass_certifying_claim_failed", payload["hard_blockers"])
+
+    def test_true_verdict_when_gate_pass_is_string_true(self) -> None:
+        proc, payload, _, _ = self._run_gate(
+            downstream_rows=[["packaged-local-app-path", "covered", "", ""]],
+            critical_rows=[["dmg-install-open", "covered", "", ""]],
+            anti_bypass_payload={"gate_pass": "true", "violation_count": "0", "violations": []},
+            anti_bypass_exit=0,
+            bead_statuses={"bd-tr8z": "closed"},
+            required_beads="bd-tr8z",
+        )
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertEqual(payload["verdict"], "true")
 
 
 if __name__ == "__main__":

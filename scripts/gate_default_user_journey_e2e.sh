@@ -431,6 +431,9 @@ record_skipped_phase() {
   : > "$OUT_DIR/$stderr_relpath"
   {
     printf 'phase_id=%s\n' "$phase_id"
+    # Contract aggregate rule does not allow mixed warn+skipped lanes.
+    # Represent capability-gated omissions as contract failures so the
+    # lane rolls up deterministically to warn/fail instead of invalid.
     printf 'status=fail\n'
     printf 'required=%s\n' "$required"
     printf 'notes=%s\n' "$notes"
@@ -458,6 +461,7 @@ CAPABILITY_GATED=0
 if [[ "$SKIP_DMG_PHASE" == "1" || "$SKIP_XCTEST_PHASE" == "1" || "$SKIP_PACKAGED_LIVE_PHASE" == "1" ]]; then
   CAPABILITY_GATED=1
 fi
+export CAPABILITY_GATED
 
 run_dmg_script=$(cat <<'RUN_DMG'
 env \

@@ -306,7 +306,6 @@ def validate_manifest(root: Path, manifest: dict[str, Any], expect_lane_type: st
     elif manifest["overall_status"] == "warn":
         ensure(not fail_required, "overall_status=warn is invalid when a required phase failed")
         ensure(phase_statuses != {"pass"}, "overall_status=warn requires at least one non-pass phase status")
-        ensure("skipped" not in phase_statuses, "overall_status=warn cannot include skipped phases")
     elif manifest["overall_status"] == "fail":
         ensure(fail_required, "overall_status=fail requires at least one required phase failure")
     elif manifest["overall_status"] == "skipped":

@@ -818,15 +818,20 @@ execute_or_skip_phase() {
     return
   fi
 
-  if [[ "$DRY_RUN" == "1" || "$CAPABILITY_GATED" == "1" ]]; then
-    local skip_reason="capability-gated suite mode requested"
-    if [[ "$DRY_RUN" == "1" ]]; then
-      skip_reason="dry-run requested"
-    elif [[ "$explicit_skip_flag" == "1" ]]; then
-      skip_reason="skip flag requested"
-    elif [[ -n "$capability_note" ]]; then
-      skip_reason="capability-gated: $capability_note"
-    fi
+  if [[ "$DRY_RUN" == "1" ]]; then
+    record_skipped_phase "$phase_id" "$title" "false" "dry-run requested" "$script_body"
+    CAPABILITY_GATED=1
+    return
+  fi
+
+  if [[ "$explicit_skip_flag" == "1" ]]; then
+    record_skipped_phase "$phase_id" "$title" "false" "skip flag requested" "$script_body"
+    CAPABILITY_GATED=1
+    return
+  fi
+
+  if [[ -n "$capability_note" && "$ALLOW_CAPABILITY_GATED" == "1" ]]; then
+    local skip_reason="capability-gated: $capability_note"
     record_skipped_phase "$phase_id" "$title" "false" "$skip_reason" "$script_body"
     CAPABILITY_GATED=1
     return
@@ -945,12 +950,12 @@ if [[ "$PIPELINE_BLOCKED" == "1" ]]; then
     "true" \
     "blocked by prior required failure" \
     "$run_suite_summary_script"
-elif [[ "$CAPABILITY_GATED" == "1" || "$DRY_RUN" == "1" ]]; then
+elif [[ "$DRY_RUN" == "1" ]]; then
   record_skipped_phase \
     "suite_summary_checks" \
     "Comprehensive suite summary and contract checks" \
     "false" \
-    "capability-gated suite mode requested" \
+    "dry-run requested" \
     "$run_suite_summary_script"
 else
   if ! run_phase_script \

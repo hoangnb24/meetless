@@ -356,6 +356,51 @@ class E2EEvidenceContractValidatorTests(unittest.TestCase):
         self.assertEqual(payload["overall_status"], "warn")
         self.assertEqual(payload["phase_count"], 2)
 
+    def test_warn_lane_allows_optional_skipped_phase(self) -> None:
+        root = self.make_evidence_root(
+            scenario_id="warn-with-skipped-optional",
+            overall_status="warn",
+            phases=[
+                {
+                    "phase_id": "required_lane",
+                    "title": "Required lane",
+                    "required": True,
+                    "status": "pass",
+                    "exit_classification": "success",
+                    "started_at_utc": "2026-03-06T12:00:00Z",
+                    "ended_at_utc": "2026-03-06T12:00:02Z",
+                    "command_display": "required lane",
+                    "command_argv": ["required-lane"],
+                    "log_relpath": "logs/required_lane.log",
+                    "stdout_relpath": "logs/required_lane.stdout",
+                    "stderr_relpath": "logs/required_lane.stderr",
+                    "primary_artifact_relpath": "artifacts/required_lane.txt",
+                },
+                {
+                    "phase_id": "optional_lane",
+                    "title": "Optional lane",
+                    "required": False,
+                    "status": "skipped",
+                    "exit_classification": "skip_requested",
+                    "started_at_utc": "2026-03-06T12:00:03Z",
+                    "ended_at_utc": "2026-03-06T12:00:03Z",
+                    "command_display": "optional lane",
+                    "command_argv": ["optional-lane"],
+                    "log_relpath": "logs/optional_lane.log",
+                    "stdout_relpath": "logs/optional_lane.stdout",
+                    "stderr_relpath": "logs/optional_lane.stderr",
+                    "primary_artifact_relpath": "",
+                    "notes": "optional lane intentionally skipped in capability-gated mode",
+                },
+            ],
+        )
+        result = self.run_validator(root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["overall_status"], "warn")
+        self.assertEqual(payload["phase_count"], 2)
+
     def test_fail_lane_accepts_required_failed_phase(self) -> None:
         root = self.make_evidence_root(
             scenario_id="fail-lane",

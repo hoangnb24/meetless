@@ -215,6 +215,14 @@ def check_default_journey_evidence(root: Path, failures: list[Failure], skip_con
         return
     if "journey_claim_ready" not in checks:
         failures.append(Failure("default_journey_missing_journey_claim_ready", "journey_claim_ready key missing"))
+        return
+    if checks.get("journey_claim_ready", "").strip().lower() not in {"1", "true", "yes", "pass"}:
+        failures.append(
+            Failure(
+                "default_journey_claim_not_ready",
+                f"journey_claim_ready={checks.get('journey_claim_ready', '')}",
+            )
+        )
 
 
 def check_failure_matrix_evidence(
@@ -271,10 +279,20 @@ def run_certification_gate(repo_root: Path, out_dir: Path) -> tuple[str, list[Fa
     failures: list[Failure] = []
     verdict = "unknown"
     if status_json.exists():
-        payload = json.loads(status_json.read_text(encoding="utf-8"))
-        verdict = str(payload.get("verdict", "unknown"))
+        try:
+            payload = json.loads(status_json.read_text(encoding="utf-8"))
+        except Exception as exc:
+            failures.append(Failure("certification_status_malformed", f"{status_json}: {exc}"))
+            payload = None
+        if isinstance(payload, dict):
+            verdict = str(payload.get("verdict", "unknown")).strip().lower()
+        elif payload is not None:
+            failures.append(Failure("certification_status_malformed", f"{status_json}: expected object"))
     else:
         failures.append(Failure("certification_status_missing", str(status_json)))
+
+    if verdict not in {"true", "false", "unproven"}:
+        failures.append(Failure("certification_verdict_invalid", verdict))
 
     if proc.returncode not in {0, 1}:
         failures.append(Failure("certification_gate_execution_error", proc.stderr.strip() or proc.stdout.strip() or f"exit={proc.returncode}"))

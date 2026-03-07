@@ -95,7 +95,7 @@ class GateCoverageMatrixEvidenceTests(unittest.TestCase):
             )
         return rows
 
-    def _create_default_journey_root(self, root: Path) -> Path:
+    def _create_default_journey_root(self, root: Path, journey_claim_ready: str = "true") -> Path:
         journey = root / "journey"
         (journey / "artifacts").mkdir(parents=True, exist_ok=True)
         (journey / "summary.csv").write_text("k,v\n", encoding="utf-8")
@@ -105,7 +105,7 @@ class GateCoverageMatrixEvidenceTests(unittest.TestCase):
         write_csv(
             journey / "artifacts" / "default_user_journey_checks.csv",
             ["key", "value"],
-            [["journey_claim_ready", "true"]],
+            [["journey_claim_ready", journey_claim_ready]],
         )
         return journey
 
@@ -129,7 +129,14 @@ class GateCoverageMatrixEvidenceTests(unittest.TestCase):
         (failure / "artifacts" / "failure_matrix_status.txt").write_text("status=pass\n", encoding="utf-8")
         return failure
 
-    def _run_gate(self, temp_root: Path, claim_text: str, missing_scenario: str | None = None) -> tuple[subprocess.CompletedProcess[str], dict]:
+    def _run_gate(
+        self,
+        temp_root: Path,
+        claim_text: str,
+        missing_scenario: str | None = None,
+        journey_claim_ready: str = "true",
+        repo_root_override: Path | None = None,
+    ) -> tuple[subprocess.CompletedProcess[str], dict]:
         downstream_csv = temp_root / "downstream.csv"
         critical_csv = temp_root / "critical.csv"
         out_dir = temp_root / "out"
@@ -169,15 +176,16 @@ class GateCoverageMatrixEvidenceTests(unittest.TestCase):
             self._make_critical_rows(),
         )
 
-        journey = self._create_default_journey_root(temp_root)
+        journey = self._create_default_journey_root(temp_root, journey_claim_ready=journey_claim_ready)
         failure = self._create_failure_root(temp_root, missing=missing_scenario)
 
+        repo_root = repo_root_override or ROOT
         proc = subprocess.run(
             [
                 "python3",
                 str(SCRIPT),
                 "--root",
-                str(ROOT),
+                str(repo_root),
                 "--out-dir",
                 str(out_dir),
                 "--downstream-matrix-csv",
@@ -199,6 +207,46 @@ class GateCoverageMatrixEvidenceTests(unittest.TestCase):
         payload = json.loads((out_dir / "status.json").read_text(encoding="utf-8"))
         return proc, payload
 
+    def _create_fake_repo_with_cert_gate(
+        self,
+        temp_root: Path,
+        cert_status_body: str,
+        cert_exit_code: int = 0,
+    ) -> Path:
+        fake_repo = temp_root / "fake_repo"
+        scripts_dir = fake_repo / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        gate_script = scripts_dir / "gate_coverage_certification.sh"
+        gate_script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "set -euo pipefail",
+                    'OUT_DIR=""',
+                    'while [[ $# -gt 0 ]]; do',
+                    '  case "$1" in',
+                    "    --out-dir)",
+                    '      OUT_DIR="$2"',
+                    "      shift 2",
+                    "      ;;",
+                    "    *)",
+                    "      shift",
+                    "      ;;",
+                    "  esac",
+                    "done",
+                    'mkdir -p "$OUT_DIR"',
+                    'cat > "$OUT_DIR/status.json" <<\'JSON\'',
+                    cert_status_body,
+                    "JSON",
+                    f"exit {cert_exit_code}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        gate_script.chmod(0o755)
+        return fake_repo
+
     def test_pass_with_complete_rows_and_evidence_without_claim_text(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gate_cov_matrix_pass_") as tmp:
             proc, payload = self._run_gate(Path(tmp), claim_text="release notes\n")
@@ -218,6 +266,47 @@ class GateCoverageMatrixEvidenceTests(unittest.TestCase):
             self.assertNotEqual(proc.returncode, 0)
             codes = {item["code"] for item in payload["failures"]}
             self.assertIn("unsupported_certifying_claim_text", codes)
+
+    def test_fail_when_default_journey_claim_ready_is_false(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gate_cov_matrix_claim_ready_") as tmp:
+            proc, payload = self._run_gate(
+                Path(tmp),
+                claim_text="release notes\n",
+                journey_claim_ready="false",
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            codes = {item["code"] for item in payload["failures"]}
+            self.assertIn("default_journey_claim_not_ready", codes)
+
+    def test_fail_when_certification_status_json_is_malformed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gate_cov_matrix_cert_malformed_") as tmp:
+            temp_root = Path(tmp)
+            fake_repo = self._create_fake_repo_with_cert_gate(temp_root, cert_status_body="{not-json")
+            proc, payload = self._run_gate(
+                temp_root,
+                claim_text="release notes\n",
+                repo_root_override=fake_repo,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            codes = {item["code"] for item in payload["failures"]}
+            self.assertIn("certification_status_malformed", codes)
+            self.assertIn("certification_verdict_invalid", codes)
+
+    def test_fail_when_certification_verdict_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gate_cov_matrix_cert_invalid_") as tmp:
+            temp_root = Path(tmp)
+            fake_repo = self._create_fake_repo_with_cert_gate(
+                temp_root,
+                cert_status_body='{"verdict":"maybe"}',
+            )
+            proc, payload = self._run_gate(
+                temp_root,
+                claim_text="release notes\n",
+                repo_root_override=fake_repo,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            codes = {item["code"] for item in payload["failures"]}
+            self.assertIn("certification_verdict_invalid", codes)
 
 
 if __name__ == "__main__":
