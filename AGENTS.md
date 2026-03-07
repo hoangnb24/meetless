@@ -99,7 +99,7 @@ Beads provides a lightweight, dependency-aware issue database and CLI (`br` - be
 
 ---
 
-## bv — Graph-Aware Triage Engine
+## Beads Viewer (bv) — Graph-Aware Triage Engine
 
 bv is a graph-aware triage engine for Beads projects (`.beads/beads.jsonl`). It computes PageRank, betweenness, critical path, cycles, HITS, eigenvector, and k-core metrics deterministically.
 
@@ -262,99 +262,7 @@ git push                # Push to remote
 
 ---
 
-Note for Codex/GPT-5.2:
-
-You constantly bother me and stop working with concerned questions that look similar to this:
-
-```
-Unexpected changes (need guidance)
-
-- Working tree still shows edits I did not make in Cargo.toml, Cargo.lock, src/cli/commands/upgrade.rs, src/storage/sqlite.rs, tests/conformance.rs, tests/storage_deps.rs. Please advise whether to keep/commit/revert these before any further work. I did not touch them.
-
-Next steps (pick one)
-
-1. Decide how to handle the unrelated modified files above so we can resume cleanly.
-2. Triage beads_rust-orko (clippy/cargo warnings) and beads_rust-ydqr (rustfmt failures).
-3. If you want a full suite run later, fix conformance/clippy blockers and re‑run cargo test --all.
-```
-
-NEVER EVER DO THAT AGAIN. The answer is literally ALWAYS the same: those are changes created by the potentially dozen of other agents working on the project at the same time. This is not only a common occurence, it happens multiple times PER MINUTE. The way to deal with it is simple: you NEVER, under ANY CIRCUMSTANCE, stash, revert, overwrite, or otherwise disturb in ANY way the work of other agents. Just treat those changes identically to changes that you yourself made. Just fool yourself into thinking YOU made the changes and simply don't recall it for some reason.
-
-## Legacy `bd` Workflow (Deprecated)
-
-Historical docs may still mention `beads_viewer`/`bd` commands. For this repository, that workflow is deprecated.
-
-Canonical issue workflow is:
-- `br` for task state and dependency management
-- `br sync --flush-only` for JSONL export (no git automation)
-- `bv --robot-*` for triage/planning (never bare `bv`)
-
-Do not run `bd`/`bd sync` for normal work. Only use legacy command names when reading old artifacts or translating historical instructions.
-
-Quick translation from legacy docs:
-
-| Legacy | Canonical |
-|--------|-----------|
-| `bd ready` | `br ready` |
-| `bd list --status=open` | `br list --status open` |
-| `bd show <id>` | `br show <id>` |
-| `bd update <id> --status=in_progress` | `br update <id> --status in_progress` |
-| `bd close <id>` | `br close <id> --reason "Completed"` |
-| `bd sync` | `br sync --flush-only` + manual git add/commit/push |
-
----
-
-## UBS Quick Reference for AI Agents
-
-UBS stands for "Ultimate Bug Scanner": **The AI Coding Agent's Secret Weapon: Flagging Likely Bugs for Fixing Early On**
-
-**Install:** `curl -sSL https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/master/install.sh | bash`
-
-**Golden Rule:** `ubs <changed-files>` before every commit. Exit 0 = safe. Exit >0 = fix & re-run.
-
-**Commands:**
-```bash
-ubs file.ts file2.py                    # Specific files (< 1s) — USE THIS
-ubs $(git diff --name-only --cached)    # Staged files — before commit
-ubs --only=js,python src/               # Language filter (3-5x faster)
-ubs --ci --fail-on-warning .            # CI mode — before PR
-ubs --help                              # Full command reference
-ubs sessions --entries 1                # Tail the latest install session log
-ubs .                                   # Whole project (ignores things like .venv and node_modules automatically)
-```
-
-**Output Format:**
-```
-⚠️  Category (N errors)
-    file.ts:42:5 – Issue description
-    💡 Suggested fix
-Exit code: 1
-```
-Parse: `file:line:col` → location | 💡 → how to fix | Exit 0/1 → pass/fail
-
-**Fix Workflow:**
-1. Read finding → category + fix suggestion
-2. Navigate `file:line:col` → view context
-3. Verify real issue (not false positive)
-4. Fix root cause (not symptom)
-5. Re-run `ubs <file>` → exit 0
-6. Commit
-
-**Speed Critical:** Scope to changed files. `ubs src/file.ts` (< 1s) vs `ubs .` (30s). Never full scan for small edits.
-
-**Bug Severity:**
-- **Critical** (always fix): Null safety, XSS/injection, async/await, memory leaks
-- **Important** (production): Type narrowing, division-by-zero, resource leaks
-- **Contextual** (judgment): TODO/FIXME, console logs
-
-**Anti-Patterns:**
-- ❌ Ignore findings → ✅ Investigate each
-- ❌ Full scan per edit → ✅ Scope to file
-- ❌ Fix symptom (`if (x) { x.y }`) → ✅ Root cause (`x?.y`)
-
----
-
-## cass — Cross-Agent Session Search
+## CASS — Cross-Agent Session Search
 
 `cass` indexes prior agent conversations (Claude Code, Codex, Cursor, Gemini, ChatGPT, etc.) so we can reuse solved problems.
 
@@ -383,7 +291,7 @@ Treat cass as a way to avoid re-solving problems other agents already handled.
 
 ---
 
-Note for Codex/GPT-5.2:
+## Note for Codex/GPT-5.2:
 
 You constantly bother me and stop working with concerned questions that look similar to this:
 
