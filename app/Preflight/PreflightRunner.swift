@@ -239,26 +239,31 @@ public struct RecorditPreflightRunner {
         }
 
         guard result.exitCode == 0 else {
+            let stderrText = String(data: result.stderr, encoding: .utf8) ?? "<binary>"
             throw AppServiceError(
                 code: .preflightFailed,
                 userMessage: "Preflight checks failed.",
                 remediation: "Review check statuses and complete the recommended remediation steps.",
-                debugDetail: String(data: result.stderr, encoding: .utf8)
+                debugDetail: "exit_code=\(result.exitCode) stderr=\(stderrText)"
             )
         }
 
         guard !result.stdout.isEmpty else {
+            let stderrText = String(data: result.stderr, encoding: .utf8) ?? "<binary>"
             throw AppServiceError(
                 code: .manifestInvalid,
-                userMessage: "Preflight produced no JSON output.",
-                remediation: "Run preflight again and ensure `--json` output is enabled."
+                userMessage: "Preflight produced no output.",
+                remediation: "Verify that `recordit` is installed and in PATH, then rerun preflight.",
+                debugDetail: "exit_code=\(result.exitCode) stderr=\(stderrText)"
             )
         }
 
+        let stderrText = String(data: result.stderr, encoding: .utf8) ?? "<binary>"
         throw AppServiceError(
             code: .manifestInvalid,
             userMessage: "Preflight output is malformed.",
-            remediation: "Re-run preflight and verify JSON output contract compatibility."
+            remediation: "Re-run preflight and verify JSON output contract compatibility.",
+            debugDetail: "exit_code=\(result.exitCode) stdout_bytes=\(result.stdout.count) stderr=\(stderrText)"
         )
     }
 
