@@ -947,7 +947,7 @@ final class RecorditAppTests: XCTestCase {
         XCTAssertEqual(startCount, 1)
         XCTAssertNil(controller.lastServiceError)
         XCTAssertTrue(
-            controller.transcriptEntries.contains(where: {
+            controller.statusLog.contains(where: {
                 $0.text.localizedCaseInsensitiveContains("runtime running")
             })
         )
@@ -1755,12 +1755,12 @@ final class RecorditAppTests: XCTestCase {
             XCTAssertTrue(FileManager.default.fileExists(atPath: sessionRoot.appendingPathComponent("session.jsonl").path))
             XCTAssertTrue(FileManager.default.fileExists(atPath: sessionRoot.appendingPathComponent("session.wav").path))
             XCTAssertTrue(
-                controller.transcriptEntries.contains(where: {
+                controller.statusLog.contains(where: {
                     $0.text.localizedCaseInsensitiveContains("runtime running")
                 })
             )
             XCTAssertTrue(
-                controller.transcriptEntries.contains(where: {
+                controller.statusLog.contains(where: {
                     $0.text.localizedCaseInsensitiveContains("completed successfully")
                 })
             )
@@ -1831,12 +1831,12 @@ final class RecorditAppTests: XCTestCase {
             XCTAssertEqual(controller.latestFinalizationSummary?.sessionID, sessionRoot.lastPathComponent)
             XCTAssertEqual(controller.latestFinalizationSummary?.status, "ok")
             XCTAssertTrue(
-                controller.transcriptEntries.contains(where: {
+                controller.statusLog.contains(where: {
                     $0.text.localizedCaseInsensitiveContains("record-only session started")
                 })
             )
             XCTAssertTrue(
-                controller.transcriptEntries.contains(where: {
+                controller.statusLog.contains(where: {
                     $0.text.localizedCaseInsensitiveContains("record-only session stopped and finalized")
                 })
             )
@@ -1945,7 +1945,7 @@ final class RecorditAppTests: XCTestCase {
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline {
             if case .running = controller.runtimeState,
-               controller.transcriptEntries.contains(where: { $0.text.localizedCaseInsensitiveContains("runtime running") }) {
+               controller.statusLog.contains(where: { $0.text.localizedCaseInsensitiveContains("runtime running") }) {
                 return
             }
             try await Task.sleep(nanoseconds: 10_000_000)
@@ -1958,7 +1958,7 @@ final class RecorditAppTests: XCTestCase {
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline {
             if case .running = controller.runtimeState,
-               controller.transcriptEntries.contains(where: { $0.text.localizedCaseInsensitiveContains("record-only session started") }) {
+               controller.statusLog.contains(where: { $0.text.localizedCaseInsensitiveContains("record-only session started") }) {
                 return
             }
             try await Task.sleep(nanoseconds: 10_000_000)

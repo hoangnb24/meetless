@@ -28,7 +28,28 @@ final class MainSessionController: ObservableObject {
         }
     }
 
-    struct TranscriptEntry: Identifiable {
+    struct LiveTranscriptLine: Identifiable {
+        let id = UUID()
+        let eventType: String
+        let channel: String
+        let startMs: UInt64
+        let endMs: UInt64
+        let text: String
+
+        var isPartial: Bool {
+            eventType == "partial"
+        }
+
+        var formattedTimestamp: String {
+            let startSec = Double(startMs) / 1000.0
+            let endSec = Double(endMs) / 1000.0
+            return String(format: "[%02d:%06.3f-%02d:%06.3f]",
+                          Int(startSec) / 60, startSec.truncatingRemainder(dividingBy: 60),
+                          Int(endSec) / 60, endSec.truncatingRemainder(dividingBy: 60))
+        }
+    }
+
+    struct StatusLogEntry: Identifiable {
         let id = UUID()
         let createdAt: Date
         let text: String
@@ -44,10 +65,13 @@ final class MainSessionController: ObservableObject {
     @Published var selectedMode: ModeOption = .live
     @Published private(set) var runtimeState: RuntimeViewModel.RunState
     @Published private(set) var elapsedLabel = "00:00"
-    @Published private(set) var transcriptEntries: [TranscriptEntry] = []
+    @Published private(set) var liveTranscriptLines: [LiveTranscriptLine] = []
+    @Published private(set) var statusLog: [StatusLogEntry] = []
+    @Published private(set) var diagnosticSignals: [RuntimeDiagnosticSurfaceSignal] = []
     @Published private(set) var lastServiceError: AppServiceError?
     @Published private(set) var activeOutputRoot: URL?
     @Published private(set) var latestFinalizationSummary: FinalizationSummary?
+    @Published var isStatusLogExpanded: Bool = false
 
     private let environment: AppEnvironment
     private let runtimeViewModel: RuntimeViewModel
@@ -55,6 +79,9 @@ final class MainSessionController: ObservableObject {
     private var activeRecordOnlyProcessID: Int32?
     private var sessionStartDate: Date?
     private var timerTask: Task<Void, Never>?
+    private var pollerTask: Task<Void, Never>?
+    private var tailCursor: JsonlTailCursor = .start
+    private let surfaceMapper = JsonlEventSurfaceMapper()
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -67,6 +94,7 @@ final class MainSessionController: ObservableObject {
 
     deinit {
         timerTask?.cancel()
+        pollerTask?.cancel()
     }
 
     var canStart: Bool {
@@ -143,7 +171,10 @@ final class MainSessionController: ObservableObject {
         runningMode = selectedMode.runtimeMode
         lastServiceError = nil
         latestFinalizationSummary = nil
-        appendTranscript("Start requested for \(selectedMode.title) at \(outputRoot.path).")
+        liveTranscriptLines = []
+        diagnosticSignals = []
+        tailCursor = .start
+        appendStatusLog("Start requested for \(selectedMode.title).")
         startTimer()
 
         switch selectedMode {
@@ -155,6 +186,10 @@ final class MainSessionController: ObservableObject {
                 await runtimeViewModel.startLive(outputRoot: outputRoot, explicitModelPath: nil)
                 await MainActor.run {
                     syncFromRuntimeViewModel(eventPrefix: "Live start")
+                    if case .running = runtimeState {
+                        let jsonlPath = outputRoot.appendingPathComponent("session.jsonl")
+                        startTranscriptPoller(jsonlPath: jsonlPath)
+                    }
                 }
             }
         case .recordOnly:
@@ -170,13 +205,13 @@ final class MainSessionController: ObservableObject {
                     await MainActor.run {
                         activeRecordOnlyProcessID = launch.processIdentifier
                         runtimeState = .running(processID: launch.processIdentifier)
-                        appendTranscript("Record-only session started (pid \(launch.processIdentifier)).")
+                        appendStatusLog("Record-only session started (pid \(launch.processIdentifier)).")
                     }
                 } catch let serviceError as AppServiceError {
                     await MainActor.run {
                         runtimeState = .failed(serviceError)
                         lastServiceError = serviceError
-                        appendTranscript("Record-only start failed: \(serviceError.userMessage)")
+                        appendStatusLog("Record-only start failed: \(serviceError.userMessage)")
                         stopTimer(reset: false)
                     }
                 } catch {
@@ -189,7 +224,7 @@ final class MainSessionController: ObservableObject {
                         )
                         runtimeState = .failed(wrapped)
                         lastServiceError = wrapped
-                        appendTranscript("Record-only start failed: \(wrapped.userMessage)")
+                        appendStatusLog("Record-only start failed: \(wrapped.userMessage)")
                         stopTimer(reset: false)
                     }
                 }
@@ -202,7 +237,7 @@ final class MainSessionController: ObservableObject {
 
         if runningMode == .recordOnly, let processID = activeRecordOnlyProcessID {
             runtimeState = .stopping(processID: processID)
-            appendTranscript("Stop requested for record-only session (pid \(processID)).")
+            appendStatusLog("Stop requested for record-only session (pid \(processID)).")
             Task {
                 do {
                     _ = try await environment.runtimeService.controlSession(
@@ -213,7 +248,7 @@ final class MainSessionController: ObservableObject {
                         activeRecordOnlyProcessID = nil
                         runtimeState = .completed
                         refreshFinalizationSummary()
-                        appendTranscript("Record-only session stopped and finalized.")
+                        appendStatusLog("Record-only session stopped and finalized.")
                         stopTimer(reset: false)
                     }
                 } catch let serviceError as AppServiceError {
@@ -221,7 +256,7 @@ final class MainSessionController: ObservableObject {
                         runtimeState = .failed(serviceError)
                         lastServiceError = serviceError
                         refreshFinalizationSummary()
-                        appendTranscript("Record-only stop failed: \(serviceError.userMessage)")
+                        appendStatusLog("Record-only stop failed: \(serviceError.userMessage)")
                         stopTimer(reset: false)
                     }
                 } catch {
@@ -235,7 +270,7 @@ final class MainSessionController: ObservableObject {
                         runtimeState = .failed(wrapped)
                         lastServiceError = wrapped
                         refreshFinalizationSummary()
-                        appendTranscript("Record-only stop failed: \(wrapped.userMessage)")
+                        appendStatusLog("Record-only stop failed: \(wrapped.userMessage)")
                         stopTimer(reset: false)
                     }
                 }
@@ -243,7 +278,8 @@ final class MainSessionController: ObservableObject {
             return
         }
 
-        appendTranscript("Stop requested for live session.")
+        appendStatusLog("Stop requested for live session.")
+        stopTranscriptPoller()
         Task {
             await runtimeViewModel.stopCurrentRun()
             await MainActor.run {
@@ -257,21 +293,21 @@ final class MainSessionController: ObservableObject {
 
         if let rejected = runtimeViewModel.lastRejectedActionError {
             lastServiceError = rejected
-            appendTranscript("\(eventPrefix) rejected: \(rejected.userMessage)")
+            appendStatusLog("\(eventPrefix) rejected: \(rejected.userMessage)")
         }
 
         switch runtimeState {
         case .running(let pid):
-            appendTranscript("\(eventPrefix) succeeded; runtime running (pid \(pid)).")
+            appendStatusLog("\(eventPrefix) succeeded; runtime running (pid \(pid)).")
         case .completed:
             refreshFinalizationSummary()
-            appendTranscript("\(eventPrefix) completed successfully.")
+            appendStatusLog("\(eventPrefix) completed successfully.")
             stopTimer(reset: false)
             activeRecordOnlyProcessID = nil
         case .failed(let error):
             lastServiceError = error
             refreshFinalizationSummary()
-            appendTranscript("\(eventPrefix) failed: \(error.userMessage)")
+            appendStatusLog("\(eventPrefix) failed: \(error.userMessage)")
             stopTimer(reset: false)
             activeRecordOnlyProcessID = nil
         case .preparing, .stopping, .finalizing, .idle:
@@ -382,10 +418,67 @@ final class MainSessionController: ObservableObject {
         }
     }
 
-    private func appendTranscript(_ text: String) {
-        transcriptEntries.append(TranscriptEntry(createdAt: Date(), text: text))
-        if transcriptEntries.count > 300 {
-            transcriptEntries.removeFirst(transcriptEntries.count - 300)
+    private func appendStatusLog(_ text: String) {
+        statusLog.append(StatusLogEntry(createdAt: Date(), text: text))
+        if statusLog.count > 200 {
+            statusLog.removeFirst(statusLog.count - 200)
+        }
+    }
+
+    // MARK: - Live Transcript Polling
+
+    private func startTranscriptPoller(jsonlPath: URL) {
+        stopTranscriptPoller()
+        pollerTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.pollTranscriptOnce(jsonlPath: jsonlPath)
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+        }
+    }
+
+    private func stopTranscriptPoller() {
+        pollerTask?.cancel()
+        pollerTask = nil
+    }
+
+    private func pollTranscriptOnce(jsonlPath: URL) {
+        do {
+            let (events, nextCursor) = try environment.jsonlTailService.readEvents(
+                at: jsonlPath,
+                from: tailCursor
+            )
+            tailCursor = nextCursor
+
+            guard !events.isEmpty else { return }
+
+            let snapshot = surfaceMapper.map(events: events)
+
+            for line in snapshot.transcriptLines {
+                liveTranscriptLines.append(
+                    LiveTranscriptLine(
+                        eventType: line.eventType,
+                        channel: line.channel,
+                        startMs: line.startMs,
+                        endMs: line.endMs,
+                        text: line.text
+                    )
+                )
+            }
+
+            if liveTranscriptLines.count > 500 {
+                liveTranscriptLines.removeFirst(liveTranscriptLines.count - 500)
+            }
+
+            if !snapshot.diagnostics.isEmpty {
+                diagnosticSignals.append(contentsOf: snapshot.diagnostics)
+                if diagnosticSignals.count > 100 {
+                    diagnosticSignals.removeFirst(diagnosticSignals.count - 100)
+                }
+            }
+        } catch {
+            // Tailer may throw before file exists; silently retry next poll.
         }
     }
 
@@ -419,8 +512,9 @@ struct MainSessionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            // MARK: - Header
             HStack(spacing: 10) {
-                Text("Main Session")
+                Text("Recordit")
                     .font(.headline)
 
                 Capsule()
@@ -434,42 +528,43 @@ struct MainSessionView: View {
 
                 Spacer()
 
-                Text("Elapsed: \(controller.elapsedLabel)")
+                Text(controller.elapsedLabel)
                     .font(.system(.body, design: .monospaced))
             }
 
-            Picker("Mode", selection: $controller.selectedMode) {
-                ForEach(MainSessionController.ModeOption.allCases) { option in
-                    Text(option.title).tag(option)
+            // MARK: - Mode + Controls
+            HStack {
+                Picker("Mode", selection: $controller.selectedMode) {
+                    ForEach(MainSessionController.ModeOption.allCases) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 280)
+
+                Spacer()
+
+                HStack(spacing: 12) {
+                    Button("Start") {
+                        controller.startSession()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!controller.canStart)
+                    .keyboardShortcut(.return, modifiers: [.command])
+                    .accessibilityIdentifier("start_live_transcribe")
+
+                    Button("Stop") {
+                        controller.stopSession()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                    .disabled(!controller.canStop)
+                    .keyboardShortcut(".", modifiers: [.command])
+                    .accessibilityIdentifier("stop_live_transcribe")
                 }
             }
-            .pickerStyle(.segmented)
 
-            HStack(spacing: 12) {
-                Button("Start") {
-                    controller.startSession()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!controller.canStart)
-                .keyboardShortcut(.return, modifiers: [.command])
-                .accessibilityIdentifier("start_live_transcribe")
-
-                Button("Stop") {
-                    controller.stopSession()
-                }
-                .buttonStyle(.bordered)
-                .disabled(!controller.canStop)
-                .keyboardShortcut(".", modifiers: [.command])
-                .accessibilityIdentifier("stop_live_transcribe")
-            }
-
-            if let outputRoot = controller.activeOutputRoot {
-                Text("Output root: \(outputRoot.path)")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-
+            // MARK: - Error Banner
             if let error = controller.lastServiceError {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(error.userMessage)
@@ -478,6 +573,8 @@ struct MainSessionView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                .padding(8)
+                .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             }
 
             if !controller.recoveryActionsSummary.isEmpty {
@@ -486,29 +583,119 @@ struct MainSessionView: View {
                     .foregroundStyle(.secondary)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            // MARK: - Live Transcript
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Transcript")
                     .font(.headline)
 
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(controller.transcriptEntries) { entry in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(entry.createdAt, style: .time)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(entry.text)
-                                    .font(.body)
-                                    .textSelection(.enabled)
+                if controller.liveTranscriptLines.isEmpty {
+                    VStack(spacing: 6) {
+                        Text(controller.selectedMode == .recordOnly
+                             ? "Transcript pending — record-only mode"
+                             : "Waiting for transcript…")
+                            .font(.subheadline)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 180)
+                    .background(.quinary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 4) {
+                                ForEach(controller.liveTranscriptLines) { line in
+                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                        Text(line.formattedTimestamp)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+
+                                        Text(line.channel)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .foregroundStyle(line.channel == "mic" ? .blue : .orange)
+                                            .fontWeight(.semibold)
+
+                                        Text(line.isPartial ? "~ \(line.text)" : line.text)
+                                            .font(.body)
+                                            .italic(line.isPartial)
+                                            .foregroundStyle(line.isPartial ? .secondary : .primary)
+                                            .textSelection(.enabled)
+                                    }
+                                    .id(line.id)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                }
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
-                            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .frame(minHeight: 220)
+                        .background(.quinary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                        .onChange(of: controller.liveTranscriptLines.count) {
+                            if let lastLine = controller.liveTranscriptLines.last {
+                                withAnimation {
+                                    proxy.scrollTo(lastLine.id, anchor: .bottom)
+                                }
+                            }
                         }
                     }
                 }
-                .frame(minHeight: 220)
-                .background(.quinary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+            }
+
+            // MARK: - Session Health
+            if !controller.diagnosticSignals.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Session Health")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+
+                    let trustCount = controller.diagnosticSignals.filter { $0.category == .trust }.count
+                    let queueCount = controller.diagnosticSignals.filter { $0.category == .queue }.count
+
+                    HStack(spacing: 16) {
+                        Label("Trust: \(trustCount == 0 ? "OK" : "\(trustCount) notice\(trustCount == 1 ? "" : "s")")",
+                              systemImage: trustCount == 0 ? "checkmark.shield" : "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(trustCount == 0 ? .green : .orange)
+
+                        Label("Queue: \(queueCount == 0 ? "Normal" : "\(queueCount) signal\(queueCount == 1 ? "" : "s")")",
+                              systemImage: queueCount == 0 ? "checkmark.circle" : "exclamationmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(queueCount == 0 ? .green : .orange)
+                    }
+                }
+                .padding(8)
+                .background(.quinary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            // MARK: - Status Log (Collapsible)
+            DisclosureGroup("Status Log (\(controller.statusLog.count))",
+                            isExpanded: $controller.isStatusLogExpanded) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(controller.statusLog) { entry in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(entry.createdAt, style: .time)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                                Text(entry.text)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 120)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            // MARK: - Actions
+            if controller.activeOutputRoot != nil {
+                HStack(spacing: 12) {
+                    Button("Open Session Folder") {
+                        controller.openCurrentSessionArtifacts()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
             }
         }
     }
