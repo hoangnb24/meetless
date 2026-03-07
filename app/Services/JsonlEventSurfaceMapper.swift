@@ -53,13 +53,16 @@ public struct RuntimeDiagnosticSurfaceSignal: Equatable, Sendable {
 
 public struct RuntimeEventSurfaceSnapshot: Equatable, Sendable {
     public var transcriptLines: [RuntimeTranscriptSurfaceLine]
+    public var partialLines: [RuntimeTranscriptSurfaceLine]
     public var diagnostics: [RuntimeDiagnosticSurfaceSignal]
 
     public init(
         transcriptLines: [RuntimeTranscriptSurfaceLine],
+        partialLines: [RuntimeTranscriptSurfaceLine] = [],
         diagnostics: [RuntimeDiagnosticSurfaceSignal]
     ) {
         self.transcriptLines = transcriptLines
+        self.partialLines = partialLines
         self.diagnostics = diagnostics
     }
 }
@@ -112,9 +115,20 @@ public struct JsonlEventSurfaceMapper {
             }
         }
 
-        let transcriptLines = canonicalTranscriptLines(from: transcriptCandidates)
+        let transcriptLines = canonicalTranscriptLines(from: transcriptCandidates.filter { $0.type != .partial })
+        let partialLines = transcriptCandidates.filter { $0.type == .partial }.map {
+            RuntimeTranscriptSurfaceLine(
+                eventType: $0.type.rawValue,
+                channel: $0.channel,
+                segmentID: $0.segmentID,
+                startMs: $0.startMs,
+                endMs: $0.endMs,
+                text: $0.text
+            )
+        }
         return RuntimeEventSurfaceSnapshot(
             transcriptLines: transcriptLines,
+            partialLines: partialLines,
             diagnostics: diagnostics
         )
     }
@@ -191,12 +205,15 @@ public struct JsonlEventSurfaceMapper {
 }
 
 private enum TranscriptEventType: String {
-    case final
+    case partial
+    case `final`
     case llmFinal = "llm_final"
     case reconciledFinal = "reconciled_final"
 
     var rank: Int {
         switch self {
+        case .partial:
+            return -1
         case .final:
             return 0
         case .llmFinal:

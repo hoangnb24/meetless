@@ -80,6 +80,11 @@ private func runSmoke() {
     check(snapshot.transcriptLines[0].text == "first reconciled", "unexpected reconciled transcript text")
     check(snapshot.transcriptLines[1].eventType == "llm_final", "expected llm final as second stable line")
 
+    check(snapshot.partialLines.count == 1, "expected 1 partial line")
+    check(snapshot.partialLines[0].eventType == "partial", "partial eventType mismatch")
+    check(snapshot.partialLines[0].text == "partial line", "partial text mismatch")
+    check(snapshot.partialLines[0].channel == "mic", "partial channel mismatch")
+
     check(snapshot.diagnostics.count == 4, "expected queue/trust/lifecycle/control diagnostics only")
     let categories = snapshot.diagnostics.map(\.category)
     check(categories == [.queue, .trust, .lifecycle, .control], "diagnostic category order mismatch")

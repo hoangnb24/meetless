@@ -66,6 +66,7 @@ final class MainSessionController: ObservableObject {
     @Published private(set) var runtimeState: RuntimeViewModel.RunState
     @Published private(set) var elapsedLabel = "00:00"
     @Published private(set) var liveTranscriptLines: [LiveTranscriptLine] = []
+    @Published private(set) var currentPartials: [LiveTranscriptLine] = []
     @Published private(set) var statusLog: [StatusLogEntry] = []
     @Published private(set) var diagnosticSignals: [RuntimeDiagnosticSurfaceSignal] = []
     @Published private(set) var lastServiceError: AppServiceError?
@@ -172,6 +173,7 @@ final class MainSessionController: ObservableObject {
         lastServiceError = nil
         latestFinalizationSummary = nil
         liveTranscriptLines = []
+        currentPartials = []
         diagnosticSignals = []
         tailCursor = .start
         appendStatusLog("Start requested for \(selectedMode.title).")
@@ -433,7 +435,7 @@ final class MainSessionController: ObservableObject {
             while !Task.isCancelled {
                 guard let self else { return }
                 self.pollTranscriptOnce(jsonlPath: jsonlPath)
-                try? await Task.sleep(nanoseconds: 250_000_000)
+                try? await Task.sleep(nanoseconds: 100_000_000)
             }
         }
     }
@@ -441,6 +443,7 @@ final class MainSessionController: ObservableObject {
     private func stopTranscriptPoller() {
         pollerTask?.cancel()
         pollerTask = nil
+        currentPartials = []
     }
 
     private func pollTranscriptOnce(jsonlPath: URL) {
@@ -476,6 +479,24 @@ final class MainSessionController: ObservableObject {
                 if diagnosticSignals.count > 100 {
                     diagnosticSignals.removeFirst(diagnosticSignals.count - 100)
                 }
+            }
+
+            // Partials are ephemeral — replace previous with latest
+            if !snapshot.partialLines.isEmpty {
+                currentPartials = snapshot.partialLines.map {
+                    LiveTranscriptLine(
+                        eventType: $0.eventType,
+                        channel: $0.channel,
+                        startMs: $0.startMs,
+                        endMs: $0.endMs,
+                        text: $0.text
+                    )
+                }
+            }
+
+            // When we receive finals, clear the partials they supersede
+            if !snapshot.transcriptLines.isEmpty {
+                currentPartials = []
             }
         } catch {
             // Tailer may throw before file exists; silently retry next poll.
@@ -588,7 +609,7 @@ struct MainSessionView: View {
                 Text("Transcript")
                     .font(.headline)
 
-                if controller.liveTranscriptLines.isEmpty {
+                if controller.liveTranscriptLines.isEmpty && controller.currentPartials.isEmpty {
                     VStack(spacing: 6) {
                         Text(controller.selectedMode == .recordOnly
                              ? "Transcript pending — record-only mode"
@@ -613,16 +634,44 @@ struct MainSessionView: View {
                                             .foregroundStyle(line.channel == "mic" ? .blue : .orange)
                                             .fontWeight(.semibold)
 
-                                        Text(line.isPartial ? "~ \(line.text)" : line.text)
+                                        Text(line.text)
                                             .font(.body)
-                                            .italic(line.isPartial)
-                                            .foregroundStyle(line.isPartial ? .secondary : .primary)
+                                            .foregroundStyle(.primary)
                                             .textSelection(.enabled)
                                     }
                                     .id(line.id)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
+                                }
+
+                                // Live partials — ephemeral, visually distinct
+                                ForEach(controller.currentPartials) { partial in
+                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                        Text(partial.formattedTimestamp)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .foregroundStyle(.tertiary)
+
+                                        Text(partial.channel)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .foregroundStyle(partial.channel == "mic" ? .blue.opacity(0.6) : .orange.opacity(0.6))
+                                            .fontWeight(.medium)
+
+                                        HStack(spacing: 4) {
+                                            Text("◉")
+                                                .font(.caption2)
+                                                .foregroundStyle(.green)
+                                            Text(partial.text)
+                                                .font(.body)
+                                                .italic()
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .id(partial.id)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color.green.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                                 }
                             }
                         }
@@ -632,6 +681,13 @@ struct MainSessionView: View {
                             if let lastLine = controller.liveTranscriptLines.last {
                                 withAnimation {
                                     proxy.scrollTo(lastLine.id, anchor: .bottom)
+                                }
+                            }
+                        }
+                        .onChange(of: controller.currentPartials.count) {
+                            if let lastPartial = controller.currentPartials.last {
+                                withAnimation {
+                                    proxy.scrollTo(lastPartial.id, anchor: .bottom)
                                 }
                             }
                         }
