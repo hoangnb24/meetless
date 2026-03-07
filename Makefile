@@ -74,7 +74,7 @@ SMOKE_NEAR_LIVE_DETERMINISTIC_DIR ?= artifacts/smoke/near-live-deterministic
 SMOKE_NEAR_LIVE_INPUT_WAV ?= $(SMOKE_NEAR_LIVE_DIR)/capture.input.wav
 SMOKE_NEAR_LIVE_DETERMINISTIC_INPUT_WAV ?= artifacts/bench/corpus/gate_c/tts_phrase_stereo.wav
 
-.PHONY: help build build-release prepare-recordit-runtime-inputs build-recordit-app bundle-recordit-app sign-recordit-app verify-recordit-app inspect-recordit-release-artifacts run-recordit-app create-recordit-dmg notarize-recordit-dmg probe capture transcribe-live transcribe-live-stream capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic contracts-ci setup-whispercpp-model run-transcribe-app run-transcribe-live-stream-app run-transcribe-preflight-app run-transcribe-model-doctor-app bench-harness gate-backlog-pressure gate-transcript-completeness gate-v1-acceptance gate-packaged-live-smoke gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
+.PHONY: help build build-release prepare-recordit-runtime-inputs build-recordit-app bundle-recordit-app sign-recordit-app verify-recordit-app inspect-recordit-release-artifacts gate-dmg-install-open run-recordit-app create-recordit-dmg notarize-recordit-dmg probe capture transcribe-live transcribe-live-stream capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic contracts-ci setup-whispercpp-model run-transcribe-app run-transcribe-live-stream-app run-transcribe-preflight-app run-transcribe-model-doctor-app bench-harness gate-backlog-pressure gate-transcript-completeness gate-v1-acceptance gate-packaged-live-smoke gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
 
 help:
 	@echo "Targets:"
@@ -99,6 +99,7 @@ help:
 	@echo "  sign-recordit-app - Codesign dist/Recordit.app"
 	@echo "  verify-recordit-app - Verify signature and entitlements for dist/Recordit.app"
 	@echo "  inspect-recordit-release-artifacts - Retain Xcode/dist/DMG release artifact evidence bundle"
+	@echo "  gate-dmg-install-open - Verify DMG mount/layout/copy/open with retained e2e evidence contract"
 	@echo "  run-recordit-app - Launch signed dist/Recordit.app (recommended packaged default)"
 	@echo "  create-recordit-dmg - Build DMG with Recordit.app + Applications alias install surface"
 	@echo "  notarize-recordit-dmg - Run notary submit/wait + staple + Gatekeeper assess with retained evidence"
@@ -151,6 +152,9 @@ verify-recordit-app:
 
 inspect-recordit-release-artifacts:
 	OUT_DIR="$(OUT_DIR)" SIGN_IDENTITY="$(SIGN_IDENTITY)" RECORDIT_APP_BUNDLE="$(abspath $(RECORDIT_APP_DIR))" RECORDIT_DMG="$(abspath dist/$(RECORDIT_DMG_NAME))" RECORDIT_DMG_VOLNAME="$(RECORDIT_DMG_VOLNAME)" RECORDIT_DERIVED_DATA="$(abspath $(RECORDIT_DERIVED_DATA))" RECORDIT_XCODE_CONFIGURATION="$(RECORDIT_XCODE_CONFIGURATION)" scripts/inspect_recordit_release_artifacts.sh
+
+gate-dmg-install-open:
+	OUT_DIR="$(OUT_DIR)" SIGN_IDENTITY="$(SIGN_IDENTITY)" RECORDIT_APP_BUNDLE="$(abspath $(RECORDIT_APP_DIR))" RECORDIT_DMG="$(abspath dist/$(RECORDIT_DMG_NAME))" RECORDIT_DMG_VOLNAME="$(RECORDIT_DMG_VOLNAME)" scripts/gate_dmg_install_open.sh
 
 run-recordit-app: sign-recordit-app
 	open -W "$(RECORDIT_APP_DIR)"

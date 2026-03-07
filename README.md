@@ -303,6 +303,43 @@ Optional overrides:
 - `RECORDIT_DMG_NAME` (default: `Recordit.dmg`)
 - `RECORDIT_DMG_VOLNAME` (default: `Recordit`)
 
+### Verify DMG Install Surface (Mount/Layout/Copy/Open)
+```bash
+make gate-dmg-install-open
+```
+Runs retained install-surface verification for `Recordit.dmg` with standardized e2e evidence output:
+
+- optional app/DMG build steps (`make sign-recordit-app`, DMG creation)
+- DMG attach + layout checks (`Recordit.app` presence, `Applications` link target)
+- copy/install to an explicit destination root
+- launch attempt of the installed app (`open -n`) and deterministic launch diagnostics
+- explicit detach cleanup
+
+Evidence root default:
+- `artifacts/ops/gate_dmg_install_open/<timestamp>/`
+
+Key retained outputs:
+- `evidence_contract.json`
+- `summary.csv`
+- `summary.json`
+- `status.txt`
+- `logs/<phase>.log|stdout|stderr`
+- `artifacts/dmg_attach.plist`
+- `artifacts/dmg_layout_report.txt`
+- `artifacts/install_copy_report.txt`
+- `artifacts/open_launch_report.txt`
+
+Useful overrides:
+- `OUT_DIR`
+- `RECORDIT_DMG_NAME`
+- `RECORDIT_DMG_VOLNAME`
+- `SKIP_BUILD=1` (reuse existing `dist/Recordit.app`)
+- `SKIP_DMG_BUILD=1` (reuse an existing DMG path)
+- `INSTALL_DESTINATION=<path>`
+- `OPEN_WAIT_SEC=<seconds>`
+
+Reference: `docs/gate-dmg-install-open.md`.
+
 ### Run Packaged Beta Entrypoint (signed app mode, compatibility/fallback)
 ```bash
 make run-transcribe-app ASR_MODEL=models/ggml-base.en.bin
