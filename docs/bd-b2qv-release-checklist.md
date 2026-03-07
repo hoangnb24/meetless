@@ -64,14 +64,16 @@ Pass criteria:
 ## Step B - Signed Recordit App Packaging and Verification
 
 ```bash
-make sign-recordit-app SIGN_IDENTITY=- | tee "${EVIDENCE_ROOT}/logs/sign-recordit-app.log"
-codesign --verify --deep --strict --verbose=2 dist/Recordit.app | tee "${EVIDENCE_ROOT}/logs/codesign-verify.log"
-codesign -d --entitlements :- --verbose=2 dist/Recordit.app > "${EVIDENCE_ROOT}/logs/codesign-entitlements.plist" 2>&1
+RELEASE_ARTIFACT_DIR="${EVIDENCE_ROOT}/release-artifacts"
+OUT_DIR="${RELEASE_ARTIFACT_DIR}" \
+make inspect-recordit-release-artifacts SIGN_IDENTITY=- RECORDIT_DMG_NAME="Recordit-${RELEASE_TAG}.dmg" RECORDIT_DMG_VOLNAME="Recordit Beta" \
+  | tee "${EVIDENCE_ROOT}/logs/inspect-recordit-release-artifacts.log"
 ```
 
 Pass criteria:
-1. `codesign --verify` reports valid signature
-2. entitlements file is captured
+1. `${RELEASE_ARTIFACT_DIR}/status.txt` reports `pass`
+2. `${RELEASE_ARTIFACT_DIR}/dist_release_context/summary.csv` exists
+3. `${RELEASE_ARTIFACT_DIR}/artifacts/dmg_root_inventory.json` exists
 
 ## Step C - Packaged Live Smoke Gate
 
@@ -119,21 +121,19 @@ Pass criteria:
 
 ```bash
 DMG_NAME="Recordit-${RELEASE_TAG}.dmg"
-scripts/create_recordit_dmg.sh \
-  --app "dist/Recordit.app" \
-  --output "dist/${DMG_NAME}" \
-  --volname "Recordit Beta" | tee "${EVIDENCE_ROOT}/packaging/create-recordit-dmg.log"
+cp "${RELEASE_ARTIFACT_DIR}/summary.csv" "${EVIDENCE_ROOT}/packaging/release-artifact-inspection.summary.csv"
+cp "${RELEASE_ARTIFACT_DIR}/checks.json" "${EVIDENCE_ROOT}/packaging/release-artifact-inspection.checks.json"
 ```
 
 Pass criteria:
 1. DMG file exists at `dist/${DMG_NAME}`
-2. `scripts/create_recordit_dmg.sh` exits `0`
+2. retained inspection summary is copied into `${EVIDENCE_ROOT}/packaging/`
 
 ## Step G - Hash and Gatekeeper Assessment
 
 ```bash
-shasum -a 256 "dist/${DMG_NAME}" | tee "${EVIDENCE_ROOT}/packaging/${DMG_NAME}.sha256"
-spctl --assess --type open --context context:primary-signature --verbose=4 "dist/${DMG_NAME}" | tee "${EVIDENCE_ROOT}/packaging/spctl-dmg.log"
+cp "${RELEASE_ARTIFACT_DIR}/logs/dmg_checksum.log" "${EVIDENCE_ROOT}/packaging/${DMG_NAME}.sha256"
+cp "${RELEASE_ARTIFACT_DIR}/logs/dmg_spctl.log" "${EVIDENCE_ROOT}/packaging/spctl-dmg.log"
 ```
 
 Pass criteria:

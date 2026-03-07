@@ -23,7 +23,7 @@ Sequoia Capture is a macOS 15+ Rust project that records:
 - `Recordit.xcodeproj`: macOS app project containing the `RecorditApp` target/scheme
 - `app/RecorditApp/`: SwiftUI `@main` app entrypoint and initial window scene
 - `app/RecorditApp/Info.plist`: Recordit.app bundle metadata and privacy usage descriptions
-- `packaging/entitlements.plist`: sandbox and privacy entitlements
+- `packaging/entitlements.plist`: Recordit.app signing entitlements for the current v1 release posture (empty/unsandboxed for v1)
 - `docs/research.md`: API/TCC/platform research
 - `docs/architecture.md`: real-time pipeline and interleave spec
 - `docs/state-machine.md`: executable state-machine single source of truth (CLI/runtime/capture/queue/lifecycle)
@@ -41,6 +41,10 @@ Sequoia Capture is a macOS 15+ Rust project that records:
 - `docs/bd-yu7n-recordit-signing-notary-paths.md`: signing/notarization/gatekeeper path retarget evidence for `Recordit.app`
 - `docs/bd-14y4-sequoiatranscribe-fallback-policy.md`: strict non-default fallback policy for legacy `SequoiaTranscribe` usage
 - `docs/bd-k993-coverage-claim-policy.md`: canonical terminology policy for truthful coverage/readiness claims
+- `docs/bd-2gw4-release-posture-and-build-context-parity.md`: canonical guide to which dev, packaged, and release contexts are authoritative for which claims
+- `docs/bd-1ff5-xctest-xcuitest-retained-artifact-contract.md`: concrete retained-artifact contract for XCTest/XCUITest/app-launched evidence lanes
+- `docs/bd-2j49-cross-lane-e2e-evidence-standard.md`: project-wide standard tying shell, packaged, XCTest, XCUITest, and app-launched retained evidence together
+- `docs/bd-1ngy-cross-lane-evidence-index-and-triage-map.md`: practical triage map showing where to start and which retained artifacts to inspect for common failure classes
 - `docs/beads-governance.md`: issue decomposition, traceability governance, and evidence-linking workflow
 
 ## Commands
@@ -98,6 +102,11 @@ Runs app-level `xcodebuild` test lanes, captures per-step logs + `.xcresult` bun
 - `artifacts/ci/xctest_evidence/<stamp>/status.csv`
 - `artifacts/ci/xctest_evidence/<stamp>/summary.csv`
 - `artifacts/ci/xctest_evidence/<stamp>/responsiveness_budget_summary.csv` (app-level responsiveness gate evidence)
+- `artifacts/ci/xctest_evidence/<stamp>/contracts/xctest/evidence_contract.json`
+- `artifacts/ci/xctest_evidence/<stamp>/contracts/xcuitest/evidence_contract.json`
+- `artifacts/ci/xctest_evidence/<stamp>/contracts/lane_matrix.json`
+
+See `docs/bd-1ff5-xctest-xcuitest-retained-artifact-contract.md` for the truthful retained-artifact contract, including the current rule that app-launched verification is represented through the `xcuitest-evidence` lane. See `docs/bd-2j49-cross-lane-e2e-evidence-standard.md` for the cross-lane summary-surface and traceability standard shared with shell and packaged evidence lanes.
 
 Relevant controls:
 - `XCTEST_EVIDENCE_STAMP` (artifact folder name)
@@ -274,6 +283,40 @@ Post-implementation verification checklist and evidence index: `docs/post-implem
 make create-recordit-dmg
 ```
 Builds `dist/Recordit.dmg` from `dist/Recordit.app` and stages an `Applications` alias/symlink in the DMG root so install UX is explicit.
+
+### Notarize + Staple + Gatekeeper Assess (Release Candidate DMG)
+```bash
+NOTARY_KEYCHAIN_PROFILE=recordit-notary \
+scripts/notarize_recordit_dmg.sh --dmg dist/Recordit.dmg
+```
+Runs the release-finalization lane for the distributable DMG artifact:
+- `xcrun notarytool submit --wait`
+- `xcrun notarytool log`
+- `xcrun stapler staple`
+- `xcrun stapler validate`
+- `spctl --assess --type open --context context:primary-signature --verbose=4`
+
+Default retained evidence root:
+- `artifacts/releases/ga/<timestamp>/summary.csv`
+- `artifacts/releases/ga/<timestamp>/summary.json`
+- `artifacts/releases/ga/<timestamp>/status.txt`
+- `artifacts/releases/ga/<timestamp>/notary/notary_submit.json`
+- `artifacts/releases/ga/<timestamp>/notary/notary_log.json`
+- `artifacts/releases/ga/<timestamp>/notary/failure_signatures.json`
+- `artifacts/releases/ga/<timestamp>/logs/*.log`
+
+### Inspect Release Artifacts (Xcode + dist + DMG evidence bundle)
+```bash
+make inspect-recordit-release-artifacts
+```
+Builds or reuses the current packaged artifacts and writes a retained evidence bundle under:
+
+- `artifacts/ops/release-artifact-inspection/<timestamp>/summary.csv`
+- `artifacts/ops/release-artifact-inspection/<timestamp>/dist_release_context/summary.csv`
+- `artifacts/ops/release-artifact-inspection/<timestamp>/artifacts/xcode_bundle_inventory.json`
+- `artifacts/ops/release-artifact-inspection/<timestamp>/artifacts/dmg_root_inventory.json`
+
+This is the canonical automated inspection path for the current v1 release posture: it captures Xcode-built app inventory, nested `dist/Recordit.app` release-context verification, DMG metadata/checksum/mounted contents, and runtime-payload parity across those artifact layers.
 
 Optional overrides:
 - `RECORDIT_DMG_NAME` (default: `Recordit.dmg`)

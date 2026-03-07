@@ -74,7 +74,7 @@ SMOKE_NEAR_LIVE_DETERMINISTIC_DIR ?= artifacts/smoke/near-live-deterministic
 SMOKE_NEAR_LIVE_INPUT_WAV ?= $(SMOKE_NEAR_LIVE_DIR)/capture.input.wav
 SMOKE_NEAR_LIVE_DETERMINISTIC_INPUT_WAV ?= artifacts/bench/corpus/gate_c/tts_phrase_stereo.wav
 
-.PHONY: help build build-release prepare-recordit-runtime-inputs build-recordit-app bundle-recordit-app sign-recordit-app verify-recordit-app run-recordit-app create-recordit-dmg probe capture transcribe-live transcribe-live-stream capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic contracts-ci setup-whispercpp-model run-transcribe-app run-transcribe-live-stream-app run-transcribe-preflight-app run-transcribe-model-doctor-app bench-harness gate-backlog-pressure gate-transcript-completeness gate-v1-acceptance gate-packaged-live-smoke gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
+.PHONY: help build build-release prepare-recordit-runtime-inputs build-recordit-app bundle-recordit-app sign-recordit-app verify-recordit-app inspect-recordit-release-artifacts run-recordit-app create-recordit-dmg notarize-recordit-dmg probe capture transcribe-live transcribe-live-stream capture-transcribe transcribe-preflight transcribe-model-doctor smoke smoke-offline smoke-near-live smoke-near-live-deterministic contracts-ci setup-whispercpp-model run-transcribe-app run-transcribe-live-stream-app run-transcribe-preflight-app run-transcribe-model-doctor-app bench-harness gate-backlog-pressure gate-transcript-completeness gate-v1-acceptance gate-packaged-live-smoke gate-d-soak bundle bundle-transcribe sign sign-transcribe verify run-app reset-perms clean
 
 help:
 	@echo "Targets:"
@@ -98,8 +98,10 @@ help:
 	@echo "  bundle-recordit-app - Copy built Recordit.app into dist/"
 	@echo "  sign-recordit-app - Codesign dist/Recordit.app"
 	@echo "  verify-recordit-app - Verify signature and entitlements for dist/Recordit.app"
+	@echo "  inspect-recordit-release-artifacts - Retain Xcode/dist/DMG release artifact evidence bundle"
 	@echo "  run-recordit-app - Launch signed dist/Recordit.app (recommended packaged default)"
 	@echo "  create-recordit-dmg - Build DMG with Recordit.app + Applications alias install surface"
+	@echo "  notarize-recordit-dmg - Run notary submit/wait + staple + Gatekeeper assess with retained evidence"
 	@echo "  run-transcribe-app - Run signed SequoiaTranscribe.app (legacy compatibility/fallback path)"
 	@echo "  run-transcribe-live-stream-app - Legacy compatibility/fallback: SequoiaTranscribe.app with --live-stream"
 	@echo "  run-transcribe-preflight-app - Legacy compatibility/fallback: SequoiaTranscribe preflight diagnostics"
@@ -147,11 +149,17 @@ verify-recordit-app:
 	@echo "[verify-recordit-app] runtime binaries present and executable under Contents/Resources/runtime/bin"
 	@echo "[verify-recordit-app] runtime artifact manifest present under Contents/Resources/runtime"
 
+inspect-recordit-release-artifacts:
+	OUT_DIR="$(OUT_DIR)" SIGN_IDENTITY="$(SIGN_IDENTITY)" RECORDIT_APP_BUNDLE="$(abspath $(RECORDIT_APP_DIR))" RECORDIT_DMG="$(abspath dist/$(RECORDIT_DMG_NAME))" RECORDIT_DMG_VOLNAME="$(RECORDIT_DMG_VOLNAME)" RECORDIT_DERIVED_DATA="$(abspath $(RECORDIT_DERIVED_DATA))" RECORDIT_XCODE_CONFIGURATION="$(RECORDIT_XCODE_CONFIGURATION)" scripts/inspect_recordit_release_artifacts.sh
+
 run-recordit-app: sign-recordit-app
 	open -W "$(RECORDIT_APP_DIR)"
 
 create-recordit-dmg: sign-recordit-app
 	DMG_VOLNAME="$(RECORDIT_DMG_VOLNAME)" scripts/create_recordit_dmg.sh --app "$(RECORDIT_APP_DIR)" --output "dist/$(RECORDIT_DMG_NAME)"
+
+notarize-recordit-dmg:
+	OUT_DIR="$(OUT_DIR)" RECORDIT_DMG="$(abspath dist/$(RECORDIT_DMG_NAME))" RECORDIT_DMG_NAME="$(RECORDIT_DMG_NAME)" RECORDIT_DMG_VOLNAME="$(RECORDIT_DMG_VOLNAME)" SIGN_IDENTITY="$(SIGN_IDENTITY)" NOTARY_PROFILE="$(NOTARY_PROFILE)" SKIP_DMG_BUILD="$(SKIP_DMG_BUILD)" ALLOW_SPCTL_FAILURE="$(ALLOW_SPCTL_FAILURE)" scripts/notarize_recordit_release_dmg.sh
 
 probe: build
 	DYLD_LIBRARY_PATH=/usr/lib/swift cargo run --bin sck_probe -- $(CAPTURE_SECS)

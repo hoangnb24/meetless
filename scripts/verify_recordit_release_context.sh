@@ -182,6 +182,13 @@ else
   mark_fail
 fi
 
+if run_optional_step codesign_display codesign -d --verbose=4 "$RECORDIT_APP_BUNDLE"; then
+  append_summary "codesign_display" "pass" "captured verbose codesign display" "$LOG_DIR/codesign_display.log"
+else
+  append_summary "codesign_display" "fail" "failed to capture verbose codesign display" "$LOG_DIR/codesign_display.log"
+  mark_fail
+fi
+
 if run_optional_step entitlements_dump codesign -d --entitlements :- --verbose=2 "$RECORDIT_APP_BUNDLE"; then
   append_summary "entitlements_dump" "pass" "captured signed entitlements" "$LOG_DIR/entitlements_dump.log"
 else

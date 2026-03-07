@@ -111,3 +111,10 @@ beads, not evidence that the v1 release decision is still undecided.
 
 If a future agent needs one citation for the release boundary, cite this document
 first and use ADR-005 / build-strategy docs as supporting context.
+
+## Current Signing Interpretation
+
+For the current v1 `Recordit.app` signing path, `packaging/entitlements.plist` should
+not request App Sandbox entitlements. If sandbox keys appear in that file or in the
+signed `dist/Recordit.app` entitlements dump, treat that as release-context drift to
+be fixed before using the packaged artifact as trusted v1 evidence.

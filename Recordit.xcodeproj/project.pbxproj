@@ -489,7 +489,8 @@
 				"$(SRCROOT)/scripts/prepare_recordit_runtime_inputs.sh",
 				"$(SRCROOT)/.build/recordit-runtime-inputs/$(CONFIGURATION)/runtime/bin/recordit",
 				"$(SRCROOT)/.build/recordit-runtime-inputs/$(CONFIGURATION)/runtime/bin/sequoia_capture",
-				"$(SRCROOT)/.build/recordit-runtime-inputs/$(CONFIGURATION)/runtime/models/whispercpp",
+				"$(SRCROOT)/.build/recordit-runtime-inputs/$(CONFIGURATION)/runtime/models/whispercpp/ggml-tiny.en.bin",
+				"$(SRCROOT)/.build/recordit-runtime-inputs/$(CONFIGURATION)/runtime/artifact-manifest.json",
 			);
 			name = "Embed Runtime Binaries";
 			outputFileListPaths = (
@@ -497,6 +498,8 @@
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/runtime/bin/recordit",
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/runtime/bin/sequoia_capture",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/runtime/models/whispercpp/ggml-tiny.en.bin",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/runtime/artifact-manifest.json",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;

@@ -10,6 +10,19 @@ ROOT="${SRCROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 configuration="${CONFIGURATION:-Debug}"
 default_runtime_input_dir="$ROOT/.build/recordit-runtime-inputs/$configuration"
 runtime_input_dir="${RECORDIT_RUNTIME_INPUT_DIR:-$default_runtime_input_dir}"
+require_strict_runtime_payload=0
+if [[ "$configuration" == "Release" ]]; then
+  require_strict_runtime_payload=1
+fi
+
+fail_or_warn() {
+  local message="$1"
+  if [[ "$require_strict_runtime_payload" == "1" ]]; then
+    echo "error: $message" >&2
+    exit 1
+  fi
+  echo "[embed-runtime][copy] warning: $message" >&2
+}
 
 recordit_src="$runtime_input_dir/runtime/bin/recordit"
 capture_src="$runtime_input_dir/runtime/bin/sequoia_capture"
@@ -51,7 +64,7 @@ if [[ -f "$default_model_src" ]]; then
   fi
 else
   rm -f "$model_dest"
-  echo "[embed-runtime][copy] warning: prebuilt whispercpp model not found at $default_model_src; onboarding model validation may require manual model path" >&2
+  fail_or_warn "prebuilt whispercpp model not found at $default_model_src; standard app runtime parity requires a bundled default model"
 fi
 
 if [[ -f "$runtime_artifact_manifest_src" ]]; then
@@ -59,7 +72,7 @@ if [[ -f "$runtime_artifact_manifest_src" ]]; then
   echo "[embed-runtime][copy] embedded runtime artifact manifest into $runtime_manifest_dest"
 else
   rm -f "$runtime_manifest_dest"
-  echo "[embed-runtime][copy] warning: runtime artifact manifest not found at $runtime_artifact_manifest_src; parity verification will fail until runtime inputs are regenerated" >&2
+  fail_or_warn "runtime artifact manifest not found at $runtime_artifact_manifest_src; bundled runtime parity verification requires this manifest"
 fi
 
 echo "[embed-runtime][copy] embedded runtime binaries into $dest_dir"

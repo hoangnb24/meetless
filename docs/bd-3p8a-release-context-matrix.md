@@ -38,7 +38,7 @@ This matrix exists to prevent context drift. A command that is appropriate in on
 | Context | Primary question answered | Canonical commands | Required pass signals | Evidence roots |
 |---|---|---|---|---|
 | Dev/Xcode validation | Does the app target build correctly, wire runtime inputs correctly, and pass app-level XCTest/XCUITest evidence lanes? | `make build-recordit-app`; `scripts/ci_recordit_xctest_evidence.sh` | `xcodebuild` succeeds; app-level summaries exist; responsiveness rows are present in summary artifacts | `.build/recordit-derived-data/`; `artifacts/ci/xctest_evidence/<stamp>/`; `artifacts/ci/xctest_evidence/<stamp>/derived_data/` |
-| Packaged local validation | Does the local packaged app path produce a signed `dist/Recordit.app`, preserve default launch semantics, and satisfy packaged smoke/runtime checks? | `make bundle-recordit-app sign-recordit-app verify-recordit-app`; `make gate-packaged-live-smoke`; `make create-recordit-dmg RECORDIT_DMG_NAME=Recordit-local.dmg RECORDIT_DMG_VOLNAME='Recordit'` | `codesign --verify` passes on `dist/Recordit.app`; packaged smoke summary reports `recordit_launch_semantics_ok=true` and `gate_pass=true`; DMG is created from `dist/Recordit.app` | `dist/Recordit.app`; `dist/Recordit-local.dmg`; `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<stamp>/` |
+| Packaged local validation | Does the local packaged app path produce a signed `dist/Recordit.app`, preserve default launch semantics, and satisfy packaged smoke/runtime checks? | `make inspect-recordit-release-artifacts RECORDIT_DMG_NAME=Recordit-local.dmg RECORDIT_DMG_VOLNAME='Recordit'`; `make gate-packaged-live-smoke` | inspection summary reports pass for Xcode/dist/DMG artifact checks; packaged smoke summary reports `recordit_launch_semantics_ok=true`, `release_context_verify_ok=true`, and `gate_pass=true` | `artifacts/ops/release-artifact-inspection/<stamp>/`; `dist/Recordit.app`; `dist/Recordit-local.dmg`; `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<stamp>/` |
 | Release-candidate / notarized validation | Is the distributable DMG signed, notarized, stapled, Gatekeeper-assessed, and backed by retained release evidence? | `make sign-recordit-app SIGN_IDENTITY="$SIGN_IDENTITY"`; `scripts/create_recordit_dmg.sh --app ... --output ... --volname ...`; `codesign --force --sign "$SIGN_IDENTITY" ...dmg`; `xcrun notarytool submit ... --wait`; `xcrun stapler staple`; `spctl --assess ...`; plus required runtime gates | app signature valid; DMG signature valid; notarization `status=Accepted`; stapler validate passes; `spctl` passes; required gates/reliability evidence pass | `artifacts/releases/ga/<tag>/` with `logs/`, `packaging/`, `notary/`, `gates/`, `release/` |
 
 ## Context A — Dev/Xcode Validation
@@ -90,42 +90,46 @@ Use this context after app-target changes that affect packaging, signing, launch
 ### Commands
 
 ```bash
-make bundle-recordit-app sign-recordit-app verify-recordit-app
+make inspect-recordit-release-artifacts RECORDIT_DMG_NAME=Recordit-local.dmg RECORDIT_DMG_VOLNAME='Recordit'
 make gate-packaged-live-smoke
-make create-recordit-dmg RECORDIT_DMG_NAME=Recordit-local.dmg RECORDIT_DMG_VOLNAME='Recordit'
-```
-
-### Supporting checks
-
-```bash
-codesign --verify --deep --strict --verbose=2 dist/Recordit.app
-codesign -d --entitlements :- --verbose=2 dist/Recordit.app
 ```
 
 ### What this context proves
 
 1. `dist/Recordit.app` is the packaged default artifact path.
-2. Local signing/verification works on the packaged app.
-3. The packaged smoke gate still enforces `Recordit.app` launch semantics while retaining compatibility runtime checks.
-4. DMG assembly uses `dist/Recordit.app` as the source bundle.
+2. One retained evidence bundle spans the Xcode build product, signed `dist/Recordit.app`, and the DMG assembled from it.
+3. The nested `dist_release_context/` verifier captures signing, entitlements, `spctl`, payload inventory, and packaged preflight evidence against the exact packaged artifact.
+4. The packaged smoke lane still uses the compatibility runtime app for deterministic live execution, so that runtime execution evidence remains supportive rather than the sole authority for `Recordit.app` artifact posture.
 
 ### Expected outputs
 
-1. Packaged app:
+1. Release artifact inspection bundle:
+   - `artifacts/ops/release-artifact-inspection/<stamp>/summary.csv`
+   - `artifacts/ops/release-artifact-inspection/<stamp>/status.txt`
+   - `artifacts/ops/release-artifact-inspection/<stamp>/dist_release_context/summary.csv`
+   - `artifacts/ops/release-artifact-inspection/<stamp>/artifacts/xcode_bundle_inventory.json`
+   - `artifacts/ops/release-artifact-inspection/<stamp>/artifacts/dmg_root_inventory.json`
+2. Packaged app:
    - `dist/Recordit.app`
-2. Local DMG:
+3. Local DMG:
    - `dist/Recordit-local.dmg`
-3. Packaged smoke evidence:
+4. Packaged smoke evidence:
    - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<stamp>/summary.csv`
    - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<stamp>/status.txt`
    - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<stamp>/recordit_run_plan.log`
+   - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<stamp>/release_context_verification/summary.csv`
+   - `~/Library/Containers/com.recordit.sequoiatranscribe/Data/artifacts/packaged-beta/gates/gate_packaged_live_smoke/<stamp>/release_context_verification/status.txt`
 
 ### Required pass signals
 
-From app verification:
+From release-artifact inspection:
 
-1. `codesign --verify` reports a valid signature for `dist/Recordit.app`.
-2. Effective entitlements can be dumped and retained.
+1. `artifacts/ops/release-artifact-inspection/<stamp>/status.txt` reports `pass`.
+2. `summary.csv` includes successful rows for:
+   - `dist_release_context_verify`
+   - `xcode_vs_dist_runtime_parity`
+   - `dmg_vs_dist_runtime_parity`
+   - `dmg_applications_alias`
 
 From packaged smoke `summary.csv`:
 
@@ -133,7 +137,8 @@ From packaged smoke `summary.csv`:
 2. `runtime_first_stable_emit_ok=true`
 3. `runtime_transcript_surface_ok=true`
 4. `runtime_terminal_live_mode_ok=true`
-5. `gate_pass=true`
+5. `release_context_verify_ok=true`
+6. `gate_pass=true`
 
 ### Not sufficient for
 
@@ -186,6 +191,8 @@ xcrun stapler validate "dist/${DMG_NAME}" | tee "${EVIDENCE_ROOT}/notary/stapler
 spctl --assess --type open --context context:primary-signature --verbose=4 "dist/${DMG_NAME}" | tee "${EVIDENCE_ROOT}/notary/spctl-assess.log"
 
 make gate-packaged-live-smoke | tee "${EVIDENCE_ROOT}/gates/gate-packaged-live-smoke.log"
+# Supporting runtime reliability evidence only: this lane still runs the debug CLI,
+# so it is not by itself release-artifact posture proof.
 make gate-v1-acceptance | tee "${EVIDENCE_ROOT}/gates/gate-v1-acceptance.log"
 make gate-backlog-pressure | tee "${EVIDENCE_ROOT}/gates/gate-backlog-pressure.log"
 make gate-transcript-completeness | tee "${EVIDENCE_ROOT}/gates/gate-transcript-completeness.log"
@@ -198,8 +205,9 @@ br show bd-2n4m --json | tee "${EVIDENCE_ROOT}/gates/bd-2n4m-status.json"
 2. The distributable DMG preserves the repo's drag-to-Applications install surface before signing/notarization.
 3. The DMG is notarized and stapled.
 4. Gatekeeper accepts the distribution artifact.
-5. Runtime/reliability gates still pass on the release candidate.
-6. Evidence required for release sign-off is retained in one root.
+5. Artifact-bound packaged/release gates still pass on the release candidate.
+6. Supporting non-artifact runtime reliability lanes can be retained alongside the RC evidence, but they do not replace artifact-bound proof.
+7. Evidence required for release sign-off is retained in one root.
 
 ### Required pass signals
 
@@ -207,8 +215,9 @@ br show bd-2n4m --json | tee "${EVIDENCE_ROOT}/gates/bd-2n4m-status.json"
 2. `notary-submit.json` reports `status=Accepted`.
 3. `stapler validate` exits `0`.
 4. `spctl --assess` passes for the DMG.
-5. Runtime/reliability gates emit pass envelopes.
-6. `bd-2n4m` is `closed` before GA sign-off.
+5. Artifact-bound packaged/release gates emit pass envelopes.
+6. Any retained `gate-v1-acceptance` run is treated as supporting reliability evidence, not as notarization/Gatekeeper authority by itself.
+7. `bd-2n4m` is `closed` before GA sign-off.
 
 ### Mandatory retained evidence
 
