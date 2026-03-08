@@ -13,12 +13,64 @@ jobs:
   build-release-dmg:
     runs-on: macos-14
     timeout-minutes: 60
+    permissions:
+      contents: write   # needed for creating releases + pushing tags
 
     steps:
       - name: Checkout (with LFS)
         uses: actions/checkout@v4
         with:
           lfs: true
+          fetch-depth: 0   # full history for version tag discovery
+
+      - name: Determine release version
+        id: version
+        run: |
+          # Find the latest v* tag. If none exists, default to v0.1.0.
+          LATEST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="v0.1.0"
+            echo "No existing release tags found — starting from $LATEST_TAG"
+          else
+            echo "Latest release tag: $LATEST_TAG"
+          fi
+
+          # Strip 'v' prefix → e.g. "0.1.0"
+          CURRENT="${LATEST_TAG#v}"
+          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT" | cut -d. -f3)
+
+          # Check if the latest tag points at this exact commit
+          LATEST_TAG_COMMIT=$(git rev-list -n1 "$LATEST_TAG" 2>/dev/null || echo "")
+          HEAD_COMMIT=$(git rev-parse HEAD)
+
+          if [ "$LATEST_TAG_COMMIT" = "$HEAD_COMMIT" ]; then
+            # This commit is already tagged — use the version as-is
+            NEW_VERSION="$CURRENT"
+            echo "HEAD is already tagged $LATEST_TAG — re-using version"
+          else
+            # Bump patch version
+            PATCH=$((PATCH + 1))
+            NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            echo "Bumped version: $CURRENT → $NEW_VERSION"
+          fi
+
+          BUILD_NUMBER=${{ github.run_number }}
+
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Release version: v$NEW_VERSION (build $BUILD_NUMBER)"
+
+      - name: Stamp version into Info.plist
+        run: |
+          PLIST="app/RecorditApp/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ steps.version.outputs.build_number }}" "$PLIST"
+          echo "Stamped $PLIST:"
+          echo "  CFBundleShortVersionString = ${{ steps.version.outputs.version }}"
+          echo "  CFBundleVersion = ${{ steps.version.outputs.build_number }}"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -113,29 +165,34 @@ jobs:
             SKIP_DMG_BUILD=1 \
             ALLOW_SPCTL_FAILURE=0
 
-      # ── Artifacts ──────────────────────────────────────────────────
+      # ── Release ────────────────────────────────────────────────────
+      - name: Rename DMG with version
+        run: |
+          mv dist/Recordit.dmg "dist/Recordit-${{ steps.version.outputs.version }}.dmg"
+
       - name: Upload DMG artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Recordit-${{ github.sha }}
-          path: dist/Recordit.dmg
+          name: Recordit-${{ steps.version.outputs.version }}-build${{ steps.version.outputs.build_number }}
+          path: dist/Recordit-*.dmg
           if-no-files-found: error
 
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Build ${{ github.run_number }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Recordit ${{ steps.version.outputs.version }}
           body: |
-            Automated release from merge to main.
+            ## Recordit ${{ steps.version.outputs.version }}
 
-            **Commit:** ${{ github.sha }}
+            **Build:** ${{ steps.version.outputs.build_number }}
+            **Commit:** `${{ github.sha }}`
             **Signing:** ${{ env.SIGN_IDENTITY == '-' && 'Ad-hoc (not notarized)' || 'Developer ID (notarized)' }}
-          files: dist/Recordit.dmg
+          files: dist/Recordit-${{ steps.version.outputs.version }}.dmg
           draft: false
-          prerelease: true
+          prerelease: ${{ env.SIGN_IDENTITY == '-' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
