@@ -16,6 +16,7 @@ STRICT_UI_TESTS="${CI_STRICT_UI_TESTS:-0}"
 UI_BOOTSTRAP_RETRIES="${XCTEST_UI_BOOTSTRAP_RETRIES:-1}"
 XCTEST_CONFIGURATION="${XCTEST_CONFIGURATION:-Debug}"
 RUNTIME_INPUT_DIR="${XCTEST_RUNTIME_INPUT_DIR:-$ROOT/.build/recordit-runtime-inputs/$XCTEST_CONFIGURATION}"
+read -ra XCODEBUILD_EXTRAS <<< "${XCTEST_XCODEBUILD_EXTRAS:-}"
 
 LOG_DIR="$OUT_DIR/logs"
 RESULT_DIR="$OUT_DIR/xcresult"
@@ -100,11 +101,11 @@ run_xcodebuild_step() {
   if [[ -n "$result_bundle_path" ]]; then
     run_step "$step_name" "$required" "$result_bundle_path" \
       env RECORDIT_RUNTIME_INPUT_DIR="$RUNTIME_INPUT_DIR" \
-      xcodebuild "$@" -resultBundlePath "$result_bundle_path"
+      xcodebuild "$@" "${XCODEBUILD_EXTRAS[@]}" -resultBundlePath "$result_bundle_path"
   else
     run_step "$step_name" "$required" "" \
       env RECORDIT_RUNTIME_INPUT_DIR="$RUNTIME_INPUT_DIR" \
-      xcodebuild "$@"
+      xcodebuild "$@" "${XCODEBUILD_EXTRAS[@]}"
   fi
 }
 
@@ -153,7 +154,7 @@ run_xcodebuild_ui_step_with_bootstrap_retry() {
     set +e
     evidence_capture_command_logs "$attempt_log" "$attempt_stdout" "$attempt_stderr" \
       env RECORDIT_RUNTIME_INPUT_DIR="$RUNTIME_INPUT_DIR" \
-      xcodebuild "$@" -resultBundlePath "$result_bundle_path"
+      xcodebuild "$@" "${XCODEBUILD_EXTRAS[@]}" -resultBundlePath "$result_bundle_path"
     rc=$?
     set -e
 
@@ -223,6 +224,7 @@ run_step \
   -configuration "$XCTEST_CONFIGURATION" \
   -destination "$DESTINATION" \
   -derivedDataPath "$DERIVED_DATA_PATH" \
+  "${XCODEBUILD_EXTRAS[@]}" \
   -resultBundlePath "$RESULT_DIR/responsiveness_budget_gate.xcresult" \
   -only-testing:RecorditAppTests/RecorditAppTests/testAppLevelResponsivenessBudgetsForLiveRun
 

@@ -18,7 +18,7 @@ on:
 
 jobs:
   xctest-evidence:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
 
     steps:
@@ -31,6 +31,7 @@ jobs:
         env:
           XCTEST_EVIDENCE_STAMP: gha-${{ github.run_id }}-${{ github.run_attempt }}
           CI_STRICT_UI_TESTS: "1"
+          XCTEST_XCODEBUILD_EXTRAS: CODE_SIGNING_ALLOWED=NO
         run: scripts/ci_recordit_xctest_evidence.sh
 
       - name: Upload XCTest evidence artifacts
