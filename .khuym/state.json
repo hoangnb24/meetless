@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.1",
+  "feature_slug": "native-macos-meeting-recorder",
+  "mode": "deep",
+  "active_skill": "khuym:swarming",
+  "phase": "swarming",
+  "phase_number": 1,
+  "epic_id": "bd-3cy",
+  "approved_gates": {
+    "context": true,
+    "phase_plan": true,
+    "execution": true,
+    "review": false
+  },
+  "active_beads": [],
+  "active_workers": [],
+  "blockers": [],
+  "focus": "phase-1-complete",
+  "summary": "Phase 1 swarm execution is complete for the native macOS meeting recorder. All current-phase task beads are closed, reservations are clear, and the repo is ready to hand back for the next workflow step.",
+  "next_action": "Return to planning for the next approved phase, or begin reviewing if the user wants a review pass on the completed Phase 1 execution.",
+  "deferred_beads": [],
+  "last_compounding_run": {
+    "feature": "",
+    "date": "",
+    "learnings_file": "",
+    "critical_promotions": 0
+  },
+  "last_updated": "2026-04-22T07:48:07Z"
+}

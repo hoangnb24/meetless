@@ -1,0 +1,21 @@
+project_doc_max_bytes = 65536
+
+
+# KHUYM: compact_prompt start
+compact_prompt = """
+MANDATORY: Khuym context compaction recovery.
+
+STOP. Before doing anything else:
+1. Read AGENTS.md completely.
+2. If present, run node .codex/khuym_status.mjs --json.
+3. If present, read .khuym/HANDOFF.json and .khuym/state.json.
+4. Re-open the active feature CONTEXT.md before more planning or edits.
+5. Re-open the current bead or task before running more implementation commands.
+6. Check the current worktree state with git status before resuming.
+
+After completing these steps, briefly confirm what context you restored and only then continue.
+"""
+# KHUYM: compact_prompt end
+
+[features]
+codex_hooks = true

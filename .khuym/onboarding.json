@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "plugin": "khuym",
+  "plugin_version": "3.0.0",
+  "installed_at": "2026-04-22T02:34:06.080Z",
+  "status": "complete",
+  "managed_assets": {
+    "agents_mode": "updated_managed_block",
+    "config_changes": [
+      "compact_prompt_managed"
+    ],
+    "hook_changes": [],
+    "hook_scripts": [
+      ".codex/hooks/khuym_session_start.mjs",
+      ".codex/hooks/khuym_pre_tool_use.mjs",
+      ".codex/hooks/khuym_stop.mjs"
+    ],
+    "support_scripts": [
+      ".codex/khuym_status.mjs",
+      ".codex/khuym_state.mjs",
+      ".codex/khuym_dependencies.mjs",
+      ".codex/khuym_reservations.mjs"
+    ],
+    "state_file": ".khuym/state.json"
+  },
+  "notes": []
+}

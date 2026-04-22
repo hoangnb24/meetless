@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .codex/hooks/khuym_session_start.mjs",
+            "statusMessage": "Khuym: session bootstrap"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .codex/hooks/khuym_pre_tool_use.mjs",
+            "statusMessage": "Khuym: shell guardrails"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .codex/hooks/khuym_stop.mjs",
+            "statusMessage": "Khuym: end-of-turn check"
+          }
+        ]
+      }
+    ]
+  }
+}

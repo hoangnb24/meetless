@@ -1,0 +1,262 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-04-22T07:47:24.338Z",
+  "reservations": [
+    {
+      "id": "resv-mo9h1t2g-cjxcw7",
+      "agent": "Epicurus",
+      "bead_id": "bd-3uo",
+      "paths": [
+        "Meetless.xcodeproj",
+        "MeetlessApp/App",
+        "MeetlessApp/Features/Home",
+        "MeetlessApp/Features/Recording",
+        "MeetlessApp/Resources"
+      ],
+      "created_at": "2026-04-22T03:06:59.560Z",
+      "updated_at": "2026-04-22T03:13:11.424Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T04:06:59.560Z",
+      "status": "released",
+      "released_at": "2026-04-22T03:13:11.424Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mo9hbgs7-iq7tbn",
+      "agent": "Mendel",
+      "bead_id": "bd-3uo",
+      "paths": [
+        "Meetless.xcodeproj",
+        "MeetlessApp/App",
+        "MeetlessApp/Features/Home",
+        "MeetlessApp/Features/Recording",
+        "MeetlessApp/Resources"
+      ],
+      "created_at": "2026-04-22T03:14:30.199Z",
+      "updated_at": "2026-04-22T03:17:57.858Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T04:14:30.199Z",
+      "status": "released",
+      "released_at": "2026-04-22T03:17:57.858Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mo9hi89z-70lebx",
+      "agent": "Nash",
+      "bead_id": "bd-3uo",
+      "paths": [
+        "Meetless.xcodeproj/**",
+        "MeetlessApp/App/**",
+        "MeetlessApp/Features/Home/**",
+        "MeetlessApp/Features/Recording/**",
+        "MeetlessApp/Resources/**"
+      ],
+      "created_at": "2026-04-22T03:19:45.767Z",
+      "updated_at": "2026-04-22T04:06:24.514Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T04:19:45.767Z",
+      "status": "released",
+      "released_at": "2026-04-22T04:06:24.514Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mo9j9cdg-0sn84a",
+      "agent": "Bohr",
+      "bead_id": "bd-3uo",
+      "paths": [
+        "Meetless.xcodeproj/**",
+        "MeetlessApp/**"
+      ],
+      "created_at": "2026-04-22T04:08:50.404Z",
+      "updated_at": "2026-04-22T04:13:41.970Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T05:08:50.404Z",
+      "status": "released",
+      "released_at": "2026-04-22T04:13:41.970Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mo9jibxv-j9kc2t",
+      "agent": "Curie",
+      "bead_id": "bd-2lw",
+      "paths": [
+        "Vendor/whisper.cpp",
+        "MeetlessPackages/WhisperCppBridge",
+        "MeetlessApp/Features/Recording",
+        "MeetlessApp/Resources/Models",
+        "Meetless.xcodeproj/project.pbxproj",
+        "scripts/build-whisper-xcframework.sh"
+      ],
+      "created_at": "2026-04-22T04:15:49.747Z",
+      "updated_at": "2026-04-22T04:24:56.518Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T05:15:49.747Z",
+      "status": "released",
+      "released_at": "2026-04-22T04:24:56.518Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mo9jkxnq-h79nhh",
+      "agent": "Curie",
+      "bead_id": "bd-2lw",
+      "paths": [
+        "MeetlessApp/Resources/Samples"
+      ],
+      "created_at": "2026-04-22T04:17:51.206Z",
+      "updated_at": "2026-04-22T04:24:56.518Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T05:17:51.206Z",
+      "status": "released",
+      "released_at": "2026-04-22T04:24:56.518Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mo9jwopl-0t7k8i",
+      "agent": "Zeno",
+      "bead_id": "bd-303",
+      "paths": [
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift",
+        "MeetlessApp/Features/Recording/RecordingStatusBanner.swift",
+        "MeetlessApp/Features/Home/HomeView.swift",
+        "MeetlessApp/App/AppModel.swift",
+        "MeetlessApp/Services/Capture",
+        "MeetlessApp/Services/Permissions",
+        "Meetless.xcodeproj/project.pbxproj"
+      ],
+      "created_at": "2026-04-22T04:26:59.481Z",
+      "updated_at": "2026-04-22T04:36:38.675Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T05:26:59.481Z",
+      "status": "released",
+      "released_at": "2026-04-22T04:36:38.675Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mo9p2a2a-f421yc",
+      "agent": "Noether",
+      "bead_id": "bd-2az",
+      "paths": [
+        "MeetlessApp/Services/Capture/ScreenCaptureSession.swift",
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift",
+        "MeetlessApp/Features/Recording/RecordingStatusBanner.swift",
+        "MeetlessApp/Services/AudioPipeline/*",
+        "MeetlessApp/Services/SessionRepository/*"
+      ],
+      "created_at": "2026-04-22T06:51:18.514Z",
+      "updated_at": "2026-04-22T06:52:26.917Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T07:51:18.514Z",
+      "status": "released",
+      "released_at": "2026-04-22T06:52:26.917Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mo9p4dd3-2ib49i",
+      "agent": "Wegener",
+      "bead_id": "bd-2az",
+      "paths": [
+        "MeetlessApp/Services/Capture/ScreenCaptureSession.swift",
+        "MeetlessApp/Services/AudioPipeline/*",
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift",
+        "MeetlessApp/Features/Recording/RecordingStatusBanner.swift",
+        "Meetless.xcodeproj/project.pbxproj"
+      ],
+      "created_at": "2026-04-22T06:52:56.103Z",
+      "updated_at": "2026-04-22T07:00:47.317Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T07:52:56.103Z",
+      "status": "released",
+      "released_at": "2026-04-22T07:00:47.317Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mo9phb2n-cu0u4s",
+      "agent": "Mendel",
+      "bead_id": "bd-2rx",
+      "paths": [
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift",
+        "MeetlessApp/Features/Home/HomeView.swift",
+        "MeetlessApp/Services/Capture/ScreenCaptureSession.swift",
+        "MeetlessApp/Services/AudioPipeline/SourceAudioPipeline.swift",
+        "MeetlessApp/Services/Transcription/*",
+        "MeetlessApp/Services/TranscriptCoordinator/*"
+      ],
+      "created_at": "2026-04-22T07:02:59.663Z",
+      "updated_at": "2026-04-22T07:10:22.479Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T08:02:59.663Z",
+      "status": "released",
+      "released_at": "2026-04-22T07:10:22.479Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mo9qd13y-el8bsr",
+      "agent": "Averroes",
+      "bead_id": "bd-2rx",
+      "paths": [
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift",
+        "MeetlessApp/Features/Recording/RecordingStatusBanner.swift",
+        "MeetlessApp/Services/Transcription/*",
+        "MeetlessApp/Services/TranscriptCoordinator/*"
+      ],
+      "created_at": "2026-04-22T07:27:39.742Z",
+      "updated_at": "2026-04-22T07:37:26.988Z",
+      "ttl_seconds": null,
+      "expires_at": null,
+      "status": "released",
+      "released_at": "2026-04-22T07:37:26.988Z",
+      "note": "Diagnostic reservation claim health check; agent_id=019db415-b1a9-7283-b4ba-645526a8ec94"
+    },
+    {
+      "id": "resv-mo9qhjv0-v7ma2f",
+      "agent": "Averroes",
+      "bead_id": "bd-2rx",
+      "paths": [
+        "MeetlessApp/Services/AudioPipeline/SourceAudioPipeline.swift",
+        "MeetlessApp/Services/Capture/ScreenCaptureSession.swift",
+        "MeetlessPackages/WhisperCppBridge/Sources/WhisperCppBridge/WhisperSourceWorker.swift",
+        "Meetless.xcodeproj/project.pbxproj"
+      ],
+      "created_at": "2026-04-22T07:31:10.668Z",
+      "updated_at": "2026-04-22T07:37:26.988Z",
+      "ttl_seconds": null,
+      "expires_at": null,
+      "status": "released",
+      "released_at": "2026-04-22T07:37:26.988Z",
+      "note": "bd-2rx live transcript coordination implementation expansion"
+    },
+    {
+      "id": "resv-mo9qsb1t-dz1lme",
+      "agent": "Maxwell",
+      "bead_id": "bd-p23",
+      "paths": [
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift",
+        "MeetlessApp/Services/Capture/ScreenCaptureSession.swift",
+        "MeetlessApp/Services/SessionRepository/SessionRepository.swift",
+        "Meetless.xcodeproj/project.pbxproj"
+      ],
+      "created_at": "2026-04-22T07:39:32.465Z",
+      "updated_at": "2026-04-22T07:47:24.338Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T08:39:32.465Z",
+      "status": "released",
+      "released_at": "2026-04-22T07:47:24.338Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mo9queao-9mejqv",
+      "agent": "Maxwell",
+      "bead_id": "bd-p23",
+      "paths": [
+        "MeetlessApp/Services/AudioPipeline/SourceAudioPipeline.swift"
+      ],
+      "created_at": "2026-04-22T07:41:09.984Z",
+      "updated_at": "2026-04-22T07:47:24.338Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T08:41:09.984Z",
+      "status": "released",
+      "released_at": "2026-04-22T07:47:24.338Z",
+      "note": ""
+    }
+  ]
+}
