@@ -1,0 +1,595 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		17C0A035631BF17AA6C51F87 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4692D9678E406F8BF70DAD19 /* Cocoa.framework */; };
+		2F7F743C08B880C05C998769 /* HomeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB7B30A07CFD9AA5A7AE24F3 /* HomeViewModel.swift */; };
+		32F7B6BFBA0047C2A51A21DC /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = C8870BE1DD1E36ED6A4E19F9 /* README.md */; };
+		378B70D0C53F4FD1073A5DDB /* WhisperSourceWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 072A1ADF9625E85575F11AEA /* WhisperSourceWorker.swift */; };
+		4A9819D30DD3D6215354AB05 /* RecordingPermissionGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 936CBCFE8E3D948BBDBA30D9 /* RecordingPermissionGate.swift */; };
+		5308762956E0E1DD87356813 /* jfk.wav in Resources */ = {isa = PBXBuildFile; fileRef = F1A74CE2465E124E032F2617 /* jfk.wav */; };
+		66FC4B54249F03A6D06B4578 /* MeetlessRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9654C365C07C889D7036B160 /* MeetlessRootView.swift */; };
+		688258500425D71D5FD70BB9 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B7C54689B49102109345A83 /* HistoryView.swift */; };
+		694CC8A9275C769D52089724 /* MeetlessApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AC66603B410B1D420CC96A9 /* MeetlessApp.swift */; };
+		6BEC75D668234C9B425C4619 /* whisper.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1BA7217B149AB521D10C84E2 /* whisper.xcframework */; };
+		6DB31251E006F5E23891A25B /* SourceAudioPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F92E9244C48B3A43E0577EE /* SourceAudioPipeline.swift */; };
+		6E285DE05C01D46B77089E1A /* whisper.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 1BA7217B149AB521D10C84E2 /* whisper.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		6F8D0D2C7B5A4F249C0A1E61 /* SessionRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F8D0D2C7B5A4F249C0A1E62 /* SessionRepository.swift */; };
+		766030739E703520FB85F01D /* SessionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5769FC61B12AC8A5ED938DF /* SessionDetailView.swift */; };
+		926A0D374E711E747FA19866 /* WhisperBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44F29975EE3556201727500A /* WhisperBridge.swift */; };
+		9F4606D5519994942F6A683E /* WaveFileDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1682F1BBC508055F07E04BDE /* WaveFileDecoder.swift */; };
+		9F6C1BB8B429A86F1157B566 /* ScreenCaptureSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D4B5AB38B720A1A1D40ED0E /* ScreenCaptureSession.swift */; };
+		A38A2D6A5603EA715DF59E1B /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F899578FD929857ED10FEF02 /* HomeView.swift */; };
+		C0547FF52444D32D4B355106 /* HistoryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F773E4BC2AC9260598766E42 /* HistoryViewModel.swift */; };
+		C95B5B16C276506634F2E8CD /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 770B8E5B0A45C30A056238BA /* AppModel.swift */; };
+		D6A39C88A614472F60C3D6B2 /* RecordingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D486E8A24E5A703D09AE706 /* RecordingViewModel.swift */; };
+		E885FC5266FF3A2573A0C1B8 /* ggml-tiny.en.bin in Resources */ = {isa = PBXBuildFile; fileRef = E612904283F3A0E430010210 /* ggml-tiny.en.bin */; };
+		ED05074EC426D89924D7124B /* RecordingStatusBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8A91B7C5F4E4319908443C4 /* RecordingStatusBanner.swift */; };
+		F803F530D3CC9F658A96E2D9 /* AppScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DB546F187CAAB02659ED178 /* AppScreen.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		F5107DA978EDECCCA64637C9 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				6E285DE05C01D46B77089E1A /* whisper.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		072A1ADF9625E85575F11AEA /* WhisperSourceWorker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WhisperSourceWorker.swift; sourceTree = "<group>"; };
+		0F92E9244C48B3A43E0577EE /* SourceAudioPipeline.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SourceAudioPipeline.swift; sourceTree = "<group>"; };
+		1682F1BBC508055F07E04BDE /* WaveFileDecoder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WaveFileDecoder.swift; sourceTree = "<group>"; };
+		1BA7217B149AB521D10C84E2 /* whisper.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = wrapper.xcframework; name = whisper.xcframework; path = "Vendor/whisper.cpp/build-apple/whisper.xcframework"; sourceTree = "<group>"; };
+		1D486E8A24E5A703D09AE706 /* RecordingViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingViewModel.swift; sourceTree = "<group>"; };
+		44F29975EE3556201727500A /* WhisperBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WhisperBridge.swift; sourceTree = "<group>"; };
+		4692D9678E406F8BF70DAD19 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		4DB546F187CAAB02659ED178 /* AppScreen.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppScreen.swift; sourceTree = "<group>"; };
+		6F8D0D2C7B5A4F249C0A1E62 /* SessionRepository.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionRepository.swift; sourceTree = "<group>"; };
+		770B8E5B0A45C30A056238BA /* AppModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		8B7C54689B49102109345A83 /* HistoryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
+		936CBCFE8E3D948BBDBA30D9 /* RecordingPermissionGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingPermissionGate.swift; sourceTree = "<group>"; };
+		9654C365C07C889D7036B160 /* MeetlessRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MeetlessRootView.swift; sourceTree = "<group>"; };
+		9AC66603B410B1D420CC96A9 /* MeetlessApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MeetlessApp.swift; sourceTree = "<group>"; };
+		9D4B5AB38B720A1A1D40ED0E /* ScreenCaptureSession.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenCaptureSession.swift; sourceTree = "<group>"; };
+		A1981DFABC8B7B4AE27AD2FB /* Meetless.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Meetless.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C8870BE1DD1E36ED6A4E19F9 /* README.md */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		CB7B30A07CFD9AA5A7AE24F3 /* HomeViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HomeViewModel.swift; sourceTree = "<group>"; };
+		D5769FC61B12AC8A5ED938DF /* SessionDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionDetailView.swift; sourceTree = "<group>"; };
+		E612904283F3A0E430010210 /* ggml-tiny.en.bin */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.macbinary; path = "ggml-tiny.en.bin"; sourceTree = "<group>"; };
+		E8A91B7C5F4E4319908443C4 /* RecordingStatusBanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingStatusBanner.swift; sourceTree = "<group>"; };
+		F1A74CE2465E124E032F2617 /* jfk.wav */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = audio.wav; path = jfk.wav; sourceTree = "<group>"; };
+		F773E4BC2AC9260598766E42 /* HistoryViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HistoryViewModel.swift; sourceTree = "<group>"; };
+		F899578FD929857ED10FEF02 /* HomeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		7C180CCA0BA783CC64D58D7F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				17C0A035631BF17AA6C51F87 /* Cocoa.framework in Frameworks */,
+				6BEC75D668234C9B425C4619 /* whisper.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		09E20B00CF20393FE449E350 /* MeetlessApp */ = {
+			isa = PBXGroup;
+			children = (
+				963BCC353C577DEF8A4EBC57 /* App */,
+				4A6D967BBCC568BCC6A91E0E /* Features */,
+				290B4149A7D92B48C0F02BF4 /* Services */,
+				A2C4E6E731E5DFBC34B2BFEF /* Resources */,
+			);
+			path = MeetlessApp;
+			sourceTree = "<group>";
+		};
+		0E2899D0665A5106A5D8EFDF /* MeetlessPackages */ = {
+			isa = PBXGroup;
+			children = (
+				32E4F1744F57D064588970BB /* WhisperCppBridge */,
+			);
+			path = MeetlessPackages;
+			sourceTree = "<group>";
+		};
+		290B4149A7D92B48C0F02BF4 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				54E5154AE32EEA21F1227D5E /* Capture */,
+				5B9D0878B8D0B74420A5FD0D /* AudioPipeline */,
+				6F8D0D2C7B5A4F249C0A1E63 /* SessionRepository */,
+				B155CB1329D84E9B4806FCF0 /* Permissions */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		30E732110410226F35941191 /* History */ = {
+			isa = PBXGroup;
+			children = (
+				8B7C54689B49102109345A83 /* HistoryView.swift */,
+				F773E4BC2AC9260598766E42 /* HistoryViewModel.swift */,
+			);
+			path = History;
+			sourceTree = "<group>";
+		};
+		32E4F1744F57D064588970BB /* WhisperCppBridge */ = {
+			isa = PBXGroup;
+			children = (
+				696B46CFC4D76D1DFDC3CF7F /* Sources */,
+			);
+			path = WhisperCppBridge;
+			sourceTree = "<group>";
+		};
+		33C88D1985771B07B993AA19 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				E612904283F3A0E430010210 /* ggml-tiny.en.bin */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		46E64F94477EC412F2C7011C /* Samples */ = {
+			isa = PBXGroup;
+			children = (
+				F1A74CE2465E124E032F2617 /* jfk.wav */,
+			);
+			path = Samples;
+			sourceTree = "<group>";
+		};
+		4A6D967BBCC568BCC6A91E0E /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				9BE91C0030FC969C03FBF472 /* Home */,
+				B24AD881211C29AAC5B0BC51 /* Recording */,
+				30E732110410226F35941191 /* History */,
+				6483186C1F2ABE874BE256AD /* SessionDetail */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		54E5154AE32EEA21F1227D5E /* Capture */ = {
+			isa = PBXGroup;
+			children = (
+				9D4B5AB38B720A1A1D40ED0E /* ScreenCaptureSession.swift */,
+			);
+			path = Capture;
+			sourceTree = "<group>";
+		};
+		5B9D0878B8D0B74420A5FD0D /* AudioPipeline */ = {
+			isa = PBXGroup;
+			children = (
+				0F92E9244C48B3A43E0577EE /* SourceAudioPipeline.swift */,
+			);
+			path = AudioPipeline;
+			sourceTree = "<group>";
+		};
+		6483186C1F2ABE874BE256AD /* SessionDetail */ = {
+			isa = PBXGroup;
+			children = (
+				D5769FC61B12AC8A5ED938DF /* SessionDetailView.swift */,
+			);
+			path = SessionDetail;
+			sourceTree = "<group>";
+		};
+		696B46CFC4D76D1DFDC3CF7F /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				A25532F7C9F9E4A3C4AEAFB2 /* WhisperCppBridge */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		6F8D0D2C7B5A4F249C0A1E63 /* SessionRepository */ = {
+			isa = PBXGroup;
+			children = (
+				6F8D0D2C7B5A4F249C0A1E62 /* SessionRepository.swift */,
+			);
+			path = SessionRepository;
+			sourceTree = "<group>";
+		};
+		8766D2BCA1E8EE0236886655 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A1981DFABC8B7B4AE27AD2FB /* Meetless.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		963BCC353C577DEF8A4EBC57 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				9AC66603B410B1D420CC96A9 /* MeetlessApp.swift */,
+				9654C365C07C889D7036B160 /* MeetlessRootView.swift */,
+				770B8E5B0A45C30A056238BA /* AppModel.swift */,
+				4DB546F187CAAB02659ED178 /* AppScreen.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		9BE91C0030FC969C03FBF472 /* Home */ = {
+			isa = PBXGroup;
+			children = (
+				F899578FD929857ED10FEF02 /* HomeView.swift */,
+				CB7B30A07CFD9AA5A7AE24F3 /* HomeViewModel.swift */,
+			);
+			path = Home;
+			sourceTree = "<group>";
+		};
+		A25532F7C9F9E4A3C4AEAFB2 /* WhisperCppBridge */ = {
+			isa = PBXGroup;
+			children = (
+				44F29975EE3556201727500A /* WhisperBridge.swift */,
+				1682F1BBC508055F07E04BDE /* WaveFileDecoder.swift */,
+				072A1ADF9625E85575F11AEA /* WhisperSourceWorker.swift */,
+			);
+			path = WhisperCppBridge;
+			sourceTree = "<group>";
+		};
+		A2C4E6E731E5DFBC34B2BFEF /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				C8870BE1DD1E36ED6A4E19F9 /* README.md */,
+				33C88D1985771B07B993AA19 /* Models */,
+				46E64F94477EC412F2C7011C /* Samples */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		B155CB1329D84E9B4806FCF0 /* Permissions */ = {
+			isa = PBXGroup;
+			children = (
+				936CBCFE8E3D948BBDBA30D9 /* RecordingPermissionGate.swift */,
+			);
+			path = Permissions;
+			sourceTree = "<group>";
+		};
+		B24AD881211C29AAC5B0BC51 /* Recording */ = {
+			isa = PBXGroup;
+			children = (
+				E8A91B7C5F4E4319908443C4 /* RecordingStatusBanner.swift */,
+				1D486E8A24E5A703D09AE706 /* RecordingViewModel.swift */,
+			);
+			path = Recording;
+			sourceTree = "<group>";
+		};
+		C79628DF1B14FB97FFDBFD3C /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				F22C2733435485D6D696F3BE /* OS X */,
+				1BA7217B149AB521D10C84E2 /* whisper.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		E7813D23C1C47F4538C15C36 = {
+			isa = PBXGroup;
+			children = (
+				8766D2BCA1E8EE0236886655 /* Products */,
+				C79628DF1B14FB97FFDBFD3C /* Frameworks */,
+				09E20B00CF20393FE449E350 /* MeetlessApp */,
+				0E2899D0665A5106A5D8EFDF /* MeetlessPackages */,
+			);
+			sourceTree = "<group>";
+		};
+		F22C2733435485D6D696F3BE /* OS X */ = {
+			isa = PBXGroup;
+			children = (
+				4692D9678E406F8BF70DAD19 /* Cocoa.framework */,
+			);
+			name = "OS X";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		CE410883757D744EFBBB26FD /* Meetless */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6750A47117A68747C9E5AC53 /* Build configuration list for PBXNativeTarget "Meetless" */;
+			buildPhases = (
+				44FB07D8BDADF58021E9C42D /* Sources */,
+				7C180CCA0BA783CC64D58D7F /* Frameworks */,
+				24BC04E4AF7F0F3B2BE90660 /* Resources */,
+				F5107DA978EDECCCA64637C9 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Meetless;
+			productName = Meetless;
+			productReference = A1981DFABC8B7B4AE27AD2FB /* Meetless.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		6DDF48CF52206B66C76EFA79 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1640;
+				ORGANIZATIONNAME = themrb;
+				TargetAttributes = {
+					CE410883757D744EFBBB26FD = {
+						CreatedOnToolsVersion = 16.4;
+					};
+				};
+			};
+			buildConfigurationList = 8FA27507396D0527489139C8 /* Build configuration list for PBXProject "Meetless" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = E7813D23C1C47F4538C15C36;
+			productRefGroup = 8766D2BCA1E8EE0236886655 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CE410883757D744EFBBB26FD /* Meetless */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		24BC04E4AF7F0F3B2BE90660 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				32F7B6BFBA0047C2A51A21DC /* README.md in Resources */,
+				E885FC5266FF3A2573A0C1B8 /* ggml-tiny.en.bin in Resources */,
+				5308762956E0E1DD87356813 /* jfk.wav in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		44FB07D8BDADF58021E9C42D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				694CC8A9275C769D52089724 /* MeetlessApp.swift in Sources */,
+				66FC4B54249F03A6D06B4578 /* MeetlessRootView.swift in Sources */,
+				C95B5B16C276506634F2E8CD /* AppModel.swift in Sources */,
+				F803F530D3CC9F658A96E2D9 /* AppScreen.swift in Sources */,
+				A38A2D6A5603EA715DF59E1B /* HomeView.swift in Sources */,
+				2F7F743C08B880C05C998769 /* HomeViewModel.swift in Sources */,
+				ED05074EC426D89924D7124B /* RecordingStatusBanner.swift in Sources */,
+				D6A39C88A614472F60C3D6B2 /* RecordingViewModel.swift in Sources */,
+				9F6C1BB8B429A86F1157B566 /* ScreenCaptureSession.swift in Sources */,
+				6DB31251E006F5E23891A25B /* SourceAudioPipeline.swift in Sources */,
+				6F8D0D2C7B5A4F249C0A1E61 /* SessionRepository.swift in Sources */,
+				4A9819D30DD3D6215354AB05 /* RecordingPermissionGate.swift in Sources */,
+				688258500425D71D5FD70BB9 /* HistoryView.swift in Sources */,
+				C0547FF52444D32D4B355106 /* HistoryViewModel.swift in Sources */,
+				766030739E703520FB85F01D /* SessionDetailView.swift in Sources */,
+				926A0D374E711E747FA19866 /* WhisperBridge.swift in Sources */,
+				9F4606D5519994942F6A683E /* WaveFileDecoder.swift in Sources */,
+				378B70D0C53F4FD1073A5DDB /* WhisperSourceWorker.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1118CF63441DFD3A0AC9511D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = 63M98WD275;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Meetless;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Meetless records your voice as the separate Me source while a meeting is in progress.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.themrb.meetless;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		3D2877CF0A8333765E5928E5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		93221BF89C923CD994616215 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A988A0976A3F0EA89A02B1F8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = 63M98WD275;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Meetless;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Meetless records your voice as the separate Me source while a meeting is in progress.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.themrb.meetless;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		6750A47117A68747C9E5AC53 /* Build configuration list for PBXNativeTarget "Meetless" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1118CF63441DFD3A0AC9511D /* Release */,
+				A988A0976A3F0EA89A02B1F8 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		8FA27507396D0527489139C8 /* Build configuration list for PBXProject "Meetless" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				93221BF89C923CD994616215 /* Debug */,
+				3D2877CF0A8333765E5928E5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 6DDF48CF52206B66C76EFA79 /* Project object */;
+}
