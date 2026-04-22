@@ -4,6 +4,7 @@ import Foundation
 final class HistoryViewModel: ObservableObject {
     struct Row: Identifiable {
         let id: String
+        let directoryURL: URL
         let title: String
         let startedAtText: String
         let durationText: String
@@ -12,6 +13,7 @@ final class HistoryViewModel: ObservableObject {
 
         init(summary: PersistedSessionSummary) {
             id = summary.id
+            directoryURL = summary.directoryURL
             title = summary.title
             startedAtText = Self.startedAtFormatter.string(from: summary.startedAt)
             durationText = Self.durationText(for: summary.durationSeconds)

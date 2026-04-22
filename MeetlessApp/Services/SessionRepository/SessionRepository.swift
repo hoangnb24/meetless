@@ -37,6 +37,24 @@ struct PersistedSessionSummary: Identifiable, Sendable {
     }
 }
 
+struct PersistedSessionDetail: Identifiable, Sendable {
+    let id: String
+    let directoryURL: URL
+    let title: String
+    let startedAt: Date
+    let endedAt: Date?
+    let durationSeconds: TimeInterval?
+    let status: PersistedSessionStatus
+    let sourceStatuses: [SourcePipelineStatus]
+    let updatedAt: Date
+    let transcriptSavedAt: Date
+    let transcriptChunks: [CommittedTranscriptChunk]
+
+    var isIncomplete: Bool {
+        status == .incomplete
+    }
+}
+
 private struct SessionBundleManifest: Codable, Sendable {
     let schemaVersion: Int
     let id: String
@@ -186,6 +204,31 @@ actor SessionRepository {
         return sessions.sorted(by: Self.sort(lhs:rhs:))
     }
 
+    func loadSavedSessionDetail(at directoryURL: URL) throws -> PersistedSessionDetail {
+        let session = PersistedSessionBundle(
+            id: directoryURL.lastPathComponent.lowercased(),
+            directoryURL: directoryURL,
+            startedAt: .distantPast,
+            title: directoryURL.lastPathComponent
+        )
+        let manifest = try loadManifest(for: session)
+        let transcriptSnapshot = try loadTranscriptSnapshot(for: session)
+
+        return PersistedSessionDetail(
+            id: manifest.id,
+            directoryURL: directoryURL,
+            title: manifest.title,
+            startedAt: manifest.startedAt,
+            endedAt: manifest.endedAt,
+            durationSeconds: manifest.durationSeconds,
+            status: manifest.status,
+            sourceStatuses: manifest.sourceStatuses,
+            updatedAt: manifest.updatedAt,
+            transcriptSavedAt: transcriptSnapshot.savedAt,
+            transcriptChunks: transcriptSnapshot.chunks
+        )
+    }
+
     func updateTranscriptSnapshot(
         for session: PersistedSessionBundle,
         transcriptChunks: [CommittedTranscriptChunk]
@@ -223,6 +266,11 @@ actor SessionRepository {
     private func loadManifest(for session: PersistedSessionBundle) throws -> SessionBundleManifest {
         let data = try Data(contentsOf: session.manifestURL)
         return try decoder.decode(SessionBundleManifest.self, from: data)
+    }
+
+    private func loadTranscriptSnapshot(for session: PersistedSessionBundle) throws -> SessionTranscriptSnapshot {
+        let data = try Data(contentsOf: session.transcriptURL)
+        return try decoder.decode(SessionTranscriptSnapshot.self, from: data)
     }
 
     private func writeManifest(_ manifest: SessionBundleManifest, to session: PersistedSessionBundle) throws {

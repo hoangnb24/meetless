@@ -4,6 +4,7 @@ struct HistoryView: View {
     @ObservedObject var viewModel: HistoryViewModel
     let onBackHome: () -> Void
     let onReload: () -> Void
+    let onOpenSessionDetail: (HistoryViewModel.Row) -> Void
 
     var body: some View {
         ScrollView {
@@ -118,47 +119,55 @@ struct HistoryView: View {
     }
 
     private func sessionRow(_ row: HistoryViewModel.Row) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(row.title)
-                        .font(.title3.weight(.semibold))
-                    Text(row.startedAtText)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer(minLength: 12)
-
-                VStack(alignment: .trailing, spacing: 8) {
-                    if let statusLabel = row.statusLabel {
-                        Text(statusLabel)
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.orange.opacity(0.16), in: Capsule())
-                            .foregroundStyle(Color.orange)
+        Button(action: { onOpenSessionDetail(row) }) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(row.title)
+                            .font(.title3.weight(.semibold))
+                        Text(row.startedAtText)
+                            .foregroundStyle(.secondary)
                     }
 
-                    Text(row.durationText)
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                }
-            }
+                    Spacer(minLength: 12)
 
-            Text(row.transcriptPreview)
-                .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    VStack(alignment: .trailing, spacing: 8) {
+                        if let statusLabel = row.statusLabel {
+                            Text(statusLabel)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.orange.opacity(0.16), in: Capsule())
+                                .foregroundStyle(Color.orange)
+                        }
+
+                        Text(row.durationText)
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Text(row.transcriptPreview)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+                Label("Open transcript snapshot", systemImage: "arrow.right.circle")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .buttonStyle(.plain)
     }
 }
 
 #Preview {
-    HistoryView(viewModel: HistoryViewModel(), onBackHome: {}, onReload: {})
+    HistoryView(viewModel: HistoryViewModel(), onBackHome: {}, onReload: {}, onOpenSessionDetail: { _ in })
         .frame(width: 1080, height: 720)
 }

@@ -3,11 +3,13 @@ import Foundation
 @MainActor
 final class AppModel: ObservableObject {
     @Published var selectedScreen: AppScreen = .home
+    @Published private(set) var selectedSessionID: String?
 
     private let sessionRepository: SessionRepository
 
     let homeViewModel = HomeViewModel()
     let historyViewModel = HistoryViewModel()
+    let sessionDetailViewModel = SessionDetailViewModel()
     let recordingViewModel: RecordingViewModel
 
     init(
@@ -25,12 +27,27 @@ final class AppModel: ObservableObject {
     func show(_ screen: AppScreen) {
         selectedScreen = screen
 
-        guard screen == .history else {
-            return
+        switch screen {
+        case .history:
+            Task {
+                await refreshSavedSessions()
+            }
+        case .sessionDetail:
+            if selectedSessionID == nil {
+                sessionDetailViewModel.showNoSelection()
+            }
+        case .home:
+            break
         }
+    }
+
+    func openSessionDetail(for row: HistoryViewModel.Row) {
+        selectedSessionID = row.id
+        selectedScreen = .sessionDetail
+        sessionDetailViewModel.showLoading(title: row.title)
 
         Task {
-            await refreshSavedSessions()
+            await loadSessionDetail(sessionID: row.id, directoryURL: row.directoryURL)
         }
     }
 
@@ -42,6 +59,23 @@ final class AppModel: ObservableObject {
             historyViewModel.showSessions(sessions)
         } catch {
             historyViewModel.showLoadFailure(error)
+        }
+    }
+
+    private func loadSessionDetail(sessionID: String, directoryURL: URL) async {
+        do {
+            let detail = try await sessionRepository.loadSavedSessionDetail(at: directoryURL)
+            guard selectedSessionID == sessionID else {
+                return
+            }
+
+            sessionDetailViewModel.showDetail(detail)
+        } catch {
+            guard selectedSessionID == sessionID else {
+                return
+            }
+
+            sessionDetailViewModel.showLoadFailure(title: nil, error: error)
         }
     }
 }
