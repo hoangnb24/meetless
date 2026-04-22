@@ -247,12 +247,13 @@ final class ScreenCaptureSession: NSObject, SCStreamDelegate {
             )
         }
 
-        var voiceProcessingError: NSError?
-        guard inputNode.setVoiceProcessingEnabled(true, error: &voiceProcessingError) else {
-            throw voiceProcessingError ?? NSError(
+        do {
+            try inputNode.setVoiceProcessingEnabled(true)
+        } catch {
+            throw NSError(
                 domain: "ScreenCaptureSession",
                 code: -2,
-                userInfo: [NSLocalizedDescriptionKey: "Meetless could not enable voice processing on the microphone input."]
+                userInfo: [NSLocalizedDescriptionKey: "Meetless could not enable voice processing on the microphone input: \(error.localizedDescription)"]
             )
         }
 
@@ -282,7 +283,7 @@ final class ScreenCaptureSession: NSObject, SCStreamDelegate {
         }
 
         copiedBuffer.frameLength = buffer.frameLength
-        let sourceBuffers = UnsafeAudioBufferListPointer(buffer.audioBufferList)
+        let sourceBuffers = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
         let destinationBuffers = UnsafeMutableAudioBufferListPointer(copiedBuffer.mutableAudioBufferList)
 
         guard sourceBuffers.count == destinationBuffers.count else {
