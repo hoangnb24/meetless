@@ -20,6 +20,23 @@ enum PersistedSessionStatus: String, Codable, Sendable {
     case incomplete
 }
 
+struct PersistedSessionSummary: Identifiable, Sendable {
+    let id: String
+    let directoryURL: URL
+    let title: String
+    let startedAt: Date
+    let endedAt: Date?
+    let durationSeconds: TimeInterval?
+    let transcriptPreview: String
+    let status: PersistedSessionStatus
+    let sourceStatuses: [SourcePipelineStatus]
+    let updatedAt: Date
+
+    var isIncomplete: Bool {
+        status == .incomplete
+    }
+}
+
 private struct SessionBundleManifest: Codable, Sendable {
     let schemaVersion: Int
     let id: String
@@ -121,6 +138,54 @@ actor SessionRepository {
         return session
     }
 
+    func listSavedSessions() throws -> [PersistedSessionSummary] {
+        let sessionsDirectoryURL = try Self.sessionsDirectoryURL(fileManager: fileManager)
+        guard fileManager.fileExists(atPath: sessionsDirectoryURL.path) else {
+            return []
+        }
+
+        let candidateURLs = try fileManager.contentsOfDirectory(
+            at: sessionsDirectoryURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        let sessions = try candidateURLs.compactMap { directoryURL -> PersistedSessionSummary? in
+            let values = try directoryURL.resourceValues(forKeys: [.isDirectoryKey])
+            guard values.isDirectory == true else {
+                return nil
+            }
+
+            let manifestURL = directoryURL.appendingPathComponent("session.json", isDirectory: false)
+            guard fileManager.fileExists(atPath: manifestURL.path) else {
+                return nil
+            }
+
+            let session = PersistedSessionBundle(
+                id: directoryURL.lastPathComponent.lowercased(),
+                directoryURL: directoryURL,
+                startedAt: .distantPast,
+                title: directoryURL.lastPathComponent
+            )
+            let manifest = try loadManifest(for: session)
+
+            return PersistedSessionSummary(
+                id: manifest.id,
+                directoryURL: directoryURL,
+                title: manifest.title,
+                startedAt: manifest.startedAt,
+                endedAt: manifest.endedAt,
+                durationSeconds: manifest.durationSeconds,
+                transcriptPreview: manifest.transcriptPreview,
+                status: manifest.status,
+                sourceStatuses: manifest.sourceStatuses,
+                updatedAt: manifest.updatedAt
+            )
+        }
+
+        return sessions.sorted(by: Self.sort(lhs:rhs:))
+    }
+
     func updateTranscriptSnapshot(
         for session: PersistedSessionBundle,
         transcriptChunks: [CommittedTranscriptChunk]
@@ -178,6 +243,28 @@ actor SessionRepository {
         formatter.locale = Locale.autoupdatingCurrent
         formatter.setLocalizedDateFormatFromTemplate("MMM d, h:mm a")
         return "Meeting \(formatter.string(from: startedAt))"
+    }
+
+    private static func sessionsDirectoryURL(fileManager: FileManager) throws -> URL {
+        guard let applicationSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            throw SourceAudioPipelineError.missingApplicationSupportDirectory
+        }
+
+        return applicationSupportURL
+            .appendingPathComponent("Meetless", isDirectory: true)
+            .appendingPathComponent("Sessions", isDirectory: true)
+    }
+
+    private static func sort(lhs: PersistedSessionSummary, rhs: PersistedSessionSummary) -> Bool {
+        if lhs.startedAt != rhs.startedAt {
+            return lhs.startedAt > rhs.startedAt
+        }
+
+        if lhs.updatedAt != rhs.updatedAt {
+            return lhs.updatedAt > rhs.updatedAt
+        }
+
+        return lhs.id > rhs.id
     }
 
     private static func transcriptPreview(from transcriptChunks: [CommittedTranscriptChunk]) -> String {
