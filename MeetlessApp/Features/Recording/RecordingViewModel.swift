@@ -311,18 +311,23 @@ actor TranscriptCoordinator {
         case let .transcript(text):
             lane.markTranscriptionFinished()
             nextSequenceNumber += 1
-            committedChunks.append(
-                CommittedTranscriptChunk(
-                    id: UUID(),
-                    source: window.source,
-                    text: text,
-                    startFrameIndex: window.startFrameIndex,
-                    endFrameIndex: window.endFrameIndex,
-                    sampleRate: window.sampleRate,
-                    sequenceNumber: nextSequenceNumber
-                )
+            let candidateChunk = CommittedTranscriptChunk(
+                id: UUID(),
+                source: window.source,
+                text: text,
+                startFrameIndex: window.startFrameIndex,
+                endFrameIndex: window.endFrameIndex,
+                sampleRate: window.sampleRate,
+                sequenceNumber: nextSequenceNumber
             )
-            snapshotToPersist = orderedCommittedChunks()
+
+            if shouldSuppressCommittedChunk(candidateChunk) {
+                snapshotToPersist = nil
+            } else {
+                committedChunks.append(candidateChunk)
+                pruneEchoChunks(preferredChunk: candidateChunk)
+                snapshotToPersist = orderedCommittedChunks()
+            }
         case .silence:
             lane.markTranscriptionFinished()
             snapshotToPersist = nil
@@ -339,6 +344,24 @@ actor TranscriptCoordinator {
         }
 
         scheduleTranscriptionIfNeeded(for: source)
+    }
+
+    private func shouldSuppressCommittedChunk(_ candidateChunk: CommittedTranscriptChunk) -> Bool {
+        guard candidateChunk.source == .me else {
+            return false
+        }
+
+        return committedChunks.contains { existingChunk in
+            existingChunk.source == .meeting && Self.shouldTreatAsMeetingEcho(candidateChunk, relativeTo: existingChunk)
+        }
+    }
+
+    private func pruneEchoChunks(preferredChunk: CommittedTranscriptChunk) {
+        guard preferredChunk.source == .meeting else { return }
+
+        committedChunks.removeAll { existingChunk in
+            existingChunk.source == .me && Self.shouldTreatAsMeetingEcho(existingChunk, relativeTo: preferredChunk)
+        }
     }
 
     private static func loadSamples(
@@ -389,6 +412,90 @@ actor TranscriptCoordinator {
             return nil
         }
 
+        guard !isPlaceholderLikeTranscript(trimmedText) else {
+            return nil
+        }
+
+        return trimmedText
+    }
+
+    private static func shouldTreatAsMeetingEcho(
+        _ microphoneChunk: CommittedTranscriptChunk,
+        relativeTo meetingChunk: CommittedTranscriptChunk
+    ) -> Bool {
+        guard temporalDistanceBetweenChunks(microphoneChunk, meetingChunk) <= 64_000 else {
+            return false
+        }
+
+        if isPlaceholderLikeTranscript(microphoneChunk.text) {
+            return true
+        }
+
+        let microphoneTokens = comparisonTokens(for: microphoneChunk.text)
+        let meetingTokens = comparisonTokens(for: meetingChunk.text)
+        guard !microphoneTokens.isEmpty, !meetingTokens.isEmpty else {
+            return false
+        }
+
+        let intersectionCount = microphoneTokens.intersection(meetingTokens).count
+        let unionCount = microphoneTokens.union(meetingTokens).count
+        guard unionCount > 0 else { return false }
+
+        let overlapRatio = Double(intersectionCount) / Double(unionCount)
+        if overlapRatio >= 0.72 {
+            return true
+        }
+
+        let normalizedMicrophoneText = normalizedComparisonText(for: microphoneChunk.text)
+        let normalizedMeetingText = normalizedComparisonText(for: meetingChunk.text)
+        guard normalizedMicrophoneText.count >= 12, normalizedMeetingText.count >= 12 else {
+            return false
+        }
+
+        return normalizedMicrophoneText.contains(normalizedMeetingText)
+            || normalizedMeetingText.contains(normalizedMicrophoneText)
+    }
+
+    private static func temporalDistanceBetweenChunks(
+        _ lhs: CommittedTranscriptChunk,
+        _ rhs: CommittedTranscriptChunk
+    ) -> Int64 {
+        if lhs.endFrameIndex < rhs.startFrameIndex {
+            return rhs.startFrameIndex - lhs.endFrameIndex
+        }
+
+        if rhs.endFrameIndex < lhs.startFrameIndex {
+            return lhs.startFrameIndex - rhs.endFrameIndex
+        }
+
+        return 0
+    }
+
+    private static func comparisonTokens(for text: String) -> Set<String> {
+        Set(
+            normalizedComparisonText(for: text)
+                .split(separator: " ")
+                .map(String.init)
+                .filter { $0.count >= 3 }
+        )
+    }
+
+    private static func normalizedComparisonText(for text: String) -> String {
+        let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let scalars = folded.unicodeScalars.map { scalar -> Character in
+            if CharacterSet.alphanumerics.contains(scalar) {
+                return Character(scalar)
+            }
+            return " "
+        }
+
+        return String(scalars)
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+
+    private static func isPlaceholderLikeTranscript(_ text: String) -> Bool {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedMarker = trimmedText
             .replacingOccurrences(of: " ", with: "")
             .lowercased()
@@ -397,14 +504,45 @@ actor TranscriptCoordinator {
             "[blank_audio]",
             "[blankaudio]",
             "[silence]",
-            "(silence)"
+            "(silence)",
+            "[inaudible]",
+            "(inaudible)",
+            "(speakinginforeignlanguage)",
+            "[speakinginforeignlanguage]",
+            "(mumbling)",
+            "[mumbling]",
+            "[music]",
+            "(music)",
+            "[applause]",
+            "(applause)"
         ]
 
-        guard !ignoredMarkers.contains(normalizedMarker) else {
-            return nil
+        if ignoredMarkers.contains(normalizedMarker) {
+            return true
         }
 
-        return trimmedText
+        let isBracketedDescriptor =
+            ((trimmedText.hasPrefix("(") && trimmedText.hasSuffix(")"))
+                || (trimmedText.hasPrefix("[") && trimmedText.hasSuffix("]")))
+
+        guard isBracketedDescriptor else {
+            return false
+        }
+
+        let descriptorKeywords = [
+            "music",
+            "inaudible",
+            "mumbling",
+            "silence",
+            "applause",
+            "laughter",
+            "noise",
+            "speaking",
+            "foreignlanguage",
+            "dramatic"
+        ]
+
+        return descriptorKeywords.contains { normalizedMarker.contains($0) }
     }
 
     private func orderedCommittedChunks() -> [CommittedTranscriptChunk] {
