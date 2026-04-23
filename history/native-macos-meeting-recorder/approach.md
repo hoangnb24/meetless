@@ -1,6 +1,6 @@
 # Approach: Native macOS Meeting Recorder
 
-**Date**: 2026-04-22
+**Date**: 2026-04-23
 **Feature**: `native-macos-meeting-recorder`
 **Based on**:
 - `history/native-macos-meeting-recorder/discovery.md`
@@ -10,131 +10,71 @@
 
 ## 1. Gap Analysis
 
-> What the app already has after Phase 1 vs. what Phase 2 still needs.
+> What the app already has after Phase 2 vs. what Phase 3 still needs.
 
 | Component | Have | Need | Gap Size |
 |-----------|------|------|----------|
-| App shell | One macOS window with Home, History, and Session Detail destinations | Saved-session selection and refresh state owned at the app level | Medium |
-| Recording + save loop | Real local recording, transcript snapshot saving, and session bundle finalization | History/detail screens to consume those saved bundles | Medium |
-| Persistence boundary | `SessionRepository` actor for write-side bundle creation and updates | Symmetric read/list/load/delete API and public saved-session models | Medium |
-| History UI | Placeholder row contract and browse-only intent | Real rows loaded from `session.json`, navigation into detail, and empty/error states | Medium |
-| Session detail UI | Transcript-plus-metadata shell | Real transcript snapshot rendering and saved metadata presentation | Medium |
-| Saved-session honesty | Completed/incomplete status exists in the manifest today | Consumption of degraded transcript and persistence-warning markers when review follow-ups land | Medium |
-| Hardening | Buildable app and reviewed Phase 1 core loop | Tests, signing, and log/privacy follow-ups | Later phase / sidecar |
+| Live recording + saved-session product loop | Buildable app with record/save/history/detail/delete and existing warning surfaces | Honest degraded-state propagation for retry-exhausted transcript lanes and transcript snapshot persistence failures | Medium |
+| Persistence boundary | `SessionRepository` already owns manifests, snapshots, summaries, detail loading, and delete | Saved metadata that stays honest when recording-side failure modes appear | Medium |
+| Warning presentation | Recording banner, History, and Session Detail already render source or saved-session warnings | The remaining failure paths must actually feed those surfaces | Medium |
+| Testability | Manual build verification only | Minimal XCTest target plus focused regression coverage and a working `xcodebuild test` path | Medium |
+| Privacy / release defaults | Logger categories exist and sandbox flags are enabled in build settings | Signed entitlements enforcement plus path-safe public logs | High |
 
-The central Phase 2 truth is simple: the app already creates the right kind of saved artifacts, but it still does not let the user live in those saved sessions as a product.
+The important Phase 3 truth is that the app already feels like a product. What it lacks now is trust: some failure paths still look healthier than they really are, the core loop has no regression harness, and the runtime privacy story is only partially true.
 
 ---
 
 ## 2. Recommended Approach
 
-Keep the existing single-window SwiftUI shell and extend the current file-backed persistence boundary instead of layering in a new database or a second coordinator tree. `SessionRepository` should become the symmetric owner of saved-session disk access by adding public read-side DTOs and delete operations on top of the existing write-side bundle contract. `AppModel` should grow just enough session-navigation state to manage a selected saved session and coordinate refreshes across Home, History, and Session Detail. History should decode manifest-level summaries for the browse list, while Session Detail should decode the transcript snapshot and metadata from the selected bundle and remain read-only. Delete should stay folder-based and local-only.
+Treat Phase 3 as one trust pass over the existing app, not as a new feature layer. First, close the two honesty gaps by reusing the current `SourcePipelineStatus` and saved-session notice pipeline so both live recording and saved bundles become explicit when transcript coverage or transcript snapshot persistence degrades. Then add a minimal XCTest target that locks those invariants in place with `xcodebuild test`. Finally, restore real signing/entitlements behavior and redact sensitive path details from public logs so the app’s local-first privacy story is technically true, not just narratively true.
 
 ### Why This Approach
 
-- It matches `D4`, `D8`, `D9`, `D10`, and `D19` without changing the already-proven storage shape.
-- It avoids re-solving persistence with SwiftData or SQLite when the product only needs browse/open/delete over a small local bundle set.
-- It keeps saved-session behavior anchored to the exact Phase 1 artifacts that review already verified.
-- It leaves a clean place to consume the still-open honesty markers from `bd-2ap` and `bd-15x` rather than duplicating that logic in the view layer.
+- It respects `D15` and `D23` by keeping the bounded stop path while making partial transcript outcomes visible instead of silent.
+- It builds on the UI and persistence seams Phase 2 already introduced rather than replacing them.
+- It sequences work so tests capture the final intended hardening behavior instead of freezing the current bugs.
+- It keeps project-configuration work late enough that the behavior contract is already settled, but still inside the same phase because privacy/release trust is part of the same user promise.
+
+### Story-Level Strategy
+
+| Story | Strategy | Why This Order |
+|-------|----------|----------------|
+| Story 1: Honest failure signals survive recording and saving | Extend the existing recording/source-status and saved-session notice model to cover retry exhaustion and snapshot-write failure | These are the most important remaining product-trust failures, and later tests should lock the corrected behavior in place |
+| Story 2: Regression coverage protects the core loop | Add the first XCTest target and cover the pure-Swift invariants most likely to regress from Story 1 and future recording changes | Once the truth contract is fixed, tests prevent backsliding |
+| Story 3: Privacy and signing defaults match the local-first promise | Re-enable signing with explicit entitlements, then remove full artifact paths from public logs | This closes the trust story at the runtime and observability layer after the product behavior itself is honest |
 
 ### Key Architectural Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Read-side ownership | Keep read/list/load/delete inside `SessionRepository` | One file-IO boundary is easier to reason about and test than a second store |
-| Public saved-session models | Add explicit summary/detail DTOs rather than exposing private manifest structs directly | Keeps the repository flexible while giving UI code a stable contract |
-| Selected-session state | Put it in `AppModel` | The app shell already owns screen selection, so session selection belongs at the same level |
-| History refresh model | Explicit refresh on app launch / screen entry / post-recording / post-delete | Simple, predictable, and enough for a browse-only local list |
-| Detail rendering | Decode transcript snapshot plus manifest metadata into a read-only view model | Honors `D3`, `D8`, and `D23` without inventing editing or playback |
-| Honesty marker handling | Phase 2 consumes saved degraded/incomplete markers when present; it does not invent them in the UI | Keeps write-side review fixes and read-side product surfacing separate |
-
-### Recommended Runtime Shape
-
-```text
-MeetlessRootView
-  -> AppModel
-    -> RecordingViewModel
-    -> HistoryViewModel
-    -> SessionDetailViewModel
-    -> SessionRepository
-```
-
-### Proposed Phase 2 Additions
-
-#### Saved-session repository surface
-
-`SessionRepository` should gain public operations such as:
-
-- list saved sessions for history
-- load one saved session detail record
-- delete one saved session bundle
-
-The repository should decode the existing manifest and transcript snapshot files into public Swift models rather than letting view code parse JSON directly.
-
-#### History flow
-
-History stays intentionally simple:
-
-- load local sessions
-- sort newest first
-- show the locked row fields
-- surface incomplete state clearly
-- leave search/filtering absent
-
-The history screen should become the browse hub for saved recordings, not a second recording dashboard.
-
-#### Detail flow
-
-Opening a saved session should show:
-
-- the saved title
-- date/time and duration
-- incomplete/completed state
-- source-status summary
-- the persisted transcript snapshot, exactly as saved during recording
-
-No playback, export, or transcript editing should appear here.
-
-#### Delete flow
-
-Delete should remain local and direct:
-
-- remove the bundle folder
-- refresh the current list
-- return to history if the deleted session was open in detail
-
-Because the app is browse-only in v1, there is no need for trash, remote sync, or soft-delete complexity.
-
-#### Honesty markers
-
-Phase 2 should reserve visible space for saved-session warnings so the app can stay honest when:
-
-- one transcript lane became partial (`bd-2ap`)
-- transcript snapshot persistence degraded mid-recording (`bd-15x`)
-
-Those write-side review beads remain the source of truth for producing the markers. Phase 2 should focus on consuming and presenting them.
+| Live degraded-state model | Reuse `SourcePipelineStatus` and existing source-state presentation | The app already has a consistent live status language |
+| Saved failure surfacing | Reuse persisted source statuses / saved-session notices instead of a second warning UI model | Avoids duplicating saved-session honesty logic |
+| Snapshot persistence honesty | Persist an explicit honest signal when transcript snapshot refresh fails | Supports incomplete-session recovery and saved-session trust without guessing later |
+| First test surface | Start with pure-Swift recording/persistence seams before UI automation | Fastest path to stable regression coverage in this repo |
+| Signing configuration | Add explicit entitlements and restore actual code signing when sandbox is on | Makes the privacy story real and reviewable |
+| Log redaction | Keep short identifiers public, mark full paths private or omit them | Preserves debugging value without leaking local storage details |
 
 ---
 
 ## 3. Alternatives Considered
 
-### Option A: Add SwiftData or SQLite before shipping history/detail
+### Option A: Add tests before fixing the remaining honesty gaps
 
-- Description: move saved sessions into a database and treat the bundle files as secondary artifacts.
-- Why considered: database queries can make list/detail code feel cleaner.
-- Why rejected: the app already has a stable on-disk bundle contract, history is browse-only, and a new persistence layer would create migration work before the product needs it.
+- Description: create a test target first and capture the current recording/persistence behavior as-is.
+- Why considered: it can feel safer to add tests before making changes.
+- Why rejected: it would freeze the wrong contract. Story 1 needs to decide what the honest behavior should be before Story 2 locks it in.
 
-### Option B: Let views read `session.json` and `transcript.json` directly
+### Option B: Introduce a separate saved-session warning model for Phase 3
 
-- Description: keep repository write-only and decode saved files inside view models or views.
-- Why considered: looks fast in the short term.
-- Why rejected: it spreads file-format knowledge through the UI, makes delete/error handling inconsistent, and weakens the single IO boundary that Phase 1 already established.
+- Description: create new persisted warning objects or a second UI pipeline dedicated to hardening notices.
+- Why considered: it could make the new review issues feel isolated.
+- Why rejected: the app already has `SourcePipelineStatus` and `SavedSessionNotice` seams. A second model would duplicate meaning and make later maintenance harder.
 
-### Option C: Rebuild the app shell around a more complex coordinator/router now
+### Option C: Defer signing/privacy work to a later release-only phase
 
-- Description: replace the current simple `AppModel` screen switcher with a heavier navigation architecture before adding saved-session state.
-- Why considered: future growth.
-- Why rejected: the current shell already cleanly models the three destinations we need, and Phase 2 only requires one selected-session seam, not a framework-level rewrite.
+- Description: close the recording honesty gaps and tests now, but leave signing and path redaction for a later operational pass.
+- Why considered: it shortens the current phase.
+- Why rejected: the whole point of Phase 3 is release trust. Leaving sandbox/signing and public path leaks unresolved would keep the app only partially trustworthy.
 
 ---
 
@@ -142,15 +82,15 @@ Those write-side review beads remain the source of truth for producing the marke
 
 | Component | Risk Level | Reason | Verification Needed |
 |-----------|------------|--------|---------------------|
-| Session-bundle read model | **MEDIUM** | The repository currently exposes only write-side behavior and private manifest structs | Focused validation with sample bundles and real Phase 1 artifacts |
-| History refresh + navigation state | **MEDIUM** | New saved-session state has to coordinate Home, History, and Detail without drift | Focused validation in-app |
-| Session detail rendering | **LOW** | Once the read model exists, transcript-plus-metadata rendering is straightforward SwiftUI | Normal validation |
-| Delete flow | **MEDIUM** | Must remove local bundles safely and update selection/list state cleanly | Focused validation with real saved sessions |
-| Honesty marker surfacing | **MEDIUM** | Depends on still-open review beads `bd-2ap` and `bd-15x` for full fidelity | Validation should check dependency alignment and visible fallback behavior |
+| Retry-exhaustion honesty fix | **MEDIUM** | Touches the recording state machine and saved-session status propagation in shared files | Focused validation with controlled transcript failure injection |
+| Snapshot-write failure honesty fix | **MEDIUM** | Needs to keep bounded recording behavior while making persisted state explicit | Focused validation with repository write-failure injection |
+| XCTest target + regression coverage | **MEDIUM** | Requires Xcode project changes plus stable test seams in a repo that currently has none | `xcodebuild test` verification in the local project |
+| Signing + entitlements restoration | **HIGH** | Crosses build settings, runtime entitlement behavior, and the app’s privacy model | Explicit build/config verification plus runtime storage-path check |
+| Public log redaction | **LOW** | Small code edits, but easy to verify | Log inspection during build/run verification |
 
 ### HIGH-Risk Summary (for `khuym:validating`)
 
-None. Phase 2 is a medium-risk product surfacing phase built on an already-reviewed Phase 1 storage and recording loop.
+- `bd-2w7` should be treated as the only HIGH-risk Phase 3 bead because it changes the build/runtime trust boundary for the app.
 
 ---
 
@@ -158,31 +98,37 @@ None. Phase 2 is a medium-risk product surfacing phase built on an already-revie
 
 ```text
 MeetlessApp/
-  App/
-    AppModel.swift                # add selected-session state and refresh hooks
-    MeetlessRootView.swift        # wire history/detail navigation to real saved-session state
-
   Features/
-    History/
-      HistoryView.swift           # render saved rows, status, delete actions
-      HistoryViewModel.swift      # real list state instead of placeholder copy
-    SessionDetail/
-      SessionDetailView.swift     # render transcript snapshot and metadata
-      SessionDetailViewModel.swift # selected-session detail loading state
-
+    Recording/
+      RecordingViewModel.swift         # Story 1 honesty fixes and later test seams
+    RecordingStatusBanner.swift        # live degraded-state copy if needed
   Services/
     SessionRepository/
-      SessionRepository.swift     # read/list/load/delete API plus public DTOs
+      SessionRepository.swift          # persisted honesty markers and testable IO behavior
+    Capture/
+      ScreenCaptureSession.swift       # path-safe logging
+
+MeetlessTests/
+  Recording/
+    RecordingCoordinatorTests.swift    # transcript / stop / degraded-state invariants
+  Services/
+    SessionRepositoryTests.swift       # manifest / snapshot honesty invariants
+
+MeetlessApp/
+  Meetless.entitlements                # explicit sandbox/signing contract
+
+Meetless.xcodeproj/
+  project.pbxproj                      # test target + signing configuration
 ```
 
 ### File Direction
 
-- Favor adding saved-session DTOs to `SessionRepository.swift` first so the UI can stay simple.
-- Add a real `SessionDetailViewModel` if loading/detail formatting starts to exceed lightweight view logic.
-- Keep `RecordingViewModel` focused on live recording. It should trigger refreshes, not become the owner of history/detail state.
+- Story 1 should touch `RecordingViewModel.swift` and `SessionRepository.swift` first because those edits define the behavior Story 2 will test.
+- Story 2 should own the first project-file expansion into `MeetlessTests/` and keep the test surface focused on pure Swift.
+- Story 3 should finish the project-level configuration work and then clean up the remaining public-path logs.
 
 ---
 
 ## 6. Institutional Learnings Applied
 
-- No prior repo learnings existed for this domain, so the main applied lesson is local to this feature: keep the saved-session UI anchored to the already-proven Phase 1 bundle contract instead of redesigning storage midstream.
+- There are still no prior repo learnings for this domain, so the main applied lesson comes from the current feature history: the app already has warning surfaces and a single persistence boundary, so Phase 3 should harden those seams instead of adding new parallel structures.
