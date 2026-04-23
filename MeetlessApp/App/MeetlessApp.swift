@@ -1,6 +1,22 @@
 import Foundation
 import SwiftUI
 
+enum PublicLogRedaction {
+    static func sessionIdentifier(for directoryURL: URL) -> String {
+        let identifier = directoryURL.lastPathComponent
+        return identifier.isEmpty ? "unknown-session" : identifier
+    }
+
+    static func storageRootLabel(for directoryURL: URL) -> String {
+        let productComponent = directoryURL.deletingLastPathComponent().lastPathComponent
+        let containerComponent = directoryURL.lastPathComponent
+
+        let productLabel = productComponent.isEmpty ? "ApplicationSupport" : productComponent
+        let containerLabel = containerComponent.isEmpty ? "storage" : containerComponent
+        return "\(productLabel).\(containerLabel)"
+    }
+}
+
 private enum RuntimeStorageProbe {
     private static let environmentKey = "MEETLESS_PRINT_STORAGE_ROOT"
 
@@ -19,7 +35,7 @@ private enum RuntimeStorageProbe {
             .appendingPathComponent("Meetless", isDirectory: true)
             .appendingPathComponent("Sessions", isDirectory: true)
 
-        print("MEETLESS_RUNTIME_STORAGE_ROOT=\(storageRoot.path)")
+        print("MEETLESS_RUNTIME_STORAGE_ROOT=redacted; container=\(PublicLogRedaction.storageRootLabel(for: storageRoot))")
     }
 }
 

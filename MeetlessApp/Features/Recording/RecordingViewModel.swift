@@ -765,7 +765,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
                 await transcriptCoordinator.ingest(audioChunk)
             }
         }
-        logger.notice("ScreenCaptureSession started; artifactDirectory=\(capture.artifactDirectoryURL.path, privacy: .public)")
+        logger.notice("ScreenCaptureSession started; sessionID=\(PublicLogRedaction.sessionIdentifier(for: capture.artifactDirectoryURL), privacy: .public)")
 
         let transcriptChunks = await transcriptCoordinator.currentTranscriptChunks()
         do {

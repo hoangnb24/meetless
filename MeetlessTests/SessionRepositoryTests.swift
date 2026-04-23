@@ -7,6 +7,32 @@ final class SessionRepositoryTests: XCTestCase {
         super.tearDown()
     }
 
+    func testPublicLogRedactionUsesSessionIdentifierInsteadOfAbsolutePath() {
+        let sessionDirectory = URL(
+            fileURLWithPath: "/Users/tester/Library/Application Support/Meetless/Sessions/abc123-session",
+            isDirectory: true
+        )
+
+        let redactedValue = PublicLogRedaction.sessionIdentifier(for: sessionDirectory)
+
+        XCTAssertEqual(redactedValue, "abc123-session")
+        XCTAssertFalse(redactedValue.contains("/Users/tester/Library"))
+        XCTAssertFalse(redactedValue.contains("Application Support"))
+    }
+
+    func testPublicLogRedactionUsesContainerLabelInsteadOfAbsoluteStoragePath() {
+        let storageRoot = URL(
+            fileURLWithPath: "/Users/tester/Library/Application Support/Meetless/Sessions",
+            isDirectory: true
+        )
+
+        let redactedValue = PublicLogRedaction.storageRootLabel(for: storageRoot)
+
+        XCTAssertEqual(redactedValue, "Meetless.Sessions")
+        XCTAssertFalse(redactedValue.contains("/Users/tester/Library"))
+        XCTAssertFalse(redactedValue.contains("Application Support"))
+    }
+
     func testFinalizeSessionPersistsDegradedSourceWarnings() async throws {
         let repository = SessionRepository()
         let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryTests")

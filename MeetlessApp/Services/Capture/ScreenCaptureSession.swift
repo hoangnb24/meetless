@@ -130,7 +130,7 @@ final class ScreenCaptureSession: NSObject, SCStreamDelegate {
             logger.error("voice-processed microphone start failed: \(error.localizedDescription, privacy: .public)")
         }
         self.lastStopErrorDescription = nil
-        logger.notice("ScreenCaptureSession.start completed; artifactDirectory=\(sessionScratch.directoryURL.path, privacy: .public)")
+        logger.notice("ScreenCaptureSession.start completed; sessionID=\(PublicLogRedaction.sessionIdentifier(for: sessionScratch.directoryURL), privacy: .public)")
 
         return currentSnapshot()!
     }
