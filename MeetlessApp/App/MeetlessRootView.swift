@@ -47,12 +47,14 @@ struct MeetlessRootView: View {
                 viewModel: appModel.historyViewModel,
                 onBackHome: { appModel.show(.home) },
                 onReload: { Task { await appModel.refreshSavedSessions() } },
-                onOpenSessionDetail: { row in appModel.openSessionDetail(for: row) }
+                onOpenSessionDetail: { row in appModel.openSessionDetail(for: row) },
+                onDeleteSession: { row in appModel.deleteSession(row) }
             )
         case .sessionDetail:
             SessionDetailView(
                 viewModel: appModel.sessionDetailViewModel,
-                onBackToHistory: { appModel.show(.history) }
+                onBackToHistory: { appModel.show(.history) },
+                onDeleteSession: { appModel.deleteSelectedSession() }
             )
         }
     }

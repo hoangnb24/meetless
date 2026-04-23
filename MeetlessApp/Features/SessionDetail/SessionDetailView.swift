@@ -20,11 +20,17 @@ final class SessionDetailViewModel: ObservableObject {
     @Published private(set) var metadataItems: [MetadataItem] = []
     @Published private(set) var transcriptRows: [TranscriptRow] = []
     @Published private(set) var sourceStatuses: [SourcePipelineStatus] = []
+    @Published private(set) var savedSessionNotices: [SavedSessionNotice] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var actionMessage: String?
 
     var transcriptEmptyMessage: String {
         "This saved session does not contain any committed transcript chunks in its persisted snapshot yet."
+    }
+
+    var canDelete: Bool {
+        !isLoading && errorMessage == nil && (!metadataItems.isEmpty || !transcriptRows.isEmpty || !sourceStatuses.isEmpty)
     }
 
     func showNoSelection() {
@@ -33,8 +39,10 @@ final class SessionDetailViewModel: ObservableObject {
         metadataItems = []
         transcriptRows = []
         sourceStatuses = []
+        savedSessionNotices = []
         isLoading = false
         errorMessage = nil
+        actionMessage = nil
     }
 
     func showLoading(title: String?) {
@@ -43,8 +51,10 @@ final class SessionDetailViewModel: ObservableObject {
         metadataItems = []
         transcriptRows = []
         sourceStatuses = []
+        savedSessionNotices = []
         isLoading = true
         errorMessage = nil
+        actionMessage = nil
     }
 
     func showDetail(_ detail: PersistedSessionDetail) {
@@ -69,8 +79,10 @@ final class SessionDetailViewModel: ObservableObject {
             )
         }
         sourceStatuses = detail.sourceStatuses
+        savedSessionNotices = detail.savedSessionNotices
         isLoading = false
         errorMessage = nil
+        actionMessage = nil
     }
 
     func showLoadFailure(title: String?, error: Error) {
@@ -79,8 +91,15 @@ final class SessionDetailViewModel: ObservableObject {
         metadataItems = []
         transcriptRows = []
         sourceStatuses = []
+        savedSessionNotices = []
         isLoading = false
         errorMessage = error.localizedDescription
+        actionMessage = nil
+    }
+
+    func showDeleteFailure(title: String, error: Error) {
+        self.title = title
+        actionMessage = "Meetless could not delete this local session bundle: \(error.localizedDescription)"
     }
 
     private static let dateTimeFormatter: DateFormatter = {
@@ -118,6 +137,8 @@ final class SessionDetailViewModel: ObservableObject {
 struct SessionDetailView: View {
     @ObservedObject var viewModel: SessionDetailViewModel
     let onBackToHistory: () -> Void
+    let onDeleteSession: () -> Void
+    @State private var isPresentingDeleteConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -132,11 +153,28 @@ struct SessionDetailView: View {
 
                 content
 
-                Button("Back To History", action: onBackToHistory)
-                    .buttonStyle(.borderedProminent)
+                HStack(spacing: 12) {
+                    Button("Back To History", action: onBackToHistory)
+                        .buttonStyle(.borderedProminent)
+
+                    if viewModel.canDelete {
+                        Button(role: .destructive) {
+                            isPresentingDeleteConfirmation = true
+                        } label: {
+                            Label("Delete Session", systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
             }
             .padding(32)
             .frame(maxWidth: 1100, alignment: .leading)
+        }
+        .alert("Delete saved session?", isPresented: $isPresentingDeleteConfirmation) {
+            Button("Delete", role: .destructive, action: onDeleteSession)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the local session bundle, transcript snapshot, and raw audio artifacts from Meetless.")
         }
     }
 
@@ -158,6 +196,14 @@ struct SessionDetailView: View {
             )
         } else {
             VStack(alignment: .leading, spacing: 18) {
+                if let actionMessage = viewModel.actionMessage {
+                    messageCard(
+                        title: "Delete unavailable",
+                        icon: "exclamationmark.triangle",
+                        body: actionMessage
+                    )
+                }
+                savedSessionNoticeCard
                 transcriptCard
                 metadataCard
                 sourceHealthCard
@@ -211,6 +257,34 @@ struct SessionDetailView: View {
                         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     }
                 }
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private var savedSessionNoticeCard: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Label("Saved-session honesty", systemImage: "checkmark.shield")
+                .font(.headline)
+
+            ForEach(viewModel.savedSessionNotices) { notice in
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: noticeIcon(for: notice.severity))
+                        .foregroundStyle(noticeColor(for: notice.severity))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(notice.title)
+                            .font(.subheadline.weight(.semibold))
+                        Text(notice.message)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(noticeColor(for: notice.severity).opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
         }
         .padding(24)
@@ -318,9 +392,27 @@ struct SessionDetailView: View {
             return "exclamationmark.triangle"
         }
     }
+
+    private func noticeColor(for severity: SavedSessionNoticeSeverity) -> Color {
+        switch severity {
+        case .info:
+            return .blue
+        case .warning:
+            return .orange
+        }
+    }
+
+    private func noticeIcon(for severity: SavedSessionNoticeSeverity) -> String {
+        switch severity {
+        case .info:
+            return "info.circle"
+        case .warning:
+            return "exclamationmark.triangle"
+        }
+    }
 }
 
 #Preview {
-    SessionDetailView(viewModel: SessionDetailViewModel(), onBackToHistory: {})
+    SessionDetailView(viewModel: SessionDetailViewModel(), onBackToHistory: {}, onDeleteSession: {})
         .frame(width: 1080, height: 720)
 }

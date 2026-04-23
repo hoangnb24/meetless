@@ -1,0 +1,3 @@
+[submodule "Vendor/whisper.cpp"]
+	path = Vendor/whisper.cpp
+	url = https://github.com/ggml-org/whisper.cpp

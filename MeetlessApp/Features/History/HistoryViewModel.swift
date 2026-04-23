@@ -10,6 +10,7 @@ final class HistoryViewModel: ObservableObject {
         let durationText: String
         let transcriptPreview: String
         let statusLabel: String?
+        let savedSessionNotices: [SavedSessionNotice]
 
         init(summary: PersistedSessionSummary) {
             id = summary.id
@@ -24,6 +25,11 @@ final class HistoryViewModel: ObservableObject {
                 : trimmedPreview
 
             statusLabel = summary.isIncomplete ? "Incomplete" : nil
+            savedSessionNotices = summary.savedSessionNotices
+        }
+
+        var warningNotices: [SavedSessionNotice] {
+            savedSessionNotices.filter { $0.severity == .warning }
         }
 
         private static let startedAtFormatter: DateFormatter = {
@@ -50,6 +56,7 @@ final class HistoryViewModel: ObservableObject {
     @Published private(set) var rows: [Row] = []
     @Published private(set) var isLoading = true
     @Published private(set) var loadErrorMessage: String?
+    @Published private(set) var actionMessage: String?
 
     let rowFields = [
         "Title",
@@ -81,17 +88,24 @@ final class HistoryViewModel: ObservableObject {
     func showLoading() {
         isLoading = true
         loadErrorMessage = nil
+        actionMessage = nil
     }
 
     func showSessions(_ sessions: [PersistedSessionSummary]) {
         rows = sessions.map(Row.init(summary:))
         isLoading = false
         loadErrorMessage = nil
+        actionMessage = nil
     }
 
     func showLoadFailure(_ error: Error) {
         rows = []
         isLoading = false
         loadErrorMessage = "Meetless could not read the saved session bundle directory: \(error.localizedDescription)"
+        actionMessage = nil
+    }
+
+    func showDeleteFailure(title: String, error: Error) {
+        actionMessage = "Meetless could not delete \(title): \(error.localizedDescription)"
     }
 }

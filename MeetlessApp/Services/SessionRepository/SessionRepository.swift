@@ -20,6 +20,18 @@ enum PersistedSessionStatus: String, Codable, Sendable {
     case incomplete
 }
 
+enum SavedSessionNoticeSeverity: Equatable, Sendable {
+    case info
+    case warning
+}
+
+struct SavedSessionNotice: Identifiable, Sendable {
+    let id: String
+    let severity: SavedSessionNoticeSeverity
+    let title: String
+    let message: String
+}
+
 struct PersistedSessionSummary: Identifiable, Sendable {
     let id: String
     let directoryURL: URL
@@ -34,6 +46,10 @@ struct PersistedSessionSummary: Identifiable, Sendable {
 
     var isIncomplete: Bool {
         status == .incomplete
+    }
+
+    var savedSessionNotices: [SavedSessionNotice] {
+        SavedSessionNoticeFactory.make(status: status, sourceStatuses: sourceStatuses)
     }
 }
 
@@ -52,6 +68,10 @@ struct PersistedSessionDetail: Identifiable, Sendable {
 
     var isIncomplete: Bool {
         status == .incomplete
+    }
+
+    var savedSessionNotices: [SavedSessionNotice] {
+        SavedSessionNoticeFactory.make(status: status, sourceStatuses: sourceStatuses)
     }
 }
 
@@ -85,6 +105,63 @@ private struct SessionTranscriptSnapshot: Codable, Sendable {
     let schemaVersion: Int
     let savedAt: Date
     let chunks: [CommittedTranscriptChunk]
+}
+
+private enum SavedSessionNoticeFactory {
+    static func make(
+        status: PersistedSessionStatus,
+        sourceStatuses: [SourcePipelineStatus]
+    ) -> [SavedSessionNotice] {
+        var notices: [SavedSessionNotice] = []
+
+        if status == .incomplete {
+            notices.append(
+                SavedSessionNotice(
+                    id: "incomplete",
+                    severity: .warning,
+                    title: "Saved as incomplete",
+                    message: "Meetless saved this bundle after recording ended unexpectedly. The transcript shown here is the exact snapshot that was available at stop time."
+                )
+            )
+        }
+
+        notices.append(contentsOf: sourceStatuses.compactMap(makeSourceNotice(for:)))
+
+        if notices.isEmpty {
+            notices.append(
+                SavedSessionNotice(
+                    id: "snapshot-note",
+                    severity: .info,
+                    title: "Saved snapshot note",
+                    message: "Meetless shows the transcript snapshot and source markers that were written into this local bundle. If no extra warning markers were saved, the app does not infer them later."
+                )
+            )
+        }
+
+        return notices
+    }
+
+    private static func makeSourceNotice(for sourceStatus: SourcePipelineStatus) -> SavedSessionNotice? {
+        let title: String
+
+        switch sourceStatus.state {
+        case .ready:
+            return nil
+        case .blocked:
+            title = "\(sourceStatus.source.rawValue) source was blocked"
+        case .monitoring:
+            title = "\(sourceStatus.source.rawValue) source needs review"
+        case .degraded:
+            title = "\(sourceStatus.source.rawValue) source degraded"
+        }
+
+        return SavedSessionNotice(
+            id: "source-\(sourceStatus.source.id)-\(sourceStatus.state.rawValue)",
+            severity: .warning,
+            title: title,
+            message: sourceStatus.detail
+        )
+    }
 }
 
 actor SessionRepository {
@@ -227,6 +304,14 @@ actor SessionRepository {
             transcriptSavedAt: transcriptSnapshot.savedAt,
             transcriptChunks: transcriptSnapshot.chunks
         )
+    }
+
+    func deleteSavedSession(at directoryURL: URL) throws {
+        guard fileManager.fileExists(atPath: directoryURL.path) else {
+            return
+        }
+
+        try fileManager.removeItem(at: directoryURL)
     }
 
     func updateTranscriptSnapshot(

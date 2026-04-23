@@ -61,7 +61,7 @@ final class ScreenCaptureSession: NSObject, SCStreamDelegate {
         logger.notice("ScreenCaptureSession.start begin")
         if stream != nil {
             logger.notice("ScreenCaptureSession.start stopping existing stream first")
-            _ = try await stop()
+            _ = await stop()
         }
 
         logger.notice("awaiting SCShareableContent.current")
@@ -147,11 +147,18 @@ final class ScreenCaptureSession: NSObject, SCStreamDelegate {
         }
     }
 
-    func stop() async throws -> CaptureSessionSnapshot? {
+    func stop() async -> CaptureSessionSnapshot? {
         guard let stream else { return nil }
         logger.notice("ScreenCaptureSession.stop begin")
         stopVoiceProcessedMicrophoneCapture()
-        try await stream.stopCapture()
+
+        do {
+            try await stream.stopCapture()
+        } catch {
+            lastStopErrorDescription = error.localizedDescription
+            logger.error("SCStream stopCapture failed: \(error.localizedDescription, privacy: .public)")
+        }
+
         let snapshot = outputQueue.sync { () -> CaptureSessionSnapshot? in
             guard let sessionScratch else { return nil }
 

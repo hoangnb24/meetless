@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		17C0A035631BF17AA6C51F87 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4692D9678E406F8BF70DAD19 /* Cocoa.framework */; };
+		1F9B5A8D4C7E21B300A4F912 /* CoreML.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1F9B5A8D4C7E21B300A4F911 /* CoreML.framework */; };
 		2F7F743C08B880C05C998769 /* HomeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB7B30A07CFD9AA5A7AE24F3 /* HomeViewModel.swift */; };
 		32F7B6BFBA0047C2A51A21DC /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = C8870BE1DD1E36ED6A4E19F9 /* README.md */; };
 		378B70D0C53F4FD1073A5DDB /* WhisperSourceWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 072A1ADF9625E85575F11AEA /* WhisperSourceWorker.swift */; };
@@ -55,6 +56,7 @@
 		1D486E8A24E5A703D09AE706 /* RecordingViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingViewModel.swift; sourceTree = "<group>"; };
 		44F29975EE3556201727500A /* WhisperBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WhisperBridge.swift; sourceTree = "<group>"; };
 		4692D9678E406F8BF70DAD19 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		1F9B5A8D4C7E21B300A4F911 /* CoreML.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreML.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/CoreML.framework; sourceTree = DEVELOPER_DIR; };
 		4DB546F187CAAB02659ED178 /* AppScreen.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppScreen.swift; sourceTree = "<group>"; };
 		6F8D0D2C7B5A4F249C0A1E62 /* SessionRepository.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionRepository.swift; sourceTree = "<group>"; };
 		770B8E5B0A45C30A056238BA /* AppModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
@@ -80,6 +82,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				17C0A035631BF17AA6C51F87 /* Cocoa.framework in Frameworks */,
+				1F9B5A8D4C7E21B300A4F912 /* CoreML.framework in Frameworks */,
 				6BEC75D668234C9B425C4619 /* whisper.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -289,6 +292,7 @@
 			isa = PBXGroup;
 			children = (
 				4692D9678E406F8BF70DAD19 /* Cocoa.framework */,
+				1F9B5A8D4C7E21B300A4F911 /* CoreML.framework */,
 			);
 			name = "OS X";
 			sourceTree = "<group>";

@@ -5,6 +5,8 @@ struct HistoryView: View {
     let onBackHome: () -> Void
     let onReload: () -> Void
     let onOpenSessionDetail: (HistoryViewModel.Row) -> Void
+    let onDeleteSession: (HistoryViewModel.Row) -> Void
+    @State private var pendingDeleteRow: HistoryViewModel.Row?
 
     var body: some View {
         ScrollView {
@@ -23,6 +25,14 @@ struct HistoryView: View {
             }
             .padding(32)
             .frame(maxWidth: 1100, alignment: .leading)
+        }
+        .alert("Delete saved session?", isPresented: deleteConfirmationBinding, presenting: pendingDeleteRow) { row in
+            Button("Delete", role: .destructive) {
+                onDeleteSession(row)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { row in
+            Text("This removes \(row.title) from local storage, including its transcript snapshot and raw audio artifacts.")
         }
     }
 
@@ -90,6 +100,12 @@ struct HistoryView: View {
             Text("History stays browse-only in v1. Search, filters, and playback are still intentionally absent.")
                 .foregroundStyle(.secondary)
 
+            honestyCard
+
+            if let actionMessage = viewModel.actionMessage {
+                warningBanner(title: "Delete unavailable", body: actionMessage)
+            }
+
             LazyVStack(spacing: 14) {
                 ForEach(viewModel.rows) { row in
                     sessionRow(row)
@@ -99,6 +115,19 @@ struct HistoryView: View {
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private var honestyCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Saved-session honesty", systemImage: "checkmark.shield")
+                .font(.headline)
+            Text("Meetless shows the saved transcript snapshot plus any warning markers that were written into the local bundle. If a bundle has no extra markers yet, the app stays limited to what the saved bundle recorded.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private var rowContractCard: some View {
@@ -119,55 +148,94 @@ struct HistoryView: View {
     }
 
     private func sessionRow(_ row: HistoryViewModel.Row) -> some View {
-        Button(action: { onOpenSessionDetail(row) }) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(row.title)
-                            .font(.title3.weight(.semibold))
-                        Text(row.startedAtText)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer(minLength: 12)
-
-                    VStack(alignment: .trailing, spacing: 8) {
-                        if let statusLabel = row.statusLabel {
-                            Text(statusLabel)
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Color.orange.opacity(0.16), in: Capsule())
-                                .foregroundStyle(Color.orange)
-                        }
-
-                        Text(row.durationText)
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                    }
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(row.title)
+                        .font(.title3.weight(.semibold))
+                    Text(row.startedAtText)
+                        .foregroundStyle(.secondary)
                 }
 
-                Text(row.transcriptPreview)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                Spacer(minLength: 12)
 
-                Label("Open transcript snapshot", systemImage: "arrow.right.circle")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
+                VStack(alignment: .trailing, spacing: 8) {
+                    if let statusLabel = row.statusLabel {
+                        Text(statusLabel)
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.orange.opacity(0.16), in: Capsule())
+                            .foregroundStyle(Color.orange)
+                    }
+
+                    Text(row.durationText)
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                }
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+
+            Text(row.transcriptPreview)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            ForEach(row.warningNotices) { notice in
+                warningBanner(title: notice.title, body: notice.message)
+            }
+
+            HStack(spacing: 12) {
+                Button(action: { onOpenSessionDetail(row) }) {
+                    Label("Open transcript snapshot", systemImage: "arrow.right.circle")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(role: .destructive) {
+                    pendingDeleteRow = row
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    private func warningBanner(title: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(Color.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var deleteConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteRow != nil },
+            set: { isPresented in
+                if !isPresented {
+                    pendingDeleteRow = nil
+                }
+            }
+        )
     }
 }
 
 #Preview {
-    HistoryView(viewModel: HistoryViewModel(), onBackHome: {}, onReload: {}, onOpenSessionDetail: { _ in })
+    HistoryView(viewModel: HistoryViewModel(), onBackHome: {}, onReload: {}, onOpenSessionDetail: { _ in }, onDeleteSession: { _ in })
         .frame(width: 1080, height: 720)
 }

@@ -95,6 +95,18 @@ private struct TranscriptCommitWindow {
     let endFrameIndex: Int64
 }
 
+private struct TranscriptCommitWindowKey: Hashable, Sendable {
+    let source: RecordingSourceKind
+    let startFrameIndex: Int64
+    let endFrameIndex: Int64
+
+    init(window: TranscriptCommitWindow) {
+        source = window.source
+        startFrameIndex = window.startFrameIndex
+        endFrameIndex = window.endFrameIndex
+    }
+}
+
 private struct SourceTranscriptLane {
     let source: RecordingSourceKind
     var sampleRate: Double = 16_000
@@ -191,10 +203,14 @@ actor TranscriptCoordinator {
     private let logger = Logger(subsystem: "com.themrb.meetless", category: "transcript-coordinator")
     private let minimumCommitFrameCount: Int
     private let maximumCommitFrameCount: Int
+    private let maximumRetryCountPerWindow = 3
     private let workers: [RecordingSourceKind: WhisperSourceWorker]
 
     private var committedChunks: [CommittedTranscriptChunk] = []
     private var lanes: [RecordingSourceKind: SourceTranscriptLane]
+    private var isFrozen = false
+    private var sessionGeneration: UInt64 = 0
+    private var retryCounts: [TranscriptCommitWindowKey: Int] = [:]
     private var nextSequenceNumber = 0
     private var snapshotHandler: TranscriptSnapshotHandler?
 
@@ -217,7 +233,10 @@ actor TranscriptCoordinator {
     }
 
     func reset() {
+        sessionGeneration += 1
+        isFrozen = false
         committedChunks.removeAll()
+        retryCounts.removeAll()
         nextSequenceNumber = 0
         lanes = [
             .meeting: SourceTranscriptLane(source: .meeting),
@@ -230,24 +249,17 @@ actor TranscriptCoordinator {
     }
 
     func ingest(_ chunk: SourceAudioChunk) {
+        guard !isFrozen else { return }
         guard var lane = lanes[chunk.source] else { return }
         lane.append(chunk)
         lanes[chunk.source] = lane
         scheduleTranscriptionIfNeeded(for: chunk.source)
     }
 
-    func finishPendingWork() async -> [CommittedTranscriptChunk] {
-        for source in RecordingSourceKind.allCases {
-            guard var lane = lanes[source] else { continue }
-            lane.requestFlush()
-            lanes[source] = lane
-            scheduleTranscriptionIfNeeded(for: source)
-        }
-
-        while hasOutstandingWork {
-            await Task.yield()
-        }
-
+    func freezeVisibleSnapshot() -> [CommittedTranscriptChunk] {
+        sessionGeneration += 1
+        isFrozen = true
+        snapshotHandler = nil
         return orderedCommittedChunks()
     }
 
@@ -255,13 +267,8 @@ actor TranscriptCoordinator {
         orderedCommittedChunks()
     }
 
-    private var hasOutstandingWork: Bool {
-        lanes.values.contains { lane in
-            lane.isTranscribing || lane.hasBufferedFrames
-        }
-    }
-
     private func scheduleTranscriptionIfNeeded(for source: RecordingSourceKind) {
+        guard !isFrozen else { return }
         guard
             var lane = lanes[source],
             let worker = workers[source],
@@ -274,6 +281,7 @@ actor TranscriptCoordinator {
         }
 
         lanes[source] = lane
+        let expectedGeneration = sessionGeneration
 
         Task(priority: .utility) {
             let outcome: TranscriptProcessingOutcome
@@ -295,21 +303,35 @@ actor TranscriptCoordinator {
                 outcome = .failure(error.localizedDescription)
             }
 
-            await self.handleProcessingOutcome(outcome, for: source, window: commitWindow)
+            await self.handleProcessingOutcome(
+                outcome,
+                for: source,
+                window: commitWindow,
+                expectedGeneration: expectedGeneration
+            )
         }
     }
 
     private func handleProcessingOutcome(
         _ outcome: TranscriptProcessingOutcome,
         for source: RecordingSourceKind,
-        window: TranscriptCommitWindow
+        window: TranscriptCommitWindow,
+        expectedGeneration: UInt64
     ) async {
+        guard expectedGeneration == sessionGeneration else { return }
         guard var lane = lanes[source] else { return }
+        guard !isFrozen else {
+            lane.markTranscriptionFinished()
+            lanes[source] = lane
+            return
+        }
 
         let snapshotToPersist: [CommittedTranscriptChunk]?
+        let windowKey = TranscriptCommitWindowKey(window: window)
         switch outcome {
         case let .transcript(text):
             lane.markTranscriptionFinished()
+            retryCounts[windowKey] = nil
             nextSequenceNumber += 1
             let candidateChunk = CommittedTranscriptChunk(
                 id: UUID(),
@@ -330,10 +352,20 @@ actor TranscriptCoordinator {
             }
         case .silence:
             lane.markTranscriptionFinished()
+            retryCounts[windowKey] = nil
             snapshotToPersist = nil
         case let .failure(message):
-            logger.error("transcription window failed for \(source.rawValue, privacy: .public) frames \(window.startFrameIndex, privacy: .public)-\(window.endFrameIndex, privacy: .public): \(message, privacy: .public)")
-            lane.restore(window)
+            let nextRetryCount = (retryCounts[windowKey] ?? 0) + 1
+            retryCounts[windowKey] = nextRetryCount
+
+            if nextRetryCount < maximumRetryCountPerWindow {
+                logger.error("transcription window failed for \(source.rawValue, privacy: .public) frames \(window.startFrameIndex, privacy: .public)-\(window.endFrameIndex, privacy: .public); retry \(nextRetryCount, privacy: .public) of \(self.maximumRetryCountPerWindow, privacy: .public): \(message, privacy: .public)")
+                lane.restore(window)
+            } else {
+                logger.error("transcription window failed permanently for \(source.rawValue, privacy: .public) frames \(window.startFrameIndex, privacy: .public)-\(window.endFrameIndex, privacy: .public) after \(nextRetryCount, privacy: .public) attempts; dropping window so Stop can complete: \(message, privacy: .public)")
+                lane.markTranscriptionFinished()
+                retryCounts[windowKey] = nil
+            }
             snapshotToPersist = nil
         }
 
@@ -717,7 +749,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         } catch {
             logger.error("session bundle begin failed: \(error.localizedDescription, privacy: .public)")
             await transcriptCoordinator.setSnapshotHandler(nil)
-            _ = try? await captureSession.stop()
+            _ = await captureSession.stop()
             await meetingWorker.unloadModel()
             await meWorker.unloadModel()
             throw error
@@ -739,9 +771,8 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
 
     func stopShellSession() async throws -> RecordingStatusSnapshot {
         logger.notice("stopShellSession begin")
-        let capture = try await captureSession.stop()
-        let transcriptChunks = await transcriptCoordinator.finishPendingWork()
-        await transcriptCoordinator.setSnapshotHandler(nil)
+        let transcriptChunks = await transcriptCoordinator.freezeVisibleSnapshot()
+        let capture = await captureSession.stop()
         let finalSourceStatuses = capture?.sourceStatuses
             ?? liveSnapshot?.sourceStatuses
             ?? MeetlessRecordingCoordinator.blockedSourceStatuses(for: [])

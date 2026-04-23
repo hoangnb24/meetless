@@ -4,6 +4,7 @@ import Foundation
 final class AppModel: ObservableObject {
     @Published var selectedScreen: AppScreen = .home
     @Published private(set) var selectedSessionID: String?
+    @Published private(set) var selectedSessionDirectoryURL: URL?
 
     private let sessionRepository: SessionRepository
 
@@ -43,11 +44,36 @@ final class AppModel: ObservableObject {
 
     func openSessionDetail(for row: HistoryViewModel.Row) {
         selectedSessionID = row.id
+        selectedSessionDirectoryURL = row.directoryURL
         selectedScreen = .sessionDetail
         sessionDetailViewModel.showLoading(title: row.title)
 
         Task {
             await loadSessionDetail(sessionID: row.id, directoryURL: row.directoryURL)
+        }
+    }
+
+    func deleteSession(_ row: HistoryViewModel.Row) {
+        Task {
+            await deleteSession(
+                sessionID: row.id,
+                directoryURL: row.directoryURL,
+                title: row.title
+            )
+        }
+    }
+
+    func deleteSelectedSession() {
+        guard let selectedSessionID, let selectedSessionDirectoryURL else {
+            return
+        }
+
+        Task {
+            await deleteSession(
+                sessionID: selectedSessionID,
+                directoryURL: selectedSessionDirectoryURL,
+                title: sessionDetailViewModel.title
+            )
         }
     }
 
@@ -77,5 +103,30 @@ final class AppModel: ObservableObject {
 
             sessionDetailViewModel.showLoadFailure(title: nil, error: error)
         }
+    }
+
+    private func deleteSession(sessionID: String, directoryURL: URL, title: String) async {
+        do {
+            try await sessionRepository.deleteSavedSession(at: directoryURL)
+
+            if selectedSessionID == sessionID {
+                clearSelectedSession()
+                selectedScreen = .history
+            }
+
+            await refreshSavedSessions()
+        } catch {
+            if selectedSessionID == sessionID && selectedScreen == .sessionDetail {
+                sessionDetailViewModel.showDeleteFailure(title: title, error: error)
+            } else {
+                historyViewModel.showDeleteFailure(title: title, error: error)
+            }
+        }
+    }
+
+    private func clearSelectedSession() {
+        selectedSessionID = nil
+        selectedSessionDirectoryURL = nil
+        sessionDetailViewModel.showNoSelection()
     }
 }
