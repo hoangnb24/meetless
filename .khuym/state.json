@@ -2,22 +2,74 @@
   "schema_version": "1.1",
   "feature_slug": "native-macos-meeting-recorder",
   "mode": "deep",
-  "active_skill": "khuym:swarming",
-  "phase": "phase_2_executed",
-  "phase_number": 2,
+  "active_skill": "khuym:reviewing",
+  "phase": "reviewing-uat",
+  "phase_number": 3,
   "epic_id": "bd-3cy",
   "approved_gates": {
     "context": true,
     "phase_plan": true,
     "execution": true,
-    "review": false
+    "review": true
   },
   "active_beads": [],
   "active_workers": [],
   "blockers": [],
-  "focus": "phase-2-executed",
-  "summary": "Phase 2 swarm execution is complete for the native macOS meeting recorder. The Phase 2 bead chain bd-28c -> bd-2pg -> bd-a27 is closed, reservations are clear, and the macOS app build passed.",
-  "next_action": "Resume khuym:planning to prepare the next phase.",
+  "uat_log": [
+    {
+      "item": 1,
+      "decision_ids": [
+        "D6",
+        "D20",
+        "D21"
+      ],
+      "status": "pass"
+    },
+    {
+      "item": 2,
+      "decision_ids": [
+        "D1",
+        "D2",
+        "D14",
+        "D16",
+        "D17"
+      ],
+      "status": "pass"
+    },
+    {
+      "item": 3,
+      "decision_ids": [
+        "D4",
+        "D7",
+        "D8",
+        "D9",
+        "D19",
+        "D23"
+      ],
+      "status": "pass"
+    },
+    {
+      "item": 4,
+      "decision_ids": [
+        "D5",
+        "D15",
+        "D23"
+      ],
+      "status": "skip",
+      "reason": "Skipped in this review session because the degraded or interrupted path was not exercised live."
+    },
+    {
+      "item": 5,
+      "decision_ids": [
+        "D10",
+        "D11"
+      ],
+      "status": "pass"
+    }
+  ],
+  "focus": "review-finish",
+  "summary": "Reviewing is complete for the native macOS meeting recorder. Automated review found no new P1 blockers and produced five non-blocking follow-up beads: bd-34x, bd-2lr, bd-1l8, bd-19s, and bd-12m. UAT items 1, 2, 3, and 5 passed; item 4 was skipped because the degraded or interrupted path was not exercised live. Final verification passed with `xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS'`.",
+  "next_action": "Choose a merge disposition: create PR, merge directly, keep branch for follow-up review fixes, or discard branch.",
   "deferred_beads": [
     "bd-2ap",
     "bd-15x",
@@ -31,5 +83,5 @@
     "learnings_file": "",
     "critical_promotions": 0
   },
-  "last_updated": "2026-04-22T15:52:03Z"
+  "last_updated": "2026-04-23T07:23:00Z"
 }
