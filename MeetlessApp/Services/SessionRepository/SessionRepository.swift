@@ -41,6 +41,8 @@ struct PersistedSessionSummary: Identifiable, Sendable {
     let durationSeconds: TimeInterval?
     let transcriptPreview: String
     let status: PersistedSessionStatus
+    let transcriptSnapshotMatchesCommittedTimeline: Bool
+    let transcriptSnapshotWarning: String?
     let sourceStatuses: [SourcePipelineStatus]
     let updatedAt: Date
 
@@ -49,7 +51,12 @@ struct PersistedSessionSummary: Identifiable, Sendable {
     }
 
     var savedSessionNotices: [SavedSessionNotice] {
-        SavedSessionNoticeFactory.make(status: status, sourceStatuses: sourceStatuses)
+        SavedSessionNoticeFactory.make(
+            status: status,
+            transcriptSnapshotMatchesCommittedTimeline: transcriptSnapshotMatchesCommittedTimeline,
+            transcriptSnapshotWarning: transcriptSnapshotWarning,
+            sourceStatuses: sourceStatuses
+        )
     }
 }
 
@@ -61,6 +68,8 @@ struct PersistedSessionDetail: Identifiable, Sendable {
     let endedAt: Date?
     let durationSeconds: TimeInterval?
     let status: PersistedSessionStatus
+    let transcriptSnapshotMatchesCommittedTimeline: Bool
+    let transcriptSnapshotWarning: String?
     let sourceStatuses: [SourcePipelineStatus]
     let updatedAt: Date
     let transcriptSavedAt: Date
@@ -71,8 +80,19 @@ struct PersistedSessionDetail: Identifiable, Sendable {
     }
 
     var savedSessionNotices: [SavedSessionNotice] {
-        SavedSessionNoticeFactory.make(status: status, sourceStatuses: sourceStatuses)
+        SavedSessionNoticeFactory.make(
+            status: status,
+            transcriptSnapshotMatchesCommittedTimeline: transcriptSnapshotMatchesCommittedTimeline,
+            transcriptSnapshotWarning: transcriptSnapshotWarning,
+            sourceStatuses: sourceStatuses
+        )
     }
+}
+
+struct TranscriptSnapshotPersistenceIssue: Equatable, Sendable {
+    let title: String
+    let message: String
+    let latestEvent: String
 }
 
 private struct SessionBundleManifest: Codable, Sendable {
@@ -85,7 +105,8 @@ private struct SessionBundleManifest: Codable, Sendable {
     var status: PersistedSessionStatus
     var transcriptPreview: String
     let rawAudioFilesAreDurableSourceOfRecord: Bool
-    let transcriptSnapshotMatchesCommittedTimeline: Bool
+    var transcriptSnapshotMatchesCommittedTimeline: Bool
+    var transcriptSnapshotWarning: String?
     let transcriptSnapshotFilename: String
     let audioArtifacts: [SessionAudioArtifact]
     var sourceStatuses: [SourcePipelineStatus]
@@ -110,6 +131,8 @@ private struct SessionTranscriptSnapshot: Codable, Sendable {
 private enum SavedSessionNoticeFactory {
     static func make(
         status: PersistedSessionStatus,
+        transcriptSnapshotMatchesCommittedTimeline: Bool,
+        transcriptSnapshotWarning: String?,
         sourceStatuses: [SourcePipelineStatus]
     ) -> [SavedSessionNotice] {
         var notices: [SavedSessionNotice] = []
@@ -121,6 +144,18 @@ private enum SavedSessionNoticeFactory {
                     severity: .warning,
                     title: "Saved as incomplete",
                     message: "Meetless saved this bundle after recording ended unexpectedly. The transcript shown here is the exact snapshot that was available at stop time."
+                )
+            )
+        }
+
+        if !transcriptSnapshotMatchesCommittedTimeline {
+            notices.append(
+                SavedSessionNotice(
+                    id: "transcript-snapshot-warning",
+                    severity: .warning,
+                    title: "Saved transcript snapshot fell behind",
+                    message: transcriptSnapshotWarning
+                        ?? "Meetless could not keep transcript.json aligned with the visible timeline for this bundle. The durable audio artifacts remain intact, but reopening this session may show an older transcript snapshot."
                 )
             )
         }
@@ -165,6 +200,8 @@ private enum SavedSessionNoticeFactory {
 }
 
 actor SessionRepository {
+    private static let forcedSnapshotFailureEnvironmentKey = "MEETLESS_FORCE_TRANSCRIPT_SNAPSHOT_UPDATE_FAILURE"
+
     private let fileManager: FileManager
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -210,6 +247,7 @@ actor SessionRepository {
             transcriptPreview: Self.transcriptPreview(from: transcriptChunks),
             rawAudioFilesAreDurableSourceOfRecord: true,
             transcriptSnapshotMatchesCommittedTimeline: true,
+            transcriptSnapshotWarning: nil,
             transcriptSnapshotFilename: session.transcriptURL.lastPathComponent,
             audioArtifacts: RecordingSourceKind.allCases.map { source in
                 SessionAudioArtifact(
@@ -273,6 +311,8 @@ actor SessionRepository {
                 durationSeconds: manifest.durationSeconds,
                 transcriptPreview: manifest.transcriptPreview,
                 status: manifest.status,
+                transcriptSnapshotMatchesCommittedTimeline: manifest.transcriptSnapshotMatchesCommittedTimeline,
+                transcriptSnapshotWarning: manifest.transcriptSnapshotWarning,
                 sourceStatuses: manifest.sourceStatuses,
                 updatedAt: manifest.updatedAt
             )
@@ -299,6 +339,8 @@ actor SessionRepository {
             endedAt: manifest.endedAt,
             durationSeconds: manifest.durationSeconds,
             status: manifest.status,
+            transcriptSnapshotMatchesCommittedTimeline: manifest.transcriptSnapshotMatchesCommittedTimeline,
+            transcriptSnapshotWarning: manifest.transcriptSnapshotWarning,
             sourceStatuses: manifest.sourceStatuses,
             updatedAt: manifest.updatedAt,
             transcriptSavedAt: transcriptSnapshot.savedAt,
@@ -317,17 +359,29 @@ actor SessionRepository {
     func updateTranscriptSnapshot(
         for session: PersistedSessionBundle,
         transcriptChunks: [CommittedTranscriptChunk]
-    ) throws {
+    ) throws -> TranscriptSnapshotPersistenceIssue? {
         let savedAt = Date()
-        try writeTranscriptSnapshot(
-            SessionTranscriptSnapshot(schemaVersion: 1, savedAt: savedAt, chunks: transcriptChunks),
-            to: session
-        )
+        let transcriptSnapshot = SessionTranscriptSnapshot(schemaVersion: 1, savedAt: savedAt, chunks: transcriptChunks)
 
-        var manifest = try loadManifest(for: session)
-        manifest.transcriptPreview = Self.transcriptPreview(from: transcriptChunks)
-        manifest.updatedAt = savedAt
-        try writeManifest(manifest, to: session)
+        do {
+            if Self.shouldForceTranscriptSnapshotWriteFailure() {
+                throw CocoaError(.fileWriteUnknown)
+            }
+
+            try writeTranscriptSnapshot(transcriptSnapshot, to: session)
+
+            var manifest = try loadManifest(for: session)
+            manifest.transcriptPreview = Self.transcriptPreview(from: transcriptChunks)
+            manifest.transcriptSnapshotMatchesCommittedTimeline = true
+            manifest.transcriptSnapshotWarning = nil
+            manifest.updatedAt = savedAt
+            try writeManifest(manifest, to: session)
+            return nil
+        } catch {
+            let issue = Self.makeTranscriptSnapshotPersistenceIssue(forcedFailure: Self.shouldForceTranscriptSnapshotWriteFailure())
+            try markTranscriptSnapshotAsLagging(for: session, issue: issue, updatedAt: savedAt)
+            return issue
+        }
     }
 
     func finalizeSession(
@@ -336,8 +390,8 @@ actor SessionRepository {
         transcriptChunks: [CommittedTranscriptChunk],
         endedAt: Date = Date(),
         status: PersistedSessionStatus
-    ) throws {
-        try updateTranscriptSnapshot(for: session, transcriptChunks: transcriptChunks)
+    ) throws -> TranscriptSnapshotPersistenceIssue? {
+        let snapshotIssue = try updateTranscriptSnapshot(for: session, transcriptChunks: transcriptChunks)
 
         var manifest = try loadManifest(for: session)
         manifest.status = status
@@ -346,6 +400,7 @@ actor SessionRepository {
         manifest.sourceStatuses = sourceStatuses
         manifest.updatedAt = endedAt
         try writeManifest(manifest, to: session)
+        return snapshotIssue
     }
 
     private func loadManifest(for session: PersistedSessionBundle) throws -> SessionBundleManifest {
@@ -369,6 +424,18 @@ actor SessionRepository {
     ) throws {
         let data = try encoder.encode(transcriptSnapshot)
         try data.write(to: session.transcriptURL, options: .atomic)
+    }
+
+    private func markTranscriptSnapshotAsLagging(
+        for session: PersistedSessionBundle,
+        issue: TranscriptSnapshotPersistenceIssue,
+        updatedAt: Date
+    ) throws {
+        var manifest = try loadManifest(for: session)
+        manifest.transcriptSnapshotMatchesCommittedTimeline = false
+        manifest.transcriptSnapshotWarning = issue.message
+        manifest.updatedAt = updatedAt
+        try writeManifest(manifest, to: session)
     }
 
     private static func defaultTitle(for startedAt: Date) -> String {
@@ -411,5 +478,26 @@ actor SessionRepository {
         }
 
         return String(preview.prefix(157)) + "..."
+    }
+
+    private static func shouldForceTranscriptSnapshotWriteFailure() -> Bool {
+        let value = ProcessInfo.processInfo.environment[forcedSnapshotFailureEnvironmentKey]
+        return value == "1" || value?.lowercased() == "true"
+    }
+
+    private static func makeTranscriptSnapshotPersistenceIssue(forcedFailure: Bool) -> TranscriptSnapshotPersistenceIssue {
+        let message = "Meetless could not keep transcript.json aligned with the visible timeline for this bundle. The durable Meeting and Me audio artifacts remain intact, but reopening this session may show an older transcript snapshot."
+        let latestEvent: String
+        if forcedFailure {
+            latestEvent = "Meetless forced a transcript snapshot write failure for review injection, so the saved bundle may now lag behind the live transcript."
+        } else {
+            latestEvent = "Meetless could not update the saved transcript snapshot, so the bundle may now lag behind the live transcript until a later write succeeds."
+        }
+
+        return TranscriptSnapshotPersistenceIssue(
+            title: "Saved transcript snapshot fell behind",
+            message: message,
+            latestEvent: latestEvent
+        )
     }
 }

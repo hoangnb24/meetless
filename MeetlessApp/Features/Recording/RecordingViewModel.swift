@@ -182,6 +182,15 @@ private struct SourceTranscriptLane {
 
 private typealias TranscriptSnapshotHandler = @Sendable ([CommittedTranscriptChunk]) async -> Void
 
+private struct TranscriptHealthSnapshot: Sendable {
+    let sourceStatuses: [SourcePipelineStatus]
+    let latestEvent: String?
+
+    var hasDegradedSource: Bool {
+        sourceStatuses.contains(where: { $0.state == .degraded })
+    }
+}
+
 private enum TranscriptWindowLoadError: LocalizedError {
     case shortRead(fileURL: URL, expectedByteCount: Int, actualByteCount: Int)
 
@@ -213,6 +222,8 @@ actor TranscriptCoordinator {
     private var retryCounts: [TranscriptCommitWindowKey: Int] = [:]
     private var nextSequenceNumber = 0
     private var snapshotHandler: TranscriptSnapshotHandler?
+    private var degradedSourceStatuses: [RecordingSourceKind: SourcePipelineStatus] = [:]
+    private var degradationLatestEvent: String?
 
     init(
         meetingWorker: WhisperSourceWorker,
@@ -238,6 +249,8 @@ actor TranscriptCoordinator {
         committedChunks.removeAll()
         retryCounts.removeAll()
         nextSequenceNumber = 0
+        degradedSourceStatuses.removeAll()
+        degradationLatestEvent = nil
         lanes = [
             .meeting: SourceTranscriptLane(source: .meeting),
             .me: SourceTranscriptLane(source: .me)
@@ -265,6 +278,13 @@ actor TranscriptCoordinator {
 
     func currentTranscriptChunks() -> [CommittedTranscriptChunk] {
         orderedCommittedChunks()
+    }
+
+    fileprivate func currentHealthSnapshot() -> TranscriptHealthSnapshot {
+        TranscriptHealthSnapshot(
+            sourceStatuses: RecordingSourceKind.allCases.compactMap { degradedSourceStatuses[$0] },
+            latestEvent: degradationLatestEvent
+        )
     }
 
     private func scheduleTranscriptionIfNeeded(for source: RecordingSourceKind) {
@@ -328,6 +348,8 @@ actor TranscriptCoordinator {
 
         let snapshotToPersist: [CommittedTranscriptChunk]?
         let windowKey = TranscriptCommitWindowKey(window: window)
+        var degradedStatusToRecord: SourcePipelineStatus?
+        var degradedEventToRecord: String?
         switch outcome {
         case let .transcript(text):
             lane.markTranscriptionFinished()
@@ -365,10 +387,22 @@ actor TranscriptCoordinator {
                 logger.error("transcription window failed permanently for \(source.rawValue, privacy: .public) frames \(window.startFrameIndex, privacy: .public)-\(window.endFrameIndex, privacy: .public) after \(nextRetryCount, privacy: .public) attempts; dropping window so Stop can complete: \(message, privacy: .public)")
                 lane.markTranscriptionFinished()
                 retryCounts[windowKey] = nil
+                degradedStatusToRecord = SourcePipelineStatus(
+                    source: source,
+                    detail: "\(source.rawValue) transcript coverage became partial after Meetless dropped a retry-exhausted window. The durable audio artifact stayed intact, but some transcript text for this source is missing from the saved snapshot.",
+                    state: .degraded
+                )
+                degradedEventToRecord = "\(source.rawValue) transcript coverage became partial after repeated failures. Meetless dropped a retry-exhausted window so Stop can still finish cleanly."
             }
             snapshotToPersist = nil
         }
 
+        if let degradedStatusToRecord {
+            degradedSourceStatuses[source] = degradedStatusToRecord
+        }
+        if let degradedEventToRecord {
+            degradationLatestEvent = degradedEventToRecord
+        }
         lanes[source] = lane
 
         if let snapshotToPersist, let snapshotHandler {
@@ -687,6 +721,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
     private let captureSession = ScreenCaptureSession()
     private var liveSnapshot: RecordingStatusSnapshot?
     private var activeSession: PersistedSessionBundle?
+    private var transcriptSnapshotPersistenceIssue: TranscriptSnapshotPersistenceIssue?
 
     init(bundle: Bundle = .main) {
         let assets = WhisperBridgeAssets(bundle: bundle)
@@ -723,6 +758,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         await transcriptCoordinator.setSnapshotHandler(nil)
         await transcriptCoordinator.reset()
         activeSession = nil
+        transcriptSnapshotPersistenceIssue = nil
         logger.notice("starting ScreenCaptureSession")
         let capture = try await captureSession.start { [transcriptCoordinator] audioChunk in
             Task(priority: .utility) {
@@ -741,10 +777,22 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
             self.activeSession = activeSession
             logger.notice("session bundle began; sessionID=\(activeSession.id, privacy: .public)")
             await transcriptCoordinator.setSnapshotHandler { [sessionRepository] transcriptChunks in
-                try? await sessionRepository.updateTranscriptSnapshot(
-                    for: activeSession,
-                    transcriptChunks: transcriptChunks
-                )
+                do {
+                    let snapshotIssue = try await sessionRepository.updateTranscriptSnapshot(
+                        for: activeSession,
+                        transcriptChunks: transcriptChunks
+                    )
+                    await self.setTranscriptSnapshotPersistenceIssue(snapshotIssue)
+                } catch {
+                    self.logger.error("transcript snapshot persistence handling failed: \(error.localizedDescription, privacy: .private)")
+                    await self.setTranscriptSnapshotPersistenceIssue(
+                        TranscriptSnapshotPersistenceIssue(
+                            title: "Saved transcript snapshot fell behind",
+                            message: "Meetless could not refresh the saved transcript snapshot metadata for this bundle. The live transcript may be ahead of what the session can reopen until a later write succeeds.",
+                            latestEvent: "Meetless could not refresh the saved transcript snapshot metadata, so the bundle may now lag behind the live transcript."
+                        )
+                    )
+                }
             }
         } catch {
             logger.error("session bundle begin failed: \(error.localizedDescription, privacy: .public)")
@@ -773,39 +821,73 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         logger.notice("stopShellSession begin")
         let transcriptChunks = await transcriptCoordinator.freezeVisibleSnapshot()
         let capture = await captureSession.stop()
-        let finalSourceStatuses = capture?.sourceStatuses
-            ?? liveSnapshot?.sourceStatuses
-            ?? MeetlessRecordingCoordinator.blockedSourceStatuses(for: [])
+        let transcriptHealth = await transcriptCoordinator.currentHealthSnapshot()
+        let finalSourceStatuses = mergedSourceStatuses(
+            captureStatuses: capture?.sourceStatuses
+                ?? liveSnapshot?.sourceStatuses
+                ?? MeetlessRecordingCoordinator.blockedSourceStatuses(for: []),
+            transcriptHealth: transcriptHealth
+        )
         let finalStatus: PersistedSessionStatus = captureSession.lastStopErrorDescription == nil
             ? .completed
             : .incomplete
 
+        let snapshotPersistenceIssue: TranscriptSnapshotPersistenceIssue?
         if let activeSession {
             defer { self.activeSession = nil }
-            try await sessionRepository.finalizeSession(
+            snapshotPersistenceIssue = try await sessionRepository.finalizeSession(
                 activeSession,
                 sourceStatuses: finalSourceStatuses,
                 transcriptChunks: transcriptChunks,
                 endedAt: Date(),
                 status: finalStatus
             )
+            transcriptSnapshotPersistenceIssue = snapshotPersistenceIssue
+        } else {
+            snapshotPersistenceIssue = transcriptSnapshotPersistenceIssue
         }
 
         await meetingWorker.unloadModel()
         await meWorker.unloadModel()
         logger.notice("stopShellSession finalized status=\(finalStatus.rawValue, privacy: .public) transcriptChunkCount=\(transcriptChunks.count, privacy: .public)")
 
-        let snapshot = RecordingStatusSnapshot(
-            phase: .idle,
-            headline: finalStatus == .completed ? "Capture stopped cleanly" : "Capture ended with an incomplete saved session",
-            detail: capture.map {
+        let savedSessionHeadline: String
+        let savedSessionDetail: String
+        if snapshotPersistenceIssue != nil {
+            savedSessionHeadline = "Capture stopped with a stale saved transcript snapshot"
+            if finalStatus == .completed {
+                savedSessionDetail = "Capture stopped, but Meetless could not keep transcript.json aligned with the visible timeline before the session closed. Reopening this bundle may show an older transcript snapshot, while the durable Meeting and Me audio artifacts remain intact."
+            } else {
+                savedSessionDetail = "Capture ended unexpectedly, and Meetless also could not keep transcript.json aligned with the visible timeline before the session closed. Reopening this bundle may show an older transcript snapshot, while the durable Meeting and Me audio artifacts remain intact."
+            }
+        } else if transcriptHealth.hasDegradedSource {
+            let sourceNames = Self.formattedSourceList(for: transcriptHealth.sourceStatuses)
+            savedSessionHeadline = "Capture stopped with partial transcript coverage"
+            if finalStatus == .completed {
+                savedSessionDetail = "Capture stopped, and the saved bundle still holds durable Meeting and Me audio artifacts plus the exact visible transcript snapshot. Transcript coverage is partial for \(sourceNames) because Meetless had to drop a retry-exhausted transcription window."
+            } else {
+                savedSessionDetail = "Capture ended unexpectedly, but the saved bundle still holds durable Meeting and Me audio artifacts plus the exact visible transcript snapshot. Transcript coverage is partial for \(sourceNames) because Meetless had to drop a retry-exhausted transcription window."
+            }
+        } else {
+            savedSessionHeadline = finalStatus == .completed ? "Capture stopped cleanly" : "Capture ended with an incomplete saved session"
+            savedSessionDetail = capture.map {
                 if finalStatus == .completed {
                     return "The ScreenCaptureKit session is down, the saved Application Support bundle in \($0.artifactDirectoryURL.lastPathComponent) now holds the exact committed transcript snapshot plus durable Meeting and Me audio artifacts."
                 }
 
                 return "Capture ended unexpectedly, but the Application Support bundle in \($0.artifactDirectoryURL.lastPathComponent) still keeps the last committed transcript snapshot and durable Meeting and Me audio artifacts for incomplete-session recovery."
-            } ?? "The ScreenCaptureKit session is down, the live transcript timeline remains as last shown, and the shell is ready for another local recording attempt.",
-            latestEvent: capture?.latestEvent ?? captureSession.lastStopErrorDescription ?? "Stop tapped. Capture ended and both source lanes returned to idle.",
+            } ?? "The ScreenCaptureKit session is down, the live transcript timeline remains as last shown, and the shell is ready for another local recording attempt."
+        }
+
+        let snapshot = RecordingStatusSnapshot(
+            phase: .idle,
+            headline: savedSessionHeadline,
+            detail: savedSessionDetail,
+            latestEvent: snapshotPersistenceIssue?.latestEvent
+                ?? transcriptHealth.latestEvent
+                ?? capture?.latestEvent
+                ?? captureSession.lastStopErrorDescription
+                ?? "Stop tapped. Capture ended and both source lanes returned to idle.",
             sourceStatuses: finalSourceStatuses,
             repairActions: [],
             transcriptChunks: transcriptChunks
@@ -820,24 +902,48 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         }
 
         let transcriptChunks = await transcriptCoordinator.currentTranscriptChunks()
-        let headline = capture.hasDegradedSource
-            ? "Recording continues in a degraded state"
-            : "Recording session is live"
-        let detail = capture.hasDegradedSource
-            ? "One source degraded, but Meetless kept the surviving source alive and continues writing durable per-source PCM while preserving the committed transcript timeline."
-            : "Meeting comes from ScreenCaptureKit system audio while Me comes from a voice-processed microphone lane; both are normalized into 16 kHz mono PCM, written durably during the session, and merged into one committed transcript timeline."
+        let transcriptHealth = await transcriptCoordinator.currentHealthSnapshot()
+        let sourceStatuses = mergedSourceStatuses(
+            captureStatuses: capture.sourceStatuses,
+            transcriptHealth: transcriptHealth
+        )
+        let headline: String
+        let detail: String
+        if transcriptSnapshotPersistenceIssue != nil {
+            headline = "Recording continues with a stale saved transcript snapshot"
+            detail = "Meetless is still writing durable per-source audio, but transcript.json could not be refreshed for this bundle. The live transcript may now be ahead of what reopening the saved session can show until a later snapshot write succeeds."
+        } else if transcriptHealth.hasDegradedSource {
+            let sourceNames = Self.formattedSourceList(for: transcriptHealth.sourceStatuses)
+            headline = "Recording continues with partial transcript coverage"
+            detail = "Meetless kept recording durable per-source audio, but transcript coverage is now partial for \(sourceNames) after a retry-exhausted window was dropped to preserve bounded Stop behavior."
+        } else if sourceStatuses.contains(where: { $0.state == .degraded }) {
+            headline = "Recording continues in a degraded state"
+            detail = "One source degraded, but Meetless kept the surviving source alive and continues writing durable per-source PCM while preserving the committed transcript timeline."
+        } else {
+            headline = "Recording session is live"
+            detail = "Meeting comes from ScreenCaptureKit system audio while Me comes from a voice-processed microphone lane; both are normalized into 16 kHz mono PCM, written durably during the session, and merged into one committed transcript timeline."
+        }
 
         let snapshot = RecordingStatusSnapshot(
             phase: .recording,
             headline: headline,
             detail: detail,
-            latestEvent: capture.latestEvent,
-            sourceStatuses: capture.sourceStatuses,
+            latestEvent: transcriptSnapshotPersistenceIssue?.latestEvent
+                ?? transcriptHealth.latestEvent
+                ?? capture.latestEvent,
+            sourceStatuses: sourceStatuses,
             repairActions: [],
             transcriptChunks: transcriptChunks
         )
         liveSnapshot = snapshot
         return snapshot
+    }
+
+    private func setTranscriptSnapshotPersistenceIssue(_ issue: TranscriptSnapshotPersistenceIssue?) {
+        transcriptSnapshotPersistenceIssue = issue
+        if let issue {
+            logger.error("transcript snapshot persistence degraded: \(issue.latestEvent, privacy: .public)")
+        }
     }
 
     func runSmokeTranscription() async throws -> SmokeTranscriptionSnapshot {
@@ -870,6 +976,61 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
                 state: blockedKinds.contains(.microphone) ? .blocked : .ready
             )
         ]
+    }
+
+    private func mergedSourceStatuses(
+        captureStatuses: [SourcePipelineStatus],
+        transcriptHealth: TranscriptHealthSnapshot
+    ) -> [SourcePipelineStatus] {
+        let captureBySource = Dictionary(uniqueKeysWithValues: captureStatuses.map { ($0.source, $0) })
+        let transcriptBySource = Dictionary(uniqueKeysWithValues: transcriptHealth.sourceStatuses.map { ($0.source, $0) })
+
+        return RecordingSourceKind.allCases.map { source in
+            let captureStatus = captureBySource[source]
+                ?? SourcePipelineStatus(
+                    source: source,
+                    detail: "\(source.rawValue) is waiting for capture to start.",
+                    state: .ready
+                )
+
+            guard let transcriptStatus = transcriptBySource[source] else {
+                return captureStatus
+            }
+
+            switch captureStatus.state {
+            case .ready, .monitoring:
+                return transcriptStatus
+            case .blocked:
+                return captureStatus
+            case .degraded:
+                if captureStatus.detail.contains(transcriptStatus.detail) {
+                    return captureStatus
+                }
+
+                return SourcePipelineStatus(
+                    source: source,
+                    detail: "\(captureStatus.detail) \(transcriptStatus.detail)",
+                    state: .degraded
+                )
+            }
+        }
+    }
+
+    private static func formattedSourceList(for sourceStatuses: [SourcePipelineStatus]) -> String {
+        let names = RecordingSourceKind.allCases.compactMap { source in
+            sourceStatuses.contains(where: { $0.source == source }) ? source.rawValue : nil
+        }
+
+        switch names.count {
+        case 0:
+            return "one source"
+        case 1:
+            return names[0]
+        case 2:
+            return "\(names[0]) and \(names[1])"
+        default:
+            return names.joined(separator: ", ")
+        }
     }
 }
 
