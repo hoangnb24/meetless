@@ -3,6 +3,7 @@
 **Date**: 2026-04-22
 **Feature**: `native-macos-meeting-recorder`
 **CONTEXT.md reference**: `history/native-macos-meeting-recorder/CONTEXT.md`
+**Planning refresh**: after Phase 1 execution and review completion
 
 ---
 
@@ -22,214 +23,144 @@ No prior learnings for this domain.
 
 ## Agent A: Architecture Snapshot
 
-> Source: local file tree inspection, Khuym scout, grep fallback
+> Source: `node .codex/khuym_status.mjs --json`, `gkg` repo topology, and local file inspection
 
-`gkg` is unavailable for this repo because the scout reports no supported source files yet. Discovery therefore used local file inspection plus primary-source platform research instead of gkg topology tools.
+`gkg` is now available for this repo and was useful for confirming the current app topology, but Swift definition coverage is still limited in this session. Discovery therefore used `gkg` for the high-level map and local file inspection for the concrete Phase 2 seams.
 
 ### Relevant Packages / Modules
 
-| Package/Module | Purpose | Key Files |
-|----------------|---------|-----------|
-| Repo workflow only | Khuym routing and handoff state | `AGENTS.md`, `.khuym/state.json`, `.khuym/STATE.md` |
-| Feature context | Locked product decisions from exploring | `history/native-macos-meeting-recorder/CONTEXT.md` |
+| Package / Module | Purpose | Key Files |
+|------------------|---------|-----------|
+| App shell | Owns the window, current screen, and top-level model wiring | `MeetlessApp/App/MeetlessRootView.swift`, `MeetlessApp/App/AppModel.swift`, `MeetlessApp/App/AppScreen.swift` |
+| Home + recording surface | Exposes the Phase 1 recorder and current status banner | `MeetlessApp/Features/Home/HomeView.swift`, `MeetlessApp/Features/Recording/RecordingViewModel.swift`, `MeetlessApp/Features/Recording/RecordingStatusBanner.swift` |
+| Session persistence | Writes `session.json`, `transcript.json`, and per-source audio artifacts | `MeetlessApp/Services/SessionRepository/SessionRepository.swift`, `MeetlessApp/Services/AudioPipeline/SourceAudioPipeline.swift` |
+| History shell | Placeholder browse screen with the final row contract already spelled out | `MeetlessApp/Features/History/HistoryView.swift`, `MeetlessApp/Features/History/HistoryViewModel.swift` |
+| Session detail shell | Placeholder transcript-plus-metadata destination | `MeetlessApp/Features/SessionDetail/SessionDetailView.swift` |
 
-### Entry Points
+### Current Product State
 
-- **Current repo state**: no app target, no Swift package, no Xcode project, and no existing product code.
-- **Implication**: this feature must be planned as a true greenfield macOS app. There is nothing in the repo to model the implementation after beyond Khuym workflow artifacts.
+- The repo is no longer greenfield. It now contains a buildable macOS app, a working recording flow, on-demand permission repair, transcript coordination, and durable session bundles.
+- The app shell already has three destinations: Home, History, and Session Detail.
+- `AppModel` currently owns only the selected screen and the Phase 1 `RecordingViewModel`. It does not yet track a selected saved session or coordinate list/detail refresh.
+- `SessionRepository` is currently write-side only. It can begin, update, and finalize a bundle, but it does not yet expose read/list/load/delete APIs for saved sessions.
+- History and detail are still honest shells. They were intentionally left thin so Phase 2 can attach real persisted-session behavior without rewriting the window structure.
 
-### Key Files to Model After
+### Most Important Phase 2 Seam
 
-- `history/native-macos-meeting-recorder/CONTEXT.md` — fixed product contract for the new app
-- `AGENTS.md` — workflow guardrails for planning, validation, and later execution
+The saved-session product surface should attach to the existing session bundle contract instead of redefining storage:
+
+```text
+Application Support/Meetless/Sessions/{session-id}/
+  session.json
+  transcript.json
+  meeting.wav
+  me.wav
+```
+
+That means Phase 2 is primarily a read-side, navigation-state, and deletion pass over an existing persistence shape rather than a new storage design.
 
 ---
 
 ## Agent B: Pattern Search
 
-> Source: local inspection only
+> Source: local file inspection
 
-### Similar Existing Implementations
+### Existing Patterns To Reuse
 
-| Feature/Component | Location | Pattern Used | Reusable? |
-|-------------------|----------|--------------|-----------|
-| None | N/A | Repo contains no existing app code | No |
+| Area | Existing Pattern | Why It Matters For Phase 2 |
+|------|------------------|----------------------------|
+| Top-level state ownership | `AppModel` is the single window-level owner of navigation state and screen-scoped models | Saved-session selection should stay here instead of creating a second root coordinator |
+| File IO boundary | `SessionRepository` is an actor and already owns session-bundle encoding and disk writes | Read/list/delete behavior should stay behind the same actor boundary |
+| Persistence contract | `SessionRepository` writes timestamp titles, incomplete/completed status, transcript preview, source statuses, and transcript snapshots | History and detail should decode and display this shape directly |
+| UI style | Lightweight SwiftUI screens with thin view models and no database layer | Phase 2 should stay browse-only and not overbuild data infrastructure |
 
-### Reusable Utilities
+### Missing Patterns That Phase 2 Must Add
 
-- None in product code. The repo currently contains only Khuym workflow/state files.
+- No public read model for session manifests or transcript snapshots
+- No selected-session state in the app shell
+- No history refresh lifecycle after the app launches or after a recording stops
+- No delete flow
+- No UI surface yet for incomplete or degraded saved-session honesty markers
 
-### Naming Conventions
+### Reuse Boundary
 
-- No product-side naming convention exists yet.
-- Planning should therefore choose a simple, macOS-native structure instead of inventing a heavy modular architecture to match code that is not present.
+Phase 2 should reuse:
+
+- the existing session bundle format
+- the existing single-window navigation shell
+- the current `RecordingViewModel` as the source of new saved bundles
+
+Phase 2 should not introduce:
+
+- search or filters
+- playback controls
+- transcript editing
+- export or sharing
+- a database or sync layer
 
 ---
 
 ## Agent C: Constraints Analysis
 
-> Source: repo scout, local environment inspection, Apple documentation, upstream `whisper.cpp`
+> Source: current code, open bead graph, and locked decisions
 
-### Runtime & Framework
+### Locked Product Constraints That Matter Most In Phase 2
 
-- **Language**: Swift
-- **UI**: SwiftUI with AppKit bridges only where macOS-specific behavior requires them
-- **Capture framework**: ScreenCaptureKit
-- **Transcription engine**: `whisper.cpp`
-- **Distribution target for v1 planning**: Apple Silicon first
+| Decision | Meaning For Phase 2 |
+|----------|---------------------|
+| `D3` | Session detail stays read-only; do not add transcript editing |
+| `D4` | History rows must stay simple: title, date/time, duration, transcript preview |
+| `D5` | Incomplete sessions must be visible rather than disappearing |
+| `D8` | Session detail is transcript plus metadata only; no playback UI |
+| `D9` | History stays browse-only; no search or filters |
+| `D10` | Saved sessions remain local-only |
+| `D19` | Delete from history/local storage is required in v1 |
+| `D23` | Saved detail shows the exact live transcript snapshot that was committed during recording |
 
-### Existing Dependencies (Relevant to This Feature)
+### Open Review Follow-Ups That Touch Phase 2
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `br` | local CLI present | Bead creation later in planning |
-| `bv` | local CLI present | Graph inspection later in planning/validating |
-| `cass` | local CLI present | Session search if needed later |
-| `cm` | local CLI present | Memory retrieval if needed later |
+| Bead | Why It Matters |
+|------|----------------|
+| `bd-2ap` | Saved sessions should eventually surface when one transcript lane became partial after retry exhaustion |
+| `bd-15x` | Saved sessions should eventually surface when transcript snapshot persistence degraded during recording |
+| `bd-3sy` | Automated regression coverage is still missing but does not block planning the product shape |
+| `bd-2w7` | Signing/sandbox hardening is still open but does not change the Phase 2 user flow |
+| `bd-1ov` | Log redaction is important later but not a Phase 2 interaction design driver |
 
-### New Dependencies Needed
+### Practical Constraint
 
-| Package | Reason | Risk Level |
-|---------|--------|------------|
-| `whisper.cpp` | Local offline speech-to-text engine | HIGH — new native C/C++ dependency |
-| Xcode macOS app project | SwiftUI app shell and signing/capabilities | MEDIUM — new project scaffold |
-
-### Build / Quality Requirements
-
-There is no build system in the repo yet. Based on current Apple and upstream docs, the planning baseline should assume:
-
-- Xcode 16 or later
-- macOS 15 or later if we want the current documented ScreenCaptureKit sample path with separate `.audio` and `.microphone` stream outputs in one capture stack
-- App Sandbox enabled
-- microphone usage description in `Info.plist`
-- screen recording permission flow handled at runtime
-
-### Database / Storage
-
-- No persistence layer exists yet.
-- Because history is browse-only in v1 and the repo is greenfield, file-backed session bundles are a viable first persistence model.
-- A database is not forced by current scope; adding one now would be anticipatory complexity.
+Phase 2 should not invent new saved-session certainty. If degraded transcript coverage or snapshot-write failure metadata is present, history/detail should surface it. If that metadata is not present yet, the Phase 2 structure should leave room for it rather than hard-coding a falsely clean story.
 
 ---
 
 ## Agent D: External Research
 
-> Source: official Apple docs and upstream `whisper.cpp` docs/code
+> Source: none required beyond the current repo and previously validated Phase 1 decisions
 
-### Library Documentation
-
-| Library | Version / Snapshot | Key Docs |
-|---------|--------------------|----------|
-| ScreenCaptureKit | Apple docs crawled Apr 2026 | Framework overview, `SCStream`, `SCStreamConfiguration`, current sample app |
-| App Sandbox / macOS permissions | Apple docs crawled Apr 2026 | microphone authorization, sandbox entitlements |
-| `whisper.cpp` | upstream README at stable `v1.8.1` and current example code | README, XCFramework workflow, SwiftUI example, C API usage |
-
-### Primary-Source Findings
-
-#### 1. ScreenCaptureKit can deliver separate system-audio and microphone buffers
-
-- Apple’s current sample for “Capturing screen content in macOS” shows a single `SCStream` adding outputs for `.screen`, `.audio`, and `.microphone`.
-- Apple’s current ScreenCaptureKit updates page explicitly describes microphone capture through `SCStreamOutputTypeMicrophone`.
-- `SCStreamConfiguration` currently exposes both `capturesAudio` and `captureMicrophone`, plus `microphoneCaptureDeviceID`.
-
-Why this matters:
-- This supports the planned `Meeting` vs `Me` source split without inventing a second capture stack.
-- It makes a macOS-15-first design materially simpler than mixing ScreenCaptureKit for system audio with a separate AVFoundation microphone pipeline.
-
-#### 2. Screen recording and microphone permissions are distinct and operationally important
-
-- Apple’s current ScreenCaptureKit sample notes that the first run prompts for Screen Recording permission and that the app must be restarted after the user grants it before capture works.
-- Apple’s authorization guide for media capture on macOS confirms explicit microphone permission is required and must be backed by `NSMicrophoneUsageDescription`.
-- Apple’s App Sandbox docs confirm microphone capture needs the audio-input entitlement.
-
-Why this matters:
-- The permission repair flow must treat Screen Recording as a blocking prerequisite and tell the user that a restart/relaunch may be required.
-- The first usable recording flow depends on both runtime permission handling and correct signing/capability setup.
-
-#### 3. `whisper.cpp` is viable for a native Swift app, but it should be isolated from the app target
-
-- Upstream README describes Apple Silicon optimization through NEON, Accelerate, Metal, and optional Core ML.
-- Upstream README documents an XCFramework workflow and shows a SwiftPM binary target example for Apple platforms.
-- Upstream `whisper.swiftui` example explicitly recommends building an XCFramework first, then embedding it into the app.
-- That same example warns that pushing `-O3 -DNDEBUG` into the app project is “not ideal in real world” and suggests isolating the C/C++ build settings instead of letting them bleed into the whole app.
-
-Why this matters:
-- The cleanest app architecture is not “compile whisper.cpp directly inside the main app target.”
-- The bridge should live behind its own wrapper target or local package boundary.
-
-#### 4. `whisper.cpp` runtime access should be serialized per context
-
-- Upstream Swift example wraps the `whisper` context in a Swift `actor` and includes the explicit note: “Don’t access from more than one thread at a time.”
-- The example resolves model files from the app bundle and creates a long-lived `WhisperContext` per loaded model.
-
-Why this matters:
-- The app should not share one mutable context across concurrent `Meeting` and `Me` transcription work.
-- If we want two sources to progress independently, the safest default is one isolated transcription worker per source, each with its own context.
-
-#### 5. Model packaging is a product decision, not just a dev convenience
-
-- Upstream README lists approximate model sizes and memory footprints, with `base.en` at 142 MiB on disk and about 388 MB memory, and `small.en` substantially larger.
-- Upstream README documents optional Core ML encoder generation, but that adds an extra generated model bundle and first-run compilation cost on device.
-
-Why this matters:
-- Bundling a model is viable, but model size and memory become first-order constraints if the app keeps one live transcription context per source.
-- Core ML should be treated as an optimization path, not a mandatory day-one requirement.
-
-### Known Gotchas / Anti-Patterns
-
-- **Gotcha**: treating Screen Recording permission like normal microphone permission
-  - Why it matters: Apple’s sample notes capture won’t work until after permission is granted and the app is restarted.
-  - How to avoid: build a blocked repair flow that opens System Settings, explains the restart requirement, and rechecks readiness on relaunch.
-
-- **Gotcha**: building `whisper.cpp` directly into the app target
-  - Why it matters: upstream explicitly calls out that app-wide C flags are not a good real-world setup.
-  - How to avoid: isolate the native bridge in a wrapper target or local package around an XCFramework.
-
-- **Gotcha**: assuming one `whisper` context can safely serve multiple concurrent streams
-  - Why it matters: upstream example treats the context as single-threaded and actor-isolated.
-  - How to avoid: serialize access strictly, or use one context per source worker.
-
-- **Anti-pattern**: adding Core ML generation and downloadable model management before the first live recording loop works
-  - Common mistake: front-loading packaging and performance polish before proving the capture/transcription event flow.
-  - Correct approach: start with one bundled pinned model and Metal-capable build, then benchmark whether Core ML is needed.
+No new external-library or platform research was required for this Phase 2 planning refresh. The remaining work is primarily about reading, presenting, and deleting the session bundles already proven in Phase 1.
 
 ---
 
 ## Open Questions
 
-> Items that were not fully resolvable through research alone.
+> Items that discovery surfaced for synthesis to resolve.
 
-- [ ] Does a single display-scoped ScreenCaptureKit stream behave exactly as desired for “whole-system meeting audio” on the target macOS version, especially on multi-display setups?
-- [ ] What bundled model choice gives the best live dual-source tradeoff on Apple Silicon for v1: `base.en`, a quantized `base.en`, or a smaller English model?
-- [ ] Is transcript durability better served by a single snapshot JSON file, or by an append-only event log plus final snapshot compaction for incomplete-session recovery?
+- [ ] Should the public read-side model live directly in `SessionRepository`, or should the app introduce a second saved-session store on top of it?
+- [ ] Where should the selected saved session live so Home, History, and Detail stay coordinated without overbuilding navigation?
+- [ ] How should Phase 2 consume future degraded-session honesty markers from `bd-2ap` and `bd-15x` without duplicating their write-side logic?
+- [ ] What is the lightest refresh strategy so new recordings appear in history without adding a background watcher?
 
 ---
 
 ## Summary for Synthesis (Phase 2 Input)
 
-**What we have**: a greenfield repo with no app code, a fully locked product contract, and strong primary-source evidence that ScreenCaptureKit plus `whisper.cpp` is viable for the chosen stack.
+**What we have**: a real Phase 1 recorder that writes durable local session bundles and already owns the app shell, permission repair, and transcript snapshot contract.
 
-**What we need**: a minimal native macOS architecture that isolates the `whisper.cpp` boundary, supports separate `Meeting` and `Me` live transcription flows, and persists raw audio plus transcript snapshots locally without overengineering.
+**What we need**: a read-side and UI pass that turns those bundles into a browseable history list, a real transcript-plus-metadata detail screen, and a delete flow that keeps incomplete or degraded saved-session state honest.
 
-**Key constraints from research**:
-- Current Apple docs support separate `.audio` and `.microphone` outputs in a single ScreenCaptureKit-based pipeline.
-- Screen Recording permission is blocking and operationally different from microphone permission.
-- `whisper.cpp` should be isolated behind its own wrapper boundary, and context access should remain serialized.
+**High-signal reality checks**:
 
-**Institutional warnings to honor**:
-- No prior institutional learnings for this domain.
-
----
-
-## Sources
-
-- Apple ScreenCaptureKit overview: https://developer.apple.com/documentation/screencapturekit/
-- Apple sample, “Capturing screen content in macOS”: https://developer.apple.com/documentation/ScreenCaptureKit/capturing-screen-content-in-macos
-- Apple `SCStream` docs: https://developer.apple.com/documentation/screencapturekit/scstream
-- Apple `SCStreamConfiguration` docs: https://developer.apple.com/documentation/screencapturekit/scstreamconfiguration
-- Apple ScreenCaptureKit updates: https://developer.apple.com/documentation/Updates/ScreenCaptureKit
-- Apple media capture authorization on macOS: https://developer.apple.com/documentation/bundleresources/requesting-authorization-for-media-capture-on-macos
-- Apple audio-input entitlement: https://developer.apple.com/documentation/BundleResources/Entitlements/com.apple.security.device.audio-input
-- Apple App Sandbox overview: https://developer.apple.com/documentation/security/protecting-user-data-with-app-sandbox
-- `whisper.cpp` upstream README: https://github.com/ggml-org/whisper.cpp
-- `whisper.cpp` SwiftUI example README: https://github.com/ggml-org/whisper.cpp/blob/master/examples/whisper.swiftui/README.md
+- The app structure is already in place; Phase 2 should deepen it rather than re-architect it.
+- `SessionRepository` is the natural place to keep file IO ownership.
+- The biggest missing seam is selected-session and read-model state, not capture or transcription.
+- The current review follow-ups around degraded transcript honesty should be treated as real dependencies for the final saved-session experience instead of hand-waved away.
