@@ -182,7 +182,7 @@ private struct SourceTranscriptLane {
 
 private typealias TranscriptSnapshotHandler = @Sendable ([CommittedTranscriptChunk]) async -> Void
 
-private struct TranscriptHealthSnapshot: Sendable {
+struct TranscriptHealthSnapshot: Sendable {
     let sourceStatuses: [SourcePipelineStatus]
     let latestEvent: String?
 
@@ -280,7 +280,7 @@ actor TranscriptCoordinator {
         orderedCommittedChunks()
     }
 
-    fileprivate func currentHealthSnapshot() -> TranscriptHealthSnapshot {
+    func currentHealthSnapshot() -> TranscriptHealthSnapshot {
         TranscriptHealthSnapshot(
             sourceStatuses: RecordingSourceKind.allCases.compactMap { degradedSourceStatuses[$0] },
             latestEvent: degradationLatestEvent

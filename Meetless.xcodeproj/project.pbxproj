@@ -26,6 +26,10 @@
 		9F4606D5519994942F6A683E /* WaveFileDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1682F1BBC508055F07E04BDE /* WaveFileDecoder.swift */; };
 		9F6C1BB8B429A86F1157B566 /* ScreenCaptureSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D4B5AB38B720A1A1D40ED0E /* ScreenCaptureSession.swift */; };
 		A38A2D6A5603EA715DF59E1B /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F899578FD929857ED10FEF02 /* HomeView.swift */; };
+		B3E100000000000000000001 /* TranscriptCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E100000000000000000007 /* TranscriptCoordinatorTests.swift */; };
+		B3E100000000000000000002 /* SessionRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E100000000000000000008 /* SessionRepositoryTests.swift */; };
+		B3E100000000000000000003 /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E100000000000000000009 /* TestSupport.swift */; };
+		B3E100000000000000000004 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4692D9678E406F8BF70DAD19 /* Cocoa.framework */; };
 		C0547FF52444D32D4B355106 /* HistoryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F773E4BC2AC9260598766E42 /* HistoryViewModel.swift */; };
 		C95B5B16C276506634F2E8CD /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 770B8E5B0A45C30A056238BA /* AppModel.swift */; };
 		D6A39C88A614472F60C3D6B2 /* RecordingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D486E8A24E5A703D09AE706 /* RecordingViewModel.swift */; };
@@ -33,6 +37,16 @@
 		ED05074EC426D89924D7124B /* RecordingStatusBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8A91B7C5F4E4319908443C4 /* RecordingStatusBanner.swift */; };
 		F803F530D3CC9F658A96E2D9 /* AppScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DB546F187CAAB02659ED178 /* AppScreen.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B3E100000000000000000005 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6DDF48CF52206B66C76EFA79 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CE410883757D744EFBBB26FD;
+			remoteInfo = Meetless;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		F5107DA978EDECCCA64637C9 /* Embed Frameworks */ = {
@@ -66,6 +80,10 @@
 		9AC66603B410B1D420CC96A9 /* MeetlessApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MeetlessApp.swift; sourceTree = "<group>"; };
 		9D4B5AB38B720A1A1D40ED0E /* ScreenCaptureSession.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenCaptureSession.swift; sourceTree = "<group>"; };
 		A1981DFABC8B7B4AE27AD2FB /* Meetless.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Meetless.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B3E100000000000000000006 /* MeetlessTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeetlessTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B3E100000000000000000007 /* TranscriptCoordinatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TranscriptCoordinatorTests.swift; sourceTree = "<group>"; };
+		B3E100000000000000000008 /* SessionRepositoryTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionRepositoryTests.swift; sourceTree = "<group>"; };
+		B3E100000000000000000009 /* TestSupport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TestSupport.swift; sourceTree = "<group>"; };
 		C8870BE1DD1E36ED6A4E19F9 /* README.md */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		CB7B30A07CFD9AA5A7AE24F3 /* HomeViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HomeViewModel.swift; sourceTree = "<group>"; };
 		D5769FC61B12AC8A5ED938DF /* SessionDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionDetailView.swift; sourceTree = "<group>"; };
@@ -77,6 +95,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		B3E10000000000000000000A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B3E100000000000000000004 /* Cocoa.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		7C180CCA0BA783CC64D58D7F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -208,6 +234,7 @@
 			isa = PBXGroup;
 			children = (
 				A1981DFABC8B7B4AE27AD2FB /* Meetless.app */,
+				B3E100000000000000000006 /* MeetlessTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -278,12 +305,23 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
+		B3E10000000000000000000B /* MeetlessTests */ = {
+			isa = PBXGroup;
+			children = (
+				B3E100000000000000000007 /* TranscriptCoordinatorTests.swift */,
+				B3E100000000000000000008 /* SessionRepositoryTests.swift */,
+				B3E100000000000000000009 /* TestSupport.swift */,
+			);
+			path = MeetlessTests;
+			sourceTree = "<group>";
+		};
 		E7813D23C1C47F4538C15C36 = {
 			isa = PBXGroup;
 			children = (
 				8766D2BCA1E8EE0236886655 /* Products */,
 				C79628DF1B14FB97FFDBFD3C /* Frameworks */,
 				09E20B00CF20393FE449E350 /* MeetlessApp */,
+				B3E10000000000000000000B /* MeetlessTests */,
 				0E2899D0665A5106A5D8EFDF /* MeetlessPackages */,
 			);
 			sourceTree = "<group>";
@@ -300,6 +338,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		B3E10000000000000000000C /* MeetlessTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B3E100000000000000000012 /* Build configuration list for PBXNativeTarget "MeetlessTests" */;
+			buildPhases = (
+				B3E10000000000000000000E /* Sources */,
+				B3E10000000000000000000A /* Frameworks */,
+				B3E10000000000000000000D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B3E10000000000000000000F /* PBXTargetDependency */,
+			);
+			name = MeetlessTests;
+			productName = MeetlessTests;
+			productReference = B3E100000000000000000006 /* MeetlessTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		CE410883757D744EFBBB26FD /* Meetless */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 6750A47117A68747C9E5AC53 /* Build configuration list for PBXNativeTarget "Meetless" */;
@@ -328,6 +384,10 @@
 				LastUpgradeCheck = 1640;
 				ORGANIZATIONNAME = themrb;
 				TargetAttributes = {
+					B3E10000000000000000000C = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = CE410883757D744EFBBB26FD;
+					};
 					CE410883757D744EFBBB26FD = {
 						CreatedOnToolsVersion = 16.4;
 					};
@@ -346,12 +406,20 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				B3E10000000000000000000C /* MeetlessTests */,
 				CE410883757D744EFBBB26FD /* Meetless */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		B3E10000000000000000000D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		24BC04E4AF7F0F3B2BE90660 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -365,6 +433,16 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		B3E10000000000000000000E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B3E100000000000000000002 /* SessionRepositoryTests.swift in Sources */,
+				B3E100000000000000000003 /* TestSupport.swift in Sources */,
+				B3E100000000000000000001 /* TranscriptCoordinatorTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		44FB07D8BDADF58021E9C42D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -391,6 +469,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B3E10000000000000000000F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CE410883757D744EFBBB26FD /* Meetless */;
+			targetProxy = B3E100000000000000000005 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		1118CF63441DFD3A0AC9511D /* Release */ = {
@@ -540,6 +626,52 @@
 			};
 			name = Debug;
 		};
+		B3E100000000000000000010 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.themrb.meetless.tests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Meetless.app/Contents/MacOS/Meetless";
+				TEST_TARGET_NAME = Meetless;
+			};
+			name = Debug;
+		};
+		B3E100000000000000000011 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.themrb.meetless.tests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Meetless.app/Contents/MacOS/Meetless";
+				TEST_TARGET_NAME = Meetless;
+			};
+			name = Release;
+		};
 		A988A0976A3F0EA89A02B1F8 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -580,6 +712,15 @@
 			buildConfigurations = (
 				1118CF63441DFD3A0AC9511D /* Release */,
 				A988A0976A3F0EA89A02B1F8 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B3E100000000000000000012 /* Build configuration list for PBXNativeTarget "MeetlessTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B3E100000000000000000011 /* Release */,
+				B3E100000000000000000010 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

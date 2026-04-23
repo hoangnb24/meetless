@@ -201,6 +201,7 @@ private enum SavedSessionNoticeFactory {
 
 actor SessionRepository {
     private static let forcedSnapshotFailureEnvironmentKey = "MEETLESS_FORCE_TRANSCRIPT_SNAPSHOT_UPDATE_FAILURE"
+    static var testForcedTranscriptSnapshotFailureOverride: Bool?
 
     private let fileManager: FileManager
     private let encoder: JSONEncoder
@@ -481,6 +482,10 @@ actor SessionRepository {
     }
 
     private static func shouldForceTranscriptSnapshotWriteFailure() -> Bool {
+        if let testForcedTranscriptSnapshotFailureOverride {
+            return testForcedTranscriptSnapshotFailureOverride
+        }
+
         let value = ProcessInfo.processInfo.environment[forcedSnapshotFailureEnvironmentKey]
         return value == "1" || value?.lowercased() == "true"
     }
