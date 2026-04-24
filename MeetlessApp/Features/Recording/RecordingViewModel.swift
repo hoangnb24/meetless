@@ -1047,6 +1047,7 @@ final class RecordingViewModel: ObservableObject {
     ]
     @Published private(set) var repairActions: [PermissionRepairAction] = []
     @Published private(set) var transcriptChunks: [CommittedTranscriptChunk] = []
+    @Published private(set) var recordingStartedAt: Date?
     @Published private(set) var isBusy = false
     @Published private(set) var smokePhase: SmokeTranscriptionPhase = .ready
     @Published private(set) var smokeHeadline = "Bundled local transcription is ready to verify"
@@ -1157,6 +1158,7 @@ final class RecordingViewModel: ObservableObject {
 
     private func apply(_ snapshot: RecordingStatusSnapshot) {
         self.logger.notice("apply recording snapshot; phase=\(String(describing: snapshot.phase), privacy: .public) latestEvent=\(snapshot.latestEvent, privacy: .public)")
+        let previousPhase = phase
         phase = snapshot.phase
         headline = snapshot.headline
         detail = snapshot.detail
@@ -1167,8 +1169,12 @@ final class RecordingViewModel: ObservableObject {
 
         switch snapshot.phase {
         case .recording:
+            if previousPhase != .recording || recordingStartedAt == nil {
+                recordingStartedAt = Date()
+            }
             startStatusPolling()
         case .idle, .blocked:
+            recordingStartedAt = nil
             stopStatusPolling()
         }
     }
