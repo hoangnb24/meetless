@@ -164,9 +164,13 @@ struct HistoryView: View {
                 .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
                 .lineLimit(1)
 
-            Text(row.transcriptPreview)
+            Text(row.rowSubtitleText)
                 .font(MeetlessDesignTokens.Typography.caption)
-                .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                .foregroundStyle(
+                    row.hasWarningState
+                        ? MeetlessDesignTokens.Colors.warningAmber
+                        : MeetlessDesignTokens.Colors.secondaryText
+                )
                 .lineLimit(1)
         }
     }

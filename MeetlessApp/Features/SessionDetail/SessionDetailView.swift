@@ -8,6 +8,20 @@ final class SessionDetailViewModel: ObservableObject {
         let value: String
     }
 
+    struct NoticeItem: Identifiable {
+        let id: String
+        let severity: SavedSessionNoticeSeverity
+        let title: String
+        let message: String
+    }
+
+    struct SourceHealthItem: Identifiable {
+        let id: String
+        let state: SourcePipelineState
+        let title: String
+        let message: String
+    }
+
     struct TranscriptRow: Identifiable {
         let id: UUID
         let source: RecordingSourceKind
@@ -44,6 +58,36 @@ final class SessionDetailViewModel: ObservableObject {
 
     var canDelete: Bool {
         !isLoading && errorMessage == nil && (!metadataItems.isEmpty || !transcriptRows.isEmpty || !sourceStatuses.isEmpty)
+    }
+
+    var compactNoticeItems: [NoticeItem] {
+        savedSessionNotices.map(Self.compactNoticeItem(for:))
+    }
+
+    var compactSourceHealthItems: [SourceHealthItem] {
+        let nonReadyItems = sourceStatuses
+            .filter { $0.state != .ready }
+            .enumerated()
+            .map { index, status in
+                Self.compactSourceHealthItem(for: status, index: index)
+            }
+
+        if !nonReadyItems.isEmpty {
+            return nonReadyItems
+        }
+
+        guard !sourceStatuses.isEmpty else {
+            return []
+        }
+
+        return [
+            SourceHealthItem(
+                id: "inputs-ready",
+                state: .ready,
+                title: "Inputs ready",
+                message: "\(sourceStatuses.count) saved input\(sourceStatuses.count == 1 ? "" : "s") completed without warning."
+            )
+        ]
     }
 
     func showNoSelection() {
@@ -144,6 +188,84 @@ final class SessionDetailViewModel: ObservableObject {
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
         return String(format: "%01d:%02d", minutes, seconds)
+    }
+
+    private static func compactNoticeItem(for notice: SavedSessionNotice) -> NoticeItem {
+        switch notice.id {
+        case "incomplete":
+            return NoticeItem(
+                id: notice.id,
+                severity: notice.severity,
+                title: "Incomplete save",
+                message: "Saved after an interrupted stop."
+            )
+        case "transcript-snapshot-warning":
+            return NoticeItem(
+                id: notice.id,
+                severity: notice.severity,
+                title: "Transcript snapshot",
+                message: "Saved transcript may be older than the final timeline."
+            )
+        case "snapshot-note":
+            return NoticeItem(
+                id: notice.id,
+                severity: notice.severity,
+                title: "No saved warnings",
+                message: "Saved transcript snapshot is available."
+            )
+        default:
+            if notice.id.hasPrefix("source-") {
+                return NoticeItem(
+                    id: notice.id,
+                    severity: notice.severity,
+                    title: "Input health",
+                    message: sanitizedSourceText(notice.message)
+                )
+            }
+
+            return NoticeItem(
+                id: notice.id,
+                severity: notice.severity,
+                title: sanitizedSourceText(notice.title),
+                message: sanitizedSourceText(notice.message)
+            )
+        }
+    }
+
+    private static func compactSourceHealthItem(for status: SourcePipelineStatus, index: Int) -> SourceHealthItem {
+        let title: String
+        let message: String
+
+        switch status.state {
+        case .ready:
+            title = "Input ready"
+            message = "Saved without warning."
+        case .blocked:
+            title = "Input blocked"
+            message = "One saved input was unavailable during recording."
+        case .monitoring:
+            title = "Input needs review"
+            message = "One saved input reported a recoverable capture warning."
+        case .degraded:
+            title = "Input degraded"
+            message = "One saved input continued with reduced capture health."
+        }
+
+        return SourceHealthItem(
+            id: "\(status.state.rawValue)-\(index)",
+            state: status.state,
+            title: title,
+            message: message
+        )
+    }
+
+    private static func sanitizedSourceText(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "Meeting source", with: "Input")
+            .replacingOccurrences(of: "Me source", with: "Input")
+            .replacingOccurrences(of: "Meeting", with: "Input")
+            .replacingOccurrences(of: "Me was", with: "Input was")
+            .replacingOccurrences(of: "Me is", with: "Input is")
     }
 }
 
@@ -370,17 +492,17 @@ struct SessionDetailView: View {
 
     @ViewBuilder
     private var noticesSection: some View {
-        if !viewModel.savedSessionNotices.isEmpty {
+        if !viewModel.compactNoticeItems.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 sectionHeader("Notices")
                     .padding(.bottom, 8)
 
                 HairlineDivider()
 
-                ForEach(Array(viewModel.savedSessionNotices.enumerated()), id: \.element.id) { index, notice in
+                ForEach(Array(viewModel.compactNoticeItems.enumerated()), id: \.element.id) { index, notice in
                     compactNoticeRow(notice)
 
-                    if index < viewModel.savedSessionNotices.count - 1 {
+                    if index < viewModel.compactNoticeItems.count - 1 {
                         HairlineDivider()
                     }
                 }
@@ -390,17 +512,17 @@ struct SessionDetailView: View {
 
     @ViewBuilder
     private var sourceHealthSection: some View {
-        if !viewModel.sourceStatuses.isEmpty {
+        if !viewModel.compactSourceHealthItems.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 sectionHeader("Input Health")
                     .padding(.bottom, 8)
 
                 HairlineDivider()
 
-                ForEach(Array(viewModel.sourceStatuses.enumerated()), id: \.element.id) { index, status in
-                    compactSourceHealthRow(status, index: index)
+                ForEach(Array(viewModel.compactSourceHealthItems.enumerated()), id: \.element.id) { index, status in
+                    compactSourceHealthRow(status)
 
-                    if index < viewModel.sourceStatuses.count - 1 {
+                    if index < viewModel.compactSourceHealthItems.count - 1 {
                         HairlineDivider()
                     }
                 }
@@ -433,7 +555,7 @@ struct SessionDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func compactNoticeRow(_ notice: SavedSessionNotice) -> some View {
+    private func compactNoticeRow(_ notice: SessionDetailViewModel.NoticeItem) -> some View {
         HStack(alignment: .top, spacing: 8) {
             StatusDot(color: noticeColor(for: notice.severity))
                 .padding(.top, 4)
@@ -455,18 +577,18 @@ struct SessionDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func compactSourceHealthRow(_ status: SourcePipelineStatus, index: Int) -> some View {
+    private func compactSourceHealthRow(_ status: SessionDetailViewModel.SourceHealthItem) -> some View {
         HStack(alignment: .top, spacing: 8) {
             StatusDot(color: color(for: status.state))
                 .padding(.top, 4)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("Input \(index + 1)")
+                Text(status.title)
                     .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
                     .tracking(MeetlessDesignTokens.Typography.letterSpacing)
                     .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
 
-                Text(sourceHealthText(for: status))
+                Text(status.message)
                     .font(MeetlessDesignTokens.Typography.caption)
                     .tracking(MeetlessDesignTokens.Typography.letterSpacing)
                     .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
@@ -475,22 +597,6 @@ struct SessionDetailView: View {
         }
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func sourceHealthText(for status: SourcePipelineStatus) -> String {
-        let stateText: String
-        switch status.state {
-        case .ready:
-            stateText = "Ready"
-        case .blocked:
-            stateText = "Blocked"
-        case .monitoring:
-            stateText = "Monitoring"
-        case .degraded:
-            stateText = "Degraded"
-        }
-
-        return "\(stateText): \(status.detail)"
     }
 
     private func messageState(title: String, icon: String, body: String) -> some View {

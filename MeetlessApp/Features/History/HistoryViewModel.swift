@@ -21,7 +21,7 @@ final class HistoryViewModel: ObservableObject {
 
             let trimmedPreview = summary.transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines)
             transcriptPreview = trimmedPreview.isEmpty
-                ? "No committed transcript preview was captured for this saved session yet."
+                ? "No transcript preview"
                 : trimmedPreview
 
             statusLabel = summary.isIncomplete ? "Incomplete" : nil
@@ -46,6 +46,40 @@ final class HistoryViewModel: ObservableObject {
 
         var hasWarningState: Bool {
             statusLabel != nil || !warningNotices.isEmpty
+        }
+
+        var rowSubtitleText: String {
+            if let statusLabel {
+                return "\(statusLabel): saved after interrupted stop"
+            }
+
+            if let firstWarning = warningNotices.first {
+                return Self.compactWarningText(for: firstWarning)
+            }
+
+            return transcriptPreview
+        }
+
+        private static func compactWarningText(for notice: SavedSessionNotice) -> String {
+            switch notice.id {
+            case "transcript-snapshot-warning":
+                return "Warning: transcript snapshot may be older"
+            default:
+                if notice.id.hasPrefix("source-") {
+                    return "Warning: input health needs review"
+                }
+
+                return "Warning: \(sanitizedSourceText(notice.title))"
+            }
+        }
+
+        private static func sanitizedSourceText(_ text: String) -> String {
+            text
+                .replacingOccurrences(of: "Meeting source", with: "Input")
+                .replacingOccurrences(of: "Me source", with: "Input")
+                .replacingOccurrences(of: "Meeting", with: "Input")
+                .replacingOccurrences(of: "Me was", with: "Input was")
+                .replacingOccurrences(of: "Me is", with: "Input is")
         }
 
         private static let startedAtFormatter: DateFormatter = {
