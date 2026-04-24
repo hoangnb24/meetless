@@ -153,28 +153,50 @@ struct SessionDetailView: View {
 
                 content
 
-                HStack(spacing: 12) {
-                    Button("Back To History", action: onBackToHistory)
-                        .buttonStyle(.borderedProminent)
-
-                    if viewModel.canDelete {
-                        Button(role: .destructive) {
-                            isPresentingDeleteConfirmation = true
-                        } label: {
-                            Label("Delete Session", systemImage: "trash")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
+                detailActions
             }
-            .padding(32)
-            .frame(maxWidth: 1100, alignment: .leading)
+            .frame(maxWidth: 960, alignment: .leading)
         }
         .alert("Delete saved session?", isPresented: $isPresentingDeleteConfirmation) {
             Button("Delete", role: .destructive, action: onDeleteSession)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes the local session bundle, transcript snapshot, and raw audio artifacts from Meetless.")
+        }
+    }
+
+    private var detailActions: some View {
+        ViewThatFits(in: .horizontal) {
+            detailActionsRow
+
+            VStack(alignment: .leading, spacing: 10) {
+                backToHistoryButton
+                deleteSessionButton
+            }
+        }
+    }
+
+    private var detailActionsRow: some View {
+        HStack(spacing: 12) {
+            backToHistoryButton
+            deleteSessionButton
+        }
+    }
+
+    private var backToHistoryButton: some View {
+        Button("Back To History", action: onBackToHistory)
+            .buttonStyle(.borderedProminent)
+    }
+
+    @ViewBuilder
+    private var deleteSessionButton: some View {
+        if viewModel.canDelete {
+            Button(role: .destructive) {
+                isPresentingDeleteConfirmation = true
+            } label: {
+                Label("Delete Session", systemImage: "trash")
+            }
+            .buttonStyle(.bordered)
         }
     }
 
@@ -237,14 +259,17 @@ struct SessionDetailView: View {
                 LazyVStack(spacing: 14) {
                     ForEach(viewModel.transcriptRows) { row in
                         VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Label(row.source.rawValue, systemImage: row.source == .meeting ? "person.2.wave.2" : "person.wave.2")
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(sourceColor(for: row.source))
-                                Spacer()
-                                Text(row.timeRangeText)
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
+                            ViewThatFits(in: .horizontal) {
+                                HStack {
+                                    transcriptSourceLabel(row)
+                                    Spacer()
+                                    transcriptTimeRange(row)
+                                }
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    transcriptSourceLabel(row)
+                                    transcriptTimeRange(row)
+                                }
                             }
 
                             Text(row.text)
@@ -262,6 +287,18 @@ struct SessionDetailView: View {
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func transcriptSourceLabel(_ row: SessionDetailViewModel.TranscriptRow) -> some View {
+        Label(row.source.rawValue, systemImage: row.source == .meeting ? "person.2.wave.2" : "person.wave.2")
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(sourceColor(for: row.source))
+    }
+
+    private func transcriptTimeRange(_ row: SessionDetailViewModel.TranscriptRow) -> some View {
+        Text(row.timeRangeText)
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
     }
 
     private var savedSessionNoticeCard: some View {

@@ -23,8 +23,7 @@ struct HistoryView: View {
 
                 rowContractCard
             }
-            .padding(32)
-            .frame(maxWidth: 1100, alignment: .leading)
+            .frame(maxWidth: 960, alignment: .leading)
         }
         .alert("Delete saved session?", isPresented: deleteConfirmationBinding, presenting: pendingDeleteRow) { row in
             Button("Delete", role: .destructive) {
@@ -87,14 +86,17 @@ struct HistoryView: View {
 
     private var sessionListCard: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Label("Local session bundles", systemImage: "externaldrive.badge.checkmark")
-                    .font(.headline)
-                Spacer()
-                Button("Reload", action: onReload)
-                    .buttonStyle(.bordered)
-                Button("Back To Home", action: onBackHome)
-                    .buttonStyle(.borderedProminent)
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    sessionListTitle
+                    Spacer()
+                    sessionListActions
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    sessionListTitle
+                    sessionListActionsVertical
+                }
             }
 
             Text("History stays browse-only in v1. Search, filters, and playback are still intentionally absent.")
@@ -115,6 +117,35 @@ struct HistoryView: View {
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private var sessionListTitle: some View {
+        Label("Local session bundles", systemImage: "externaldrive.badge.checkmark")
+            .font(.headline)
+    }
+
+    private var sessionListActions: some View {
+        HStack(spacing: 12) {
+            reloadButton
+            backHomeButton
+        }
+    }
+
+    private var sessionListActionsVertical: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            reloadButton
+            backHomeButton
+        }
+    }
+
+    private var reloadButton: some View {
+        Button("Reload", action: onReload)
+            .buttonStyle(.bordered)
+    }
+
+    private var backHomeButton: some View {
+        Button("Back To Home", action: onBackHome)
+            .buttonStyle(.borderedProminent)
     }
 
     private var honestyCard: some View {
@@ -149,29 +180,18 @@ struct HistoryView: View {
 
     private func sessionRow(_ row: HistoryViewModel.Row) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(row.title)
-                        .font(.title3.weight(.semibold))
-                    Text(row.startedAtText)
-                        .foregroundStyle(.secondary)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                    sessionRowTitle(row)
+
+                    Spacer(minLength: 12)
+
+                    sessionRowStatus(row, alignment: .trailing, textAlignment: .trailing)
                 }
 
-                Spacer(minLength: 12)
-
-                VStack(alignment: .trailing, spacing: 8) {
-                    if let statusLabel = row.statusLabel {
-                        Text(statusLabel)
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.orange.opacity(0.16), in: Capsule())
-                            .foregroundStyle(Color.orange)
-                    }
-
-                    Text(row.durationText)
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 10) {
+                    sessionRowTitle(row)
+                    sessionRowStatus(row, alignment: .leading, textAlignment: .leading)
                 }
             }
 
@@ -203,6 +223,37 @@ struct HistoryView: View {
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    private func sessionRowTitle(_ row: HistoryViewModel.Row) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(row.title)
+                .font(.title3.weight(.semibold))
+            Text(row.startedAtText)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func sessionRowStatus(
+        _ row: HistoryViewModel.Row,
+        alignment: HorizontalAlignment,
+        textAlignment: TextAlignment
+    ) -> some View {
+        VStack(alignment: alignment, spacing: 8) {
+            if let statusLabel = row.statusLabel {
+                Text(statusLabel)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.orange.opacity(0.16), in: Capsule())
+                    .foregroundStyle(Color.orange)
+            }
+
+            Text(row.durationText)
+                .font(.headline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(textAlignment)
+        }
     }
 
     private func warningBanner(title: String, body: String) -> some View {
