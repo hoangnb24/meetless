@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var selectedScreen: AppScreen = .home
+    @Published private(set) var selectedScreen: AppScreen = .home
     @Published private(set) var selectedSessionID: String?
     @Published private(set) var selectedSessionDirectoryURL: URL?
 

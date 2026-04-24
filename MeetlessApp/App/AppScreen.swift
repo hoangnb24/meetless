@@ -7,12 +7,14 @@ enum AppScreen: String, CaseIterable, Identifiable {
 
     var id: Self { self }
 
+    static let primaryNavigationCases: [AppScreen] = [.home, .history]
+
     var title: String {
         switch self {
         case .home:
-            return "Home"
+            return "Record"
         case .history:
-            return "History"
+            return "Sessions"
         case .sessionDetail:
             return "Session Detail"
         }
@@ -21,9 +23,9 @@ enum AppScreen: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .home:
-            return "Recording-first launch surface"
+            return "Start and monitor recording"
         case .history:
-            return "Saved sessions land here later"
+            return "Browse saved sessions"
         case .sessionDetail:
             return "Transcript and metadata shell"
         }
