@@ -32,6 +32,22 @@ final class HistoryViewModel: ObservableObject {
             savedSessionNotices.filter { $0.severity == .warning }
         }
 
+        var compactStatusText: String {
+            if let statusLabel {
+                return statusLabel
+            }
+
+            if !warningNotices.isEmpty {
+                return "Warning"
+            }
+
+            return "Complete"
+        }
+
+        var hasWarningState: Bool {
+            statusLabel != nil || !warningNotices.isEmpty
+        }
+
         private static let startedAtFormatter: DateFormatter = {
             let formatter = DateFormatter()
             formatter.locale = Locale.autoupdatingCurrent
@@ -58,13 +74,6 @@ final class HistoryViewModel: ObservableObject {
     @Published private(set) var loadErrorMessage: String?
     @Published private(set) var actionMessage: String?
 
-    let rowFields = [
-        "Title",
-        "Date and time",
-        "Duration",
-        "Transcript preview"
-    ]
-
     var title: String {
         "Saved sessions"
     }
@@ -75,14 +84,14 @@ final class HistoryViewModel: ObservableObject {
         }
 
         if isLoading {
-            return "Meetless is reading the local session bundle directory so history stays file-backed instead of inventing a second storage path."
+            return "Reading local sessions."
         }
 
         if rows.isEmpty {
-            return "Completed and incomplete local bundles will appear here as a browse-only history list with the locked row contract."
+            return "No saved sessions yet."
         }
 
-        return "\(rows.count) saved session\(rows.count == 1 ? "" : "s") loaded from local bundle storage."
+        return "\(rows.count) saved session\(rows.count == 1 ? "" : "s")"
     }
 
     func showLoading() {

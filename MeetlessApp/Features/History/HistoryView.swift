@@ -9,22 +9,16 @@ struct HistoryView: View {
     @State private var pendingDeleteRow: HistoryViewModel.Row?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(viewModel.title)
-                        .font(.system(size: 32, weight: .semibold, design: .rounded))
-                    Text(viewModel.subtitle)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: 760, alignment: .leading)
-                }
+        VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
+            header
 
-                contentCard
-
-                rowContractCard
+            if let actionMessage = viewModel.actionMessage {
+                warningBanner(title: "Delete unavailable", body: actionMessage)
             }
-            .frame(maxWidth: 960, alignment: .leading)
+
+            content
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .alert("Delete saved session?", isPresented: deleteConfirmationBinding, presenting: pendingDeleteRow) { row in
             Button("Delete", role: .destructive) {
                 onDeleteSession(row)
@@ -35,243 +29,206 @@ struct HistoryView: View {
         }
     }
 
-    @ViewBuilder
-    private var contentCard: some View {
-        if viewModel.isLoading {
-            loadingCard
-        } else if viewModel.rows.isEmpty {
-            emptyStateCard
-        } else {
-            sessionListCard
-        }
-    }
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(viewModel.title)
+                .font(MeetlessDesignTokens.Typography.screenTitle)
+                .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
 
-    private var loadingCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ProgressView()
-                .controlSize(.large)
-            Text("Loading saved sessions")
-                .font(.headline)
-            Text("Meetless is scanning the local Application Support bundle directory and decoding saved session manifests.")
-                .foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                Button("Back To Home", action: onBackHome)
-                    .buttonStyle(.borderedProminent)
-                Button("Reload", action: onReload)
-                    .buttonStyle(.bordered)
+            Text(viewModel.subtitle)
+                .font(MeetlessDesignTokens.Typography.caption)
+                .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+
+            Spacer(minLength: 16)
+
+            Button(action: onReload) {
+                Label("Refresh", systemImage: "arrow.clockwise")
+                    .font(MeetlessDesignTokens.Typography.body.weight(.medium))
             }
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-    }
-
-    private var emptyStateCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label("No saved sessions yet", systemImage: "tray")
-                .font(.headline)
-            Text("Run a local recording and stop it once to create the first saved bundle. Meetless will then show it here with its title, time, duration, preview, and incomplete status if capture ended unexpectedly.")
-                .foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                Button("Back To Home", action: onBackHome)
-                    .buttonStyle(.borderedProminent)
-                Button("Reload", action: onReload)
-                    .buttonStyle(.bordered)
-            }
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-    }
-
-    private var sessionListCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ViewThatFits(in: .horizontal) {
-                HStack {
-                    sessionListTitle
-                    Spacer()
-                    sessionListActions
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    sessionListTitle
-                    sessionListActionsVertical
-                }
-            }
-
-            Text("History stays browse-only in v1. Search, filters, and playback are still intentionally absent.")
-                .foregroundStyle(.secondary)
-
-            honestyCard
-
-            if let actionMessage = viewModel.actionMessage {
-                warningBanner(title: "Delete unavailable", body: actionMessage)
-            }
-
-            LazyVStack(spacing: 14) {
-                ForEach(viewModel.rows) { row in
-                    sessionRow(row)
-                }
-            }
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-    }
-
-    private var sessionListTitle: some View {
-        Label("Local session bundles", systemImage: "externaldrive.badge.checkmark")
-            .font(.headline)
-    }
-
-    private var sessionListActions: some View {
-        HStack(spacing: 12) {
-            reloadButton
-            backHomeButton
-        }
-    }
-
-    private var sessionListActionsVertical: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            reloadButton
-            backHomeButton
-        }
-    }
-
-    private var reloadButton: some View {
-        Button("Reload", action: onReload)
             .buttonStyle(.bordered)
-    }
-
-    private var backHomeButton: some View {
-        Button("Back To Home", action: onBackHome)
-            .buttonStyle(.borderedProminent)
-    }
-
-    private var honestyCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Saved-session honesty", systemImage: "checkmark.shield")
-                .font(.headline)
-            Text("Meetless shows the saved transcript snapshot plus any warning markers that were written into the local bundle. If a bundle has no extra markers yet, the app stays limited to what the saved bundle recorded.")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            .controlSize(.small)
         }
-        .padding(18)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if viewModel.isLoading {
+            loadingState
+        } else if viewModel.rows.isEmpty {
+            emptyState
+        } else {
+            sessionTable
+        }
+    }
+
+    private var loadingState: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Loading saved sessions")
+                .font(MeetlessDesignTokens.Typography.body)
+                .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+        }
+        .padding(.vertical, 22)
+    }
+
+    private var emptyState: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "tray")
+                .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+            Text("No saved sessions yet")
+                .font(MeetlessDesignTokens.Typography.body)
+                .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+            Spacer()
+        }
+        .padding(.vertical, 22)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    private var rowContractCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Row contract")
-                .font(.headline)
+    private var sessionTable: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                tableHeader
 
-            ForEach(viewModel.rowFields, id: \.self) { field in
-                Label(field, systemImage: "checkmark.circle")
+                HairlineDivider()
+
+                ForEach(Array(viewModel.rows.enumerated()), id: \.element.id) { index, row in
+                    sessionRow(row)
+
+                    if index < viewModel.rows.count - 1 {
+                        HairlineDivider()
+                    }
+                }
             }
-
-            Text("Incomplete sessions remain in the same list instead of disappearing, so the saved bundle stays visible even when capture did not end cleanly.")
-                .foregroundStyle(.secondary)
         }
-        .padding(22)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var tableHeader: some View {
+        HStack(spacing: 12) {
+            columnLabel("Name")
+                .frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
+            columnLabel("Date")
+                .frame(width: 142, alignment: .leading)
+            columnLabel("Duration")
+                .frame(width: 82, alignment: .leading)
+            columnLabel("Status")
+                .frame(width: 94, alignment: .leading)
+            columnLabel("Action")
+                .frame(width: 132, alignment: .trailing)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 2)
+    }
+
+    private func columnLabel(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 10, weight: .semibold))
+            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+            .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
     }
 
     private func sessionRow(_ row: HistoryViewModel.Row) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 12) {
-                    sessionRowTitle(row)
+        HStack(alignment: .center, spacing: 12) {
+            sessionNameCell(row)
+                .frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
 
-                    Spacer(minLength: 12)
-
-                    sessionRowStatus(row, alignment: .trailing, textAlignment: .trailing)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    sessionRowTitle(row)
-                    sessionRowStatus(row, alignment: .leading, textAlignment: .leading)
-                }
-            }
-
-            Text(row.transcriptPreview)
-                .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-            ForEach(row.warningNotices) { notice in
-                warningBanner(title: notice.title, body: notice.message)
-            }
-
-            HStack(spacing: 12) {
-                Button(action: { onOpenSessionDetail(row) }) {
-                    Label("Open transcript snapshot", systemImage: "arrow.right.circle")
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button(role: .destructive) {
-                    pendingDeleteRow = row
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-    }
-
-    private func sessionRowTitle(_ row: HistoryViewModel.Row) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(row.title)
-                .font(.title3.weight(.semibold))
             Text(row.startedAtText)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func sessionRowStatus(
-        _ row: HistoryViewModel.Row,
-        alignment: HorizontalAlignment,
-        textAlignment: TextAlignment
-    ) -> some View {
-        VStack(alignment: alignment, spacing: 8) {
-            if let statusLabel = row.statusLabel {
-                Text(statusLabel)
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.orange.opacity(0.16), in: Capsule())
-                    .foregroundStyle(Color.orange)
-            }
+                .font(MeetlessDesignTokens.Typography.caption)
+                .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                .lineLimit(2)
+                .frame(width: 142, alignment: .leading)
 
             Text(row.durationText)
-                .font(.headline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(textAlignment)
+                .font(MeetlessDesignTokens.Typography.caption.weight(.medium))
+                .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                .frame(width: 82, alignment: .leading)
+
+            statusPill(row)
+                .frame(width: 94, alignment: .leading)
+
+            actionButtons(row)
+                .frame(width: 132, alignment: .trailing)
+        }
+        .padding(.vertical, 11)
+        .padding(.horizontal, 2)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func sessionNameCell(_ row: HistoryViewModel.Row) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(row.title)
+                .font(MeetlessDesignTokens.Typography.body.weight(.medium))
+                .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                .lineLimit(1)
+
+            Text(row.transcriptPreview)
+                .font(MeetlessDesignTokens.Typography.caption)
+                .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                .lineLimit(1)
+        }
+    }
+
+    private func statusPill(_ row: HistoryViewModel.Row) -> some View {
+        HStack(spacing: 5) {
+            StatusDot(
+                color: row.hasWarningState
+                    ? MeetlessDesignTokens.Colors.warningAmber
+                    : MeetlessDesignTokens.Colors.successGreen
+            )
+            Text(row.compactStatusText)
+                .font(MeetlessDesignTokens.Typography.caption.weight(.medium))
+                .foregroundStyle(
+                    row.hasWarningState
+                        ? MeetlessDesignTokens.Colors.warningAmber
+                        : MeetlessDesignTokens.Colors.secondaryText
+                )
+                .lineLimit(1)
+        }
+    }
+
+    private func actionButtons(_ row: HistoryViewModel.Row) -> some View {
+        HStack(spacing: 6) {
+            Button(action: { onOpenSessionDetail(row) }) {
+                Label("Detail", systemImage: "doc.text")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Button(role: .destructive) {
+                pendingDeleteRow = row
+            } label: {
+                Label("Delete", systemImage: "trash")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .accessibilityLabel("Delete \(row.title)")
         }
     }
 
     private func warningBanner(title: String, body: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(Color.orange)
+                .foregroundStyle(MeetlessDesignTokens.Colors.warningAmber)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(MeetlessDesignTokens.Typography.body.weight(.semibold))
                 Text(body)
-                    .foregroundStyle(.secondary)
+                    .font(MeetlessDesignTokens.Typography.caption)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
         }
-        .padding(16)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(
+            MeetlessDesignTokens.Colors.warningAmber.opacity(0.1),
+            in: RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
+        )
     }
 
     private var deleteConfirmationBinding: Binding<Bool> {
