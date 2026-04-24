@@ -26,7 +26,20 @@ final class SessionDetailViewModel: ObservableObject {
     @Published private(set) var actionMessage: String?
 
     var transcriptEmptyMessage: String {
-        "This saved session does not contain any committed transcript chunks in its persisted snapshot yet."
+        "No transcript chunks were saved for this session."
+    }
+
+    var compactMetadataLine: String {
+        let preferredIDs = ["state", "started", "duration"]
+        let values = preferredIDs.compactMap { id in
+            metadataItems.first(where: { $0.id == id })?.value
+        }
+
+        guard !values.isEmpty else {
+            return subtitle
+        }
+
+        return values.joined(separator: " / ")
     }
 
     var canDelete: Bool {
@@ -141,22 +154,11 @@ struct SessionDetailView: View {
     @State private var isPresentingDeleteConfirmation = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(viewModel.title)
-                        .font(.system(size: 32, weight: .semibold, design: .rounded))
-                    Text(viewModel.subtitle)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: 760, alignment: .leading)
-                }
-
-                content
-
-                detailActions
-            }
-            .frame(maxWidth: 960, alignment: .leading)
+        VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
+            header
+            content
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .alert("Delete saved session?", isPresented: $isPresentingDeleteConfirmation) {
             Button("Delete", role: .destructive, action: onDeleteSession)
             Button("Cancel", role: .cancel) {}
@@ -165,27 +167,41 @@ struct SessionDetailView: View {
         }
     }
 
-    private var detailActions: some View {
-        ViewThatFits(in: .horizontal) {
-            detailActionsRow
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(viewModel.title)
+                    .font(MeetlessDesignTokens.Typography.screenTitle)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                    .lineLimit(1)
 
-            VStack(alignment: .leading, spacing: 10) {
-                backToHistoryButton
-                deleteSessionButton
+                Text(viewModel.compactMetadataLine)
+                    .font(MeetlessDesignTokens.Typography.caption)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                    .lineLimit(1)
             }
+
+            Spacer(minLength: 16)
+
+            detailActionsRow
         }
     }
 
     private var detailActionsRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             backToHistoryButton
             deleteSessionButton
         }
     }
 
     private var backToHistoryButton: some View {
-        Button("Back To History", action: onBackToHistory)
-            .buttonStyle(.borderedProminent)
+        Button(action: onBackToHistory) {
+            Label("Back", systemImage: "chevron.left")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
     }
 
     @ViewBuilder
@@ -194,257 +210,354 @@ struct SessionDetailView: View {
             Button(role: .destructive) {
                 isPresentingDeleteConfirmation = true
             } label: {
-                Label("Delete Session", systemImage: "trash")
+                Label("Delete", systemImage: "trash")
             }
             .buttonStyle(.bordered)
+            .controlSize(.small)
         }
     }
 
     @ViewBuilder
     private var content: some View {
         if viewModel.isLoading {
-            loadingCard
+            loadingState
         } else if let errorMessage = viewModel.errorMessage {
-            messageCard(
+            messageState(
                 title: "Saved session unavailable",
                 icon: "exclamationmark.triangle",
                 body: errorMessage
             )
         } else if viewModel.metadataItems.isEmpty && viewModel.transcriptRows.isEmpty && viewModel.sourceStatuses.isEmpty {
-            messageCard(
+            messageState(
                 title: "No session selected",
                 icon: "text.document",
-                body: "Choose a row from Saved Sessions to open the exact persisted transcript snapshot and metadata here."
+                body: "Choose a row from Saved Sessions to open its transcript and metadata."
             )
         } else {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
                 if let actionMessage = viewModel.actionMessage {
-                    messageCard(
+                    warningBanner(
                         title: "Delete unavailable",
-                        icon: "exclamationmark.triangle",
                         body: actionMessage
                     )
                 }
-                savedSessionNoticeCard
-                transcriptCard
-                metadataCard
-                sourceHealthCard
+
+                readingLayout
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
-    private var loadingCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+    private var loadingState: some View {
+        HStack(spacing: 10) {
             ProgressView()
-                .controlSize(.large)
+                .controlSize(.small)
             Text("Loading saved session detail")
-                .font(.headline)
-            Text("Meetless is reading the transcript snapshot and saved metadata from the selected local bundle.")
-                .foregroundStyle(.secondary)
+                .font(MeetlessDesignTokens.Typography.body)
+                .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .padding(.vertical, 22)
     }
 
-    private var transcriptCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Label("Transcript snapshot", systemImage: "text.quote")
-                .font(.headline)
+    private var readingLayout: some View {
+        HStack(alignment: .top, spacing: MeetlessDesignTokens.Layout.largeGap) {
+            transcriptPane
+                .frame(minWidth: 360, maxWidth: .infinity, alignment: .topLeading)
 
-            if viewModel.transcriptRows.isEmpty {
-                Text(viewModel.transcriptEmptyMessage)
-                    .foregroundStyle(.secondary)
-            } else {
-                LazyVStack(spacing: 14) {
-                    ForEach(viewModel.transcriptRows) { row in
-                        VStack(alignment: .leading, spacing: 10) {
-                            ViewThatFits(in: .horizontal) {
-                                HStack {
-                                    transcriptSourceLabel(row)
-                                    Spacer()
-                                    transcriptTimeRange(row)
-                                }
+            HairlineDivider(.vertical)
 
-                                VStack(alignment: .leading, spacing: 6) {
-                                    transcriptSourceLabel(row)
-                                    transcriptTimeRange(row)
-                                }
-                            }
+            metadataRail
+                .frame(width: 240, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
 
-                            Text(row.text)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(16)
-                                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        }
-                        .padding(18)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    }
+    private var transcriptPane: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("Transcript")
+                .padding(.bottom, 8)
+
+            HairlineDivider()
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    transcriptRowsContent
                 }
             }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
-    private func transcriptSourceLabel(_ row: SessionDetailViewModel.TranscriptRow) -> some View {
-        Label(row.source.rawValue, systemImage: row.source == .meeting ? "person.2.wave.2" : "person.wave.2")
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(sourceColor(for: row.source))
-    }
+    @ViewBuilder
+    private var transcriptRowsContent: some View {
+        if viewModel.transcriptRows.isEmpty {
+            emptyTranscriptState
+                .padding(.vertical, 14)
+        } else {
+            ForEach(Array(viewModel.transcriptRows.enumerated()), id: \.element.id) { index, row in
+                transcriptRow(row)
 
-    private func transcriptTimeRange(_ row: SessionDetailViewModel.TranscriptRow) -> some View {
-        Text(row.timeRangeText)
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-    }
-
-    private var savedSessionNoticeCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Label("Saved-session honesty", systemImage: "checkmark.shield")
-                .font(.headline)
-
-            ForEach(viewModel.savedSessionNotices) { notice in
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: noticeIcon(for: notice.severity))
-                        .foregroundStyle(noticeColor(for: notice.severity))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(notice.title)
-                            .font(.subheadline.weight(.semibold))
-                        Text(notice.message)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer()
+                if index < viewModel.transcriptRows.count - 1 {
+                    HairlineDivider()
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(noticeColor(for: notice.severity).opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
-    private var metadataCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Label("Session metadata", systemImage: "calendar")
-                .font(.headline)
+    private var emptyTranscriptState: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), alignment: .leading)], alignment: .leading, spacing: 14) {
-                ForEach(viewModel.metadataItems) { item in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(item.label)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(item.value)
-                            .font(.body.weight(.medium))
-                    }
-                    .padding(16)
+            Text(viewModel.transcriptEmptyMessage)
+                .font(MeetlessDesignTokens.Typography.body)
+                .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func transcriptRow(_ row: SessionDetailViewModel.TranscriptRow) -> some View {
+        Grid(alignment: .topLeading, horizontalSpacing: 14, verticalSpacing: 0) {
+            GridRow {
+                Text(row.timeRangeText)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+                    .frame(width: 76, alignment: .leading)
+                    .padding(.top, 1)
+
+                Text(row.text)
+                    .font(MeetlessDesignTokens.Typography.body)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+        }
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(row.timeRangeText), \(row.text)")
+    }
+
+    private var metadataRail: some View {
+        VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
+            metadataSection
+            noticesSection
+            sourceHealthSection
+        }
+    }
+
+    private var metadataSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("Metadata")
+                .padding(.bottom, 8)
+
+            HairlineDivider()
+
+            ForEach(Array(viewModel.metadataItems.enumerated()), id: \.element.id) { index, item in
+                labelValueRow(label: item.label, value: item.value)
+
+                if index < viewModel.metadataItems.count - 1 {
+                    HairlineDivider()
                 }
             }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
-    private var sourceHealthCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Label("Saved source health", systemImage: "waveform.badge.exclamationmark")
-                .font(.headline)
+    @ViewBuilder
+    private var noticesSection: some View {
+        if !viewModel.savedSessionNotices.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                sectionHeader("Notices")
+                    .padding(.bottom, 8)
 
-            ForEach(viewModel.sourceStatuses) { status in
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: icon(for: status.state))
-                        .foregroundStyle(color(for: status.state))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(status.source.rawValue)
-                            .font(.subheadline.weight(.semibold))
-                        Text(status.detail)
-                            .foregroundStyle(.secondary)
+                HairlineDivider()
+
+                ForEach(Array(viewModel.savedSessionNotices.enumerated()), id: \.element.id) { index, notice in
+                    compactNoticeRow(notice)
+
+                    if index < viewModel.savedSessionNotices.count - 1 {
+                        HairlineDivider()
                     }
-                    Spacer()
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
-    private func messageCard(title: String, icon: String, body: String) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label(title, systemImage: icon)
-                .font(.headline)
+    @ViewBuilder
+    private var sourceHealthSection: some View {
+        if !viewModel.sourceStatuses.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                sectionHeader("Input Health")
+                    .padding(.bottom, 8)
 
-            Text(body)
-                .foregroundStyle(.secondary)
+                HairlineDivider()
+
+                ForEach(Array(viewModel.sourceStatuses.enumerated()), id: \.element.id) { index, status in
+                    compactSourceHealthRow(status, index: index)
+
+                    if index < viewModel.sourceStatuses.count - 1 {
+                        HairlineDivider()
+                    }
+                }
+            }
+        }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.system(size: 10, weight: .semibold))
+            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+            .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+    }
+
+    private func labelValueRow(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(MeetlessDesignTokens.Typography.caption)
+                .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                .lineLimit(1)
+
+            Text(value)
+                .font(MeetlessDesignTokens.Typography.body.weight(.medium))
+                .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func sourceColor(for source: RecordingSourceKind) -> Color {
-        switch source {
-        case .meeting:
-            return .blue
-        case .me:
-            return .green
+    private func compactNoticeRow(_ notice: SavedSessionNotice) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            StatusDot(color: noticeColor(for: notice.severity))
+                .padding(.top, 4)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(notice.title)
+                    .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+
+                Text(notice.message)
+                    .font(MeetlessDesignTokens.Typography.caption)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func compactSourceHealthRow(_ status: SourcePipelineStatus, index: Int) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            StatusDot(color: color(for: status.state))
+                .padding(.top, 4)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Input \(index + 1)")
+                    .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+
+                Text(sourceHealthText(for: status))
+                    .font(MeetlessDesignTokens.Typography.caption)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func sourceHealthText(for status: SourcePipelineStatus) -> String {
+        let stateText: String
+        switch status.state {
+        case .ready:
+            stateText = "Ready"
+        case .blocked:
+            stateText = "Blocked"
+        case .monitoring:
+            stateText = "Monitoring"
+        case .degraded:
+            stateText = "Degraded"
+        }
+
+        return "\(stateText): \(status.detail)"
+    }
+
+    private func messageState(title: String, icon: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(MeetlessDesignTokens.Typography.body.weight(.semibold))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                Text(body)
+                    .font(MeetlessDesignTokens.Typography.caption)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func warningBanner(title: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(MeetlessDesignTokens.Colors.warningAmber)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(MeetlessDesignTokens.Typography.body.weight(.semibold))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                Text(body)
+                    .font(MeetlessDesignTokens.Typography.caption)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            MeetlessDesignTokens.Colors.warningAmber.opacity(0.1),
+            in: RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
+        )
     }
 
     private func color(for state: SourcePipelineState) -> Color {
         switch state {
         case .ready:
-            return .blue
+            return MeetlessDesignTokens.Colors.successGreen
         case .blocked:
-            return .orange
+            return MeetlessDesignTokens.Colors.warningAmber
         case .monitoring:
-            return .orange
+            return MeetlessDesignTokens.Colors.warningAmber
         case .degraded:
-            return .red
-        }
-    }
-
-    private func icon(for state: SourcePipelineState) -> String {
-        switch state {
-        case .ready:
-            return "checkmark.circle"
-        case .blocked:
-            return "lock.trianglebadge.exclamationmark"
-        case .monitoring:
-            return "waveform"
-        case .degraded:
-            return "exclamationmark.triangle"
+            return MeetlessDesignTokens.Colors.recordingRed
         }
     }
 
     private func noticeColor(for severity: SavedSessionNoticeSeverity) -> Color {
         switch severity {
         case .info:
-            return .blue
+            return MeetlessDesignTokens.Colors.successGreen
         case .warning:
-            return .orange
-        }
-    }
-
-    private func noticeIcon(for severity: SavedSessionNoticeSeverity) -> String {
-        switch severity {
-        case .info:
-            return "info.circle"
-        case .warning:
-            return "exclamationmark.triangle"
+            return MeetlessDesignTokens.Colors.warningAmber
         }
     }
 }
