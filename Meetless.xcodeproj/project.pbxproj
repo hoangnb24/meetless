@@ -12,6 +12,10 @@
 		2F7F743C08B880C05C998769 /* HomeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB7B30A07CFD9AA5A7AE24F3 /* HomeViewModel.swift */; };
 		32F7B6BFBA0047C2A51A21DC /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = C8870BE1DD1E36ED6A4E19F9 /* README.md */; };
 		378B70D0C53F4FD1073A5DDB /* WhisperSourceWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 072A1ADF9625E85575F11AEA /* WhisperSourceWorker.swift */; };
+		AACE20010000000000000001 /* MeetlessDesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = AACE20110000000000000005 /* MeetlessDesignTokens.swift */; };
+		AACE20020000000000000002 /* StatusDot.swift in Sources */ = {isa = PBXBuildFile; fileRef = AACE20120000000000000006 /* StatusDot.swift */; };
+		AACE20030000000000000003 /* LocalStatusFooter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AACE20130000000000000007 /* LocalStatusFooter.swift */; };
+		AACE20040000000000000004 /* ShellPrimitives.swift in Sources */ = {isa = PBXBuildFile; fileRef = AACE20140000000000000008 /* ShellPrimitives.swift */; };
 		4A9819D30DD3D6215354AB05 /* RecordingPermissionGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 936CBCFE8E3D948BBDBA30D9 /* RecordingPermissionGate.swift */; };
 		5308762956E0E1DD87356813 /* jfk.wav in Resources */ = {isa = PBXBuildFile; fileRef = F1A74CE2465E124E032F2617 /* jfk.wav */; };
 		66FC4B54249F03A6D06B4578 /* MeetlessRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9654C365C07C889D7036B160 /* MeetlessRootView.swift */; };
@@ -68,6 +72,10 @@
 		1682F1BBC508055F07E04BDE /* WaveFileDecoder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WaveFileDecoder.swift; sourceTree = "<group>"; };
 		1BA7217B149AB521D10C84E2 /* whisper.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = wrapper.xcframework; name = whisper.xcframework; path = "Vendor/whisper.cpp/build-apple/whisper.xcframework"; sourceTree = "<group>"; };
 		1D486E8A24E5A703D09AE706 /* RecordingViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingViewModel.swift; sourceTree = "<group>"; };
+		AACE20110000000000000005 /* MeetlessDesignTokens.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MeetlessDesignTokens.swift; sourceTree = "<group>"; };
+		AACE20120000000000000006 /* StatusDot.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StatusDot.swift; sourceTree = "<group>"; };
+		AACE20130000000000000007 /* LocalStatusFooter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LocalStatusFooter.swift; sourceTree = "<group>"; };
+		AACE20140000000000000008 /* ShellPrimitives.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShellPrimitives.swift; sourceTree = "<group>"; };
 		44F29975EE3556201727500A /* WhisperBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WhisperBridge.swift; sourceTree = "<group>"; };
 		4692D9678E406F8BF70DAD19 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		1F9B5A8D4C7E21B300A4F911 /* CoreML.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreML.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/CoreML.framework; sourceTree = DEVELOPER_DIR; };
@@ -120,6 +128,7 @@
 			isa = PBXGroup;
 			children = (
 				963BCC353C577DEF8A4EBC57 /* App */,
+				AACE20210000000000000009 /* Design */,
 				4A6D967BBCC568BCC6A91E0E /* Features */,
 				290B4149A7D92B48C0F02BF4 /* Services */,
 				A2C4E6E731E5DFBC34B2BFEF /* Resources */,
@@ -161,6 +170,17 @@
 				696B46CFC4D76D1DFDC3CF7F /* Sources */,
 			);
 			path = WhisperCppBridge;
+			sourceTree = "<group>";
+		};
+		AACE20210000000000000009 /* Design */ = {
+			isa = PBXGroup;
+			children = (
+				AACE20110000000000000005 /* MeetlessDesignTokens.swift */,
+				AACE20120000000000000006 /* StatusDot.swift */,
+				AACE20130000000000000007 /* LocalStatusFooter.swift */,
+				AACE20140000000000000008 /* ShellPrimitives.swift */,
+			);
+			path = Design;
 			sourceTree = "<group>";
 		};
 		33C88D1985771B07B993AA19 /* Models */ = {
@@ -451,6 +471,10 @@
 				66FC4B54249F03A6D06B4578 /* MeetlessRootView.swift in Sources */,
 				C95B5B16C276506634F2E8CD /* AppModel.swift in Sources */,
 				F803F530D3CC9F658A96E2D9 /* AppScreen.swift in Sources */,
+				AACE20010000000000000001 /* MeetlessDesignTokens.swift in Sources */,
+				AACE20020000000000000002 /* StatusDot.swift in Sources */,
+				AACE20030000000000000003 /* LocalStatusFooter.swift in Sources */,
+				AACE20040000000000000004 /* ShellPrimitives.swift in Sources */,
 				A38A2D6A5603EA715DF59E1B /* HomeView.swift in Sources */,
 				2F7F743C08B880C05C998769 /* HomeViewModel.swift in Sources */,
 				ED05074EC426D89924D7124B /* RecordingStatusBanner.swift in Sources */,
