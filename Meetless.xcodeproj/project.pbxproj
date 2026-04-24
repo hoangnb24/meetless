@@ -12,6 +12,8 @@
 		2F7F743C08B880C05C998769 /* HomeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB7B30A07CFD9AA5A7AE24F3 /* HomeViewModel.swift */; };
 		32F7B6BFBA0047C2A51A21DC /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = C8870BE1DD1E36ED6A4E19F9 /* README.md */; };
 		378B70D0C53F4FD1073A5DDB /* WhisperSourceWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 072A1ADF9625E85575F11AEA /* WhisperSourceWorker.swift */; };
+		3E4B1A7C5D8F4290A6C3B102 /* WaveformMeterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4B1A7C5D8F4290A6C3B103 /* WaveformMeterView.swift */; };
+		3E4B1A7C5D8F4290A6C3B104 /* TranscriptRowsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4B1A7C5D8F4290A6C3B105 /* TranscriptRowsView.swift */; };
 		AACE20010000000000000001 /* MeetlessDesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = AACE20110000000000000005 /* MeetlessDesignTokens.swift */; };
 		AACE20020000000000000002 /* StatusDot.swift in Sources */ = {isa = PBXBuildFile; fileRef = AACE20120000000000000006 /* StatusDot.swift */; };
 		AACE20030000000000000003 /* LocalStatusFooter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AACE20130000000000000007 /* LocalStatusFooter.swift */; };
@@ -72,6 +74,8 @@
 		1682F1BBC508055F07E04BDE /* WaveFileDecoder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WaveFileDecoder.swift; sourceTree = "<group>"; };
 		1BA7217B149AB521D10C84E2 /* whisper.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = wrapper.xcframework; name = whisper.xcframework; path = "Vendor/whisper.cpp/build-apple/whisper.xcframework"; sourceTree = "<group>"; };
 		1D486E8A24E5A703D09AE706 /* RecordingViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingViewModel.swift; sourceTree = "<group>"; };
+		3E4B1A7C5D8F4290A6C3B103 /* WaveformMeterView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WaveformMeterView.swift; sourceTree = "<group>"; };
+		3E4B1A7C5D8F4290A6C3B105 /* TranscriptRowsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TranscriptRowsView.swift; sourceTree = "<group>"; };
 		AACE20110000000000000005 /* MeetlessDesignTokens.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MeetlessDesignTokens.swift; sourceTree = "<group>"; };
 		AACE20120000000000000006 /* StatusDot.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StatusDot.swift; sourceTree = "<group>"; };
 		AACE20130000000000000007 /* LocalStatusFooter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LocalStatusFooter.swift; sourceTree = "<group>"; };
@@ -310,6 +314,8 @@
 		B24AD881211C29AAC5B0BC51 /* Recording */ = {
 			isa = PBXGroup;
 			children = (
+				3E4B1A7C5D8F4290A6C3B103 /* WaveformMeterView.swift */,
+				3E4B1A7C5D8F4290A6C3B105 /* TranscriptRowsView.swift */,
 				E8A91B7C5F4E4319908443C4 /* RecordingStatusBanner.swift */,
 				1D486E8A24E5A703D09AE706 /* RecordingViewModel.swift */,
 			);
@@ -477,6 +483,8 @@
 				AACE20040000000000000004 /* ShellPrimitives.swift in Sources */,
 				A38A2D6A5603EA715DF59E1B /* HomeView.swift in Sources */,
 				2F7F743C08B880C05C998769 /* HomeViewModel.swift in Sources */,
+				3E4B1A7C5D8F4290A6C3B102 /* WaveformMeterView.swift in Sources */,
+				3E4B1A7C5D8F4290A6C3B104 /* TranscriptRowsView.swift in Sources */,
 				ED05074EC426D89924D7124B /* RecordingStatusBanner.swift in Sources */,
 				D6A39C88A614472F60C3D6B2 /* RecordingViewModel.swift in Sources */,
 				9F6C1BB8B429A86F1157B566 /* ScreenCaptureSession.swift in Sources */,
