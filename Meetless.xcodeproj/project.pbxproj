@@ -31,6 +31,8 @@
 		926A0D374E711E747FA19866 /* WhisperBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44F29975EE3556201727500A /* WhisperBridge.swift */; };
 		9F4606D5519994942F6A683E /* WaveFileDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1682F1BBC508055F07E04BDE /* WaveFileDecoder.swift */; };
 		9F6C1BB8B429A86F1157B566 /* ScreenCaptureSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D4B5AB38B720A1A1D40ED0E /* ScreenCaptureSession.swift */; };
+		A1C0A551E7D94E0C92A00001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1C0A552E7D94E0C92A00002 /* Assets.xcassets */; };
+		A1C0A553E7D94E0C92A00003 /* MeetlessIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = A1C0A554E7D94E0C92A00004 /* MeetlessIcon.icns */; };
 		A38A2D6A5603EA715DF59E1B /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F899578FD929857ED10FEF02 /* HomeView.swift */; };
 		B3E100000000000000000001 /* TranscriptCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E100000000000000000007 /* TranscriptCoordinatorTests.swift */; };
 		B3E100000000000000000002 /* SessionRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E100000000000000000008 /* SessionRepositoryTests.swift */; };
@@ -91,6 +93,9 @@
 		9654C365C07C889D7036B160 /* MeetlessRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MeetlessRootView.swift; sourceTree = "<group>"; };
 		9AC66603B410B1D420CC96A9 /* MeetlessApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MeetlessApp.swift; sourceTree = "<group>"; };
 		9D4B5AB38B720A1A1D40ED0E /* ScreenCaptureSession.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenCaptureSession.swift; sourceTree = "<group>"; };
+		A1C0A552E7D94E0C92A00002 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A1C0A554E7D94E0C92A00004 /* MeetlessIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = MeetlessIcon.icns; sourceTree = "<group>"; };
+		A1C0A555E7D94E0C92A00005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1981DFABC8B7B4AE27AD2FB /* Meetless.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Meetless.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B3E100000000000000000006 /* MeetlessTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeetlessTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B3E100000000000000000007 /* TranscriptCoordinatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TranscriptCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -136,6 +141,7 @@
 				4A6D967BBCC568BCC6A91E0E /* Features */,
 				290B4149A7D92B48C0F02BF4 /* Services */,
 				A2C4E6E731E5DFBC34B2BFEF /* Resources */,
+				A1C0A555E7D94E0C92A00005 /* Info.plist */,
 			);
 			path = MeetlessApp;
 			sourceTree = "<group>";
@@ -296,6 +302,8 @@
 		A2C4E6E731E5DFBC34B2BFEF /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				A1C0A552E7D94E0C92A00002 /* Assets.xcassets */,
+				A1C0A554E7D94E0C92A00004 /* MeetlessIcon.icns */,
 				C8870BE1DD1E36ED6A4E19F9 /* README.md */,
 				33C88D1985771B07B993AA19 /* Models */,
 				46E64F94477EC412F2C7011C /* Samples */,
@@ -450,6 +458,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1C0A551E7D94E0C92A00001 /* Assets.xcassets in Resources */,
+				A1C0A553E7D94E0C92A00003 /* MeetlessIcon.icns in Resources */,
 				32F7B6BFBA0047C2A51A21DC /* README.md in Resources */,
 				E885FC5266FF3A2573A0C1B8 /* ggml-tiny.en.bin in Resources */,
 				5308762956E0E1DD87356813 /* jfk.wav in Resources */,
@@ -514,7 +524,6 @@
 		1118CF63441DFD3A0AC9511D /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = MeetlessApp/Meetless.entitlements;
@@ -525,11 +534,8 @@
 				DEVELOPMENT_TEAM = 63M98WD275;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Meetless;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Meetless records your voice as the separate Me source while a meeting is in progress.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MeetlessApp/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -708,7 +714,6 @@
 		A988A0976A3F0EA89A02B1F8 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = MeetlessApp/Meetless.entitlements;
@@ -719,11 +724,8 @@
 				DEVELOPMENT_TEAM = 63M98WD275;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Meetless;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Meetless records your voice as the separate Me source while a meeting is in progress.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MeetlessApp/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
