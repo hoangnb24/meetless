@@ -806,7 +806,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         let snapshot = RecordingStatusSnapshot(
             phase: .recording,
             headline: "Recording session is live",
-            detail: "Meetless is capturing Meeting from ScreenCaptureKit system audio and Me from a voice-processed microphone lane, writing both source artifacts directly into the Application Support session bundle, and snapshotting committed transcript chunks as the local whisper workers finish them.",
+            detail: "Meetless is capturing Meeting from ScreenCaptureKit system audio and Me from ScreenCaptureKit microphone capture, writing both source artifacts directly into the Application Support session bundle, and snapshotting committed transcript chunks as the local whisper workers finish them.",
             latestEvent: capture.latestEvent,
             sourceStatuses: capture.sourceStatuses,
             repairActions: [],
@@ -921,7 +921,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
             detail = "One source degraded, but Meetless kept the surviving source alive and continues writing durable per-source PCM while preserving the committed transcript timeline."
         } else {
             headline = "Recording session is live"
-            detail = "Meeting comes from ScreenCaptureKit system audio while Me comes from a voice-processed microphone lane; both are normalized into 16 kHz mono PCM, written durably during the session, and merged into one committed transcript timeline."
+            detail = "Meeting comes from ScreenCaptureKit system audio while Me comes from ScreenCaptureKit microphone capture; both are normalized into 16 kHz mono PCM, written durably during the session, and merged into one committed transcript timeline."
         }
 
         let snapshot = RecordingStatusSnapshot(
