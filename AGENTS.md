@@ -1,3 +1,12 @@
+## Communication Preference
+
+  For findings, debugging, and implementation recommendations:
+  - Start with the plain-language conclusion.
+  - Explain what it means for the product/user before naming files or APIs.
+  - Keep code references secondary unless asked for deep detail.
+  - Prefer: Finding → Why → Next Step.
+  - Avoid long investigation summaries unless the user explicitly asks for a deep dive.
+
 <!-- KHUYM:START -->
 # Khuym Workflow
 

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-04-22T07:47:24.338Z",
+  "updated_at": "2026-04-24T12:42:52.856Z",
   "reservations": [
     {
       "id": "resv-mo9h1t2g-cjxcw7",
@@ -256,6 +256,398 @@
       "expires_at": "2026-04-22T08:41:09.984Z",
       "status": "released",
       "released_at": "2026-04-22T07:47:24.338Z",
+      "note": ""
+    },
+    {
+      "id": "resv-moa7lhya-syzqgj",
+      "agent": "Laplace",
+      "bead_id": "bd-28c",
+      "paths": [
+        "MeetlessApp/Services/SessionRepository/*"
+      ],
+      "created_at": "2026-04-22T15:30:08.290Z",
+      "updated_at": "2026-04-22T15:36:24.189Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T16:30:08.290Z",
+      "status": "released",
+      "released_at": "2026-04-22T15:36:24.189Z",
+      "note": ""
+    },
+    {
+      "id": "resv-moa7lhyg-4mszd8",
+      "agent": "Laplace",
+      "bead_id": "bd-28c",
+      "paths": [
+        "MeetlessApp/App/AppModel.swift"
+      ],
+      "created_at": "2026-04-22T15:30:08.296Z",
+      "updated_at": "2026-04-22T15:36:24.189Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T16:30:08.296Z",
+      "status": "released",
+      "released_at": "2026-04-22T15:36:24.189Z",
+      "note": ""
+    },
+    {
+      "id": "resv-moa7lhyk-qbuu1n",
+      "agent": "Laplace",
+      "bead_id": "bd-28c",
+      "paths": [
+        "MeetlessApp/Features/History/*"
+      ],
+      "created_at": "2026-04-22T15:30:08.300Z",
+      "updated_at": "2026-04-22T15:36:24.189Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T16:30:08.300Z",
+      "status": "released",
+      "released_at": "2026-04-22T15:36:24.189Z",
+      "note": ""
+    },
+    {
+      "id": "resv-moa7lhzc-aeoki8",
+      "agent": "Laplace",
+      "bead_id": "bd-28c",
+      "paths": [
+        "MeetlessApp/App/MeetlessRootView.swift"
+      ],
+      "created_at": "2026-04-22T15:30:08.328Z",
+      "updated_at": "2026-04-22T15:36:24.189Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T16:30:08.328Z",
+      "status": "released",
+      "released_at": "2026-04-22T15:36:24.189Z",
+      "note": ""
+    },
+    {
+      "id": "resv-moa7w1ey-kdinau",
+      "agent": "Boole",
+      "bead_id": "bd-2pg",
+      "paths": [
+        "MeetlessApp/App/*",
+        "MeetlessApp/Features/History/*",
+        "MeetlessApp/Features/SessionDetail/*",
+        "MeetlessApp/Services/SessionRepository/*"
+      ],
+      "created_at": "2026-04-22T15:38:20.074Z",
+      "updated_at": "2026-04-22T15:42:35.933Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T16:38:20.074Z",
+      "status": "released",
+      "released_at": "2026-04-22T15:42:35.933Z",
+      "note": ""
+    },
+    {
+      "id": "resv-moa84lwa-j10yu7",
+      "agent": "Lagrange",
+      "bead_id": "bd-a27",
+      "paths": [
+        "MeetlessApp/App/*",
+        "MeetlessApp/Features/History/*",
+        "MeetlessApp/Features/SessionDetail/*",
+        "MeetlessApp/Services/SessionRepository/*"
+      ],
+      "created_at": "2026-04-22T15:44:59.866Z",
+      "updated_at": "2026-04-22T15:51:56.087Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-22T16:44:59.866Z",
+      "status": "released",
+      "released_at": "2026-04-22T15:51:56.087Z",
+      "note": ""
+    },
+    {
+      "id": "resv-moayteg1-nzqd35",
+      "agent": "Kepler",
+      "bead_id": "bd-2ap",
+      "paths": [
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift"
+      ],
+      "created_at": "2026-04-23T04:12:06.625Z",
+      "updated_at": "2026-04-23T04:18:08.031Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-23T05:12:06.625Z",
+      "status": "released",
+      "released_at": "2026-04-23T04:18:08.031Z",
+      "note": ""
+    },
+    {
+      "id": "resv-moaz6v88-yvbd03",
+      "agent": "Euclid",
+      "bead_id": "bd-15x",
+      "paths": [
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift",
+        "MeetlessApp/Services/SessionRepository/SessionRepository.swift"
+      ],
+      "created_at": "2026-04-23T04:22:34.904Z",
+      "updated_at": "2026-04-23T04:25:49.190Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-23T05:22:34.904Z",
+      "status": "released",
+      "released_at": "2026-04-23T04:25:49.190Z",
+      "note": ""
+    },
+    {
+      "id": "resv-moazifpv-29amn0",
+      "agent": "Aristotle",
+      "bead_id": "bd-15x",
+      "paths": [
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift"
+      ],
+      "created_at": "2026-04-23T04:31:34.675Z",
+      "updated_at": "2026-04-23T04:32:26.011Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-23T05:31:34.675Z",
+      "status": "released",
+      "released_at": "2026-04-23T04:32:26.011Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mob38c72-6d3mqm",
+      "agent": "Bohr",
+      "bead_id": "bd-3sy",
+      "paths": [
+        "Meetless.xcodeproj/project.pbxproj",
+        "Meetless.xcodeproj/xcshareddata/xcschemes/Meetless.xcscheme",
+        "MeetlessTests/**",
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift"
+      ],
+      "created_at": "2026-04-23T06:15:42.014Z",
+      "updated_at": "2026-04-23T06:21:53.657Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-23T07:15:42.014Z",
+      "status": "released",
+      "released_at": "2026-04-23T06:21:53.657Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mob3ay33-xgmk8k",
+      "agent": "Bohr",
+      "bead_id": "bd-3sy",
+      "paths": [
+        "MeetlessApp/Services/SessionRepository/SessionRepository.swift"
+      ],
+      "created_at": "2026-04-23T06:17:43.695Z",
+      "updated_at": "2026-04-23T06:21:53.657Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-23T07:17:43.695Z",
+      "status": "released",
+      "released_at": "2026-04-23T06:21:53.657Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mob3k1d7-7q03g0",
+      "agent": "Laplace",
+      "bead_id": "bd-2w7",
+      "paths": [
+        "Meetless.xcodeproj/project.pbxproj",
+        "MeetlessApp/Meetless.entitlements"
+      ],
+      "created_at": "2026-04-23T06:24:47.851Z",
+      "updated_at": "2026-04-23T06:28:37.463Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-23T07:24:47.851Z",
+      "status": "released",
+      "released_at": "2026-04-23T06:28:37.463Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mob3law9-n0ojx9",
+      "agent": "Laplace",
+      "bead_id": "bd-2w7",
+      "paths": [
+        "MeetlessApp/App/MeetlessApp.swift"
+      ],
+      "created_at": "2026-04-23T06:25:46.857Z",
+      "updated_at": "2026-04-23T06:28:37.463Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-23T07:25:46.857Z",
+      "status": "released",
+      "released_at": "2026-04-23T06:28:37.463Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mob3sa4c-ugjy42",
+      "agent": "Turing",
+      "bead_id": "bd-1ov",
+      "paths": [
+        "MeetlessApp/Services/Capture/ScreenCaptureSession.swift",
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift",
+        "MeetlessApp/App/MeetlessApp.swift",
+        "MeetlessApp/Shared/Logging/PublicLogRedaction.swift",
+        "MeetlessTests/PublicLogRedactionTests.swift"
+      ],
+      "created_at": "2026-04-23T06:31:12.444Z",
+      "updated_at": "2026-04-23T06:33:59.001Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-23T07:31:12.444Z",
+      "status": "released",
+      "released_at": "2026-04-23T06:33:59.001Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mob3spbb-j8uz95",
+      "agent": "Turing",
+      "bead_id": "bd-1ov",
+      "paths": [
+        "MeetlessTests/SessionRepositoryTests.swift"
+      ],
+      "created_at": "2026-04-23T06:31:32.135Z",
+      "updated_at": "2026-04-23T06:33:59.001Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-23T07:31:32.135Z",
+      "status": "released",
+      "released_at": "2026-04-23T06:33:59.001Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mocilii3-yx941x",
+      "agent": "Schrodinger",
+      "bead_id": "bd-39f",
+      "paths": [
+        "MeetlessApp/App/MeetlessRootView.swift",
+        "MeetlessApp/App/AppModel.swift",
+        "MeetlessApp/App/AppScreen.swift"
+      ],
+      "created_at": "2026-04-24T06:13:37.131Z",
+      "updated_at": "2026-04-24T06:15:49.501Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-24T07:13:37.131Z",
+      "status": "released",
+      "released_at": "2026-04-24T06:15:49.501Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mociqz89-aknnjy",
+      "agent": "Fermat",
+      "bead_id": "bd-2ze",
+      "paths": [
+        "MeetlessApp/Design/MeetlessDesignTokens.swift",
+        "MeetlessApp/Design/StatusDot.swift",
+        "MeetlessApp/Design/LocalStatusFooter.swift",
+        "MeetlessApp/Design/ShellPrimitives.swift",
+        "MeetlessApp/App/MeetlessRootView.swift",
+        "Meetless.xcodeproj/project.pbxproj"
+      ],
+      "created_at": "2026-04-24T06:17:52.089Z",
+      "updated_at": "2026-04-24T06:21:00.006Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-24T07:17:52.089Z",
+      "status": "released",
+      "released_at": "2026-04-24T06:21:00.006Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mocixp2k-3f9xb6",
+      "agent": "Mendel",
+      "bead_id": "bd-2e1",
+      "paths": [
+        "MeetlessApp/Features/Home/HomeView.swift",
+        "MeetlessApp/Features/History/HistoryView.swift",
+        "MeetlessApp/Features/SessionDetail/SessionDetailView.swift"
+      ],
+      "created_at": "2026-04-24T06:23:05.516Z",
+      "updated_at": "2026-04-24T06:27:50.483Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-24T07:23:05.516Z",
+      "status": "released",
+      "released_at": "2026-04-24T06:27:50.483Z",
+      "note": ""
+    },
+    {
+      "id": "resv-moctx5js-vur0d1",
+      "agent": "Dewey",
+      "bead_id": "bd-1n3",
+      "paths": [
+        "MeetlessApp/Features/Home/**"
+      ],
+      "created_at": "2026-04-24T11:30:35.992Z",
+      "updated_at": "2026-04-24T11:33:15.950Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-24T12:30:35.992Z",
+      "status": "released",
+      "released_at": "2026-04-24T11:33:15.950Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mocu2bcb-toamku",
+      "agent": "Gibbs",
+      "bead_id": "bd-1zo",
+      "paths": [
+        "MeetlessApp/Features/Recording/WaveformMeterView.swift",
+        "MeetlessApp/Features/Recording/TranscriptRowsView.swift",
+        "Meetless.xcodeproj/project.pbxproj"
+      ],
+      "created_at": "2026-04-24T11:34:36.779Z",
+      "updated_at": "2026-04-24T11:36:51.269Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-24T12:34:36.779Z",
+      "status": "released",
+      "released_at": "2026-04-24T11:36:51.269Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mocu79ik-n6gc46",
+      "agent": "Curie",
+      "bead_id": "bd-2yh",
+      "paths": [
+        "MeetlessApp/Features/Recording/RecordingStatusBanner.swift",
+        "MeetlessApp/Features/Recording/ActiveRecordingPanel.swift",
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift",
+        "Meetless.xcodeproj/project.pbxproj"
+      ],
+      "created_at": "2026-04-24T11:38:27.692Z",
+      "updated_at": "2026-04-24T11:41:24.337Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-24T12:38:27.692Z",
+      "status": "released",
+      "released_at": "2026-04-24T11:41:24.337Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mocvip21-64a4so",
+      "agent": "Aquinas",
+      "bead_id": "bd-1h1",
+      "paths": [
+        "MeetlessApp/Features/History/HistoryView.swift",
+        "MeetlessApp/Features/History/HistoryViewModel.swift"
+      ],
+      "created_at": "2026-04-24T12:15:20.665Z",
+      "updated_at": "2026-04-24T12:22:33.110Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-24T13:15:20.665Z",
+      "status": "released",
+      "released_at": "2026-04-24T12:22:33.110Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mocvuiqy-poebwl",
+      "agent": "Aristotle",
+      "bead_id": "bd-31j",
+      "paths": [
+        "MeetlessApp/Features/SessionDetail/SessionDetailView.swift"
+      ],
+      "created_at": "2026-04-24T12:24:32.362Z",
+      "updated_at": "2026-04-24T12:28:36.320Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-24T13:24:32.362Z",
+      "status": "released",
+      "released_at": "2026-04-24T12:28:36.320Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mocwaqj8-rphxa4",
+      "agent": "Anscombe",
+      "bead_id": "bd-bxp",
+      "paths": [
+        "MeetlessApp/Features/History/HistoryView.swift",
+        "MeetlessApp/Features/History/HistoryViewModel.swift",
+        "MeetlessApp/Features/SessionDetail/SessionDetailView.swift"
+      ],
+      "created_at": "2026-04-24T12:37:08.948Z",
+      "updated_at": "2026-04-24T12:42:52.856Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-04-24T13:37:08.948Z",
+      "status": "released",
+      "released_at": "2026-04-24T12:42:52.856Z",
       "note": ""
     }
   ]

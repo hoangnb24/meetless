@@ -1,0 +1,390 @@
+{
+  "schema_version": "1.0",
+  "name": "Meetless Target UI Design",
+  "source_image": "target-ui-design.png",
+  "created_from": "Khuym UI/UX target mockup approved by user",
+  "product": {
+    "name": "Meetless",
+    "platform": "macOS",
+    "positioning": "local-first meeting recorder",
+    "tone": [
+      "minimal",
+      "professional",
+      "compact",
+      "calm",
+      "focused",
+      "trustworthy"
+    ]
+  },
+  "design_principles": [
+    "Use one consistent macOS shell across Record, Recording, Sessions, and Detail.",
+    "Prefer compact controls and sparse labels over explanatory content.",
+    "Show recording health through status indicators, timer, waveform, and primary actions.",
+    "Do not expose Meeting/Me source lanes in the primary UI.",
+    "Keep the local-first trust signal visible but quiet.",
+    "Use whitespace, alignment, and hairline separators instead of nested cards.",
+    "Prioritize fast scanning for daily repeated use."
+  ],
+  "visual_language": {
+    "inspiration": "Reference screenshot's soft gray sidebar, white reading surface, compact toolbar, calm typography, and subtle dividers.",
+    "density": "compact desktop utility",
+    "surface_style": "flat native macOS surfaces with minimal shadow",
+    "corner_radius": {
+      "window": 12,
+      "sidebar_selection": 6,
+      "button": 6,
+      "row": 6,
+      "panel": 8
+    },
+    "shadow": {
+      "window": "subtle macOS window shadow only",
+      "content": "avoid decorative shadows inside the app"
+    },
+    "dividers": "hairline separators between toolbar, sidebar, content sections, rows, and detail columns"
+  },
+  "color_tokens": {
+    "app_background": "#F4F5F6",
+    "window_background": "#FFFFFF",
+    "sidebar_background": "#F2F2F4",
+    "sidebar_selection": "#E4ECF8",
+    "primary_text": "#1F2328",
+    "secondary_text": "#66707A",
+    "tertiary_text": "#8A929A",
+    "separator": "#E5E7EB",
+    "primary_blue": "#256FE6",
+    "recording_red": "#E54842",
+    "success_green": "#55B96A",
+    "warning_amber": "#C98221",
+    "button_background": "#256FE6",
+    "button_text": "#FFFFFF",
+    "destructive_text": "#E54842"
+  },
+  "typography": {
+    "font_family": "system",
+    "letter_spacing": 0,
+    "scale": {
+      "window_title": {
+        "size": 15,
+        "weight": "semibold"
+      },
+      "screen_title": {
+        "size": 21,
+        "weight": "semibold"
+      },
+      "section_title": {
+        "size": 13,
+        "weight": "semibold"
+      },
+      "body": {
+        "size": 13,
+        "weight": "regular"
+      },
+      "caption": {
+        "size": 11,
+        "weight": "regular"
+      },
+      "timer": {
+        "size": 30,
+        "weight": "regular",
+        "monospaced_digits": true
+      }
+    }
+  },
+  "layout": {
+    "window": {
+      "default_width": 980,
+      "default_height": 620,
+      "min_width": 880,
+      "min_height": 560
+    },
+    "shell": {
+      "sidebar_width": 190,
+      "toolbar_height": 54,
+      "content_padding": 28,
+      "content_max_width": 760,
+      "inter_section_spacing": 22
+    },
+    "grid": {
+      "base_unit": 4,
+      "compact_gap": 8,
+      "default_gap": 16,
+      "large_gap": 28
+    }
+  },
+  "app_shell": {
+    "components": [
+      {
+        "name": "WindowChrome",
+        "description": "Native macOS window with traffic-light controls and subtle rounded corners."
+      },
+      {
+        "name": "Sidebar",
+        "description": "Soft gray persistent navigation rail with compact icon+label rows.",
+        "items": [
+          "Record",
+          "Sessions",
+          "Settings"
+        ],
+        "footer_status": {
+          "label": "Local",
+          "indicator": "small green dot"
+        }
+      },
+      {
+        "name": "TopToolbar",
+        "description": "White toolbar aligned with the content area. Shows title or view action controls, local status, compact view/menu button, and settings icon."
+      },
+      {
+        "name": "MainContent",
+        "description": "White canvas with restrained content width and hairline separators."
+      }
+    ],
+    "navigation_behavior": {
+      "selected_item_style": "blue icon/text on pale blue rounded row",
+      "inactive_item_style": "gray icon/text with no container",
+      "current_views": [
+        "Record",
+        "Sessions",
+        "Session Detail"
+      ]
+    }
+  },
+  "shared_components": {
+    "PrimaryButton": {
+      "usage": "Start recording",
+      "style": "filled blue button with icon and short label",
+      "height": 54,
+      "min_width": 180
+    },
+    "StopButton": {
+      "usage": "Stop active recording",
+      "style": "outlined red button with red icon and label",
+      "height": 34
+    },
+    "StatusDot": {
+      "usage": "Local, Ready, Recording active, Completed",
+      "sizes": {
+        "small": 8,
+        "medium": 10
+      }
+    },
+    "WaveformMeter": {
+      "usage": "Recording-is-working indicator",
+      "style": "thin vertical gray bars with restrained movement or level variation",
+      "height": 56,
+      "active_accent": "small red endpoint dot"
+    },
+    "TranscriptList": {
+      "usage": "Live and saved transcript preview",
+      "style": "timestamp column plus text rows with hairline separators",
+      "row_height": 42
+    },
+    "SessionTable": {
+      "usage": "Saved Sessions",
+      "style": "compact table with rows, no heavy cards",
+      "columns": [
+        "Name",
+        "Date",
+        "Duration",
+        "Status",
+        "Action"
+      ]
+    },
+    "MetadataRail": {
+      "usage": "Session Detail",
+      "style": "right-side metadata column separated by a vertical divider",
+      "width": 260
+    }
+  },
+  "views": {
+    "record_home": {
+      "current_code": [
+        "MeetlessApp/Features/Home/HomeView.swift",
+        "MeetlessApp/Features/Home/HomeViewModel.swift",
+        "MeetlessApp/Features/Recording/RecordingStatusBanner.swift"
+      ],
+      "sidebar_selection": "Record",
+      "purpose": "Ready state before recording starts.",
+      "layout": [
+        "Centered ready state in main content area.",
+        "Primary Start button is the most visually prominent action.",
+        "Local Status appears below a separator as a compact checklist.",
+        "Avoid large explanatory cards and marketing copy."
+      ],
+      "required_elements": [
+        "Ready title",
+        "brief local-first helper text",
+        "Start button",
+        "Storage status",
+        "Permissions status",
+        "Model status",
+        "Local footer indicator"
+      ],
+      "avoid": [
+        "Meeting/Me lane labels",
+        "shell highlights",
+        "large card stacks",
+        "smoke transcription as prominent product UI"
+      ]
+    },
+    "active_recording": {
+      "current_code": [
+        "MeetlessApp/Features/Recording/RecordingViewModel.swift",
+        "MeetlessApp/Features/Recording/RecordingStatusBanner.swift",
+        "MeetlessApp/Services/Capture/ScreenCaptureSession.swift"
+      ],
+      "sidebar_selection": "Record",
+      "purpose": "Show that recording is active and healthy.",
+      "layout": [
+        "Compact recording panel at top of content.",
+        "Left side: red recording dot and Recording label.",
+        "Center: large monospaced elapsed timer.",
+        "Right side: Stop button.",
+        "Middle: waveform meter.",
+        "Bottom strip: green active indicator and local-storage reassurance.",
+        "Transcript preview follows below as compact rows."
+      ],
+      "required_elements": [
+        "Recording label",
+        "elapsed timer",
+        "Stop button",
+        "waveform/audio activity",
+        "Recording is active status",
+        "Transcript rows"
+      ],
+      "avoid": [
+        "Meeting/Me lane labels",
+        "verbose latest-event text",
+        "separate source-status cards",
+        "dashboard analytics"
+      ]
+    },
+    "saved_sessions": {
+      "current_code": [
+        "MeetlessApp/Features/History/HistoryView.swift",
+        "MeetlessApp/Features/History/HistoryViewModel.swift",
+        "MeetlessApp/Services/SessionRepository/SessionRepository.swift"
+      ],
+      "sidebar_selection": "Sessions",
+      "purpose": "Browse local saved sessions quickly.",
+      "layout": [
+        "Screen title Saved at top left.",
+        "Refresh icon button at top right.",
+        "Compact table/list with columns for name, date, duration, status, and detail action.",
+        "Footer shows total session count and Local status."
+      ],
+      "required_elements": [
+        "Saved title",
+        "refresh action",
+        "session rows",
+        "duration",
+        "completed or incomplete status",
+        "Detail action",
+        "session count"
+      ],
+      "avoid": [
+        "large empty-state panels when sessions exist",
+        "row cards with heavy backgrounds",
+        "long saved-session honesty copy in primary list"
+      ]
+    },
+    "session_detail": {
+      "current_code": [
+        "MeetlessApp/Features/SessionDetail/SessionDetailView.swift",
+        "MeetlessApp/Services/SessionRepository/SessionRepository.swift"
+      ],
+      "sidebar_selection": "Sessions",
+      "purpose": "Read a saved transcript snapshot and verify local bundle metadata.",
+      "layout": [
+        "Top toolbar has Back on the left and Delete on the right.",
+        "Header shows session title and compact metadata line.",
+        "Main body uses two columns: transcript on the left, local bundle metadata on the right.",
+        "Transcript rows use timestamp plus text with light separators.",
+        "Metadata uses short label/value groups."
+      ],
+      "required_elements": [
+        "Back action",
+        "Delete action",
+        "session title",
+        "date/time",
+        "duration",
+        "completed status",
+        "transcript rows",
+        "local bundle metadata",
+        "model",
+        "created/updated timestamps"
+      ],
+      "avoid": [
+        "playback UI",
+        "editing controls",
+        "oversized metadata cards",
+        "source lane cards"
+      ]
+    }
+  },
+  "content_rules": {
+    "labels": {
+      "prefer": [
+        "Record",
+        "Sessions",
+        "Settings",
+        "Ready",
+        "Start",
+        "Recording",
+        "Stop",
+        "Transcript",
+        "Saved",
+        "Local",
+        "Completed",
+        "Detail",
+        "Delete"
+      ],
+      "avoid": [
+        "Meeting",
+        "Me",
+        "source lane",
+        "shell",
+        "placeholder",
+        "smoke transcription",
+        "row contract"
+      ]
+    },
+    "copy_style": "short labels and one-line helper text only; no explanatory paragraphs in primary surfaces",
+    "status_style": "state should be communicated with dot color, concise label, timer, waveform, and row status"
+  },
+  "implementation_guidance": {
+    "swiftui": [
+      "Introduce a shared app shell component before rewriting individual screens.",
+      "Replace segmented toolbar navigation with a persistent sidebar navigation pattern.",
+      "Collapse RecordingStatusBanner into compact states: ready, blocked, recording, stopped.",
+      "Keep detailed warnings available, but move them to contextual rows or secondary disclosure surfaces.",
+      "Use native SF Symbols for sidebar, toolbar, Start, Stop, refresh, back, delete, and settings.",
+      "Use monospaced digits for elapsed time and transcript timestamps."
+    ],
+    "component_candidates": [
+      "MeetlessShellView",
+      "SidebarNavigation",
+      "LocalStatusFooter",
+      "RecordReadyView",
+      "ActiveRecordingPanel",
+      "WaveformMeterView",
+      "TranscriptRowsView",
+      "SessionsTableView",
+      "SessionDetailMetadataRail"
+    ],
+    "migration_order": [
+      "Build shared shell and sidebar.",
+      "Refactor Record/Home ready state.",
+      "Refactor Active Recording panel and transcript preview.",
+      "Refactor Saved Sessions table.",
+      "Refactor Session Detail two-column layout.",
+      "Run xcodebuild test and browser/manual screenshot review if app can launch locally."
+    ]
+  },
+  "non_goals": [
+    "Do not add export, sharing, playback, transcript editing, search, or filters as part of this design revamp.",
+    "Do not add marketing/landing-page content.",
+    "Do not expose low-level audio-source implementation details in the primary UI.",
+    "Do not pixel-copy the mockup where native macOS controls should decide exact metrics."
+  ]
+}
