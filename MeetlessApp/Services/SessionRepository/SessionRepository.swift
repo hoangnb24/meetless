@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 struct PersistedSessionBundle: Sendable {
@@ -104,11 +105,11 @@ private struct SessionBundleManifest: Codable, Sendable {
     var durationSeconds: TimeInterval?
     var status: PersistedSessionStatus
     var transcriptPreview: String
-    let rawAudioFilesAreDurableSourceOfRecord: Bool
+    var rawAudioFilesAreDurableSourceOfRecord: Bool
     var transcriptSnapshotMatchesCommittedTimeline: Bool
     var transcriptSnapshotWarning: String?
     let transcriptSnapshotFilename: String
-    let audioArtifacts: [SessionAudioArtifact]
+    var audioArtifacts: [SessionAudioArtifact]
     var sourceStatuses: [SourcePipelineStatus]
     let appBundleIdentifier: String?
     let appVersion: String?
@@ -120,6 +121,11 @@ private struct SessionAudioArtifact: Codable, Sendable {
     let source: RecordingSourceKind
     let filename: String
     let isPrimarySourceOfRecord: Bool
+}
+
+private struct AudioCompressionOutcome: Sendable {
+    let source: RecordingSourceKind
+    let filename: String
 }
 
 private struct SessionTranscriptSnapshot: Codable, Sendable {
@@ -206,9 +212,14 @@ actor SessionRepository {
     private let fileManager: FileManager
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let audioCompressor: any SessionAudioCompressing
 
-    init(fileManager: FileManager = .default) {
+    init(
+        fileManager: FileManager = .default,
+        audioCompressor: any SessionAudioCompressing = AVFoundationSessionAudioCompressor()
+    ) {
         self.fileManager = fileManager
+        self.audioCompressor = audioCompressor
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -391,7 +402,7 @@ actor SessionRepository {
         transcriptChunks: [CommittedTranscriptChunk],
         endedAt: Date = Date(),
         status: PersistedSessionStatus
-    ) throws -> TranscriptSnapshotPersistenceIssue? {
+    ) async throws -> TranscriptSnapshotPersistenceIssue? {
         let snapshotIssue = try updateTranscriptSnapshot(for: session, transcriptChunks: transcriptChunks)
 
         var manifest = try loadManifest(for: session)
@@ -401,6 +412,8 @@ actor SessionRepository {
         manifest.sourceStatuses = sourceStatuses
         manifest.updatedAt = endedAt
         try writeManifest(manifest, to: session)
+
+        try await compressFinishedAudioArtifacts(for: session)
         return snapshotIssue
     }
 
@@ -437,6 +450,63 @@ actor SessionRepository {
         manifest.transcriptSnapshotWarning = issue.message
         manifest.updatedAt = updatedAt
         try writeManifest(manifest, to: session)
+    }
+
+    private func compressFinishedAudioArtifacts(for session: PersistedSessionBundle) async throws {
+        var manifest = try loadManifest(for: session)
+        var outcomesBySource: [RecordingSourceKind: AudioCompressionOutcome] = [:]
+
+        for artifact in manifest.audioArtifacts {
+            guard artifact.filename.hasSuffix(".wav") else {
+                continue
+            }
+
+            let sourceURL = session.directoryURL.appendingPathComponent(artifact.filename, isDirectory: false)
+            guard fileManager.fileExists(atPath: sourceURL.path) else {
+                continue
+            }
+
+            let compressedFilename = artifact.source.compressedArtifactFilename
+            let compressedURL = session.directoryURL.appendingPathComponent(compressedFilename, isDirectory: false)
+
+            do {
+                try audioCompressor.compressWAVToM4A(from: sourceURL, to: compressedURL)
+                outcomesBySource[artifact.source] = AudioCompressionOutcome(
+                    source: artifact.source,
+                    filename: compressedFilename
+                )
+            } catch {
+                try? fileManager.removeItem(at: compressedURL)
+            }
+        }
+
+        guard !outcomesBySource.isEmpty else {
+            return
+        }
+
+        manifest.audioArtifacts = manifest.audioArtifacts.map { artifact in
+            guard let outcome = outcomesBySource[artifact.source] else {
+                return artifact
+            }
+
+            return SessionAudioArtifact(
+                source: artifact.source,
+                filename: outcome.filename,
+                isPrimarySourceOfRecord: artifact.isPrimarySourceOfRecord
+            )
+        }
+        manifest.rawAudioFilesAreDurableSourceOfRecord = false
+        manifest.updatedAt = Date()
+        try writeManifest(manifest, to: session)
+
+        for artifact in manifest.audioArtifacts {
+            guard outcomesBySource[artifact.source] != nil else {
+                continue
+            }
+
+            let originalURL = session.directoryURL.appendingPathComponent(artifact.source.artifactFilename, isDirectory: false)
+            try? fileManager.removeItem(at: originalURL)
+        }
     }
 
     private static func defaultTitle(for startedAt: Date) -> String {
@@ -504,5 +574,59 @@ actor SessionRepository {
             message: message,
             latestEvent: latestEvent
         )
+    }
+}
+
+protocol SessionAudioCompressing: Sendable {
+    func compressWAVToM4A(from sourceURL: URL, to destinationURL: URL) throws
+}
+
+struct AVFoundationSessionAudioCompressor: SessionAudioCompressing {
+    private let bitRate: Int
+
+    init(bitRate: Int = 48_000) {
+        self.bitRate = bitRate
+    }
+
+    func compressWAVToM4A(from sourceURL: URL, to destinationURL: URL) throws {
+        let sourceFile = try AVAudioFile(forReading: sourceURL)
+        guard sourceFile.length > 0 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+
+        try FileManager.default.createDirectory(
+            at: destinationURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try FileManager.default.removeItem(at: destinationURL)
+        }
+
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: sourceFile.fileFormat.sampleRate,
+            AVNumberOfChannelsKey: sourceFile.fileFormat.channelCount,
+            AVEncoderBitRateKey: bitRate
+        ]
+        let destinationFile = try AVAudioFile(forWriting: destinationURL, settings: settings)
+        let frameCapacity = AVAudioFrameCount(min(max(sourceFile.length, 1), 16_384))
+
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: sourceFile.processingFormat,
+            frameCapacity: frameCapacity
+        ) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        while sourceFile.framePosition < sourceFile.length {
+            try sourceFile.read(into: buffer)
+            guard buffer.frameLength > 0 else {
+                break
+            }
+
+            try destinationFile.write(from: buffer)
+        }
     }
 }

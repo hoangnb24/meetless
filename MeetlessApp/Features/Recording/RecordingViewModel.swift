@@ -35,6 +35,15 @@ enum RecordingSourceKind: String, Identifiable, CaseIterable, Codable, Sendable 
             return "me.wav"
         }
     }
+
+    var compressedArtifactFilename: String {
+        switch self {
+        case .meeting:
+            return "meeting.m4a"
+        case .me:
+            return "me.m4a"
+        }
+    }
 }
 
 struct SourcePipelineStatus: Identifiable, Codable, Sendable {
@@ -872,7 +881,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
             savedSessionHeadline = finalStatus == .completed ? "Capture stopped cleanly" : "Capture ended with an incomplete saved session"
             savedSessionDetail = capture.map {
                 if finalStatus == .completed {
-                    return "The ScreenCaptureKit session is down, the saved Application Support bundle in \($0.artifactDirectoryURL.lastPathComponent) now holds the exact committed transcript snapshot plus durable Meeting and Me audio artifacts."
+                    return "The ScreenCaptureKit session is down, and the saved Application Support bundle in \($0.artifactDirectoryURL.lastPathComponent) now holds the exact committed transcript snapshot plus durable Meeting and Me audio artifacts."
                 }
 
                 return "Capture ended unexpectedly, but the Application Support bundle in \($0.artifactDirectoryURL.lastPathComponent) still keeps the last committed transcript snapshot and durable Meeting and Me audio artifacts for incomplete-session recovery."

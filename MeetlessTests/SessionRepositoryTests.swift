@@ -143,4 +143,104 @@ final class SessionRepositoryTests: XCTestCase {
             "Expected the saved bundle to carry an explicit honesty marker when transcript.json falls behind."
         )
     }
+
+    func testFinalizeSessionCompressesWAVArtifactsAfterStop() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryCompressionTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Me lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 300)
+        )
+        try MeetlessTestSupport.writePCM16WaveFile(
+            to: session.directoryURL.appendingPathComponent("meeting.wav", isDirectory: false),
+            sampleCount: 16_000
+        )
+        try MeetlessTestSupport.writePCM16WaveFile(
+            to: session.directoryURL.appendingPathComponent("me.wav", isDirectory: false),
+            sampleCount: 16_000
+        )
+
+        _ = try await repository.finalizeSession(
+            session,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane finished cleanly.", state: .ready),
+                SourcePipelineStatus(source: .me, detail: "Me lane finished cleanly.", state: .ready)
+            ],
+            transcriptChunks: [],
+            endedAt: Date(timeIntervalSince1970: 360),
+            status: .completed
+        )
+
+        let manifest = try Self.loadManifestDictionary(from: session.manifestURL)
+        let artifactFilenames = try Self.audioArtifactFilenames(from: manifest)
+
+        XCTAssertEqual(Set(artifactFilenames), Set(["meeting.m4a", "me.m4a"]))
+        XCTAssertEqual(manifest["rawAudioFilesAreDurableSourceOfRecord"] as? Bool, false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.directoryURL.appendingPathComponent("meeting.m4a").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.directoryURL.appendingPathComponent("me.m4a").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.directoryURL.appendingPathComponent("meeting.wav").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.directoryURL.appendingPathComponent("me.wav").path))
+    }
+
+    func testFinalizeSessionPreservesWAVArtifactsWhenCompressionFails() async throws {
+        let repository = SessionRepository(audioCompressor: FailingSessionAudioCompressor())
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryCompressionFailureTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Me lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 400)
+        )
+        try MeetlessTestSupport.writePCM16WaveFile(
+            to: session.directoryURL.appendingPathComponent("meeting.wav", isDirectory: false),
+            sampleCount: 16_000
+        )
+
+        _ = try await repository.finalizeSession(
+            session,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane finished cleanly.", state: .ready),
+                SourcePipelineStatus(source: .me, detail: "Me lane finished cleanly.", state: .ready)
+            ],
+            transcriptChunks: [],
+            endedAt: Date(timeIntervalSince1970: 460),
+            status: .completed
+        )
+
+        let manifest = try Self.loadManifestDictionary(from: session.manifestURL)
+        let artifactFilenames = try Self.audioArtifactFilenames(from: manifest)
+
+        XCTAssertEqual(Set(artifactFilenames), Set(["meeting.wav", "me.wav"]))
+        XCTAssertEqual(manifest["rawAudioFilesAreDurableSourceOfRecord"] as? Bool, true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.directoryURL.appendingPathComponent("meeting.wav").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.directoryURL.appendingPathComponent("meeting.m4a").path))
+    }
+
+    private static func loadManifestDictionary(from manifestURL: URL) throws -> [String: Any] {
+        let data = try Data(contentsOf: manifestURL)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private static func audioArtifactFilenames(from manifest: [String: Any]) throws -> [String] {
+        let artifacts = try XCTUnwrap(manifest["audioArtifacts"] as? [[String: Any]])
+        return artifacts.compactMap { $0["filename"] as? String }
+    }
+}
+
+private struct FailingSessionAudioCompressor: SessionAudioCompressing {
+    func compressWAVToM4A(from sourceURL: URL, to destinationURL: URL) throws {
+        throw CocoaError(.fileWriteUnknown)
+    }
 }
