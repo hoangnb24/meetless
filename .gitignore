@@ -1,2 +1,9 @@
 # bv (beads viewer) local config and caches
 .bv/
+
+# Local build, release, and macOS metadata
+.derived/
+.dist/
+.DS_Store
+xcuserdata/
+*.xcuserstate
