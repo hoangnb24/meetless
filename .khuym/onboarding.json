@@ -1,14 +1,12 @@
 {
   "schema_version": "1.0",
   "plugin": "khuym",
-  "plugin_version": "3.0.0",
-  "installed_at": "2026-04-22T02:34:06.080Z",
+  "plugin_version": "3.0.1",
+  "installed_at": "2026-04-29T03:23:16.885Z",
   "status": "complete",
   "managed_assets": {
     "agents_mode": "updated_managed_block",
-    "config_changes": [
-      "compact_prompt_managed"
-    ],
+    "config_changes": [],
     "hook_changes": [],
     "hook_scripts": [
       ".codex/hooks/khuym_session_start.mjs",
