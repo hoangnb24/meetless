@@ -75,6 +75,7 @@ struct PersistedSessionDetail: Identifiable, Sendable {
     let updatedAt: Date
     let transcriptSavedAt: Date
     let transcriptChunks: [CommittedTranscriptChunk]
+    let generatedNotes: GeneratedSessionNotes?
 
     var isIncomplete: Bool {
         status == .incomplete
@@ -88,6 +89,13 @@ struct PersistedSessionDetail: Identifiable, Sendable {
             sourceStatuses: sourceStatuses
         )
     }
+}
+
+struct GeneratedSessionNotes: Equatable, Sendable {
+    let generatedAt: Date
+    let hiddenGeminiTranscript: String
+    let summary: String
+    let actionItemBullets: [String]
 }
 
 struct TranscriptSnapshotPersistenceIssue: Equatable, Sendable {
@@ -109,6 +117,7 @@ private struct SessionBundleManifest: Codable, Sendable {
     var transcriptSnapshotMatchesCommittedTimeline: Bool
     var transcriptSnapshotWarning: String?
     let transcriptSnapshotFilename: String
+    var generatedNotesFilename: String?
     var audioArtifacts: [SessionAudioArtifact]
     var sourceStatuses: [SourcePipelineStatus]
     let appBundleIdentifier: String?
@@ -132,6 +141,14 @@ private struct SessionTranscriptSnapshot: Codable, Sendable {
     let schemaVersion: Int
     let savedAt: Date
     let chunks: [CommittedTranscriptChunk]
+}
+
+private struct GeneratedSessionNotesSnapshot: Codable, Sendable {
+    let schemaVersion: Int
+    let generatedAt: Date
+    let hiddenGeminiTranscript: String
+    let summary: String
+    let actionItemBullets: [String]
 }
 
 private enum SavedSessionNoticeFactory {
@@ -207,7 +224,10 @@ private enum SavedSessionNoticeFactory {
 
 actor SessionRepository {
     private static let forcedSnapshotFailureEnvironmentKey = "MEETLESS_FORCE_TRANSCRIPT_SNAPSHOT_UPDATE_FAILURE"
+    private static let forcedGeneratedNotesFailureEnvironmentKey = "MEETLESS_FORCE_GENERATED_NOTES_WRITE_FAILURE"
+    private static let generatedNotesFilename = "generated-notes.json"
     static var testForcedTranscriptSnapshotFailureOverride: Bool?
+    static var testForcedGeneratedNotesWriteFailureOverride: Bool?
 
     private let fileManager: FileManager
     private let encoder: JSONEncoder
@@ -261,6 +281,7 @@ actor SessionRepository {
             transcriptSnapshotMatchesCommittedTimeline: true,
             transcriptSnapshotWarning: nil,
             transcriptSnapshotFilename: session.transcriptURL.lastPathComponent,
+            generatedNotesFilename: nil,
             audioArtifacts: RecordingSourceKind.allCases.map { source in
                 SessionAudioArtifact(
                     source: source,
@@ -342,6 +363,7 @@ actor SessionRepository {
         )
         let manifest = try loadManifest(for: session)
         let transcriptSnapshot = try loadTranscriptSnapshot(for: session)
+        let generatedNotes = try loadGeneratedNotes(for: session, manifest: manifest)
 
         return PersistedSessionDetail(
             id: manifest.id,
@@ -356,8 +378,70 @@ actor SessionRepository {
             sourceStatuses: manifest.sourceStatuses,
             updatedAt: manifest.updatedAt,
             transcriptSavedAt: transcriptSnapshot.savedAt,
-            transcriptChunks: transcriptSnapshot.chunks
+            transcriptChunks: transcriptSnapshot.chunks,
+            generatedNotes: generatedNotes
         )
+    }
+
+    func loadGeneratedNotes(for session: PersistedSessionBundle) throws -> GeneratedSessionNotes? {
+        let manifest = try loadManifest(for: session)
+        return try loadGeneratedNotes(for: session, manifest: manifest)
+    }
+
+    func saveGeneratedNotes(
+        _ generatedNotes: GeneratedSessionNotes,
+        for session: PersistedSessionBundle
+    ) throws {
+        if Self.shouldForceGeneratedNotesWriteFailure() {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        let snapshot = GeneratedSessionNotesSnapshot(
+            schemaVersion: 1,
+            generatedAt: generatedNotes.generatedAt,
+            hiddenGeminiTranscript: generatedNotes.hiddenGeminiTranscript,
+            summary: generatedNotes.summary,
+            actionItemBullets: generatedNotes.actionItemBullets
+        )
+        let notesData = try encoder.encode(snapshot)
+        var manifest = try loadManifest(for: session)
+        manifest.generatedNotesFilename = Self.generatedNotesFilename
+        manifest.updatedAt = generatedNotes.generatedAt
+        let manifestData = try encoder.encode(manifest)
+
+        let stagingDirectory = session.directoryURL.appendingPathComponent(
+            ".generated-notes-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let notesURL = session.directoryURL.appendingPathComponent(Self.generatedNotesFilename, isDirectory: false)
+        let stagedNotesURL = stagingDirectory.appendingPathComponent(Self.generatedNotesFilename, isDirectory: false)
+        let stagedManifestURL = stagingDirectory.appendingPathComponent(session.manifestURL.lastPathComponent, isDirectory: false)
+        let backupManifestURL = stagingDirectory.appendingPathComponent("session.json.backup", isDirectory: false)
+        let backupNotesURL = stagingDirectory.appendingPathComponent("generated-notes.json.backup", isDirectory: false)
+        let hadExistingNotes = fileManager.fileExists(atPath: notesURL.path)
+
+        do {
+            try fileManager.createDirectory(at: stagingDirectory, withIntermediateDirectories: true, attributes: nil)
+            try notesData.write(to: stagedNotesURL, options: .withoutOverwriting)
+            try manifestData.write(to: stagedManifestURL, options: .withoutOverwriting)
+            try fileManager.copyItem(at: session.manifestURL, to: backupManifestURL)
+            if hadExistingNotes {
+                try fileManager.copyItem(at: notesURL, to: backupNotesURL)
+            }
+
+            try replaceItem(at: notesURL, with: stagedNotesURL)
+            try replaceItem(at: session.manifestURL, with: stagedManifestURL)
+            try? fileManager.removeItem(at: stagingDirectory)
+        } catch {
+            try? restoreItem(at: session.manifestURL, from: backupManifestURL)
+            if hadExistingNotes {
+                try? restoreItem(at: notesURL, from: backupNotesURL)
+            } else {
+                try? fileManager.removeItem(at: notesURL)
+            }
+            try? fileManager.removeItem(at: stagingDirectory)
+            throw error
+        }
     }
 
     func deleteSavedSession(at directoryURL: URL) throws {
@@ -427,6 +511,26 @@ actor SessionRepository {
         return try decoder.decode(SessionTranscriptSnapshot.self, from: data)
     }
 
+    private func loadGeneratedNotes(
+        for session: PersistedSessionBundle,
+        manifest: SessionBundleManifest
+    ) throws -> GeneratedSessionNotes? {
+        guard let generatedNotesFilename = manifest.generatedNotesFilename else {
+            return nil
+        }
+
+        let generatedNotesURL = session.directoryURL.appendingPathComponent(generatedNotesFilename, isDirectory: false)
+        let data = try Data(contentsOf: generatedNotesURL)
+        let snapshot = try decoder.decode(GeneratedSessionNotesSnapshot.self, from: data)
+
+        return GeneratedSessionNotes(
+            generatedAt: snapshot.generatedAt,
+            hiddenGeminiTranscript: snapshot.hiddenGeminiTranscript,
+            summary: snapshot.summary,
+            actionItemBullets: snapshot.actionItemBullets
+        )
+    }
+
     private func writeManifest(_ manifest: SessionBundleManifest, to session: PersistedSessionBundle) throws {
         let data = try encoder.encode(manifest)
         try data.write(to: session.manifestURL, options: .atomic)
@@ -438,6 +542,22 @@ actor SessionRepository {
     ) throws {
         let data = try encoder.encode(transcriptSnapshot)
         try data.write(to: session.transcriptURL, options: .atomic)
+    }
+
+    private func replaceItem(at destinationURL: URL, with replacementURL: URL) throws {
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            _ = try fileManager.replaceItemAt(destinationURL, withItemAt: replacementURL)
+        } else {
+            try fileManager.moveItem(at: replacementURL, to: destinationURL)
+        }
+    }
+
+    private func restoreItem(at destinationURL: URL, from backupURL: URL) throws {
+        guard fileManager.fileExists(atPath: backupURL.path) else {
+            return
+        }
+
+        try replaceItem(at: destinationURL, with: backupURL)
     }
 
     private func markTranscriptSnapshotAsLagging(
@@ -557,6 +677,15 @@ actor SessionRepository {
         }
 
         let value = ProcessInfo.processInfo.environment[forcedSnapshotFailureEnvironmentKey]
+        return value == "1" || value?.lowercased() == "true"
+    }
+
+    private static func shouldForceGeneratedNotesWriteFailure() -> Bool {
+        if let testForcedGeneratedNotesWriteFailureOverride {
+            return testForcedGeneratedNotesWriteFailureOverride
+        }
+
+        let value = ProcessInfo.processInfo.environment[forcedGeneratedNotesFailureEnvironmentKey]
         return value == "1" || value?.lowercased() == "true"
     }
 

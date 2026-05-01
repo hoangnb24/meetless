@@ -4,6 +4,7 @@ import XCTest
 final class SessionRepositoryTests: XCTestCase {
     override func tearDown() {
         SessionRepository.testForcedTranscriptSnapshotFailureOverride = nil
+        SessionRepository.testForcedGeneratedNotesWriteFailureOverride = nil
         super.tearDown()
     }
 
@@ -228,6 +229,110 @@ final class SessionRepositoryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: session.directoryURL.appendingPathComponent("meeting.m4a").path))
     }
 
+    func testOldSessionLoadsWithoutGeneratedNotes() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryGeneratedNotesAbsentTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Me lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 500)
+        )
+
+        let detail = try await repository.loadSavedSessionDetail(at: session.directoryURL)
+        let generatedNotes = try await repository.loadGeneratedNotes(for: session)
+        let manifest = try Self.loadManifestDictionary(from: session.manifestURL)
+
+        XCTAssertNil(detail.generatedNotes)
+        XCTAssertNil(generatedNotes)
+        XCTAssertNil(manifest["generatedNotesFilename"])
+    }
+
+    func testSavedGeneratedNotesReopenWithHiddenTranscriptAndActionBullets() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryGeneratedNotesSaveTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Me lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 600)
+        )
+
+        let notes = Self.makeGeneratedNotes()
+        try await repository.saveGeneratedNotes(notes, for: session)
+
+        let detail = try await repository.loadSavedSessionDetail(at: session.directoryURL)
+        let reopenedNotes = try XCTUnwrap(detail.generatedNotes)
+        let notesFile = session.directoryURL.appendingPathComponent("generated-notes.json", isDirectory: false)
+        let notesData = try Data(contentsOf: notesFile)
+        let notesJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: notesData) as? [String: Any])
+
+        XCTAssertEqual(reopenedNotes, notes)
+        XCTAssertEqual(reopenedNotes.hiddenGeminiTranscript, "Jordan: We agreed to ship the privacy copy first.\nTaylor: I will review the summary panel.")
+        XCTAssertEqual(reopenedNotes.summary, "The team aligned on the privacy copy and the first review path.")
+        XCTAssertEqual(reopenedNotes.actionItemBullets, [
+            "Draft the privacy copy.",
+            "Review the summary panel."
+        ])
+        XCTAssertEqual(notesJSON["hiddenGeminiTranscript"] as? String, notes.hiddenGeminiTranscript)
+        XCTAssertEqual(notesJSON["actionItemBullets"] as? [String], notes.actionItemBullets)
+    }
+
+    func testGeneratedNotesWriteFailurePreservesExistingBundleAndPriorNotes() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryGeneratedNotesFailureTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Me lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 700)
+        )
+        let originalNotes = Self.makeGeneratedNotes()
+        try await repository.saveGeneratedNotes(originalNotes, for: session)
+
+        let manifestDataBeforeFailure = try Data(contentsOf: session.manifestURL)
+        let notesURL = session.directoryURL.appendingPathComponent("generated-notes.json", isDirectory: false)
+        let notesDataBeforeFailure = try Data(contentsOf: notesURL)
+
+        SessionRepository.testForcedGeneratedNotesWriteFailureOverride = true
+        let replacementNotes = GeneratedSessionNotes(
+            generatedAt: Date(timeIntervalSince1970: 800),
+            hiddenGeminiTranscript: "This replacement transcript must not be saved.",
+            summary: "This replacement summary must not be saved.",
+            actionItemBullets: ["Do not persist this bullet."]
+        )
+
+        do {
+            try await repository.saveGeneratedNotes(replacementNotes, for: session)
+            XCTFail("Expected generated-notes write failure to throw.")
+        } catch {
+            XCTAssertTrue(error is CocoaError)
+        }
+
+        let manifestDataAfterFailure = try Data(contentsOf: session.manifestURL)
+        let notesDataAfterFailure = try Data(contentsOf: notesURL)
+        let reopenedNotes = try await repository.loadGeneratedNotes(for: session)
+
+        XCTAssertEqual(manifestDataAfterFailure, manifestDataBeforeFailure)
+        XCTAssertEqual(notesDataAfterFailure, notesDataBeforeFailure)
+        XCTAssertEqual(reopenedNotes, originalNotes)
+    }
+
     private static func loadManifestDictionary(from manifestURL: URL) throws -> [String: Any] {
         let data = try Data(contentsOf: manifestURL)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -236,6 +341,18 @@ final class SessionRepositoryTests: XCTestCase {
     private static func audioArtifactFilenames(from manifest: [String: Any]) throws -> [String] {
         let artifacts = try XCTUnwrap(manifest["audioArtifacts"] as? [[String: Any]])
         return artifacts.compactMap { $0["filename"] as? String }
+    }
+
+    private static func makeGeneratedNotes() -> GeneratedSessionNotes {
+        GeneratedSessionNotes(
+            generatedAt: Date(timeIntervalSince1970: 650),
+            hiddenGeminiTranscript: "Jordan: We agreed to ship the privacy copy first.\nTaylor: I will review the summary panel.",
+            summary: "The team aligned on the privacy copy and the first review path.",
+            actionItemBullets: [
+                "Draft the privacy copy.",
+                "Review the summary panel."
+            ]
+        )
     }
 }
 
