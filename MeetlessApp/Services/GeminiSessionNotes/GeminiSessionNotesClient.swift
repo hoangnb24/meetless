@@ -7,6 +7,122 @@ protocol GeminiSessionNotesGenerating: Sendable {
     ) async throws -> GeminiGenerateContentResponse
 }
 
+protocol GeminiSessionNotesOrchestrating {
+    func generateNotes(for session: PersistedSessionBundle) async throws -> GeneratedSessionNotes
+}
+
+enum GeminiSessionNotesOrchestrationError: Error, Equatable, Sendable {
+    case missingAPIKey
+    case alreadyGenerated
+    case missingAudio(SessionAudioArtifactResolutionError)
+    case authentication
+    case client
+    case provider
+    case parser(GeminiSessionNotesError)
+    case persistence
+}
+
+struct GeminiSessionNotesOrchestrator: GeminiSessionNotesOrchestrating {
+    private let apiKeyStore: any GeminiAPIKeyStoring
+    private let sessionRepository: SessionRepository
+    private let generator: any GeminiSessionNotesGenerating
+    private let generatedAt: @Sendable () -> Date
+
+    init(
+        apiKeyStore: any GeminiAPIKeyStoring = KeychainGeminiAPIKeyStore(),
+        sessionRepository: SessionRepository = SessionRepository(),
+        generator: any GeminiSessionNotesGenerating = GeminiSessionNotesClient(),
+        generatedAt: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.apiKeyStore = apiKeyStore
+        self.sessionRepository = sessionRepository
+        self.generator = generator
+        self.generatedAt = generatedAt
+    }
+
+    func generateNotes(for session: PersistedSessionBundle) async throws -> GeneratedSessionNotes {
+        let apiKey: String
+        do {
+            guard let loadedAPIKey = try apiKeyStore.loadAPIKey() else {
+                throw GeminiSessionNotesOrchestrationError.missingAPIKey
+            }
+
+            apiKey = loadedAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !apiKey.isEmpty else {
+                throw GeminiSessionNotesOrchestrationError.missingAPIKey
+            }
+        } catch let error as GeminiSessionNotesOrchestrationError {
+            throw error
+        } catch {
+            throw GeminiSessionNotesOrchestrationError.client
+        }
+
+        do {
+            if try await sessionRepository.loadGeneratedNotes(for: session) != nil {
+                throw GeminiSessionNotesOrchestrationError.alreadyGenerated
+            }
+        } catch let error as GeminiSessionNotesOrchestrationError {
+            throw error
+        } catch {
+            throw GeminiSessionNotesOrchestrationError.persistence
+        }
+
+        let audioArtifacts: SessionAudioArtifactsForUpload
+        do {
+            audioArtifacts = try await sessionRepository.resolveAudioArtifactsForUpload(for: session)
+        } catch let error as SessionAudioArtifactResolutionError {
+            throw GeminiSessionNotesOrchestrationError.missingAudio(error)
+        } catch {
+            throw GeminiSessionNotesOrchestrationError.persistence
+        }
+
+        let response: GeminiGenerateContentResponse
+        do {
+            response = try await generator.generateContent(apiKey: apiKey, audioArtifacts: audioArtifacts)
+        } catch let error as GeminiSessionNotesError {
+            throw Self.mapGenerationError(error)
+        } catch {
+            throw GeminiSessionNotesOrchestrationError.client
+        }
+
+        let notes: GeneratedSessionNotes
+        do {
+            notes = try GeminiSessionNotesParser.parse(response, generatedAt: generatedAt())
+        } catch let error as GeminiSessionNotesError {
+            throw GeminiSessionNotesOrchestrationError.parser(error)
+        } catch {
+            throw GeminiSessionNotesOrchestrationError.parser(.malformedStructuredJSON)
+        }
+
+        do {
+            try await sessionRepository.saveGeneratedNotes(notes, for: session)
+        } catch let error as GeneratedSessionNotesPersistenceError where error == .alreadyExists {
+            throw GeminiSessionNotesOrchestrationError.alreadyGenerated
+        } catch {
+            throw GeminiSessionNotesOrchestrationError.persistence
+        }
+
+        return notes
+    }
+
+    private static func mapGenerationError(_ error: GeminiSessionNotesError) -> GeminiSessionNotesOrchestrationError {
+        switch error {
+        case .authenticationFailed:
+            return .authentication
+        case .invalidAPIKey, .unsupportedAudioMIMEType:
+            return .client
+        case .uploadFailed, .generationFailed, .malformedUploadResponse, .malformedGenerateContentResponse:
+            return .provider
+        case .malformedStructuredJSON,
+                .missingRequiredField,
+                .emptyRequiredField,
+                .invalidActionItems,
+                .sourceLabelLeakage:
+            return .parser(error)
+        }
+    }
+}
+
 protocol GeminiHTTPTransport: Sendable {
     func send(_ request: GeminiHTTPRequest) async throws -> GeminiHTTPResponse
 }
