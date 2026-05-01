@@ -545,6 +545,65 @@ final class GeminiSessionNotesClientTests: XCTestCase {
     }
 
     @MainActor
+    func testAppModelLoadsPersistedGeneratedNotesDisplayAndPreventsOverwrite() async throws {
+        let fixture = try await Self.makeSessionFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+
+        let generatedNotes = GeneratedSessionNotes(
+            generatedAt: Date(timeIntervalSince1970: 1_798_200_000),
+            hiddenGeminiTranscript: "Hidden transcript must stay out of the detail view.",
+            summary: "Meeting: Approved the launch checklist. Me: will confirm privacy copy.",
+            actionItemBullets: [
+                "Meeting lane should send the launch checklist.",
+                "Me: confirm privacy copy."
+            ]
+        )
+        try await fixture.repository.saveGeneratedNotes(generatedNotes, for: fixture.session)
+
+        let replacementNotes = GeneratedSessionNotes(
+            generatedAt: Date(timeIntervalSince1970: 1_798_300_000),
+            hiddenGeminiTranscript: "Replacement transcript.",
+            summary: "Replacement summary.",
+            actionItemBullets: ["Replacement action item."]
+        )
+        let orchestrator = FixtureGeminiSessionNotesOrchestrator(
+            result: .success(replacementNotes),
+            repository: fixture.repository
+        )
+        let appModel = AppModel(
+            sessionRepository: fixture.repository,
+            geminiAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: "test-gemini-key"),
+            geminiSessionNotesOrchestrator: orchestrator
+        )
+
+        appModel.openSessionDetail(for: try await Self.makeHistoryRow(for: fixture.session, repository: fixture.repository))
+        let display = try await MeetlessTestSupport.waitForValue(description: "persisted generated notes display") { @MainActor in
+            appModel.sessionDetailViewModel.generatedNotesDisplay
+        }
+
+        XCTAssertTrue(appModel.sessionDetailViewModel.hasGeneratedNotes)
+        XCTAssertFalse(appModel.sessionDetailViewModel.canGenerateNotes)
+        XCTAssertEqual(display.summary, "Speaker: Approved the launch checklist. You: will confirm privacy copy.")
+        XCTAssertEqual(display.actionItemBullets, [
+            "saved input should send the launch checklist.",
+            "You: confirm privacy copy."
+        ])
+        XCTAssertFalse(display.summary.contains("Hidden transcript"))
+        XCTAssertFalse(display.actionItemBullets.joined(separator: "\n").contains("Hidden transcript"))
+        XCTAssertFalse(display.summary.contains("Meeting:"))
+        XCTAssertFalse(display.summary.contains("Me:"))
+        XCTAssertFalse(display.actionItemBullets.joined(separator: "\n").contains("Meeting lane"))
+        XCTAssertEqual(appModel.sessionDetailViewModel.generateNotesStatusText, "Notes have already been generated for this session.")
+
+        appModel.generateNotesForSelectedSession()
+
+        let requestCount = await orchestrator.requestCount
+        let reopenedNotes = try await fixture.repository.loadGeneratedNotes(for: fixture.session)
+        XCTAssertEqual(requestCount, 0)
+        XCTAssertEqual(reopenedNotes, generatedNotes)
+    }
+
+    @MainActor
     func testAppModelGenerateNotesFailureLeavesSelectedSessionRetryableAndUnchanged() async throws {
         let fixture = try await Self.makeSessionFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }

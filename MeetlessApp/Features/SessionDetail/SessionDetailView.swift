@@ -29,6 +29,12 @@ final class SessionDetailViewModel: ObservableObject {
         let text: String
     }
 
+    struct GeneratedNotesDisplay: Equatable {
+        let generatedAtText: String
+        let summary: String
+        let actionItemBullets: [String]
+    }
+
     enum GenerateFailure: Error, Equatable {
         case noSelectedSession
         case missingAPIKey
@@ -40,6 +46,7 @@ final class SessionDetailViewModel: ObservableObject {
     @Published private(set) var transcriptRows: [TranscriptRow] = []
     @Published private(set) var sourceStatuses: [SourcePipelineStatus] = []
     @Published private(set) var savedSessionNotices: [SavedSessionNotice] = []
+    @Published private(set) var generatedNotesDisplay: GeneratedNotesDisplay?
     @Published private(set) var hasGeneratedNotes = false
     @Published private(set) var isGeminiConfigured = false
     @Published private(set) var isGeneratingNotes = false
@@ -135,6 +142,7 @@ final class SessionDetailViewModel: ObservableObject {
         transcriptRows = []
         sourceStatuses = []
         savedSessionNotices = []
+        generatedNotesDisplay = nil
         hasGeneratedNotes = false
         isGeneratingNotes = false
         generationErrorMessage = nil
@@ -150,6 +158,7 @@ final class SessionDetailViewModel: ObservableObject {
         transcriptRows = []
         sourceStatuses = []
         savedSessionNotices = []
+        generatedNotesDisplay = nil
         hasGeneratedNotes = false
         isGeneratingNotes = false
         generationErrorMessage = nil
@@ -181,7 +190,8 @@ final class SessionDetailViewModel: ObservableObject {
         }
         sourceStatuses = detail.sourceStatuses
         savedSessionNotices = detail.savedSessionNotices
-        hasGeneratedNotes = detail.generatedNotes != nil
+        generatedNotesDisplay = detail.generatedNotes.map(Self.generatedNotesDisplay(for:))
+        hasGeneratedNotes = generatedNotesDisplay != nil
         isGeneratingNotes = false
         generationErrorMessage = nil
         isLoading = false
@@ -196,6 +206,7 @@ final class SessionDetailViewModel: ObservableObject {
         transcriptRows = []
         sourceStatuses = []
         savedSessionNotices = []
+        generatedNotesDisplay = nil
         hasGeneratedNotes = false
         isGeneratingNotes = false
         generationErrorMessage = nil
@@ -326,6 +337,24 @@ final class SessionDetailViewModel: ObservableObject {
             title: title,
             message: message
         )
+    }
+
+    private static func generatedNotesDisplay(for notes: GeneratedSessionNotes) -> GeneratedNotesDisplay {
+        GeneratedNotesDisplay(
+            generatedAtText: dateTimeFormatter.string(from: notes.generatedAt),
+            summary: sanitizedGeneratedNotesText(notes.summary),
+            actionItemBullets: notes.actionItemBullets.map(sanitizedGeneratedNotesText)
+        )
+    }
+
+    private static func sanitizedGeneratedNotesText(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "Meeting source", with: "saved input")
+            .replacingOccurrences(of: "Me source", with: "saved input")
+            .replacingOccurrences(of: "Meeting lane", with: "saved input")
+            .replacingOccurrences(of: "Me lane", with: "saved input")
+            .replacingOccurrences(of: "Meeting:", with: "Speaker:")
+            .replacingOccurrences(of: "Me:", with: "You:")
     }
 
     private static func sanitizedSourceText(_ text: String) -> String {
@@ -525,6 +554,8 @@ struct SessionDetailView: View {
 
     private var transcriptPane: some View {
         VStack(alignment: .leading, spacing: 0) {
+            generatedNotesSection
+
             sectionHeader("Transcript")
                 .padding(.bottom, 8)
 
@@ -535,6 +566,63 @@ struct SessionDetailView: View {
                     transcriptRowsContent
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var generatedNotesSection: some View {
+        if let generatedNotesDisplay = viewModel.generatedNotesDisplay {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    sectionHeader("Summary")
+
+                    Spacer(minLength: 12)
+
+                    Text("Generated \(generatedNotesDisplay.generatedAtText)")
+                        .font(MeetlessDesignTokens.Typography.caption)
+                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                        .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+                        .lineLimit(1)
+                }
+
+                Text(generatedNotesDisplay.summary)
+                    .font(MeetlessDesignTokens.Typography.body)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if !generatedNotesDisplay.actionItemBullets.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        sectionHeader("Action Items")
+
+                        VStack(alignment: .leading, spacing: 7) {
+                            ForEach(Array(generatedNotesDisplay.actionItemBullets.enumerated()), id: \.offset) { _, actionItem in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text("-")
+                                        .font(MeetlessDesignTokens.Typography.body.weight(.semibold))
+                                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                                        .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+
+                                    Text(actionItem)
+                                        .font(MeetlessDesignTokens.Typography.body)
+                                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                                        .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                                        .lineSpacing(2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.bottom, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HairlineDivider()
+                .padding(.bottom, 16)
         }
     }
 
