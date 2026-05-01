@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-04-24T12:42:52.856Z",
+  "updated_at": "2026-05-01T06:54:54.647Z",
   "reservations": [
     {
       "id": "resv-mo9h1t2g-cjxcw7",
@@ -648,6 +648,561 @@
       "expires_at": "2026-04-24T13:37:08.948Z",
       "status": "released",
       "released_at": "2026-04-24T12:42:52.856Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momfle37-wknu8x",
+      "agent": "Feynman",
+      "bead_id": "bd-2u9",
+      "paths": [
+        "MeetlessTests/GeminiAPIKeyStoreTests.swift"
+      ],
+      "created_at": "2026-05-01T04:47:14.323Z",
+      "updated_at": "2026-05-01T04:50:04.173Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T05:47:14.323Z",
+      "status": "released",
+      "released_at": "2026-05-01T04:50:04.173Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momfle3a-knd595",
+      "agent": "Feynman",
+      "bead_id": "bd-2u9",
+      "paths": [
+        "MeetlessApp/Services/GeminiAPIKeyStore/**"
+      ],
+      "created_at": "2026-05-01T04:47:14.326Z",
+      "updated_at": "2026-05-01T04:50:04.173Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T05:47:14.326Z",
+      "status": "released",
+      "released_at": "2026-05-01T04:50:04.173Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momfle3f-918c6k",
+      "agent": "Feynman",
+      "bead_id": "bd-2u9",
+      "paths": [
+        "Meetless.xcodeproj/project.pbxproj"
+      ],
+      "created_at": "2026-05-01T04:47:14.331Z",
+      "updated_at": "2026-05-01T04:50:04.173Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T05:47:14.331Z",
+      "status": "released",
+      "released_at": "2026-05-01T04:50:04.173Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momfr8bg-ira1j4",
+      "agent": "Volta",
+      "bead_id": "bd-2yy",
+      "paths": [
+        "MeetlessApp/Services/SessionRepository/SessionRepository.swift"
+      ],
+      "created_at": "2026-05-01T04:51:46.780Z",
+      "updated_at": "2026-05-01T04:54:59.217Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T05:51:46.780Z",
+      "status": "released",
+      "released_at": "2026-05-01T04:54:59.217Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momfr8e8-0ncd0y",
+      "agent": "Volta",
+      "bead_id": "bd-2yy",
+      "paths": [
+        "MeetlessTests/SessionRepositoryTests.swift"
+      ],
+      "created_at": "2026-05-01T04:51:46.880Z",
+      "updated_at": "2026-05-01T04:54:59.217Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T05:51:46.880Z",
+      "status": "released",
+      "released_at": "2026-05-01T04:54:59.217Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momfxtqq-jws50x",
+      "agent": "Faraday",
+      "bead_id": "bd-2k0",
+      "paths": [
+        "MeetlessTests/SessionRepositoryTests.swift"
+      ],
+      "created_at": "2026-05-01T04:56:54.482Z",
+      "updated_at": "2026-05-01T04:59:19.800Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T05:56:54.482Z",
+      "status": "released",
+      "released_at": "2026-05-01T04:59:19.800Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momfxtqv-mpqn4p",
+      "agent": "Faraday",
+      "bead_id": "bd-2k0",
+      "paths": [
+        "MeetlessApp/Services/SessionRepository/SessionRepository.swift"
+      ],
+      "created_at": "2026-05-01T04:56:54.487Z",
+      "updated_at": "2026-05-01T04:59:19.800Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T05:56:54.487Z",
+      "status": "released",
+      "released_at": "2026-05-01T04:59:19.800Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momgk527-e30vse",
+      "agent": "Codex",
+      "bead_id": "bd-1rs",
+      "paths": [
+        "MeetlessTests/SessionRepositoryTests.swift"
+      ],
+      "created_at": "2026-05-01T05:14:15.583Z",
+      "updated_at": "2026-05-01T05:19:56.470Z",
+      "ttl_seconds": null,
+      "expires_at": null,
+      "status": "released",
+      "released_at": "2026-05-01T05:19:56.470Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momgk52h-2wer1q",
+      "agent": "Codex",
+      "bead_id": "bd-1g4",
+      "paths": [
+        "MeetlessTests/GeminiAPIKeyStoreTests.swift"
+      ],
+      "created_at": "2026-05-01T05:14:15.593Z",
+      "updated_at": "2026-05-01T05:19:56.470Z",
+      "ttl_seconds": null,
+      "expires_at": null,
+      "status": "released",
+      "released_at": "2026-05-01T05:19:56.470Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momgk52l-c1w0ws",
+      "agent": "Codex",
+      "bead_id": "bd-1rs",
+      "paths": [
+        "MeetlessApp/Services/SessionRepository/SessionRepository.swift"
+      ],
+      "created_at": "2026-05-01T05:14:15.597Z",
+      "updated_at": "2026-05-01T05:19:56.470Z",
+      "ttl_seconds": null,
+      "expires_at": null,
+      "status": "released",
+      "released_at": "2026-05-01T05:19:56.470Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momhstvb-ux8okh",
+      "agent": "Pascal",
+      "bead_id": "bd-227",
+      "paths": [
+        "MeetlessTests/SessionRepositoryTests.swift"
+      ],
+      "created_at": "2026-05-01T05:49:00.599Z",
+      "updated_at": "2026-05-01T05:50:28.082Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T06:49:00.599Z",
+      "status": "released",
+      "released_at": "2026-05-01T05:50:28.082Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momhstvh-b5f42e",
+      "agent": "Pascal",
+      "bead_id": "bd-227",
+      "paths": [
+        "MeetlessApp/Services/SessionRepository/SessionRepository.swift"
+      ],
+      "created_at": "2026-05-01T05:49:00.605Z",
+      "updated_at": "2026-05-01T05:50:28.082Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T06:49:00.605Z",
+      "status": "released",
+      "released_at": "2026-05-01T05:50:28.082Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momhwnds-qphfa2",
+      "agent": "Hopper",
+      "bead_id": "bd-g06",
+      "paths": [
+        "MeetlessApp/Services/GeminiSessionNotes/GeminiSessionNotesClient.swift"
+      ],
+      "created_at": "2026-05-01T05:51:58.816Z",
+      "updated_at": "2026-05-01T05:56:16.662Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T06:51:58.816Z",
+      "status": "released",
+      "released_at": "2026-05-01T05:56:16.662Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momhwngd-84qg2w",
+      "agent": "Hopper",
+      "bead_id": "bd-g06",
+      "paths": [
+        "MeetlessTests/GeminiSessionNotesClientTests.swift"
+      ],
+      "created_at": "2026-05-01T05:51:58.909Z",
+      "updated_at": "2026-05-01T05:56:16.662Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T06:51:58.909Z",
+      "status": "released",
+      "released_at": "2026-05-01T05:56:16.662Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momhwnja-ev21hx",
+      "agent": "Hopper",
+      "bead_id": "bd-g06",
+      "paths": [
+        "Meetless.xcodeproj/project.pbxproj"
+      ],
+      "created_at": "2026-05-01T05:51:59.014Z",
+      "updated_at": "2026-05-01T05:56:16.662Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T06:51:59.014Z",
+      "status": "released",
+      "released_at": "2026-05-01T05:56:16.662Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momi4mom-0ax2mw",
+      "agent": "Lovelace",
+      "bead_id": "bd-sbt",
+      "paths": [
+        "MeetlessApp/Services/GeminiSessionNotes/GeminiSessionNotesClient.swift"
+      ],
+      "created_at": "2026-05-01T05:58:11.157Z",
+      "updated_at": "2026-05-01T06:01:04.775Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T06:58:11.157Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:01:04.775Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momi4moq-h4emwu",
+      "agent": "Lovelace",
+      "bead_id": "bd-sbt",
+      "paths": [
+        "MeetlessTests/GeminiSessionNotesClientTests.swift"
+      ],
+      "created_at": "2026-05-01T05:58:11.162Z",
+      "updated_at": "2026-05-01T06:01:04.775Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T06:58:11.162Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:01:04.775Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momi7pye-b8s83e",
+      "agent": "Lovelace",
+      "bead_id": "bd-sbt",
+      "paths": [
+        ".beads/issues.jsonl"
+      ],
+      "created_at": "2026-05-01T06:00:35.365Z",
+      "updated_at": "2026-05-01T06:01:04.775Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:00:35.365Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:01:04.775Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momiaija-xivdk7",
+      "agent": "Tarski",
+      "bead_id": "bd-3ra",
+      "paths": [
+        "MeetlessTests/GeminiSessionNotesClientTests.swift"
+      ],
+      "created_at": "2026-05-01T06:02:45.718Z",
+      "updated_at": "2026-05-01T06:06:36.415Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:02:45.718Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:06:36.415Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momiaijf-bic489",
+      "agent": "Tarski",
+      "bead_id": "bd-3ra",
+      "paths": [
+        "MeetlessApp/Services/GeminiSessionNotes/GeminiSessionNotesClient.swift"
+      ],
+      "created_at": "2026-05-01T06:02:45.723Z",
+      "updated_at": "2026-05-01T06:06:36.415Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:02:45.723Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:06:36.415Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momiaijo-69mae9",
+      "agent": "Tarski",
+      "bead_id": "bd-3ra",
+      "paths": [
+        ".beads/issues.jsonl"
+      ],
+      "created_at": "2026-05-01T06:02:45.731Z",
+      "updated_at": "2026-05-01T06:06:36.415Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:02:45.731Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:06:36.415Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momjj4wz-iqxbvx",
+      "agent": "Chandrasekhar",
+      "bead_id": "bd-1on",
+      "paths": [
+        "MeetlessApp/Services/GeminiSessionNotes/GeminiSessionNotesClient.swift"
+      ],
+      "created_at": "2026-05-01T06:37:27.587Z",
+      "updated_at": "2026-05-01T06:39:24.812Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:37:27.587Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:39:24.812Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momjj4xf-yh4vli",
+      "agent": "Chandrasekhar",
+      "bead_id": "bd-1on",
+      "paths": [
+        "MeetlessTests/GeminiSessionNotesClientTests.swift"
+      ],
+      "created_at": "2026-05-01T06:37:27.603Z",
+      "updated_at": "2026-05-01T06:39:24.812Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:37:27.603Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:39:24.812Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momjj4xk-8ozefl",
+      "agent": "Chandrasekhar",
+      "bead_id": "bd-1on",
+      "paths": [
+        ".beads/issues.jsonl"
+      ],
+      "created_at": "2026-05-01T06:37:27.607Z",
+      "updated_at": "2026-05-01T06:39:24.812Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:37:27.607Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:39:24.812Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momjodcn-o1rq5j",
+      "agent": "Godel",
+      "bead_id": "bd-1ok",
+      "paths": [
+        "MeetlessApp/App/AppScreen.swift"
+      ],
+      "created_at": "2026-05-01T06:41:31.798Z",
+      "updated_at": "2026-05-01T06:44:16.863Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:41:31.798Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:44:16.863Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momjodcr-w3bmmd",
+      "agent": "Godel",
+      "bead_id": "bd-1ok",
+      "paths": [
+        "MeetlessApp/App/AppModel.swift"
+      ],
+      "created_at": "2026-05-01T06:41:31.803Z",
+      "updated_at": "2026-05-01T06:44:16.863Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:41:31.803Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:44:16.863Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momjodcy-d0x5x8",
+      "agent": "Godel",
+      "bead_id": "bd-1ok",
+      "paths": [
+        "MeetlessTests/GeminiAPIKeyStoreTests.swift"
+      ],
+      "created_at": "2026-05-01T06:41:31.810Z",
+      "updated_at": "2026-05-01T06:44:16.863Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:41:31.810Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:44:16.863Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momjodd3-nswm46",
+      "agent": "Godel",
+      "bead_id": "bd-1ok",
+      "paths": [
+        "MeetlessApp/App/MeetlessRootView.swift"
+      ],
+      "created_at": "2026-05-01T06:41:31.815Z",
+      "updated_at": "2026-05-01T06:44:16.863Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:41:31.815Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:44:16.863Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momjudyi-kqsz33",
+      "agent": "Avicenna",
+      "bead_id": "bd-uen",
+      "paths": [
+        "MeetlessApp/App/AppModel.swift"
+      ],
+      "created_at": "2026-05-01T06:46:12.522Z",
+      "updated_at": "2026-05-01T06:50:20.630Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:46:12.522Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:50:20.630Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momjudym-87ogka",
+      "agent": "Avicenna",
+      "bead_id": "bd-uen",
+      "paths": [
+        "MeetlessApp/Features/SessionDetail/SessionDetailView.swift"
+      ],
+      "created_at": "2026-05-01T06:46:12.526Z",
+      "updated_at": "2026-05-01T06:50:20.630Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:46:12.526Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:50:20.630Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momjue13-zcgsma",
+      "agent": "Avicenna",
+      "bead_id": "bd-uen",
+      "paths": [
+        "MeetlessTests/GeminiSessionNotesClientTests.swift"
+      ],
+      "created_at": "2026-05-01T06:46:12.615Z",
+      "updated_at": "2026-05-01T06:50:20.630Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:46:12.615Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:50:20.630Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momjue17-5u4jsu",
+      "agent": "Avicenna",
+      "bead_id": "bd-uen",
+      "paths": [
+        ".beads/issues.jsonl"
+      ],
+      "created_at": "2026-05-01T06:46:12.619Z",
+      "updated_at": "2026-05-01T06:50:20.630Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:46:12.619Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:50:20.630Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momjwftr-wj3y5k",
+      "agent": "Avicenna",
+      "bead_id": "bd-uen",
+      "paths": [
+        "MeetlessApp/App/MeetlessRootView.swift"
+      ],
+      "created_at": "2026-05-01T06:47:48.255Z",
+      "updated_at": "2026-05-01T06:50:20.630Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:47:48.255Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:50:20.630Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momk21i6-q56lwd",
+      "agent": "Singer",
+      "bead_id": "bd-213",
+      "paths": [
+        "MeetlessApp/Features/SessionDetail/SessionDetailView.swift"
+      ],
+      "created_at": "2026-05-01T06:52:09.630Z",
+      "updated_at": "2026-05-01T06:54:32.339Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:52:09.630Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:54:32.339Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momk21ic-mrkool",
+      "agent": "Singer",
+      "bead_id": "bd-213",
+      "paths": [
+        "MeetlessTests/GeminiSessionNotesClientTests.swift"
+      ],
+      "created_at": "2026-05-01T06:52:09.636Z",
+      "updated_at": "2026-05-01T06:54:32.339Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:52:09.636Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:54:32.339Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momk21il-rv3e7r",
+      "agent": "Singer",
+      "bead_id": "bd-213",
+      "paths": [
+        ".beads/issues.jsonl"
+      ],
+      "created_at": "2026-05-01T06:52:09.645Z",
+      "updated_at": "2026-05-01T06:54:32.339Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:52:09.645Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:54:32.339Z",
+      "note": ""
+    },
+    {
+      "id": "resv-momk5aqw-p5k6k9",
+      "agent": "Singer",
+      "bead_id": "bd-213",
+      "paths": [
+        ".khuym/state.json"
+      ],
+      "created_at": "2026-05-01T06:54:41.576Z",
+      "updated_at": "2026-05-01T06:54:54.647Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-05-01T07:54:41.576Z",
+      "status": "released",
+      "released_at": "2026-05-01T06:54:54.647Z",
       "note": ""
     }
   ]
