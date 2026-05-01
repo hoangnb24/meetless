@@ -36,7 +36,8 @@ struct MeetlessRootView: View {
             SessionDetailView(
                 viewModel: appModel.sessionDetailViewModel,
                 onBackToHistory: { appModel.show(.history) },
-                onDeleteSession: { appModel.deleteSelectedSession() }
+                onDeleteSession: { appModel.deleteSelectedSession() },
+                onGenerateNotes: { appModel.generateNotesForSelectedSession() }
             )
         case .settings:
             GeminiSettingsView(viewModel: appModel.geminiSettingsViewModel)

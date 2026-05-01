@@ -29,12 +29,21 @@ final class SessionDetailViewModel: ObservableObject {
         let text: String
     }
 
+    enum GenerateFailure: Error, Equatable {
+        case noSelectedSession
+        case missingAPIKey
+    }
+
     @Published private(set) var title = "Session detail"
     @Published private(set) var subtitle = "Select a saved history row to open its persisted transcript snapshot and metadata here."
     @Published private(set) var metadataItems: [MetadataItem] = []
     @Published private(set) var transcriptRows: [TranscriptRow] = []
     @Published private(set) var sourceStatuses: [SourcePipelineStatus] = []
     @Published private(set) var savedSessionNotices: [SavedSessionNotice] = []
+    @Published private(set) var hasGeneratedNotes = false
+    @Published private(set) var isGeminiConfigured = false
+    @Published private(set) var isGeneratingNotes = false
+    @Published private(set) var generationErrorMessage: String?
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var actionMessage: String?
@@ -57,7 +66,36 @@ final class SessionDetailViewModel: ObservableObject {
     }
 
     var canDelete: Bool {
-        !isLoading && errorMessage == nil && (!metadataItems.isEmpty || !transcriptRows.isEmpty || !sourceStatuses.isEmpty)
+        !isLoading && !isGeneratingNotes && errorMessage == nil && (!metadataItems.isEmpty || !transcriptRows.isEmpty || !sourceStatuses.isEmpty)
+    }
+
+    var canGenerateNotes: Bool {
+        !isLoading
+            && !isGeneratingNotes
+            && errorMessage == nil
+            && !metadataItems.isEmpty
+            && isGeminiConfigured
+            && !hasGeneratedNotes
+    }
+
+    var generateNotesStatusText: String? {
+        if isGeneratingNotes {
+            return "Generating notes from saved audio."
+        }
+
+        if let generationErrorMessage {
+            return generationErrorMessage
+        }
+
+        if hasGeneratedNotes {
+            return "Notes have already been generated for this session."
+        }
+
+        if !isGeminiConfigured && !metadataItems.isEmpty && errorMessage == nil && !isLoading {
+            return "Add a Gemini API key in Settings before generating notes."
+        }
+
+        return nil
     }
 
     var compactNoticeItems: [NoticeItem] {
@@ -97,6 +135,9 @@ final class SessionDetailViewModel: ObservableObject {
         transcriptRows = []
         sourceStatuses = []
         savedSessionNotices = []
+        hasGeneratedNotes = false
+        isGeneratingNotes = false
+        generationErrorMessage = nil
         isLoading = false
         errorMessage = nil
         actionMessage = nil
@@ -109,6 +150,9 @@ final class SessionDetailViewModel: ObservableObject {
         transcriptRows = []
         sourceStatuses = []
         savedSessionNotices = []
+        hasGeneratedNotes = false
+        isGeneratingNotes = false
+        generationErrorMessage = nil
         isLoading = true
         errorMessage = nil
         actionMessage = nil
@@ -137,6 +181,9 @@ final class SessionDetailViewModel: ObservableObject {
         }
         sourceStatuses = detail.sourceStatuses
         savedSessionNotices = detail.savedSessionNotices
+        hasGeneratedNotes = detail.generatedNotes != nil
+        isGeneratingNotes = false
+        generationErrorMessage = nil
         isLoading = false
         errorMessage = nil
         actionMessage = nil
@@ -149,6 +196,9 @@ final class SessionDetailViewModel: ObservableObject {
         transcriptRows = []
         sourceStatuses = []
         savedSessionNotices = []
+        hasGeneratedNotes = false
+        isGeneratingNotes = false
+        generationErrorMessage = nil
         isLoading = false
         errorMessage = error.localizedDescription
         actionMessage = nil
@@ -157,6 +207,25 @@ final class SessionDetailViewModel: ObservableObject {
     func showDeleteFailure(title: String, error: Error) {
         self.title = title
         actionMessage = "Meetless could not delete this local session bundle: \(error.localizedDescription)"
+    }
+
+    func updateGeminiConfiguration(_ isConfigured: Bool) {
+        isGeminiConfigured = isConfigured
+    }
+
+    func beginGeneratingNotes() {
+        guard canGenerateNotes else {
+            return
+        }
+
+        isGeneratingNotes = true
+        generationErrorMessage = nil
+        actionMessage = nil
+    }
+
+    func showGenerationFailure(_ error: Error) {
+        isGeneratingNotes = false
+        generationErrorMessage = Self.safeGenerationFailureMessage(for: error)
     }
 
     private static let dateTimeFormatter: DateFormatter = {
@@ -267,13 +336,49 @@ final class SessionDetailViewModel: ObservableObject {
             .replacingOccurrences(of: "Me was", with: "Input was")
             .replacingOccurrences(of: "Me is", with: "Input is")
     }
+
+    private static func safeGenerationFailureMessage(for error: Error) -> String {
+        if let viewError = error as? GenerateFailure {
+            switch viewError {
+            case .noSelectedSession:
+                return "Open a saved session before generating notes."
+            case .missingAPIKey:
+                return "Add a Gemini API key in Settings, then try generating notes again."
+            }
+        }
+
+        if let orchestrationError = error as? GeminiSessionNotesOrchestrationError {
+            switch orchestrationError {
+            case .missingAPIKey:
+                return "Add a Gemini API key in Settings, then try generating notes again."
+            case .alreadyGenerated:
+                return "This session already has generated notes, so Meetless will not overwrite them."
+            case .missingAudio:
+                return "Meetless could not find the saved audio needed for Gemini. Check this saved session, then try again."
+            case .authentication:
+                return "Gemini rejected the saved API key. Update it in Settings, then try again."
+            case .client:
+                return "Meetless could not prepare the Gemini request. Check your connection and settings, then try again."
+            case .provider:
+                return "Gemini could not finish this request. Try generating notes again."
+            case .parser:
+                return "Gemini returned notes Meetless could not read safely. Try generating notes again."
+            case .persistence:
+                return "Meetless could not save the generated notes locally. Try generating notes again."
+            }
+        }
+
+        return "Meetless could not generate notes. Try again."
+    }
 }
 
 struct SessionDetailView: View {
     @ObservedObject var viewModel: SessionDetailViewModel
     let onBackToHistory: () -> Void
     let onDeleteSession: () -> Void
+    let onGenerateNotes: () -> Void
     @State private var isPresentingDeleteConfirmation = false
+    @State private var isPresentingGenerateConfirmation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
@@ -286,6 +391,14 @@ struct SessionDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes the local session bundle, transcript snapshot, and raw audio artifacts from Meetless.")
+        }
+        .alert("Upload saved audio to Gemini?", isPresented: $isPresentingGenerateConfirmation) {
+            Button("Upload and generate") {
+                onGenerateNotes()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Meetless will send this saved session's audio files to Gemini to create a summary and action items.")
         }
     }
 
@@ -314,6 +427,7 @@ struct SessionDetailView: View {
     private var detailActionsRow: some View {
         HStack(spacing: 8) {
             backToHistoryButton
+            generateNotesButton
             deleteSessionButton
         }
     }
@@ -324,6 +438,17 @@ struct SessionDetailView: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
+    }
+
+    private var generateNotesButton: some View {
+        Button {
+            isPresentingGenerateConfirmation = true
+        } label: {
+            Label("Generate", systemImage: "sparkles")
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .disabled(!viewModel.canGenerateNotes)
     }
 
     @ViewBuilder
@@ -362,6 +487,10 @@ struct SessionDetailView: View {
                         title: "Delete unavailable",
                         body: actionMessage
                     )
+                }
+
+                if let generateNotesStatusText = viewModel.generateNotesStatusText {
+                    generationStatusBanner(generateNotesStatusText)
                 }
 
                 readingLayout
@@ -645,6 +774,37 @@ struct SessionDetailView: View {
         )
     }
 
+    private func generationStatusBanner(_ body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            if viewModel.isGeneratingNotes {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: viewModel.hasGeneratedNotes ? "checkmark.circle" : "exclamationmark.triangle")
+                    .foregroundStyle(viewModel.hasGeneratedNotes ? MeetlessDesignTokens.Colors.successGreen : MeetlessDesignTokens.Colors.warningAmber)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(viewModel.isGeneratingNotes ? "Generating notes" : viewModel.hasGeneratedNotes ? "Notes ready" : "Generate unavailable")
+                    .font(MeetlessDesignTokens.Typography.body.weight(.semibold))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                Text(body)
+                    .font(MeetlessDesignTokens.Typography.caption)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            (viewModel.hasGeneratedNotes ? MeetlessDesignTokens.Colors.successGreen : MeetlessDesignTokens.Colors.warningAmber).opacity(0.1),
+            in: RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
+        )
+    }
+
     private func color(for state: SourcePipelineState) -> Color {
         switch state {
         case .ready:
@@ -669,6 +829,6 @@ struct SessionDetailView: View {
 }
 
 #Preview {
-    SessionDetailView(viewModel: SessionDetailViewModel(), onBackToHistory: {}, onDeleteSession: {})
+    SessionDetailView(viewModel: SessionDetailViewModel(), onBackToHistory: {}, onDeleteSession: {}, onGenerateNotes: {})
         .frame(width: 1080, height: 720)
 }

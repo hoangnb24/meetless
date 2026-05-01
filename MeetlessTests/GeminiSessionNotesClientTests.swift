@@ -510,6 +510,105 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         XCTAssertNil(generatedNotesAfterFailure)
     }
 
+    @MainActor
+    func testAppModelGenerateNotesRefreshesSelectedSessionAfterSuccess() async throws {
+        let fixture = try await Self.makeSessionFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+
+        let generatedNotes = Self.makeGeneratedNotes()
+        let orchestrator = FixtureGeminiSessionNotesOrchestrator(
+            result: .success(generatedNotes),
+            repository: fixture.repository
+        )
+        let appModel = AppModel(
+            sessionRepository: fixture.repository,
+            geminiAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: "test-gemini-key"),
+            geminiSessionNotesOrchestrator: orchestrator
+        )
+
+        appModel.openSessionDetail(for: try await Self.makeHistoryRow(for: fixture.session, repository: fixture.repository))
+        _ = try await MeetlessTestSupport.waitForValue(description: "session detail can generate") { @MainActor in
+            appModel.sessionDetailViewModel.canGenerateNotes ? true : nil
+        }
+
+        appModel.generateNotesForSelectedSession()
+        _ = try await MeetlessTestSupport.waitForValue(description: "selected detail refreshed with generated notes") { @MainActor in
+            appModel.sessionDetailViewModel.hasGeneratedNotes ? true : nil
+        }
+
+        let requestCount = await orchestrator.requestCount
+        let reopenedNotes = try await fixture.repository.loadGeneratedNotes(for: fixture.session)
+        XCTAssertEqual(requestCount, 1)
+        XCTAssertEqual(reopenedNotes, generatedNotes)
+        XCTAssertFalse(appModel.sessionDetailViewModel.canGenerateNotes)
+        XCTAssertNil(appModel.sessionDetailViewModel.generationErrorMessage)
+    }
+
+    @MainActor
+    func testAppModelGenerateNotesFailureLeavesSelectedSessionRetryableAndUnchanged() async throws {
+        let fixture = try await Self.makeSessionFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+
+        let orchestrator = FixtureGeminiSessionNotesOrchestrator(
+            result: .failure(GeminiSessionNotesOrchestrationError.provider)
+        )
+        let appModel = AppModel(
+            sessionRepository: fixture.repository,
+            geminiAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: "test-gemini-key"),
+            geminiSessionNotesOrchestrator: orchestrator
+        )
+
+        appModel.openSessionDetail(for: try await Self.makeHistoryRow(for: fixture.session, repository: fixture.repository))
+        _ = try await MeetlessTestSupport.waitForValue(description: "session detail can generate") { @MainActor in
+            appModel.sessionDetailViewModel.canGenerateNotes ? true : nil
+        }
+
+        appModel.generateNotesForSelectedSession()
+        let errorMessage = try await MeetlessTestSupport.waitForValue(description: "retryable generation error") { @MainActor in
+            appModel.sessionDetailViewModel.generationErrorMessage
+        }
+
+        let requestCount = await orchestrator.requestCount
+        let reopenedNotes = try await fixture.repository.loadGeneratedNotes(for: fixture.session)
+        XCTAssertEqual(requestCount, 1)
+        XCTAssertNil(reopenedNotes)
+        XCTAssertEqual(errorMessage, "Gemini could not finish this request. Try generating notes again.")
+        XCTAssertTrue(appModel.sessionDetailViewModel.canGenerateNotes)
+    }
+
+    @MainActor
+    func testAppModelGenerateNotesRequiresConfiguredKeyBeforeCallingOrchestrator() async throws {
+        let fixture = try await Self.makeSessionFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+
+        let orchestrator = FixtureGeminiSessionNotesOrchestrator(
+            result: .success(Self.makeGeneratedNotes()),
+            repository: fixture.repository
+        )
+        let appModel = AppModel(
+            sessionRepository: fixture.repository,
+            geminiAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
+            geminiSessionNotesOrchestrator: orchestrator
+        )
+
+        appModel.openSessionDetail(for: try await Self.makeHistoryRow(for: fixture.session, repository: fixture.repository))
+        _ = try await MeetlessTestSupport.waitForValue(description: "session detail loaded without key") { @MainActor in
+            appModel.sessionDetailViewModel.generateNotesStatusText != nil ? true : nil
+        }
+
+        appModel.generateNotesForSelectedSession()
+
+        let requestCount = await orchestrator.requestCount
+        let reopenedNotes = try await fixture.repository.loadGeneratedNotes(for: fixture.session)
+        XCTAssertEqual(requestCount, 0)
+        XCTAssertNil(reopenedNotes)
+        XCTAssertEqual(
+            appModel.sessionDetailViewModel.generationErrorMessage,
+            "Add a Gemini API key in Settings, then try generating notes again."
+        )
+        XCTAssertFalse(appModel.sessionDetailViewModel.canGenerateNotes)
+    }
+
     private static func makeArtifactsFixture() throws -> (directoryURL: URL, artifacts: SessionAudioArtifactsForUpload) {
         let directoryURL = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "GeminiSessionNotesClientTests")
         let meetingURL = directoryURL.appendingPathComponent("meeting.m4a")
@@ -568,6 +667,29 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         }
 
         return (directoryURL, repository, session)
+    }
+
+    private static func makeHistoryRow(
+        for session: PersistedSessionBundle,
+        repository: SessionRepository
+    ) async throws -> HistoryViewModel.Row {
+        let detail = try await repository.loadSavedSessionDetail(at: session.directoryURL)
+        let summary = PersistedSessionSummary(
+            id: detail.id,
+            directoryURL: detail.directoryURL,
+            title: detail.title,
+            startedAt: detail.startedAt,
+            endedAt: detail.endedAt,
+            durationSeconds: detail.durationSeconds,
+            transcriptPreview: detail.transcriptChunks.first?.text ?? "",
+            status: detail.status,
+            transcriptSnapshotMatchesCommittedTimeline: detail.transcriptSnapshotMatchesCommittedTimeline,
+            transcriptSnapshotWarning: detail.transcriptSnapshotWarning,
+            sourceStatuses: detail.sourceStatuses,
+            updatedAt: detail.updatedAt
+        )
+
+        return HistoryViewModel.Row(summary: summary)
     }
 
     private static func uploadResponse(uri: String, mimeType: String) -> GeminiHTTPResponse {
@@ -741,5 +863,38 @@ private actor FixtureGeminiSessionNotesGenerator: GeminiSessionNotesGenerating {
         }
 
         return try XCTUnwrap(response)
+    }
+}
+
+private actor FixtureGeminiSessionNotesOrchestrator: GeminiSessionNotesOrchestrating {
+    private let result: Result<GeneratedSessionNotes, Error>
+    private let repository: SessionRepository?
+    private(set) var requestedSessions: [PersistedSessionBundle] = []
+
+    init(
+        result: Result<GeneratedSessionNotes, Error>,
+        repository: SessionRepository? = nil
+    ) {
+        self.result = result
+        self.repository = repository
+    }
+
+    var requestCount: Int {
+        requestedSessions.count
+    }
+
+    func generateNotes(for session: PersistedSessionBundle) async throws -> GeneratedSessionNotes {
+        requestedSessions.append(session)
+
+        switch result {
+        case .success(let generatedNotes):
+            if let repository {
+                try await repository.saveGeneratedNotes(generatedNotes, for: session)
+            }
+
+            return generatedNotes
+        case .failure(let error):
+            throw error
+        }
     }
 }

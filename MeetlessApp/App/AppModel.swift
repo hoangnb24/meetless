@@ -7,6 +7,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var selectedSessionDirectoryURL: URL?
 
     private let sessionRepository: SessionRepository
+    private let geminiSessionNotesOrchestrator: any GeminiSessionNotesOrchestrating
+    private var selectedSessionBundle: PersistedSessionBundle?
 
     let homeViewModel = HomeViewModel()
     let historyViewModel = HistoryViewModel()
@@ -17,9 +19,15 @@ final class AppModel: ObservableObject {
     init(
         sessionRepository: SessionRepository = SessionRepository(),
         recordingCoordinator: any RecordingCoordinating = MeetlessRecordingCoordinator(),
-        geminiAPIKeyStore: any GeminiAPIKeyStoring = KeychainGeminiAPIKeyStore()
+        geminiAPIKeyStore: any GeminiAPIKeyStoring = KeychainGeminiAPIKeyStore(),
+        geminiSessionNotesOrchestrator: (any GeminiSessionNotesOrchestrating)? = nil
     ) {
         self.sessionRepository = sessionRepository
+        self.geminiSessionNotesOrchestrator = geminiSessionNotesOrchestrator
+            ?? GeminiSessionNotesOrchestrator(
+                apiKeyStore: geminiAPIKeyStore,
+                sessionRepository: sessionRepository
+            )
         self.geminiSettingsViewModel = GeminiSettingsViewModel(apiKeyStore: geminiAPIKeyStore)
         self.recordingViewModel = RecordingViewModel(coordinator: recordingCoordinator)
 
@@ -38,6 +46,7 @@ final class AppModel: ObservableObject {
                 await refreshSavedSessions()
             }
         case .sessionDetail:
+            sessionDetailViewModel.updateGeminiConfiguration(geminiSettingsViewModel.isConfigured)
             if selectedSessionID == nil {
                 sessionDetailViewModel.showNoSelection()
             }
@@ -51,6 +60,7 @@ final class AppModel: ObservableObject {
     func openSessionDetail(for row: HistoryViewModel.Row) {
         selectedSessionID = row.id
         selectedSessionDirectoryURL = row.directoryURL
+        selectedSessionBundle = nil
         selectedScreen = .sessionDetail
         sessionDetailViewModel.showLoading(title: row.title)
 
@@ -83,6 +93,44 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func generateNotesForSelectedSession() {
+        guard let selectedSessionID, let selectedSessionDirectoryURL, let selectedSessionBundle else {
+            sessionDetailViewModel.showGenerationFailure(SessionDetailViewModel.GenerateFailure.noSelectedSession)
+            return
+        }
+
+        guard geminiSettingsViewModel.isConfigured else {
+            sessionDetailViewModel.showGenerationFailure(SessionDetailViewModel.GenerateFailure.missingAPIKey)
+            return
+        }
+
+        guard sessionDetailViewModel.canGenerateNotes else {
+            return
+        }
+
+        sessionDetailViewModel.beginGeneratingNotes()
+
+        Task {
+            do {
+                _ = try await geminiSessionNotesOrchestrator.generateNotes(for: selectedSessionBundle)
+                guard self.selectedSessionID == selectedSessionID else {
+                    return
+                }
+
+                await loadSessionDetail(
+                    sessionID: selectedSessionID,
+                    directoryURL: selectedSessionDirectoryURL
+                )
+            } catch {
+                guard self.selectedSessionID == selectedSessionID else {
+                    return
+                }
+
+                sessionDetailViewModel.showGenerationFailure(error)
+            }
+        }
+    }
+
     func refreshSavedSessions() async {
         historyViewModel.showLoading()
 
@@ -101,12 +149,20 @@ final class AppModel: ObservableObject {
                 return
             }
 
+            selectedSessionBundle = PersistedSessionBundle(
+                id: detail.id,
+                directoryURL: detail.directoryURL,
+                startedAt: detail.startedAt,
+                title: detail.title
+            )
             sessionDetailViewModel.showDetail(detail)
+            sessionDetailViewModel.updateGeminiConfiguration(geminiSettingsViewModel.isConfigured)
         } catch {
             guard selectedSessionID == sessionID else {
                 return
             }
 
+            selectedSessionBundle = nil
             sessionDetailViewModel.showLoadFailure(title: nil, error: error)
         }
     }
@@ -133,6 +189,7 @@ final class AppModel: ObservableObject {
     private func clearSelectedSession() {
         selectedSessionID = nil
         selectedSessionDirectoryURL = nil
+        selectedSessionBundle = nil
         sessionDetailViewModel.showNoSelection()
     }
 }
