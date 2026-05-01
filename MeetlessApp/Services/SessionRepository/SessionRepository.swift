@@ -98,6 +98,48 @@ struct GeneratedSessionNotes: Equatable, Sendable {
     let actionItemBullets: [String]
 }
 
+struct SessionAudioArtifactForUpload: Equatable, Identifiable, Sendable {
+    let source: RecordingSourceKind
+    let fileURL: URL
+    let filename: String
+    let fileExtension: String
+    let mimeType: String
+    let displayName: String
+    let sourceDescription: String
+    let isPrimarySourceOfRecord: Bool
+
+    var id: RecordingSourceKind { source }
+}
+
+struct SessionAudioArtifactsForUpload: Equatable, Sendable {
+    let sessionID: String
+    let sessionTitle: String
+    let artifacts: [SessionAudioArtifactForUpload]
+}
+
+enum SessionAudioArtifactResolutionError: LocalizedError, Equatable, Sendable {
+    case missingManifestEntry(source: RecordingSourceKind)
+    case missingRequiredFile(source: RecordingSourceKind, filename: String, url: URL)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingManifestEntry(let source):
+            return "Saved session is missing the \(Self.sourceName(for: source)) audio artifact entry in session.json."
+        case .missingRequiredFile(let source, let filename, _):
+            return "Saved session is missing the required \(Self.sourceName(for: source)) audio file: \(filename)."
+        }
+    }
+
+    private static func sourceName(for source: RecordingSourceKind) -> String {
+        switch source {
+        case .meeting:
+            return "meeting"
+        case .me:
+            return "microphone"
+        }
+    }
+}
+
 struct TranscriptSnapshotPersistenceIssue: Equatable, Sendable {
     let title: String
     let message: String
@@ -388,6 +430,43 @@ actor SessionRepository {
         return try loadGeneratedNotes(for: session, manifest: manifest)
     }
 
+    func resolveAudioArtifactsForUpload(for session: PersistedSessionBundle) throws -> SessionAudioArtifactsForUpload {
+        let manifest = try loadManifest(for: session)
+        let artifactsBySource = Dictionary(uniqueKeysWithValues: manifest.audioArtifacts.map { ($0.source, $0) })
+
+        let artifacts = try RecordingSourceKind.allCases.map { source -> SessionAudioArtifactForUpload in
+            guard let artifact = artifactsBySource[source] else {
+                throw SessionAudioArtifactResolutionError.missingManifestEntry(source: source)
+            }
+
+            let fileURL = session.directoryURL.appendingPathComponent(artifact.filename, isDirectory: false)
+            guard fileManager.fileExists(atPath: fileURL.path) else {
+                throw SessionAudioArtifactResolutionError.missingRequiredFile(
+                    source: source,
+                    filename: artifact.filename,
+                    url: fileURL
+                )
+            }
+
+            return SessionAudioArtifactForUpload(
+                source: source,
+                fileURL: fileURL,
+                filename: artifact.filename,
+                fileExtension: fileURL.pathExtension,
+                mimeType: Self.mimeType(forAudioFilename: artifact.filename),
+                displayName: Self.uploadDisplayName(for: source),
+                sourceDescription: Self.uploadSourceDescription(for: source),
+                isPrimarySourceOfRecord: artifact.isPrimarySourceOfRecord
+            )
+        }
+
+        return SessionAudioArtifactsForUpload(
+            sessionID: manifest.id,
+            sessionTitle: manifest.title,
+            artifacts: artifacts
+        )
+    }
+
     func saveGeneratedNotes(
         _ generatedNotes: GeneratedSessionNotes,
         for session: PersistedSessionBundle
@@ -669,6 +748,35 @@ actor SessionRepository {
         }
 
         return String(preview.prefix(157)) + "..."
+    }
+
+    private static func mimeType(forAudioFilename filename: String) -> String {
+        switch URL(fileURLWithPath: filename).pathExtension.lowercased() {
+        case "m4a":
+            return "audio/mp4"
+        case "wav", "wave":
+            return "audio/wav"
+        default:
+            return "application/octet-stream"
+        }
+    }
+
+    private static func uploadDisplayName(for source: RecordingSourceKind) -> String {
+        switch source {
+        case .meeting:
+            return "Meeting audio"
+        case .me:
+            return "Microphone audio"
+        }
+    }
+
+    private static func uploadSourceDescription(for source: RecordingSourceKind) -> String {
+        switch source {
+        case .meeting:
+            return "Computer-side saved audio captured from the meeting."
+        case .me:
+            return "User microphone saved audio captured locally."
+        }
     }
 
     private static func shouldForceTranscriptSnapshotWriteFailure() -> Bool {

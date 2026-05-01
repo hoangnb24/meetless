@@ -333,6 +333,143 @@ final class SessionRepositoryTests: XCTestCase {
         XCTAssertEqual(reopenedNotes, originalNotes)
     }
 
+    func testResolveAudioArtifactsForUploadReturnsManifestBackedM4AFiles() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryAudioArtifactsM4ATests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Microphone lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 900)
+        )
+        try Self.writeArtifactFixture(for: .meeting, in: session.directoryURL)
+        try Self.writeArtifactFixture(for: .me, in: session.directoryURL)
+
+        _ = try await repository.finalizeSession(
+            session,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane finished cleanly.", state: .ready),
+                SourcePipelineStatus(source: .me, detail: "Microphone lane finished cleanly.", state: .ready)
+            ],
+            transcriptChunks: [],
+            endedAt: Date(timeIntervalSince1970: 960),
+            status: .completed
+        )
+
+        let resolved = try await repository.resolveAudioArtifactsForUpload(for: session)
+        let meetingArtifact = try XCTUnwrap(resolved.artifacts.first { $0.source == .meeting })
+        let microphoneArtifact = try XCTUnwrap(resolved.artifacts.first { $0.source == .me })
+
+        XCTAssertEqual(resolved.sessionID, session.id)
+        XCTAssertEqual(resolved.artifacts.map(\.source), RecordingSourceKind.allCases)
+        XCTAssertEqual(meetingArtifact.filename, RecordingSourceKind.meeting.compressedArtifactFilename)
+        XCTAssertEqual(microphoneArtifact.filename, RecordingSourceKind.me.compressedArtifactFilename)
+        XCTAssertEqual(meetingArtifact.fileURL.lastPathComponent, meetingArtifact.filename)
+        XCTAssertEqual(microphoneArtifact.fileURL.lastPathComponent, microphoneArtifact.filename)
+        XCTAssertEqual(
+            meetingArtifact.fileExtension,
+            URL(fileURLWithPath: RecordingSourceKind.meeting.compressedArtifactFilename).pathExtension
+        )
+        XCTAssertEqual(
+            microphoneArtifact.fileExtension,
+            URL(fileURLWithPath: RecordingSourceKind.me.compressedArtifactFilename).pathExtension
+        )
+        XCTAssertEqual(meetingArtifact.mimeType, "audio/mp4")
+        XCTAssertEqual(microphoneArtifact.mimeType, "audio/mp4")
+        XCTAssertEqual(meetingArtifact.displayName, "Meeting audio")
+        XCTAssertEqual(microphoneArtifact.displayName, "Microphone audio")
+        XCTAssertTrue(meetingArtifact.isPrimarySourceOfRecord)
+        XCTAssertTrue(microphoneArtifact.isPrimarySourceOfRecord)
+    }
+
+    func testResolveAudioArtifactsForUploadReturnsWAVFallbackFiles() async throws {
+        let repository = SessionRepository(audioCompressor: FailingSessionAudioCompressor())
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryAudioArtifactsWAVTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Microphone lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        try Self.writeArtifactFixture(for: .meeting, in: session.directoryURL)
+        try Self.writeArtifactFixture(for: .me, in: session.directoryURL)
+
+        _ = try await repository.finalizeSession(
+            session,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane finished cleanly.", state: .ready),
+                SourcePipelineStatus(source: .me, detail: "Microphone lane finished cleanly.", state: .ready)
+            ],
+            transcriptChunks: [],
+            endedAt: Date(timeIntervalSince1970: 1_060),
+            status: .completed
+        )
+
+        let resolved = try await repository.resolveAudioArtifactsForUpload(for: session)
+        let artifactsBySource = Dictionary(uniqueKeysWithValues: resolved.artifacts.map { ($0.source, $0) })
+
+        XCTAssertEqual(artifactsBySource[.meeting]?.filename, RecordingSourceKind.meeting.artifactFilename)
+        XCTAssertEqual(artifactsBySource[.me]?.filename, RecordingSourceKind.me.artifactFilename)
+        XCTAssertEqual(
+            artifactsBySource[.meeting]?.fileExtension,
+            URL(fileURLWithPath: RecordingSourceKind.meeting.artifactFilename).pathExtension
+        )
+        XCTAssertEqual(
+            artifactsBySource[.me]?.fileExtension,
+            URL(fileURLWithPath: RecordingSourceKind.me.artifactFilename).pathExtension
+        )
+        XCTAssertEqual(artifactsBySource[.meeting]?.mimeType, "audio/wav")
+        XCTAssertEqual(artifactsBySource[.me]?.mimeType, "audio/wav")
+    }
+
+    func testResolveAudioArtifactsForUploadFailsClearlyWithoutMutatingBundleWhenRequiredFileIsMissing() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryAudioArtifactsMissingTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Microphone lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 1_100)
+        )
+        try Self.writeArtifactFixture(for: .meeting, in: session.directoryURL)
+
+        let manifestDataBeforeFailure = try Data(contentsOf: session.manifestURL)
+
+        do {
+            _ = try await repository.resolveAudioArtifactsForUpload(for: session)
+            XCTFail("Expected missing microphone audio artifact resolution to throw.")
+        } catch let error as SessionAudioArtifactResolutionError {
+            guard case .missingRequiredFile(let source, let filename, let url) = error else {
+                return XCTFail("Expected missingRequiredFile, got \(error).")
+            }
+
+            XCTAssertEqual(source, .me)
+            XCTAssertEqual(filename, RecordingSourceKind.me.artifactFilename)
+            XCTAssertEqual(url.lastPathComponent, RecordingSourceKind.me.artifactFilename)
+            XCTAssertTrue(error.localizedDescription.contains("microphone"))
+            XCTAssertTrue(error.localizedDescription.contains(RecordingSourceKind.me.artifactFilename))
+        }
+
+        let manifestDataAfterFailure = try Data(contentsOf: session.manifestURL)
+
+        XCTAssertEqual(manifestDataAfterFailure, manifestDataBeforeFailure)
+    }
+
     private static func loadManifestDictionary(from manifestURL: URL) throws -> [String: Any] {
         let data = try Data(contentsOf: manifestURL)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -352,6 +489,13 @@ final class SessionRepositoryTests: XCTestCase {
                 "Draft the privacy copy.",
                 "Review the summary panel."
             ]
+        )
+    }
+
+    private static func writeArtifactFixture(for source: RecordingSourceKind, in sessionDirectoryURL: URL) throws {
+        try MeetlessTestSupport.writePCM16WaveFile(
+            to: sessionDirectoryURL.appendingPathComponent(source.artifactFilename, isDirectory: false),
+            sampleCount: 16_000
         )
     }
 }
