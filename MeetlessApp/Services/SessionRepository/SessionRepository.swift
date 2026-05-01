@@ -119,12 +119,15 @@ struct SessionAudioArtifactsForUpload: Equatable, Sendable {
 
 enum SessionAudioArtifactResolutionError: LocalizedError, Equatable, Sendable {
     case missingManifestEntry(source: RecordingSourceKind)
+    case invalidManifestFilename(source: RecordingSourceKind, filename: String)
     case missingRequiredFile(source: RecordingSourceKind, filename: String, url: URL)
 
     var errorDescription: String? {
         switch self {
         case .missingManifestEntry(let source):
             return "Saved session is missing the \(Self.sourceName(for: source)) audio artifact entry in session.json."
+        case .invalidManifestFilename(let source, let filename):
+            return "Saved session has an invalid \(Self.sourceName(for: source)) audio artifact filename: \(filename)."
         case .missingRequiredFile(let source, let filename, _):
             return "Saved session is missing the required \(Self.sourceName(for: source)) audio file: \(filename)."
         }
@@ -136,6 +139,20 @@ enum SessionAudioArtifactResolutionError: LocalizedError, Equatable, Sendable {
             return "meeting"
         case .me:
             return "microphone"
+        }
+    }
+}
+
+enum GeneratedSessionNotesPersistenceError: LocalizedError, Equatable, Sendable {
+    case alreadyExists
+    case invalidManifestFilename(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .alreadyExists:
+            return "Generated notes already exist for this saved session."
+        case .invalidManifestFilename(let filename):
+            return "Saved session has an invalid generated notes filename: \(filename)."
         }
     }
 }
@@ -266,10 +283,10 @@ private enum SavedSessionNoticeFactory {
 
 actor SessionRepository {
     private static let forcedSnapshotFailureEnvironmentKey = "MEETLESS_FORCE_TRANSCRIPT_SNAPSHOT_UPDATE_FAILURE"
-    private static let forcedGeneratedNotesFailureEnvironmentKey = "MEETLESS_FORCE_GENERATED_NOTES_WRITE_FAILURE"
     private static let generatedNotesFilename = "generated-notes.json"
     static var testForcedTranscriptSnapshotFailureOverride: Bool?
     static var testForcedGeneratedNotesWriteFailureOverride: Bool?
+    static var testForcedGeneratedNotesManifestReplacementFailureOverride: Bool?
 
     private let fileManager: FileManager
     private let encoder: JSONEncoder
@@ -439,7 +456,11 @@ actor SessionRepository {
                 throw SessionAudioArtifactResolutionError.missingManifestEntry(source: source)
             }
 
-            let fileURL = session.directoryURL.appendingPathComponent(artifact.filename, isDirectory: false)
+            let fileURL = try validatedAudioArtifactURL(
+                filename: artifact.filename,
+                source: source,
+                in: session
+            )
             guard fileManager.fileExists(atPath: fileURL.path) else {
                 throw SessionAudioArtifactResolutionError.missingRequiredFile(
                     source: source,
@@ -471,6 +492,12 @@ actor SessionRepository {
         _ generatedNotes: GeneratedSessionNotes,
         for session: PersistedSessionBundle
     ) throws {
+        var manifest = try loadManifest(for: session)
+        let notesURL = session.directoryURL.appendingPathComponent(Self.generatedNotesFilename, isDirectory: false)
+        guard manifest.generatedNotesFilename == nil, !fileManager.fileExists(atPath: notesURL.path) else {
+            throw GeneratedSessionNotesPersistenceError.alreadyExists
+        }
+
         if Self.shouldForceGeneratedNotesWriteFailure() {
             throw CocoaError(.fileWriteUnknown)
         }
@@ -483,7 +510,6 @@ actor SessionRepository {
             actionItemBullets: generatedNotes.actionItemBullets
         )
         let notesData = try encoder.encode(snapshot)
-        var manifest = try loadManifest(for: session)
         manifest.generatedNotesFilename = Self.generatedNotesFilename
         manifest.updatedAt = generatedNotes.generatedAt
         let manifestData = try encoder.encode(manifest)
@@ -492,32 +518,25 @@ actor SessionRepository {
             ".generated-notes-\(UUID().uuidString)",
             isDirectory: true
         )
-        let notesURL = session.directoryURL.appendingPathComponent(Self.generatedNotesFilename, isDirectory: false)
         let stagedNotesURL = stagingDirectory.appendingPathComponent(Self.generatedNotesFilename, isDirectory: false)
         let stagedManifestURL = stagingDirectory.appendingPathComponent(session.manifestURL.lastPathComponent, isDirectory: false)
         let backupManifestURL = stagingDirectory.appendingPathComponent("session.json.backup", isDirectory: false)
-        let backupNotesURL = stagingDirectory.appendingPathComponent("generated-notes.json.backup", isDirectory: false)
-        let hadExistingNotes = fileManager.fileExists(atPath: notesURL.path)
 
         do {
             try fileManager.createDirectory(at: stagingDirectory, withIntermediateDirectories: true, attributes: nil)
             try notesData.write(to: stagedNotesURL, options: .withoutOverwriting)
             try manifestData.write(to: stagedManifestURL, options: .withoutOverwriting)
             try fileManager.copyItem(at: session.manifestURL, to: backupManifestURL)
-            if hadExistingNotes {
-                try fileManager.copyItem(at: notesURL, to: backupNotesURL)
-            }
 
             try replaceItem(at: notesURL, with: stagedNotesURL)
+            if Self.shouldForceGeneratedNotesManifestReplacementFailure() {
+                throw CocoaError(.fileWriteUnknown)
+            }
             try replaceItem(at: session.manifestURL, with: stagedManifestURL)
             try? fileManager.removeItem(at: stagingDirectory)
         } catch {
             try? restoreItem(at: session.manifestURL, from: backupManifestURL)
-            if hadExistingNotes {
-                try? restoreItem(at: notesURL, from: backupNotesURL)
-            } else {
-                try? fileManager.removeItem(at: notesURL)
-            }
+            try? fileManager.removeItem(at: notesURL)
             try? fileManager.removeItem(at: stagingDirectory)
             throw error
         }
@@ -597,8 +616,11 @@ actor SessionRepository {
         guard let generatedNotesFilename = manifest.generatedNotesFilename else {
             return nil
         }
+        guard generatedNotesFilename == Self.generatedNotesFilename else {
+            throw GeneratedSessionNotesPersistenceError.invalidManifestFilename(generatedNotesFilename)
+        }
 
-        let generatedNotesURL = session.directoryURL.appendingPathComponent(generatedNotesFilename, isDirectory: false)
+        let generatedNotesURL = session.directoryURL.appendingPathComponent(Self.generatedNotesFilename, isDirectory: false)
         let data = try Data(contentsOf: generatedNotesURL)
         let snapshot = try decoder.decode(GeneratedSessionNotesSnapshot.self, from: data)
 
@@ -761,6 +783,42 @@ actor SessionRepository {
         }
     }
 
+    private func validatedAudioArtifactURL(
+        filename: String,
+        source: RecordingSourceKind,
+        in session: PersistedSessionBundle
+    ) throws -> URL {
+        guard Self.isSafeSessionFilename(filename) else {
+            throw SessionAudioArtifactResolutionError.invalidManifestFilename(source: source, filename: filename)
+        }
+
+        let fileExtension = URL(fileURLWithPath: filename).pathExtension.lowercased()
+        guard ["m4a", "wav", "wave"].contains(fileExtension) else {
+            throw SessionAudioArtifactResolutionError.invalidManifestFilename(source: source, filename: filename)
+        }
+
+        let sessionDirectoryURL = session.directoryURL.resolvingSymlinksInPath().standardizedFileURL
+        let fileURL = session.directoryURL
+            .appendingPathComponent(filename, isDirectory: false)
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        let sessionPath = sessionDirectoryURL.path.hasSuffix("/") ? sessionDirectoryURL.path : sessionDirectoryURL.path + "/"
+
+        guard fileURL.path.hasPrefix(sessionPath) else {
+            throw SessionAudioArtifactResolutionError.invalidManifestFilename(source: source, filename: filename)
+        }
+
+        return fileURL
+    }
+
+    private static func isSafeSessionFilename(_ filename: String) -> Bool {
+        guard !filename.isEmpty else {
+            return false
+        }
+
+        return filename == URL(fileURLWithPath: filename).lastPathComponent
+    }
+
     private static func uploadDisplayName(for source: RecordingSourceKind) -> String {
         switch source {
         case .meeting:
@@ -793,8 +851,15 @@ actor SessionRepository {
             return testForcedGeneratedNotesWriteFailureOverride
         }
 
-        let value = ProcessInfo.processInfo.environment[forcedGeneratedNotesFailureEnvironmentKey]
-        return value == "1" || value?.lowercased() == "true"
+        return false
+    }
+
+    private static func shouldForceGeneratedNotesManifestReplacementFailure() -> Bool {
+        if let testForcedGeneratedNotesManifestReplacementFailureOverride {
+            return testForcedGeneratedNotesManifestReplacementFailureOverride
+        }
+
+        return false
     }
 
     private static func makeTranscriptSnapshotPersistenceIssue(forcedFailure: Bool) -> TranscriptSnapshotPersistenceIssue {

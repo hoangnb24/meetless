@@ -43,6 +43,13 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         XCTAssertNil(try store.loadAPIKey())
     }
 
+    func testDeleteAPIKeySucceedsWhenValueIsAlreadyMissing() {
+        let keychain = FakeKeychainItemAccessor()
+        let store = KeychainGeminiAPIKeyStore(keychain: keychain)
+
+        XCTAssertNoThrow(try store.deleteAPIKey())
+    }
+
     func testLoadMapsKeychainFailure() {
         let keychain = FakeKeychainItemAccessor(copyMatchingStatusOverride: errSecAuthFailed)
         let store = KeychainGeminiAPIKeyStore(keychain: keychain)

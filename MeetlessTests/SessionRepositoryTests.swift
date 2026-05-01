@@ -5,6 +5,7 @@ final class SessionRepositoryTests: XCTestCase {
     override func tearDown() {
         SessionRepository.testForcedTranscriptSnapshotFailureOverride = nil
         SessionRepository.testForcedGeneratedNotesWriteFailureOverride = nil
+        SessionRepository.testForcedGeneratedNotesManifestReplacementFailureOverride = nil
         super.tearDown()
     }
 
@@ -288,9 +289,9 @@ final class SessionRepositoryTests: XCTestCase {
         XCTAssertEqual(notesJSON["actionItemBullets"] as? [String], notes.actionItemBullets)
     }
 
-    func testGeneratedNotesWriteFailurePreservesExistingBundleAndPriorNotes() async throws {
+    func testSecondGeneratedNotesSaveFailsAndPreservesExistingBundleAndPriorNotes() async throws {
         let repository = SessionRepository()
-        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryGeneratedNotesFailureTests")
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryGeneratedNotesOverwriteTests")
         defer { try? FileManager.default.removeItem(at: scratchDirectory) }
 
         let session = try await repository.beginSessionBundle(
@@ -309,7 +310,6 @@ final class SessionRepositoryTests: XCTestCase {
         let notesURL = session.directoryURL.appendingPathComponent("generated-notes.json", isDirectory: false)
         let notesDataBeforeFailure = try Data(contentsOf: notesURL)
 
-        SessionRepository.testForcedGeneratedNotesWriteFailureOverride = true
         let replacementNotes = GeneratedSessionNotes(
             generatedAt: Date(timeIntervalSince1970: 800),
             hiddenGeminiTranscript: "This replacement transcript must not be saved.",
@@ -319,9 +319,9 @@ final class SessionRepositoryTests: XCTestCase {
 
         do {
             try await repository.saveGeneratedNotes(replacementNotes, for: session)
-            XCTFail("Expected generated-notes write failure to throw.")
-        } catch {
-            XCTAssertTrue(error is CocoaError)
+            XCTFail("Expected generated-notes overwrite rejection to throw.")
+        } catch let error as GeneratedSessionNotesPersistenceError {
+            XCTAssertEqual(error, .alreadyExists)
         }
 
         let manifestDataAfterFailure = try Data(contentsOf: session.manifestURL)
@@ -331,6 +331,40 @@ final class SessionRepositoryTests: XCTestCase {
         XCTAssertEqual(manifestDataAfterFailure, manifestDataBeforeFailure)
         XCTAssertEqual(notesDataAfterFailure, notesDataBeforeFailure)
         XCTAssertEqual(reopenedNotes, originalNotes)
+    }
+
+    func testGeneratedNotesWriteFailureInsideTransactionPreservesFirstTimeBundle() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryGeneratedNotesTransactionalFailureTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Me lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 810)
+        )
+        let manifestDataBeforeFailure = try Data(contentsOf: session.manifestURL)
+        let notesURL = session.directoryURL.appendingPathComponent("generated-notes.json", isDirectory: false)
+
+        SessionRepository.testForcedGeneratedNotesManifestReplacementFailureOverride = true
+
+        do {
+            try await repository.saveGeneratedNotes(Self.makeGeneratedNotes(), for: session)
+            XCTFail("Expected generated-notes transaction failure to throw.")
+        } catch {
+            XCTAssertTrue(error is CocoaError)
+        }
+
+        let manifestDataAfterFailure = try Data(contentsOf: session.manifestURL)
+        let generatedNotesAfterFailure = try await repository.loadGeneratedNotes(for: session)
+
+        XCTAssertEqual(manifestDataAfterFailure, manifestDataBeforeFailure)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: notesURL.path))
+        XCTAssertNil(generatedNotesAfterFailure)
     }
 
     func testResolveAudioArtifactsForUploadReturnsManifestBackedM4AFiles() async throws {
@@ -470,6 +504,134 @@ final class SessionRepositoryTests: XCTestCase {
         XCTAssertEqual(manifestDataAfterFailure, manifestDataBeforeFailure)
     }
 
+    func testResolveAudioArtifactsForUploadRejectsTraversalManifestFilenameWithoutMutatingBundle() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryAudioArtifactsTraversalTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Microphone lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 1_200)
+        )
+        try Self.writeArtifactFixture(for: .meeting, in: session.directoryURL)
+        try Self.writeArtifactFixture(for: .me, in: session.directoryURL)
+        try Self.updateManifestDictionary(at: session.manifestURL) { manifest in
+            var artifacts = try XCTUnwrap(manifest["audioArtifacts"] as? [[String: Any]])
+            let microphoneIndex = try XCTUnwrap(artifacts.firstIndex { $0["source"] as? String == RecordingSourceKind.me.rawValue })
+            artifacts[microphoneIndex]["filename"] = "../../../../Documents/private.wav"
+            manifest["audioArtifacts"] = artifacts
+        }
+        let manifestDataBeforeFailure = try Data(contentsOf: session.manifestURL)
+
+        do {
+            _ = try await repository.resolveAudioArtifactsForUpload(for: session)
+            XCTFail("Expected traversal audio artifact filename to throw.")
+        } catch let error as SessionAudioArtifactResolutionError {
+            XCTAssertEqual(
+                error,
+                .invalidManifestFilename(source: .me, filename: "../../../../Documents/private.wav")
+            )
+        }
+
+        let manifestDataAfterFailure = try Data(contentsOf: session.manifestURL)
+
+        XCTAssertEqual(manifestDataAfterFailure, manifestDataBeforeFailure)
+    }
+
+    func testResolveAudioArtifactsForUploadRejectsNonAudioManifestFilename() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryAudioArtifactsExtensionTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Microphone lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 1_300)
+        )
+        try Self.writeArtifactFixture(for: .meeting, in: session.directoryURL)
+        try Self.updateManifestDictionary(at: session.manifestURL) { manifest in
+            var artifacts = try XCTUnwrap(manifest["audioArtifacts"] as? [[String: Any]])
+            let microphoneIndex = try XCTUnwrap(artifacts.firstIndex { $0["source"] as? String == RecordingSourceKind.me.rawValue })
+            artifacts[microphoneIndex]["filename"] = "private.txt"
+            manifest["audioArtifacts"] = artifacts
+        }
+
+        do {
+            _ = try await repository.resolveAudioArtifactsForUpload(for: session)
+            XCTFail("Expected non-audio artifact filename to throw.")
+        } catch let error as SessionAudioArtifactResolutionError {
+            XCTAssertEqual(error, .invalidManifestFilename(source: .me, filename: "private.txt"))
+        }
+    }
+
+    func testResolveAudioArtifactsForUploadFailsClearlyWhenManifestEntryIsMissing() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryAudioArtifactsMissingManifestEntryTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Microphone lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 1_400)
+        )
+        try Self.writeArtifactFixture(for: .meeting, in: session.directoryURL)
+        try Self.updateManifestDictionary(at: session.manifestURL) { manifest in
+            let artifacts = try XCTUnwrap(manifest["audioArtifacts"] as? [[String: Any]])
+            manifest["audioArtifacts"] = artifacts.filter { $0["source"] as? String != RecordingSourceKind.me.rawValue }
+        }
+        let manifestDataBeforeFailure = try Data(contentsOf: session.manifestURL)
+
+        do {
+            _ = try await repository.resolveAudioArtifactsForUpload(for: session)
+            XCTFail("Expected missing manifest entry to throw.")
+        } catch let error as SessionAudioArtifactResolutionError {
+            XCTAssertEqual(error, .missingManifestEntry(source: .me))
+        }
+
+        let manifestDataAfterFailure = try Data(contentsOf: session.manifestURL)
+
+        XCTAssertEqual(manifestDataAfterFailure, manifestDataBeforeFailure)
+    }
+
+    func testLoadGeneratedNotesRejectsTraversalManifestFilename() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryGeneratedNotesTraversalTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Me lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 1_500)
+        )
+        try Self.updateManifestDictionary(at: session.manifestURL) { manifest in
+            manifest["generatedNotesFilename"] = "../../../../Documents/generated-notes.json"
+        }
+
+        do {
+            _ = try await repository.loadGeneratedNotes(for: session)
+            XCTFail("Expected invalid generated notes manifest filename to throw.")
+        } catch let error as GeneratedSessionNotesPersistenceError {
+            XCTAssertEqual(error, .invalidManifestFilename("../../../../Documents/generated-notes.json"))
+        }
+    }
+
     private static func loadManifestDictionary(from manifestURL: URL) throws -> [String: Any] {
         let data = try Data(contentsOf: manifestURL)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -478,6 +640,16 @@ final class SessionRepositoryTests: XCTestCase {
     private static func audioArtifactFilenames(from manifest: [String: Any]) throws -> [String] {
         let artifacts = try XCTUnwrap(manifest["audioArtifacts"] as? [[String: Any]])
         return artifacts.compactMap { $0["filename"] as? String }
+    }
+
+    private static func updateManifestDictionary(
+        at manifestURL: URL,
+        update: (inout [String: Any]) throws -> Void
+    ) throws {
+        var manifest = try loadManifestDictionary(from: manifestURL)
+        try update(&manifest)
+        let data = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: manifestURL, options: .atomic)
     }
 
     private static func makeGeneratedNotes() -> GeneratedSessionNotes {
