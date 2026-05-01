@@ -11,17 +11,21 @@ final class AppModel: ObservableObject {
     let homeViewModel = HomeViewModel()
     let historyViewModel = HistoryViewModel()
     let sessionDetailViewModel = SessionDetailViewModel()
+    let geminiSettingsViewModel: GeminiSettingsViewModel
     let recordingViewModel: RecordingViewModel
 
     init(
         sessionRepository: SessionRepository = SessionRepository(),
-        recordingCoordinator: any RecordingCoordinating = MeetlessRecordingCoordinator()
+        recordingCoordinator: any RecordingCoordinating = MeetlessRecordingCoordinator(),
+        geminiAPIKeyStore: any GeminiAPIKeyStoring = KeychainGeminiAPIKeyStore()
     ) {
         self.sessionRepository = sessionRepository
+        self.geminiSettingsViewModel = GeminiSettingsViewModel(apiKeyStore: geminiAPIKeyStore)
         self.recordingViewModel = RecordingViewModel(coordinator: recordingCoordinator)
 
         Task {
             await refreshSavedSessions()
+            geminiSettingsViewModel.refreshStatus()
         }
     }
 
@@ -37,6 +41,8 @@ final class AppModel: ObservableObject {
             if selectedSessionID == nil {
                 sessionDetailViewModel.showNoSelection()
             }
+        case .settings:
+            geminiSettingsViewModel.refreshStatus()
         case .home:
             break
         }
@@ -128,5 +134,114 @@ final class AppModel: ObservableObject {
         selectedSessionID = nil
         selectedSessionDirectoryURL = nil
         sessionDetailViewModel.showNoSelection()
+    }
+}
+
+@MainActor
+final class GeminiSettingsViewModel: ObservableObject {
+    enum KeyStatus: Equatable {
+        case unknown
+        case configured
+        case notConfigured
+        case error(String)
+
+        var title: String {
+            switch self {
+            case .unknown:
+                return "Checking"
+            case .configured:
+                return "Configured"
+            case .notConfigured:
+                return "Not configured"
+            case .error:
+                return "Needs attention"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .unknown:
+                return "Checking the saved Gemini key."
+            case .configured:
+                return "A Gemini API key is saved in Keychain."
+            case .notConfigured:
+                return "Add a Gemini API key before generating session notes."
+            case .error(let message):
+                return message
+            }
+        }
+    }
+
+    @Published private(set) var keyStatus: KeyStatus = .unknown
+    @Published private(set) var feedbackMessage: String?
+    @Published var apiKeyInput = ""
+
+    private let apiKeyStore: any GeminiAPIKeyStoring
+
+    init(apiKeyStore: any GeminiAPIKeyStoring) {
+        self.apiKeyStore = apiKeyStore
+        refreshStatus()
+    }
+
+    var canSave: Bool {
+        !apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var isConfigured: Bool {
+        keyStatus == .configured
+    }
+
+    func refreshStatus() {
+        do {
+            let savedKey = try apiKeyStore.loadAPIKey()
+            keyStatus = savedKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? .configured
+                : .notConfigured
+        } catch {
+            keyStatus = .error(Self.safeMessage(for: error))
+        }
+    }
+
+    func saveAPIKey() {
+        let trimmedKey = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else {
+            feedbackMessage = "Enter a Gemini API key before saving."
+            return
+        }
+
+        do {
+            try apiKeyStore.saveAPIKey(trimmedKey)
+            apiKeyInput = ""
+            keyStatus = .configured
+            feedbackMessage = "Gemini API key saved."
+        } catch {
+            keyStatus = .error(Self.safeMessage(for: error))
+            feedbackMessage = "The Gemini API key could not be saved."
+        }
+    }
+
+    func deleteAPIKey() {
+        do {
+            try apiKeyStore.deleteAPIKey()
+            apiKeyInput = ""
+            keyStatus = .notConfigured
+            feedbackMessage = "Gemini API key removed."
+        } catch {
+            keyStatus = .error(Self.safeMessage(for: error))
+            feedbackMessage = "The Gemini API key could not be removed."
+        }
+    }
+
+    private static func safeMessage(for error: Error) -> String {
+        if let storeError = error as? GeminiAPIKeyStoreError {
+            switch storeError {
+            case .invalidStoredData:
+                return "The saved Gemini key could not be read. Remove it and save a new key."
+            case .keychainFailure:
+                return "Keychain could not complete the request. Check macOS access and try again."
+            }
+        }
+
+        return "Gemini key settings could not be updated. Try again."
     }
 }

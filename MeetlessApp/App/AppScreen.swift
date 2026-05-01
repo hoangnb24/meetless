@@ -4,10 +4,11 @@ enum AppScreen: String, CaseIterable, Identifiable {
     case home
     case history
     case sessionDetail
+    case settings
 
     var id: Self { self }
 
-    static let primaryNavigationCases: [AppScreen] = [.home, .history]
+    static let primaryNavigationCases: [AppScreen] = [.home, .history, .settings]
 
     var title: String {
         switch self {
@@ -17,6 +18,8 @@ enum AppScreen: String, CaseIterable, Identifiable {
             return "Sessions"
         case .sessionDetail:
             return "Session Detail"
+        case .settings:
+            return "Settings"
         }
     }
 
@@ -28,6 +31,8 @@ enum AppScreen: String, CaseIterable, Identifiable {
             return "Browse saved sessions"
         case .sessionDetail:
             return "Transcript and metadata shell"
+        case .settings:
+            return "Gemini key management"
         }
     }
 
@@ -39,6 +44,8 @@ enum AppScreen: String, CaseIterable, Identifiable {
             return "clock.arrow.circlepath"
         case .sessionDetail:
             return "text.document"
+        case .settings:
+            return "gearshape"
         }
     }
 }

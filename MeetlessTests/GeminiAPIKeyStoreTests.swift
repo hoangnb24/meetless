@@ -107,6 +107,73 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
             XCTAssertEqual(error as? GeminiAPIKeyStoreError, .invalidStoredData)
         }
     }
+
+    @MainActor
+    func testSettingsViewModelShowsNotConfiguredWhenKeyIsMissing() {
+        let store = KeychainGeminiAPIKeyStore(keychain: FakeKeychainItemAccessor())
+        let viewModel = GeminiSettingsViewModel(apiKeyStore: store)
+
+        XCTAssertEqual(viewModel.keyStatus, .notConfigured)
+        XCTAssertFalse(viewModel.isConfigured)
+    }
+
+    @MainActor
+    func testSettingsViewModelSavesTrimmedKeyWithoutDisplayingSecret() throws {
+        let keychain = FakeKeychainItemAccessor()
+        let store = KeychainGeminiAPIKeyStore(keychain: keychain)
+        let viewModel = GeminiSettingsViewModel(apiKeyStore: store)
+
+        viewModel.apiKeyInput = "  gemini-secret  "
+        viewModel.saveAPIKey()
+
+        XCTAssertEqual(try store.loadAPIKey(), "gemini-secret")
+        XCTAssertEqual(keychain.recordedValues, ["gemini-secret"])
+        XCTAssertEqual(viewModel.keyStatus, .configured)
+        XCTAssertEqual(viewModel.apiKeyInput, "")
+        XCTAssertFalse(viewModel.keyStatus.detail.contains("gemini-secret"))
+        XCTAssertFalse(viewModel.feedbackMessage?.contains("gemini-secret") ?? false)
+    }
+
+    @MainActor
+    func testSettingsViewModelRejectsBlankKey() throws {
+        let keychain = FakeKeychainItemAccessor()
+        let store = KeychainGeminiAPIKeyStore(keychain: keychain)
+        let viewModel = GeminiSettingsViewModel(apiKeyStore: store)
+
+        viewModel.apiKeyInput = "   "
+        viewModel.saveAPIKey()
+
+        XCTAssertNil(try store.loadAPIKey())
+        XCTAssertEqual(viewModel.keyStatus, .notConfigured)
+        XCTAssertEqual(viewModel.feedbackMessage, "Enter a Gemini API key before saving.")
+    }
+
+    @MainActor
+    func testSettingsViewModelDeletesSavedKey() throws {
+        let keychain = FakeKeychainItemAccessor()
+        let store = KeychainGeminiAPIKeyStore(keychain: keychain)
+        try store.saveAPIKey("gemini-secret")
+        let viewModel = GeminiSettingsViewModel(apiKeyStore: store)
+
+        viewModel.deleteAPIKey()
+
+        XCTAssertNil(try store.loadAPIKey())
+        XCTAssertEqual(viewModel.keyStatus, .notConfigured)
+        XCTAssertEqual(viewModel.feedbackMessage, "Gemini API key removed.")
+    }
+
+    @MainActor
+    func testSettingsViewModelMapsKeychainErrorsToSafeCopy() {
+        let store = KeychainGeminiAPIKeyStore(
+            keychain: FakeKeychainItemAccessor(copyMatchingStatusOverride: errSecAuthFailed)
+        )
+        let viewModel = GeminiSettingsViewModel(apiKeyStore: store)
+
+        XCTAssertEqual(
+            viewModel.keyStatus,
+            .error("Keychain could not complete the request. Check macOS access and try again.")
+        )
+    }
 }
 
 private final class FakeKeychainItemAccessor: KeychainItemAccessing {
