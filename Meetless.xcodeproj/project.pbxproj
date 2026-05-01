@@ -35,6 +35,8 @@
 		A1C0A553E7D94E0C92A00003 /* MeetlessIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = A1C0A554E7D94E0C92A00004 /* MeetlessIcon.icns */; };
 		A9F001000000000000000001 /* GeminiAPIKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F001000000000000000002 /* GeminiAPIKeyStore.swift */; };
 		A9F001000000000000000004 /* GeminiAPIKeyStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F001000000000000000005 /* GeminiAPIKeyStoreTests.swift */; };
+		A9F002000000000000000001 /* GeminiSessionNotesClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F002000000000000000002 /* GeminiSessionNotesClient.swift */; };
+		A9F002000000000000000004 /* GeminiSessionNotesClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F002000000000000000005 /* GeminiSessionNotesClientTests.swift */; };
 		A38A2D6A5603EA715DF59E1B /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F899578FD929857ED10FEF02 /* HomeView.swift */; };
 		B3E100000000000000000001 /* TranscriptCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E100000000000000000007 /* TranscriptCoordinatorTests.swift */; };
 		B3E100000000000000000002 /* SessionRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E100000000000000000008 /* SessionRepositoryTests.swift */; };
@@ -101,6 +103,8 @@
 		A1981DFABC8B7B4AE27AD2FB /* Meetless.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Meetless.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A9F001000000000000000002 /* GeminiAPIKeyStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiAPIKeyStore.swift; sourceTree = "<group>"; };
 		A9F001000000000000000005 /* GeminiAPIKeyStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiAPIKeyStoreTests.swift; sourceTree = "<group>"; };
+		A9F002000000000000000002 /* GeminiSessionNotesClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiSessionNotesClient.swift; sourceTree = "<group>"; };
+		A9F002000000000000000005 /* GeminiSessionNotesClientTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiSessionNotesClientTests.swift; sourceTree = "<group>"; };
 		B3E100000000000000000006 /* MeetlessTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeetlessTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B3E100000000000000000007 /* TranscriptCoordinatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TranscriptCoordinatorTests.swift; sourceTree = "<group>"; };
 		B3E100000000000000000008 /* SessionRepositoryTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionRepositoryTests.swift; sourceTree = "<group>"; };
@@ -166,6 +170,7 @@
 				6F8D0D2C7B5A4F249C0A1E63 /* SessionRepository */,
 				B155CB1329D84E9B4806FCF0 /* Permissions */,
 				A9F001000000000000000003 /* GeminiAPIKeyStore */,
+				A9F002000000000000000003 /* GeminiSessionNotes */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -324,6 +329,14 @@
 			path = GeminiAPIKeyStore;
 			sourceTree = "<group>";
 		};
+		A9F002000000000000000003 /* GeminiSessionNotes */ = {
+			isa = PBXGroup;
+			children = (
+				A9F002000000000000000002 /* GeminiSessionNotesClient.swift */,
+			);
+			path = GeminiSessionNotes;
+			sourceTree = "<group>";
+		};
 		B155CB1329D84E9B4806FCF0 /* Permissions */ = {
 			isa = PBXGroup;
 			children = (
@@ -358,6 +371,7 @@
 				B3E100000000000000000007 /* TranscriptCoordinatorTests.swift */,
 				B3E100000000000000000008 /* SessionRepositoryTests.swift */,
 				A9F001000000000000000005 /* GeminiAPIKeyStoreTests.swift */,
+				A9F002000000000000000005 /* GeminiSessionNotesClientTests.swift */,
 				B3E100000000000000000009 /* TestSupport.swift */,
 			);
 			path = MeetlessTests;
@@ -489,6 +503,7 @@
 			files = (
 				B3E100000000000000000002 /* SessionRepositoryTests.swift in Sources */,
 				A9F001000000000000000004 /* GeminiAPIKeyStoreTests.swift in Sources */,
+				A9F002000000000000000004 /* GeminiSessionNotesClientTests.swift in Sources */,
 				B3E100000000000000000003 /* TestSupport.swift in Sources */,
 				B3E100000000000000000001 /* TranscriptCoordinatorTests.swift in Sources */,
 			);
@@ -515,6 +530,7 @@
 				9F6C1BB8B429A86F1157B566 /* ScreenCaptureSession.swift in Sources */,
 				6DB31251E006F5E23891A25B /* SourceAudioPipeline.swift in Sources */,
 				A9F001000000000000000001 /* GeminiAPIKeyStore.swift in Sources */,
+				A9F002000000000000000001 /* GeminiSessionNotesClient.swift in Sources */,
 				6F8D0D2C7B5A4F249C0A1E61 /* SessionRepository.swift in Sources */,
 				4A9819D30DD3D6215354AB05 /* RecordingPermissionGate.swift in Sources */,
 				688258500425D71D5FD70BB9 /* HistoryView.swift in Sources */,
