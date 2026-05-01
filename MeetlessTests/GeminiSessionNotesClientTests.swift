@@ -117,7 +117,9 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
 
         let transport = FixtureGeminiHTTPTransport(responses: [
+            Self.uploadStartResponse(uploadURL: "https://upload.test/meeting"),
             Self.uploadResponse(uri: "files/meeting-audio", mimeType: "audio/mp4"),
+            Self.uploadStartResponse(uploadURL: "https://upload.test/microphone"),
             Self.uploadResponse(uri: "files/microphone-audio", mimeType: "audio/mp4"),
             GeminiHTTPResponse(statusCode: 200, body: Data(#"{"ok":true}"#.utf8))
         ])
@@ -133,30 +135,40 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         let requests = await transport.requests
 
         XCTAssertEqual(response.fileURIs, ["files/meeting-audio", "files/microphone-audio"])
-        XCTAssertEqual(requests.count, 3)
+        XCTAssertEqual(requests.count, 5)
 
         XCTAssertEqual(requests[0].method, "POST")
-        XCTAssertEqual(requests[0].url.absoluteString, "https://gemini.test/upload/v1beta/files")
-        XCTAssertEqual(requests[0].headers["X-Goog-API-Key"], "test-gemini-key")
-        XCTAssertEqual(requests[0].headers["X-Goog-Upload-Protocol"], "raw")
+        XCTAssertEqual(requests[0].url.absoluteString, "https://gemini.test/upload/v1beta/files?key=test-gemini-key")
+        XCTAssertEqual(requests[0].headers["X-Goog-Upload-Protocol"], "resumable")
+        XCTAssertEqual(requests[0].headers["X-Goog-Upload-Command"], "start")
         XCTAssertEqual(requests[0].headers["X-Goog-Upload-Header-Content-Type"], "audio/mp4")
-        XCTAssertEqual(requests[0].headers["Content-Type"], "audio/mp4")
-        XCTAssertEqual(requests[0].body, Data("meeting audio".utf8))
+        XCTAssertEqual(requests[0].headers["Content-Type"], "application/json")
+        XCTAssertEqual(Self.uploadDisplayName(from: requests[0]), "meeting.m4a")
 
         XCTAssertEqual(requests[1].method, "POST")
-        XCTAssertEqual(requests[1].url.absoluteString, "https://gemini.test/upload/v1beta/files")
-        XCTAssertEqual(requests[1].headers["X-Goog-API-Key"], "test-gemini-key")
-        XCTAssertEqual(requests[1].headers["X-Goog-Upload-Header-Content-Type"], "audio/mp4")
-        XCTAssertEqual(requests[1].body, Data("microphone audio".utf8))
+        XCTAssertEqual(requests[1].url.absoluteString, "https://upload.test/meeting")
+        XCTAssertEqual(requests[1].headers["X-Goog-Upload-Offset"], "0")
+        XCTAssertEqual(requests[1].headers["X-Goog-Upload-Command"], "upload, finalize")
+        XCTAssertEqual(requests[1].body, Data("meeting audio".utf8))
 
-        let generateRequest = requests[2]
+        XCTAssertEqual(requests[2].method, "POST")
+        XCTAssertEqual(requests[2].url.absoluteString, "https://gemini.test/upload/v1beta/files?key=test-gemini-key")
+        XCTAssertEqual(requests[2].headers["X-Goog-Upload-Protocol"], "resumable")
+        XCTAssertEqual(requests[2].headers["X-Goog-Upload-Header-Content-Type"], "audio/mp4")
+        XCTAssertEqual(Self.uploadDisplayName(from: requests[2]), "me.m4a")
+
+        XCTAssertEqual(requests[3].method, "POST")
+        XCTAssertEqual(requests[3].url.absoluteString, "https://upload.test/microphone")
+        XCTAssertEqual(requests[3].headers["X-Goog-Upload-Command"], "upload, finalize")
+        XCTAssertEqual(requests[3].body, Data("microphone audio".utf8))
+
+        let generateRequest = requests[4]
         XCTAssertEqual(generateRequest.method, "POST")
         XCTAssertEqual(
             generateRequest.url.absoluteString,
-            "https://gemini.test/v1beta/models/\(GeminiSessionNotesModel.stableFlash):generateContent"
+            "https://gemini.test/v1beta/models/\(GeminiSessionNotesModel.stableFlash):generateContent?key=test-gemini-key"
         )
         XCTAssertEqual(GeminiSessionNotesModel.stableFlash, "gemini-2.5-flash")
-        XCTAssertEqual(generateRequest.headers["X-Goog-API-Key"], "test-gemini-key")
         XCTAssertEqual(generateRequest.headers["Content-Type"], "application/json")
 
         let json = try XCTUnwrap(
@@ -191,7 +203,9 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         try Data("microphone wave audio".utf8).write(to: microphoneURL)
 
         let transport = FixtureGeminiHTTPTransport(responses: [
+            Self.uploadStartResponse(uploadURL: "https://upload.test/meeting-wav"),
             Self.uploadResponse(uri: "files/meeting-wav", mimeType: "audio/wav"),
+            Self.uploadStartResponse(uploadURL: "https://upload.test/microphone-wave"),
             Self.uploadResponse(uri: "files/microphone-wave", mimeType: "audio/wav"),
             GeminiHTTPResponse(statusCode: 200, body: Data(#"{"ok":true}"#.utf8))
         ])
@@ -232,11 +246,11 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         let fileDataParts = parts.compactMap { $0["fileData"] as? [String: Any] }
 
         XCTAssertEqual(response.fileURIs, ["files/meeting-wav", "files/microphone-wave"])
-        XCTAssertEqual(requests.count, 3)
+        XCTAssertEqual(requests.count, 5)
         XCTAssertEqual(requests[0].headers["X-Goog-Upload-Header-Content-Type"], "audio/wav")
-        XCTAssertEqual(requests[0].headers["Content-Type"], "audio/wav")
-        XCTAssertEqual(requests[1].headers["X-Goog-Upload-Header-Content-Type"], "audio/wav")
-        XCTAssertEqual(requests[1].headers["Content-Type"], "audio/wav")
+        XCTAssertEqual(requests[0].headers["Content-Type"], "application/json")
+        XCTAssertEqual(requests[2].headers["X-Goog-Upload-Header-Content-Type"], "audio/wav")
+        XCTAssertEqual(requests[2].headers["Content-Type"], "application/json")
         XCTAssertEqual(fileDataParts.map { $0["mimeType"] as? String }, ["audio/wav", "audio/wav"])
     }
 
@@ -303,7 +317,9 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
 
         let transport = FixtureGeminiHTTPTransport(responses: [
+            Self.uploadStartResponse(uploadURL: "https://upload.test/meeting"),
             Self.uploadResponse(uri: "files/meeting-audio", mimeType: "audio/mp4"),
+            Self.uploadStartResponse(uploadURL: "https://upload.test/microphone"),
             Self.uploadResponse(uri: "files/microphone-audio", mimeType: "audio/mp4"),
             GeminiHTTPResponse(statusCode: 503, body: Data())
         ])
@@ -317,7 +333,7 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         }
 
         let requestCount = await transport.requests.count
-        XCTAssertEqual(requestCount, 3)
+        XCTAssertEqual(requestCount, 5)
     }
 
     func testOrchestratorSavesGeneratedNotesOnlyAfterCompleteSuccess() async throws {
@@ -749,6 +765,25 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         )
 
         return HistoryViewModel.Row(summary: summary)
+    }
+
+    private static func uploadDisplayName(from request: GeminiHTTPRequest) -> String? {
+        guard
+            let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+            let file = json["file"] as? [String: Any]
+        else {
+            return nil
+        }
+
+        return file["display_name"] as? String
+    }
+
+    private static func uploadStartResponse(uploadURL: String) -> GeminiHTTPResponse {
+        GeminiHTTPResponse(
+            statusCode: 200,
+            headers: ["X-Goog-Upload-URL": uploadURL],
+            body: Data()
+        )
     }
 
     private static func uploadResponse(uri: String, mimeType: String) -> GeminiHTTPResponse {

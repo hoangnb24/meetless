@@ -136,7 +136,14 @@ struct GeminiHTTPRequest: Equatable, Sendable {
 
 struct GeminiHTTPResponse: Equatable, Sendable {
     let statusCode: Int
+    let headers: [String: String]
     let body: Data
+
+    init(statusCode: Int, headers: [String: String] = [:], body: Data) {
+        self.statusCode = statusCode
+        self.headers = headers
+        self.body = body
+    }
 }
 
 struct GeminiGenerateContentResponse: Equatable, Sendable {
@@ -190,10 +197,18 @@ struct GeminiSessionNotesClient: GeminiSessionNotesGenerating {
 
         var uploadedFiles: [GeminiUploadedFile] = []
         for artifact in audioArtifacts.artifacts {
-            let upload = try makeUploadRequest(apiKey: normalizedAPIKey, artifact: artifact)
-            let response = try await transport.send(upload.request)
-            try validate(response: response, failedError: .uploadFailed(statusCode: response.statusCode))
-            let uploadedFile = try decodeUploadedFile(from: response.body, fallbackMIMEType: upload.mimeType)
+            let upload = try makeUploadRequests(apiKey: normalizedAPIKey, artifact: artifact)
+            let startResponse = try await transport.send(upload.startRequest)
+            try validate(response: startResponse, failedError: .uploadFailed(statusCode: startResponse.statusCode))
+            let uploadURL = try resumableUploadURL(from: startResponse)
+
+            let finalizeRequest = makeFinalizeUploadRequest(
+                uploadURL: uploadURL,
+                body: upload.body
+            )
+            let finalizeResponse = try await transport.send(finalizeRequest)
+            try validate(response: finalizeResponse, failedError: .uploadFailed(statusCode: finalizeResponse.statusCode))
+            let uploadedFile = try decodeUploadedFile(from: finalizeResponse.body, fallbackMIMEType: upload.mimeType)
             uploadedFiles.append(uploadedFile)
         }
 
@@ -211,29 +226,48 @@ struct GeminiSessionNotesClient: GeminiSessionNotesGenerating {
         )
     }
 
-    private func makeUploadRequest(
+    private func makeUploadRequests(
         apiKey: String,
         artifact: SessionAudioArtifactForUpload
-    ) throws -> GeminiUploadRequest {
+    ) throws -> GeminiUploadRequests {
         let mimeType = try GeminiAudioMIMETypeMapper.mimeType(for: artifact.filename)
         let body = try Data(contentsOf: artifact.fileURL)
-        let url = baseURL.appendingPathComponent("upload/v1beta/files")
+        let url = try apiKeyURL(
+            baseURL.appendingPathComponent("upload/v1beta/files"),
+            apiKey: apiKey
+        )
+        let metadata = GeminiUploadMetadataRequest(
+            file: GeminiUploadMetadataFile(displayName: artifact.filename)
+        )
 
-        return GeminiUploadRequest(
-            request: GeminiHTTPRequest(
+        return GeminiUploadRequests(
+            startRequest: GeminiHTTPRequest(
                 method: "POST",
                 url: url,
                 headers: [
-                    "Content-Type": mimeType,
-                    "Content-Length": "\(body.count)",
-                    "X-Goog-API-Key": apiKey,
-                    "X-Goog-Upload-Protocol": "raw",
+                    "Content-Type": "application/json",
+                    "X-Goog-Upload-Protocol": "resumable",
+                    "X-Goog-Upload-Command": "start",
                     "X-Goog-Upload-Header-Content-Length": "\(body.count)",
                     "X-Goog-Upload-Header-Content-Type": mimeType
                 ],
-                body: body
+                body: try jsonEncoder.encode(metadata)
             ),
+            body: body,
             mimeType: mimeType
+        )
+    }
+
+    private func makeFinalizeUploadRequest(uploadURL: URL, body: Data) -> GeminiHTTPRequest {
+        GeminiHTTPRequest(
+            method: "POST",
+            url: uploadURL,
+            headers: [
+                "Content-Length": "\(body.count)",
+                "X-Goog-Upload-Offset": "0",
+                "X-Goog-Upload-Command": "upload, finalize"
+            ],
+            body: body
         )
     }
 
@@ -265,15 +299,16 @@ struct GeminiSessionNotesClient: GeminiSessionNotesGenerating {
             )
         )
 
-        let url = baseURL
-            .appendingPathComponent("v1beta/models/\(GeminiSessionNotesModel.stableFlash):generateContent")
+        let url = try apiKeyURL(
+            baseURL.appendingPathComponent("v1beta/models/\(GeminiSessionNotesModel.stableFlash):generateContent"),
+            apiKey: apiKey
+        )
 
         return GeminiHTTPRequest(
             method: "POST",
             url: url,
             headers: [
-                "Content-Type": "application/json",
-                "X-Goog-API-Key": apiKey
+                "Content-Type": "application/json"
             ],
             body: try jsonEncoder.encode(body)
         )
@@ -305,6 +340,34 @@ struct GeminiSessionNotesClient: GeminiSessionNotesGenerating {
         } catch {
             throw GeminiSessionNotesError.malformedUploadResponse
         }
+    }
+
+    private func resumableUploadURL(from response: GeminiHTTPResponse) throws -> URL {
+        let uploadURLValue = response.headers.first { key, _ in
+            key.caseInsensitiveCompare("X-Goog-Upload-URL") == .orderedSame
+        }?.value
+
+        guard let uploadURLValue, let uploadURL = URL(string: uploadURLValue) else {
+            throw GeminiSessionNotesError.malformedUploadResponse
+        }
+
+        return uploadURL
+    }
+
+    private func apiKeyURL(_ url: URL, apiKey: String) throws -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw GeminiSessionNotesError.invalidAPIKey
+        }
+
+        var queryItems = components.queryItems ?? []
+        queryItems.append(URLQueryItem(name: "key", value: apiKey))
+        components.queryItems = queryItems
+
+        guard let keyedURL = components.url else {
+            throw GeminiSessionNotesError.invalidAPIKey
+        }
+
+        return keyedURL
     }
 
     private static func prompt(sessionTitle: String) -> String {
@@ -441,14 +504,35 @@ struct URLSessionGeminiHTTPTransport: GeminiHTTPTransport {
         }
 
         let (data, response) = try await URLSession.shared.data(for: urlRequest)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-        return GeminiHTTPResponse(statusCode: statusCode, body: data)
+        let httpResponse = response as? HTTPURLResponse
+        let statusCode = httpResponse?.statusCode ?? 0
+        let headers = httpResponse?.allHeaderFields.reduce(into: [String: String]()) { result, entry in
+            guard let key = entry.key as? String else {
+                return
+            }
+
+            result[key] = "\(entry.value)"
+        } ?? [:]
+        return GeminiHTTPResponse(statusCode: statusCode, headers: headers, body: data)
     }
 }
 
-private struct GeminiUploadRequest {
-    let request: GeminiHTTPRequest
+private struct GeminiUploadRequests {
+    let startRequest: GeminiHTTPRequest
+    let body: Data
     let mimeType: String
+}
+
+private struct GeminiUploadMetadataRequest: Encodable {
+    let file: GeminiUploadMetadataFile
+}
+
+private struct GeminiUploadMetadataFile: Encodable {
+    let displayName: String
+
+    enum CodingKeys: String, CodingKey {
+        case displayName = "display_name"
+    }
 }
 
 private struct GeminiUploadedFile {
