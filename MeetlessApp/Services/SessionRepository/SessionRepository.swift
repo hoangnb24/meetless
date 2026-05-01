@@ -102,10 +102,6 @@ struct SessionAudioArtifactForUpload: Equatable, Identifiable, Sendable {
     let source: RecordingSourceKind
     let fileURL: URL
     let filename: String
-    let fileExtension: String
-    let mimeType: String
-    let displayName: String
-    let sourceDescription: String
     let isPrimarySourceOfRecord: Bool
 
     var id: RecordingSourceKind { source }
@@ -473,10 +469,6 @@ actor SessionRepository {
                 source: source,
                 fileURL: fileURL,
                 filename: artifact.filename,
-                fileExtension: fileURL.pathExtension,
-                mimeType: Self.mimeType(forAudioFilename: artifact.filename),
-                displayName: Self.uploadDisplayName(for: source),
-                sourceDescription: Self.uploadSourceDescription(for: source),
                 isPrimarySourceOfRecord: artifact.isPrimarySourceOfRecord
             )
         }
@@ -772,17 +764,6 @@ actor SessionRepository {
         return String(preview.prefix(157)) + "..."
     }
 
-    private static func mimeType(forAudioFilename filename: String) -> String {
-        switch URL(fileURLWithPath: filename).pathExtension.lowercased() {
-        case "m4a":
-            return "audio/mp4"
-        case "wav", "wave":
-            return "audio/wav"
-        default:
-            return "application/octet-stream"
-        }
-    }
-
     private func validatedAudioArtifactURL(
         filename: String,
         source: RecordingSourceKind,
@@ -817,24 +798,6 @@ actor SessionRepository {
         }
 
         return filename == URL(fileURLWithPath: filename).lastPathComponent
-    }
-
-    private static func uploadDisplayName(for source: RecordingSourceKind) -> String {
-        switch source {
-        case .meeting:
-            return "Meeting audio"
-        case .me:
-            return "Microphone audio"
-        }
-    }
-
-    private static func uploadSourceDescription(for source: RecordingSourceKind) -> String {
-        switch source {
-        case .meeting:
-            return "Computer-side saved audio captured from the meeting."
-        case .me:
-            return "User microphone saved audio captured locally."
-        }
     }
 
     private static func shouldForceTranscriptSnapshotWriteFailure() -> Bool {

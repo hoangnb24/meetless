@@ -405,18 +405,6 @@ final class SessionRepositoryTests: XCTestCase {
         XCTAssertEqual(microphoneArtifact.filename, RecordingSourceKind.me.compressedArtifactFilename)
         XCTAssertEqual(meetingArtifact.fileURL.lastPathComponent, meetingArtifact.filename)
         XCTAssertEqual(microphoneArtifact.fileURL.lastPathComponent, microphoneArtifact.filename)
-        XCTAssertEqual(
-            meetingArtifact.fileExtension,
-            URL(fileURLWithPath: RecordingSourceKind.meeting.compressedArtifactFilename).pathExtension
-        )
-        XCTAssertEqual(
-            microphoneArtifact.fileExtension,
-            URL(fileURLWithPath: RecordingSourceKind.me.compressedArtifactFilename).pathExtension
-        )
-        XCTAssertEqual(meetingArtifact.mimeType, "audio/mp4")
-        XCTAssertEqual(microphoneArtifact.mimeType, "audio/mp4")
-        XCTAssertEqual(meetingArtifact.displayName, "Meeting audio")
-        XCTAssertEqual(microphoneArtifact.displayName, "Microphone audio")
         XCTAssertTrue(meetingArtifact.isPrimarySourceOfRecord)
         XCTAssertTrue(microphoneArtifact.isPrimarySourceOfRecord)
     }
@@ -454,16 +442,8 @@ final class SessionRepositoryTests: XCTestCase {
 
         XCTAssertEqual(artifactsBySource[.meeting]?.filename, RecordingSourceKind.meeting.artifactFilename)
         XCTAssertEqual(artifactsBySource[.me]?.filename, RecordingSourceKind.me.artifactFilename)
-        XCTAssertEqual(
-            artifactsBySource[.meeting]?.fileExtension,
-            URL(fileURLWithPath: RecordingSourceKind.meeting.artifactFilename).pathExtension
-        )
-        XCTAssertEqual(
-            artifactsBySource[.me]?.fileExtension,
-            URL(fileURLWithPath: RecordingSourceKind.me.artifactFilename).pathExtension
-        )
-        XCTAssertEqual(artifactsBySource[.meeting]?.mimeType, "audio/wav")
-        XCTAssertEqual(artifactsBySource[.me]?.mimeType, "audio/wav")
+        XCTAssertEqual(artifactsBySource[.meeting]?.fileURL.lastPathComponent, RecordingSourceKind.meeting.artifactFilename)
+        XCTAssertEqual(artifactsBySource[.me]?.fileURL.lastPathComponent, RecordingSourceKind.me.artifactFilename)
     }
 
     func testResolveAudioArtifactsForUploadFailsClearlyWithoutMutatingBundleWhenRequiredFileIsMissing() async throws {
