@@ -35,6 +35,12 @@ enum GeminiSessionNotesError: Error, Equatable, Sendable {
     case generationFailed(statusCode: Int)
     case unsupportedAudioMIMEType(filename: String)
     case malformedUploadResponse
+    case malformedGenerateContentResponse
+    case malformedStructuredJSON
+    case missingRequiredField(String)
+    case emptyRequiredField(String)
+    case invalidActionItems
+    case sourceLabelLeakage(field: String)
 }
 
 enum GeminiSessionNotesModel {
@@ -193,6 +199,122 @@ struct GeminiSessionNotesClient: GeminiSessionNotesGenerating {
     }
 }
 
+enum GeminiSessionNotesParser {
+    static func parse(
+        _ response: GeminiGenerateContentResponse,
+        generatedAt: Date = Date()
+    ) throws -> GeneratedSessionNotes {
+        let structuredData = try extractStructuredJSONData(from: response.body)
+        let payload = try decodeStructuredPayload(from: structuredData)
+
+        let transcript = try requiredText(payload.transcript, field: "transcript")
+        let summary = try requiredText(payload.summary, field: "summary")
+        let actionItems = try requiredActionItems(payload.actionItems)
+
+        try rejectUserVisibleSourceLabels(in: summary, field: "summary")
+        for actionItem in actionItems {
+            try rejectUserVisibleSourceLabels(in: actionItem, field: "actionItems")
+        }
+
+        return GeneratedSessionNotes(
+            generatedAt: generatedAt,
+            hiddenGeminiTranscript: transcript,
+            summary: summary,
+            actionItemBullets: actionItems
+        )
+    }
+
+    private static func extractStructuredJSONData(from data: Data) throws -> Data {
+        if let envelope = try? JSONDecoder().decode(GeminiGenerateContentEnvelope.self, from: data) {
+            let textParts = envelope.candidates
+                .flatMap(\.content.parts)
+                .compactMap(\.text)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+
+            guard let structuredText = textParts.first else {
+                throw GeminiSessionNotesError.malformedGenerateContentResponse
+            }
+
+            return Data(structuredText.utf8)
+        }
+
+        return data
+    }
+
+    private static func decodeStructuredPayload(from data: Data) throws -> GeminiStructuredSessionNotesPayload {
+        do {
+            return try JSONDecoder().decode(GeminiStructuredSessionNotesPayload.self, from: data)
+        } catch let error as GeminiSessionNotesError {
+            throw error
+        } catch let error as DecodingError {
+            if error.isMissingRequiredField {
+                throw GeminiSessionNotesError.missingRequiredField(error.missingFieldName)
+            }
+
+            throw GeminiSessionNotesError.malformedStructuredJSON
+        } catch {
+            throw GeminiSessionNotesError.malformedStructuredJSON
+        }
+    }
+
+    private static func requiredText(_ value: String?, field: String) throws -> String {
+        guard let value else {
+            throw GeminiSessionNotesError.missingRequiredField(field)
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw GeminiSessionNotesError.emptyRequiredField(field)
+        }
+
+        return trimmed
+    }
+
+    private static func requiredActionItems(_ value: [String]?) throws -> [String] {
+        guard let value else {
+            throw GeminiSessionNotesError.missingRequiredField("actionItems")
+        }
+
+        let trimmed = value.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard !trimmed.isEmpty, trimmed.allSatisfy({ !$0.isEmpty }) else {
+            throw GeminiSessionNotesError.invalidActionItems
+        }
+
+        return trimmed
+    }
+
+    private static func rejectUserVisibleSourceLabels(in text: String, field: String) throws {
+        let lowercased = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let linePrefixes = [
+            "meeting:",
+            "me:",
+            "- meeting:",
+            "- me:",
+            "* meeting:",
+            "* me:"
+        ]
+        let leakedPhrases = [
+            "meeting lane",
+            "me lane",
+            "meeting audio",
+            "microphone audio",
+            "source: meeting",
+            "source: me",
+            "speaker: meeting",
+            "speaker: me"
+        ]
+
+        if lowercased
+            .components(separatedBy: .newlines)
+            .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+            .contains(where: { line in linePrefixes.contains(where: line.hasPrefix) })
+            || leakedPhrases.contains(where: lowercased.contains) {
+            throw GeminiSessionNotesError.sourceLabelLeakage(field: field)
+        }
+    }
+}
+
 struct URLSessionGeminiHTTPTransport: GeminiHTTPTransport {
     func send(_ request: GeminiHTTPRequest) async throws -> GeminiHTTPResponse {
         var urlRequest = URLRequest(url: request.url)
@@ -239,6 +361,64 @@ private struct GeminiUploadResponseEnvelope: Decodable {
 private struct GeminiUploadedFileResponse: Decodable {
     let uri: String
     let mimeType: String?
+}
+
+private struct GeminiGenerateContentEnvelope: Decodable {
+    let candidates: [GeminiGenerateCandidate]
+}
+
+private struct GeminiGenerateCandidate: Decodable {
+    let content: GeminiGenerateCandidateContent
+}
+
+private struct GeminiGenerateCandidateContent: Decodable {
+    let parts: [GeminiGenerateCandidatePart]
+}
+
+private struct GeminiGenerateCandidatePart: Decodable {
+    let text: String?
+}
+
+private struct GeminiStructuredSessionNotesPayload: Decodable {
+    let transcript: String?
+    let summary: String?
+    let actionItems: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case transcript
+        case summary
+        case actionItems
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.transcript = try container.decodeIfPresent(String.self, forKey: .transcript)
+        self.summary = try container.decodeIfPresent(String.self, forKey: .summary)
+
+        do {
+            self.actionItems = try container.decodeIfPresent([String].self, forKey: .actionItems)
+        } catch {
+            throw GeminiSessionNotesError.invalidActionItems
+        }
+    }
+}
+
+private extension DecodingError {
+    var isMissingRequiredField: Bool {
+        if case .keyNotFound = self {
+            return true
+        }
+
+        return false
+    }
+
+    var missingFieldName: String {
+        if case .keyNotFound(let key, _) = self {
+            return key.stringValue
+        }
+
+        return ""
+    }
 }
 
 private struct GeminiGenerateContentRequest: Encodable {
