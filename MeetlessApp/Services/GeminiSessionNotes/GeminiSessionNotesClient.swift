@@ -462,7 +462,7 @@ private enum GeminiAudioMIMETypeMapper {
         switch lowercasedExtension {
         case "m4a":
             return "audio/mp4"
-        case "wav":
+        case "wav", "wave":
             return "audio/wav"
         default:
             throw GeminiSessionNotesError.unsupportedAudioMIMEType(filename: filename)

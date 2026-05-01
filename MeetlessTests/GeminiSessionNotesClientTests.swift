@@ -181,6 +181,65 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         XCTAssertEqual(fileDataParts.map { $0["mimeType"] as? String }, ["audio/mp4", "audio/mp4"])
     }
 
+    func testGenerateContentMapsWavAndWaveUploadMIMETypes() async throws {
+        let directoryURL = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "GeminiSessionNotesClientTests")
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+
+        let meetingURL = directoryURL.appendingPathComponent("meeting.wav")
+        let microphoneURL = directoryURL.appendingPathComponent("microphone.wave")
+        try Data("meeting wav audio".utf8).write(to: meetingURL)
+        try Data("microphone wave audio".utf8).write(to: microphoneURL)
+
+        let transport = FixtureGeminiHTTPTransport(responses: [
+            Self.uploadResponse(uri: "files/meeting-wav", mimeType: "audio/wav"),
+            Self.uploadResponse(uri: "files/microphone-wave", mimeType: "audio/wav"),
+            GeminiHTTPResponse(statusCode: 200, body: Data(#"{"ok":true}"#.utf8))
+        ])
+        let client = GeminiSessionNotesClient(
+            transport: transport,
+            baseURL: URL(string: "https://gemini.test")!
+        )
+        let audioArtifacts = SessionAudioArtifactsForUpload(
+            sessionID: "session-1",
+            sessionTitle: "Weekly Planning",
+            artifacts: [
+                SessionAudioArtifactForUpload(
+                    source: .meeting,
+                    fileURL: meetingURL,
+                    filename: "meeting.wav",
+                    isPrimarySourceOfRecord: true
+                ),
+                SessionAudioArtifactForUpload(
+                    source: .me,
+                    fileURL: microphoneURL,
+                    filename: "microphone.wave",
+                    isPrimarySourceOfRecord: true
+                )
+            ]
+        )
+
+        let response = try await client.generateContent(
+            apiKey: "test-gemini-key",
+            audioArtifacts: audioArtifacts
+        )
+        let requests = await transport.requests
+        let generateRequest = try XCTUnwrap(requests.last)
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: generateRequest.body) as? [String: Any]
+        )
+        let contents = try XCTUnwrap(json["contents"] as? [[String: Any]])
+        let parts = try XCTUnwrap(contents.first?["parts"] as? [[String: Any]])
+        let fileDataParts = parts.compactMap { $0["fileData"] as? [String: Any] }
+
+        XCTAssertEqual(response.fileURIs, ["files/meeting-wav", "files/microphone-wave"])
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertEqual(requests[0].headers["X-Goog-Upload-Header-Content-Type"], "audio/wav")
+        XCTAssertEqual(requests[0].headers["Content-Type"], "audio/wav")
+        XCTAssertEqual(requests[1].headers["X-Goog-Upload-Header-Content-Type"], "audio/wav")
+        XCTAssertEqual(requests[1].headers["Content-Type"], "audio/wav")
+        XCTAssertEqual(fileDataParts.map { $0["mimeType"] as? String }, ["audio/wav", "audio/wav"])
+    }
+
     func testGenerateContentRejectsBlankAPIKeyBeforeTransport() async throws {
         let fixture = try Self.makeArtifactsFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
