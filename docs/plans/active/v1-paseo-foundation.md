@@ -320,10 +320,31 @@ without overwriting an existing file.
   local control adapter -> daemon recording use cases <- `MeetingStore`, chunk
   filesystem, `RecordingSource`, and MP3 finalizer adapters. Native, filesystem,
   codec, Electron, and WebSocket types do not enter recording policy.
-- **Status:** `FOUNDATION_REQUIRED`. Milestone 1 supplies atomic persistence and
-  plugin supervision but has no recording state, chunk manifest, publish
-  intent, or recovery model. Accept that foundation before native/UI feature
-  integration continues.
+- **Status:** `FOUNDATION_ACCEPTED` at
+  `ebfc456b18c56fad5fabed90d1ceb42a0c536379`. The extended store atomically
+  couples Meeting and Recording transitions, rejects inconsistent persisted
+  lifecycle families, preserves immutable finalization intent across retry,
+  and gates chunk cleanup on the exact readable, durably saved output. Lead
+  verification passed 53 focused tests and the full 54-test typecheck,
+  build, and Expo-export gate; independent correction review accepted the
+  frozen commit with no material finding.
+
+`PLAN_RECONCILIATION v1` (2026-08-17, after the third accepted Milestone 2
+frontier):
+
+- **Accepted and absorbed:** the macOS capture boundary, crash-safe durability
+  boundary, and durable lifecycle foundation are no longer discovery work.
+- **Dependency order:** unchanged. Implement one integrated desktop recording
+  slice against the accepted store, then freeze/review it, then run automated
+  renderer-exit, daemon-restart, collision, and retry proofs before the
+  controlled two-speaker Zoom/Meet call.
+- **Ownership:** keep the native helper, daemon service, finalizer, private
+  desktop transport, and global controls in one integration frontier because
+  their protocol and recovery behavior meet at the acceptance boundary. Do not
+  open parallel writers over those moving contracts.
+- **Scope check:** unchanged. Milestone 2 ends at durable playable recording;
+  transcription, citation playback, agent analysis, and Q&A remain later
+  milestones.
 
 The first `RecordingSource` is one macOS 15+ Swift helper using one
 ScreenCaptureKit stream with separate `.audio` and `.microphone` outputs. The
