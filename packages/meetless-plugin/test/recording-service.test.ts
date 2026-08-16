@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { promisify } from "node:util";
+import { MeetingStore } from "@meetless/meeting-store";
 import { RecordingService } from "../src/recording-service.js";
 
 const roots = new Set<string>();
@@ -154,7 +155,80 @@ describe("daemon recording service", () => {
     const next = await restarted.execute({ version: 1, requestId: "next-start", command: "start", title: "Now allowed" });
     expect(next).toMatchObject({ status: "recording", title: "Now allowed" });
   }, 30_000);
+
+  test("drains two persisted unresolved sessions oldest-first regardless of storage order", async () => {
+    const config = await fixtureConfig();
+    let now = "2026-08-17T10:00:00.000Z";
+    const seed = new MeetingStore({ root: config.storeRoot, now: () => now });
+    await seed.create({ id: "meeting-old", title: "Old recovery" });
+    await seed.startRecording({ id: "recording-old", meetingId: "meeting-old" });
+    await seedRecoverableChunk(seed, config, "recording-old", "microphone", 440, "2026-08-17T10:00:01.000Z");
+    now = "2026-08-17T10:00:02.000Z";
+    await seed.interruptRecording("recording-old", "seeded interruption");
+    now = "2026-08-17T10:00:03.000Z";
+    await seed.assessInterruption("recording-old", { recoverable: true });
+
+    now = "2026-08-17T11:00:00.000Z";
+    await seed.create({ id: "meeting-new", title: "New recovery" });
+    await seed.startRecording({ id: "recording-new", meetingId: "meeting-new" });
+    await seedRecoverableChunk(seed, config, "recording-new", "system", 880, "2026-08-17T11:00:01.000Z");
+    now = "2026-08-17T11:00:02.000Z";
+    await seed.interruptRecording("recording-new", "seeded interruption");
+    now = "2026-08-17T11:00:03.000Z";
+    await seed.assessInterruption("recording-new", { recoverable: true });
+
+    const statePath = path.join(config.storeRoot, "meetings.json");
+    const persisted = JSON.parse(await readFile(statePath, "utf8")) as { recordings: unknown[] };
+    persisted.recordings.reverse();
+    await writeFile(statePath, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
+
+    const service = new RecordingService(config); services.add(service);
+    await expect(service.initialize()).resolves.toBeUndefined();
+    expect(await service.status()).toMatchObject({ recordingId: "recording-old", status: "recoverable" });
+
+    let beforeRejectedStart = await readFile(statePath);
+    await expect(service.execute({ version: 1, requestId: "blocked-old", command: "start", title: "Blocked" }))
+      .rejects.toThrow(/Resolve recording recording-old/u);
+    expect(await readFile(statePath)).toEqual(beforeRejectedStart);
+
+    await service.execute({ version: 1, requestId: "retry-old", command: "retryFinalization" });
+    expect((await service.store.listRecordings()).find((recording) => recording.id === "recording-old")?.status).toBe("saved");
+    expect(await service.status()).toMatchObject({ recordingId: "recording-new", status: "recoverable" });
+
+    beforeRejectedStart = await readFile(statePath);
+    await expect(service.execute({ version: 1, requestId: "blocked-new", command: "start", title: "Still blocked" }))
+      .rejects.toThrow(/Resolve recording recording-new/u);
+    expect(await readFile(statePath)).toEqual(beforeRejectedStart);
+
+    await service.execute({ version: 1, requestId: "retry-new", command: "retryFinalization" });
+    expect((await service.store.listRecordings()).find((recording) => recording.id === "recording-new")?.status).toBe("saved");
+    await expect(service.execute({ version: 1, requestId: "allowed", command: "start", title: "All drained" }))
+      .resolves.toMatchObject({ status: "recording", title: "All drained" });
+  }, 30_000);
 });
+
+async function seedRecoverableChunk(
+  store: MeetingStore,
+  config: Awaited<ReturnType<typeof fixtureConfig>>,
+  recordingId: string,
+  source: "microphone" | "system",
+  frequency: number,
+  committedAt: string,
+): Promise<void> {
+  const sessionDirectory = path.join(config.storeRoot, "sessions", recordingId);
+  await mkdir(sessionDirectory, { recursive: true });
+  const id = `chunk--${source}--000000--000000000000--000000016000--16000--1`;
+  const chunkPath = path.join(sessionDirectory, `${id}.wav`);
+  await execFileAsync(config.ffmpeg, [
+    "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+    `sine=frequency=${frequency}:duration=1:sample_rate=16000`, "-ar", "16000", "-ac", "1", chunkPath,
+  ]);
+  await store.commitChunk(recordingId, {
+    id, source, storageKey: path.relative(config.storeRoot, chunkPath), ...(await identity(chunkPath)),
+    committedAt, logicalStartMs: 0, durationMs: 1_000,
+    sampleRate: 16_000, channels: 1, format: "wav",
+  });
+}
 
 async function waitFor(condition: () => Promise<boolean>, timeoutMs = 8_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;

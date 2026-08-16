@@ -328,15 +328,17 @@ const UNRESOLVED_STATUSES: ReadonlySet<RecordingSession["status"]> = new Set([
 ]);
 
 function unresolvedRecordings(recordings: readonly RecordingSession[]): RecordingSession[] {
-  return recordings.filter((recording) => UNRESOLVED_STATUSES.has(recording.status));
+  return recordings
+    .filter((recording) => UNRESOLVED_STATUSES.has(recording.status))
+    .sort((left, right) => {
+      const byStartedAt = Date.parse(left.startedAt) - Date.parse(right.startedAt);
+      return byStartedAt === 0 ? left.id.localeCompare(right.id) : byStartedAt;
+    });
 }
 
 function selectCurrentRecording(recordings: readonly RecordingSession[]): RecordingSession | undefined {
-  const unresolved = unresolvedRecordings(recordings);
-  if (unresolved.length > 1) {
-    throw new Error(`Recording store contains ${unresolved.length} unresolved sessions; manual recovery is required`);
-  }
-  if (unresolved[0]) return unresolved[0];
+  const selected = unresolvedRecordings(recordings)[0];
+  if (selected) return selected;
   return recordings.reduce<RecordingSession | undefined>((latest, recording) => {
     if (!latest) return recording;
     return Date.parse(recording.updatedAt) >= Date.parse(latest.updatedAt) ? recording : latest;
