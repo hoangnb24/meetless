@@ -1,0 +1,14 @@
+{
+  "name": "@meetless/meeting-surface",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./dist/index.js" },
+  "types": "./dist/index.d.ts",
+  "scripts": { "build": "tsc -b", "typecheck": "tsc -p tsconfig.json --noEmit" },
+  "dependencies": {
+    "@meetless/meeting-contracts": "0.1.0",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": ".",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
+  },
+  "include": ["index.tsx", "src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["test"],
+  "references": [
+    { "path": "../meeting-contracts" },
+    { "path": "../meeting-store" }
+  ]
+}

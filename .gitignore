@@ -1,3 +1,14 @@
 # Harness core maintenance binary
 scripts/bin/harness
 scripts/bin/harness.exe
+
+# Meetless build and isolated runtime artifacts
+node_modules/
+packages/*/dist/
+packages/*/dist-types/
+packages/meetless-app/.expo/
+packages/meetless-app/ios/
+packages/meetless-app/android/
+coverage/
+.meetless-runtime/
+*.tsbuildinfo

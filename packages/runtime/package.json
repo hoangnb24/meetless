@@ -1,0 +1,14 @@
+{
+  "name": "@meetless/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./dist/config.js" },
+  "types": "./dist/config.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run test"
+  },
+  "dependencies": { "zod": "^4.4.3" }
+}

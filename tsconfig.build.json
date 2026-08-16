@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/meeting-domain" },
+    { "path": "packages/meeting-contracts" },
+    { "path": "packages/meeting-store" },
+    { "path": "packages/meeting-surface" },
+    { "path": "packages/meetless-client" },
+    { "path": "packages/meetless-plugin" },
+    { "path": "packages/runtime" }
+  ]
+}

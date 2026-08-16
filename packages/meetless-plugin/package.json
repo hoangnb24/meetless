@@ -1,0 +1,17 @@
+{
+  "name": "@meetless/plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run test"
+  },
+  "dependencies": {
+    "@meetless/meeting-contracts": "0.1.0",
+    "@meetless/meeting-store": "0.1.0",
+    "@paseo/plugin": "0.3.0",
+    "zod": "^4.4.3"
+  }
+}
