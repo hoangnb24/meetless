@@ -292,6 +292,69 @@ Acceptance boundary: a controlled Zoom/Meet call contains both speakers; a
 forced renderer exit leaves recoverable audio; stop produces a playable MP3
 without overwriting an existing file.
 
+#### Milestone 2 implementation contract
+
+`FOUNDATION_CHECK v1` (2026-08-17):
+
+- **State owner:** the daemon-side Meetless plugin, through one extended
+  `MeetingStore`, owns recording lifecycle, committed-chunk inventory,
+  finalization intent, and saved output identity. The renderer is a controller
+  and observer. Media files are durable evidence, not a second lifecycle owner.
+- **Lifecycle:** `recording -> finalizing -> saved`; capture or finalization
+  interruption becomes `interrupted -> recoverable | failed`; `recoverable`
+  can re-enter `finalizing`. Valid committed chunks make transient capture,
+  helper, encoder, and I/O failures recoverable. `failed` is reserved for
+  proven unrecoverable media loss or corruption.
+- **Cross-boundary invariants:** at most one active recording; every committed
+  chunk has exactly one `microphone` or `system` source identity; pause/stop is
+  acknowledged only after open chunks are durably closed; existing exports are
+  never replaced; source chunks remain until the published MP3 is readable and
+  the exact saved path and identity have been durably recorded.
+- **Required mechanisms:** a supervised signed Swift ScreenCaptureKit helper;
+  daemon-allocated session directories; temporary-write, file-sync,
+  atomic-rename, and directory-sync chunk commits; an immutable finalization
+  chunk-set digest; same-filesystem MP3 staging; durable publish intent; atomic
+  no-replace publication; decode/readability and identity verification; startup
+  reconciliation; serialized retry; cleanup only after durable `saved`.
+- **Dependency direction:** route-independent Expo controls -> desktop-only
+  local control adapter -> daemon recording use cases <- `MeetingStore`, chunk
+  filesystem, `RecordingSource`, and MP3 finalizer adapters. Native, filesystem,
+  codec, Electron, and WebSocket types do not enter recording policy.
+- **Status:** `FOUNDATION_REQUIRED`. Milestone 1 supplies atomic persistence and
+  plugin supervision but has no recording state, chunk manifest, publish
+  intent, or recovery model. Accept that foundation before native/UI feature
+  integration continues.
+
+The first `RecordingSource` is one macOS 15+ Swift helper using one
+ScreenCaptureKit stream with separate `.audio` and `.microphone` outputs. The
+daemon plugin supervises it over a small source-labelled control/event
+protocol. EOF or helper failure durably closes completed chunks and makes the
+session recoverable. Keeping the stream alive while paused, closing current
+chunks before pause acknowledgement, discarding paused buffers, and starting
+new chunks on resume makes elapsed time and the saved timeline exclude paused
+duration.
+
+Recording commands and status use Paseo's existing Electron-only local
+transport to a private daemon-plugin control socket. Generic plugin RPC remains
+the meeting/companion API but is not the recording-control authority because it
+does not identify an Electron caller. Web and mobile therefore cannot obtain
+the V1 recording capability merely by connecting to the daemon.
+
+Chunk recovery adopts only fully renamed, readable source chunks with valid
+identity; temporary files are ignored or quarantined. Finalization persists a
+publish intent before atomic no-replace publication. After a crash between MP3
+publication and the `saved` transition, restart may adopt that exact readable
+output only when it matches the persisted identity; otherwise the existing file
+is untouched and a new collision-safe destination is selected. Retry reuses the
+same committed chunks and never records the meeting again.
+
+Milestone 2 host proof may use an explicitly resolved and attested local
+`ffmpeg` with MP3 support. Bundling its dynamic libraries, license notices,
+signing, hardened-runtime configuration, notarization, and clean-install
+permission attribution remain Milestone 7 distribution gates; they do not
+weaken Milestone 2's source build, executable hash, real-host permission, or
+both-side call evidence.
+
 ### Milestone 3: transcription and audio-grounded citations
 
 - Adapt Paseo speech components behind `TranscriptionProvider` without leaking
@@ -445,6 +508,17 @@ Recovery rules:
 - 2026-08-16: Distribution is open source compatible with Paseo's
   AGPL-3.0-or-later obligations; binary release remains gated on a complete
   third-party/native/model license and notice review.
+- 2026-08-17: Milestone 2 recording state, chunk identity, finalization intent,
+  and saved output identity have one daemon-side owner in the extended
+  `MeetingStore`. The Swift helper produces source-labelled bytes; the renderer
+  controls and observes but never owns the session.
+- 2026-08-17: V1 recording controls use the pinned Electron-only local
+  transport to a private Meetless plugin socket. Generic plugin RPC remains the
+  companion meeting API and does not grant web/mobile system-audio recording.
+- 2026-08-17: An MP3 is published only through an atomic no-replace operation
+  after readable staging and durable publish intent. Source chunks may be
+  cleaned only after the exact output is readable and the `saved` transition is
+  durably complete; finalization retry always reuses committed chunks.
 
 Open decisions before affected implementation:
 
@@ -462,6 +536,12 @@ Open decisions before affected implementation:
   allowlisted document paths.
 - **Adapter proof:** controlled fixtures for recording, MP3 finalization,
   transcription timing, retrieval updates, provider failure, and reconnect.
+- **Milestone 2 invariant proof:** positive cases preserve valid chunks and
+  publish a readable MP3; negative cases inject collisions, encoder failure,
+  renderer exit, helper/daemon interruption, and a crash after publication but
+  before `saved`. The collision target must remain byte-identical, premature
+  cleanup must be rejected, and retry/reconciliation must use the original
+  committed chunks.
 - **Integration proof:** real app/client/daemon meeting creation; forced capture
   interruption and recovery; real Codex analysis; citation-to-audio playback.
 - **End-to-end proof:** Zoom/Meet both-side recording through summary/action
