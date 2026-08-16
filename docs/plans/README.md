@@ -30,4 +30,6 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 
 ## Active Plans
 
-No active execution plans are currently indexed.
+- [Meetless V1 on top of Paseo](active/v1-paseo-foundation.md) — personal,
+  local-first Zoom/Meet recording, coding-agent analysis, grounded Q&A, and
+  cross-platform companion clients.
