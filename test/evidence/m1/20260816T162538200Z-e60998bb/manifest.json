@@ -1,0 +1,169 @@
+{
+  "schema": "MEETLESS_M1_EVIDENCE v1",
+  "status": "passed",
+  "runId": "20260816T162538200Z-e60998bb",
+  "preEvidenceSourceDigest": "b2db35b95b3d5aafe5be641cc1148576875f2b59b4aa7f929cf851b57994860e",
+  "startedAt": "2026-08-16T16:25:38.200Z",
+  "endedAt": "2026-08-16T16:27:34.556Z",
+  "meetingId": "72548faf-11ac-4720-b427-747ad190049a",
+  "endpoint": "127.0.0.1:52600",
+  "rendererOrigin": "http://127.0.0.1:52601",
+  "surfaces": {
+    "electron": {
+      "identity": "Meetless Electron desktop",
+      "title": "Meetless",
+      "mode": "desktop",
+      "trustedDesktopBridge": true,
+      "createEnabled": true,
+      "meetingId": "72548faf-11ac-4720-b427-747ad190049a",
+      "viewport": null
+    },
+    "web": {
+      "identity": "Meetless Expo web companion",
+      "title": "Meetless",
+      "mode": "companion",
+      "attemptedUrlMode": "desktop",
+      "trustedDesktopBridge": false,
+      "createEnabled": false,
+      "meetingId": "72548faf-11ac-4720-b427-747ad190049a",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      }
+    },
+    "ios": {
+      "identity": "Meetless Expo iOS companion",
+      "bundleId": "com.meetless.app",
+      "deviceName": "Meetless Proof 20260816T162538200Z-e60998bb",
+      "deviceUdid": "645B6569-CB20-4481-AA6C-C1F80CE5AD4A",
+      "deviceType": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+      "mode": "companion",
+      "createEnabled": false,
+      "meetingId": "72548faf-11ac-4720-b427-747ad190049a"
+    }
+  },
+  "production": {
+    "before": {
+      "files": [
+        {
+          "path": "/Users/tubakhuym/.paseo/paseo.pid",
+          "sha256": "58e7fb0ae0a8d6f1685ccbb14cc2c4c15190f338b83122c5495f4bfac8720051",
+          "size": 142,
+          "mtimeMs": 1786897516005,
+          "value": {
+            "pid": 31114,
+            "startedAt": "2026-08-15T04:49:39.700Z",
+            "hostname": "Hoangs-Mac-Studio.local",
+            "uid": 501,
+            "listen": "127.0.0.1:6767",
+            "heartbeat": true
+          }
+        },
+        {
+          "path": "/Users/tubakhuym/.paseo/server-id",
+          "sha256": "fcaa56cf7bdd348d2402a2683b8f7f5c23f74287fcfd665777685aadf7feae65",
+          "size": 17,
+          "mtimeMs": 1785506030597.0764
+        },
+        {
+          "path": "/Users/tubakhuym/.paseo/config.json",
+          "sha256": "713b495637fa119fea3f54582301c298746a0ddefa5f757d11a60ba0ebf288c8",
+          "size": 5038,
+          "mtimeMs": 1786765256575.829
+        }
+      ],
+      "listener": "p31115\ncnode\nf31\ntIPv4\nn127.0.0.1:6767",
+      "processIdentity": "31114 Sat Aug 15 11:49:39 2026     Paseo Supervisor"
+    },
+    "after": {
+      "files": [
+        {
+          "path": "/Users/tubakhuym/.paseo/paseo.pid",
+          "sha256": "58e7fb0ae0a8d6f1685ccbb14cc2c4c15190f338b83122c5495f4bfac8720051",
+          "size": 142,
+          "mtimeMs": 1786897636016,
+          "value": {
+            "pid": 31114,
+            "startedAt": "2026-08-15T04:49:39.700Z",
+            "hostname": "Hoangs-Mac-Studio.local",
+            "uid": 501,
+            "listen": "127.0.0.1:6767",
+            "heartbeat": true
+          }
+        },
+        {
+          "path": "/Users/tubakhuym/.paseo/server-id",
+          "sha256": "fcaa56cf7bdd348d2402a2683b8f7f5c23f74287fcfd665777685aadf7feae65",
+          "size": 17,
+          "mtimeMs": 1785506030597.0764
+        },
+        {
+          "path": "/Users/tubakhuym/.paseo/config.json",
+          "sha256": "713b495637fa119fea3f54582301c298746a0ddefa5f757d11a60ba0ebf288c8",
+          "size": 5038,
+          "mtimeMs": 1786765256575.829
+        }
+      ],
+      "listener": "p31115\ncnode\nf31\ntIPv4\nn127.0.0.1:6767",
+      "processIdentity": "31114 Sat Aug 15 11:49:39 2026     Paseo Supervisor"
+    }
+  },
+  "cleanup": {
+    "authorizedIsolatedStopChecked": true,
+    "browserClientsClosed": true,
+    "ownedProcessGroupsGone": true,
+    "isolatedListenersGone": true,
+    "runtimeRootAbsent": true,
+    "disposableSimulatorAbsent": true,
+    "simulatorTerminateChecked": true,
+    "simulatorUninstallChecked": true,
+    "simulatorShutdownChecked": true,
+    "simulatorDeleteChecked": true,
+    "productionPreserved": true
+  },
+  "files": [
+    {
+      "name": "electron.png",
+      "kind": "screenshot",
+      "sha256": "d76b4da0a30d37a399c919eb7cc7f1911c2d151fd2506d3b967b78b5ded0ce61",
+      "size": 30007
+    },
+    {
+      "name": "ios-ocr.log",
+      "kind": "log",
+      "sha256": "7a33e496a2bdbd65fbe152e092d41ccf99aab8554a4c2991b480ead45929d72a",
+      "size": 227
+    },
+    {
+      "name": "ios-surface.log",
+      "kind": "log",
+      "sha256": "5386f8132da803cb4ecf46451b607b20f2ed3adc800547b807d4868cdc519069",
+      "size": 438
+    },
+    {
+      "name": "ios.png",
+      "kind": "screenshot",
+      "sha256": "0e6ebf1d2d93cd48b503ecdf7da806c5cc0b6a2a88cc68753d8a9c8571066abd",
+      "size": 150466
+    },
+    {
+      "name": "result.json",
+      "kind": "result",
+      "sha256": "4ec019b9c326d70256735e555c1acd82b82eb0e507a95fbd1fa80eb23a73d120",
+      "size": 4361
+    },
+    {
+      "name": "runtime-stop.log",
+      "kind": "log",
+      "sha256": "4fd320a3a550206e9d8442552df288b8fa0169a15fdc0f20bb0e9f21f16a2db1",
+      "size": 117
+    },
+    {
+      "name": "web-compact.png",
+      "kind": "screenshot",
+      "sha256": "a94d75cad555750171c8fe1f58f30b6c0dacdd1b7122407b8df8b1b6945a9f5d",
+      "size": 27485
+    }
+  ]
+}
