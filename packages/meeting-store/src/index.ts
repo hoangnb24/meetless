@@ -2,11 +2,28 @@ import { randomUUID } from "node:crypto";
 import { open, mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import {
+  adoptOrphanChunk,
+  assertCleanupEligible,
+  assessInterruptedRecording,
+  beginFinalization,
+  commitRecordingChunk,
   createMeeting,
+  interruptRecording,
+  markRecordingSaved,
   MEETING_STATUSES,
+  pauseRecording,
+  reconcilePublishIntent,
+  RECORDING_SOURCES,
+  RECORDING_STATUSES,
+  resumeRecording,
+  retryFinalization,
+  startRecording,
   transitionMeeting,
+  type CommittedRecordingChunk,
   type Meeting,
   type MeetingStatus,
+  type OutputIdentity,
+  type RecordingSession,
 } from "@meetless/meeting-domain";
 import { z } from "zod";
 
@@ -20,7 +37,7 @@ const MeetingSchema = z
   })
   .strict();
 
-const MeetingStateSchema = z
+const StateV1Schema = z
   .object({
     version: z.literal(1),
     meetings: z.array(MeetingSchema),
@@ -40,9 +57,156 @@ const MeetingStateSchema = z
     });
   });
 
+const OutputIdentitySchema = z
+  .object({
+    byteLength: z.number().int().positive(),
+    sha256: z.string().trim().min(1),
+  })
+  .strict();
+
+const ChunkSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    source: z.enum(RECORDING_SOURCES),
+    storageKey: z.string().trim().min(1),
+    byteLength: z.number().int().positive(),
+    sha256: z.string().trim().min(1),
+    committedAt: z.string().datetime(),
+  })
+  .strict();
+
+const RecordingSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    meetingId: z.string().trim().min(1),
+    status: z.enum(RECORDING_STATUSES),
+    startedAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+    elapsedMs: z.number().int().nonnegative(),
+    activeSince: z.string().datetime().nullable(),
+    chunks: z.array(ChunkSchema),
+    interruption: z
+      .object({ reason: z.string().trim().min(1), interruptedAt: z.string().datetime() })
+      .strict()
+      .nullable(),
+    failureReason: z.string().trim().min(1).nullable(),
+    finalization: z
+      .object({
+        chunkIds: z.array(z.string().trim().min(1)).min(1),
+        chunkSetDigest: z.string().trim().min(1),
+        publishIntent: z
+          .object({
+            destination: z.string().trim().min(1),
+            expectedIdentity: OutputIdentitySchema,
+            createdAt: z.string().datetime(),
+          })
+          .strict(),
+      })
+      .strict()
+      .nullable(),
+    savedOutput: z
+      .object({
+        destination: z.string().trim().min(1),
+        byteLength: z.number().int().positive(),
+        sha256: z.string().trim().min(1),
+        savedAt: z.string().datetime(),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict()
+  .superRefine((recording, context) => {
+    const chunkIds = new Set<string>();
+    recording.chunks.forEach((chunk, index) => {
+      if (chunkIds.has(chunk.id)) {
+        context.addIssue({ code: "custom", path: ["chunks", index, "id"], message: `Duplicate chunk id: ${chunk.id}` });
+      }
+      chunkIds.add(chunk.id);
+    });
+    if (recording.status === "recording" && recording.finalization !== null) {
+      context.addIssue({ code: "custom", path: ["finalization"], message: "Recording state cannot have finalization intent" });
+    }
+    if (recording.status !== "recording" && recording.activeSince !== null) {
+      context.addIssue({ code: "custom", path: ["activeSince"], message: "Inactive recording state cannot accumulate elapsed time" });
+    }
+    if (recording.status === "finalizing" && recording.finalization === null) {
+      context.addIssue({ code: "custom", path: ["finalization"], message: "Finalizing recording requires durable intent" });
+    }
+    if (recording.status === "saved" && (!recording.savedOutput || !recording.finalization)) {
+      context.addIssue({ code: "custom", path: ["savedOutput"], message: "Saved recording requires output and finalization identity" });
+    }
+    if (recording.status !== "saved" && recording.savedOutput !== null) {
+      context.addIssue({ code: "custom", path: ["savedOutput"], message: "Only saved state can own saved output identity" });
+    }
+    if (recording.status === "interrupted" && recording.interruption === null) {
+      context.addIssue({ code: "custom", path: ["interruption"], message: "Interrupted state requires interruption evidence" });
+    }
+    if (recording.status === "failed" && recording.failureReason === null) {
+      context.addIssue({ code: "custom", path: ["failureReason"], message: "Failed state requires proven failure reason" });
+    }
+    if (
+      recording.finalization &&
+      recording.finalization.chunkIds.join("\u0000") !== recording.chunks.map((chunk) => chunk.id).join("\u0000")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["finalization", "chunkIds"],
+        message: "Finalization chunk set must exactly match committed chunks",
+      });
+    }
+    if (
+      recording.savedOutput &&
+      recording.finalization &&
+      (recording.savedOutput.destination !== recording.finalization.publishIntent.destination ||
+        recording.savedOutput.byteLength !== recording.finalization.publishIntent.expectedIdentity.byteLength ||
+        recording.savedOutput.sha256 !== recording.finalization.publishIntent.expectedIdentity.sha256)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["savedOutput"],
+        message: "Saved output must exactly match publication intent",
+      });
+    }
+  });
+
+const MeetingStateSchema = z
+  .object({
+    version: z.literal(2),
+    meetings: z.array(MeetingSchema),
+    recordings: z.array(RecordingSchema),
+  })
+  .strict()
+  .superRefine((state, context) => {
+    const meetingIds = new Set<string>();
+    state.meetings.forEach((meeting, index) => {
+      if (meetingIds.has(meeting.id)) {
+        context.addIssue({ code: "custom", path: ["meetings", index, "id"], message: `Duplicate meeting id: ${meeting.id}` });
+      }
+      meetingIds.add(meeting.id);
+    });
+    const recordingIds = new Set<string>();
+    state.recordings.forEach((recording, index) => {
+      if (recordingIds.has(recording.id)) {
+        context.addIssue({ code: "custom", path: ["recordings", index, "id"], message: `Duplicate recording id: ${recording.id}` });
+      }
+      recordingIds.add(recording.id);
+      if (!meetingIds.has(recording.meetingId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["recordings", index, "meetingId"],
+          message: `Recording references missing meeting: ${recording.meetingId}`,
+        });
+      }
+    });
+    if (state.recordings.filter((recording) => recording.status === "recording").length > 1) {
+      context.addIssue({ code: "custom", path: ["recordings"], message: "At most one active recording is allowed" });
+    }
+  });
+
 interface MeetingState {
-  version: 1;
+  version: 2;
   meetings: Meeting[];
+  recordings: RecordingSession[];
 }
 
 export class MeetingStoreCorruptError extends Error {
@@ -85,6 +249,16 @@ export class MeetingStore {
     return state.meetings.map((meeting) => ({ ...meeting }));
   }
 
+  async listRecordings(): Promise<RecordingSession[]> {
+    await this.mutationTail;
+    const state = await this.readState();
+    return state.recordings.map((recording) => structuredClone(recording));
+  }
+
+  migrateSchemaV1(): Promise<void> {
+    return this.mutate(async () => undefined);
+  }
+
   create(input: { title: string; id?: string }): Promise<Meeting> {
     return this.mutate(async (state) => {
       const meeting = createMeeting({
@@ -112,6 +286,144 @@ export class MeetingStore {
     });
   }
 
+  startRecording(input: { meetingId: string; id?: string }): Promise<RecordingSession> {
+    return this.mutate(async (state) => {
+      if (!state.meetings.some((meeting) => meeting.id === input.meetingId)) {
+        throw new Error(`Meeting not found: ${input.meetingId}`);
+      }
+      if (state.recordings.some((recording) => recording.status === "recording")) {
+        throw new Error(
+          "At most one active recording is allowed (docs/product/recording.md). Stop or recover the active session before starting another.",
+        );
+      }
+      const recording = startRecording({
+        id: input.id ?? this.createId(),
+        meetingId: input.meetingId,
+        now: this.now(),
+      });
+      if (state.recordings.some((candidate) => candidate.id === recording.id)) {
+        throw new Error(`Recording already exists: ${recording.id}`);
+      }
+      state.recordings.push(recording);
+      return recording;
+    });
+  }
+
+  pauseRecording(id: string, openChunksDurablyClosed: boolean): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) =>
+      pauseRecording(recording, { now: this.now(), openChunksDurablyClosed }),
+    );
+  }
+
+  resumeRecording(id: string): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) => resumeRecording(recording, this.now()));
+  }
+
+  commitChunk(id: string, chunk: CommittedRecordingChunk): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) => commitRecordingChunk(recording, chunk));
+  }
+
+  adoptOrphanChunk(
+    id: string,
+    input: {
+      chunk: CommittedRecordingChunk;
+      fullyCommitted: boolean;
+      readable: boolean;
+      identityValid: boolean;
+    },
+  ): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) => adoptOrphanChunk(recording, input));
+  }
+
+  interruptRecording(id: string, reason: string): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) =>
+      interruptRecording(recording, { now: this.now(), reason }),
+    );
+  }
+
+  assessInterruption(
+    id: string,
+    input: { recoverable: boolean; reason?: string },
+  ): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) =>
+      assessInterruptedRecording(recording, { ...input, now: this.now() }),
+    );
+  }
+
+  beginFinalization(
+    id: string,
+    input: {
+      openChunksDurablyClosed: boolean;
+      chunkSetDigest: string;
+      destination: string;
+      expectedIdentity: OutputIdentity;
+    },
+  ): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) =>
+      beginFinalization(recording, { ...input, now: this.now() }),
+    );
+  }
+
+  retryFinalization(id: string, destination?: string): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) =>
+      retryFinalization(recording, { now: this.now(), destination }),
+    );
+  }
+
+  reconcilePublish(
+    id: string,
+    input: {
+      existingOutput: OutputIdentity | null;
+      existingOutputReadable?: boolean;
+      nextDestination?: string;
+    },
+  ): Promise<{ action: "publish" | "adopt" | "collision"; recording: RecordingSession }> {
+    return this.mutate(async (state) => {
+      const index = this.recordingIndex(state, id);
+      const result = reconcilePublishIntent(state.recordings[index]!, { ...input, now: this.now() });
+      state.recordings[index] = result.session;
+      return { action: result.action, recording: result.session };
+    });
+  }
+
+  markRecordingSaved(
+    id: string,
+    input: { destination: string; identity: OutputIdentity; readable: boolean },
+  ): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) =>
+      markRecordingSaved(recording, { ...input, now: this.now() }),
+    );
+  }
+
+  async cleanupEligibleChunks(
+    id: string,
+    verification: { destination: string; identity: OutputIdentity; readable: boolean },
+  ): Promise<CommittedRecordingChunk[]> {
+    await this.mutationTail;
+    const state = await this.readState();
+    const recording = state.recordings[this.recordingIndex(state, id)]!;
+    assertCleanupEligible(recording, verification);
+    return recording.chunks.map((chunk) => ({ ...chunk }));
+  }
+
+  private changeRecording(
+    id: string,
+    change: (recording: RecordingSession) => RecordingSession,
+  ): Promise<RecordingSession> {
+    return this.mutate(async (state) => {
+      const index = this.recordingIndex(state, id);
+      const next = change(state.recordings[index]!);
+      state.recordings[index] = next;
+      return next;
+    });
+  }
+
+  private recordingIndex(state: MeetingState, id: string): number {
+    const index = state.recordings.findIndex((recording) => recording.id === id);
+    if (index < 0) throw new Error(`Recording not found: ${id}`);
+    return index;
+  }
+
   private mutate<T>(change: (state: MeetingState) => Promise<T>): Promise<T> {
     const operation = this.mutationTail.then(async () => {
       const state = await this.readState();
@@ -131,11 +443,14 @@ export class MeetingStore {
     try {
       contents = await readFile(this.filePath, "utf8");
     } catch (error) {
-      if (isErrno(error, "ENOENT")) return { version: 1, meetings: [] };
+      if (isErrno(error, "ENOENT")) return { version: 2, meetings: [], recordings: [] };
       throw error;
     }
     try {
-      return MeetingStateSchema.parse(JSON.parse(contents));
+      const decoded: unknown = JSON.parse(contents);
+      const v1 = StateV1Schema.safeParse(decoded);
+      if (v1.success) return { version: 2, meetings: v1.data.meetings, recordings: [] };
+      return MeetingStateSchema.parse(decoded);
     } catch (error) {
       throw new MeetingStoreCorruptError(this.filePath, error);
     }
