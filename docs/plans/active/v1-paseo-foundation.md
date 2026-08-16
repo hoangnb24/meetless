@@ -265,14 +265,16 @@ license limits, product authority, and evidence-bounded platform matrix are
 recorded. A controlled two-participant Google Meet produced distinct
 microphone/system artifacts and a mixed MP3 on macOS 26.4 arm64. See
 [`docs/macos-capture-spike.md`](../../macos-capture-spike.md). Milestone 1 has
-not started.
+also completed with the isolated Paseo runtime and real Electron, web, and iOS
+meeting surfaces described below.
 
 ### Milestone 1: compose the shell and meeting domain
 
 - Bring up the Paseo-derived daemon, Electron shell, web app, and one mobile
   client without importing coding workspace screens as the Meetless product.
 - Add plain meeting lifecycle types and focused use-case tests.
-- Add new capability-gated `meeting.*` protocol messages and client methods.
+- Add capability-gated, validated `meeting.*` plugin RPC contracts and
+  Meetless client methods over Paseo's existing generic plugin RPC transport.
 - Add a meeting store that owns atomic state transitions and paths.
 
 Acceptance boundary: desktop creates and lists a meeting through real
@@ -390,7 +392,7 @@ Recovery rules:
 - [x] Record the Paseo adoption, license, and upstream-update decision.
 - [x] Inventory the pinned Paseo P0 package and file seams.
 - [x] Run the microphone plus system-audio Zoom/Meet capture spike.
-- [ ] Complete Milestone 1: shell and meeting domain.
+- [x] Complete Milestone 1: shell and meeting domain.
 - [ ] Complete Milestone 2: durable desktop recording.
 - [ ] Complete Milestone 3: transcription and citation playback.
 - [ ] Complete Milestone 4: coding-agent analysis.
@@ -418,6 +420,28 @@ Recovery rules:
   `ee3420e80d93f7f0c875fcd45e816a5a9d06188f` (tag
   `meetless-v1-base-2026-08-16`); Meetless product code never lives in the
   Paseo repository.
+- 2026-08-16: Milestone 1 composes Meetless as a trusted local plugin loaded by
+  the isolated pinned Paseo daemon. The daemon's `plugins` server feature and
+  the `meetless` catalog entry gate validated `meeting.create` and
+  `meeting.list` contracts carried by Paseo's compatible
+  `plugin.rpc.invoke.request`/`plugin.rpc.invoke.response` envelope. This is the
+  explicit integration-adapter seam: it is not a second daemon and does not
+  require Meetless product code or first-class meeting wire variants inside
+  `vendor/paseo`.
+- 2026-08-16: Meetless desktop startup must set its isolated daemon home,
+  listen target, Electron user-data root, and product storage before importing
+  or starting the Paseo runtime. Desktop lifecycle commands may act only on
+  ownership discovered from that isolated home.
+- 2026-08-16: One Meetless-owned Expo surface is authoritative across Electron,
+  web, and iOS. Only the pinned Electron preload bridge grants desktop meeting
+  creation; URL parameters cannot grant it. Web and iOS remain read-only, and
+  the trusted plugin contributes daemon RPC handlers rather than a second
+  product surface.
+- 2026-08-16: A Meetless daemon stop is authorized only when the isolated PID
+  lock agrees with the live supervisor identity, an exact ownership marker held
+  open under the isolated `PASEO_HOME`, the pinned supervisor entrypoint, and a
+  listener worker in that supervisor's process tree. Unsupported inspection
+  fails closed.
 - 2026-08-16: Distribution is open source compatible with Paseo's
   AGPL-3.0-or-later obligations; binary release remains gated on a complete
   third-party/native/model license and notice review.
@@ -458,6 +482,34 @@ Open decisions before affected implementation:
   `shasum` commands and pass criteria in
   [`docs/macos-capture-spike.md`](../../macos-capture-spike.md). Levels alone do
   not replace phrase/listening or transcript evidence.
+- **Milestone 1 proof:** `npm run check` passed typecheck, 12 test files / 40
+  tests, the pinned Paseo and Meetless builds, and the Expo web export;
+  `npm run test:focused` passed 11 files / 39 tests; and
+  `npm run validate:isolation` passed 5 files / 24 positive and negative
+  isolation, ownership, publication, and import-boundary tests. The atomic
+  evidence manifest for run `20260816T162538200Z-e60998bb` is
+  [`test/evidence/m1/20260816T162538200Z-e60998bb/manifest.json`](../../../test/evidence/m1/20260816T162538200Z-e60998bb/manifest.json),
+  SHA-256
+  `6264da3a635bfb6b54ac42e3e8f18ddb42ef40518a82ff82addd7e62e99ce72a`.
+  Electron created meeting `72548faf-11ac-4720-b427-747ad190049a`; Chrome,
+  including an attempted `?mode=desktop` escalation, and a disposable iOS 26.5
+  iPhone 17 Pro simulator read that exact daemon-owned record without create
+  controls. Candidate digest
+  `66c23199763701cc15e72415d24f09bb4705a53e6e90663bab0bd5de250294b6`
+  binds the source and eight evidence files.
+- **Milestone 1 coexistence proof:** the accepted proof used isolated endpoint
+  `127.0.0.1:52600`, an isolated runtime root, isolated server identity/store,
+  isolated logs, and isolated Electron user-data. Before and after, production
+  Paseo retained supervisor PID `31114`, daemon PID `31115`, start time
+  `2026-08-15T04:49:39.700Z`, listener `127.0.0.1:6767`, PID-lock hash
+  `58e7fb0ae0a8d6f1685ccbb14cc2c4c15190f338b83122c5495f4bfac8720051`,
+  server-id hash
+  `fcaa56cf7bdd348d2402a2683b8f7f5c23f74287fcfd665777685aadf7feae65`,
+  and config hash
+  `713b495637fa119fea3f54582301c298746a0ddefa5f757d11a60ba0ebf288c8`;
+  only the expected PID-lock heartbeat mtime advanced. The disposable simulator,
+  isolated runtime, listeners, and owned process groups were removed before the
+  proof was atomically published.
 
 ## Result
 
@@ -469,4 +521,20 @@ independent histories.
 The accepted Google Meet session
 `42943d6a-1e4a-475b-a0e2-b5692a28d6d5` records distinct microphone and system
 audio plus a playable mixed MP3 on macOS 26.4 arm64. Milestone 0 is complete.
-Product code and Milestone 1 have not started.
+Milestone 1 is complete. Meetless now composes the pinned Paseo daemon through
+an external trusted plugin, owns plain meeting lifecycle and atomic storage,
+and presents one Meetless-only Expo product surface through Electron, web, and
+iOS. Electron creates and lists meetings through the real daemon; connected web
+and iOS companion surfaces read the same list. No Meetless product policy lives
+inside `vendor/paseo`, and the pinned submodule remains clean.
+
+Milestone 1 limits are explicit: mobile proof is an actual iOS 26.5 simulator
+over host loopback, not a physical device or a LAN/relay pairing decision;
+live stop-ownership inspection currently supports macOS and fails closed on
+unsupported hosts; local validation has no checked-in hook or CI invocation,
+and branch-protection enforcement is unverified. `npm install` reports 30
+dependency vulnerabilities, largely in the pinned Paseo/Expo dependency tree;
+breaking forced upgrades were not substituted for the accepted pin. CocoaPods
+1.17.0 was installed globally through Homebrew at
+`2026-08-16T22:23:32+07:00` to build the simulator proof. The project owner
+accepted retaining that installation; it must not be removed as M1 cleanup.
