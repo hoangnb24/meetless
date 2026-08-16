@@ -1,6 +1,42 @@
 import { useCallback, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { MeetingWire } from "@meetless/meeting-contracts";
+import type { RecordingStatusWire } from "@meetless/meeting-contracts";
+
+export function RecordingStrip(props: {
+  status: RecordingStatusWire;
+  elapsedMs: number;
+  pending: boolean;
+  error: string | null;
+  onStart(title: string): Promise<void>;
+  onPause(): Promise<void>;
+  onResume(): Promise<void>;
+  onStop(): Promise<void>;
+  onRetry(): Promise<void>;
+}) {
+  const [title, setTitle] = useState("");
+  const active = props.status.status === "recording";
+  const recoverable = props.status.status === "recoverable";
+  const seconds = Math.floor(props.elapsedMs / 1000);
+  return (
+    <View style={styles.recordingStrip} testID="global-recording-strip">
+      {props.status.status === "idle" || props.status.status === "saved" || props.status.status === "failed" ? (
+        <>
+          <TextInput accessibilityLabel="Recording title" placeholder="Meeting title" placeholderTextColor="#777b82" style={styles.recordingInput} value={title} onChangeText={setTitle} testID="recording-title-input" />
+          <Pressable disabled={props.pending || !title.trim()} onPress={() => void props.onStart(title.trim()).then(() => setTitle(""))} style={styles.recordingAction} testID="recording-start"><Text style={styles.buttonText}>Start recording</Text></Pressable>
+        </>
+      ) : (
+        <>
+          <View style={styles.recordingIdentity}><Text style={styles.recordingTitle}>{props.status.title ?? "Meeting"}</Text><Text style={styles.recordingTime}>{String(Math.floor(seconds / 60)).padStart(2, "0")}:{String(seconds % 60).padStart(2, "0")} · {props.status.status}</Text></View>
+          {active ? <Pressable disabled={props.pending} onPress={() => void (props.status.paused ? props.onResume() : props.onPause())} style={styles.recordingSecondary} testID="recording-pause-resume"><Text style={styles.recordingButtonText}>{props.status.paused ? "Resume" : "Pause"}</Text></Pressable> : null}
+          {active ? <Pressable disabled={props.pending} onPress={() => void props.onStop()} style={styles.recordingAction} testID="recording-stop"><Text style={styles.buttonText}>Stop</Text></Pressable> : null}
+          {recoverable ? <Pressable disabled={props.pending} onPress={() => void props.onRetry()} style={styles.recordingAction} testID="recording-retry"><Text style={styles.buttonText}>Retry MP3</Text></Pressable> : null}
+        </>
+      )}
+      {props.error ? <Text style={styles.error} testID="recording-error">{props.error}</Text> : null}
+    </View>
+  );
+}
 
 export interface SurfaceLayoutModel {
   content: { padding: number; gap: number; maxWidth: number | "100%"; alignSelf: "center" | "stretch" };
@@ -148,4 +184,12 @@ const styles = StyleSheet.create({
   cardTitle: { color: "#f4f1e8", fontSize: 17, fontWeight: "600" },
   status: { color: "#e99a74", fontSize: 12, textTransform: "uppercase" },
   timestamp: { color: "#85898f", fontSize: 12 },
+  recordingStrip: { alignItems: "center", backgroundColor: "#191b1f", borderBottomColor: "#34373d", borderBottomWidth: 1, flexDirection: "row", gap: 10, minHeight: 64, paddingHorizontal: 16, paddingVertical: 9 },
+  recordingInput: { backgroundColor: "#202226", borderColor: "#3a3d43", borderRadius: 8, borderWidth: 1, color: "#f4f1e8", flex: 1, minHeight: 40, paddingHorizontal: 12 },
+  recordingIdentity: { flex: 1, gap: 2 },
+  recordingTitle: { color: "#f4f1e8", fontWeight: "700" },
+  recordingTime: { color: "#e99a74", fontVariant: ["tabular-nums"] },
+  recordingAction: { backgroundColor: "#e66b3d", borderRadius: 8, minHeight: 40, justifyContent: "center", paddingHorizontal: 14 },
+  recordingSecondary: { borderColor: "#565b64", borderRadius: 8, borderWidth: 1, minHeight: 40, justifyContent: "center", paddingHorizontal: 14 },
+  recordingButtonText: { color: "#f4f1e8", fontWeight: "700" },
 });

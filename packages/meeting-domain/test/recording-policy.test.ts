@@ -23,6 +23,11 @@ const chunk = (id: string, source: "microphone" | "system" = "microphone"): Comm
   byteLength: 128,
   sha256: `sha-${id}`,
   committedAt: "2026-08-17T10:00:05.000Z",
+  logicalStartMs: id.includes("system") ? 10_000 : 0,
+  durationMs: 5_000,
+  sampleRate: 16_000,
+  channels: 1,
+  format: "wav",
 });
 
 describe("recording policy", () => {

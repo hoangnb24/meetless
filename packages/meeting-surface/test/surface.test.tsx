@@ -1,10 +1,34 @@
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { MeetingListSurface } from "../src/index.js";
+import { MeetingListSurface, RecordingStrip } from "../src/index.js";
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+describe("global recording strip", () => {
+  test("renders authoritative recoverable retry state independently of meeting-list content", async () => {
+    const retry = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<RecordingStrip
+        elapsedMs={12_000}
+        error="encoder interrupted"
+        onPause={async () => undefined}
+        onResume={async () => undefined}
+        onRetry={retry}
+        onStart={async () => undefined}
+        onStop={async () => undefined}
+        pending={false}
+        status={{ status: "recoverable", recordingId: "r-1", meetingId: "m-1", title: "Sync", elapsedMs: 12_000, paused: false, chunks: [], outputPath: null, error: "encoder interrupted" }}
+      />);
+    });
+    const button = renderer!.root.findByProps({ testID: "recording-retry" });
+    await act(async () => { button.props.onPress(); });
+    expect(retry).toHaveBeenCalledOnce();
+    renderer!.unmount();
+  });
 });
 
 describe("companion meeting surface", () => {

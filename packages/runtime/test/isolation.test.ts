@@ -39,6 +39,7 @@ describe("daemon isolation invariant", () => {
       pluginsEnabled: true,
       plugins: { meetless: { enabled: true, source: "directory" } },
     });
+    expect(Buffer.byteLength(config.paths.recordingSocket)).toBeLessThanOrEqual(103);
   });
 
   test("rejects production port 6767 with an actionable authority pointer", () => {

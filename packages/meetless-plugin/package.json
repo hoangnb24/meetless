@@ -10,8 +10,10 @@
   },
   "dependencies": {
     "@meetless/meeting-contracts": "0.1.0",
+    "@meetless/meeting-domain": "0.1.0",
     "@meetless/meeting-store": "0.1.0",
     "@paseo/plugin": "0.3.0",
+    "ws": "^8.20.0",
     "zod": "^4.4.3"
   }
 }

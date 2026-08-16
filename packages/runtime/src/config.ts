@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { open, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -8,6 +8,7 @@ import { z } from "zod";
 
 export const PINNED_PASEO_COMMIT = "ee3420e80d93f7f0c875fcd45e816a5a9d06188f";
 export const DEFAULT_MEETLESS_LISTEN = "127.0.0.1:6777";
+const DARWIN_UNIX_SOCKET_PATH_BYTES = 103;
 
 const packageDirectory = path.dirname(fileURLToPath(import.meta.url));
 export const REPOSITORY_ROOT = path.resolve(packageDirectory, "../../..");
@@ -25,6 +26,9 @@ export interface RuntimePaths {
   config: string;
   manifest: string;
   plugin: string;
+  captureHelper: string;
+  recordingSocket: string;
+  recordingExports: string;
 }
 
 export interface RuntimeConfig {
@@ -76,6 +80,9 @@ export function resolveRuntimeConfig(input: {
     config: path.join(root, "paseo-home", "config.json"),
     manifest: path.join(root, "runtime.json"),
     plugin: path.join(repositoryRoot, "packages", "meetless-plugin"),
+    captureHelper: path.join(repositoryRoot, "native", "macos-capture", ".build", "release", "meetless-capture"),
+    recordingSocket: resolveRecordingSocket(path.join(root, "paseo-home")),
+    recordingExports: path.resolve(process.env.MEETLESS_EXPORT_ROOT?.trim() || path.join(userHome, "Documents", "meetings")),
   };
   assertIsolated(paths, listen, userHome);
   return {
@@ -97,8 +104,24 @@ export function resolveRuntimeConfig(input: {
       MEETLESS_RENDERER_ORIGIN: rendererOrigin,
       MEETLESS_PINNED_SUPERVISOR_ENTRYPOINT: supervisorEntrypoint,
       PASEO_TEST_APP_NAME: "Meetless",
+      MEETLESS_CAPTURE_HELPER: paths.captureHelper,
+      MEETLESS_RECORDING_SOCKET: paths.recordingSocket,
+      MEETLESS_EXPORT_ROOT: paths.recordingExports,
+      MEETLESS_FFMPEG: resolveHostTool("MEETLESS_FFMPEG", "ffmpeg"),
+      MEETLESS_FFPROBE: resolveHostTool("MEETLESS_FFPROBE", "ffprobe"),
     },
   };
+}
+
+function resolveHostTool(environmentName: string, executable: string): string {
+  const configured = process.env[environmentName]?.trim();
+  if (configured) {
+    if (!path.isAbsolute(configured)) throw new Error(`${environmentName} must be an absolute path`);
+    return configured;
+  }
+  const resolved = execFileSync("which", [executable], { encoding: "utf8" }).trim();
+  if (!path.isAbsolute(resolved)) throw new Error(`Could not resolve an absolute ${executable} path`);
+  return resolved;
 }
 
 function resolveRendererOrigin(value: string): string {
@@ -123,7 +146,10 @@ export function assertIsolated(paths: RuntimePaths, listen: string, userHome = h
   }
   const productionUserData = productionElectronPaths(path.resolve(userHome));
   for (const candidate of Object.values(paths)) {
-    if (candidate === paths.plugin) continue;
+    if (
+      candidate === paths.plugin || candidate === paths.captureHelper ||
+      candidate === paths.recordingSocket || candidate === paths.recordingExports
+    ) continue;
     if (!isSameOrDescendant(candidate, paths.root)) {
       throw new IsolationViolationError(`Runtime path escapes the isolated root: ${candidate}`);
     }
@@ -131,6 +157,15 @@ export function assertIsolated(paths: RuntimePaths, listen: string, userHome = h
       throw new IsolationViolationError(`Refusing production Paseo Electron user-data ${candidate}`);
     }
   }
+}
+
+function resolveRecordingSocket(paseoHome: string): string {
+  const inHome = path.join(paseoHome, "recording-control.sock");
+  if (process.platform !== "darwin" || Buffer.byteLength(inHome) <= DARWIN_UNIX_SOCKET_PATH_BYTES) {
+    return inHome;
+  }
+  const identity = createHash("sha256").update(paseoHome).digest("hex").slice(0, 24);
+  return `/private/tmp/meetless-recording-${identity}.sock`;
 }
 
 function parseLoopbackListen(listen: string): { host: string; port: number } {

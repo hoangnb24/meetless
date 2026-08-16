@@ -17,11 +17,12 @@
   "scripts": {
     "build:paseo:types": "npm run build --workspace=@getpaseo/protocol && npm run build --workspace=@getpaseo/relay && npm run build --workspace=@getpaseo/client && npm run build --workspace=@paseo/plugin",
     "build:paseo": "npm run build:paseo:types && npm run build --workspace=@getpaseo/highlight && npm run build --workspace=@getpaseo/server && npm run build --workspace=@getpaseo/cli && npm run build:main --workspace=@getpaseo/desktop",
+    "build:native": "node scripts/build-native.mjs",
     "build:meetless": "tsc -b tsconfig.build.json",
     "build:app": "npm run export --workspace=@meetless/app",
-    "build": "npm run build:paseo && npm run build:meetless && npm run build:app",
+    "build": "npm run build:native && npm run build:paseo && npm run build:meetless && npm run build:app",
     "typecheck": "npm run build:paseo:types && tsc -b tsconfig.build.json --pretty false && npm run typecheck --workspace=@meetless/app",
-    "pretest": "npm run build:paseo:types && npm run build:meetless",
+    "pretest": "npm run build:native && npm run build:paseo:types && npm run build:meetless",
     "test": "vitest run --config vitest.config.ts",
     "test:focused": "vitest run --config vitest.config.ts packages/meeting-domain packages/meeting-store packages/meeting-surface packages/meetless-client packages/meetless-plugin packages/meetless-app packages/runtime",
     "validate:isolation": "node packages/runtime/dist/source-guard.js && node packages/runtime/dist/app-boundary.js && vitest run --config vitest.config.ts packages/runtime/test/isolation.test.ts packages/runtime/test/source-guard.test.ts packages/runtime/test/app-boundary.test.ts packages/runtime/test/lifecycle.test.ts packages/runtime/test/proof-publication.test.ts",
@@ -32,7 +33,8 @@
     "runtime:web": "npm run start:web --workspace=@meetless/app -- --port 8082",
     "runtime:status": "node packages/runtime/dist/cli.js status",
     "runtime:stop": "node packages/runtime/dist/cli.js stop",
-    "proof:m1": "node scripts/prove-m1.mjs"
+    "proof:m1": "node scripts/prove-m1.mjs",
+    "proof:m2": "npm run build:native && npm run build:meetless && node scripts/prove-m2.mjs"
   },
   "devDependencies": {
     "@clack/core": "1.1.0",

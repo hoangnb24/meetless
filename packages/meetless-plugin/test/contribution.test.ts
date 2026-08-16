@@ -3,7 +3,7 @@ import type { PluginContext } from "@paseo/plugin";
 import contribute from "../index.js";
 
 describe("Meetless plugin contribution", () => {
-  test("publishes RPC handlers without a second product surface", () => {
+  test("publishes meeting RPC handlers without exposing recording RPC or a second product surface", async () => {
     const handle = vi.fn();
     const addSurface = vi.fn();
     const addSidebarItem = vi.fn();
@@ -13,5 +13,6 @@ describe("Meetless plugin contribution", () => {
     expect(addSurface).not.toHaveBeenCalled();
     expect(addSidebarItem).not.toHaveBeenCalled();
     expect(cleanup()).toBeUndefined();
+    expect(handle.mock.calls.map(([rpc]) => rpc.name)).not.toContain("recording.start");
   });
 });

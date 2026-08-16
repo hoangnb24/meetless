@@ -86,6 +86,11 @@ export interface CommittedRecordingChunk {
   byteLength: number;
   sha256: string;
   committedAt: string;
+  logicalStartMs: number;
+  durationMs: number;
+  sampleRate: number;
+  channels: number;
+  format: "wav";
 }
 
 export interface OutputIdentity {
@@ -246,6 +251,11 @@ function checkCommittedChunk(chunk: CommittedRecordingChunk): CommittedRecording
     byteLength: chunk.byteLength,
     sha256: requireRecordingText(chunk.sha256, "chunk sha256"),
     committedAt: requireInstant(chunk.committedAt, "chunk committedAt"),
+    logicalStartMs: chunk.logicalStartMs,
+    durationMs: chunk.durationMs,
+    sampleRate: chunk.sampleRate,
+    channels: chunk.channels,
+    format: chunk.format,
   };
   if (!RECORDING_SOURCES.includes(checked.source)) {
     throw recordingViolation(
@@ -255,6 +265,22 @@ function checkCommittedChunk(chunk: CommittedRecordingChunk): CommittedRecording
   }
   if (!Number.isSafeInteger(checked.byteLength) || checked.byteLength <= 0) {
     throw recordingViolation("Committed chunks must contain bytes", "Commit a readable non-empty chunk.");
+  }
+  if (
+    !Number.isSafeInteger(checked.logicalStartMs) ||
+    checked.logicalStartMs < 0 ||
+    !Number.isSafeInteger(checked.durationMs) ||
+    checked.durationMs <= 0 ||
+    !Number.isSafeInteger(checked.sampleRate) ||
+    checked.sampleRate <= 0 ||
+    !Number.isSafeInteger(checked.channels) ||
+    checked.channels <= 0 ||
+    checked.format !== "wav"
+  ) {
+    throw recordingViolation(
+      "Committed chunks require a valid logical timeline and audio format",
+      "Commit source-labelled WAV metadata with start, duration, sample rate, and channels.",
+    );
   }
   return checked;
 }

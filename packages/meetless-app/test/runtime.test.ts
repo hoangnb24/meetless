@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { Platform } from "react-native";
-import { resolveAppMode, resolveDaemonUrl } from "../src/runtime.js";
+import { resolveAppMode, resolveDaemonUrl, supportsDesktopRecording } from "../src/runtime.js";
 
 describe("Meetless app runtime", () => {
   afterEach(() => {
@@ -19,6 +19,12 @@ describe("Meetless app runtime", () => {
       paseoDesktop: { platform: "darwin", invoke: vi.fn() },
     });
     expect(resolveAppMode()).toBe("desktop");
+    expect(supportsDesktopRecording()).toBe(true);
+  });
+
+  test("query parameters and non-macOS Electron shells cannot grant recording", () => {
+    vi.stubGlobal("window", { location: { search: "?recording=true" }, paseoDesktop: { platform: "linux", invoke: vi.fn() } });
+    expect(supportsDesktopRecording()).toBe(false);
   });
 
   test("native remains companion even when a desktop-shaped global is present", () => {

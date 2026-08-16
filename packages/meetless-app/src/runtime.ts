@@ -22,6 +22,11 @@ export function resolveAppMode(): MeetlessAppMode {
   return hasPinnedElectronBridge ? "desktop" : "companion";
 }
 
+export function supportsDesktopRecording(): boolean {
+  return Platform.OS === "web" && typeof window !== "undefined" &&
+    window.paseoDesktop?.platform === "darwin" && typeof window.paseoDesktop.invoke === "function";
+}
+
 export function resolveDaemonUrl(input: {
   platform?: string;
   search?: string;

@@ -72,6 +72,11 @@ const ChunkSchema = z
     byteLength: z.number().int().positive(),
     sha256: z.string().trim().min(1),
     committedAt: z.string().datetime(),
+    logicalStartMs: z.number().int().nonnegative(),
+    durationMs: z.number().int().positive(),
+    sampleRate: z.number().int().positive(),
+    channels: z.number().int().positive(),
+    format: z.literal("wav"),
   })
   .strict();
 

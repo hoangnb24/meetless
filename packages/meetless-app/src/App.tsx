@@ -3,12 +3,19 @@ import { Platform, SafeAreaView, StyleSheet, useWindowDimensions } from "react-n
 import { StatusBar } from "expo-status-bar";
 import { connectMeetlessClient, type ConnectedMeetlessClient } from "@meetless/client";
 import type { MeetingWire } from "@meetless/meeting-contracts";
-import { MeetingListSurface } from "@meetless/meeting-surface";
-import { resolveAppMode, resolveDaemonUrl } from "./runtime";
+import { MeetingListSurface, RecordingStrip } from "@meetless/meeting-surface";
+import { resolveAppMode, resolveDaemonUrl, supportsDesktopRecording } from "./runtime";
+import { RecordingProvider, useRecording } from "./recording-provider";
 
 export function App() {
-  const dimensions = useWindowDimensions();
   const mode = useMemo(() => resolveAppMode(), []);
+  const recordingEnabled = useMemo(() => supportsDesktopRecording(), []);
+  return <RecordingProvider enabled={recordingEnabled}><AppContent mode={mode} /></RecordingProvider>;
+}
+
+function AppContent({ mode }: { mode: "desktop" | "companion" }) {
+  const dimensions = useWindowDimensions();
+  const recording = useRecording();
   const daemonUrl = useMemo(() => resolveDaemonUrl(), []);
   const connection = useRef<ConnectedMeetlessClient | null>(null);
   const [meetings, setMeetings] = useState<MeetingWire[]>([]);
@@ -89,6 +96,17 @@ export function App() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="light" />
+      {recording.enabled ? <RecordingStrip
+        elapsedMs={recording.displayElapsedMs}
+        error={recording.error}
+        onPause={recording.pause}
+        onResume={recording.resume}
+        onRetry={recording.retry}
+        onStart={recording.start}
+        onStop={recording.stop}
+        pending={recording.pending}
+        status={recording.status}
+      /> : null}
       <MeetingListSurface
         canCreate={mode === "desktop"}
         compact={compact}

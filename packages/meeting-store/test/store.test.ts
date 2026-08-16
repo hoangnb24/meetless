@@ -152,6 +152,7 @@ describe("meeting store", () => {
       byteLength: 128,
       sha256: "chunk-sha",
       committedAt: "2026-08-17T10:00:05.000Z",
+      logicalStartMs: 0, durationMs: 5_000, sampleRate: 16_000, channels: 1, format: "wav",
     });
     now = "2026-08-17T10:00:10.000Z";
     await store.beginFinalization("r-1", {
@@ -231,6 +232,7 @@ describe("meeting store", () => {
       byteLength: 128,
       sha256: "chunk-sha",
       committedAt: "2026-08-17T10:00:05.000Z",
+      logicalStartMs: 0, durationMs: 5_000, sampleRate: 16_000, channels: 1, format: "wav",
     });
     now = "2026-08-17T10:00:10.000Z";
     await store.beginFinalization("r-1", {
@@ -296,6 +298,7 @@ describe("meeting store", () => {
       byteLength: 128,
       sha256: "chunk-sha",
       committedAt: "2026-08-17T10:00:05.000Z",
+      logicalStartMs: 0, durationMs: 5_000, sampleRate: 16_000, channels: 1, format: "wav",
     });
     now = "2026-08-17T10:00:10.000Z";
     await store.beginFinalization("r-1", {
@@ -334,6 +337,7 @@ describe("meeting store", () => {
       byteLength: 128,
       sha256: "chunk-sha",
       committedAt: "2026-08-17T10:00:05.000Z",
+      logicalStartMs: 0, durationMs: 5_000, sampleRate: 16_000, channels: 1, format: "wav",
     });
     now = "2026-08-17T10:00:10.000Z";
     await store.beginFinalization("r-1", {
@@ -412,6 +416,7 @@ describe("meeting store", () => {
           byteLength: 128,
           sha256: "chunk-sha",
           committedAt: "2026-08-17T10:00:05.000Z",
+          logicalStartMs: 0, durationMs: 5_000, sampleRate: 16_000, channels: 1, format: "wav",
         }],
         interruption: fixture.status === "interrupted" || fixture.status === "recoverable"
           ? { reason: "fixture interruption", interruptedAt: "2026-08-17T10:00:11.000Z" }

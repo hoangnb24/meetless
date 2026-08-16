@@ -10,6 +10,7 @@
   "exclude": ["test"],
   "references": [
     { "path": "../meeting-contracts" },
+    { "path": "../meeting-domain" },
     { "path": "../meeting-store" }
   ]
 }

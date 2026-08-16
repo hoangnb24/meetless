@@ -4,6 +4,10 @@ import {
   MeetingCreateRpc,
   MeetingListRpc,
   type MeetingWire,
+  RecordingControlResponseSchema,
+  RecordingStatusEventSchema,
+  type RecordingControlRequest,
+  type RecordingStatusWire,
 } from "@meetless/meeting-contracts";
 
 export const MEETLESS_PLUGIN_ID = "meetless";
@@ -12,6 +16,135 @@ export interface MeetlessDaemonPort {
   getLastServerInfoMessage(): { features?: { plugins?: boolean } } | null;
   getPluginCatalog(): Promise<Array<{ id: string; clientBundle: string }>>;
   invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
+}
+
+interface DesktopBridge {
+  platform?: unknown;
+  invoke?(command: string, args?: Record<string, unknown>): Promise<unknown>;
+  events?: { on(event: string, handler: (payload: unknown) => void): Promise<() => void> };
+}
+
+export class DesktopRecordingClient {
+  private sessionId: string | null = null;
+  private unlisten: (() => void) | null = null;
+  private sequence = 0;
+  private readonly pending = new Map<string, { resolve(status: RecordingStatusWire): void; reject(error: Error): void }>();
+  private readonly listeners = new Set<(status: RecordingStatusWire) => void>();
+
+  constructor(private readonly bridge: DesktopBridge) {
+    if (bridge.platform !== "darwin" || typeof bridge.invoke !== "function" || typeof bridge.events?.on !== "function") {
+      throw new MeetlessFeatureUnavailableError(
+        "Desktop recording requires the pinned macOS Electron bridge; web, mobile, and URL parameters cannot grant it.",
+      );
+    }
+  }
+
+  async connect(): Promise<RecordingStatusWire> {
+    if (this.sessionId) return this.request("status");
+    this.unlisten = await this.bridge.events!.on("local-daemon-transport-event", (payload) => this.handleTransportEvent(payload));
+    const daemonStatus = await this.bridge.invoke!("desktop_daemon_status") as { home?: unknown };
+    if (typeof daemonStatus?.home !== "string" || !daemonStatus.home.startsWith("/")) {
+      throw new Error("Desktop daemon did not expose an absolute isolated home");
+    }
+    const socketPath = await resolveRecordingSocket(daemonStatus.home.replace(/\/$/u, ""));
+    let session: unknown;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        session = await this.bridge.invoke!("open_local_daemon_transport", { transportType: "socket", transportPath: socketPath });
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 29) await delay(100);
+      }
+    }
+    if (session === undefined && lastError) {
+      this.unlisten?.(); this.unlisten = null;
+      throw lastError;
+    }
+    if (typeof session !== "string" || !session) throw new Error("Desktop recording transport did not return a session ID");
+    this.sessionId = session;
+    return this.request("status");
+  }
+
+  subscribe(listener: (status: RecordingStatusWire) => void): () => void {
+    this.listeners.add(listener); return () => this.listeners.delete(listener);
+  }
+
+  start(title: string): Promise<RecordingStatusWire> { return this.request("start", title); }
+  status(): Promise<RecordingStatusWire> { return this.request("status"); }
+  pause(): Promise<RecordingStatusWire> { return this.request("pause"); }
+  resume(): Promise<RecordingStatusWire> { return this.request("resume"); }
+  stop(): Promise<RecordingStatusWire> { return this.request("stop"); }
+  retryFinalization(): Promise<RecordingStatusWire> { return this.request("retryFinalization"); }
+
+  async close(): Promise<void> {
+    const sessionId = this.sessionId; this.sessionId = null;
+    if (sessionId) await this.bridge.invoke!("close_local_daemon_transport", { sessionId }).catch(() => undefined);
+    this.unlisten?.(); this.unlisten = null;
+    this.rejectPending(new Error("Desktop recording transport closed"));
+  }
+
+  private async request(command: RecordingControlRequest["command"], title?: string): Promise<RecordingStatusWire> {
+    const sessionId = this.sessionId;
+    if (!sessionId) throw new Error("Desktop recording transport is not connected");
+    const requestId = `recording-${Date.now()}-${++this.sequence}`;
+    const response = new Promise<RecordingStatusWire>((resolve, reject) => this.pending.set(requestId, { resolve, reject }));
+    await this.bridge.invoke!("send_local_daemon_transport_message", {
+      sessionId,
+      text: JSON.stringify({ version: 1, requestId, command, ...(title === undefined ? {} : { title }) }),
+    });
+    return response;
+  }
+
+  private handleTransportEvent(payload: unknown): void {
+    if (!payload || typeof payload !== "object") return;
+    const event = payload as { sessionId?: unknown; kind?: unknown; text?: unknown; error?: unknown };
+    if (event.sessionId !== this.sessionId) return;
+    if (event.kind === "close" || event.kind === "error") {
+      this.rejectPending(new Error(typeof event.error === "string" ? event.error : "Desktop recording transport disconnected"));
+      return;
+    }
+    if (event.kind !== "message" || typeof event.text !== "string") return;
+    const decoded: unknown = JSON.parse(event.text);
+    const statusEvent = RecordingStatusEventSchema.safeParse(decoded);
+    if (statusEvent.success) {
+      for (const listener of this.listeners) listener(statusEvent.data.status);
+      return;
+    }
+    const response = RecordingControlResponseSchema.parse(decoded);
+    const pending = this.pending.get(response.requestId);
+    if (!pending) return;
+    this.pending.delete(response.requestId);
+    if (response.ok) pending.resolve(response.status);
+    else pending.reject(new Error(response.error ?? "Recording command failed"));
+  }
+
+  private rejectPending(error: Error): void {
+    for (const pending of this.pending.values()) pending.reject(error);
+    this.pending.clear();
+  }
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function resolveRecordingSocket(paseoHome: string): Promise<string> {
+  const inHome = `${paseoHome}/recording-control.sock`;
+  if (new TextEncoder().encode(inHome).byteLength <= 103) return inHome;
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(paseoHome));
+  const identity = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 24);
+  return `/private/tmp/meetless-recording-${identity}.sock`;
+}
+
+export function createDesktopRecordingClient(): DesktopRecordingClient {
+  const bridge = typeof window === "undefined" ? undefined : (window as unknown as { paseoDesktop?: DesktopBridge }).paseoDesktop;
+  if (!bridge) throw new MeetlessFeatureUnavailableError("Electron recording bridge is unavailable");
+  return new DesktopRecordingClient(bridge);
 }
 
 export class MeetlessFeatureUnavailableError extends Error {
