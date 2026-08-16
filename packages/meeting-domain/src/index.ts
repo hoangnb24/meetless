@@ -368,7 +368,7 @@ export function beginFinalization(
 
 export function retryFinalization(
   session: RecordingSession,
-  input: { now: string; destination?: string },
+  input: { now: string },
 ): RecordingSession {
   if ((session.status !== "recoverable" && session.status !== "finalizing") || !session.finalization) {
     throw recordingViolation("Finalization retry requires an existing immutable intent", "Begin finalization once first.");
@@ -384,15 +384,7 @@ export function retryFinalization(
   return {
     ...next,
     status: "finalizing",
-    finalization: input.destination
-      ? {
-          ...session.finalization,
-          publishIntent: {
-            ...session.finalization.publishIntent,
-            destination: requireRecordingText(input.destination, "publish destination"),
-          },
-        }
-      : session.finalization,
+    finalization: session.finalization,
   };
 }
 

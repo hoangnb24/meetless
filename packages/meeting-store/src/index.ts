@@ -190,18 +190,35 @@ const MeetingStateSchema = z
         context.addIssue({ code: "custom", path: ["recordings", index, "id"], message: `Duplicate recording id: ${recording.id}` });
       }
       recordingIds.add(recording.id);
-      if (!meetingIds.has(recording.meetingId)) {
+      const meeting = state.meetings.find((candidate) => candidate.id === recording.meetingId);
+      if (!meeting) {
         context.addIssue({
           code: "custom",
           path: ["recordings", index, "meetingId"],
-          message: `Recording references missing meeting: ${recording.meetingId}`,
+          message: `Recording references missing meeting ${recording.meetingId} (docs/product/recording.md). Restore the parent meeting before retrying`,
+        });
+      } else if (!recordingParentStatuses(recording).includes(meeting.status)) {
+        const expected = recordingParentStatuses(recording).join(" or ");
+        context.addIssue({
+          code: "custom",
+          path: ["recordings", index, "meetingId"],
+          message: `Recording ${recording.id} (${recording.status}) requires parent meeting ${meeting.id} to be ${expected}, not ${meeting.status} (docs/product/recording.md). Restore the coupled lifecycle state before retrying`,
         });
       }
     });
     if (state.recordings.filter((recording) => recording.status === "recording").length > 1) {
-      context.addIssue({ code: "custom", path: ["recordings"], message: "At most one active recording is allowed" });
+      context.addIssue({
+        code: "custom",
+        path: ["recordings"],
+        message: "At most one active recording is allowed (docs/product/recording.md). Recover the existing session before starting another",
+      });
     }
   });
+
+function recordingParentStatuses(recording: RecordingSession): readonly MeetingStatus[] {
+  if (recording.status === "saved") return ["processing", "ready", "archived"];
+  return recording.finalization === null ? ["recording"] : ["processing"];
+}
 
 interface MeetingState {
   version: 2;
@@ -220,6 +237,15 @@ export class DuplicateMeetingError extends Error {
   constructor(id: string) {
     super(`Meeting already exists: ${id}`);
     this.name = "DuplicateMeetingError";
+  }
+}
+
+export class RecordingOwnedMeetingTransitionError extends Error {
+  constructor(from: MeetingStatus, to: MeetingStatus, nextAction: string) {
+    super(
+      `Meeting transition ${from} -> ${to} is owned by the recording lifecycle (docs/product/recording.md). ${nextAction}`,
+    );
+    this.name = "RecordingOwnedMeetingTransitionError";
   }
 }
 
@@ -280,6 +306,20 @@ export class MeetingStore {
       if (index < 0) throw new Error(`Meeting not found: ${id}`);
       const current = state.meetings[index];
       if (!current) throw new Error(`Meeting not found: ${id}`);
+      if (current.status === "draft" && status === "recording") {
+        throw new RecordingOwnedMeetingTransitionError(
+          current.status,
+          status,
+          "Call startRecording so the meeting and recording session are committed together.",
+        );
+      }
+      if (current.status === "recording" && status === "processing") {
+        throw new RecordingOwnedMeetingTransitionError(
+          current.status,
+          status,
+          "Call beginFinalization so the meeting and recording session are committed together.",
+        );
+      }
       const next = transitionMeeting(current, status, this.now());
       state.meetings[index] = next;
       return next;
@@ -288,22 +328,32 @@ export class MeetingStore {
 
   startRecording(input: { meetingId: string; id?: string }): Promise<RecordingSession> {
     return this.mutate(async (state) => {
-      if (!state.meetings.some((meeting) => meeting.id === input.meetingId)) {
-        throw new Error(`Meeting not found: ${input.meetingId}`);
+      const meetingIndex = state.meetings.findIndex((meeting) => meeting.id === input.meetingId);
+      if (meetingIndex < 0) throw new Error(`Meeting not found: ${input.meetingId}`);
+      const meeting = state.meetings[meetingIndex]!;
+      if (meeting.status !== "draft") {
+        throw new RecordingOwnedMeetingTransitionError(
+          meeting.status,
+          "recording",
+          "Start recording only from a draft meeting.",
+        );
       }
       if (state.recordings.some((recording) => recording.status === "recording")) {
         throw new Error(
           "At most one active recording is allowed (docs/product/recording.md). Stop or recover the active session before starting another.",
         );
       }
+      const now = this.now();
       const recording = startRecording({
         id: input.id ?? this.createId(),
         meetingId: input.meetingId,
-        now: this.now(),
+        now,
       });
       if (state.recordings.some((candidate) => candidate.id === recording.id)) {
         throw new Error(`Recording already exists: ${recording.id}`);
       }
+      const transitionedMeeting = transitionMeeting(meeting, "recording", now);
+      state.meetings[meetingIndex] = transitionedMeeting;
       state.recordings.push(recording);
       return recording;
     });
@@ -359,14 +409,31 @@ export class MeetingStore {
       expectedIdentity: OutputIdentity;
     },
   ): Promise<RecordingSession> {
-    return this.changeRecording(id, (recording) =>
-      beginFinalization(recording, { ...input, now: this.now() }),
-    );
+    return this.mutate(async (state) => {
+      const recordingIndex = this.recordingIndex(state, id);
+      const recording = state.recordings[recordingIndex]!;
+      const meetingIndex = state.meetings.findIndex((meeting) => meeting.id === recording.meetingId);
+      if (meetingIndex < 0) throw new Error(`Meeting not found: ${recording.meetingId}`);
+      const meeting = state.meetings[meetingIndex]!;
+      if (meeting.status !== "recording") {
+        throw new RecordingOwnedMeetingTransitionError(
+          meeting.status,
+          "processing",
+          "Begin finalization only while the parent meeting is recording.",
+        );
+      }
+      const now = this.now();
+      const finalizedRecording = beginFinalization(recording, { ...input, now });
+      const transitionedMeeting = transitionMeeting(meeting, "processing", now);
+      state.recordings[recordingIndex] = finalizedRecording;
+      state.meetings[meetingIndex] = transitionedMeeting;
+      return finalizedRecording;
+    });
   }
 
-  retryFinalization(id: string, destination?: string): Promise<RecordingSession> {
+  retryFinalization(id: string): Promise<RecordingSession> {
     return this.changeRecording(id, (recording) =>
-      retryFinalization(recording, { now: this.now(), destination }),
+      retryFinalization(recording, { now: this.now() }),
     );
   }
 
