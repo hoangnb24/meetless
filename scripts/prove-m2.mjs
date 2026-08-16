@@ -35,6 +35,7 @@ const environment = {
 };
 
 const daemons = new Set();
+const helpers = new Set();
 let socket = null;
 let result;
 let requestSequence = 0;
@@ -81,6 +82,8 @@ try {
   socket = null;
   await stopDaemon(daemon);
 
+  const timeline = await proveTimestampTimeline(path.join(root, "timeline-fixture"), helpers);
+
   if (!Buffer.from(await readFile(collisionPath)).equals(collisionBytes)) throw new Error("Collision target bytes changed");
   const outputPath = saved.status.outputPath;
   const probe = JSON.parse((await execFileAsync(ffprobe, [
@@ -108,6 +111,7 @@ try {
     rendererExit: { captureContinued: true, chunksAfterReconnect: afterRendererExit.status.chunks.length },
     daemonRestart: { recovered: true, chunkIds: originalChunkIds },
     retryWithoutRecording: { injectedFailure: injected.error, saved: true, sameChunkIds: true },
+    timestampTimeline: timeline,
     collision: { path: collisionPath, sha256: sha256(collisionBytes), unchanged: true, publishedPath: outputPath },
     output: { path: outputPath, sha256: await fileSha256(outputPath), probe, frequencyEvidence },
     tools: {
@@ -119,6 +123,7 @@ try {
 } finally {
   socket?.close();
   await Promise.all([...daemons].map((daemon) => stopDaemon(daemon)));
+  await Promise.all([...helpers].map((helperProcess) => stopChild(helperProcess, "timeline fixture helper")));
   await rm(root, { recursive: true, force: true });
 }
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
@@ -187,11 +192,15 @@ async function waitFor(condition, timeoutMs = 10_000, describeWait = () => "M2 p
 }
 
 async function stopDaemon(child) {
+  return stopChild(child, "proof daemon");
+}
+
+async function stopChild(child, label) {
   if (child.exitCode !== null) return;
   child.kill("SIGTERM");
   if (await waitForExit(child, 10_000)) return;
   child.kill("SIGKILL");
-  if (!await waitForExit(child, 5_000)) throw new Error(`Proof daemon ${child.pid} did not exit`);
+  if (!await waitForExit(child, 5_000)) throw new Error(`${label} ${child.pid} did not exit`);
 }
 
 async function waitForExit(child, timeoutMs) {
@@ -209,6 +218,67 @@ async function availablePort() {
   if (!address || typeof address === "string") throw new Error("Could not allocate proof port");
   await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   return address.port;
+}
+
+async function proveTimestampTimeline(sessionDirectory, ownedHelpers) {
+  const child = spawn(helper, ["--timeline-fixture"], {
+    cwd: repositoryRoot, env: { PATH: process.env.PATH }, stdio: ["pipe", "pipe", "pipe"],
+  });
+  ownedHelpers.add(child);
+  const events = [];
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-16_384); });
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+    while (stdout.includes("\n")) {
+      const newline = stdout.indexOf("\n");
+      const line = stdout.slice(0, newline).trim();
+      stdout = stdout.slice(newline + 1);
+      if (line) events.push(JSON.parse(line));
+    }
+  });
+  const sendHelper = (value) => child.stdin.write(`${JSON.stringify(value)}\n`);
+  const starts = (source) => events
+    .filter((event) => event.event === "chunkCommitted" && event.source === source)
+    .map((event) => event.logicalStartMs);
+  const wait = (condition, label) => waitFor(() => {
+    if (condition()) return true;
+    if (child.exitCode !== null) throw new Error(`Timeline fixture exited ${child.exitCode}: ${stderr}`);
+    return false;
+  }, 10_000, () => label);
+
+  sendHelper({ version: 1, command: "start", sessionDirectory, elapsedMs: 0 });
+  await wait(() => events.some((event) => event.event === "started"), "timeline fixture start");
+  await wait(() => starts("microphone").includes(500) && starts("system").includes(125), "PTS source offset and gap");
+  sendHelper({ version: 1, command: "pause" });
+  await wait(() => events.some((event) => event.event === "paused"), "timeline fixture pause");
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  sendHelper({ version: 1, command: "resume", elapsedMs: 2_000 });
+  await wait(() => events.some((event) => event.event === "resumed"), "timeline fixture resume");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  sendHelper({ version: 1, command: "stop" });
+  await wait(() => events.some((event) => event.event === "stopped"), "timeline fixture stop");
+  await waitForExit(child, 5_000);
+
+  const microphoneStartsMs = starts("microphone");
+  const systemStartsMs = starts("system");
+  if (![0, 500, 2_125].every((start) => microphoneStartsMs.includes(start))) {
+    throw new Error(`Microphone PTS timeline mismatch: ${JSON.stringify(microphoneStartsMs)}`);
+  }
+  if (![125, 2_000].every((start) => systemStartsMs.includes(start))) {
+    throw new Error(`System PTS timeline mismatch: ${JSON.stringify(systemStartsMs)}`);
+  }
+  return {
+    sharedOrigin: true,
+    microphoneStartsMs,
+    systemStartsMs,
+    discontinuityPreserved: microphoneStartsMs.includes(500),
+    pauseExcludedAtMs: 2_000,
+    crossSourceResumeOffsetMs: 125,
+  };
 }
 
 function sha256(data) { return createHash("sha256").update(data).digest("hex"); }

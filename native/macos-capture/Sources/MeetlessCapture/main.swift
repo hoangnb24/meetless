@@ -53,36 +53,54 @@ private func diagnostic(_ message: String) {
 private enum Source: String, CaseIterable { case microphone, system }
 
 private final class ChunkWriter: @unchecked Sendable {
+  private struct Packet {
+    let samples: [Int16]
+    let source: Source
+    let presentationFrame: Int64
+  }
+
   private let directory: URL
+  private let invalidClaimFixture: Bool
   private let lock = NSLock()
   private var buffers: [Source: [Int16]] = [.microphone: [], .system: []]
-  private var logicalFrames: [Source: Int64] = [.microphone: 0, .system: 0]
+  private var chunkStartFrames: [Source: Int64] = [:]
   private var indexes: [Source: Int] = [.microphone: 0, .system: 0]
+  private var originPresentationFrame: Int64?
+  private var sharedAdjustmentFrame: Int64 = 0
+  private var pendingAnchorPackets: [Packet] = []
+  private var pendingAnchorSources: Set<Source> = []
+  private var resumeElapsedFrame: Int64?
+  private var awaitingSharedAnchor = true
   private var paused = false
   private var closed = false
 
-  init(directory: URL) throws {
+  init(directory: URL, invalidClaimFixture: Bool) throws {
     self.directory = directory.standardizedFileURL
+    self.invalidClaimFixture = invalidClaimFixture
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
   }
 
-  func append(_ samples: [Int16], source: Source) throws {
+  func append(_ samples: [Int16], source: Source, presentationFrame: Int64) throws {
     lock.lock()
     defer { lock.unlock() }
     guard !paused && !closed else { return }
-    buffers[source, default: []].append(contentsOf: samples)
-    while buffers[source, default: []].count >= defaultChunkFrames {
-      let frames = Array(buffers[source, default: []].prefix(defaultChunkFrames))
-      buffers[source]?.removeFirst(defaultChunkFrames)
-      try commit(frames, source: source)
+    guard !samples.isEmpty, presentationFrame >= 0 else { return }
+    let packet = Packet(samples: samples, source: source, presentationFrame: presentationFrame)
+    if awaitingSharedAnchor {
+      pendingAnchorPackets.append(packet)
+      pendingAnchorSources.insert(source)
+      if pendingAnchorSources.count == Source.allCases.count { try activateSharedAnchor() }
+      return
     }
+    try appendMapped(packet)
   }
 
   func pause() throws {
     lock.lock()
     defer { lock.unlock() }
     guard !closed else { return }
+    if awaitingSharedAnchor && !pendingAnchorPackets.isEmpty { try activateSharedAnchor() }
     try flushAll()
     paused = true
   }
@@ -90,8 +108,10 @@ private final class ChunkWriter: @unchecked Sendable {
   func resume(elapsedMs: Int) {
     lock.lock()
     defer { lock.unlock() }
-    let frame = Int64(elapsedMs) * Int64(sampleRate) / 1_000
-    for source in Source.allCases { logicalFrames[source] = frame }
+    pendingAnchorPackets = []
+    pendingAnchorSources = []
+    resumeElapsedFrame = Int64(elapsedMs) * Int64(sampleRate) / 1_000
+    awaitingSharedAnchor = true
     paused = false
   }
 
@@ -99,22 +119,70 @@ private final class ChunkWriter: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     guard !closed else { return }
+    if awaitingSharedAnchor && !pendingAnchorPackets.isEmpty { try activateSharedAnchor() }
     try flushAll()
     closed = true
   }
 
-  private func flushAll() throws {
-    for source in Source.allCases {
-      let frames = buffers[source, default: []]
-      buffers[source] = []
-      if !frames.isEmpty { try commit(frames, source: source) }
+  private func activateSharedAnchor() throws {
+    guard let firstPresentationFrame = pendingAnchorPackets.map(\.presentationFrame).min() else { return }
+    if originPresentationFrame == nil {
+      originPresentationFrame = firstPresentationFrame
+      sharedAdjustmentFrame = 0
+    } else if let resumeElapsedFrame, let originPresentationFrame {
+      sharedAdjustmentFrame = resumeElapsedFrame - (firstPresentationFrame - originPresentationFrame)
+    }
+    let packets = pendingAnchorPackets.sorted {
+      if $0.presentationFrame != $1.presentationFrame { return $0.presentationFrame < $1.presentationFrame }
+      return $0.source.rawValue < $1.source.rawValue
+    }
+    pendingAnchorPackets = []
+    pendingAnchorSources = []
+    self.resumeElapsedFrame = nil
+    awaitingSharedAnchor = false
+    for packet in packets { try appendMapped(packet) }
+  }
+
+  private func appendMapped(_ packet: Packet) throws {
+    guard let originPresentationFrame else { return }
+    var logicalStart = packet.presentationFrame - originPresentationFrame + sharedAdjustmentFrame
+    guard logicalStart >= 0 else { throw NSError(domain: "MeetlessCapture", code: 20, userInfo: [NSLocalizedDescriptionKey: "Audio PTS predates the shared timeline origin"]) }
+    let buffered = buffers[packet.source, default: []]
+    if !buffered.isEmpty, let chunkStart = chunkStartFrames[packet.source] {
+      let expected = chunkStart + Int64(buffered.count)
+      if abs(logicalStart - expected) > 1 {
+        try flush(packet.source)
+      } else {
+        logicalStart = expected
+      }
+    }
+    if buffers[packet.source, default: []].isEmpty { chunkStartFrames[packet.source] = logicalStart }
+    buffers[packet.source, default: []].append(contentsOf: packet.samples)
+    while buffers[packet.source, default: []].count >= defaultChunkFrames {
+      let frames = Array(buffers[packet.source, default: []].prefix(defaultChunkFrames))
+      buffers[packet.source]?.removeFirst(defaultChunkFrames)
+      let startFrame = chunkStartFrames[packet.source]!
+      try commit(frames, source: packet.source, startFrame: startFrame)
+      chunkStartFrames[packet.source] = startFrame + Int64(frames.count)
+      if buffers[packet.source, default: []].isEmpty { chunkStartFrames[packet.source] = nil }
     }
   }
 
-  private func commit(_ frames: [Int16], source: Source) throws {
+  private func flushAll() throws {
+    for source in Source.allCases { try flush(source) }
+  }
+
+  private func flush(_ source: Source) throws {
+    let frames = buffers[source, default: []]
+    buffers[source] = []
+    guard !frames.isEmpty, let startFrame = chunkStartFrames[source] else { return }
+    try commit(frames, source: source, startFrame: startFrame)
+    chunkStartFrames[source] = nil
+  }
+
+  private func commit(_ frames: [Int16], source: Source, startFrame: Int64) throws {
     guard !frames.isEmpty else { return }
     let index = indexes[source, default: 0]
-    let startFrame = logicalFrames[source, default: 0]
     let id = String(format: "chunk--%@--%06d--%012lld--%012d--%d--%d", source.rawValue, index, startFrame, frames.count, sampleRate, channels)
     let finalURL = directory.appendingPathComponent("\(id).wav")
     let partialURL = directory.appendingPathComponent(".\(id).\(UUID().uuidString).partial")
@@ -147,12 +215,12 @@ private final class ChunkWriter: @unchecked Sendable {
     let digest = SHA256.hash(data: committed).map { String(format: "%02x", $0) }.joined()
     let startMs = Int(startFrame * 1_000 / Int64(sampleRate))
     let durationMs = max(1, frames.count * 1_000 / sampleRate)
+    let eventDigest = invalidClaimFixture && source == .microphone && index == 1 ? String(repeating: "0", count: 64) : digest
     emit(ProtocolEvent(
       event: "chunkCommitted", source: source.rawValue, id: id, path: finalURL.path,
-      byteLength: committed.count, sha256: digest, logicalStartMs: startMs,
+      byteLength: committed.count, sha256: eventDigest, logicalStartMs: startMs,
       durationMs: durationMs, sampleRate: sampleRate, channels: channels, format: "wav"
     ))
-    logicalFrames[source] = startFrame + Int64(frames.count)
     indexes[source] = index + 1
   }
 
@@ -180,19 +248,24 @@ private protocol CaptureSource: AnyObject, Sendable {
 
 private final class FixtureSource: CaptureSource, @unchecked Sendable {
   private let writer: ChunkWriter
+  private let timelineFixture: Bool
   private var timer: DispatchSourceTimer?
   private var micFrame: Int64 = 0
   private var systemFrame: Int64 = 0
-  init(writer: ChunkWriter) { self.writer = writer }
+  private var tickIndex: Int64 = 0
+  init(writer: ChunkWriter, timelineFixture: Bool) {
+    self.writer = writer
+    self.timelineFixture = timelineFixture
+  }
   func start() async throws {
     let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "meetless.fixture"))
-    timer.schedule(deadline: .now(), repeating: .milliseconds(100))
+    timer.schedule(deadline: .now(), repeating: .milliseconds(timelineFixture ? 50 : 100))
     timer.setEventHandler { [weak self] in self?.tick() }
     self.timer = timer
     timer.resume()
   }
   private func tick() {
-    let count = sampleRate / 10
+    let count = timelineFixture ? sampleRate / 4 : sampleRate / 10
     let mic = (0..<count).map { offset -> Int16 in
       let value = sin(2 * Double.pi * 440 * Double(micFrame + Int64(offset)) / Double(sampleRate))
       return Int16(value * 8_000)
@@ -202,7 +275,18 @@ private final class FixtureSource: CaptureSource, @unchecked Sendable {
       return Int16(value * 8_000)
     }
     micFrame += Int64(count); systemFrame += Int64(count)
-    do { try writer.append(mic, source: .microphone); try writer.append(system, source: .system) }
+    let base = timelineFixture ? Int64(sampleRate * 10) : 0
+    let micPresentation = timelineFixture
+      ? base + (tickIndex == 0 ? 0 : (tickIndex + 1) * Int64(count))
+      : tickIndex * Int64(count)
+    let systemPresentation = timelineFixture
+      ? base + Int64(sampleRate / 8) + tickIndex * Int64(count)
+      : tickIndex * Int64(count)
+    tickIndex += 1
+    do {
+      try writer.append(mic, source: .microphone, presentationFrame: micPresentation)
+      try writer.append(system, source: .system, presentationFrame: systemPresentation)
+    }
     catch { diagnostic("fixture write failed: \(error)") }
   }
   func stop() async { timer?.cancel(); timer = nil }
@@ -239,7 +323,13 @@ private final class ScreenCaptureSource: NSObject, CaptureSource, SCStreamOutput
     guard buffer.isValid else { return }
     let source: Source = type == .microphone ? .microphone : .system
     guard type == .microphone || type == .audio else { return }
-    do { try writer.append(try normalizedSamples(buffer), source: source) }
+    let presentationSeconds = CMSampleBufferGetPresentationTimeStamp(buffer).seconds
+    guard presentationSeconds.isFinite && presentationSeconds >= 0 else {
+      diagnostic("\(source.rawValue) buffer rejected: invalid presentation timestamp")
+      return
+    }
+    let presentationFrame = Int64((presentationSeconds * Double(sampleRate)).rounded())
+    do { try writer.append(try normalizedSamples(buffer), source: source, presentationFrame: presentationFrame) }
     catch { diagnostic("\(source.rawValue) buffer rejected: \(error)") }
   }
 
@@ -287,10 +377,16 @@ private final class ScreenCaptureSource: NSObject, CaptureSource, SCStreamOutput
 
 private final class Runtime: @unchecked Sendable {
   private let fixture: Bool
+  private let timelineFixture: Bool
+  private let invalidClaimFixture: Bool
   private var writer: ChunkWriter?
   private var source: CaptureSource?
   private var stopped = false
-  init(fixture: Bool) { self.fixture = fixture }
+  init(fixture: Bool, timelineFixture: Bool, invalidClaimFixture: Bool) {
+    self.fixture = fixture
+    self.timelineFixture = timelineFixture
+    self.invalidClaimFixture = invalidClaimFixture
+  }
 
   func handle(_ command: Command) throws {
     guard command.version == 1 else { throw NSError(domain: "MeetlessCapture", code: 10, userInfo: [NSLocalizedDescriptionKey: "Unsupported protocol version"] ) }
@@ -298,9 +394,11 @@ private final class Runtime: @unchecked Sendable {
     case "start":
       guard writer == nil, let rawDirectory = command.sessionDirectory else { throw NSError(domain: "MeetlessCapture", code: 11) }
       let directory = URL(fileURLWithPath: rawDirectory).standardizedFileURL
-      let writer = try ChunkWriter(directory: directory)
+      let writer = try ChunkWriter(directory: directory, invalidClaimFixture: invalidClaimFixture)
       self.writer = writer
-      let source: CaptureSource = fixture ? FixtureSource(writer: writer) : ScreenCaptureSource(writer: writer)
+      let source: CaptureSource = fixture
+        ? FixtureSource(writer: writer, timelineFixture: timelineFixture)
+        : ScreenCaptureSource(writer: writer)
       self.source = source
       let semaphore = DispatchSemaphore(value: 0)
       final class ErrorBox: @unchecked Sendable { var error: Error? }
@@ -336,7 +434,13 @@ private final class Runtime: @unchecked Sendable {
   }
 }
 
-private let runtime = Runtime(fixture: CommandLine.arguments.contains("--fixture"))
+private let timelineFixture = CommandLine.arguments.contains("--timeline-fixture")
+private let invalidClaimFixture = CommandLine.arguments.contains("--invalid-claim-fixture")
+private let runtime = Runtime(
+  fixture: CommandLine.arguments.contains("--fixture") || timelineFixture || invalidClaimFixture,
+  timelineFixture: timelineFixture,
+  invalidClaimFixture: invalidClaimFixture
+)
 while let line = readLine() {
   guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
   do {

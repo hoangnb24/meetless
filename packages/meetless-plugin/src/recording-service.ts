@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { MeetingStore } from "@meetless/meeting-store";
 import { recordingElapsedMs, type CommittedRecordingChunk, type RecordingSession } from "@meetless/meeting-domain";
 import type { RecordingControlRequest, RecordingStatusWire } from "@meetless/meeting-contracts";
 import { CaptureHelper } from "./capture-helper.js";
 import { fileIdentity, Mp3Finalizer } from "./finalizer.js";
+import { validateCommittedWavChunk } from "./chunk-validator.js";
 
 export interface RecordingServiceConfig {
   storeRoot: string;
@@ -65,7 +66,7 @@ export class RecordingService {
 
   async status(): Promise<RecordingStatusWire> {
     const [recordings, meetings] = await Promise.all([this.store.listRecordings(), this.store.list()]);
-    const recording = recordings.at(-1);
+    const recording = selectCurrentRecording(recordings);
     if (!recording) return idleStatus();
     const meeting = meetings.find((candidate) => candidate.id === recording.meetingId);
     return {
@@ -89,8 +90,12 @@ export class RecordingService {
 
   private async start(title: string): Promise<void> {
     if (this.helper) throw new Error("A capture helper is already supervised");
-    const active = (await this.store.listRecordings()).find((recording) => recording.status === "recording");
-    if (active) throw new Error("At most one active recording is allowed (docs/product/recording.md)");
+    const unresolved = unresolvedRecordings(await this.store.listRecordings());
+    if (unresolved.length > 0) {
+      throw new Error(
+        `Resolve recording ${unresolved[0]!.id} (${unresolved[0]!.status}) before starting another (docs/product/recording.md)`,
+      );
+    }
     const meeting = await this.store.create({ title });
     const recording = await this.store.startRecording({ meetingId: meeting.id });
     const sessionDirectory = path.join(this.config.storeRoot, "sessions", recording.id);
@@ -256,24 +261,19 @@ export class RecordingService {
     const known = new Set(recording.chunks.map((chunk) => chunk.id));
     for (const name of names.sort()) {
       if (name.endsWith(".partial") || name.startsWith(".")) continue;
-      const metadata = parseChunkName(name);
-      if (!metadata || known.has(metadata.id)) continue;
       const filePath = path.join(directory, name);
-      const data = await readFile(filePath);
-      if (!isReadableWav(data)) continue;
-      const info = await stat(filePath);
-      await this.store.adoptOrphanChunk(recording.id, {
-        fullyCommitted: true, readable: true, identityValid: true,
-        chunk: {
-          ...metadata,
-          storageKey: path.relative(this.config.storeRoot, filePath),
-          byteLength: info.size,
-          sha256: createHash("sha256").update(data).digest("hex"),
-          committedAt: info.mtime.toISOString(),
-          format: "wav",
-        },
-      });
-      known.add(metadata.id);
+      try {
+        const chunk = await validateCommittedWavChunk({
+          filePath, sessionDirectory: directory, storeRoot: this.config.storeRoot,
+        });
+        if (known.has(chunk.id)) continue;
+        await this.store.adoptOrphanChunk(recording.id, {
+          fullyCommitted: true, readable: true, identityValid: true, chunk,
+        });
+        known.add(chunk.id);
+      } catch {
+        continue;
+      }
     }
   }
 
@@ -296,7 +296,7 @@ export class RecordingService {
   }
 
   private async requireCurrent(...statuses: RecordingSession["status"][]): Promise<RecordingSession> {
-    const recording = (await this.store.listRecordings()).at(-1);
+    const recording = selectCurrentRecording(await this.store.listRecordings());
     if (!recording || !statuses.includes(recording.status)) {
       throw new Error(`Recording command requires ${statuses.join(" or ")} state`);
     }
@@ -323,26 +323,30 @@ function idleStatus(): RecordingStatusWire {
   return { status: "idle", recordingId: null, meetingId: null, title: null, elapsedMs: 0, paused: false, chunks: [], outputPath: null, error: null };
 }
 
+const UNRESOLVED_STATUSES: ReadonlySet<RecordingSession["status"]> = new Set([
+  "recording", "interrupted", "recoverable", "finalizing",
+]);
+
+function unresolvedRecordings(recordings: readonly RecordingSession[]): RecordingSession[] {
+  return recordings.filter((recording) => UNRESOLVED_STATUSES.has(recording.status));
+}
+
+function selectCurrentRecording(recordings: readonly RecordingSession[]): RecordingSession | undefined {
+  const unresolved = unresolvedRecordings(recordings);
+  if (unresolved.length > 1) {
+    throw new Error(`Recording store contains ${unresolved.length} unresolved sessions; manual recovery is required`);
+  }
+  if (unresolved[0]) return unresolved[0];
+  return recordings.reduce<RecordingSession | undefined>((latest, recording) => {
+    if (!latest) return recording;
+    return Date.parse(recording.updatedAt) >= Date.parse(latest.updatedAt) ? recording : latest;
+  }, undefined);
+}
+
 function chunkSetDigest(chunks: readonly CommittedRecordingChunk[]): string {
   return createHash("sha256").update(JSON.stringify(chunks.map((chunk) => ({
     id: chunk.id, source: chunk.source, sha256: chunk.sha256, logicalStartMs: chunk.logicalStartMs, durationMs: chunk.durationMs,
   })))).digest("hex");
-}
-
-function parseChunkName(name: string): Omit<CommittedRecordingChunk, "storageKey" | "byteLength" | "sha256" | "committedAt" | "format"> | null {
-  const match = /^((chunk)--(microphone|system)--\d{6}--(\d{12})--(\d{12})--(\d+)--(\d+))\.wav$/u.exec(name);
-  if (!match) return null;
-  const startFrame = Number(match[4]); const frameCount = Number(match[5]); const sampleRate = Number(match[6]); const channels = Number(match[7]);
-  if (![startFrame, frameCount, sampleRate, channels].every(Number.isSafeInteger) || frameCount <= 0 || sampleRate <= 0 || channels <= 0) return null;
-  return {
-    id: match[1]!, source: match[3]! as "microphone" | "system",
-    logicalStartMs: Math.floor(startFrame * 1_000 / sampleRate),
-    durationMs: Math.max(1, Math.floor(frameCount * 1_000 / sampleRate)), sampleRate, channels,
-  };
-}
-
-function isReadableWav(data: Buffer): boolean {
-  return data.length > 44 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WAVE";
 }
 
 function sameIdentity(left: { byteLength: number; sha256: string }, right: { byteLength: number; sha256: string }): boolean {

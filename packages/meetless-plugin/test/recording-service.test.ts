@@ -82,6 +82,8 @@ describe("daemon recording service", () => {
     const recordingId = (await first.status()).recordingId!;
     const sessionDirectory = path.join(config.storeRoot, "sessions", recordingId);
     await writeFile(path.join(sessionDirectory, ".uncommitted.partial"), "partial", "utf8");
+    const malformedOrphan = "chunk--system--999999--000000032000--000000016000--16000--1";
+    await writeFile(path.join(sessionDirectory, `${malformedOrphan}.wav`), "RIFF malformed orphan", "utf8");
     await first.shutdown(); services.delete(first);
 
     const restarted = new RecordingService(config); services.add(restarted); await restarted.initialize();
@@ -89,6 +91,7 @@ describe("daemon recording service", () => {
     expect(recovered.status).toBe("recoverable");
     expect(recovered.chunks.length).toBeGreaterThanOrEqual(2);
     expect(recovered.chunks.some((chunk) => chunk.id.includes("uncommitted"))).toBe(false);
+    expect(recovered.chunks.some((chunk) => chunk.id === malformedOrphan)).toBe(false);
   }, 30_000);
 
   test("adopts only the exact decode-readable publish intent after publication-before-saved crash", async () => {
@@ -119,6 +122,37 @@ describe("daemon recording service", () => {
     expect((await restarted.status()).status).toBe("saved");
     await expect(access(chunkPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await identity(destination)).toEqual(outputIdentity);
+  }, 30_000);
+
+  test("keeps a non-last recoverable session selected, rejects byte-changing start, then allows start after retry", async () => {
+    const config = await fixtureConfig();
+    const first = new RecordingService(config); services.add(first); await first.initialize();
+    await first.execute({ version: 1, requestId: "saved-start", command: "start", title: "Saved history" });
+    await waitFor(async () => (await first.status()).chunks.length >= 2);
+    await first.execute({ version: 1, requestId: "saved-stop", command: "stop" });
+
+    await first.execute({ version: 1, requestId: "recoverable-start", command: "start", title: "Must recover" });
+    await waitFor(async () => (await first.status()).chunks.length >= 2);
+    const recoverableId = (await first.status()).recordingId!;
+    await first.shutdown(); services.delete(first);
+
+    const statePath = path.join(config.storeRoot, "meetings.json");
+    const persisted = JSON.parse(await readFile(statePath, "utf8")) as { recordings: unknown[] };
+    persisted.recordings.reverse();
+    await writeFile(statePath, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
+
+    const restarted = new RecordingService(config); services.add(restarted); await restarted.initialize();
+    expect(await restarted.status()).toMatchObject({ recordingId: recoverableId, status: "recoverable", title: "Must recover" });
+    const beforeRejectedStart = await readFile(statePath);
+    await expect(restarted.execute({
+      version: 1, requestId: "blocked-start", command: "start", title: "Must not strand recovery",
+    })).rejects.toThrow(/Resolve recording.*recoverable.*before starting another/u);
+    expect(await readFile(statePath)).toEqual(beforeRejectedStart);
+
+    const saved = await restarted.execute({ version: 1, requestId: "retry", command: "retryFinalization" });
+    expect(saved).toMatchObject({ recordingId: recoverableId, status: "saved" });
+    const next = await restarted.execute({ version: 1, requestId: "next-start", command: "start", title: "Now allowed" });
+    expect(next).toMatchObject({ status: "recording", title: "Now allowed" });
   }, 30_000);
 });
 

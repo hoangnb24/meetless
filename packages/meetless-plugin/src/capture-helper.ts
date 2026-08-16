@@ -1,8 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import path from "node:path";
-import { realpathSync } from "node:fs";
 import { z } from "zod";
 import type { CommittedRecordingChunk } from "@meetless/meeting-domain";
+import { validateCommittedWavChunk } from "./chunk-validator.js";
 
 const HelperEventSchema = z.object({
   version: z.literal(1),
@@ -27,6 +26,7 @@ export interface CaptureHelperOptions {
   sessionDirectory: string;
   storeRoot: string;
   fixture: boolean;
+  arguments?: string[];
   onChunk(chunk: CommittedRecordingChunk): Promise<void>;
   onFailure(reason: string): Promise<void>;
   onDiagnostic?(line: string): void;
@@ -39,6 +39,7 @@ export class CaptureHelper {
   private eventTail: Promise<void> = Promise.resolve();
   private waiters = new Map<string, Array<{ resolve(): void; reject(error: Error): void }>>();
   private expectedExit = false;
+  private failed = false;
 
   constructor(private readonly options: CaptureHelperOptions) {}
 
@@ -46,7 +47,7 @@ export class CaptureHelper {
 
   async start(): Promise<void> {
     if (this.child) throw new Error("Capture helper is already running");
-    const child = spawn(this.options.executable, this.options.fixture ? ["--fixture"] : [], {
+    const child = spawn(this.options.executable, this.options.arguments ?? (this.options.fixture ? ["--fixture"] : []), {
       stdio: ["pipe", "pipe", "pipe"],
       env: { PATH: process.env.PATH },
     });
@@ -116,7 +117,7 @@ export class CaptureHelper {
 
   private async handleEvent(line: string): Promise<void> {
     const event = HelperEventSchema.parse(JSON.parse(line));
-    if (event.event === "chunkCommitted") await this.options.onChunk(this.chunk(event));
+    if (event.event === "chunkCommitted") await this.options.onChunk(await this.chunk(event));
     if (event.event === "captureFailed" || event.event === "error") {
       await this.fail(event.error ?? event.event);
     }
@@ -124,26 +125,25 @@ export class CaptureHelper {
     if (waiter) waiter.resolve();
   }
 
-  private chunk(event: HelperEvent): CommittedRecordingChunk {
+  private async chunk(event: HelperEvent): Promise<CommittedRecordingChunk> {
     const required = [event.id, event.source, event.path, event.byteLength, event.sha256, event.logicalStartMs, event.durationMs, event.sampleRate, event.channels, event.format];
     if (required.some((value) => value === undefined)) throw new Error("Incomplete chunkCommitted helper event");
-    const candidate = realpathSync(event.path!);
-    const sessionDirectory = realpathSync(this.options.sessionDirectory);
-    const relative = path.relative(sessionDirectory, candidate);
-    if (relative.startsWith("..") || path.isAbsolute(relative) || path.extname(candidate) !== ".wav") {
-      throw new Error(`Capture helper attempted to commit outside its daemon-allocated session: ${candidate}`);
-    }
-    return {
-      id: event.id!, source: event.source!,
-      storageKey: path.relative(realpathSync(this.options.storeRoot), candidate),
-      byteLength: event.byteLength!, sha256: event.sha256!, committedAt: new Date().toISOString(),
-      logicalStartMs: event.logicalStartMs!, durationMs: event.durationMs!, sampleRate: event.sampleRate!,
-      channels: event.channels!, format: event.format!,
-    };
+    return validateCommittedWavChunk({
+      filePath: event.path!, sessionDirectory: this.options.sessionDirectory, storeRoot: this.options.storeRoot,
+      claim: {
+        id: event.id!, source: event.source!, path: event.path!, byteLength: event.byteLength!, sha256: event.sha256!,
+        logicalStartMs: event.logicalStartMs!, durationMs: event.durationMs!, sampleRate: event.sampleRate!,
+        channels: event.channels!, format: event.format!,
+      },
+    });
   }
 
   private async fail(reason: string): Promise<void> {
+    if (this.failed) return;
+    this.failed = true;
+    this.expectedExit = true;
     this.rejectWaiters(new Error(reason));
+    this.child?.kill("SIGTERM");
     await this.options.onFailure(reason);
   }
 
