@@ -33,6 +33,16 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "preowner") {
+    const lock = await readPidLock(config.paths.pidLock);
+    if (!lock || !isRunning(lock.pid)) {
+      throw new Error(
+        "Production pre-owner readiness requires a live MeetlessHost-owned runtime. " +
+        "Launch it with npm run runtime:host; direct npm runtime ownership is rejected. " +
+        "Authority: docs/plans/active/v1-paseo-foundation.md.",
+      );
+    }
+    const { assertSupervisorOwnedByHost } = await import("./host.js");
+    const host = await assertSupervisorOwnedByHost(config, lock.pid);
     const {
       assertPreOwnerRecordingReady,
       inspectRuntimeReadiness,
@@ -43,7 +53,7 @@ async function main(): Promise<void> {
     const inspected = await inspectRuntimeReadiness(config, status);
     assertPreOwnerRecordingReady(inspected);
     const report = await prepareCollisionEvidence(config, inspected);
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ ...report, host }, null, 2)}\n`);
     return;
   }
   const lock = await readPidLock(config.paths.pidLock);

@@ -36,6 +36,10 @@ export interface RuntimeConfig {
   rendererOrigin: string;
   supervisorEntrypoint: string;
   paths: RuntimePaths;
+  host: {
+    bundle: string;
+    identity: string;
+  };
   environment: NodeJS.ProcessEnv;
 }
 
@@ -90,6 +94,10 @@ export function resolveRuntimeConfig(input: {
     rendererOrigin,
     supervisorEntrypoint,
     paths,
+    host: {
+      bundle: path.join(userHome, "Applications", "Meetless.app"),
+      identity: path.join(userHome, "Library", "Application Support", "Meetless", "host-identity.json"),
+    },
     environment: {
       ...process.env,
       PASEO_HOME: paths.paseoHome,

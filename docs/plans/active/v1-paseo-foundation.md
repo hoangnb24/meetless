@@ -366,6 +366,49 @@ frontier):
 - **Evidence:**
   [`test/evidence/m2/20260817T135955Z-live-failed/manifest.json`](../../../test/evidence/m2/20260817T135955Z-live-failed/manifest.json).
 
+`FOUNDATION_CHECK v1 — M2 local TCC host prerequisite` (2026-08-17):
+
+- **Responsible application:** the immutable local
+  `~/Applications/Meetless.app` bundle, identifier `com.meetless.app`, is the
+  sole Meetless-owned TCC identity. It is launched only through LaunchServices
+  and remains alive above the existing desktop CLI, isolated daemon, Meetless
+  plugin, and direct `meetless-capture` helper. Paseo.app, Terminal, Codex, and
+  direct bundle-executable launch are not accepted responsible ancestors.
+- **Preserved architecture:** Electron remains the recording controller; the
+  daemon plugin and `MeetingStore` remain the sole recording-session authority;
+  the helper stdin/stdout protocol, persistence, finalization, collision, and
+  cleanup lifecycles are unchanged. No second capture app or IPC channel exists.
+- **Local identity:** `npm run host:install` creates and ad-hoc signs the frozen
+  local bundle once, then records its canonical path, designated requirement,
+  CDHash, executable inode/size/SHA-256, and exact repository/runtime launch
+  configuration. A valid installation is left byte-identical by ordinary
+  builds and repeated install commands. Drift fails closed; replacement is
+  explicit through `npm run host:install -- --replace` and requires regranting
+  capture only to `~/Applications/Meetless.app`.
+- **Lifecycle commands:** `npm run runtime:host` attests the installed identity
+  and invokes `open`, while `npm run runtime:host:stop` terminates only the exact
+  LaunchServices-owned host and lets it propagate shutdown through its owned
+  composition. Production desktop startup and pre-owner readiness reject a
+  runtime whose supervisor chain is not
+  `MeetlessHost -> desktop CLI -> Paseo Supervisor`.
+- **Observed local identity:** designated requirement
+  `cdhash H"7ca04dfd5282c517dd0e1d4f7c9963206e55111d"`, CDHash
+  `7ca04dfd5282c517dd0e1d4f7c9963206e55111d`, and host binary SHA-256
+  `bf4db7b5e48a0d449df3fb54505a7e21b5b35b2eea6e0c1dc2eb7e77af6ec575`.
+  Two LaunchServices starts retained that identity; duplicate launch reused the
+  live host. The observed chain was host PID `97603`, desktop PID `97623`,
+  supervisor PID `97807`, daemon PID `97821`, and plugin PID `97824`.
+- **Open proof condition:** the preserved store contains terminal failed records
+  with no readable committed chunks, including
+  `16036ac4-09bf-4132-a3fe-903ee1eaf445`; the currently selected latest record
+  is `544255a2-6808-499f-9ee3-07c1e24b2167`. The default store therefore reports
+  authoritative `failed`, not `idle`. This host frontier does not alter or
+  delete daemon state. Lead must disposition the failed record through the
+  accepted recording lifecycle before the owner-facing capture attempt.
+- **Milestone 7 deferral:** Developer ID signing, hardened runtime, notarization,
+  production packaging, clean-install attribution, and distribution remain M7
+  gates. They are not added to this bounded local M2 host.
+
 The first `RecordingSource` is one macOS 15+ Swift helper using one
 ScreenCaptureKit stream with separate `.audio` and `.microphone` outputs. The
 daemon plugin supervises it over a small source-labelled control/event
@@ -556,6 +599,11 @@ Recovery rules:
 - 2026-08-17: V1 recording controls use the pinned Electron-only local
   transport to a private Meetless plugin socket. Generic plugin RPC remains the
   companion meeting API and does not grant web/mobile system-audio recording.
+- 2026-08-17: The frozen M2 permission host is the ad-hoc signed local
+  `~/Applications/Meetless.app` bundle (`com.meetless.app`) launched through
+  LaunchServices. It exclusively owns the desktop runtime ancestry used for TCC
+  attribution; Paseo.app has no permission or responsible-application role.
+  Full release signing, hardening, notarization, and packaging remain M7 work.
 - 2026-08-17: An MP3 is published only through an atomic no-replace operation
   after readable staging and durable publish intent. Source chunks may be
   cleaned only after the exact output is readable and the `saved` transition is

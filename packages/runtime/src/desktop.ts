@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RuntimeConfig } from "./config.js";
 import { prepareRuntime, REPOSITORY_ROOT } from "./config.js";
+import { assertDesktopLaunchedByHost, assertSupervisorOwnedByHost } from "./host.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
 
 export function buildRendererUrl(config: RuntimeConfig): string {
@@ -19,6 +20,7 @@ export function buildRendererUrl(config: RuntimeConfig): string {
 }
 
 export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number> {
+  await assertDesktopLaunchedByHost(config);
   await prepareRuntime(config);
   const { waitForRecordingRuntime } = await import("./readiness.js");
   await writeDesktopSettings(config.paths.electronUserData);
@@ -28,6 +30,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
     let lock = await readPidLock(config.paths.pidLock);
     if (lock && processIsRunning(lock.pid)) {
       authorizeOwnedDaemon(config, lock);
+      await assertSupervisorOwnedByHost(config, lock.pid);
     } else {
       const cliPath = fileURLToPath(new URL("./cli.js", import.meta.url));
       const daemon = spawn(process.execPath, [cliPath, "daemon"], {
@@ -38,6 +41,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
       owned.push(daemon);
       daemonOwned = true;
       lock = await waitForDaemon(config, daemon);
+      await assertSupervisorOwnedByHost(config, lock.pid);
     }
 
     const recorder = await waitForRecordingRuntime(config);
