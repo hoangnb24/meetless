@@ -346,6 +346,26 @@ frontier):
   transcription, citation playback, agent analysis, and Q&A remain later
   milestones.
 
+`LIVE_ACCEPTANCE_HANDOFF v1` (2026-08-17):
+
+- **Candidate:** integrated implementation `185919b63ae797ad102317d72d91716d05f48c81`
+  remains the accepted automated candidate; this live attempt did not modify it.
+- **Attempt result:** failed before capture. A two-participant Google Meet was
+  active with the host camera off and microphone on, and the owner reported
+  speaking both requested phone phrases. However, the recording-control socket
+  refused connections, no capture helper was running, the daemon-owned meeting
+  store contained no recording files, and no MP3 or collision artifact was
+  produced. The phrases therefore cannot be treated as recorded evidence.
+- **Acceptance:** Milestone 2 remains incomplete. Automated fixture evidence is
+  not a substitute for the missing production ScreenCaptureKit call artifact.
+- **Retry order:** prove an authoritative active production recording and live
+  microphone/system chunk commits; prepare the stop/finalization and collision
+  evidence targets; only then create/join the controlled call and request owner
+  phrases; finally stop, decode-probe, inspect both sources, and verify the
+  collision target remained byte-identical.
+- **Evidence:**
+  [`test/evidence/m2/20260817T135955Z-live-failed/manifest.json`](../../../test/evidence/m2/20260817T135955Z-live-failed/manifest.json).
+
 The first `RecordingSource` is one macOS 15+ Swift helper using one
 ScreenCaptureKit stream with separate `.audio` and `.microphone` outputs. The
 daemon plugin supervises it over a small source-labelled control/event

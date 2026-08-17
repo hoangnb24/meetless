@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "milestone": 2,
+  "candidateCommit": "185919b63ae797ad102317d72d91716d05f48c81",
+  "observedAt": "2026-08-17T13:59:55Z",
+  "kind": "controlled-google-meet-live-acceptance",
+  "result": "failed",
+  "observations": {
+    "participantsObserved": 2,
+    "hostCamera": "off",
+    "hostMicrophone": "on",
+    "ownerReportedPhonePhrasesSpoken": 2,
+    "recordingControlSocket": "connection-refused",
+    "recordingStoreFiles": [],
+    "captureHelperProcesses": [],
+    "publishedMp3FilesObserved": [],
+    "collisionArtifactObserved": false
+  },
+  "acceptanceDecision": {
+    "milestoneAccepted": false,
+    "reason": "The owner phrases were spoken before an authoritative active recording session was established. No live chunks or MP3 exist, so both-speaker, playable-MP3, recoverability, and no-overwrite claims cannot be made from this call. Automated fixture evidence was not substituted."
+  },
+  "retryGate": [
+    "Confirm the production desktop interface reports an authoritative active recording and session ID.",
+    "Confirm live microphone and system chunks are committed before requesting owner participation.",
+    "Confirm the intended collision target and pre-stop evidence capture are ready.",
+    "Only then create or join the controlled call and request the owner phrases."
+  ]
+}
