@@ -2,8 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { connectMeetlessClient } from "@meetless/client";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
+  RecordingRuntimeBootstrapOutputSchema,
   RecordingRuntimeReadinessResponseSchema,
   type CollisionEvidence,
   type RecordingRuntimeReadinessResponse,
@@ -17,10 +18,31 @@ export const RECORDING_READINESS_AUTHORITY = "docs/plans/active/v1-paseo-foundat
 type ReadinessOperation = "status" | "prepareCollision" | "validateCollision";
 type ProcessEntry = { pid: number; ppid: number; command: string };
 
+interface LiveProcessInspection {
+  executablePath(pid: number): Promise<string>;
+  commandLine(pid: number): Promise<string>;
+}
+
+export interface DaemonMeetlessPluginAttestation {
+  pluginId: "meetless";
+  sourcePath: string;
+  status: "running";
+  runtimeInstanceId: string;
+  pluginPid: number;
+}
+
+export type AuthoritativeRecordingRuntime = RecordingRuntimeReadinessResponse & {
+  daemonPlugin: DaemonMeetlessPluginAttestation;
+};
+
 export interface RecordingReadinessDependencies {
-  bootstrapPlugin(config: RuntimeConfig): Promise<void>;
+  bootstrapPlugin(config: RuntimeConfig): Promise<DaemonMeetlessPluginAttestation>;
   requestReadiness(socketPath: string, operation: ReadinessOperation): Promise<RecordingRuntimeReadinessResponse>;
-  verifyOwnership(config: RuntimeConfig, response: RecordingRuntimeReadinessResponse): Promise<void>;
+  verifyOwnership(
+    config: RuntimeConfig,
+    response: RecordingRuntimeReadinessResponse,
+    daemonPlugin: DaemonMeetlessPluginAttestation,
+  ): Promise<void>;
   delay(milliseconds: number): Promise<void>;
 }
 
@@ -29,7 +51,15 @@ export interface RuntimeReadinessReport {
   captureMode: "production";
   supervisor: { pid: number; live: boolean };
   daemon: { pid: number; listen: string };
-  plugin: { pid: number; live: boolean; instanceId: string; startedAt: string };
+  plugin: {
+    id: "meetless";
+    pid: number;
+    live: boolean;
+    instanceId: string;
+    startedAt: string;
+    sourcePath: string;
+    sourceRealPath: string;
+  };
   socket: {
     path: string;
     live: true;
@@ -60,16 +90,46 @@ export interface RuntimeReadinessReport {
 
 const defaultDependencies: RecordingReadinessDependencies = {
   bootstrapPlugin: async (config) => {
-    const connected = await connectMeetlessClient({
+    const daemon = new DaemonClient({
       url: `ws://${config.listen}/ws`,
       clientId: `meetless-readiness-${process.pid}-${randomUUID()}`,
       clientType: "cli",
+      reconnect: { enabled: false },
+      connectTimeoutMs: 10_000,
     });
-    try { await connected.client.listMeetings(); }
-    finally { await connected.close(); }
+    try {
+      await daemon.connect();
+      if (daemon.getLastServerInfoMessage()?.features?.plugins !== true) {
+        throw new Error("daemon does not advertise plugin support");
+      }
+      const catalog = await daemon.getPluginCatalog();
+      if (!catalog.some((plugin) => plugin.id === "meetless")) {
+        throw new Error('daemon catalog does not contain the required "meetless" plugin');
+      }
+      const listed = (await daemon.listPlugins()).find((plugin) => plugin.id === "meetless");
+      if (!listed || listed.status !== "running") {
+        throw new Error('daemon does not report the configured "meetless" plugin as running');
+      }
+      const nonce = randomUUID();
+      const bootstrap = RecordingRuntimeBootstrapOutputSchema.parse(
+        await daemon.invokePluginRpc("meetless", "runtime.readiness.bootstrap", { nonce }),
+      );
+      if (bootstrap.nonce !== nonce) throw new Error("Meetless bootstrap nonce was not correlated");
+      return {
+        pluginId: "meetless",
+        sourcePath: listed.path,
+        status: "running",
+        runtimeInstanceId: bootstrap.runtimeInstanceId,
+        pluginPid: bootstrap.pluginPid,
+      };
+    } finally {
+      await daemon.close().catch(() => undefined);
+    }
   },
   requestReadiness: requestRecordingRuntimeReadiness,
-  verifyOwnership: async (config, response) => { await inspectOwnedRuntime(config, response); },
+  verifyOwnership: async (config, response, daemonPlugin) => {
+    await inspectOwnedRuntime(config, response, daemonPlugin);
+  },
   delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 };
 
@@ -80,19 +140,24 @@ export async function waitForRecordingRuntime(
     retryMs?: number;
     dependencies?: Partial<RecordingReadinessDependencies>;
   } = {},
-): Promise<RecordingRuntimeReadinessResponse> {
+): Promise<AuthoritativeRecordingRuntime> {
   assertProductionCapture(config);
   const timeoutMs = input.timeoutMs ?? 30_000;
   const retryMs = input.retryMs ?? 100;
   const dependencies = { ...defaultDependencies, ...input.dependencies };
   const deadline = Date.now() + timeoutMs;
   let pluginBootstrapped = false;
+  let daemonPlugin: DaemonMeetlessPluginAttestation | null = null;
   let lastError: unknown;
 
   do {
     try {
       if (!pluginBootstrapped) {
-        await beforeDeadline(() => dependencies.bootstrapPlugin(config), deadline, "Meetless plugin bootstrap");
+        daemonPlugin = await beforeDeadline(
+          () => dependencies.bootstrapPlugin(config),
+          deadline,
+          "Meetless plugin bootstrap",
+        );
         pluginBootstrapped = true;
       }
       const response = await beforeDeadline(
@@ -101,12 +166,13 @@ export async function waitForRecordingRuntime(
         "authoritative recording status",
       );
       await assertRuntimeAttestation(config, response);
+      await assertDaemonPluginAttestation(config, daemonPlugin!, response);
       await beforeDeadline(
-        () => dependencies.verifyOwnership(config, response),
+        () => dependencies.verifyOwnership(config, response, daemonPlugin!),
         deadline,
         "plugin process ownership",
       );
-      return response;
+      return Object.assign(response, { daemonPlugin: daemonPlugin! });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("Production desktop recording readiness failed closed")) {
         throw error;
@@ -167,11 +233,12 @@ export async function requestRecordingRuntimeReadiness(
 
 export async function inspectRuntimeReadiness(
   config: RuntimeConfig,
-  attestation: RecordingRuntimeReadinessResponse,
+  attestation: AuthoritativeRecordingRuntime,
 ): Promise<RuntimeReadinessReport> {
   assertProductionCapture(config);
   await assertRuntimeAttestation(config, attestation);
-  const ownership = await inspectOwnedRuntime(config, attestation);
+  await assertDaemonPluginAttestation(config, attestation.daemonPlugin, attestation);
+  const ownership = await inspectOwnedRuntime(config, attestation, attestation.daemonPlugin);
   const { lock, daemonPid } = ownership;
   const currentSocket = await socketIdentity(config.paths.recordingSocket).catch(() => null);
   if (!currentSocket || !sameSocket(currentSocket, attestation.runtime.socketIdentity)) {
@@ -202,10 +269,13 @@ export async function inspectRuntimeReadiness(
     supervisor: { pid: lock.pid, live: true },
     daemon: { pid: daemonPid, listen: config.listen },
     plugin: {
+      id: "meetless",
       pid: attestation.runtime.pluginPid,
       live: true,
       instanceId: attestation.runtime.instanceId,
       startedAt: attestation.runtime.startedAt,
+      sourcePath: attestation.daemonPlugin.sourcePath,
+      sourceRealPath: await realpath(attestation.daemonPlugin.sourcePath),
     },
     socket: {
       path: config.paths.recordingSocket,
@@ -238,6 +308,7 @@ export async function inspectRuntimeReadiness(
 async function inspectOwnedRuntime(
   config: RuntimeConfig,
   attestation: RecordingRuntimeReadinessResponse,
+  daemonPlugin: DaemonMeetlessPluginAttestation,
 ): Promise<{ lock: NonNullable<Awaited<ReturnType<typeof readPidLock>>>; daemonPid: number }> {
   const lock = await readPidLock(config.paths.pidLock);
   if (!lock) throw readinessFailure("supervisor identity", config, new Error("PID lock is unavailable"));
@@ -259,11 +330,13 @@ async function inspectOwnedRuntime(
     throw readinessFailure("live daemon listener", config, new Error("owned daemon listener is unavailable"));
   }
   const processes = inspectProcesses();
-  assertAttestedProcessOwnership({
+  await assertAttestedProcessOwnership({
     daemonPid,
     pluginPid: attestation.runtime.pluginPid,
+    daemonPluginPid: daemonPlugin.pluginPid,
     helperPid: attestation.runtime.capture.helperPid,
-    helperRealPath: attestation.runtime.capture.executable.realPath,
+    helperExecutable: attestation.runtime.capture.executable,
+    helperArguments: attestation.runtime.capture.arguments,
     processes,
   });
   return { lock, daemonPid };
@@ -321,24 +394,64 @@ export async function verifyCollisionEvidence(report: RuntimeReadinessReport): P
     createHash("sha256").update(bytes).digest("hex") === report.collisionTarget.sha256;
 }
 
-export function assertAttestedProcessOwnership(input: {
+export async function assertAttestedProcessOwnership(input: {
   daemonPid: number;
   pluginPid: number;
+  daemonPluginPid: number;
   helperPid: number | null;
-  helperRealPath: string;
+  helperExecutable: RecordingRuntimeReadinessResponse["runtime"]["capture"]["executable"];
+  helperArguments: string[];
   processes: ProcessEntry[];
-}): void {
+  inspection?: LiveProcessInspection;
+}): Promise<void> {
+  if (input.pluginPid !== input.daemonPluginPid) {
+    throw new Error(
+      `socket plugin PID ${input.pluginPid} does not match daemon-routed Meetless plugin PID ${input.daemonPluginPid}; ` +
+      `authority ${RECORDING_READINESS_AUTHORITY}, restart the isolated runtime`,
+    );
+  }
   const plugin = input.processes.find((candidate) => candidate.pid === input.pluginPid);
-  if (!plugin || !isDescendant(plugin.pid, input.daemonPid, input.processes) || !plugin.command.includes("/plugin-process.js")) {
-    throw new Error(`authoritative Meetless plugin PID ${input.pluginPid} is not an owned daemon descendant`);
+  if (!plugin || !isDescendant(plugin.pid, input.daemonPid, input.processes)) {
+    throw new Error(
+      `daemon-routed Meetless plugin PID ${input.pluginPid} is not an owned daemon descendant; ` +
+      `authority ${RECORDING_READINESS_AUTHORITY}, restart the isolated runtime`,
+    );
   }
   if (input.helperPid === null) return;
   const helper = input.processes.find((candidate) => candidate.pid === input.helperPid);
   if (!helper || !isDescendant(helper.pid, plugin.pid, input.processes)) {
     throw new Error(`authoritative capture helper PID ${input.helperPid} is not a descendant of plugin PID ${plugin.pid}`);
   }
-  if (path.resolve(helper.command.split(" ")[0] ?? "") !== path.resolve(input.helperRealPath)) {
-    throw new Error(`authoritative capture helper PID ${input.helperPid} is not the attested production executable`);
+  const inspection = input.inspection ?? defaultLiveProcessInspection;
+  const [osExecutablePath, commandLine] = await Promise.all([
+    inspection.executablePath(input.helperPid),
+    inspection.commandLine(input.helperPid),
+  ]);
+  const [osRealPath, osInfo, osBytes] = await Promise.all([
+    realpath(osExecutablePath),
+    stat(osExecutablePath),
+    readFile(osExecutablePath),
+  ]);
+  const executable = input.helperExecutable;
+  const osHash = createHash("sha256").update(osBytes).digest("hex");
+  if (
+    osRealPath !== executable.realPath ||
+    osInfo.dev !== executable.device ||
+    osInfo.ino !== executable.inode ||
+    osInfo.size !== executable.byteLength ||
+    osHash !== executable.sha256
+  ) {
+    throw new Error(
+      `live capture helper PID ${input.helperPid} executable ${osExecutablePath} does not match the attested production helper; ` +
+      `authority ${RECORDING_READINESS_AUTHORITY}, stop the runtime and rebuild the native helper`,
+    );
+  }
+  if (input.helperArguments.length > 0 || commandLine !== executable.configuredPath) {
+    throw new Error(
+      `live capture helper PID ${input.helperPid} has unexpected complete argv ${JSON.stringify(commandLine)}; ` +
+      `production requires exactly ${JSON.stringify(executable.configuredPath)} with no fixture or wrapper arguments. ` +
+      `Authority: ${RECORDING_READINESS_AUTHORITY}. Next action: stop the isolated runtime and restart without helper arguments.`,
+    );
   }
 }
 
@@ -394,6 +507,35 @@ async function assertRuntimeAttestation(
   }
 }
 
+async function assertDaemonPluginAttestation(
+  config: RuntimeConfig,
+  daemonPlugin: DaemonMeetlessPluginAttestation,
+  response: RecordingRuntimeReadinessResponse,
+): Promise<void> {
+  const [configuredSource, daemonSource] = await Promise.all([
+    realpath(config.paths.plugin),
+    realpath(daemonPlugin.sourcePath).catch(() => ""),
+  ]);
+  if (
+    daemonPlugin.pluginId !== "meetless" ||
+    daemonPlugin.status !== "running" ||
+    path.resolve(daemonPlugin.sourcePath) !== path.resolve(config.paths.plugin) ||
+    daemonSource !== configuredSource ||
+    daemonPlugin.runtimeInstanceId !== response.runtime.instanceId ||
+    daemonPlugin.pluginPid !== response.runtime.pluginPid
+  ) {
+    throw readinessFailure(
+      "daemon Meetless plugin identity",
+      config,
+      new Error(
+        `daemon plugin ${daemonPlugin.pluginId} at ${daemonPlugin.sourcePath} PID ${daemonPlugin.pluginPid} ` +
+        `does not match the socket runtime. Require active plugin ID "meetless" from ${config.paths.plugin}, ` +
+        `then restart the isolated runtime`,
+      ),
+    );
+  }
+}
+
 function readinessFailure(stage: string, config: RuntimeConfig, error: unknown): Error {
   const reason = error instanceof Error ? error.message : String(error);
   return new Error(
@@ -412,6 +554,33 @@ function inspectProcesses(): ProcessEntry[] {
     return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), command: match[3]! }] : [];
   });
 }
+
+const defaultLiveProcessInspection: LiveProcessInspection = {
+  executablePath: async (pid) => {
+    const inspected = spawnSync("lsof", ["-nP", "-a", "-p", String(pid), "-d", "txt", "-Fn"], {
+      encoding: "utf8",
+    });
+    if (inspected.error || inspected.status !== 0) {
+      throw new Error(`cannot inspect executable for capture helper PID ${pid} with lsof`);
+    }
+    const lines = inspected.stdout.split("\n");
+    const textIndex = lines.indexOf("ftxt");
+    const executable = textIndex >= 0 ? lines[textIndex + 1] : undefined;
+    if (!executable?.startsWith("n/") || executable.length <= 2) {
+      throw new Error(`lsof did not report an executable for capture helper PID ${pid}`);
+    }
+    return executable.slice(1);
+  },
+  commandLine: async (pid) => {
+    const inspected = spawnSync("ps", ["-ww", "-p", String(pid), "-o", "command="], { encoding: "utf8" });
+    if (inspected.error || inspected.status !== 0) {
+      throw new Error(`cannot inspect complete argv for capture helper PID ${pid} with ps`);
+    }
+    const commandLine = inspected.stdout.trimEnd();
+    if (!commandLine) throw new Error(`ps did not report complete argv for capture helper PID ${pid}`);
+    return commandLine;
+  },
+};
 
 function isDescendant(candidatePid: number, ancestorPid: number, processes: Array<{ pid: number; ppid: number }>): boolean {
   const byPid = new Map(processes.map((process) => [process.pid, process.ppid]));

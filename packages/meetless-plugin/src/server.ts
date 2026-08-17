@@ -9,6 +9,7 @@ let store: MeetingStore | null = null;
 let recordingService: RecordingService | null = null;
 let controlServer: RecordingControlServer | null = null;
 let recordingStart: Promise<void> | null = null;
+let runtimeIdentity: { instanceId: string; startedAt: string } | null = null;
 
 export function getMeetingStore(): MeetingStore {
   if (store) return store;
@@ -47,24 +48,32 @@ async function startRecordingRuntimeOnce(): Promise<void> {
     fixtureStampApplied: fixtureExportNow !== undefined,
     failFinalizationOnce: process.env.MEETLESS_FIXTURE_FAIL_FINALIZATION_ONCE === "1",
   }, getMeetingStore());
-  const server = new RecordingControlServer(socketPath, service, {
+  const identity = {
     instanceId: randomUUID(),
     startedAt: new Date().toISOString(),
-  });
+  };
+  const server = new RecordingControlServer(socketPath, service, identity);
   await service.initialize();
   await server.start();
   recordingService = service;
   controlServer = server;
+  runtimeIdentity = identity;
 }
 
 export async function stopRecordingRuntime(): Promise<void> {
   const server = controlServer; const service = recordingService;
   controlServer = null; recordingService = null;
+  runtimeIdentity = null;
   await server?.close();
   await service?.shutdown();
 }
 
 export function recordingRuntimeForTest(): RecordingService | null { return recordingService; }
+
+export function recordingRuntimeIdentity(): { instanceId: string; startedAt: string } {
+  if (!runtimeIdentity) throw new Error("Meetless recording runtime is not active");
+  return runtimeIdentity;
+}
 
 export function resolveFixtureExportNow(fixture: boolean, fixedStamp: string | undefined): (() => Date) | undefined {
   return fixture && fixedStamp ? () => new Date(fixedStamp) : undefined;

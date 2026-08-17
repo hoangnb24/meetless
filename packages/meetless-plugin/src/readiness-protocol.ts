@@ -1,6 +1,22 @@
 import { RecordingStatusWireSchema } from "@meetless/meeting-contracts";
 import { z } from "zod";
 
+export const RecordingRuntimeBootstrapInputSchema = z.object({
+  nonce: z.string().uuid(),
+}).strict();
+
+export const RecordingRuntimeBootstrapOutputSchema = z.object({
+  nonce: z.string().uuid(),
+  runtimeInstanceId: z.string().uuid(),
+  pluginPid: z.number().int().positive(),
+}).strict();
+
+export const RecordingRuntimeBootstrapRpc = {
+  name: "runtime.readiness.bootstrap",
+  input: RecordingRuntimeBootstrapInputSchema,
+  output: RecordingRuntimeBootstrapOutputSchema,
+};
+
 export const RecordingRuntimeReadinessRequestSchema = z.object({
   version: z.literal(1),
   requestId: z.string().min(1),

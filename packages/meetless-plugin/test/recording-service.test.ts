@@ -78,6 +78,28 @@ describe("daemon recording service", () => {
     expect(service.helperRuntime().pid).toEqual(expect.any(Number));
   }, 30_000);
 
+  test("consumes prepared collision state at durable finalization intent before retry and the next recording", async () => {
+    const config = await fixtureConfig({ failFinalizationOnce: true });
+    const service = new RecordingService(config); services.add(service); await service.initialize();
+    await service.execute({ version: 1, requestId: "first-start", command: "start", title: "Interrupted prepared stop" });
+    await waitFor(async () => (await service.status()).chunks.length >= 2);
+    const prepared = await service.prepareCollisionEvidence(
+      "27d24098-41f8-46eb-a2a0-cb4db64dc493",
+      new Date("2026-08-17T12:00:00+07:00"),
+    );
+
+    await expect(service.execute({ version: 1, requestId: "first-stop", command: "stop" }))
+      .rejects.toThrow("retry without re-recording");
+    expect(await service.status()).toMatchObject({ status: "recoverable", recordingId: prepared.recordingId });
+    await expect(service.execute({ version: 1, requestId: "retry", command: "retryFinalization" }))
+      .resolves.toMatchObject({ status: "saved", recordingId: prepared.recordingId });
+
+    await service.execute({ version: 1, requestId: "second-start", command: "start", title: "Fresh recording" });
+    await waitFor(async () => (await service.status()).chunks.length >= 2);
+    await expect(service.execute({ version: 1, requestId: "second-stop", command: "stop" }))
+      .resolves.toMatchObject({ status: "saved", title: "Fresh recording" });
+  }, 30_000);
+
   test("serializes pause/resume, preserves collision bytes, publishes a playable MP3, then cleans chunks", async () => {
     const config = await fixtureConfig();
     const collision = path.join(config.exportRoot, "12-17-08-26.mp3");

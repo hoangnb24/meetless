@@ -12,6 +12,7 @@ import {
   assertAttestedProcessOwnership,
   assertPreOwnerRecordingReady,
   prepareCollisionEvidence,
+  type DaemonMeetlessPluginAttestation,
   type RuntimeReadinessReport,
   verifyCollisionEvidence,
   waitForRecordingRuntime,
@@ -28,7 +29,7 @@ describe("production recording readiness invariant", () => {
   test("accepts an idempotent current-runtime identity only after plugin bootstrap", async () => {
     const config = resolveRuntimeConfig({ runtimeRoot: await temporaryRoot() });
     const response = await runtimeResponse(config);
-    const bootstrapPlugin = vi.fn(async () => undefined);
+    const bootstrapPlugin = vi.fn(async () => daemonAttestation(config, response));
     const requestReadiness = vi.fn(async () => response);
     const verifyOwnership = vi.fn(async () => undefined);
 
@@ -53,7 +54,7 @@ describe("production recording readiness invariant", () => {
     const started = Date.now();
     await expect(waitForRecordingRuntime(config, {
       timeoutMs: 25,
-      dependencies: { bootstrapPlugin: () => new Promise<void>(() => undefined) },
+      dependencies: { bootstrapPlugin: () => new Promise<DaemonMeetlessPluginAttestation>(() => undefined) },
     })).rejects.toThrow(/failed closed at Meetless plugin bootstrap.*outer startup deadline/s);
     expect(Date.now() - started).toBeLessThan(250);
   });
@@ -77,6 +78,8 @@ describe("production recording readiness invariant", () => {
         const replacement = await stat(socketPath);
         client.send(JSON.stringify(await runtimeResponse(config, {
           requestId: request.requestId,
+          instanceId: "e9250d8e-419d-4f90-98cb-e52fc47e8d7a",
+          pluginPid: 321,
           socketIdentity: { device: replacement.dev, inode: replacement.ino },
         })));
       })());
@@ -87,7 +90,13 @@ describe("production recording readiness invariant", () => {
         timeoutMs: 100,
         retryMs: 1,
         dependencies: {
-          bootstrapPlugin: async () => undefined,
+          bootstrapPlugin: async () => ({
+            pluginId: "meetless",
+            sourcePath: config.paths.plugin,
+            status: "running",
+            runtimeInstanceId: "e9250d8e-419d-4f90-98cb-e52fc47e8d7a",
+            pluginPid: 321,
+          }),
           verifyOwnership: async () => undefined,
         },
       })).rejects.toThrow(
@@ -121,7 +130,7 @@ describe("production recording readiness invariant", () => {
         timeoutMs: 20,
         retryMs: 1,
         dependencies: {
-          bootstrapPlugin: async () => undefined,
+          bootstrapPlugin: async () => daemonAttestation(config, response),
           requestReadiness: async () => response,
         },
       })).rejects.toThrow(new RegExp(`helper arguments are forbidden in production: ${argument}`));
@@ -141,13 +150,15 @@ describe("production recording readiness invariant", () => {
       timeoutMs: 20,
       retryMs: 1,
       dependencies: {
-        bootstrapPlugin: async () => undefined,
+        bootstrapPlugin: async () => daemonAttestation(resolved, wrongExport),
         requestReadiness: async () => wrongExport,
       },
     })).rejects.toThrow(/daemon export root differs from launcher configuration/u);
   });
 
-  test("binds to the attested plugin PID when multiple plugin descendants exist", () => {
+  test("binds to the daemon-routed plugin PID when multiple plugin descendants exist", async () => {
+    const config = resolveRuntimeConfig({ runtimeRoot: await temporaryRoot() });
+    const response = await runtimeResponse(config, { pluginPid: 21, helperPid: 31 });
     const processes = [
       { pid: 10, ppid: 1, command: "daemon" },
       { pid: 20, ppid: 10, command: "node /wrong/plugin-process.js" },
@@ -155,12 +166,72 @@ describe("production recording readiness invariant", () => {
       { pid: 30, ppid: 20, command: "/repo/meetless-capture --fixture" },
       { pid: 31, ppid: 21, command: "/repo/meetless-capture" },
     ];
-    expect(() => assertAttestedProcessOwnership({
-      daemonPid: 10, pluginPid: 21, helperPid: 31, helperRealPath: "/repo/meetless-capture", processes,
-    })).not.toThrow();
-    expect(() => assertAttestedProcessOwnership({
-      daemonPid: 10, pluginPid: 21, helperPid: 30, helperRealPath: "/repo/meetless-capture", processes,
-    })).toThrow(/not a descendant of plugin PID 21/u);
+    const inspection = {
+      executablePath: async () => response.runtime.capture.executable.configuredPath,
+      commandLine: async () => response.runtime.capture.executable.configuredPath,
+    };
+    await expect(assertAttestedProcessOwnership({
+      daemonPid: 10, pluginPid: 21, daemonPluginPid: 21, helperPid: 31,
+      helperExecutable: response.runtime.capture.executable, helperArguments: [], processes, inspection,
+    })).resolves.toBeUndefined();
+    await expect(assertAttestedProcessOwnership({
+      daemonPid: 10, pluginPid: 21, daemonPluginPid: 21, helperPid: 30,
+      helperExecutable: response.runtime.capture.executable, helperArguments: [], processes, inspection,
+    })).rejects.toThrow(/not a descendant of plugin PID 21/u);
+  });
+
+  test("rejects wrapper executables, argv0 spoofing, and arguments without splitting paths on spaces", async () => {
+    const config = resolveRuntimeConfig({ runtimeRoot: await temporaryRoot() });
+    const response = await runtimeResponse(config, { pluginPid: 21, helperPid: 31 });
+    const processes = [
+      { pid: 10, ppid: 1, command: "daemon" },
+      { pid: 21, ppid: 10, command: "node plugin-process.js" },
+      { pid: 31, ppid: 21, command: "untrusted flattened text" },
+    ];
+    await expect(assertAttestedProcessOwnership({
+      daemonPid: 10, pluginPid: 21, daemonPluginPid: 21, helperPid: 31,
+      helperExecutable: response.runtime.capture.executable, helperArguments: [], processes,
+      inspection: {
+        executablePath: async () => "/bin/sh",
+        commandLine: async () => response.runtime.capture.executable.configuredPath,
+      },
+    })).rejects.toThrow(/does not match the attested production helper.*authority/s);
+
+    const spacedExecutable = {
+      ...response.runtime.capture.executable,
+      configuredPath: "/Applications/Meetless Helper/bin/capture helper",
+    };
+    await expect(assertAttestedProcessOwnership({
+      daemonPid: 10, pluginPid: 21, daemonPluginPid: 21, helperPid: 31,
+      helperExecutable: spacedExecutable, helperArguments: [], processes,
+      inspection: {
+        executablePath: async () => response.runtime.capture.executable.configuredPath,
+        commandLine: async () => `${spacedExecutable.configuredPath} --timeline-fixture "value with spaces"`,
+      },
+    })).rejects.toThrow(/unexpected complete argv.*timeline-fixture.*production requires exactly/s);
+  });
+
+  test("rejects an unrelated generic plugin worker/listener returning otherwise matching readiness", async () => {
+    const root = await temporaryRoot();
+    const config = resolveRuntimeConfig({ runtimeRoot: root });
+    const response = await runtimeResponse(config);
+    const unrelatedSource = path.join(root, "generic-plugin");
+    await mkdir(unrelatedSource);
+    const generic: DaemonMeetlessPluginAttestation = {
+      ...daemonAttestation(config, response),
+      pluginId: "generic" as "meetless",
+      sourcePath: unrelatedSource,
+    };
+    await expect(waitForRecordingRuntime(config, {
+      timeoutMs: 50,
+      dependencies: {
+        bootstrapPlugin: async () => generic,
+        requestReadiness: async () => response,
+        verifyOwnership: async () => undefined,
+      },
+    })).rejects.toThrow(
+      new RegExp(`failed closed at daemon Meetless plugin identity.*generic.*${escapeRegex(RECORDING_READINESS_AUTHORITY)}.*runtime:stop`, "s"),
+    );
   });
 
   test("wrong attested plugin ownership fails with the accepted authority and next action", async () => {
@@ -170,7 +241,7 @@ describe("production recording readiness invariant", () => {
       timeoutMs: 30,
       retryMs: 1,
       dependencies: {
-        bootstrapPlugin: async () => undefined,
+        bootstrapPlugin: async () => daemonAttestation(config, response),
         requestReadiness: async () => response,
         verifyOwnership: async () => { throw new Error("authoritative Meetless plugin PID is not owned"); },
       },
@@ -300,13 +371,34 @@ function activeReport(sourceEvidence: string): RuntimeReadinessReport {
     captureMode: "production",
     supervisor: { pid: 1, live: true },
     daemon: { pid: 2, listen: "127.0.0.1:6777" },
-    plugin: { pid: 3, live: true, instanceId: "a10ff4d8-1a5d-4e8f-b4f1-c37080b958d8", startedAt: "2026-08-17T08:00:00.000Z" },
+    plugin: {
+      id: "meetless",
+      pid: 3,
+      live: true,
+      instanceId: "a10ff4d8-1a5d-4e8f-b4f1-c37080b958d8",
+      startedAt: "2026-08-17T08:00:00.000Z",
+      sourcePath: "/repo/meetless-plugin",
+      sourceRealPath: "/repo/meetless-plugin",
+    },
     socket: { path: "/tmp/recording.sock", live: true, authoritativeStatus: true, device: 1, inode: 2 },
     helper: { pid: 4, live: true, mode: "production", path: "/repo/helper", realPath: "/repo/helper", sha256: "a".repeat(64), arguments: [] },
     session: { status: "recording", recordingId: "recording-1", meetingId: "meeting-1", paused: false, error: null },
     chunks: { microphone: 1, system: 1, total: 2, evidencePaths: [sourceEvidence] },
     stopTarget: { command: "Electron recording control: stop", prepared: false },
     collisionTarget: null,
+  };
+}
+
+function daemonAttestation(
+  config: RuntimeConfig,
+  response: RecordingRuntimeReadinessResponse,
+): DaemonMeetlessPluginAttestation {
+  return {
+    pluginId: "meetless",
+    sourcePath: config.paths.plugin,
+    status: "running",
+    runtimeInstanceId: response.runtime.instanceId,
+    pluginPid: response.runtime.pluginPid,
   };
 }
 

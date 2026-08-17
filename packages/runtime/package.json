@@ -11,7 +11,7 @@
     "test": "vitest run test"
   },
   "dependencies": {
-    "@meetless/client": "0.1.0",
+    "@getpaseo/client": "0.4.0",
     "@meetless/meeting-contracts": "0.1.0",
     "@meetless/plugin": "0.1.0",
     "ws": "^8.20.0",

@@ -184,7 +184,6 @@ export class RecordingService {
     this.helper = null;
     const closed = await this.findRecording(recording.id);
     await this.stageBeginAndPublish(closed, prepared?.plannedPublishedPath);
-    this.preparedCollision = null;
   }
 
   private async retryFinalization(): Promise<void> {
@@ -213,6 +212,9 @@ export class RecordingService {
       destination,
       expectedIdentity: staged.identity,
     });
+    if (this.preparedCollision?.recordingId === recording.id) {
+      this.preparedCollision = null;
+    }
     if (this.failFinalizationOnce) {
       this.failFinalizationOnce = false;
       await rm(staged.stagePath, { force: true });
