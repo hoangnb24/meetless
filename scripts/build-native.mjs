@@ -1,16 +1,32 @@
 import { spawn } from "node:child_process";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const child = spawn("swift", ["build", "-c", "release", "--package-path", "native/macos-capture"], {
-  cwd: repositoryRoot,
-  env: {
-    ...process.env,
-    SWIFTPM_MODULECACHE_OVERRIDE: "/private/tmp/meetless-swift-module-cache",
-    CLANG_MODULE_CACHE_PATH: "/private/tmp/meetless-clang-module-cache",
-  },
-  stdio: "inherit",
-});
-child.once("error", (error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
-child.once("exit", (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
+const environment = {
+  ...process.env,
+  SWIFTPM_MODULECACHE_OVERRIDE: "/private/tmp/meetless-swift-module-cache",
+  CLANG_MODULE_CACHE_PATH: "/private/tmp/meetless-clang-module-cache",
+};
+
+await mkdir(path.join(repositoryRoot, "packages/runtime/dist"), { recursive: true });
+await run("swift", ["build", "-c", "release", "--package-path", "native/macos-capture"]);
+await run("xcrun", [
+  "swiftc",
+  "-O",
+  "packages/runtime/native/process-argv.swift",
+  "-o",
+  "packages/runtime/dist/meetless-process-argv",
+]);
+
+function run(command, arguments_) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, arguments_, { cwd: repositoryRoot, env: environment, stdio: "inherit" });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${command} failed with ${signal ?? `exit ${code ?? "unknown"}`}`));
+    });
+  });
+}

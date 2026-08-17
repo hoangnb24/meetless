@@ -23,14 +23,28 @@ export function getMeetingStore(): MeetingStore {
   return store;
 }
 
-export async function startRecordingRuntime(): Promise<void> {
+export async function startRecordingRuntime(deadlineEpochMs = Number.POSITIVE_INFINITY): Promise<void> {
+  assertBootstrapDeadline(deadlineEpochMs);
   if (recordingService || controlServer) return;
-  if (recordingStart) return recordingStart;
-  recordingStart = startRecordingRuntimeOnce();
-  try { await recordingStart; } finally { recordingStart = null; }
+  if (recordingStart) {
+    await recordingStart;
+    assertBootstrapDeadline(deadlineEpochMs);
+    return;
+  }
+  recordingStart = startRecordingRuntimeOnce(deadlineEpochMs);
+  try {
+    await recordingStart;
+    assertBootstrapDeadline(deadlineEpochMs);
+  } catch (error) {
+    if (Date.now() >= deadlineEpochMs) await stopRecordingRuntime();
+    throw error;
+  } finally {
+    recordingStart = null;
+  }
 }
 
-async function startRecordingRuntimeOnce(): Promise<void> {
+async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void> {
+  assertBootstrapDeadline(deadlineEpochMs);
   const storeRoot = requiredAbsolute("MEETLESS_STORE_ROOT");
   const helperPath = requiredAbsolute("MEETLESS_CAPTURE_HELPER");
   const ffmpeg = requiredAbsolute("MEETLESS_FFMPEG");
@@ -53,11 +67,19 @@ async function startRecordingRuntimeOnce(): Promise<void> {
     startedAt: new Date().toISOString(),
   };
   const server = new RecordingControlServer(socketPath, service, identity);
-  await service.initialize();
-  await server.start();
-  recordingService = service;
-  controlServer = server;
-  runtimeIdentity = identity;
+  try {
+    await service.initialize();
+    assertBootstrapDeadline(deadlineEpochMs);
+    await server.start();
+    assertBootstrapDeadline(deadlineEpochMs);
+    recordingService = service;
+    controlServer = server;
+    runtimeIdentity = identity;
+  } catch (error) {
+    await server.close().catch(() => undefined);
+    await service.shutdown().catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function stopRecordingRuntime(): Promise<void> {
@@ -83,4 +105,10 @@ function requiredAbsolute(name: string): string {
   const value = process.env[name]?.trim();
   if (!value || !path.isAbsolute(value)) throw new Error(`${name} must be an absolute path fixed by the Meetless launcher`);
   return path.resolve(value);
+}
+
+function assertBootstrapDeadline(deadlineEpochMs: number): void {
+  if (Date.now() >= deadlineEpochMs) {
+    throw new Error("Meetless recording runtime bootstrap exceeded the launcher startup deadline");
+  }
 }

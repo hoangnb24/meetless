@@ -3,6 +3,7 @@ import { z } from "zod";
 
 export const RecordingRuntimeBootstrapInputSchema = z.object({
   nonce: z.string().uuid(),
+  deadlineEpochMs: z.number().int().positive(),
 }).strict();
 
 export const RecordingRuntimeBootstrapOutputSchema = z.object({

@@ -16,9 +16,9 @@ export default function contribute(plugin: PluginContext) {
     cleanup = server.stopRecordingRuntime;
     return { meetings: await server.getMeetingStore().list() };
   });
-  plugin.handle(RecordingRuntimeBootstrapRpc, async ({ nonce }) => {
+  plugin.handle(RecordingRuntimeBootstrapRpc, async ({ nonce, deadlineEpochMs }) => {
     const server = await import("./src/server.js");
-    await server.startRecordingRuntime();
+    await server.startRecordingRuntime(deadlineEpochMs);
     cleanup = server.stopRecordingRuntime;
     const identity = server.recordingRuntimeIdentity();
     return { nonce, runtimeInstanceId: identity.instanceId, pluginPid: process.pid };

@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 import type { PluginContext } from "@paseo/plugin";
 import contribute from "../index.js";
 
@@ -18,5 +19,9 @@ describe("Meetless plugin contribution", () => {
     expect(addSidebarItem).not.toHaveBeenCalled();
     expect(cleanup()).toBeUndefined();
     expect(handle.mock.calls.map(([rpc]) => rpc.name)).not.toContain("recording.start");
+    const readiness = handle.mock.calls.find(([rpc]) => rpc.name === "runtime.readiness.bootstrap")![0];
+    expect(() => readiness.input.parse({ nonce: randomUUID() })).toThrow();
+    expect(readiness.input.parse({ nonce: randomUUID(), deadlineEpochMs: Date.now() + 1_000 }))
+      .toHaveProperty("deadlineEpochMs");
   });
 });

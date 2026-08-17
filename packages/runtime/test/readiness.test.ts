@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { access, mkdir, mkdtemp, readFile, realpath, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,6 +12,7 @@ import {
   RECORDING_READINESS_AUTHORITY,
   assertAttestedProcessOwnership,
   assertPreOwnerRecordingReady,
+  inspectNativeArgumentVector,
   prepareCollisionEvidence,
   type DaemonMeetlessPluginAttestation,
   type RuntimeReadinessReport,
@@ -57,6 +59,34 @@ describe("production recording readiness invariant", () => {
       dependencies: { bootstrapPlugin: () => new Promise<DaemonMeetlessPluginAttestation>(() => undefined) },
     })).rejects.toThrow(/failed closed at Meetless plugin bootstrap.*outer startup deadline/s);
     expect(Date.now() - started).toBeLessThan(250);
+  });
+
+  test("outer startup timeout aborts bootstrap before late initialization and connection effects", async () => {
+    const config = resolveRuntimeConfig({ runtimeRoot: await temporaryRoot() });
+    let initialized = false;
+    let connectionOpen = true;
+    let observedAbort = false;
+    await expect(waitForRecordingRuntime(config, {
+      timeoutMs: 25,
+      dependencies: {
+        bootstrapPlugin: async (_config, { signal }) => {
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => { initialized = true; resolve(); }, 200);
+            signal.addEventListener("abort", () => {
+              observedAbort = true;
+              connectionOpen = false;
+              clearTimeout(timer);
+              reject(signal.reason);
+            }, { once: true });
+          });
+          throw new Error("bootstrap must not complete");
+        },
+      },
+    })).rejects.toThrow(/failed closed at Meetless plugin bootstrap.*outer startup deadline/s);
+    await delay(225);
+    expect(observedAbort).toBe(true);
+    expect(connectionOpen).toBe(false);
+    expect(initialized).toBe(false);
   });
 
   test("a replaced socket fails even when the old listener returns a matching request ID", async () => {
@@ -106,6 +136,33 @@ describe("production recording readiness invariant", () => {
       await closeWebSocketServer(firstWs);
       await closeServer(firstHttp);
       if (replacementHttp) await closeServer(replacementHttp);
+    }
+  });
+
+  test("timed-out socket status terminates every readiness connection", async () => {
+    const root = await temporaryRoot();
+    const socketPath = path.join(root, "recording.sock");
+    const config = withSocket(resolveRuntimeConfig({ runtimeRoot: root }), socketPath);
+    const http = createServer();
+    const websocket = new WebSocketServer({ noServer: true });
+    http.on("upgrade", (request, socket, head) => {
+      websocket.handleUpgrade(request, socket, head, (client) => websocket.emit("connection", client, request));
+    });
+    await listen(http, socketPath);
+    const response = await runtimeResponse(config);
+    try {
+      await expect(waitForRecordingRuntime(config, {
+        timeoutMs: 35,
+        retryMs: 1,
+        dependencies: {
+          bootstrapPlugin: async () => daemonAttestation(config, response),
+          verifyOwnership: async () => undefined,
+        },
+      })).rejects.toThrow(/failed closed at authoritative recording status.*outer startup deadline/s);
+      await vi.waitFor(() => expect(websocket.clients.size).toBe(0));
+    } finally {
+      await closeWebSocketServer(websocket);
+      await closeServer(http);
     }
   });
 
@@ -168,7 +225,7 @@ describe("production recording readiness invariant", () => {
     ];
     const inspection = {
       executablePath: async () => response.runtime.capture.executable.configuredPath,
-      commandLine: async () => response.runtime.capture.executable.configuredPath,
+      argumentVector: async () => [response.runtime.capture.executable.configuredPath],
     };
     await expect(assertAttestedProcessOwnership({
       daemonPid: 10, pluginPid: 21, daemonPluginPid: 21, helperPid: 31,
@@ -193,7 +250,7 @@ describe("production recording readiness invariant", () => {
       helperExecutable: response.runtime.capture.executable, helperArguments: [], processes,
       inspection: {
         executablePath: async () => "/bin/sh",
-        commandLine: async () => response.runtime.capture.executable.configuredPath,
+        argumentVector: async () => [response.runtime.capture.executable.configuredPath],
       },
     })).rejects.toThrow(/does not match the attested production helper.*authority/s);
 
@@ -206,9 +263,75 @@ describe("production recording readiness invariant", () => {
       helperExecutable: spacedExecutable, helperArguments: [], processes,
       inspection: {
         executablePath: async () => response.runtime.capture.executable.configuredPath,
-        commandLine: async () => `${spacedExecutable.configuredPath} --timeline-fixture "value with spaces"`,
+        argumentVector: async () => [spacedExecutable.configuredPath, "--timeline-fixture", "value with spaces"],
       },
-    })).rejects.toThrow(/unexpected complete argv.*timeline-fixture.*production requires exactly/s);
+    })).rejects.toThrow(/unexpected native argv.*timeline-fixture.*production requires exactly/s);
+
+    for (const argumentVector of [
+      [],
+      [""],
+      [" "],
+      [response.runtime.capture.executable.configuredPath, ""],
+      [response.runtime.capture.executable.configuredPath, " "],
+      [response.runtime.capture.executable.configuredPath, "--fixture"],
+    ]) {
+      await expect(assertAttestedProcessOwnership({
+        daemonPid: 10, pluginPid: 21, daemonPluginPid: 21, helperPid: 31,
+        helperExecutable: response.runtime.capture.executable, helperArguments: [], processes,
+        inspection: {
+          executablePath: async () => response.runtime.capture.executable.configuredPath,
+          argumentVector: async () => argumentVector,
+        },
+      })).rejects.toThrow(/unexpected native argv.*production requires exactly/s);
+    }
+  });
+
+  test("native macOS argv inspection preserves empty, whitespace, and argument boundaries", async () => {
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 10_000)", "", " ", "--fixture=value with spaces"], {
+      stdio: "ignore",
+    });
+    try {
+      await waitForSpawn(child);
+      const arguments_ = await inspectNativeArgumentVector(child.pid!);
+      expect(arguments_.slice(-3)).toEqual(["", " ", "--fixture=value with spaces"]);
+    } finally {
+      await stopChild(child);
+    }
+  });
+
+  test("exact no-argument native process invocation passes production helper ownership", async () => {
+    const executablePath = "/usr/bin/yes";
+    const child = spawn(executablePath, [], { stdio: "ignore" });
+    try {
+      await waitForSpawn(child);
+      const [info, resolved, bytes] = await Promise.all([
+        stat(executablePath),
+        realpath(executablePath),
+        readFile(executablePath),
+      ]);
+      await expect(assertAttestedProcessOwnership({
+        daemonPid: 10,
+        pluginPid: 21,
+        daemonPluginPid: 21,
+        helperPid: child.pid!,
+        helperExecutable: {
+          configuredPath: executablePath,
+          realPath: resolved,
+          device: info.dev,
+          inode: info.ino,
+          byteLength: info.size,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
+        helperArguments: [],
+        processes: [
+          { pid: 10, ppid: 1, command: "daemon" },
+          { pid: 21, ppid: 10, command: "plugin" },
+          { pid: child.pid!, ppid: 21, command: "ignored flattened text" },
+        ],
+      })).resolves.toBeUndefined();
+    } finally {
+      await stopChild(child);
+    }
   });
 
   test("rejects an unrelated generic plugin worker/listener returning otherwise matching readiness", async () => {
@@ -406,6 +529,10 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 function listen(server: Server, socketPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -420,4 +547,18 @@ function closeServer(server: Server): Promise<void> {
 function closeWebSocketServer(server: WebSocketServer): Promise<void> {
   for (const client of server.clients) client.terminate();
   return new Promise((resolve) => server.close(() => resolve()));
+}
+
+function waitForSpawn(child: ChildProcess): Promise<void> {
+  if (child.pid) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", reject);
+  });
+}
+
+async function stopChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  await new Promise<void>((resolve) => child.once("exit", () => resolve()));
 }

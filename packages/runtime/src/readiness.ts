@@ -10,7 +10,7 @@ import {
   type RecordingRuntimeReadinessResponse,
 } from "@meetless/plugin/readiness-protocol";
 import WebSocket from "ws";
-import type { RuntimeConfig } from "./config.js";
+import { REPOSITORY_ROOT, type RuntimeConfig } from "./config.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
 
 export const RECORDING_READINESS_AUTHORITY = "docs/plans/active/v1-paseo-foundation.md";
@@ -20,7 +20,12 @@ type ProcessEntry = { pid: number; ppid: number; command: string };
 
 interface LiveProcessInspection {
   executablePath(pid: number): Promise<string>;
-  commandLine(pid: number): Promise<string>;
+  argumentVector(pid: number): Promise<string[]>;
+}
+
+interface ReadinessOperationContext {
+  signal: AbortSignal;
+  deadline: number;
 }
 
 export interface DaemonMeetlessPluginAttestation {
@@ -36,14 +41,19 @@ export type AuthoritativeRecordingRuntime = RecordingRuntimeReadinessResponse & 
 };
 
 export interface RecordingReadinessDependencies {
-  bootstrapPlugin(config: RuntimeConfig): Promise<DaemonMeetlessPluginAttestation>;
-  requestReadiness(socketPath: string, operation: ReadinessOperation): Promise<RecordingRuntimeReadinessResponse>;
+  bootstrapPlugin(config: RuntimeConfig, context: ReadinessOperationContext): Promise<DaemonMeetlessPluginAttestation>;
+  requestReadiness(
+    socketPath: string,
+    operation: ReadinessOperation,
+    context?: ReadinessOperationContext,
+  ): Promise<RecordingRuntimeReadinessResponse>;
   verifyOwnership(
     config: RuntimeConfig,
     response: RecordingRuntimeReadinessResponse,
     daemonPlugin: DaemonMeetlessPluginAttestation,
+    context: ReadinessOperationContext,
   ): Promise<void>;
-  delay(milliseconds: number): Promise<void>;
+  delay(milliseconds: number, context: ReadinessOperationContext): Promise<void>;
 }
 
 export interface RuntimeReadinessReport {
@@ -89,31 +99,41 @@ export interface RuntimeReadinessReport {
 }
 
 const defaultDependencies: RecordingReadinessDependencies = {
-  bootstrapPlugin: async (config) => {
+  bootstrapPlugin: async (config, context) => {
     const daemon = new DaemonClient({
       url: `ws://${config.listen}/ws`,
       clientId: `meetless-readiness-${process.pid}-${randomUUID()}`,
       clientType: "cli",
       reconnect: { enabled: false },
-      connectTimeoutMs: 10_000,
+      connectTimeoutMs: Math.max(1, context.deadline - Date.now()),
     });
+    const close = () => { void daemon.close().catch(() => undefined); };
+    context.signal.addEventListener("abort", close, { once: true });
     try {
+      context.signal.throwIfAborted();
       await daemon.connect();
+      context.signal.throwIfAborted();
       if (daemon.getLastServerInfoMessage()?.features?.plugins !== true) {
         throw new Error("daemon does not advertise plugin support");
       }
       const catalog = await daemon.getPluginCatalog();
+      context.signal.throwIfAborted();
       if (!catalog.some((plugin) => plugin.id === "meetless")) {
         throw new Error('daemon catalog does not contain the required "meetless" plugin');
       }
       const listed = (await daemon.listPlugins()).find((plugin) => plugin.id === "meetless");
+      context.signal.throwIfAborted();
       if (!listed || listed.status !== "running") {
         throw new Error('daemon does not report the configured "meetless" plugin as running');
       }
       const nonce = randomUUID();
       const bootstrap = RecordingRuntimeBootstrapOutputSchema.parse(
-        await daemon.invokePluginRpc("meetless", "runtime.readiness.bootstrap", { nonce }),
+        await daemon.invokePluginRpc("meetless", "runtime.readiness.bootstrap", {
+          nonce,
+          deadlineEpochMs: context.deadline,
+        }),
       );
+      context.signal.throwIfAborted();
       if (bootstrap.nonce !== nonce) throw new Error("Meetless bootstrap nonce was not correlated");
       return {
         pluginId: "meetless",
@@ -123,6 +143,7 @@ const defaultDependencies: RecordingReadinessDependencies = {
         pluginPid: bootstrap.pluginPid,
       };
     } finally {
+      context.signal.removeEventListener("abort", close);
       await daemon.close().catch(() => undefined);
     }
   },
@@ -130,7 +151,7 @@ const defaultDependencies: RecordingReadinessDependencies = {
   verifyOwnership: async (config, response, daemonPlugin) => {
     await inspectOwnedRuntime(config, response, daemonPlugin);
   },
-  delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  delay: (milliseconds, context) => abortableDelay(milliseconds, context.signal),
 };
 
 export async function waitForRecordingRuntime(
@@ -154,21 +175,21 @@ export async function waitForRecordingRuntime(
     try {
       if (!pluginBootstrapped) {
         daemonPlugin = await beforeDeadline(
-          () => dependencies.bootstrapPlugin(config),
+          (context) => dependencies.bootstrapPlugin(config, context),
           deadline,
           "Meetless plugin bootstrap",
         );
         pluginBootstrapped = true;
       }
       const response = await beforeDeadline(
-        () => dependencies.requestReadiness(config.paths.recordingSocket, "status"),
+        (context) => dependencies.requestReadiness(config.paths.recordingSocket, "status", context),
         deadline,
         "authoritative recording status",
       );
       await assertRuntimeAttestation(config, response);
       await assertDaemonPluginAttestation(config, daemonPlugin!, response);
       await beforeDeadline(
-        () => dependencies.verifyOwnership(config, response, daemonPlugin!),
+        (context) => dependencies.verifyOwnership(config, response, daemonPlugin!, context),
         deadline,
         "plugin process ownership",
       );
@@ -181,7 +202,11 @@ export async function waitForRecordingRuntime(
       if (!outerDeadline || lastError === undefined) lastError = error;
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
-      await beforeDeadline(() => dependencies.delay(Math.min(retryMs, remaining)), deadline, "readiness retry");
+      await beforeDeadline(
+        (context) => dependencies.delay(Math.min(retryMs, remaining), context),
+        deadline,
+        "readiness retry",
+      );
     }
   } while (Date.now() <= deadline);
 
@@ -192,32 +217,50 @@ export async function waitForRecordingRuntime(
 export async function requestRecordingRuntimeReadiness(
   socketPath: string,
   operation: ReadinessOperation = "status",
+  context?: ReadinessOperationContext,
 ): Promise<RecordingRuntimeReadinessResponse> {
+  context?.signal.throwIfAborted();
   const before = await socketIdentity(socketPath);
   const requestId = `readiness-${process.pid}-${randomUUID()}`;
-  const socket = new WebSocket(`ws+unix://${socketPath}:/ws`, { handshakeTimeout: 2_000 });
+  const remaining = context ? Math.max(1, context.deadline - Date.now()) : 2_000;
+  const socket = new WebSocket(`ws+unix://${socketPath}:/ws`, { handshakeTimeout: Math.min(2_000, remaining) });
+  const abort = () => socket.terminate();
+  context?.signal.addEventListener("abort", abort, { once: true });
   try {
     await new Promise<void>((resolve, reject) => {
-      socket.once("open", resolve);
-      socket.once("error", reject);
+      const onOpen = () => { socket.off("error", onError); resolve(); };
+      const onError = (error: Error) => { socket.off("open", onOpen); reject(error); };
+      socket.once("open", onOpen);
+      socket.once("error", onError);
     });
     const response = new Promise<RecordingRuntimeReadinessResponse>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("runtime readiness request timed out")), 2_000);
+      const cleanup = () => {
+        clearTimeout(timer);
+        socket.off("message", onMessage);
+        socket.off("close", onClose);
+        socket.off("error", onError);
+      };
+      const onClose = () => { cleanup(); reject(new Error("runtime readiness socket closed before response")); };
+      const onError = (error: Error) => { cleanup(); reject(error); };
       const onMessage = (data: WebSocket.RawData) => {
         try {
           const parsed = RecordingRuntimeReadinessResponseSchema.safeParse(JSON.parse(data.toString()));
           if (!parsed.success || parsed.data.requestId !== requestId) return;
-          clearTimeout(timer);
-          socket.off("message", onMessage);
+          cleanup();
           if (!parsed.data.ok) reject(new Error(parsed.data.error ?? "runtime readiness request failed"));
           else resolve(parsed.data);
         } catch (error) {
-          clearTimeout(timer);
-          socket.off("message", onMessage);
+          cleanup();
           reject(error);
         }
       };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("runtime readiness request timed out"));
+      }, Math.min(2_000, remaining));
       socket.on("message", onMessage);
+      socket.once("close", onClose);
+      socket.once("error", onError);
     });
     socket.send(JSON.stringify({ version: 1, requestId, command: "runtime.readiness", operation }));
     const attested = await response;
@@ -227,7 +270,8 @@ export async function requestRecordingRuntimeReadiness(
     }
     return attested;
   } finally {
-    socket.close();
+    context?.signal.removeEventListener("abort", abort);
+    socket.terminate();
   }
 }
 
@@ -423,9 +467,9 @@ export async function assertAttestedProcessOwnership(input: {
     throw new Error(`authoritative capture helper PID ${input.helperPid} is not a descendant of plugin PID ${plugin.pid}`);
   }
   const inspection = input.inspection ?? defaultLiveProcessInspection;
-  const [osExecutablePath, commandLine] = await Promise.all([
+  const [osExecutablePath, argumentVector] = await Promise.all([
     inspection.executablePath(input.helperPid),
-    inspection.commandLine(input.helperPid),
+    inspection.argumentVector(input.helperPid),
   ]);
   const [osRealPath, osInfo, osBytes] = await Promise.all([
     realpath(osExecutablePath),
@@ -446,10 +490,15 @@ export async function assertAttestedProcessOwnership(input: {
       `authority ${RECORDING_READINESS_AUTHORITY}, stop the runtime and rebuild the native helper`,
     );
   }
-  if (input.helperArguments.length > 0 || commandLine !== executable.configuredPath) {
+  const expectedArguments = [executable.configuredPath, ...input.helperArguments];
+  if (
+    input.helperArguments.length > 0 ||
+    argumentVector.length !== expectedArguments.length ||
+    argumentVector.some((argument, index) => argument !== expectedArguments[index])
+  ) {
     throw new Error(
-      `live capture helper PID ${input.helperPid} has unexpected complete argv ${JSON.stringify(commandLine)}; ` +
-      `production requires exactly ${JSON.stringify(executable.configuredPath)} with no fixture or wrapper arguments. ` +
+      `live capture helper PID ${input.helperPid} has unexpected native argv ${JSON.stringify(argumentVector)}; ` +
+      `production requires exactly ${JSON.stringify(expectedArguments)} with no empty, whitespace, fixture, or wrapper arguments. ` +
       `Authority: ${RECORDING_READINESS_AUTHORITY}. Next action: stop the isolated runtime and restart without helper arguments.`,
     );
   }
@@ -571,16 +620,29 @@ const defaultLiveProcessInspection: LiveProcessInspection = {
     }
     return executable.slice(1);
   },
-  commandLine: async (pid) => {
-    const inspected = spawnSync("ps", ["-ww", "-p", String(pid), "-o", "command="], { encoding: "utf8" });
-    if (inspected.error || inspected.status !== 0) {
-      throw new Error(`cannot inspect complete argv for capture helper PID ${pid} with ps`);
-    }
-    const commandLine = inspected.stdout.trimEnd();
-    if (!commandLine) throw new Error(`ps did not report complete argv for capture helper PID ${pid}`);
-    return commandLine;
-  },
+  argumentVector: async (pid) => inspectNativeArgumentVector(pid),
 };
+
+export async function inspectNativeArgumentVector(pid: number): Promise<string[]> {
+  if (process.platform !== "darwin") {
+    throw new Error(`native capture-helper argv inspection requires macOS, received ${process.platform}`);
+  }
+  const inspector = path.join(REPOSITORY_ROOT, "packages/runtime/dist/meetless-process-argv");
+  const inspected = spawnSync(inspector, [String(pid)], { encoding: "utf8" });
+  if (inspected.error || inspected.status !== 0) {
+    const reason = inspected.stderr.trim() || inspected.error?.message || `exit ${inspected.status ?? "unknown"}`;
+    throw new Error(
+      `cannot inspect native argv for capture helper PID ${pid}: ${reason}. ` +
+      `Run npm run build:native, then restart the isolated runtime.`,
+    );
+  }
+  let decoded: unknown;
+  try { decoded = JSON.parse(inspected.stdout); } catch { decoded = null; }
+  if (!Array.isArray(decoded) || decoded.length === 0 || decoded.some((value) => typeof value !== "string")) {
+    throw new Error(`native argv inspector returned an invalid vector for capture helper PID ${pid}`);
+  }
+  return decoded as string[];
+}
 
 function isDescendant(candidatePid: number, ancestorPid: number, processes: Array<{ pid: number; ppid: number }>): boolean {
   const byPid = new Map(processes.map((process) => [process.pid, process.ppid]));
@@ -604,18 +666,49 @@ function sameSocket(left: { device: number; inode: number }, right: { device: nu
   return left.device === right.device && left.inode === right.inode;
 }
 
-async function beforeDeadline<T>(operation: () => Promise<T>, deadline: number, stage: string): Promise<T> {
+async function beforeDeadline<T>(
+  operation: (context: ReadinessOperationContext) => Promise<T>,
+  deadline: number,
+  stage: string,
+): Promise<T> {
   const remaining = deadline - Date.now();
   if (remaining <= 0) throw new Error(`${stage} exceeded the outer startup deadline`);
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  const operationPromise = operation({ signal: controller.signal, deadline });
   try {
     return await Promise.race([
-      operation(),
+      operationPromise,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${stage} exceeded the outer startup deadline`)), remaining);
+        timer = setTimeout(() => {
+          timedOut = true;
+          controller.abort(new Error(`${stage} exceeded the outer startup deadline`));
+          reject(new Error(`${stage} exceeded the outer startup deadline`));
+        }, remaining);
       }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (timedOut) {
+      await Promise.race([
+        operationPromise.then(() => undefined, () => undefined),
+        new Promise<void>((resolve) => setTimeout(resolve, 100)),
+      ]);
+    }
   }
+}
+
+function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    const abort = () => {
+      clearTimeout(timer);
+      reject(signal.reason instanceof Error ? signal.reason : new Error("readiness operation aborted"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
