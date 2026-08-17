@@ -1,7 +1,7 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,17 @@ const config = resolveRuntimeConfig({ repositoryRoot });
 const target = config.host.bundle;
 const identityPath = config.host.identity;
 const sourceHash = await hostSourceHash();
+
+if (await exists(target)) {
+  const executablePath = path.join(await realpath(target), "Contents", "MacOS", "MeetlessHost");
+  const livePids = exactLiveHostPids(executablePath);
+  if (livePids.length > 0) {
+    throw new Error(
+      `Refusing to install or replace ${target} while the exact MeetlessHost is live as PID(s) ${livePids.join(", ")}. ` +
+      "Run npm run runtime:host:stop, verify shutdown, then retry the install.",
+    );
+  }
+}
 
 if (await exists(target)) {
   try {
@@ -56,6 +67,7 @@ try {
     listen: config.listen,
     nodePath: process.execPath,
     runtimeCliPath: path.join(repositoryRoot, "packages/runtime/dist/cli.js"),
+    identityPath,
   }, null, 2)}\n`, { mode: 0o644 });
   await execFileAsync("xcrun", [
     "swiftc",
@@ -123,4 +135,13 @@ async function exists(candidate) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return false;
     throw error;
   }
+}
+
+function exactLiveHostPids(executablePath) {
+  const inspected = spawnSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
+  if (inspected.error || inspected.status !== 0) throw new Error("Cannot inspect live MeetlessHost processes");
+  return inspected.stdout.split("\n").flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/u.exec(line);
+    return match && Number(match[2]) === 1 && match[3] === executablePath ? [Number(match[1])] : [];
+  });
 }

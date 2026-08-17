@@ -159,6 +159,7 @@ export async function waitForRecordingRuntime(
   input: {
     timeoutMs?: number;
     retryMs?: number;
+    signal?: AbortSignal;
     dependencies?: Partial<RecordingReadinessDependencies>;
   } = {},
 ): Promise<AuthoritativeRecordingRuntime> {
@@ -170,6 +171,7 @@ export async function waitForRecordingRuntime(
   let pluginBootstrapped = false;
   let daemonPlugin: DaemonMeetlessPluginAttestation | null = null;
   let lastError: unknown;
+  input.signal?.throwIfAborted();
 
   do {
     try {
@@ -178,6 +180,7 @@ export async function waitForRecordingRuntime(
           (context) => dependencies.bootstrapPlugin(config, context),
           deadline,
           "Meetless plugin bootstrap",
+          input.signal,
         );
         pluginBootstrapped = true;
       }
@@ -185,6 +188,7 @@ export async function waitForRecordingRuntime(
         (context) => dependencies.requestReadiness(config.paths.recordingSocket, "status", context),
         deadline,
         "authoritative recording status",
+        input.signal,
       );
       await assertRuntimeAttestation(config, response);
       await assertDaemonPluginAttestation(config, daemonPlugin!, response);
@@ -192,9 +196,11 @@ export async function waitForRecordingRuntime(
         (context) => dependencies.verifyOwnership(config, response, daemonPlugin!, context),
         deadline,
         "plugin process ownership",
+        input.signal,
       );
       return Object.assign(response, { daemonPlugin: daemonPlugin! });
     } catch (error) {
+      if (input.signal?.aborted) throw input.signal.reason;
       if (error instanceof Error && error.message.startsWith("Production desktop recording readiness failed closed")) {
         throw error;
       }
@@ -206,6 +212,7 @@ export async function waitForRecordingRuntime(
         (context) => dependencies.delay(Math.min(retryMs, remaining), context),
         deadline,
         "readiness retry",
+        input.signal,
       );
     }
   } while (Date.now() <= deadline);
@@ -670,12 +677,17 @@ async function beforeDeadline<T>(
   operation: (context: ReadinessOperationContext) => Promise<T>,
   deadline: number,
   stage: string,
+  parentSignal?: AbortSignal,
 ): Promise<T> {
   const remaining = deadline - Date.now();
   if (remaining <= 0) throw new Error(`${stage} exceeded the outer startup deadline`);
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;
+  const abortFromParent = () => controller.abort(parentSignal?.reason);
+  let rejectParent: (() => void) | undefined;
+  parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  if (parentSignal?.aborted) controller.abort(parentSignal.reason);
   const operationPromise = operation({ signal: controller.signal, deadline });
   try {
     return await Promise.race([
@@ -687,10 +699,18 @@ async function beforeDeadline<T>(
           reject(new Error(`${stage} exceeded the outer startup deadline`));
         }, remaining);
       }),
+      new Promise<T>((_, reject) => {
+        if (!parentSignal) return;
+        rejectParent = () => reject(parentSignal.reason instanceof Error ? parentSignal.reason : new Error("readiness aborted"));
+        if (parentSignal.aborted) rejectParent();
+        else parentSignal.addEventListener("abort", rejectParent, { once: true });
+      }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
-    if (timedOut) {
+    parentSignal?.removeEventListener("abort", abortFromParent);
+    if (rejectParent) parentSignal?.removeEventListener("abort", rejectParent);
+    if (timedOut || controller.signal.aborted) {
       await Promise.race([
         operationPromise.then(() => undefined, () => undefined),
         new Promise<void>((resolve) => setTimeout(resolve, 100)),

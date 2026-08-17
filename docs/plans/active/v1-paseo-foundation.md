@@ -392,12 +392,31 @@ frontier):
   runtime whose supervisor chain is not
   `MeetlessHost -> desktop CLI -> Paseo Supervisor`.
 - **Observed local identity:** designated requirement
-  `cdhash H"7ca04dfd5282c517dd0e1d4f7c9963206e55111d"`, CDHash
-  `7ca04dfd5282c517dd0e1d4f7c9963206e55111d`, and host binary SHA-256
-  `bf4db7b5e48a0d449df3fb54505a7e21b5b35b2eea6e0c1dc2eb7e77af6ec575`.
-  Two LaunchServices starts retained that identity; duplicate launch reused the
-  live host. The observed chain was host PID `97603`, desktop PID `97623`,
-  supervisor PID `97807`, daemon PID `97821`, and plugin PID `97824`.
+  `cdhash H"76536284825363070b36ad5695bb3fa6b04b21b1"`, CDHash
+  `76536284825363070b36ad5695bb3fa6b04b21b1`, and host binary SHA-256
+  `30a7b5034380247dfe9b8817f9c6f8169d6e71c94f8371d2a82eee8899c2aeb8`.
+  Repeated corrected LaunchServices starts retained that identity. The final
+  observed chain was host PID `64735`, desktop PID `64738`, supervisor PID
+  `65262`, daemon PID `65319`, and plugin PID `65328`.
+- **Recording-authority guard:** immediately before a production recording
+  creates a session or helper, the Meetless plugin verifies that its live
+  process ancestry contains the configured host PID and that the host's live
+  executable path/device/inode/size/SHA-256/CDHash/designated requirement match
+  the recorded installed identity. Direct daemon/plugin/socket production
+  starts fail before helper spawn; the observed direct daemon rejection created
+  neither recording socket nor helper. Existing fixture-mode tests remain
+  exempt, and generic meeting create/list remains available without bootstrapping
+  the recorder or granting recording control.
+- **Bounded shutdown and replacement:** desktop SIGTERM/SIGINT cancels startup,
+  closes Electron and the renderer, asks the owned supervisor to drain its
+  daemon/plugin/helper, and verifies release of the recording socket and 6777;
+  a bounded owned-process-group kill is the final fallback. Active recording
+  shutdown persists the accepted interrupted/recoverable state. Install and
+  replacement refuse while the exact installed host is live.
+- **M2 provenance limit:** `ppid == 1`, the exact installed live identity, and
+  the repository LaunchServices launcher are sufficient observable provenance.
+  Cryptographic anti-reparenting and adversarial detached local-process spoof
+  resistance remain deferred hardening outside M2 authority.
 - **Open proof condition:** the preserved store contains terminal failed records
   with no readable committed chunks, including
   `16036ac4-09bf-4132-a3fe-903ee1eaf445`; the currently selected latest record

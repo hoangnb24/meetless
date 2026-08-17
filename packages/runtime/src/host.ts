@@ -15,6 +15,7 @@ const HostLaunchConfigurationSchema = z.object({
   listen: z.string().min(1),
   nodePath: z.string().min(1),
   runtimeCliPath: z.string().min(1),
+  identityPath: z.string().min(1),
 }).strict();
 
 export type HostLaunchConfiguration = z.infer<typeof HostLaunchConfigurationSchema>;
@@ -41,18 +42,23 @@ interface ProcessIdentity {
   ppid: number;
   executablePath: string;
   arguments: string[];
+  executableDevice: number;
+  executableInode: number;
+  executableSize: number;
 }
 
 interface HostInspectionDependencies {
   inspectInstalled(bundlePath: string): Promise<HostIdentity>;
   readRecorded(identityPath: string): Promise<HostIdentity>;
   inspectProcess(pid: number): Promise<ProcessIdentity>;
+  inspectLiveHost(bundlePath: string): Promise<HostIdentity>;
 }
 
 const defaultDependencies: HostInspectionDependencies = {
   inspectInstalled: inspectHostBundle,
   readRecorded: readHostIdentity,
   inspectProcess,
+  inspectLiveHost: inspectHostBundle,
 };
 
 export async function inspectHostBundle(bundlePath: string): Promise<HostIdentity> {
@@ -123,6 +129,7 @@ export async function assertInstalledHostIdentity(
     installed.configuration.runtimeRoot !== expectedConfiguration.runtimeRoot ||
     installed.configuration.listen !== expectedConfiguration.listen ||
     installed.configuration.runtimeCliPath !== expectedConfiguration.runtimeCliPath ||
+    installed.configuration.identityPath !== expectedConfiguration.identityPath ||
     !path.isAbsolute(installed.configuration.nodePath)
   ) {
     throw hostFailure("installed host repository/runtime configuration differs from this production runtime");
@@ -144,7 +151,7 @@ export async function assertDesktopLaunchedByHost(
   const identity = await assertInstalledHostIdentity(config, dependencies);
   const desktop = await dependencies.inspectProcess(currentPid);
   const host = await dependencies.inspectProcess(desktop.ppid);
-  await assertExactTopology(identity, desktop, host, config);
+  await assertExactTopology(identity, desktop, host, config, dependencies.inspectLiveHost);
   return identity;
 }
 
@@ -162,7 +169,7 @@ export async function assertSupervisorOwnedByHost(
   const supervisor = await dependencies.inspectProcess(supervisorPid);
   const desktop = await dependencies.inspectProcess(supervisor.ppid);
   const host = await dependencies.inspectProcess(desktop.ppid);
-  await assertExactTopology(identity, desktop, host, config);
+  await assertExactTopology(identity, desktop, host, config, dependencies.inspectLiveHost);
   return { identity, hostPid: host.pid, desktopPid: desktop.pid, supervisorPid };
 }
 
@@ -173,6 +180,7 @@ export function expectedHostConfiguration(config: RuntimeConfig): HostLaunchConf
     listen: config.listen,
     nodePath: process.execPath,
     runtimeCliPath: path.join(path.resolve(config.paths.plugin, "..", ".."), "packages", "runtime", "dist", "cli.js"),
+    identityPath: config.host.identity,
   };
 }
 
@@ -181,6 +189,7 @@ async function assertExactTopology(
   desktop: ProcessIdentity,
   host: ProcessIdentity,
   config: RuntimeConfig,
+  inspectLiveHost: (bundlePath: string) => Promise<HostIdentity>,
 ): Promise<void> {
   if (path.resolve(host.executablePath) !== path.resolve(identity.executablePath)) {
     throw hostFailure(
@@ -194,6 +203,13 @@ async function assertExactTopology(
     realpath(host.executablePath),
     realpath(identity.executablePath),
   ]);
+  if (
+    host.executableDevice !== identity.binaryDevice ||
+    host.executableInode !== identity.binaryInode ||
+    host.executableSize !== identity.binarySize
+  ) {
+    throw hostFailure("live host executable device/inode/size differs from the installed identity");
+  }
   const expectedDesktopArguments = [
     identity.configuration.nodePath,
     identity.configuration.runtimeCliPath,
@@ -212,27 +228,34 @@ async function assertExactTopology(
       "Terminal, Codex, Paseo, and direct executable launch are not accepted responsible ancestors",
     );
   }
+  const liveIdentity = await inspectLiveHost(identity.bundleRealPath);
+  if (JSON.stringify(liveIdentity) !== JSON.stringify(identity)) {
+    throw hostFailure("live host executable hash/CDHash/designated requirement differs from the installed identity");
+  }
 }
 
 async function inspectProcess(pid: number): Promise<ProcessIdentity> {
   if (!Number.isInteger(pid) || pid <= 1) throw new Error(`invalid process PID ${pid}`);
   const ppid = Number(inspectRequired("ps", ["-p", String(pid), "-o", "ppid="], `parent PID for ${pid}`));
   if (!Number.isInteger(ppid)) throw new Error(`cannot inspect parent PID for ${pid}`);
-  const inspected = spawnSync("lsof", ["-nP", "-a", "-p", String(pid), "-d", "txt", "-Fn"], {
+  const inspected = spawnSync("lsof", ["-nP", "-a", "-p", String(pid), "-d", "txt", "-FDsin"], {
     encoding: "utf8",
   });
   if (inspected.error || inspected.status !== 0) throw new Error(`cannot inspect executable for PID ${pid}`);
-  const lines = inspected.stdout.split("\n");
-  const textIndex = lines.indexOf("ftxt");
-  const executable = textIndex >= 0 ? lines[textIndex + 1] : undefined;
-  if (!executable?.startsWith("n/") || executable.length <= 2) {
+  const entry = inspected.stdout.split("ftxt\n").slice(1).map((block) =>
+    Object.fromEntries(block.split("\n").filter(Boolean).map((line) => [line[0], line.slice(1)])),
+  ).find((fields) => fields.n && fields.D && fields.i && fields.s);
+  if (!entry?.n?.startsWith("/") || !entry.D || !entry.i || !entry.s) {
     throw new Error(`lsof did not report an executable for PID ${pid}`);
   }
   return {
     pid,
     ppid,
-    executablePath: executable.slice(1),
+    executablePath: entry.n,
     arguments: await inspectNativeArgumentVector(pid),
+    executableDevice: Number(entry.D),
+    executableInode: Number(entry.i),
+    executableSize: Number(entry.s),
   };
 }
 

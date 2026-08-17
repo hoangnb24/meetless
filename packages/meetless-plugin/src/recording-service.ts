@@ -20,6 +20,7 @@ export interface RecordingServiceConfig {
   exportNow?: () => Date;
   fixtureStampApplied?: boolean;
   failFinalizationOnce?: boolean;
+  authorizeProductionStart?: () => Promise<void>;
 }
 
 export class RecordingService {
@@ -90,6 +91,13 @@ export class RecordingService {
     this.shuttingDown = true;
     await this.helper?.terminate();
     this.helper = null;
+    await this.serialize(async () => {
+      const current = await this.status();
+      if (current.status === "recording" && current.recordingId) {
+        await this.interruptAndAssess(current.recordingId, "Meetless runtime shutdown interrupted active capture");
+        await this.emitStatus();
+      }
+    });
   }
 
   helperRuntime(): { pid: number | null; executable: string; arguments: string[] } {
@@ -135,27 +143,42 @@ export class RecordingService {
         `Resolve recording ${unresolved[0]!.id} (${unresolved[0]!.status}) before starting another (docs/product/recording.md)`,
       );
     }
+    await this.authorizeProductionStart();
     const meeting = await this.store.create({ title });
     const recording = await this.store.startRecording({ meetingId: meeting.id });
     const sessionDirectory = path.join(this.config.storeRoot, "sessions", recording.id);
     await mkdir(sessionDirectory, { recursive: true, mode: 0o700 });
-    const helper = new CaptureHelper({
-      executable: this.config.helperPath,
-      sessionDirectory,
-      storeRoot: this.config.storeRoot,
-      fixture: this.config.fixture,
-      arguments: this.config.helperArguments,
-      onChunk: (chunk) => this.store.commitChunk(recording.id, chunk).then(() => this.emitStatus()),
-      onFailure: (reason) => this.handleHelperFailure(recording.id, reason),
-      onDiagnostic: (line) => process.stderr.write(`[meetless-capture] ${line}\n`),
-    });
-    this.helper = helper;
-    try { await helper.start(); }
+    try {
+      await this.authorizeProductionStart();
+      const helper = new CaptureHelper({
+        executable: this.config.helperPath,
+        sessionDirectory,
+        storeRoot: this.config.storeRoot,
+        fixture: this.config.fixture,
+        arguments: this.config.helperArguments,
+        onChunk: (chunk) => this.store.commitChunk(recording.id, chunk).then(() => this.emitStatus()),
+        onFailure: (reason) => this.handleHelperFailure(recording.id, reason),
+        onDiagnostic: (line) => process.stderr.write(`[meetless-capture] ${line}\n`),
+      });
+      this.helper = helper;
+      await helper.start();
+    }
     catch (error) {
       this.helper = null;
       await this.interruptAndAssess(recording.id, `capture start failed: ${describe(error)}`);
       throw error;
     }
+  }
+
+  private async authorizeProductionStart(): Promise<void> {
+    if (this.config.fixture) return;
+    if (!this.config.authorizeProductionStart) {
+      throw new Error(
+        "Production recording start rejected before helper spawn: MeetlessHost provenance is unavailable. " +
+        "Authority: docs/plans/active/v1-paseo-foundation.md. Next action: launch with npm run runtime:host.",
+      );
+    }
+    await this.config.authorizeProductionStart();
   }
 
   private async pause(): Promise<void> {

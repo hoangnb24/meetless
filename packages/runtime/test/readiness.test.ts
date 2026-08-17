@@ -89,6 +89,36 @@ describe("production recording readiness invariant", () => {
     expect(initialized).toBe(false);
   });
 
+  test("desktop shutdown aborts an in-flight bootstrap and closes its owned operation", async () => {
+    const config = resolveRuntimeConfig({ runtimeRoot: await temporaryRoot() });
+    const controller = new AbortController();
+    let connectionOpen = true;
+    let initialized = false;
+    const pending = waitForRecordingRuntime(config, {
+      timeoutMs: 5_000,
+      signal: controller.signal,
+      dependencies: {
+        bootstrapPlugin: async (_config, { signal }) => {
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => { initialized = true; resolve(); }, 500);
+            signal.addEventListener("abort", () => {
+              connectionOpen = false;
+              clearTimeout(timer);
+              reject(signal.reason);
+            }, { once: true });
+          });
+          throw new Error("bootstrap must not complete after desktop shutdown");
+        },
+      },
+    });
+    await delay(10);
+    controller.abort(new Error("Meetless desktop received SIGTERM"));
+    await expect(pending).rejects.toThrow("Meetless desktop received SIGTERM");
+    await delay(525);
+    expect(connectionOpen).toBe(false);
+    expect(initialized).toBe(false);
+  });
+
   test("a replaced socket fails even when the old listener returns a matching request ID", async () => {
     const root = await temporaryRoot();
     const socketPath = path.join(root, "recording.sock");

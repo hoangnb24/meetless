@@ -8,6 +8,7 @@ private struct HostConfiguration: Decodable {
   let listen: String
   let nodePath: String
   let runtimeCliPath: String
+  let identityPath: String
 }
 
 private func logError(_ message: String) {
@@ -43,6 +44,13 @@ private final class HostDelegate: NSObject, NSApplicationDelegate {
   func applicationWillTerminate(_ notification: Notification) {
     if let runtime, runtime.isRunning {
       runtime.terminate()
+      let deadline = Date().addingTimeInterval(25)
+      while runtime.isRunning && Date() < deadline {
+        usleep(100_000)
+      }
+      if runtime.isRunning {
+        kill(runtime.processIdentifier, SIGKILL)
+      }
       runtime.waitUntilExit()
     }
     if lockDescriptor >= 0 {
@@ -96,6 +104,7 @@ private final class HostDelegate: NSObject, NSApplicationDelegate {
     environment["MEETLESS_LISTEN"] = configuration.listen
     environment["MEETLESS_HOST_PID"] = String(getpid())
     environment["MEETLESS_HOST_BUNDLE_PATH"] = Bundle.main.bundlePath
+    environment["MEETLESS_HOST_IDENTITY_PATH"] = configuration.identityPath
     process.environment = environment
     let logs = URL(fileURLWithPath: configuration.runtimeRoot).appendingPathComponent("logs")
     try FileManager.default.createDirectory(

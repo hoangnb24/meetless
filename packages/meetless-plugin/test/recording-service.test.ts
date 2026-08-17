@@ -36,6 +36,40 @@ afterEach(async () => {
 });
 
 describe("daemon recording service", () => {
+  test("rejects a direct production start before creating a session or spawning the helper", async () => {
+    const config = await fixtureConfig({
+      fixture: false,
+      authorizeProductionStart: async () => {
+        throw new Error(
+          "Production recording start rejected before helper spawn: direct daemon ancestry. " +
+          "Authority: docs/plans/active/v1-paseo-foundation.md. Next action: launch with npm run runtime:host.",
+        );
+      },
+    });
+    const service = new RecordingService(config); services.add(service); await service.initialize();
+    await expect(service.execute({ version: 1, requestId: "direct", command: "start", title: "Rejected" }))
+      .rejects.toThrow(/rejected before helper spawn.*direct daemon ancestry.*Authority.*runtime:host/s);
+    expect(await service.store.listRecordings()).toEqual([]);
+    expect(service.helperRuntime().pid).toBeNull();
+  });
+
+  test("revalidates host provenance immediately before helper construction", async () => {
+    let inspections = 0;
+    const config = await fixtureConfig({
+      fixture: false,
+      authorizeProductionStart: async () => {
+        inspections += 1;
+        if (inspections === 2) throw new Error("live host identity changed before helper spawn");
+      },
+    });
+    const service = new RecordingService(config); services.add(service); await service.initialize();
+    await expect(service.execute({ version: 1, requestId: "changed", command: "start", title: "Changed host" }))
+      .rejects.toThrow("live host identity changed before helper spawn");
+    expect(inspections).toBe(2);
+    expect(service.helperRuntime().pid).toBeNull();
+    expect(await service.status()).toMatchObject({ status: "failed", error: "No readable committed chunks survived" });
+  });
+
   test("production ignores fixture export stamps", () => {
     expect(resolveFixtureExportNow(false, "2026-08-17T12:00:00+07:00")).toBeUndefined();
     expect(resolveFixtureExportNow(true, "2026-08-17T12:00:00+07:00")?.().toISOString())
@@ -151,6 +185,7 @@ describe("daemon recording service", () => {
     const malformedOrphan = "chunk--system--999999--000000032000--000000016000--16000--1";
     await writeFile(path.join(sessionDirectory, `${malformedOrphan}.wav`), "RIFF malformed orphan", "utf8");
     await first.shutdown(); services.delete(first);
+    expect(await first.status()).toMatchObject({ status: "recoverable", recordingId });
 
     const restarted = new RecordingService(config); services.add(restarted); await restarted.initialize();
     const recovered = await restarted.status();

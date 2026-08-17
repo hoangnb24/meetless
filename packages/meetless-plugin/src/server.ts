@@ -4,6 +4,7 @@ import path from "node:path";
 import { MeetingStore } from "@meetless/meeting-store";
 import { RecordingService } from "./recording-service.js";
 import { RecordingControlServer } from "./control-server.js";
+import { assertProductionHostProvenance } from "./production-host.js";
 
 let store: MeetingStore | null = null;
 let recordingService: RecordingService | null = null;
@@ -54,6 +55,7 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
   await Promise.all([access(helperPath), access(ffmpeg), access(ffprobe)]);
   const fixedStamp = process.env.MEETLESS_FIXTURE_EXPORT_STAMP?.trim();
   const fixture = process.env.MEETLESS_CAPTURE_MODE === "fixture";
+  if (!fixture) await assertProductionHostProvenance();
   const fixtureExportNow = resolveFixtureExportNow(fixture, fixedStamp);
   const service = new RecordingService({
     storeRoot, helperPath, ffmpeg, ffprobe, exportRoot,
@@ -61,6 +63,7 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
     exportNow: fixtureExportNow,
     fixtureStampApplied: fixtureExportNow !== undefined,
     failFinalizationOnce: process.env.MEETLESS_FIXTURE_FAIL_FINALIZATION_ONCE === "1",
+    authorizeProductionStart: assertProductionHostProvenance,
   }, getMeetingStore());
   const identity = {
     instanceId: randomUUID(),

@@ -1,5 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RuntimeConfig } from "./config.js";
@@ -20,31 +20,35 @@ export function buildRendererUrl(config: RuntimeConfig): string {
 }
 
 export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number> {
-  await assertDesktopLaunchedByHost(config);
-  await prepareRuntime(config);
-  const { waitForRecordingRuntime } = await import("./readiness.js");
-  await writeDesktopSettings(config.paths.electronUserData);
-  const owned: ChildProcess[] = [];
+  const shutdown = installShutdownHandlers();
+  let daemonChild: ChildProcess | null = null;
+  let renderer: ChildProcess | null = null;
+  let electron: ChildProcess | null = null;
   let daemonOwned = false;
   try {
+    await assertDesktopLaunchedByHost(config);
+    shutdown.signal.throwIfAborted();
+    await prepareRuntime(config);
+    const { waitForRecordingRuntime } = await import("./readiness.js");
+    await writeDesktopSettings(config.paths.electronUserData);
     let lock = await readPidLock(config.paths.pidLock);
     if (lock && processIsRunning(lock.pid)) {
       authorizeOwnedDaemon(config, lock);
       await assertSupervisorOwnedByHost(config, lock.pid);
     } else {
       const cliPath = fileURLToPath(new URL("./cli.js", import.meta.url));
-      const daemon = spawn(process.execPath, [cliPath, "daemon"], {
+      daemonChild = spawn(process.execPath, [cliPath, "daemon"], {
         cwd: REPOSITORY_ROOT,
         env: config.environment,
         stdio: "inherit",
+        detached: true,
       });
-      owned.push(daemon);
       daemonOwned = true;
-      lock = await waitForDaemon(config, daemon);
+      lock = await waitForDaemon(config, daemonChild, shutdown.signal);
       await assertSupervisorOwnedByHost(config, lock.pid);
     }
 
-    const recorder = await waitForRecordingRuntime(config);
+    const recorder = await waitForRecordingRuntime(config, { signal: shutdown.signal });
     process.stdout.write(
       `Meetless production recorder instance ${recorder.runtime.instanceId} answered authoritative status: ${recorder.status.status}.\n`,
     );
@@ -52,7 +56,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
     const rendererUrl = buildRendererUrl(config);
     if (!process.env.MEETLESS_RENDERER_URL) {
       const appPort = new URL(config.rendererOrigin).port;
-      const renderer = spawn(
+      renderer = spawn(
         "npm",
         ["run", "start:web", "--workspace=@meetless/app", "--", "--port", appPort],
         {
@@ -65,13 +69,12 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
           stdio: "inherit",
         },
       );
-      owned.push(renderer);
-      await waitForHttp(config.rendererOrigin, renderer);
+      await waitForHttp(config.rendererOrigin, renderer, shutdown.signal);
     }
 
     const electronCli = fileURLToPath(import.meta.resolve("electron/cli.js"));
     const bootstrap = path.join(REPOSITORY_ROOT, "scripts/electron-bootstrap.mjs");
-    const electron = spawn(process.execPath, [electronCli, bootstrap], {
+    electron = spawn(process.execPath, [electronCli, bootstrap], {
       cwd: REPOSITORY_ROOT,
       env: {
         ...config.environment,
@@ -80,21 +83,31 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
       },
       stdio: "inherit",
     });
-    owned.push(electron);
-    const result = await waitForExit(electron);
+    const result = await Promise.race([waitForExit(electron), waitForShutdown(shutdown.signal)]);
     return result.code ?? (result.signal ? 1 : 0);
   } finally {
+    shutdown.dispose();
+    await terminateChild(electron, 5_000);
+    await terminateChild(renderer, 5_000);
     if (daemonOwned) {
       const lock = await readPidLock(config.paths.pidLock).catch(() => null);
       if (lock && processIsRunning(lock.pid)) {
         authorizeOwnedDaemon(config, lock);
         process.kill(lock.pid, "SIGTERM");
+        const released = await waitForRuntimeRelease(config, lock.pid, 15_000);
+        if (!released && daemonChild?.pid) {
+          try { process.kill(-daemonChild.pid, "SIGKILL"); } catch { /* already exited */ }
+          await waitForRuntimeRelease(config, lock.pid, 5_000);
+        }
       }
     }
-    for (const child of [...owned].reverse()) {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    await waitForExit(daemonChild, 1_000).catch(() => undefined);
+    if (daemonOwned && !(await runtimeReleased(config))) {
+      throw new Error(
+        `MeetlessHost shutdown failed closed: owned runtime still holds ${config.listen} or ${config.paths.recordingSocket}. ` +
+        "Authority: docs/plans/active/v1-paseo-foundation.md. Inspect the repo-owned process tree before retrying.",
+      );
     }
-    await Promise.all(owned.map((child) => waitForExit(child, 8_000).catch(() => undefined)));
   }
 }
 
@@ -122,9 +135,10 @@ async function writeDesktopSettings(userData: string): Promise<void> {
   );
 }
 
-async function waitForDaemon(config: RuntimeConfig, child: ChildProcess): Promise<NonNullable<Awaited<ReturnType<typeof readPidLock>>>> {
+async function waitForDaemon(config: RuntimeConfig, child: ChildProcess, signal: AbortSignal): Promise<NonNullable<Awaited<ReturnType<typeof readPidLock>>>> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
+    signal.throwIfAborted();
     if (child.exitCode !== null) throw new Error(`Meetless daemon exited during startup (${child.exitCode})`);
     const lock = await readPidLock(config.paths.pidLock).catch(() => null);
     if (lock?.listen === config.listen && processIsRunning(lock.pid)) return lock;
@@ -133,12 +147,13 @@ async function waitForDaemon(config: RuntimeConfig, child: ChildProcess): Promis
   throw new Error(`Timed out starting isolated Meetless daemon at ${config.listen}`);
 }
 
-async function waitForHttp(origin: string, child: ChildProcess): Promise<void> {
+async function waitForHttp(origin: string, child: ChildProcess, signal: AbortSignal): Promise<void> {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
+    signal.throwIfAborted();
     if (child.exitCode !== null) throw new Error(`Meetless renderer exited during startup (${child.exitCode})`);
     try {
-      const response = await fetch(origin);
+      const response = await fetch(origin, { signal });
       if (response.ok) return;
     } catch {
       // Expo has not bound its HTTP listener yet.
@@ -149,9 +164,10 @@ async function waitForHttp(origin: string, child: ChildProcess): Promise<void> {
 }
 
 async function waitForExit(
-  child: ChildProcess,
+  child: ChildProcess | null,
   timeoutMs?: number,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  if (!child) return { code: 0, signal: null };
   if (child.exitCode !== null || child.signalCode !== null) {
     return { code: child.exitCode, signal: child.signalCode };
   }
@@ -164,6 +180,55 @@ async function waitForExit(
       resolve({ code, signal });
     });
   });
+}
+
+function installShutdownHandlers(): { signal: AbortSignal; dispose(): void } {
+  const controller = new AbortController();
+  const handlers = new Map<NodeJS.Signals, () => void>();
+  for (const name of ["SIGTERM", "SIGINT"] as const) {
+    const handler = () => controller.abort(new Error(`Meetless desktop received ${name}`));
+    handlers.set(name, handler);
+    process.once(name, handler);
+  }
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      for (const [name, handler] of handlers) process.off(name, handler);
+    },
+  };
+}
+
+function waitForShutdown(signal: AbortSignal): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  return new Promise((resolve) => {
+    const finish = () => resolve({ code: 0, signal: null });
+    if (signal.aborted) finish();
+    else signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
+async function terminateChild(child: ChildProcess | null, timeoutMs: number): Promise<void> {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  if (await waitForExit(child, timeoutMs).then(() => true, () => false)) return;
+  child.kill("SIGKILL");
+  await waitForExit(child, 2_000).catch(() => undefined);
+}
+
+async function waitForRuntimeRelease(config: RuntimeConfig, pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!processIsRunning(pid) && await runtimeReleased(config)) return true;
+    await delay(100);
+  }
+  return !processIsRunning(pid) && await runtimeReleased(config);
+}
+
+async function runtimeReleased(config: RuntimeConfig): Promise<boolean> {
+  const socketExists = await stat(config.paths.recordingSocket).then(() => true, () => false);
+  const port = config.listen.slice(config.listen.lastIndexOf(":") + 1);
+  const listener = spawnSync("lsof", ["-nP", "-iTCP:" + port, "-sTCP:LISTEN", "-Fp"], { encoding: "utf8" });
+  const listenerExists = listener.status === 0 && listener.stdout.trim().length > 0;
+  return !socketExists && !listenerExists;
 }
 
 function delay(ms: number): Promise<void> {
