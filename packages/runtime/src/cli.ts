@@ -32,6 +32,20 @@ async function main(): Promise<void> {
     process.exitCode = await runMeetlessDesktop(config);
     return;
   }
+  if (command === "preowner") {
+    const {
+      assertPreOwnerRecordingReady,
+      inspectRuntimeReadiness,
+      prepareCollisionEvidence,
+      waitForRecordingRuntime,
+    } = await import("./readiness.js");
+    const status = await waitForRecordingRuntime(config, { timeoutMs: 10_000 });
+    const inspected = await inspectRuntimeReadiness(config, status);
+    assertPreOwnerRecordingReady(inspected);
+    const report = await prepareCollisionEvidence(config, inspected);
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    return;
+  }
   const lock = await readPidLock(config.paths.pidLock);
   if (command === "status") {
     process.stdout.write(

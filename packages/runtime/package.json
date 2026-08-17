@@ -10,5 +10,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run test"
   },
-  "dependencies": { "zod": "^4.4.3" }
+  "dependencies": {
+    "@meetless/client": "0.1.0",
+    "@meetless/meeting-contracts": "0.1.0",
+    "ws": "^8.20.0",
+    "zod": "^4.4.3"
+  }
 }

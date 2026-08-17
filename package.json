@@ -33,6 +33,7 @@
     "runtime:web": "npm run start:web --workspace=@meetless/app -- --port 8082",
     "runtime:status": "node packages/runtime/dist/cli.js status",
     "runtime:stop": "node packages/runtime/dist/cli.js stop",
+    "runtime:preowner": "node packages/runtime/dist/cli.js preowner",
     "proof:m1": "node scripts/prove-m1.mjs",
     "proof:m2": "npm run build:native && npm run build:meetless && node scripts/prove-m2.mjs"
   },

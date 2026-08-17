@@ -20,6 +20,7 @@ export function buildRendererUrl(config: RuntimeConfig): string {
 
 export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number> {
   await prepareRuntime(config);
+  const { waitForRecordingRuntime } = await import("./readiness.js");
   await writeDesktopSettings(config.paths.electronUserData);
   const owned: ChildProcess[] = [];
   let daemonOwned = false;
@@ -38,6 +39,11 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
       daemonOwned = true;
       lock = await waitForDaemon(config, daemon);
     }
+
+    const recorder = await waitForRecordingRuntime(config);
+    process.stdout.write(
+      `Meetless production recorder answered authoritative status: ${recorder.status}.\n`,
+    );
 
     const rendererUrl = buildRendererUrl(config);
     if (!process.env.MEETLESS_RENDERER_URL) {

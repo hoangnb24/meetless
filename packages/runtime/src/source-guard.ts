@@ -6,6 +6,7 @@ export const ISOLATION_AUTHORITY = "docs/plans/active/v1-paseo-foundation.md";
 
 export function assertLauncherOrdering(input: {
   daemonLauncher: string;
+  desktopLauncher: string;
   electronBootstrap: string;
 }): void {
   requireOrder(
@@ -13,6 +14,14 @@ export function assertLauncherOrdering(input: {
     ["await prepareRuntime(config)", "Object.assign(process.env, config.environment)", "await import("],
     "daemon launcher",
   );
+  requireOrder(
+    input.desktopLauncher,
+    ['await prepareRuntime(config)', 'await import("./readiness.js")'],
+    "desktop readiness launcher",
+  );
+  if (/^import\s+.*["']\.\/readiness\.js["']/mu.test(input.desktopLauncher)) {
+    fail("desktop readiness statically imports the Paseo client before runtime preparation");
+  }
   requireOrder(
     input.electronBootstrap,
     ['app.setPath("userData", userData)', "await import("],
@@ -50,11 +59,12 @@ async function main(): Promise<void> {
   const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
   const repositoryRoot = path.resolve(moduleDirectory, "../../..");
   const daemonLauncher = await readFile(path.join(repositoryRoot, "packages/runtime/src/cli.ts"), "utf8");
+  const desktopLauncher = await readFile(path.join(repositoryRoot, "packages/runtime/src/desktop.ts"), "utf8");
   const electronBootstrap = await readFile(
     path.join(repositoryRoot, "scripts/electron-bootstrap.mjs"),
     "utf8",
   );
-  assertLauncherOrdering({ daemonLauncher, electronBootstrap });
+  assertLauncherOrdering({ daemonLauncher, desktopLauncher, electronBootstrap });
   process.stdout.write(`Meetless launcher ordering satisfies ${ISOLATION_AUTHORITY}.\n`);
 }
 
