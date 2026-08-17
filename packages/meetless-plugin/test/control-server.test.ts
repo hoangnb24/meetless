@@ -5,6 +5,7 @@ import WebSocket, { type RawData } from "ws";
 import { RecordingControlResponseSchema } from "@meetless/meeting-contracts";
 import { RecordingControlServer } from "../src/control-server.js";
 import { RecordingService } from "../src/recording-service.js";
+import { RecordingRuntimeReadinessResponseSchema } from "../src/readiness-protocol.js";
 
 let root: string | null = null;
 let server: RecordingControlServer | null = null;
@@ -56,6 +57,21 @@ describe("private desktop recording control", () => {
     const reconnected = await command(second, "status");
     expect(reconnected.status.status).toBe("recording");
     expect(reconnected.status.chunks.length).toBeGreaterThanOrEqual(2);
+    const runtimeStatus = await readinessCommand(second, "status");
+    const repeatedStatus = await readinessCommand(second, "status");
+    expect(repeatedStatus.runtime.instanceId).toBe(runtimeStatus.runtime.instanceId);
+    expect(runtimeStatus.runtime).toMatchObject({
+      pluginPid: process.pid,
+      socketPath,
+      capture: { mode: "fixture", helperPid: expect.any(Number), arguments: ["--fixture"] },
+      export: { root: path.join(root, "exports"), fixtureStampApplied: false },
+    });
+    const collision = await readinessCommand(second, "prepareCollision");
+    expect(collision.collision).toMatchObject({
+      recordingId: reconnected.status.recordingId,
+      runtimeInstanceId: runtimeStatus.runtime.instanceId,
+      exportRoot: path.join(root, "exports"),
+    });
     const stopped = await command(second, "stop");
     expect(stopped.status.status).toBe("saved");
     second.close();
@@ -66,6 +82,22 @@ async function connect(socketPath: string): Promise<WebSocket> {
   const socket = new WebSocket(`ws+unix://${socketPath}:/ws`);
   await new Promise<void>((resolve, reject) => { socket.once("open", resolve); socket.once("error", reject); });
   return socket;
+}
+
+async function readinessCommand(socket: WebSocket, operation: "status" | "prepareCollision" | "validateCollision") {
+  const requestId = `${operation}-${Date.now()}-${Math.random()}`;
+  const response = new Promise<unknown>((resolve, reject) => {
+    const listener = (data: RawData) => {
+      try {
+        const decoded = JSON.parse(data.toString()) as { requestId?: string };
+        if (decoded.requestId !== requestId) return;
+        socket.off("message", listener); resolve(decoded);
+      } catch (error) { reject(error); }
+    };
+    socket.on("message", listener);
+  });
+  socket.send(JSON.stringify({ version: 1, requestId, command: "runtime.readiness", operation }));
+  return RecordingRuntimeReadinessResponseSchema.parse(await response);
 }
 
 async function command(socket: WebSocket, name: string, extra: Record<string, unknown> = {}) {

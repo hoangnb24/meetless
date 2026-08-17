@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, link, mkdir, open, readFile, rm, stat } from "node:fs/promises";
+import { access, link, mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { CommittedRecordingChunk, OutputIdentity } from "@meetless/meeting-domain";
@@ -81,6 +81,45 @@ export class Mp3Finalizer {
       try { await access(candidate); } catch { return candidate; }
     }
     throw new Error("Could not allocate a collision-safe recording filename");
+  }
+
+  async prepareCollisionEvidence(input: {
+    recordingId: string;
+    runtimeInstanceId: string;
+    now: Date;
+  }): Promise<{
+    path: string;
+    byteLength: number;
+    sha256: string;
+    plannedPublishedPath: string;
+    recordingId: string;
+    runtimeInstanceId: string;
+    exportRoot: string;
+    exportStamp: string;
+    preparedAt: string;
+    validUntil: null;
+  }> {
+    const collisionPath = await this.nextDestination(input.now);
+    const preparedAt = new Date().toISOString();
+    const contents = Buffer.from(
+      `Meetless pre-owner collision sentinel\nrecording=${input.recordingId}\nruntime=${input.runtimeInstanceId}\nexportStamp=${input.now.toISOString()}\nprepared=${preparedAt}\n`,
+    );
+    await writeFile(collisionPath, contents, { flag: "wx", mode: 0o600 });
+    const handle = await open(collisionPath, "r");
+    try { await handle.sync(); } finally { await handle.close(); }
+    await syncDirectory(this.config.exportRoot);
+    const identity = await fileIdentity(collisionPath);
+    return {
+      path: collisionPath,
+      ...identity,
+      plannedPublishedPath: await this.nextDestination(input.now),
+      recordingId: input.recordingId,
+      runtimeInstanceId: input.runtimeInstanceId,
+      exportRoot: this.config.exportRoot,
+      exportStamp: input.now.toISOString(),
+      preparedAt,
+      validUntil: null,
+    };
   }
 
   private resolveChunk(chunk: CommittedRecordingChunk): { path: string } {

@@ -9,6 +9,7 @@
   "include": ["src/**/*.ts"],
   "references": [
     { "path": "../meeting-contracts" },
-    { "path": "../meetless-client" }
+    { "path": "../meetless-client" },
+    { "path": "../meetless-plugin" }
   ]
 }

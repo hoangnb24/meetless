@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { access } from "node:fs/promises";
 import path from "node:path";
 import { MeetingStore } from "@meetless/meeting-store";
-import { access } from "node:fs/promises";
 import { RecordingService } from "./recording-service.js";
 import { RecordingControlServer } from "./control-server.js";
 
@@ -37,13 +38,19 @@ async function startRecordingRuntimeOnce(): Promise<void> {
   const socketPath = requiredAbsolute("MEETLESS_RECORDING_SOCKET");
   await Promise.all([access(helperPath), access(ffmpeg), access(ffprobe)]);
   const fixedStamp = process.env.MEETLESS_FIXTURE_EXPORT_STAMP?.trim();
+  const fixture = process.env.MEETLESS_CAPTURE_MODE === "fixture";
+  const fixtureExportNow = resolveFixtureExportNow(fixture, fixedStamp);
   const service = new RecordingService({
     storeRoot, helperPath, ffmpeg, ffprobe, exportRoot,
-    fixture: process.env.MEETLESS_CAPTURE_MODE === "fixture",
-    exportNow: fixedStamp ? () => new Date(fixedStamp) : undefined,
+    fixture,
+    exportNow: fixtureExportNow,
+    fixtureStampApplied: fixtureExportNow !== undefined,
     failFinalizationOnce: process.env.MEETLESS_FIXTURE_FAIL_FINALIZATION_ONCE === "1",
   }, getMeetingStore());
-  const server = new RecordingControlServer(socketPath, service);
+  const server = new RecordingControlServer(socketPath, service, {
+    instanceId: randomUUID(),
+    startedAt: new Date().toISOString(),
+  });
   await service.initialize();
   await server.start();
   recordingService = service;
@@ -58,6 +65,10 @@ export async function stopRecordingRuntime(): Promise<void> {
 }
 
 export function recordingRuntimeForTest(): RecordingService | null { return recordingService; }
+
+export function resolveFixtureExportNow(fixture: boolean, fixedStamp: string | undefined): (() => Date) | undefined {
+  return fixture && fixedStamp ? () => new Date(fixedStamp) : undefined;
+}
 
 function requiredAbsolute(name: string): string {
   const value = process.env[name]?.trim();

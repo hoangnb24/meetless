@@ -42,7 +42,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
 
     const recorder = await waitForRecordingRuntime(config);
     process.stdout.write(
-      `Meetless production recorder answered authoritative status: ${recorder.status}.\n`,
+      `Meetless production recorder instance ${recorder.runtime.instanceId} answered authoritative status: ${recorder.status.status}.\n`,
     );
 
     const rendererUrl = buildRendererUrl(config);

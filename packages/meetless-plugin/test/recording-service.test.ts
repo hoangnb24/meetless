@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { promisify } from "node:util";
 import { MeetingStore } from "@meetless/meeting-store";
 import { RecordingService } from "../src/recording-service.js";
+import { resolveFixtureExportNow } from "../src/server.js";
 
 const roots = new Set<string>();
 const services = new Set<RecordingService>();
@@ -35,6 +36,48 @@ afterEach(async () => {
 });
 
 describe("daemon recording service", () => {
+  test("production ignores fixture export stamps", () => {
+    expect(resolveFixtureExportNow(false, "2026-08-17T12:00:00+07:00")).toBeUndefined();
+    expect(resolveFixtureExportNow(true, "2026-08-17T12:00:00+07:00")?.().toISOString())
+      .toBe("2026-08-17T05:00:00.000Z");
+  });
+
+  test("binds prepared collision evidence to stop across an hour boundary", async () => {
+    const config = await fixtureConfig({ exportNow: () => new Date("2026-08-17T15:01:00+07:00") });
+    const service = new RecordingService(config); services.add(service); await service.initialize();
+    await service.execute({ version: 1, requestId: "start", command: "start", title: "Boundary fixture" });
+    await waitFor(async () => (await service.status()).chunks.length >= 2);
+
+    const runtimeInstanceId = "ae988264-f028-4700-b2b3-afac8e4ce53a";
+    const prepared = await service.prepareCollisionEvidence(
+      runtimeInstanceId,
+      new Date("2026-08-17T14:59:59+07:00"),
+    );
+    expect(prepared.path).toBe(path.join(config.exportRoot, "14-17-08-26.mp3"));
+    expect(prepared.plannedPublishedPath).toBe(path.join(config.exportRoot, "14-17-08-26-2.mp3"));
+
+    const saved = await service.execute({ version: 1, requestId: "stop", command: "stop" });
+    expect(saved.outputPath).toBe(prepared.plannedPublishedPath);
+    expect(await readFile(prepared.path, "utf8")).toContain(`runtime=${runtimeInstanceId}`);
+  }, 30_000);
+
+  test("revalidates a prepared target immediately before stop and keeps capture live on collision", async () => {
+    const config = await fixtureConfig();
+    const service = new RecordingService(config); services.add(service); await service.initialize();
+    await service.execute({ version: 1, requestId: "start", command: "start", title: "Revalidation fixture" });
+    await waitFor(async () => (await service.status()).chunks.length >= 2);
+    const prepared = await service.prepareCollisionEvidence(
+      "fe461197-64e4-4399-9317-da0d4484d35e",
+      new Date("2026-08-17T12:00:00+07:00"),
+    );
+    await writeFile(prepared.plannedPublishedPath, "late collision", { flag: "wx" });
+
+    await expect(service.execute({ version: 1, requestId: "stop", command: "stop" }))
+      .rejects.toThrow(/no longer collision-safe.*runtime:preowner/u);
+    expect(await service.status()).toMatchObject({ status: "recording", recordingId: prepared.recordingId });
+    expect(service.helperRuntime().pid).toEqual(expect.any(Number));
+  }, 30_000);
+
   test("serializes pause/resume, preserves collision bytes, publishes a playable MP3, then cleans chunks", async () => {
     const config = await fixtureConfig();
     const collision = path.join(config.exportRoot, "12-17-08-26.mp3");

@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./readiness-protocol": {
+      "types": "./dist/src/readiness-protocol.d.ts",
+      "default": "./dist/src/readiness-protocol.js"
+    }
+  },
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -p tsconfig.json --noEmit",

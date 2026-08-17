@@ -7,6 +7,7 @@ import type { RecordingControlRequest, RecordingStatusWire } from "@meetless/mee
 import { CaptureHelper } from "./capture-helper.js";
 import { fileIdentity, Mp3Finalizer } from "./finalizer.js";
 import { validateCommittedWavChunk } from "./chunk-validator.js";
+import type { CollisionEvidence } from "./readiness-protocol.js";
 
 export interface RecordingServiceConfig {
   storeRoot: string;
@@ -15,7 +16,9 @@ export interface RecordingServiceConfig {
   ffprobe: string;
   exportRoot: string;
   fixture: boolean;
+  helperArguments?: string[];
   exportNow?: () => Date;
+  fixtureStampApplied?: boolean;
   failFinalizationOnce?: boolean;
 }
 
@@ -27,6 +30,7 @@ export class RecordingService {
   private readonly listeners = new Set<(status: RecordingStatusWire) => void>();
   private failFinalizationOnce: boolean;
   private shuttingDown = false;
+  private preparedCollision: CollisionEvidence | null = null;
 
   constructor(readonly config: RecordingServiceConfig, store?: MeetingStore) {
     this.store = store ?? new MeetingStore({ root: config.storeRoot });
@@ -88,6 +92,41 @@ export class RecordingService {
     this.helper = null;
   }
 
+  helperRuntime(): { pid: number | null; executable: string; arguments: string[] } {
+    return {
+      pid: this.helper?.pid ?? null,
+      executable: this.helper?.executable ?? this.config.helperPath,
+      arguments: [...(this.helper?.arguments ?? this.config.helperArguments ?? (this.config.fixture ? ["--fixture"] : []))],
+    };
+  }
+
+  prepareCollisionEvidence(runtimeInstanceId: string, now = this.config.exportNow?.() ?? new Date()): Promise<CollisionEvidence> {
+    return this.serialize(async () => {
+      const recording = await this.requireCurrent("recording");
+      if (!this.helper) throw new Error("Capture helper is unavailable");
+      if (
+        this.preparedCollision?.recordingId === recording.id &&
+        this.preparedCollision.runtimeInstanceId === runtimeInstanceId
+      ) {
+        await this.validatePreparedCollision(recording.id, runtimeInstanceId);
+        return this.preparedCollision;
+      }
+      this.preparedCollision = await this.finalizer.prepareCollisionEvidence({
+        recordingId: recording.id,
+        runtimeInstanceId,
+        now,
+      });
+      return this.preparedCollision;
+    });
+  }
+
+  validateCollisionEvidence(runtimeInstanceId: string): Promise<CollisionEvidence> {
+    return this.serialize(async () => {
+      const recording = await this.requireCurrent("recording");
+      return this.validatePreparedCollision(recording.id, runtimeInstanceId);
+    });
+  }
+
   private async start(title: string): Promise<void> {
     if (this.helper) throw new Error("A capture helper is already supervised");
     const unresolved = unresolvedRecordings(await this.store.listRecordings());
@@ -105,6 +144,7 @@ export class RecordingService {
       sessionDirectory,
       storeRoot: this.config.storeRoot,
       fixture: this.config.fixture,
+      arguments: this.config.helperArguments,
       onChunk: (chunk) => this.store.commitChunk(recording.id, chunk).then(() => this.emitStatus()),
       onFailure: (reason) => this.handleHelperFailure(recording.id, reason),
       onDiagnostic: (line) => process.stderr.write(`[meetless-capture] ${line}\n`),
@@ -137,10 +177,14 @@ export class RecordingService {
   private async stop(): Promise<void> {
     const recording = await this.requireCurrent("recording");
     if (!this.helper) throw new Error("Capture helper is unavailable");
+    const prepared = this.preparedCollision
+      ? await this.validatePreparedCollision(recording.id, this.preparedCollision.runtimeInstanceId)
+      : null;
     await this.helper.stop();
     this.helper = null;
     const closed = await this.findRecording(recording.id);
-    await this.stageBeginAndPublish(closed);
+    await this.stageBeginAndPublish(closed, prepared?.plannedPublishedPath);
+    this.preparedCollision = null;
   }
 
   private async retryFinalization(): Promise<void> {
@@ -159,9 +203,9 @@ export class RecordingService {
     await this.publishOutput(recording.id, staged.stagePath);
   }
 
-  private async stageBeginAndPublish(recording: RecordingSession): Promise<void> {
+  private async stageBeginAndPublish(recording: RecordingSession, preparedDestination?: string): Promise<void> {
     const staged = await this.finalizer.stage(recording.id, recording.chunks);
-    const destination = await this.finalizer.nextDestination(this.config.exportNow?.() ?? new Date());
+    const destination = preparedDestination ?? await this.finalizer.nextDestination(this.config.exportNow?.() ?? new Date());
     const digest = chunkSetDigest(recording.chunks);
     await this.store.beginFinalization(recording.id, {
       openChunksDurablyClosed: true,
@@ -293,6 +337,24 @@ export class RecordingService {
       recoverable: interrupted.chunks.length > 0,
       reason: interrupted.chunks.length > 0 ? undefined : "No readable committed chunks survived",
     });
+  }
+
+  private async validatePreparedCollision(recordingId: string, runtimeInstanceId: string): Promise<CollisionEvidence> {
+    const prepared = this.preparedCollision;
+    if (!prepared) throw new Error("Collision evidence has not been prepared by this recording runtime");
+    if (prepared.recordingId !== recordingId || prepared.runtimeInstanceId !== runtimeInstanceId) {
+      throw new Error("Collision evidence is bound to a different recording runtime or session");
+    }
+    if (path.resolve(prepared.exportRoot) !== path.resolve(this.config.exportRoot)) {
+      throw new Error("Collision evidence export root no longer matches daemon configuration");
+    }
+    const identity = await fileIdentity(prepared.path);
+    if (!sameIdentity(identity, prepared)) throw new Error("Collision sentinel identity changed");
+    const next = await this.finalizer.nextDestination(new Date(prepared.exportStamp));
+    if (next !== prepared.plannedPublishedPath) {
+      throw new Error("Prepared publication target is no longer collision-safe; rerun npm run runtime:preowner");
+    }
+    return prepared;
   }
 
   private async requireCurrent(...statuses: RecordingSession["status"][]): Promise<RecordingSession> {

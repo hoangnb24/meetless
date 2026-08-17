@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { chmod, mkdir, rm } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod, mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import {
@@ -8,6 +9,12 @@ import {
   RecordingStatusEventSchema,
 } from "@meetless/meeting-contracts";
 import type { RecordingService } from "./recording-service.js";
+import {
+  RecordingRuntimeReadinessRequestSchema,
+  RecordingRuntimeReadinessResponseSchema,
+  type CollisionEvidence,
+  type RecordingRuntimeReadinessRequest,
+} from "./readiness-protocol.js";
 
 export class RecordingControlServer {
   private readonly http = createServer();
@@ -15,7 +22,11 @@ export class RecordingControlServer {
   private readonly clients = new Set<WebSocket>();
   private unsubscribe: (() => void) | null = null;
 
-  constructor(private readonly socketPath: string, private readonly service: RecordingService) {
+  constructor(
+    private readonly socketPath: string,
+    private readonly service: RecordingService,
+    private readonly identity = { instanceId: randomUUID(), startedAt: new Date().toISOString() },
+  ) {
     this.http.on("upgrade", (request, socket, head) => {
       if (request.url !== "/ws") { socket.destroy(); return; }
       this.websocket.handleUpgrade(request, socket, head, (client) => this.websocket.emit("connection", client, request));
@@ -71,6 +82,11 @@ export class RecordingControlServer {
     try {
       const decoded: unknown = JSON.parse(raw);
       if (decoded && typeof decoded === "object" && "requestId" in decoded && typeof decoded.requestId === "string") requestId = decoded.requestId;
+      const readiness = RecordingRuntimeReadinessRequestSchema.safeParse(decoded);
+      if (readiness.success) {
+        await this.handleReadiness(client, readiness.data);
+        return;
+      }
       const request = RecordingControlRequestSchema.parse(decoded);
       const status = await this.service.execute(request);
       this.send(client, RecordingControlResponseSchema.parse({ version: 1, requestId: request.requestId, ok: true, status, error: null }));
@@ -80,6 +96,71 @@ export class RecordingControlServer {
         version: 1, requestId, ok: false, status, error: error instanceof Error ? error.message : String(error),
       }));
     }
+  }
+
+  private async handleReadiness(client: WebSocket, request: RecordingRuntimeReadinessRequest): Promise<void> {
+    let collision: CollisionEvidence | null = null;
+    try {
+      if (request.operation === "prepareCollision") {
+        collision = await this.service.prepareCollisionEvidence(this.identity.instanceId);
+      } else if (request.operation === "validateCollision") {
+        collision = await this.service.validateCollisionEvidence(this.identity.instanceId);
+      }
+      this.send(client, RecordingRuntimeReadinessResponseSchema.parse({
+        version: 1,
+        type: "recording.runtime.readiness",
+        requestId: request.requestId,
+        ok: true,
+        runtime: await this.runtimeIdentity(),
+        status: await this.service.status(),
+        collision,
+        error: null,
+      }));
+    } catch (error) {
+      this.send(client, RecordingRuntimeReadinessResponseSchema.parse({
+        version: 1,
+        type: "recording.runtime.readiness",
+        requestId: request.requestId,
+        ok: false,
+        runtime: await this.runtimeIdentity(),
+        status: await this.service.status(),
+        collision: null,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+
+  private async runtimeIdentity() {
+    const [socketInfo, configuredInfo, helperBytes, helperRealPath] = await Promise.all([
+      stat(this.socketPath),
+      stat(this.service.config.helperPath),
+      readFile(this.service.config.helperPath),
+      realpath(this.service.config.helperPath),
+    ]);
+    const helper = this.service.helperRuntime();
+    return {
+      ...this.identity,
+      pluginPid: process.pid,
+      socketPath: this.socketPath,
+      socketIdentity: { device: socketInfo.dev, inode: socketInfo.ino },
+      capture: {
+        mode: this.service.config.fixture ? "fixture" as const : "production" as const,
+        executable: {
+          configuredPath: this.service.config.helperPath,
+          realPath: helperRealPath,
+          device: configuredInfo.dev,
+          inode: configuredInfo.ino,
+          byteLength: configuredInfo.size,
+          sha256: createHash("sha256").update(helperBytes).digest("hex"),
+        },
+        arguments: helper.arguments,
+        helperPid: helper.pid,
+      },
+      export: {
+        root: this.service.config.exportRoot,
+        fixtureStampApplied: this.service.config.fixtureStampApplied === true,
+      },
+    };
   }
 
   private send(client: WebSocket, value: unknown): void {

@@ -44,10 +44,14 @@ export class CaptureHelper {
   constructor(private readonly options: CaptureHelperOptions) {}
 
   get pid(): number | null { return this.child?.pid ?? null; }
+  get executable(): string { return this.options.executable; }
+  get arguments(): readonly string[] {
+    return this.options.arguments ?? (this.options.fixture ? ["--fixture"] : []);
+  }
 
   async start(): Promise<void> {
     if (this.child) throw new Error("Capture helper is already running");
-    const child = spawn(this.options.executable, this.options.arguments ?? (this.options.fixture ? ["--fixture"] : []), {
+    const child = spawn(this.options.executable, this.arguments, {
       stdio: ["pipe", "pipe", "pipe"],
       env: { PATH: process.env.PATH },
     });
