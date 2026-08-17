@@ -81,6 +81,7 @@ export class CaptureHelper {
     this.expectedExit = true;
     await this.commandAndWait("stopped", { version: 1, command: "stop" });
     await this.waitForExit(3_000);
+    await this.drainEvents();
   }
 
   async terminate(): Promise<void> {
@@ -88,11 +89,12 @@ export class CaptureHelper {
     if (!child) return;
     this.expectedExit = true;
     child.stdin.end();
-    if (await this.waitForExit(3_000)) return;
+    if (await this.waitForExit(3_000)) { await this.drainEvents(); return; }
     child.kill("SIGTERM");
-    if (await this.waitForExit(2_000)) return;
+    if (await this.waitForExit(2_000)) { await this.drainEvents(); return; }
     child.kill("SIGKILL");
     await this.waitForExit(2_000);
+    await this.drainEvents();
   }
 
   private commandAndWait(event: string, command: Record<string, unknown>): Promise<void> {
@@ -163,6 +165,10 @@ export class CaptureHelper {
       const timer = setTimeout(() => resolve(false), timeoutMs);
       child.once("close", () => { clearTimeout(timer); resolve(true); });
     });
+  }
+
+  private async drainEvents(): Promise<void> {
+    await this.eventTail;
   }
 }
 

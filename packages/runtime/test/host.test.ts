@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
 import { resolveRuntimeConfig } from "../src/config.js";
+import { HostOwnedRuntimeShutdown } from "../src/desktop.js";
 import {
   assertDesktopLaunchedByHost,
   assertInstalledHostIdentity,
@@ -109,8 +111,11 @@ describe("Meetless-owned production host invariant", () => {
     expect(joined).not.toMatch(/tccutil|com\.apple\.TCC|TCC\.db|\/Applications\/Paseo\.app|com\.paseo/u);
     expect(await readFile("scripts/launch-macos-host.mjs", "utf8")).toMatch(/execFileAsync\("open"/u);
     expect(await readFile("scripts/launch-macos-host.mjs", "utf8")).not.toMatch(/Contents\/MacOS/u);
-    expect(await readFile("scripts/install-macos-host.mjs", "utf8"))
-      .toMatch(/Refusing to install or replace.*exact MeetlessHost is live/su);
+    const installer = await readFile("scripts/install-macos-host.mjs", "utf8");
+    expect(installer).toContain("/usr/bin/lockf");
+    expect(installer).toContain("MEETLESS_HOST_INSTALL_LOCK_HELD");
+    expect(await readFile("native/macos-host/MeetlessHost.swift", "utf8"))
+      .toMatch(/flock\(lockDescriptor, LOCK_EX \| LOCK_NB\)/u);
     const plist = await readFile("native/macos-host/Info.plist", "utf8");
     expect(plist).toMatch(/<key>CFBundleIdentifier<\/key>\s*<string>com\.meetless\.app<\/string>/u);
     expect(plist).toMatch(/<key>LSMinimumSystemVersion<\/key>\s*<string>15\.0<\/string>/u);
@@ -120,6 +125,53 @@ describe("Meetless-owned production host invariant", () => {
       "NSAudioCaptureUsageDescription",
     ]) {
       expect(plist).toMatch(new RegExp(`<key>${key}<\\/key>\\s*<string>[^<]+<\\/string>`, "u"));
+    }
+  });
+
+  test("central shutdown owns pre-lock and full-UI process groups and rejects inspection failure", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-owned-shutdown-"));
+    const config = resolveRuntimeConfig({ runtimeRoot: root, rendererOrigin: "http://127.0.0.1:18082" });
+    const running = new Map([[101, true], [102, true], [103, true]]);
+    const signaled: Array<[number, NodeJS.Signals]> = [];
+    const inspection = {
+      signalGroup: (pgid: number, signal: NodeJS.Signals) => { signaled.push([pgid, signal]); running.set(pgid, false); },
+      groupRunning: (pgid: number) => running.get(pgid) === true,
+      listenerExists: () => false,
+      socketExists: async () => false,
+      delay: async () => undefined,
+    };
+    const owner = new HostOwnedRuntimeShutdown(config, inspection);
+    const daemon = fakeChild(101, () => running.set(101, false));
+    try {
+      await owner.track("daemon", daemon);
+      await owner.track("renderer", fakeChild(102));
+      await owner.track("electron", fakeChild(103));
+      await owner.shutdown({ daemonChild: daemon, daemonOwned: true });
+      expect(running).toEqual(new Map([[101, false], [102, false], [103, false]]));
+      expect(signaled).toEqual(expect.arrayContaining([
+        [101, "SIGTERM"],
+        [102, "SIGTERM"],
+        [103, "SIGTERM"],
+      ]));
+    } finally {
+      owner.signals.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+
+    const failedRoot = await mkdtemp(path.join(tmpdir(), "meetless-shutdown-inspection-"));
+    const failedOwner = new HostOwnedRuntimeShutdown(
+      resolveRuntimeConfig({ runtimeRoot: failedRoot, rendererOrigin: "http://127.0.0.1:18083" }),
+      {
+        ...inspection,
+        listenerExists: () => { throw new Error("injected lsof failure"); },
+      },
+    );
+    try {
+      await expect(failedOwner.shutdown({ daemonChild: null, daemonOwned: false }))
+        .rejects.toThrow(/failed closed.*injected lsof failure.*Authority/s);
+    } finally {
+      failedOwner.signals.dispose();
+      await rm(failedRoot, { recursive: true, force: true });
     }
   });
 });
@@ -169,4 +221,8 @@ function processIdentity(identity: HostIdentity, process: {
     executableInode: identity.binaryInode,
     executableSize: identity.binarySize,
   };
+}
+
+function fakeChild(pid: number, onKill: () => void = () => undefined) {
+  return { pid, kill: () => { onKill(); return true; } } as unknown as import("node:child_process").ChildProcess;
 }

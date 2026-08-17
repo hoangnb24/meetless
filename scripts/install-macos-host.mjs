@@ -1,6 +1,6 @@
 import { execFile, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -11,21 +11,37 @@ import { resolveRuntimeConfig } from "../packages/runtime/dist/config.js";
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const replace = process.argv.includes("--replace");
-const config = resolveRuntimeConfig({ repositoryRoot });
+const config = resolveRuntimeConfig({ repositoryRoot, runtimeRoot: process.env.MEETLESS_RUNTIME_ROOT });
 const target = config.host.bundle;
 const identityPath = config.host.identity;
-const sourceHash = await hostSourceHash();
+const exclusionPath = path.join(config.paths.root, "meetless-host.lock");
+const exclusionMarker = "MEETLESS_HOST_INSTALL_LOCK_HELD";
 
-if (await exists(target)) {
-  const executablePath = path.join(await realpath(target), "Contents", "MacOS", "MeetlessHost");
-  const livePids = exactLiveHostPids(executablePath);
-  if (livePids.length > 0) {
+await mkdir(config.paths.root, { recursive: true, mode: 0o700 });
+if (process.env[exclusionMarker] !== exclusionPath) {
+  const locked = spawnSync("/usr/bin/lockf", [
+    "-t", "0", "-k", exclusionPath,
+    process.execPath, ...process.argv.slice(1),
+  ], {
+    stdio: "inherit",
+    env: { ...process.env, [exclusionMarker]: exclusionPath },
+  });
+  if (locked.error) throw locked.error;
+  if (locked.status === 75) {
+    const owner = await readFile(exclusionPath, "utf8").then((value) => value.trim(), () => "unknown owner");
     throw new Error(
-      `Refusing to install or replace ${target} while the exact MeetlessHost is live as PID(s) ${livePids.join(", ")}. ` +
-      "Run npm run runtime:host:stop, verify shutdown, then retry the install.",
+      `Refusing MeetlessHost install/replacement because ${exclusionPath} is held by ${owner}. ` +
+      "If the exact host is live, run npm run runtime:host:stop; kernel release makes stale file contents harmless.",
     );
   }
+  process.exit(locked.status ?? 1);
 }
+const lockProbe = spawnSync("/usr/bin/lockf", ["-t", "0", "-k", exclusionPath, "/usr/bin/true"]);
+if (lockProbe.status !== 75) {
+  throw new Error("MeetlessHost installer exclusion marker was present without the kernel lock");
+}
+await writeFile(exclusionPath, `${JSON.stringify({ role: "installer", pid: process.pid, startedAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+const sourceHash = await hostSourceHash();
 
 if (await exists(target)) {
   try {
@@ -135,13 +151,4 @@ async function exists(candidate) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return false;
     throw error;
   }
-}
-
-function exactLiveHostPids(executablePath) {
-  const inspected = spawnSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
-  if (inspected.error || inspected.status !== 0) throw new Error("Cannot inspect live MeetlessHost processes");
-  return inspected.stdout.split("\n").flatMap((line) => {
-    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/u.exec(line);
-    return match && Number(match[2]) === 1 && match[3] === executablePath ? [Number(match[1])] : [];
-  });
 }

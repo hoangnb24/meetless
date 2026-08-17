@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RuntimeConfig } from "./config.js";
@@ -20,7 +20,8 @@ export function buildRendererUrl(config: RuntimeConfig): string {
 }
 
 export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number> {
-  const shutdown = installShutdownHandlers();
+  const owned = new HostOwnedRuntimeShutdown(config);
+  const shutdown = owned.signals;
   let daemonChild: ChildProcess | null = null;
   let renderer: ChildProcess | null = null;
   let electron: ChildProcess | null = null;
@@ -44,6 +45,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
         detached: true,
       });
       daemonOwned = true;
+      await owned.track("daemon", daemonChild);
       lock = await waitForDaemon(config, daemonChild, shutdown.signal);
       await assertSupervisorOwnedByHost(config, lock.pid);
     }
@@ -67,8 +69,10 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
             EXPO_PUBLIC_MEETLESS_DAEMON_URL: `ws://${config.listen}/ws`,
           },
           stdio: "inherit",
+          detached: true,
         },
       );
+      await owned.track("renderer", renderer);
       await waitForHttp(config.rendererOrigin, renderer, shutdown.signal);
     }
 
@@ -82,32 +86,158 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
         PASEO_TEST_APP_NAME: "Meetless",
       },
       stdio: "inherit",
+      detached: true,
     });
+    await owned.track("electron", electron);
     const result = await Promise.race([waitForExit(electron), waitForShutdown(shutdown.signal)]);
     return result.code ?? (result.signal ? 1 : 0);
   } finally {
     shutdown.dispose();
-    await terminateChild(electron, 5_000);
-    await terminateChild(renderer, 5_000);
-    if (daemonOwned) {
-      const lock = await readPidLock(config.paths.pidLock).catch(() => null);
-      if (lock && processIsRunning(lock.pid)) {
-        authorizeOwnedDaemon(config, lock);
-        process.kill(lock.pid, "SIGTERM");
-        const released = await waitForRuntimeRelease(config, lock.pid, 15_000);
-        if (!released && daemonChild?.pid) {
-          try { process.kill(-daemonChild.pid, "SIGKILL"); } catch { /* already exited */ }
-          await waitForRuntimeRelease(config, lock.pid, 5_000);
+    await owned.shutdown({ daemonChild, daemonOwned });
+  }
+}
+
+type OwnedGroupName = "daemon" | "renderer" | "electron";
+
+interface ShutdownInspection {
+  signalGroup(pgid: number, signal: NodeJS.Signals): void;
+  groupRunning(pgid: number): boolean;
+  listenerExists(port: string): boolean;
+  socketExists(socketPath: string): Promise<boolean>;
+  delay(milliseconds: number): Promise<void>;
+}
+
+const systemShutdownInspection: ShutdownInspection = {
+  signalGroup: (pgid, signal) => {
+    try { process.kill(-pgid, signal); } catch (error) {
+      if (!isErrno(error, "ESRCH")) throw error;
+    }
+  },
+  groupRunning: (pgid) => {
+    try { process.kill(-pgid, 0); return true; } catch (error) {
+      if (isErrno(error, "ESRCH")) return false;
+      throw new Error(`Cannot inspect owned process group ${pgid}: ${describe(error)}`);
+    }
+  },
+  listenerExists: (port) => {
+    const inspected = spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fp"], { encoding: "utf8" });
+    if (inspected.error) throw new Error(`Cannot inspect listener ${port}: ${inspected.error.message}`);
+    if (inspected.status === 1 && inspected.stdout.trim() === "") return false;
+    if (inspected.status !== 0) {
+      throw new Error(`Cannot inspect listener ${port}: lsof exited ${inspected.status} (${inspected.stderr.trim()})`);
+    }
+    return inspected.stdout.trim().length > 0;
+  },
+  socketExists: async (socketPath) => {
+    try { await stat(socketPath); return true; } catch (error) {
+      if (isErrno(error, "ENOENT")) return false;
+      throw new Error(`Cannot inspect recording socket ${socketPath}: ${describe(error)}`);
+    }
+  },
+  delay,
+};
+
+export class HostOwnedRuntimeShutdown {
+  readonly signals = installShutdownHandlers();
+  private readonly groups = new Map<OwnedGroupName, number>();
+  private readonly registryPath: string;
+  private closing = false;
+
+  constructor(
+    private readonly config: RuntimeConfig,
+    private readonly inspection: ShutdownInspection = systemShutdownInspection,
+  ) {
+    this.registryPath = path.join(config.paths.root, "owned-process-groups.json");
+  }
+
+  async track(name: OwnedGroupName, child: ChildProcess): Promise<void> {
+    if (!child.pid) throw new Error(`Cannot own ${name}: spawned process has no PID`);
+    this.groups.set(name, child.pid);
+    await this.writeRegistry();
+    this.signals.signal.throwIfAborted();
+  }
+
+  async shutdown(input: { daemonChild: ChildProcess | null; daemonOwned: boolean }): Promise<void> {
+    if (this.closing) return;
+    this.closing = true;
+    let gracefulError: unknown;
+    try {
+      this.signal("electron", "SIGTERM");
+      this.signal("renderer", "SIGTERM");
+
+      if (input.daemonOwned && input.daemonChild?.pid) {
+        const lock = await readPidLock(this.config.paths.pidLock).catch((error) => {
+          throw new Error(`Cannot inspect owned daemon PID lock during shutdown: ${describe(error)}`);
+        });
+        if (lock && processIsRunning(lock.pid)) {
+          authorizeOwnedDaemon(this.config, lock);
+          process.kill(lock.pid, "SIGTERM");
+        } else {
+          this.signal("daemon", "SIGTERM");
         }
       }
+    } catch (error) {
+      gracefulError = error;
     }
-    await waitForExit(daemonChild, 1_000).catch(() => undefined);
-    if (daemonOwned && !(await runtimeReleased(config))) {
+
+    let released = false;
+    try { released = await this.waitForRelease(15_000); } catch (error) { gracefulError ??= error; }
+    if (!released) {
+      try {
+        for (const pgid of this.groups.values()) this.inspection.signalGroup(pgid, "SIGKILL");
+      } catch (error) {
+        gracefulError ??= error;
+      }
+      try { released = await this.waitForRelease(5_000); } catch (error) { gracefulError ??= error; }
+    }
+    if (!released || gracefulError) {
       throw new Error(
-        `MeetlessHost shutdown failed closed: owned runtime still holds ${config.listen} or ${config.paths.recordingSocket}. ` +
-        "Authority: docs/plans/active/v1-paseo-foundation.md. Inspect the repo-owned process tree before retrying.",
+        `MeetlessHost shutdown failed closed: ${describe(gracefulError ?? "owned runtime did not release")}. ` +
+        `Expected no owned process groups, listeners ${this.listenerPorts().join("/")}, or socket ${this.config.paths.recordingSocket}. ` +
+        "Authority: docs/plans/active/v1-paseo-foundation.md. Inspect only the repo-owned tree before retrying.",
       );
     }
+    await rm(this.registryPath, { force: true });
+  }
+
+  private signal(name: OwnedGroupName, signal: NodeJS.Signals): void {
+    const pgid = this.groups.get(name);
+    if (pgid) this.inspection.signalGroup(pgid, signal);
+  }
+
+  private async waitForRelease(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await this.released()) return true;
+      await this.inspection.delay(100);
+    }
+    return this.released();
+  }
+
+  private async released(): Promise<boolean> {
+    if ([...this.groups.values()].some((pgid) => this.inspection.groupRunning(pgid))) return false;
+    for (const port of this.listenerPorts()) if (this.inspection.listenerExists(port)) return false;
+    return !(await this.inspection.socketExists(this.config.paths.recordingSocket));
+  }
+
+  private listenerPorts(): string[] {
+    return [
+      this.config.listen.slice(this.config.listen.lastIndexOf(":") + 1),
+      new URL(this.config.rendererOrigin).port,
+    ];
+  }
+
+  private async writeRegistry(): Promise<void> {
+    await mkdir(this.config.paths.root, { recursive: true, mode: 0o700 });
+    const temporary = `${this.registryPath}.${process.pid}.tmp`;
+    const hostPid = Number(process.env.MEETLESS_HOST_PID);
+    await writeFile(temporary, `${JSON.stringify({
+      version: 1,
+      hostPid: Number.isInteger(hostPid) ? hostPid : null,
+      desktopPid: process.pid,
+      groups: [...this.groups.entries()].map(([name, pgid]) => ({ name, pgid })),
+    })}\n`, { mode: 0o600 });
+    await rename(temporary, this.registryPath);
   }
 }
 
@@ -206,33 +336,16 @@ function waitForShutdown(signal: AbortSignal): Promise<{ code: number | null; si
   });
 }
 
-async function terminateChild(child: ChildProcess | null, timeoutMs: number): Promise<void> {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  if (await waitForExit(child, timeoutMs).then(() => true, () => false)) return;
-  child.kill("SIGKILL");
-  await waitForExit(child, 2_000).catch(() => undefined);
-}
-
-async function waitForRuntimeRelease(config: RuntimeConfig, pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!processIsRunning(pid) && await runtimeReleased(config)) return true;
-    await delay(100);
-  }
-  return !processIsRunning(pid) && await runtimeReleased(config);
-}
-
-async function runtimeReleased(config: RuntimeConfig): Promise<boolean> {
-  const socketExists = await stat(config.paths.recordingSocket).then(() => true, () => false);
-  const port = config.listen.slice(config.listen.lastIndexOf(":") + 1);
-  const listener = spawnSync("lsof", ["-nP", "-iTCP:" + port, "-sTCP:LISTEN", "-Fp"], { encoding: "utf8" });
-  const listenerExists = listener.status === 0 && listener.stdout.trim().length > 0;
-  return !socketExists && !listenerExists;
-}
-
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isErrno(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function authorizeOwnedDaemon(
@@ -257,7 +370,9 @@ function processIsRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isErrno(error, "ESRCH")) return false;
+    if (isErrno(error, "EPERM")) return true;
+    throw new Error(`Cannot inspect process ${pid}: ${describe(error)}`);
   }
 }

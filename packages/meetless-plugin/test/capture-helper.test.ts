@@ -7,6 +7,39 @@ import { MeetingStore } from "@meetless/meeting-store";
 import { CaptureHelper } from "../src/capture-helper.js";
 
 describe("capture helper supervision", () => {
+  test("drains a delayed committed chunk before shutdown interruption assessment", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-delayed-shutdown-chunk-"));
+    const store = new MeetingStore({ root });
+    const meeting = await store.create({ title: "Delayed final chunk" });
+    const recording = await store.startRecording({ meetingId: meeting.id });
+    const sessionDirectory = path.join(root, "sessions", recording.id);
+    let observedChunk!: () => void;
+    const chunkObserved = new Promise<void>((resolve) => { observedChunk = resolve; });
+    const helper = new CaptureHelper({
+      executable: path.resolve("native/macos-capture/.build/release/meetless-capture"),
+      sessionDirectory, storeRoot: root, fixture: true,
+      onChunk: async (chunk) => {
+        observedChunk();
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        await store.commitChunk(recording.id, chunk);
+      },
+      onFailure: async () => undefined,
+    });
+    try {
+      await helper.start();
+      await chunkObserved;
+      await helper.terminate();
+      const interrupted = await store.interruptRecording(recording.id, "test shutdown");
+      await store.assessInterruption(recording.id, { recoverable: interrupted.chunks.length > 0 });
+      const recovered = (await store.listRecordings())[0]!;
+      expect(recovered.status).toBe("recoverable");
+      expect(recovered.chunks.length).toBeGreaterThan(0);
+    } finally {
+      await helper.terminate();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   test("interrupts to recoverable when a live chunk event lies, without storing the invalid chunk", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-invalid-live-chunk-"));
     const store = new MeetingStore({ root });

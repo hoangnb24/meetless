@@ -11,6 +11,14 @@ private struct HostConfiguration: Decodable {
   let identityPath: String
 }
 
+private struct OwnedProcessRegistry: Decodable {
+  struct Group: Decodable { let name: String; let pgid: Int32 }
+  let version: Int
+  let hostPid: Int32?
+  let desktopPid: Int32
+  let groups: [Group]
+}
+
 private func logError(_ message: String) {
   FileHandle.standardError.write(Data("MeetlessHost: \(message)\n".utf8))
   NSLog("MeetlessHost: %@", message)
@@ -21,6 +29,7 @@ private final class HostDelegate: NSObject, NSApplicationDelegate {
   private var runtimeLog: FileHandle?
   private var lockDescriptor: Int32 = -1
   private var signalSources: [DispatchSourceSignal] = []
+  private var configuration: HostConfiguration?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     do {
@@ -32,6 +41,7 @@ private final class HostDelegate: NSObject, NSApplicationDelegate {
         )
       }
       let configuration = try loadConfiguration()
+      self.configuration = configuration
       try acquireRuntimeLock(configuration.runtimeRoot)
       installSignalHandlers()
       try launchRuntime(configuration)
@@ -42,17 +52,25 @@ private final class HostDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    let registry = loadOwnedRegistry()
     if let runtime, runtime.isRunning {
       runtime.terminate()
-      let deadline = Date().addingTimeInterval(25)
+      let deadline = Date().addingTimeInterval(20)
       while runtime.isRunning && Date() < deadline {
         usleep(100_000)
       }
-      if runtime.isRunning {
-        kill(runtime.processIdentifier, SIGKILL)
-      }
-      runtime.waitUntilExit()
     }
+    if runtime?.isRunning == true || registry?.groups.contains(where: { groupIsRunning($0.pgid) }) == true {
+      signalOwnedGroups(registry, SIGTERM)
+      waitForOwnedGroups(registry, seconds: 3)
+    }
+    if runtime?.isRunning == true || registry?.groups.contains(where: { groupIsRunning($0.pgid) }) == true {
+      signalOwnedGroups(registry, SIGKILL)
+      if let runtime, runtime.isRunning { kill(runtime.processIdentifier, SIGKILL) }
+      waitForOwnedGroups(registry, seconds: 3)
+    }
+    if let runtime, runtime.isRunning { runtime.waitUntilExit() }
+    removeOwnedRegistryIfReleased(registry)
     if lockDescriptor >= 0 {
       flock(lockDescriptor, LOCK_UN)
       close(lockDescriptor)
@@ -79,16 +97,59 @@ private final class HostDelegate: NSObject, NSApplicationDelegate {
     let lockPath = URL(fileURLWithPath: runtimeRoot).appendingPathComponent("meetless-host.lock").path
     lockDescriptor = open(lockPath, O_CREAT | O_RDWR, 0o600)
     guard lockDescriptor >= 0, flock(lockDescriptor, LOCK_EX | LOCK_NB) == 0 else {
+      let owner = (try? String(contentsOfFile: lockPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) ?? "unknown owner"
       throw NSError(
         domain: "MeetlessHost",
         code: 3,
-        userInfo: [NSLocalizedDescriptionKey: "another repo-owned Meetless host already owns \(runtimeRoot)"]
+        userInfo: [NSLocalizedDescriptionKey: "MeetlessHost start rejected because the shared install/start lock is held by \(owner); retry after the exact installer or host exits"]
       )
     }
-    let identity = "\(getpid())\n"
+    let identity = "{\"role\":\"host\",\"pid\":\(getpid())}\n"
     ftruncate(lockDescriptor, 0)
     _ = identity.withCString { write(lockDescriptor, $0, strlen($0)) }
     fsync(lockDescriptor)
+  }
+
+  private func loadOwnedRegistry() -> OwnedProcessRegistry? {
+    guard let configuration, let runtime else { return nil }
+    let url = URL(fileURLWithPath: configuration.runtimeRoot).appendingPathComponent("owned-process-groups.json")
+    guard let data = try? Data(contentsOf: url), let registry = try? JSONDecoder().decode(OwnedProcessRegistry.self, from: data) else { return nil }
+    guard registry.version == 1, registry.hostPid == getpid(), registry.desktopPid == runtime.processIdentifier else {
+      logError("ignoring stale owned-process registry at \(url.path)")
+      return nil
+    }
+    return registry
+  }
+
+  private func signalOwnedGroups(_ registry: OwnedProcessRegistry?, _ signalNumber: Int32) {
+    for group in registry?.groups ?? [] where group.pgid > 1 {
+      if kill(-group.pgid, signalNumber) != 0 && errno != ESRCH {
+        logError("cannot signal owned \(group.name) process group \(group.pgid): errno \(errno)")
+      }
+    }
+  }
+
+  private func waitForOwnedGroups(_ registry: OwnedProcessRegistry?, seconds: TimeInterval) {
+    let deadline = Date().addingTimeInterval(seconds)
+    while registry?.groups.contains(where: { groupIsRunning($0.pgid) }) == true && Date() < deadline {
+      usleep(100_000)
+    }
+  }
+
+  private func groupIsRunning(_ pgid: Int32) -> Bool {
+    if pgid <= 1 { return false }
+    if kill(-pgid, 0) == 0 { return true }
+    return errno != ESRCH
+  }
+
+  private func removeOwnedRegistryIfReleased(_ registry: OwnedProcessRegistry?) {
+    guard let configuration, let registry else { return }
+    guard !registry.groups.contains(where: { groupIsRunning($0.pgid) }) else {
+      logError("owned process groups remain after bounded host fallback")
+      return
+    }
+    let path = URL(fileURLWithPath: configuration.runtimeRoot).appendingPathComponent("owned-process-groups.json").path
+    try? FileManager.default.removeItem(atPath: path)
   }
 
   private func launchRuntime(_ configuration: HostConfiguration) throws {

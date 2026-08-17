@@ -20,7 +20,7 @@ if (matches.length !== 1) throw new Error(`Refusing to stop ${matches.length} Me
 const pid = matches[0];
 const ownedBefore = descendantsOf(pid, inspected.stdout);
 process.kill(pid, "SIGTERM");
-const deadline = Date.now() + 15_000;
+const deadline = Date.now() + 35_000;
 while (isRunning(pid) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
 if (isRunning(pid)) throw new Error(`Timed out stopping MeetlessHost PID ${pid}`);
 const releaseDeadline = Date.now() + 5_000;
@@ -36,7 +36,10 @@ if (survivors.length > 0 || !(await released())) {
 process.stdout.write(`Stopped MeetlessHost PID ${pid}.\n`);
 
 function isRunning(pid) {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try { process.kill(pid, 0); return true; } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ESRCH") return false;
+    throw new Error(`Cannot inspect owned PID ${pid} during shutdown: ${String(error)}`);
+  }
 }
 
 function descendantsOf(rootPid, output) {
@@ -57,8 +60,21 @@ function descendantsOf(rootPid, output) {
 }
 
 async function released() {
-  const socketGone = await stat(config.paths.recordingSocket).then(() => false, () => true);
-  const port = identity.configuration.listen.slice(identity.configuration.listen.lastIndexOf(":") + 1);
-  const listener = spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fp"], { encoding: "utf8" });
-  return socketGone && !(listener.status === 0 && listener.stdout.trim());
+  let socketGone = false;
+  try { await stat(config.paths.recordingSocket); } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") socketGone = true;
+    else throw new Error(`Cannot inspect recording socket during shutdown: ${String(error)}`);
+  }
+  const ports = [
+    identity.configuration.listen.slice(identity.configuration.listen.lastIndexOf(":") + 1),
+    new URL(config.rendererOrigin).port,
+  ];
+  for (const port of ports) {
+    const listener = spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fp"], { encoding: "utf8" });
+    if (listener.error) throw new Error(`Cannot inspect listener ${port}: ${listener.error.message}`);
+    if (listener.status === 1 && listener.stdout.trim() === "") continue;
+    if (listener.status !== 0) throw new Error(`Cannot inspect listener ${port}: lsof exited ${listener.status}`);
+    if (listener.stdout.trim()) return false;
+  }
+  return socketGone;
 }
