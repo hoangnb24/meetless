@@ -6,11 +6,14 @@ import { RecordingProvider, useRecording } from "../src/recording-provider.js";
 
 const idle: RecordingStatusWire = {
   status: "idle", recordingId: null, meetingId: null, title: null, elapsedMs: 0,
-  paused: false, chunks: [], outputPath: null, error: null,
+  paused: false, chunks: [], inventoryState: null, chunkCount: 0, microphoneCount: 0, systemCount: 0,
+  inventoryDigest: null, retryEligible: false, outputPath: null, error: null,
 };
 const recording: RecordingStatusWire = {
   status: "recording", recordingId: "recording-production", meetingId: "meeting-production",
-  title: "Production call", elapsedMs: 1_000, paused: false, chunks: [], outputPath: null, error: null,
+  title: "Production call", elapsedMs: 1_000, paused: false, chunks: [], inventoryState: "pending",
+  chunkCount: 0, microphoneCount: 0, systemCount: 0, inventoryDigest: null,
+  retryEligible: false, outputPath: null, error: null,
 };
 
 function ConnectedStrip() {
@@ -97,21 +100,27 @@ describe("production recording UI status delivery", () => {
       initial: idle,
       response: { ...recording, status: "recoverable" as const, error: "capture start interrupted" },
       expectedError: "start rejected with retained chunks",
-      retryVisible: true,
+      retryVisible: false,
     },
     {
       caseName: "Stop failure",
       command: "stop",
       initial: recording,
-      response: { ...recording, status: "recoverable" as const, error: "finalization interrupted" },
+      response: { ...recording, status: "recoverable" as const, inventoryState: "complete" as const,
+        chunkCount: 2, microphoneCount: 1, systemCount: 1, inventoryDigest: "digest", retryEligible: true,
+        error: "finalization interrupted" },
       expectedError: "stop rejected",
       retryVisible: true,
     },
     {
       caseName: "Finalization retry failure",
       command: "retryFinalization",
-      initial: { ...recording, status: "recoverable" as const, error: "previous interruption" },
-      response: { ...recording, status: "recoverable" as const, error: "MP3 retry failed" },
+      initial: { ...recording, status: "recoverable" as const, inventoryState: "complete" as const,
+        chunkCount: 2, microphoneCount: 1, systemCount: 1, inventoryDigest: "digest", retryEligible: true,
+        error: "previous interruption" },
+      response: { ...recording, status: "recoverable" as const, inventoryState: "complete" as const,
+        chunkCount: 2, microphoneCount: 1, systemCount: 1, inventoryDigest: "digest", retryEligible: true,
+        error: "MP3 retry failed" },
       expectedError: "retryFinalization rejected",
       retryVisible: true,
     },

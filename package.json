@@ -38,7 +38,8 @@
     "runtime:preowner": "node packages/runtime/dist/cli.js preowner",
     "host:install": "npm run build:native && npm run build:meetless && node scripts/install-macos-host.mjs",
     "proof:m1": "node scripts/prove-m1.mjs",
-    "proof:m2": "npm run build:native && npm run build:meetless && node scripts/prove-m2.mjs"
+    "proof:m2": "npm run build:native && npm run build:meetless && node scripts/prove-m2.mjs",
+    "proof:m2:scale": "npm run build:meetless && node scripts/prove-scalable-inventory.mjs"
   },
   "devDependencies": {
     "@clack/core": "1.1.0",

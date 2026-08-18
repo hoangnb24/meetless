@@ -16,7 +16,7 @@ export function RecordingStrip(props: {
 }) {
   const [title, setTitle] = useState("");
   const active = props.status.status === "recording";
-  const recoverable = props.status.status === "recoverable";
+  const recoverable = props.status.status === "recoverable" && props.status.retryEligible;
   const seconds = Math.floor(props.elapsedMs / 1000);
   return (
     <View style={styles.recordingStrip} testID="global-recording-strip">

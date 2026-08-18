@@ -296,8 +296,6 @@ export async function inspectRuntimeReadiness(
     throw readinessFailure("live recording socket", config, new Error("socket inode changed after authoritative status"));
   }
   const status = attestation.status;
-  const microphone = status.chunks.filter((chunk) => chunk.source === "microphone");
-  const system = status.chunks.filter((chunk) => chunk.source === "system");
   const evidencePaths = await Promise.all(status.chunks.map(async (chunk) => {
     const candidate = path.resolve(config.paths.meetingStore, chunk.storageKey);
     const relative = path.relative(config.paths.meetingStore, candidate);
@@ -350,7 +348,7 @@ export async function inspectRuntimeReadiness(
       paused: status.paused,
       error: status.error,
     },
-    chunks: { microphone: microphone.length, system: system.length, total: status.chunks.length, evidencePaths },
+    chunks: { microphone: status.microphoneCount, system: status.systemCount, total: status.chunkCount, evidencePaths },
     stopTarget: { command: "Electron recording control: stop", prepared: false },
     collisionTarget: null,
   };

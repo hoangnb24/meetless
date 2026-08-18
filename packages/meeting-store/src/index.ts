@@ -10,11 +10,16 @@ import {
   createMeeting,
   interruptRecording,
   markRecordingSaved,
+  markRecordingInventoryScanning,
   MEETING_STATUSES,
   pauseRecording,
+  prepareRecordingInventoryRecovery,
+  publishRecordingInventory,
+  blockRecordingInventory,
   reconcilePublishIntent,
   RECORDING_SOURCES,
   RECORDING_STATUSES,
+  RECORDING_INVENTORY_STATES,
   resumeRecording,
   retryFinalization,
   startRecording,
@@ -24,6 +29,7 @@ import {
   type MeetingStatus,
   type OutputIdentity,
   type RecordingSession,
+  type RecordingInventoryPointer,
 } from "@meetless/meeting-domain";
 import { z } from "zod";
 
@@ -80,7 +86,7 @@ const ChunkSchema = z
   })
   .strict();
 
-const RecordingSchema = z
+const RecordingV2Schema = z
   .object({
     id: z.string().trim().min(1),
     meetingId: z.string().trim().min(1),
@@ -174,11 +180,11 @@ const RecordingSchema = z
     }
   });
 
-const MeetingStateSchema = z
+const MeetingStateV2Schema = z
   .object({
     version: z.literal(2),
     meetings: z.array(MeetingSchema),
-    recordings: z.array(RecordingSchema),
+    recordings: z.array(RecordingV2Schema),
   })
   .strict()
   .superRefine((state, context) => {
@@ -220,13 +226,122 @@ const MeetingStateSchema = z
     }
   });
 
-function recordingParentStatuses(recording: RecordingSession): readonly MeetingStatus[] {
+const InventoryPointerSchema = z.object({
+  storageKey: z.string().trim().min(1),
+  digest: z.string().trim().min(1),
+  chunkCount: z.number().int().positive(),
+  microphoneCount: z.number().int().nonnegative(),
+  systemCount: z.number().int().nonnegative(),
+  publishedAt: z.string().datetime(),
+}).strict();
+
+const InventorySchema = z.object({
+  state: z.enum(RECORDING_INVENTORY_STATES),
+  knownChunkCount: z.number().int().nonnegative(),
+  microphoneCount: z.number().int().nonnegative(),
+  systemCount: z.number().int().nonnegative(),
+  pointer: InventoryPointerSchema.nullable(),
+  error: z.string().trim().min(1).nullable(),
+}).strict().superRefine((inventory, context) => {
+  if (inventory.microphoneCount + inventory.systemCount !== inventory.knownChunkCount) {
+    context.addIssue({ code: "custom", path: ["knownChunkCount"], message: "Inventory source counts must equal its authoritative count" });
+  }
+  if ((inventory.state === "complete") !== (inventory.pointer !== null)) {
+    context.addIssue({ code: "custom", path: ["pointer"], message: "Only complete inventory owns an immutable sidecar pointer" });
+  }
+  if (inventory.state === "blocked" && !inventory.error) {
+    context.addIssue({ code: "custom", path: ["error"], message: "Blocked inventory requires reconciliation evidence" });
+  }
+  if (inventory.pointer && (
+    inventory.pointer.chunkCount !== inventory.knownChunkCount ||
+    inventory.pointer.microphoneCount !== inventory.microphoneCount ||
+    inventory.pointer.systemCount !== inventory.systemCount
+  )) {
+    context.addIssue({ code: "custom", path: ["pointer"], message: "Inventory pointer counts must exactly match the store summary" });
+  }
+});
+
+const RecordingSchema = z.object({
+  id: z.string().trim().min(1),
+  meetingId: z.string().trim().min(1),
+  status: z.enum(RECORDING_STATUSES),
+  startedAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  elapsedMs: z.number().int().nonnegative(),
+  activeSince: z.string().datetime().nullable(),
+  chunks: z.array(ChunkSchema),
+  inventory: InventorySchema,
+  interruption: z.object({ reason: z.string().trim().min(1), interruptedAt: z.string().datetime() }).strict().nullable(),
+  failureReason: z.string().trim().min(1).nullable(),
+  finalization: z.object({
+    chunkSetDigest: z.string().trim().min(1),
+    chunkCount: z.number().int().positive(),
+    publishIntent: z.object({
+      destination: z.string().trim().min(1),
+      expectedIdentity: OutputIdentitySchema,
+      createdAt: z.string().datetime(),
+    }).strict(),
+  }).strict().nullable(),
+  savedOutput: z.object({
+    destination: z.string().trim().min(1), byteLength: z.number().int().positive(),
+    sha256: z.string().trim().min(1), savedAt: z.string().datetime(),
+  }).strict().nullable(),
+}).strict().superRefine((recording, context) => {
+  const ids = new Set<string>();
+  recording.chunks.forEach((chunk, index) => {
+    if (ids.has(chunk.id)) context.addIssue({ code: "custom", path: ["chunks", index, "id"], message: `Duplicate chunk id: ${chunk.id}` });
+    ids.add(chunk.id);
+  });
+  if (recording.inventory.state === "complete" && recording.chunks.length !== 0) {
+    context.addIssue({ code: "custom", path: ["chunks"], message: "Published inventory must not duplicate chunk entries in MeetingStore" });
+  }
+  if (recording.inventory.state !== "complete" && recording.chunks.length !== recording.inventory.knownChunkCount) {
+    context.addIssue({ code: "custom", path: ["inventory", "knownChunkCount"], message: "Pending inventory count must match known store chunks" });
+  }
+  if (recording.status === "recording" && recording.finalization !== null) context.addIssue({ code: "custom", path: ["finalization"], message: "Recording state cannot have finalization intent" });
+  if (recording.status !== "recording" && recording.activeSince !== null) context.addIssue({ code: "custom", path: ["activeSince"], message: "Inactive recording state cannot accumulate elapsed time" });
+  if (recording.status === "finalizing" && (!recording.finalization || recording.inventory.state !== "complete")) context.addIssue({ code: "custom", path: ["finalization"], message: "Finalizing recording requires a complete durable inventory and intent" });
+  if (recording.status === "saved" && (!recording.savedOutput || !recording.finalization)) context.addIssue({ code: "custom", path: ["savedOutput"], message: "Saved recording requires output and finalization identity" });
+  if (recording.status !== "saved" && recording.savedOutput !== null) context.addIssue({ code: "custom", path: ["savedOutput"], message: "Only saved state can own saved output identity" });
+  if (recording.status === "interrupted" && recording.interruption === null) context.addIssue({ code: "custom", path: ["interruption"], message: "Interrupted state requires interruption evidence" });
+  if (recording.status === "failed" && recording.failureReason === null) context.addIssue({ code: "custom", path: ["failureReason"], message: "Failed state requires proven failure reason" });
+  if (recording.finalization && recording.inventory.pointer && (
+    recording.finalization.chunkSetDigest !== recording.inventory.pointer.digest ||
+    recording.finalization.chunkCount !== recording.inventory.pointer.chunkCount
+  )) context.addIssue({ code: "custom", path: ["finalization"], message: "Finalization must consume the frozen inventory digest" });
+  if (recording.savedOutput && recording.finalization && (
+    recording.savedOutput.destination !== recording.finalization.publishIntent.destination ||
+    recording.savedOutput.byteLength !== recording.finalization.publishIntent.expectedIdentity.byteLength ||
+    recording.savedOutput.sha256 !== recording.finalization.publishIntent.expectedIdentity.sha256
+  )) context.addIssue({ code: "custom", path: ["savedOutput"], message: "Saved output must exactly match publication intent" });
+});
+
+const MeetingStateSchema = z.object({
+  version: z.literal(3), meetings: z.array(MeetingSchema), recordings: z.array(RecordingSchema),
+}).strict().superRefine((state, context) => {
+  const meetingIds = new Set<string>();
+  state.meetings.forEach((meeting, index) => {
+    if (meetingIds.has(meeting.id)) context.addIssue({ code: "custom", path: ["meetings", index, "id"], message: `Duplicate meeting id: ${meeting.id}` });
+    meetingIds.add(meeting.id);
+  });
+  const recordingIds = new Set<string>();
+  state.recordings.forEach((recording, index) => {
+    if (recordingIds.has(recording.id)) context.addIssue({ code: "custom", path: ["recordings", index, "id"], message: `Duplicate recording id: ${recording.id}` });
+    recordingIds.add(recording.id);
+    const meeting = state.meetings.find((candidate) => candidate.id === recording.meetingId);
+    if (!meeting) context.addIssue({ code: "custom", path: ["recordings", index, "meetingId"], message: `Recording references missing meeting ${recording.meetingId} (docs/product/recording.md). Restore the parent meeting before retrying` });
+    else if (!recordingParentStatuses(recording).includes(meeting.status)) context.addIssue({ code: "custom", path: ["recordings", index, "meetingId"], message: `Recording ${recording.id} (${recording.status}) has inconsistent parent meeting ${meeting.id} (${meeting.status}) (docs/product/recording.md). Restore the coupled lifecycle state before retrying` });
+  });
+  if (state.recordings.filter((recording) => recording.status === "recording").length > 1) context.addIssue({ code: "custom", path: ["recordings"], message: "At most one active recording is allowed (docs/product/recording.md). Recover the existing session before starting another" });
+});
+
+function recordingParentStatuses(recording: { status: RecordingSession["status"]; finalization: unknown | null }): readonly MeetingStatus[] {
   if (recording.status === "saved") return ["processing", "ready", "archived"];
   return recording.finalization === null ? ["recording"] : ["processing"];
 }
 
 interface MeetingState {
-  version: 2;
+  version: 3;
   meetings: Meeting[];
   recordings: RecordingSession[];
 }
@@ -405,6 +520,28 @@ export class MeetingStore {
     );
   }
 
+  prepareInventoryRecovery(id: string, reason: string): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) =>
+      prepareRecordingInventoryRecovery(recording, { now: this.now(), reason }),
+    );
+  }
+
+  markInventoryScanning(id: string): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) => markRecordingInventoryScanning(recording, this.now()));
+  }
+
+  publishInventory(id: string, pointer: RecordingInventoryPointer): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) =>
+      publishRecordingInventory(recording, { now: this.now(), pointer }),
+    );
+  }
+
+  blockInventory(id: string, reason: string): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) =>
+      blockRecordingInventory(recording, { now: this.now(), reason }),
+    );
+  }
+
   beginFinalization(
     id: string,
     input: {
@@ -478,6 +615,20 @@ export class MeetingStore {
     return recording.chunks.map((chunk) => ({ ...chunk }));
   }
 
+  async cleanupEligibleInventory(
+    id: string,
+    verification: { destination: string; identity: OutputIdentity; readable: boolean },
+  ): Promise<{ pointer: RecordingInventoryPointer | null; legacyChunks: CommittedRecordingChunk[] }> {
+    await this.mutationTail;
+    const state = await this.readState();
+    const recording = state.recordings[this.recordingIndex(state, id)]!;
+    assertCleanupEligible(recording, verification);
+    return {
+      pointer: recording.inventory.pointer ? { ...recording.inventory.pointer } : null,
+      legacyChunks: recording.chunks.map((chunk) => ({ ...chunk })),
+    };
+  }
+
   private changeRecording(
     id: string,
     change: (recording: RecordingSession) => RecordingSession,
@@ -515,13 +666,15 @@ export class MeetingStore {
     try {
       contents = await readFile(this.filePath, "utf8");
     } catch (error) {
-      if (isErrno(error, "ENOENT")) return { version: 2, meetings: [], recordings: [] };
+      if (isErrno(error, "ENOENT")) return { version: 3, meetings: [], recordings: [] };
       throw error;
     }
     try {
       const decoded: unknown = JSON.parse(contents);
       const v1 = StateV1Schema.safeParse(decoded);
-      if (v1.success) return { version: 2, meetings: v1.data.meetings, recordings: [] };
+      if (v1.success) return { version: 3, meetings: v1.data.meetings, recordings: [] };
+      const v2 = MeetingStateV2Schema.safeParse(decoded);
+      if (v2.success) return migrateV2(v2.data);
       return MeetingStateSchema.parse(decoded);
     } catch (error) {
       throw new MeetingStoreCorruptError(this.filePath, error);
@@ -562,4 +715,38 @@ async function syncDirectory(directory: string): Promise<void> {
   } finally {
     await handle.close();
   }
+}
+
+function migrateV2(state: z.infer<typeof MeetingStateV2Schema>): MeetingState {
+  return {
+    version: 3,
+    meetings: state.meetings,
+    recordings: state.recordings.map((recording) => {
+      const microphoneCount = recording.chunks.filter((chunk) => chunk.source === "microphone").length;
+      const systemCount = recording.chunks.length - microphoneCount;
+      const interruptedAt = recording.interruption?.interruptedAt ?? recording.updatedAt;
+      const wasFinalizing = recording.status === "finalizing";
+      return {
+        ...recording,
+        status: wasFinalizing ? "recoverable" as const : recording.status,
+        activeSince: wasFinalizing ? null : recording.activeSince,
+        interruption: wasFinalizing
+          ? { reason: "Migrated unfinished finalization requires inventory reconciliation", interruptedAt }
+          : recording.interruption,
+        inventory: {
+          state: "pending" as const,
+          knownChunkCount: recording.chunks.length,
+          microphoneCount,
+          systemCount,
+          pointer: null,
+          error: null,
+        },
+        finalization: recording.finalization ? {
+          chunkSetDigest: recording.finalization.chunkSetDigest,
+          chunkCount: recording.finalization.chunkIds.length,
+          publishIntent: recording.finalization.publishIntent,
+        } : null,
+      };
+    }),
+  };
 }

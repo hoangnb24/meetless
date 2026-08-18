@@ -240,7 +240,7 @@ describe("production recording readiness invariant", () => {
 
   test("rejects every fixture-helper argument mode and equivalent production argv", async () => {
     const config = resolveRuntimeConfig({ runtimeRoot: await temporaryRoot() });
-    for (const argument of ["--fixture", "--timeline-fixture", "--invalid-claim-fixture", "--future-fixture-mode"]) {
+    for (const argument of ["--fixture", "--timeline-fixture", "--invalid-claim-fixture", "--jitter-fixture", "--future-fixture-mode"]) {
       const response = await runtimeResponse(config, { arguments: [argument] });
       await expect(waitForRecordingRuntime(config, {
         timeoutMs: 20,
@@ -540,7 +540,9 @@ function withSocket(config: RuntimeConfig, recordingSocket: string): RuntimeConf
 }
 
 function idleStatus() {
-  return { status: "idle" as const, recordingId: null, meetingId: null, title: null, elapsedMs: 0, paused: false, chunks: [], outputPath: null, error: null };
+  return { status: "idle" as const, recordingId: null, meetingId: null, title: null, elapsedMs: 0, paused: false, chunks: [],
+    inventoryState: null, chunkCount: 0, microphoneCount: 0, systemCount: 0, inventoryDigest: null,
+    retryEligible: false, outputPath: null, error: null };
 }
 
 function activeStatus() {

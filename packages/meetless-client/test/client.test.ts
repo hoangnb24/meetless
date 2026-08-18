@@ -65,7 +65,9 @@ describe("Meetless capability gate", () => {
 
 const recordingStatus: RecordingStatusWire = {
   status: "recording", recordingId: "r-1", meetingId: "m-1", title: "Design sync",
-  elapsedMs: 1_000, paused: false, chunks: [], outputPath: null, error: null,
+  elapsedMs: 1_000, paused: false, chunks: [], inventoryState: "pending", chunkCount: 0,
+  microphoneCount: 0, systemCount: 0, inventoryDigest: null, retryEligible: false,
+  outputPath: null, error: null,
 };
 
 describe("Electron-only recording transport", () => {

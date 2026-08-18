@@ -21,12 +21,29 @@ describe("global recording strip", () => {
         onStart={async () => undefined}
         onStop={async () => undefined}
         pending={false}
-        status={{ status: "recoverable", recordingId: "r-1", meetingId: "m-1", title: "Sync", elapsedMs: 12_000, paused: false, chunks: [], outputPath: null, error: "encoder interrupted" }}
+        status={{ status: "recoverable", recordingId: "r-1", meetingId: "m-1", title: "Sync", elapsedMs: 12_000, paused: false, chunks: [],
+          inventoryState: "complete", chunkCount: 2, microphoneCount: 1, systemCount: 1,
+          inventoryDigest: "digest", retryEligible: true, outputPath: null, error: "encoder interrupted" }}
       />);
     });
     const button = renderer!.root.findByProps({ testID: "recording-retry" });
     await act(async () => { button.props.onPress(); });
     expect(retry).toHaveBeenCalledOnce();
+    renderer!.unmount();
+  });
+
+  test("hides Retry while inventory reconciliation is incomplete", async () => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<RecordingStrip
+        elapsedMs={12_000} error={null} onPause={async () => undefined} onResume={async () => undefined}
+        onRetry={async () => undefined} onStart={async () => undefined} onStop={async () => undefined}
+        pending={false} status={{ status: "recoverable", recordingId: "r-1", meetingId: "m-1", title: "Sync",
+          elapsedMs: 12_000, paused: false, chunks: [], inventoryState: "scanning", chunkCount: 20_136,
+          microphoneCount: 12_926, systemCount: 7_210, inventoryDigest: null, retryEligible: false,
+          outputPath: null, error: null }} />);
+    });
+    expect(renderer!.root.findAllByProps({ testID: "recording-retry" })).toHaveLength(0);
     renderer!.unmount();
   });
 });

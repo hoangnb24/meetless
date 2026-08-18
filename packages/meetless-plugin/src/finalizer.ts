@@ -3,7 +3,8 @@ import { execFile } from "node:child_process";
 import { access, link, mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { CommittedRecordingChunk, OutputIdentity } from "@meetless/meeting-domain";
+import type { CommittedRecordingChunk, OutputIdentity, RecordingInventoryPointer } from "@meetless/meeting-domain";
+import { readInventory, resolveStorePath } from "./inventory.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -12,34 +13,78 @@ export interface FinalizerConfig {
   ffprobe: string;
   exportRoot: string;
   storeRoot: string;
+  observeCommand?(executable: string, arguments_: readonly string[]): void;
 }
 
 export class Mp3Finalizer {
   constructor(readonly config: FinalizerConfig) {}
 
-  async stage(recordingId: string, chunks: readonly CommittedRecordingChunk[]): Promise<{
+  async stage(recordingId: string, inventory: RecordingInventoryPointer): Promise<{
     stagePath: string;
     identity: OutputIdentity;
   }> {
-    if (chunks.length === 0) throw new Error("Cannot finalize without committed chunks");
+    if (inventory.chunkCount === 0) throw new Error("Cannot finalize without committed chunks");
     await mkdir(this.config.exportRoot, { recursive: true, mode: 0o700 });
     const stagePath = path.join(this.config.exportRoot, `.meetless-${recordingId}-${randomUUID()}.mp3.stage`);
-    const inputs = chunks.map((chunk) => this.resolveChunk(chunk));
+    const timelineToken = randomUUID();
+    const timelines = await this.stageSourceTimelines(recordingId, inventory, timelineToken);
     const args = ["-hide_banner", "-nostdin", "-loglevel", "error", "-y"];
-    for (const input of inputs) args.push("-i", input.path);
-    const delayed = chunks.map((chunk, index) =>
-      `[${index}:a]adelay=${chunk.logicalStartMs}:all=1[a${index}]`,
-    );
-    const labels = chunks.map((_, index) => `[a${index}]`).join("");
-    const filter = `${delayed.join(";")};${labels}amix=inputs=${chunks.length}:duration=longest:normalize=0[mix]`;
-    args.push("-filter_complex", filter, "-map", "[mix]", "-ar", "16000", "-ac", "1", "-codec:a", "libmp3lame", "-q:a", "2", "-f", "mp3", stagePath);
+    for (const timeline of timelines) args.push("-i", timeline);
+    if (timelines.length === 2) {
+      args.push("-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest:normalize=0[mix]", "-map", "[mix]");
+    } else {
+      args.push("-map", "0:a");
+    }
+    args.push("-ar", "16000", "-ac", "1", "-codec:a", "libmp3lame", "-q:a", "2", "-f", "mp3", stagePath);
     try {
+      this.config.observeCommand?.(this.config.ffmpeg, args);
       await execFileAsync(this.config.ffmpeg, args, { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
       const verification = await this.verify(stagePath);
       return { stagePath, identity: verification.identity };
     } catch (error) {
       await rm(stagePath, { force: true }).catch(() => undefined);
       throw error;
+    } finally {
+      await Promise.all(timelines.map((timeline) => rm(timeline, { force: true }).catch(() => undefined)));
+    }
+  }
+
+  private async stageSourceTimelines(
+    recordingId: string,
+    inventory: RecordingInventoryPointer,
+    token: string,
+  ): Promise<string[]> {
+    const states = new Map<string, { path: string; handle: Awaited<ReturnType<typeof open>>; endFrame: number }>();
+    try {
+      for await (const chunk of readInventory(this.config.storeRoot, inventory)) {
+        if (chunk.sampleRate !== 16_000 || chunk.channels !== 1 || chunk.format !== "wav") {
+          throw new Error(`Finalizer requires validated 16 kHz mono PCM WAV: ${chunk.id}`);
+        }
+        let state = states.get(chunk.source);
+        if (!state) {
+          const timelinePath = path.join(this.config.exportRoot, `.meetless-${recordingId}-${token}-${chunk.source}.wav.stage`);
+          const handle = await open(timelinePath, "wx", 0o600);
+          await handle.write(Buffer.alloc(44), 0, 44, 0);
+          state = { path: timelinePath, handle, endFrame: 0 };
+          states.set(chunk.source, state);
+        }
+        const wav = await readFile(this.resolveChunk(chunk).path);
+        const pcm = wavPcmPayload(wav, chunk.id);
+        const startFrame = chunkStartFrame(chunk.id);
+        await state.handle.write(pcm, 0, pcm.length, 44 + startFrame * 2);
+        state.endFrame = Math.max(state.endFrame, startFrame + pcm.length / 2);
+      }
+      for (const state of states.values()) {
+        await state.handle.truncate(44 + state.endFrame * 2);
+        await state.handle.write(wavHeader(state.endFrame), 0, 44, 0);
+        await state.handle.sync();
+      }
+      return [...states.values()].map((state) => state.path);
+    } catch (error) {
+      await Promise.all([...states.values()].map((state) => rm(state.path, { force: true }).catch(() => undefined)));
+      throw error;
+    } finally {
+      await Promise.all([...states.values()].map((state) => state.handle.close().catch(() => undefined)));
     }
   }
 
@@ -123,7 +168,7 @@ export class Mp3Finalizer {
   }
 
   private resolveChunk(chunk: CommittedRecordingChunk): { path: string } {
-    const candidate = path.resolve(this.config.storeRoot, chunk.storageKey);
+    const candidate = resolveStorePath(this.config.storeRoot, chunk.storageKey);
     const sessionsRoot = path.resolve(this.config.storeRoot, "sessions");
     const relative = path.relative(sessionsRoot, candidate);
     if (relative.startsWith("..") || path.isAbsolute(relative)) {
@@ -131,6 +176,36 @@ export class Mp3Finalizer {
     }
     return { path: candidate };
   }
+}
+
+function chunkStartFrame(id: string): number {
+  const match = /^chunk--(?:microphone|system)--\d{6}--(\d{12})--/u.exec(id);
+  const value = Number(match?.[1]);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Inventory chunk has invalid timeline identity: ${id}`);
+  return value;
+}
+
+function wavPcmPayload(wav: Buffer, id: string): Buffer {
+  let offset = 12;
+  while (offset + 8 <= wav.length) {
+    const kind = wav.subarray(offset, offset + 4).toString("ascii");
+    const size = wav.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    if (kind === "data" && start + size <= wav.length) return wav.subarray(start, start + size);
+    offset = start + size + (size % 2);
+  }
+  throw new Error(`Validated inventory WAV lost its PCM payload: ${id}`);
+}
+
+function wavHeader(frameCount: number): Buffer {
+  const dataBytes = frameCount * 2;
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0); header.writeUInt32LE(36 + dataBytes, 4); header.write("WAVEfmt ", 8);
+  header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(16_000, 24); header.writeUInt32LE(32_000, 28);
+  header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34); header.write("data", 36);
+  header.writeUInt32LE(dataBytes, 40);
+  return header;
 }
 
 export function exportBaseName(now: Date): string {

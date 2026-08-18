@@ -93,6 +93,27 @@ export interface CommittedRecordingChunk {
   format: "wav";
 }
 
+export const RECORDING_INVENTORY_STATES = ["pending", "scanning", "complete", "blocked"] as const;
+export type RecordingInventoryState = (typeof RECORDING_INVENTORY_STATES)[number];
+
+export interface RecordingInventoryPointer {
+  storageKey: string;
+  digest: string;
+  chunkCount: number;
+  microphoneCount: number;
+  systemCount: number;
+  publishedAt: string;
+}
+
+export interface RecordingInventory {
+  state: RecordingInventoryState;
+  knownChunkCount: number;
+  microphoneCount: number;
+  systemCount: number;
+  pointer: RecordingInventoryPointer | null;
+  error: string | null;
+}
+
 export interface OutputIdentity {
   byteLength: number;
   sha256: string;
@@ -110,8 +131,8 @@ export interface SavedRecordingOutput extends OutputIdentity {
 }
 
 export interface RecordingFinalization {
-  chunkIds: string[];
   chunkSetDigest: string;
+  chunkCount: number;
   publishIntent: PublishIntent;
 }
 
@@ -129,6 +150,7 @@ export interface RecordingSession {
   elapsedMs: number;
   activeSince: string | null;
   chunks: CommittedRecordingChunk[];
+  inventory: RecordingInventory;
   interruption: RecordingInterruption | null;
   failureReason: string | null;
   finalization: RecordingFinalization | null;
@@ -190,6 +212,10 @@ export function startRecording(input: {
     elapsedMs: 0,
     activeSince: now,
     chunks: [],
+    inventory: {
+      state: "pending", knownChunkCount: 0, microphoneCount: 0, systemCount: 0,
+      pointer: null, error: null,
+    },
     interruption: null,
     failureReason: null,
     finalization: null,
@@ -240,7 +266,11 @@ export function commitRecordingChunk(
   if (session.chunks.some((candidate) => candidate.id === checked.id)) {
     throw recordingViolation(`Chunk already committed: ${checked.id}`, "Reuse the existing committed chunk.");
   }
-  return { ...updated(session, checked.committedAt), chunks: [...session.chunks, checked] };
+  return {
+    ...updated(session, checked.committedAt),
+    chunks: [...session.chunks, checked],
+    inventory: incrementPendingInventory(session.inventory, checked.source),
+  };
 }
 
 function checkCommittedChunk(chunk: CommittedRecordingChunk): CommittedRecordingChunk {
@@ -307,7 +337,110 @@ export function adoptOrphanChunk(
   if (session.chunks.some((candidate) => candidate.id === checked.id)) {
     throw recordingViolation(`Chunk already committed: ${checked.id}`, "Reuse the existing committed chunk.");
   }
-  return { ...updated(session, checked.committedAt), chunks: [...session.chunks, checked] };
+  return {
+    ...updated(session, checked.committedAt),
+    chunks: [...session.chunks, checked],
+    inventory: incrementPendingInventory(session.inventory, checked.source),
+  };
+}
+
+function incrementPendingInventory(inventory: RecordingInventory, source: RecordingSource): RecordingInventory {
+  if (inventory.state === "complete") {
+    throw recordingViolation(
+      "A published recording inventory is immutable",
+      "Create a new recording instead of appending to a completed inventory.",
+    );
+  }
+  return {
+    state: "pending",
+    knownChunkCount: inventory.knownChunkCount + 1,
+    microphoneCount: inventory.microphoneCount + (source === "microphone" ? 1 : 0),
+    systemCount: inventory.systemCount + (source === "system" ? 1 : 0),
+    pointer: null,
+    error: null,
+  };
+}
+
+export function prepareRecordingInventoryRecovery(
+  session: RecordingSession,
+  input: { now: string; reason: string },
+): RecordingSession {
+  if (!["recording", "interrupted", "recoverable"].includes(session.status)) {
+    throw recordingViolation("Only unfinished capture can enter inventory recovery", "Inspect the current lifecycle state.");
+  }
+  const now = requireInstant(input.now, "now");
+  return {
+    ...updated(session, now),
+    status: "recoverable",
+    activeSince: null,
+    elapsedMs: elapsedUntil(session, now),
+    interruption: { reason: requireRecordingText(input.reason, "interruption reason"), interruptedAt: now },
+    failureReason: null,
+    inventory: {
+      state: "pending",
+      knownChunkCount: session.chunks.length,
+      microphoneCount: session.chunks.filter((chunk) => chunk.source === "microphone").length,
+      systemCount: session.chunks.filter((chunk) => chunk.source === "system").length,
+      pointer: null,
+      error: null,
+    },
+  };
+}
+
+export function markRecordingInventoryScanning(session: RecordingSession, nowInput: string): RecordingSession {
+  if (session.status !== "recoverable" || !["pending", "scanning", "blocked"].includes(session.inventory.state)) {
+    throw recordingViolation("Inventory scanning requires recoverable unresolved media", "Prepare recovery before scanning.");
+  }
+  return { ...updated(session, nowInput), inventory: { ...session.inventory, state: "scanning", pointer: null, error: null } };
+}
+
+export function publishRecordingInventory(
+  session: RecordingSession,
+  input: { now: string; pointer: RecordingInventoryPointer },
+): RecordingSession {
+  if (session.status !== "recoverable" || session.inventory.state !== "scanning") {
+    throw recordingViolation("Inventory publication requires a complete recovery scan", "Finish validating every known and orphan file first.");
+  }
+  const pointer = checkInventoryPointer(input.pointer);
+  return {
+    ...updated(session, input.now),
+    chunks: [],
+    inventory: {
+      state: "complete",
+      knownChunkCount: pointer.chunkCount,
+      microphoneCount: pointer.microphoneCount,
+      systemCount: pointer.systemCount,
+      pointer,
+      error: null,
+    },
+  };
+}
+
+export function blockRecordingInventory(session: RecordingSession, input: { now: string; reason: string }): RecordingSession {
+  if (session.status !== "recoverable" || session.inventory.state === "complete") {
+    throw recordingViolation("Only unresolved recovery inventory can be blocked", "Do not replace a published inventory.");
+  }
+  return {
+    ...updated(session, input.now),
+    inventory: { ...session.inventory, state: "blocked", pointer: null, error: requireRecordingText(input.reason, "inventory block reason") },
+  };
+}
+
+function checkInventoryPointer(pointer: RecordingInventoryPointer): RecordingInventoryPointer {
+  const checked = {
+    storageKey: requireRecordingText(pointer.storageKey, "inventory storage key"),
+    digest: requireRecordingText(pointer.digest, "inventory digest"),
+    chunkCount: pointer.chunkCount,
+    microphoneCount: pointer.microphoneCount,
+    systemCount: pointer.systemCount,
+    publishedAt: requireInstant(pointer.publishedAt, "inventory publishedAt"),
+  };
+  if (![checked.chunkCount, checked.microphoneCount, checked.systemCount].every(Number.isSafeInteger) ||
+      checked.chunkCount <= 0 || checked.microphoneCount < 0 || checked.systemCount < 0 ||
+      checked.microphoneCount + checked.systemCount !== checked.chunkCount) {
+    throw recordingViolation("Inventory counts must be exact and source-labelled", "Publish the fully validated inventory counts.");
+  }
+  return checked;
 }
 
 export function interruptRecording(
@@ -335,7 +468,7 @@ export function assessInterruptedRecording(
     throw recordingViolation("Only an interrupted recording can be assessed", "Interrupt the session first.");
   }
   const next = updated(session, input.now);
-  if (input.recoverable && session.chunks.length > 0) {
+  if (input.recoverable && session.inventory.knownChunkCount > 0) {
     return { ...next, status: "recoverable", failureReason: null };
   }
   return {
@@ -364,14 +497,26 @@ export function beginFinalization(
       "Retry finalization with the original committed chunks and chunk-set digest.",
     );
   }
+  if (session.inventory.state !== "complete" || !session.inventory.pointer) {
+    throw recordingViolation(
+      "Finalization is unavailable until the complete inventory digest is durable",
+      "Finish inventory reconciliation before retrying finalization.",
+    );
+  }
   if (!input.openChunksDurablyClosed) {
     throw recordingViolation(
       "Stop cannot be acknowledged while a chunk is open",
       "Durably close every open chunk, then retry finalization.",
     );
   }
-  if (session.chunks.length === 0) {
+  if (session.inventory.pointer.chunkCount === 0) {
     throw recordingViolation("A recording without committed chunks cannot finalize", "Recover a valid chunk first.");
+  }
+  if (input.chunkSetDigest !== session.inventory.pointer.digest) {
+    throw recordingViolation(
+      "Finalization must consume the frozen complete inventory digest",
+      "Use the durable inventory pointer without rebuilding or changing the chunk set.",
+    );
   }
   const now = requireInstant(input.now, "now");
   const identity = checkOutputIdentity(input.expectedIdentity);
@@ -381,8 +526,8 @@ export function beginFinalization(
     elapsedMs: elapsedUntil(session, now),
     activeSince: null,
     finalization: {
-      chunkIds: session.chunks.map((chunk) => chunk.id),
       chunkSetDigest: requireRecordingText(input.chunkSetDigest, "chunk-set digest"),
+      chunkCount: session.inventory.pointer.chunkCount,
       publishIntent: {
         destination: requireRecordingText(input.destination, "publish destination"),
         expectedIdentity: identity,
@@ -399,8 +544,9 @@ export function retryFinalization(
   if ((session.status !== "recoverable" && session.status !== "finalizing") || !session.finalization) {
     throw recordingViolation("Finalization retry requires an existing immutable intent", "Begin finalization once first.");
   }
-  const currentIds = session.chunks.map((chunk) => chunk.id);
-  if (currentIds.join("\u0000") !== session.finalization.chunkIds.join("\u0000")) {
+  if (session.inventory.state !== "complete" || !session.inventory.pointer ||
+      session.inventory.pointer.digest !== session.finalization.chunkSetDigest ||
+      session.inventory.pointer.chunkCount !== session.finalization.chunkCount) {
     throw recordingViolation(
       "Finalization retry cannot change the committed chunk set",
       "Retry with the original committed chunks and chunk-set digest.",

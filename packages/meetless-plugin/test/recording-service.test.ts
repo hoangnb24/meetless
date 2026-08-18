@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { promisify } from "node:util";
 import { MeetingStore } from "@meetless/meeting-store";
 import { RecordingService } from "../src/recording-service.js";
+import { RecordingInventoryReconciler } from "../src/inventory.js";
 import { resolveFixtureExportNow } from "../src/server.js";
 
 const roots = new Set<string>();
@@ -67,7 +68,10 @@ describe("daemon recording service", () => {
       .rejects.toThrow("live host identity changed before helper spawn");
     expect(inspections).toBe(2);
     expect(service.helperRuntime().pid).toBeNull();
-    expect(await service.status()).toMatchObject({ status: "failed", error: "No readable committed chunks survived" });
+    await waitFor(async () => (await service.status()).inventoryState === "blocked");
+    expect(await service.status()).toMatchObject({
+      status: "recoverable", inventoryState: "blocked", error: "No readable committed WAV files survived inventory reconciliation",
+    });
   });
 
   test("production ignores fixture export stamps", () => {
@@ -157,7 +161,7 @@ describe("daemon recording service", () => {
 
     expect(saved).toMatchObject({ status: "saved", outputPath: path.join(config.exportRoot, "12-17-08-26-2.mp3") });
     expect(await readFile(collision, "utf8")).toBe("existing recording bytes");
-    expect(await readdir(path.join(config.storeRoot, "sessions", saved.recordingId!))).toEqual([]);
+    expect((await readdir(path.join(config.storeRoot, "sessions", saved.recordingId!))).filter((name) => name.endsWith(".wav"))).toEqual([]);
   }, 30_000);
 
   test("retries finalization from the immutable chunk set without recording again", async () => {
@@ -168,10 +172,11 @@ describe("daemon recording service", () => {
     await expect(service.execute({ version: 1, requestId: "stop", command: "stop" })).rejects.toThrow("retry without re-recording");
     const recoverable = await service.status();
     expect(recoverable.status).toBe("recoverable");
-    const chunkIds = recoverable.chunks.map((chunk) => chunk.id);
+    const digest = recoverable.inventoryDigest;
+    const chunkCount = recoverable.chunkCount;
     const saved = await service.execute({ version: 1, requestId: "retry", command: "retryFinalization" });
     expect(saved.status).toBe("saved");
-    expect(saved.chunks.map((chunk) => chunk.id)).toEqual(chunkIds);
+    expect(saved).toMatchObject({ inventoryDigest: digest, chunkCount, chunks: [] });
   }, 30_000);
 
   test("reconstructs a recoverable session after daemon-owned service restart and never adopts partials", async () => {
@@ -240,7 +245,7 @@ describe("daemon recording service", () => {
 
     const restarted = new RecordingService(config); services.add(restarted); await restarted.initialize();
     const recovered = await restarted.status();
-    expect(recovered).toMatchObject({ status: "recoverable", recordingId: recording.id });
+    expect(recovered).toMatchObject({ status: "recoverable", recordingId: recording.id, inventoryState: "pending", retryEligible: false });
     expect(recovered.chunks).toEqual(before);
     expect(recovered.error).toBe("daemon restarted while capture was active");
   }, 30_000);
@@ -287,8 +292,10 @@ describe("daemon recording service", () => {
     await mkdir(config.exportRoot, { recursive: true });
     await execFileAsync(config.ffmpeg, ["-hide_banner", "-loglevel", "error", "-i", chunkPath, "-codec:a", "libmp3lame", destination]);
     const outputIdentity = await identity(destination);
+    const inventory = await new RecordingInventoryReconciler(config.storeRoot, service.store)
+      .reconcile(await service.store.prepareInventoryRecovery(recording.id, "publication fixture capture closed"));
     await service.store.beginFinalization(recording.id, {
-      openChunksDurablyClosed: true, chunkSetDigest: "fixed-set", destination, expectedIdentity: outputIdentity,
+      openChunksDurablyClosed: true, chunkSetDigest: inventory.digest, destination, expectedIdentity: outputIdentity,
     });
     await service.shutdown(); services.delete(service);
 
@@ -322,6 +329,8 @@ describe("daemon recording service", () => {
       version: 1, requestId: "blocked-start", command: "start", title: "Must not strand recovery",
     })).rejects.toThrow(/Resolve recording.*recoverable.*before starting another/u);
     expect(await readFile(statePath)).toEqual(beforeRejectedStart);
+
+    await waitFor(async () => (await restarted.status()).retryEligible);
 
     const saved = await restarted.execute({ version: 1, requestId: "retry", command: "retryFinalization" });
     expect(saved).toMatchObject({ recordingId: recoverableId, status: "saved" });
@@ -358,6 +367,7 @@ describe("daemon recording service", () => {
     const service = new RecordingService(config); services.add(service);
     await expect(service.initialize()).resolves.toBeUndefined();
     expect(await service.status()).toMatchObject({ recordingId: "recording-old", status: "recoverable" });
+    await waitFor(async () => (await service.status()).retryEligible);
 
     let beforeRejectedStart = await readFile(statePath);
     await expect(service.execute({ version: 1, requestId: "blocked-old", command: "start", title: "Blocked" }))
@@ -367,6 +377,7 @@ describe("daemon recording service", () => {
     await service.execute({ version: 1, requestId: "retry-old", command: "retryFinalization" });
     expect((await service.store.listRecordings()).find((recording) => recording.id === "recording-old")?.status).toBe("saved");
     expect(await service.status()).toMatchObject({ recordingId: "recording-new", status: "recoverable" });
+    await waitFor(async () => (await service.status()).retryEligible);
 
     beforeRejectedStart = await readFile(statePath);
     await expect(service.execute({ version: 1, requestId: "blocked-new", command: "start", title: "Still blocked" }))

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { open, realpath } from "node:fs/promises";
+import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { CommittedRecordingChunk } from "@meetless/meeting-domain";
 
@@ -21,11 +21,13 @@ export async function validateCommittedWavChunk(input: {
   sessionDirectory: string;
   storeRoot: string;
   claim?: CommittedChunkClaim;
+  resolvedSessionDirectory?: string;
+  resolvedStoreRoot?: string;
 }): Promise<CommittedRecordingChunk> {
   const [candidate, sessionDirectory, storeRoot] = await Promise.all([
     realpath(input.filePath),
-    realpath(input.sessionDirectory),
-    realpath(input.storeRoot),
+    input.resolvedSessionDirectory ?? realpath(input.sessionDirectory),
+    input.resolvedStoreRoot ?? realpath(input.storeRoot),
   ]);
   const relativeToSession = path.relative(sessionDirectory, candidate);
   if (relativeToSession.startsWith("..") || path.isAbsolute(relativeToSession)) {
@@ -37,16 +39,18 @@ export async function validateCommittedWavChunk(input: {
   }
 
   const metadata = parseChunkFilename(path.basename(candidate));
+  const candidateInfo = await lstat(candidate);
+  if (!candidateInfo.isFile()) throw new Error(`Committed chunk is not a regular file: ${candidate}`);
   const handle = await open(candidate, "r");
   let data: Buffer;
   let info;
   try {
-    data = await handle.readFile();
     info = await handle.stat();
+    if (!info.isFile()) throw new Error(`Committed chunk is not a regular file: ${candidate}`);
+    data = await handle.readFile();
   } finally {
     await handle.close();
   }
-  if (!info.isFile()) throw new Error(`Committed chunk is not a regular file: ${candidate}`);
   if (info.size !== data.length) throw new Error(`Committed chunk changed while it was being validated: ${candidate}`);
   const wav = parsePcmWav(data, candidate);
   if (

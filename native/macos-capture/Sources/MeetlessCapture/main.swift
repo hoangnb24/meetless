@@ -8,6 +8,11 @@ import ScreenCaptureKit
 private let sampleRate = 16_000
 private let channels = 1
 private let defaultChunkFrames = 16_000
+// ScreenCaptureKit callback PTS can drift slightly from the converted PCM frame count.
+// Differences up to 100 ms are callback jitter, not a timeline gap. At one-second
+// target chunks this keeps ordinary capture at no more than 61 chunks/source/minute
+// (the final partial chunk accounts for the extra one).
+private let callbackJitterToleranceFrames = sampleRate / 10
 
 private struct Command: Decodable {
   let version: Int
@@ -64,6 +69,7 @@ private final class ChunkWriter: @unchecked Sendable {
   private let lock = NSLock()
   private var buffers: [Source: [Int16]] = [.microphone: [], .system: []]
   private var chunkStartFrames: [Source: Int64] = [:]
+  private var nextExpectedFrames: [Source: Int64] = [:]
   private var indexes: [Source: Int] = [.microphone: 0, .system: 0]
   private var originPresentationFrame: Int64?
   private var sharedAdjustmentFrame: Int64 = 0
@@ -147,17 +153,17 @@ private final class ChunkWriter: @unchecked Sendable {
     guard let originPresentationFrame else { return }
     var logicalStart = packet.presentationFrame - originPresentationFrame + sharedAdjustmentFrame
     guard logicalStart >= 0 else { throw NSError(domain: "MeetlessCapture", code: 20, userInfo: [NSLocalizedDescriptionKey: "Audio PTS predates the shared timeline origin"]) }
-    let buffered = buffers[packet.source, default: []]
-    if !buffered.isEmpty, let chunkStart = chunkStartFrames[packet.source] {
-      let expected = chunkStart + Int64(buffered.count)
-      if abs(logicalStart - expected) > 1 {
+    if let expected = nextExpectedFrames[packet.source] {
+      if abs(logicalStart - expected) > Int64(callbackJitterToleranceFrames) {
         try flush(packet.source)
+        nextExpectedFrames[packet.source] = nil
       } else {
         logicalStart = expected
       }
     }
     if buffers[packet.source, default: []].isEmpty { chunkStartFrames[packet.source] = logicalStart }
     buffers[packet.source, default: []].append(contentsOf: packet.samples)
+    nextExpectedFrames[packet.source] = logicalStart + Int64(packet.samples.count)
     while buffers[packet.source, default: []].count >= defaultChunkFrames {
       let frames = Array(buffers[packet.source, default: []].prefix(defaultChunkFrames))
       buffers[packet.source]?.removeFirst(defaultChunkFrames)
@@ -249,17 +255,19 @@ private protocol CaptureSource: AnyObject, Sendable {
 private final class FixtureSource: CaptureSource, @unchecked Sendable {
   private let writer: ChunkWriter
   private let timelineFixture: Bool
+  private let jitterFixture: Bool
   private var timer: DispatchSourceTimer?
   private var micFrame: Int64 = 0
   private var systemFrame: Int64 = 0
   private var tickIndex: Int64 = 0
-  init(writer: ChunkWriter, timelineFixture: Bool) {
+  init(writer: ChunkWriter, timelineFixture: Bool, jitterFixture: Bool) {
     self.writer = writer
     self.timelineFixture = timelineFixture
+    self.jitterFixture = jitterFixture
   }
   func start() async throws {
     let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "meetless.fixture"))
-    timer.schedule(deadline: .now(), repeating: .milliseconds(timelineFixture ? 50 : 100))
+    timer.schedule(deadline: .now(), repeating: .milliseconds(jitterFixture ? 5 : (timelineFixture ? 50 : 100)))
     timer.setEventHandler { [weak self] in self?.tick() }
     self.timer = timer
     timer.resume()
@@ -276,16 +284,18 @@ private final class FixtureSource: CaptureSource, @unchecked Sendable {
     }
     micFrame += Int64(count); systemFrame += Int64(count)
     let base = timelineFixture ? Int64(sampleRate * 10) : 0
+    let jitter = jitterFixture ? [Int64(0), Int64(80), Int64(-64)][Int(tickIndex % 3)] : 0
     let micPresentation = timelineFixture
       ? base + (tickIndex == 0 ? 0 : (tickIndex + 1) * Int64(count))
-      : tickIndex * Int64(count)
+      : tickIndex * Int64(count) + jitter
     let systemPresentation = timelineFixture
       ? base + Int64(sampleRate / 8) + tickIndex * Int64(count)
-      : tickIndex * Int64(count)
+      : tickIndex * Int64(count) - jitter
     tickIndex += 1
     do {
       try writer.append(mic, source: .microphone, presentationFrame: micPresentation)
       try writer.append(system, source: .system, presentationFrame: systemPresentation)
+      if jitterFixture && tickIndex >= 600 { timer?.cancel(); timer = nil }
     }
     catch { diagnostic("fixture write failed: \(error)") }
   }
@@ -379,13 +389,15 @@ private final class Runtime: @unchecked Sendable {
   private let fixture: Bool
   private let timelineFixture: Bool
   private let invalidClaimFixture: Bool
+  private let jitterFixture: Bool
   private var writer: ChunkWriter?
   private var source: CaptureSource?
   private var stopped = false
-  init(fixture: Bool, timelineFixture: Bool, invalidClaimFixture: Bool) {
+  init(fixture: Bool, timelineFixture: Bool, invalidClaimFixture: Bool, jitterFixture: Bool) {
     self.fixture = fixture
     self.timelineFixture = timelineFixture
     self.invalidClaimFixture = invalidClaimFixture
+    self.jitterFixture = jitterFixture
   }
 
   func handle(_ command: Command) throws {
@@ -397,7 +409,7 @@ private final class Runtime: @unchecked Sendable {
       let writer = try ChunkWriter(directory: directory, invalidClaimFixture: invalidClaimFixture)
       self.writer = writer
       let source: CaptureSource = fixture
-        ? FixtureSource(writer: writer, timelineFixture: timelineFixture)
+        ? FixtureSource(writer: writer, timelineFixture: timelineFixture, jitterFixture: jitterFixture)
         : ScreenCaptureSource(writer: writer)
       self.source = source
       let semaphore = DispatchSemaphore(value: 0)
@@ -436,10 +448,12 @@ private final class Runtime: @unchecked Sendable {
 
 private let timelineFixture = CommandLine.arguments.contains("--timeline-fixture")
 private let invalidClaimFixture = CommandLine.arguments.contains("--invalid-claim-fixture")
+private let jitterFixture = CommandLine.arguments.contains("--jitter-fixture")
 private let runtime = Runtime(
-  fixture: CommandLine.arguments.contains("--fixture") || timelineFixture || invalidClaimFixture,
+  fixture: CommandLine.arguments.contains("--fixture") || timelineFixture || invalidClaimFixture || jitterFixture,
   timelineFixture: timelineFixture,
-  invalidClaimFixture: invalidClaimFixture
+  invalidClaimFixture: invalidClaimFixture,
+  jitterFixture: jitterFixture
 )
 while let line = readLine() {
   guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }

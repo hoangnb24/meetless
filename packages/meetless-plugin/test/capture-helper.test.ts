@@ -113,6 +113,40 @@ describe("capture helper supervision", () => {
     }
   }, 15_000);
 
+  test("ordinary callback jitter stays within 61 chunks per source per recorded minute", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-jitter-helper-"));
+    const sessionDirectory = path.join(root, "sessions", "jitter");
+    const child = spawn(path.resolve("native/macos-capture/.build/release/meetless-capture"), ["--jitter-fixture"], {
+      stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH },
+    });
+    const events: Array<Record<string, unknown>> = [];
+    let stdout = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      while (stdout.includes("\n")) {
+        const newline = stdout.indexOf("\n");
+        const line = stdout.slice(0, newline).trim(); stdout = stdout.slice(newline + 1);
+        if (line) events.push(JSON.parse(line) as Record<string, unknown>);
+      }
+    });
+    try {
+      send(child, { version: 1, command: "start", sessionDirectory, elapsedMs: 0 });
+      await waitFor(() => events.some((event) => event.event === "started"));
+      await waitFor(() => chunkStarts(events, "microphone").length >= 60 && chunkStarts(events, "system").length >= 60, 10_000);
+      send(child, { version: 1, command: "stop" });
+      await waitFor(() => events.some((event) => event.event === "stopped"));
+      for (const source of ["microphone", "system"]) {
+        const starts = chunkStarts(events, source);
+        expect(starts.length).toBeLessThanOrEqual(61);
+        expect(starts.slice(0, 60)).toEqual(Array.from({ length: 60 }, (_, index) => index * 1_000));
+      }
+    } finally {
+      child.kill("SIGKILL");
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   test("commits source-labelled timeline chunks and bounded cleanup leaves no helper process", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-helper-test-"));
     const sessionDirectory = path.join(root, "sessions", "r-1");

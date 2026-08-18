@@ -2,7 +2,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { createDesktopRecordingClient, type DesktopRecordingClient } from "@meetless/client";
 import type { RecordingStatusWire } from "@meetless/meeting-contracts";
 
-const idle: RecordingStatusWire = { status: "idle", recordingId: null, meetingId: null, title: null, elapsedMs: 0, paused: false, chunks: [], outputPath: null, error: null };
+const idle: RecordingStatusWire = {
+  status: "idle", recordingId: null, meetingId: null, title: null, elapsedMs: 0, paused: false, chunks: [],
+  inventoryState: null, chunkCount: 0, microphoneCount: 0, systemCount: 0,
+  inventoryDigest: null, retryEligible: false, outputPath: null, error: null,
+};
 
 interface RecordingContextValue {
   enabled: boolean;

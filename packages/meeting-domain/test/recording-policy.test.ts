@@ -7,13 +7,17 @@ import {
   commitRecordingChunk,
   interruptRecording,
   markRecordingSaved,
+  markRecordingInventoryScanning,
   pauseRecording,
+  prepareRecordingInventoryRecovery,
+  publishRecordingInventory,
   reconcilePublishIntent,
   recordingElapsedMs,
   resumeRecording,
   retryFinalization,
   startRecording,
   type CommittedRecordingChunk,
+  type RecordingSession,
 } from "../src/index.js";
 
 const chunk = (id: string, source: "microphone" | "system" = "microphone"): CommittedRecordingChunk => ({
@@ -29,6 +33,20 @@ const chunk = (id: string, source: "microphone" | "system" = "microphone"): Comm
   channels: 1,
   format: "wav",
 });
+
+function completeInventory(recording: RecordingSession, digest = "set-sha"): RecordingSession {
+  const recovered = prepareRecordingInventoryRecovery(recording, {
+    now: "2026-08-17T10:00:09.000Z", reason: "capture closed",
+  });
+  const scanning = markRecordingInventoryScanning(recovered, "2026-08-17T10:00:09.100Z");
+  return publishRecordingInventory(scanning, { now: "2026-08-17T10:00:09.200Z", pointer: {
+    storageKey: `sessions/${recording.id}/inventory-${digest}.ndjson`, digest,
+    chunkCount: recording.chunks.length,
+    microphoneCount: recording.chunks.filter((candidate) => candidate.source === "microphone").length,
+    systemCount: recording.chunks.filter((candidate) => candidate.source === "system").length,
+    publishedAt: "2026-08-17T10:00:09.150Z",
+  } });
+}
 
 describe("recording policy", () => {
   test("counts only unpaused time and preserves source-labelled committed chunks", () => {
@@ -108,7 +126,7 @@ describe("recording policy", () => {
       startRecording({ id: "r-1", meetingId: "m-1", now: "2026-08-17T10:00:00.000Z" }),
       chunk("mic-1"),
     );
-    const finalizing = beginFinalization(started, {
+    const finalizing = beginFinalization(completeInventory(started), {
       now: "2026-08-17T10:00:10.000Z",
       openChunksDurablyClosed: true,
       chunkSetDigest: "set-sha",
@@ -126,7 +144,7 @@ describe("recording policy", () => {
     const retried = retryFinalization(recoverable, { now: "2026-08-17T10:00:13.000Z" });
 
     expect(retried.finalization).toEqual(finalizing.finalization);
-    expect(retried.chunks).toEqual(finalizing.chunks);
+    expect(retried.inventory).toEqual(finalizing.inventory);
     expect(() =>
       beginFinalization(recoverable, {
         now: "2026-08-17T10:00:13.000Z",
@@ -143,7 +161,7 @@ describe("recording policy", () => {
       startRecording({ id: "r-1", meetingId: "m-1", now: "2026-08-17T10:00:00.000Z" }),
       chunk("mic-1"),
     );
-    const finalizing = beginFinalization(started, {
+    const finalizing = beginFinalization(completeInventory(started), {
       now: "2026-08-17T10:00:10.000Z",
       openChunksDurablyClosed: true,
       chunkSetDigest: "set-sha",
@@ -180,7 +198,7 @@ describe("recording policy", () => {
       startRecording({ id: "r-1", meetingId: "m-1", now: "2026-08-17T10:00:00.000Z" }),
       chunk("mic-1"),
     );
-    const finalizing = beginFinalization(started, {
+    const finalizing = beginFinalization(completeInventory(started), {
       now: "2026-08-17T10:00:10.000Z",
       openChunksDurablyClosed: true,
       chunkSetDigest: "set-sha",

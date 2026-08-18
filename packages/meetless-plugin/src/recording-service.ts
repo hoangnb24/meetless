@@ -1,12 +1,11 @@
-import { createHash } from "node:crypto";
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { MeetingStore } from "@meetless/meeting-store";
-import { recordingElapsedMs, type CommittedRecordingChunk, type RecordingSession } from "@meetless/meeting-domain";
+import { recordingElapsedMs, type RecordingSession } from "@meetless/meeting-domain";
 import type { RecordingControlRequest, RecordingStatusWire } from "@meetless/meeting-contracts";
 import { CaptureHelper } from "./capture-helper.js";
 import { fileIdentity, Mp3Finalizer } from "./finalizer.js";
-import { validateCommittedWavChunk } from "./chunk-validator.js";
+import { readInventory, RecordingInventoryReconciler, resolveStorePath } from "./inventory.js";
 import type { CollisionEvidence } from "./readiness-protocol.js";
 
 export interface RecordingServiceConfig {
@@ -26,6 +25,7 @@ export interface RecordingServiceConfig {
 export class RecordingService {
   readonly store: MeetingStore;
   private readonly finalizer: Mp3Finalizer;
+  private readonly inventory: RecordingInventoryReconciler;
   private helper: CaptureHelper | null = null;
   private commandTail: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<(status: RecordingStatusWire) => void>();
@@ -33,12 +33,15 @@ export class RecordingService {
   private shuttingDown = false;
   private preparedCollision: CollisionEvidence | null = null;
   private statusTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly scans = new Map<string, { controller: AbortController; promise: Promise<void> }>();
+  private inventoryStartTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(readonly config: RecordingServiceConfig, store?: MeetingStore) {
     this.store = store ?? new MeetingStore({ root: config.storeRoot });
     this.finalizer = new Mp3Finalizer({
       ffmpeg: config.ffmpeg, ffprobe: config.ffprobe, exportRoot: config.exportRoot, storeRoot: config.storeRoot,
     });
+    this.inventory = new RecordingInventoryReconciler(config.storeRoot, this.store);
     this.failFinalizationOnce = config.failFinalizationOnce === true;
   }
 
@@ -50,8 +53,21 @@ export class RecordingService {
   async initialize(): Promise<void> {
     await mkdir(path.join(this.config.storeRoot, "sessions"), { recursive: true, mode: 0o700 });
     const recordings = await this.store.listRecordings();
-    for (const recording of recordings) await this.recoverRecording(recording);
+    for (const recording of recordings) {
+      if (recording.status === "recording" || recording.status === "interrupted") {
+        await this.store.prepareInventoryRecovery(recording.id, "daemon restarted while capture was active");
+      } else if (recording.status === "finalizing") {
+        await this.recoverRecording(recording);
+      }
+    }
     await this.emitStatus();
+    const startupRecoveryIds = (await this.store.listRecordings())
+      .filter((recording) => recording.status === "recoverable" && recording.inventory.state !== "complete")
+      .map((recording) => recording.id);
+    this.inventoryStartTimer = setTimeout(() => {
+      this.inventoryStartTimer = null;
+      void this.startPendingInventoryScans(startupRecoveryIds);
+    }, 100);
   }
 
   execute(request: RecordingControlRequest): Promise<RecordingStatusWire> {
@@ -82,9 +98,15 @@ export class RecordingService {
       title: meeting?.title ?? "Recovered meeting",
       elapsedMs: recording.status === "recording" ? recordingElapsedMs(recording, new Date().toISOString()) : recording.elapsedMs,
       paused: recording.status === "recording" && recording.activeSince === null,
-      chunks: recording.chunks,
+      chunks: recording.chunks.slice(-4),
+      inventoryState: recording.inventory.state,
+      chunkCount: recording.inventory.knownChunkCount,
+      microphoneCount: recording.inventory.microphoneCount,
+      systemCount: recording.inventory.systemCount,
+      inventoryDigest: recording.inventory.pointer?.digest ?? null,
+      retryEligible: recording.status === "recoverable" && recording.inventory.state === "complete",
       outputPath: recording.savedOutput?.destination ?? recording.finalization?.publishIntent.destination ?? null,
-      error: recording.failureReason ?? recording.interruption?.reason ?? null,
+      error: recording.inventory.error ?? recording.failureReason ?? recording.interruption?.reason ?? null,
     };
   }
 
@@ -94,10 +116,15 @@ export class RecordingService {
     this.helper = null;
     if (this.statusTimer) clearTimeout(this.statusTimer);
     this.statusTimer = null;
+    if (this.inventoryStartTimer) clearTimeout(this.inventoryStartTimer);
+    this.inventoryStartTimer = null;
+    for (const scan of this.scans.values()) scan.controller.abort();
+    await Promise.allSettled([...this.scans.values()].map((scan) => scan.promise));
     await this.serialize(async () => {
       const current = await this.status();
       if (current.status === "recording" && current.recordingId) {
-        await this.interruptAndAssess(current.recordingId, "Meetless runtime shutdown interrupted active capture");
+        const recovered = await this.store.prepareInventoryRecovery(current.recordingId, "Meetless runtime shutdown interrupted active capture");
+        this.startInventoryScan(recovered);
         await this.emitStatus();
       }
     });
@@ -211,18 +238,23 @@ export class RecordingService {
       : null;
     await this.helper.stop();
     this.helper = null;
-    const closed = await this.findRecording(recording.id);
-    await this.stageBeginAndPublish(closed, prepared?.plannedPublishedPath);
+    const closed = await this.store.prepareInventoryRecovery(recording.id, "capture stopped with durably closed chunks");
+    await this.reconcileInventory(closed);
+    const completed = await this.findRecording(recording.id);
+    await this.stageBeginAndPublish(completed, prepared?.plannedPublishedPath);
   }
 
   private async retryFinalization(): Promise<void> {
     const recording = await this.requireCurrent("recoverable", "finalizing");
+    if (recording.inventory.state !== "complete" || !recording.inventory.pointer) {
+      throw new Error("Retry MP3 is unavailable until inventory reconciliation is complete (docs/product/recording.md)");
+    }
     if (!recording.finalization) {
       await this.stageBeginAndPublish(recording);
       return;
     }
     await this.store.retryFinalization(recording.id);
-    const staged = await this.finalizer.stage(recording.id, recording.chunks);
+    const staged = await this.finalizer.stage(recording.id, recording.inventory.pointer);
     if (!sameIdentity(staged.identity, recording.finalization.publishIntent.expectedIdentity)) {
       await rm(staged.stagePath, { force: true });
       await this.interruptAndAssess(recording.id, "retry output identity changed");
@@ -232,12 +264,14 @@ export class RecordingService {
   }
 
   private async stageBeginAndPublish(recording: RecordingSession, preparedDestination?: string): Promise<void> {
-    const staged = await this.finalizer.stage(recording.id, recording.chunks);
+    if (recording.inventory.state !== "complete" || !recording.inventory.pointer) {
+      throw new Error("Finalization requires a complete durable inventory");
+    }
+    const staged = await this.finalizer.stage(recording.id, recording.inventory.pointer);
     const destination = preparedDestination ?? await this.finalizer.nextDestination(this.config.exportNow?.() ?? new Date());
-    const digest = chunkSetDigest(recording.chunks);
     await this.store.beginFinalization(recording.id, {
       openChunksDurablyClosed: true,
-      chunkSetDigest: digest,
+      chunkSetDigest: recording.inventory.pointer.digest,
       destination,
       expectedIdentity: staged.identity,
     });
@@ -289,33 +323,21 @@ export class RecordingService {
     await this.store.markRecordingSaved(recording.id, {
       destination: intent.destination, identity: verified.identity, readable: true,
     });
-    const chunks = await this.store.cleanupEligibleChunks(recording.id, {
+    const cleanupInventory = await this.store.cleanupEligibleInventory(recording.id, {
       destination: intent.destination, identity: verified.identity, readable: true,
     });
-    const cleanup = await Promise.allSettled(
-      chunks.map((chunk) => rm(path.resolve(this.config.storeRoot, chunk.storageKey), { force: true })),
-    );
-    for (const result of cleanup) {
-      if (result.status === "rejected") process.stderr.write(`[meetless-recording] saved chunk cleanup deferred: ${describe(result.reason)}\n`);
+    const chunks = cleanupInventory.pointer
+      ? readInventory(this.config.storeRoot, cleanupInventory.pointer)
+      : arrayChunks(cleanupInventory.legacyChunks);
+    for await (const chunk of chunks) {
+      await rm(resolveStorePath(this.config.storeRoot, chunk.storageKey), { force: true }).catch((error) => {
+        process.stderr.write(`[meetless-recording] saved chunk cleanup deferred: ${describe(error)}\n`);
+      });
     }
   }
 
   private async recoverRecording(recording: RecordingSession): Promise<void> {
-    if (["recording", "interrupted", "recoverable"].includes(recording.status)) {
-      await this.adoptOrphans(recording);
-    }
     let current = await this.findRecording(recording.id);
-    if (current.status === "recording") {
-      await this.interruptAndAssess(current.id, "daemon restarted while capture was active");
-      return;
-    }
-    if (current.status === "interrupted") {
-      await this.store.assessInterruption(current.id, {
-        recoverable: current.chunks.length > 0,
-        reason: current.chunks.length > 0 ? undefined : "No readable committed chunks survived",
-      });
-      return;
-    }
     if (current.status === "finalizing" && current.finalization) {
       const destination = current.finalization.publishIntent.destination;
       try {
@@ -330,45 +352,60 @@ export class RecordingService {
     }
   }
 
-  private async adoptOrphans(recording: RecordingSession): Promise<void> {
-    const directory = path.join(this.config.storeRoot, "sessions", recording.id);
-    const names = await readdir(directory).catch((error) => isErrno(error, "ENOENT") ? [] : Promise.reject(error));
-    const known = new Set(recording.chunks.map((chunk) => chunk.id));
-    for (const name of names.sort()) {
-      if (name.endsWith(".partial") || name.startsWith(".")) continue;
-      if (name.endsWith(".wav") && known.has(name.slice(0, -4))) continue;
-      const filePath = path.join(directory, name);
-      try {
-        const chunk = await validateCommittedWavChunk({
-          filePath, sessionDirectory: directory, storeRoot: this.config.storeRoot,
-        });
-        if (known.has(chunk.id)) continue;
-        await this.store.adoptOrphanChunk(recording.id, {
-          fullyCommitted: true, readable: true, identityValid: true, chunk,
-        });
-        known.add(chunk.id);
-      } catch {
-        continue;
-      }
-    }
-  }
-
   private async handleHelperFailure(recordingId: string, reason: string): Promise<void> {
     if (this.shuttingDown) return;
     await this.serialize(async () => {
       const current = await this.findRecording(recordingId).catch(() => null);
-      if (current?.status === "recording") await this.interruptAndAssess(recordingId, reason);
+      if (current?.status === "recording") {
+        const recovered = await this.store.prepareInventoryRecovery(recordingId, reason);
+        this.startInventoryScan(recovered);
+      }
       this.helper = null;
       await this.emitStatus();
     });
   }
 
   private async interruptAndAssess(recordingId: string, reason: string): Promise<void> {
+    const current = await this.findRecording(recordingId);
+    if (current.status === "recording") {
+      const recovered = await this.store.prepareInventoryRecovery(recordingId, reason);
+      this.startInventoryScan(recovered);
+      return;
+    }
     const interrupted = await this.store.interruptRecording(recordingId, reason);
     await this.store.assessInterruption(recordingId, {
-      recoverable: interrupted.chunks.length > 0,
-      reason: interrupted.chunks.length > 0 ? undefined : "No readable committed chunks survived",
+      recoverable: interrupted.inventory.knownChunkCount > 0,
+      reason: interrupted.inventory.knownChunkCount > 0 ? undefined : "No readable committed chunks survived",
     });
+  }
+
+  private startInventoryScan(recording: RecordingSession): void {
+    if (this.shuttingDown || this.scans.has(recording.id)) return;
+    const controller = new AbortController();
+    const promise = this.reconcileInventory(recording, controller.signal)
+      .catch((error) => {
+        if (!(error instanceof Error && error.name === "AbortError")) {
+          process.stderr.write(`[meetless-recording] inventory reconciliation blocked: ${describe(error)}\n`);
+        }
+      })
+      .finally(async () => {
+        this.scans.delete(recording.id);
+        if (!this.shuttingDown) await this.emitStatus().catch(() => undefined);
+      });
+    this.scans.set(recording.id, { controller, promise });
+  }
+
+  private async startPendingInventoryScans(recordingIds: readonly string[]): Promise<void> {
+    if (this.shuttingDown) return;
+    for (const recording of await this.store.listRecordings()) {
+      if (recordingIds.includes(recording.id) && recording.status === "recoverable" && recording.inventory.state !== "complete") {
+        this.startInventoryScan(recording);
+      }
+    }
+  }
+
+  private async reconcileInventory(recording: RecordingSession, signal?: AbortSignal): Promise<void> {
+    await this.inventory.reconcile(recording, { signal });
   }
 
   private async validatePreparedCollision(recordingId: string, runtimeInstanceId: string): Promise<CollisionEvidence> {
@@ -423,7 +460,9 @@ export class RecordingService {
 }
 
 function idleStatus(): RecordingStatusWire {
-  return { status: "idle", recordingId: null, meetingId: null, title: null, elapsedMs: 0, paused: false, chunks: [], outputPath: null, error: null };
+  return { status: "idle", recordingId: null, meetingId: null, title: null, elapsedMs: 0, paused: false, chunks: [],
+    inventoryState: null, chunkCount: 0, microphoneCount: 0, systemCount: 0, inventoryDigest: null,
+    retryEligible: false, outputPath: null, error: null };
 }
 
 const UNRESOLVED_STATUSES: ReadonlySet<RecordingSession["status"]> = new Set([
@@ -448,12 +487,6 @@ function selectCurrentRecording(recordings: readonly RecordingSession[]): Record
   }, undefined);
 }
 
-function chunkSetDigest(chunks: readonly CommittedRecordingChunk[]): string {
-  return createHash("sha256").update(JSON.stringify(chunks.map((chunk) => ({
-    id: chunk.id, source: chunk.source, sha256: chunk.sha256, logicalStartMs: chunk.logicalStartMs, durationMs: chunk.durationMs,
-  })))).digest("hex");
-}
-
 function sameIdentity(left: { byteLength: number; sha256: string }, right: { byteLength: number; sha256: string }): boolean {
   return left.byteLength === right.byteLength && left.sha256 === right.sha256;
 }
@@ -461,4 +494,8 @@ function sameIdentity(left: { byteLength: number; sha256: string }, right: { byt
 function describe(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === code;
+}
+
+async function* arrayChunks(chunks: readonly import("@meetless/meeting-domain").CommittedRecordingChunk[]) {
+  for (const chunk of chunks) yield chunk;
 }

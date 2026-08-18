@@ -59,7 +59,7 @@ describe("meeting store", () => {
     expect(meetings).toHaveLength(40);
     expect(new Set(meetings.map((meeting) => meeting.id))).toHaveLength(40);
     expect((await readdir(root)).sort()).toEqual(["meetings.json"]);
-    expect(JSON.parse(await readFile(store.filePath, "utf8"))).toMatchObject({ version: 2 });
+    expect(JSON.parse(await readFile(store.filePath, "utf8"))).toMatchObject({ version: 3 });
   });
 
   test("fails closed and preserves corrupt state", async () => {
@@ -91,7 +91,7 @@ describe("meeting store", () => {
 
     expect(await store.list()).toEqual([meeting]);
     expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({
-      version: 2,
+      version: 3,
       meetings: [meeting],
       recordings: [],
     });
@@ -140,7 +140,7 @@ describe("meeting store", () => {
       chunkSetDigest: "empty-set",
       destination: "meetings/rejected.mp3",
       expectedIdentity: { byteLength: 512, sha256: "mp3-sha" },
-    })).rejects.toThrow(/without committed chunks/);
+    })).rejects.toThrow(/inventory reconciliation/);
     expect(await readFile(store.filePath, "utf8")).toBe(beforeRejectedFinalization);
     expect(await store.list()).toMatchObject([{ status: "recording" }]);
     expect(await store.listRecordings()).toMatchObject([{ status: "recording", finalization: null }]);
@@ -154,6 +154,7 @@ describe("meeting store", () => {
       committedAt: "2026-08-17T10:00:05.000Z",
       logicalStartMs: 0, durationMs: 5_000, sampleRate: 16_000, channels: 1, format: "wav",
     });
+    await completeInventory(store, "r-1", "chunk-set-sha");
     now = "2026-08-17T10:00:10.000Z";
     await store.beginFinalization("r-1", {
       openChunksDurablyClosed: true,
@@ -234,6 +235,7 @@ describe("meeting store", () => {
       committedAt: "2026-08-17T10:00:05.000Z",
       logicalStartMs: 0, durationMs: 5_000, sampleRate: 16_000, channels: 1, format: "wav",
     });
+    await completeInventory(store, "r-1", "chunk-set-sha");
     now = "2026-08-17T10:00:10.000Z";
     await store.beginFinalization("r-1", {
       openChunksDurablyClosed: true,
@@ -272,13 +274,13 @@ describe("meeting store", () => {
     await lifecycleStore.transition("m-1", "archived");
 
     const restarted = new MeetingStore({ root });
-    await expect(restarted.cleanupEligibleChunks("r-1", verification)).resolves.toMatchObject([
-      { id: "mic-1", source: "microphone", sha256: "chunk-sha" },
-    ]);
+    await expect(restarted.cleanupEligibleInventory("r-1", verification)).resolves.toMatchObject({
+      pointer: { digest: "chunk-set-sha", chunkCount: 1 }, legacyChunks: [],
+    });
     expect((await restarted.listRecordings())[0]).toMatchObject({
       status: "saved",
       savedOutput: { destination: "meetings/output.mp3", sha256: "mp3-sha" },
-      finalization: { chunkSetDigest: "chunk-set-sha", chunkIds: ["mic-1"] },
+      finalization: { chunkSetDigest: "chunk-set-sha", chunkCount: 1 },
     });
     expect(await restarted.list()).toMatchObject([{ id: "m-1", status: "archived" }]);
   });
@@ -300,6 +302,7 @@ describe("meeting store", () => {
       committedAt: "2026-08-17T10:00:05.000Z",
       logicalStartMs: 0, durationMs: 5_000, sampleRate: 16_000, channels: 1, format: "wav",
     });
+    await completeInventory(store, "r-1", "chunk-set-sha");
     now = "2026-08-17T10:00:10.000Z";
     await store.beginFinalization("r-1", {
       openChunksDurablyClosed: true,
@@ -339,6 +342,7 @@ describe("meeting store", () => {
       committedAt: "2026-08-17T10:00:05.000Z",
       logicalStartMs: 0, durationMs: 5_000, sampleRate: 16_000, channels: 1, format: "wav",
     });
+    await completeInventory(store, "r-1", "immutable-set-sha");
     now = "2026-08-17T10:00:10.000Z";
     await store.beginFinalization("r-1", {
       openChunksDurablyClosed: true,
@@ -356,9 +360,10 @@ describe("meeting store", () => {
 
     expect((await new MeetingStore({ root }).listRecordings())[0]).toMatchObject({
       status: "finalizing",
-      chunks: [{ id: "mic-1", sha256: "chunk-sha" }],
+      chunks: [],
+      inventory: { state: "complete", knownChunkCount: 1 },
       finalization: {
-        chunkIds: ["mic-1"],
+        chunkCount: 1,
         chunkSetDigest: "immutable-set-sha",
         publishIntent: { destination: "meetings/retry.mp3", expectedIdentity: { sha256: "mp3-sha" } },
       },
@@ -445,3 +450,15 @@ describe("meeting store", () => {
     }
   });
 });
+
+async function completeInventory(store: MeetingStore, recordingId: string, digest: string): Promise<void> {
+  const recovered = await store.prepareInventoryRecovery(recordingId, "capture closed for inventory");
+  await store.markInventoryScanning(recordingId);
+  await store.publishInventory(recordingId, {
+    storageKey: `sessions/${recordingId}/inventory-${digest}.ndjson`, digest,
+    chunkCount: recovered.inventory.knownChunkCount,
+    microphoneCount: recovered.inventory.microphoneCount,
+    systemCount: recovered.inventory.systemCount,
+    publishedAt: new Date().toISOString(),
+  });
+}

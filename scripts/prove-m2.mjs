@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
@@ -6,6 +6,9 @@ import path from "node:path";
 import { promisify } from "node:util";
 import WebSocket from "ws";
 import { connectMeetlessClient } from "../packages/meetless-client/dist/index.js";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { callPluginRpc } from "@paseo/plugin/host";
+import { RecordingRuntimeBootstrapRpc } from "../packages/meetless-plugin/dist/src/readiness-protocol.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
@@ -64,10 +67,15 @@ try {
   daemon = await startDaemon(environment, socketPath, daemons);
   socket = await connect(socketPath);
   const afterRestart = await command(socket, "status");
-  if (afterRestart.status.status !== "recoverable" || afterRestart.status.chunks.length < 2) {
+  if (afterRestart.status.status !== "recoverable" || afterRestart.status.chunkCount < 2) {
     throw new Error(`Daemon restart did not recover committed chunks: ${JSON.stringify(afterRestart.status)}`);
   }
-  const originalChunkIds = afterRestart.status.chunks.map((chunk) => chunk.id);
+  await waitFor(async () => (await command(socket, "status")).status.retryEligible);
+  const completedRecovery = await command(socket, "status");
+  const originalInventory = {
+    digest: completedRecovery.status.inventoryDigest,
+    count: completedRecovery.status.chunkCount,
+  };
 
   const injected = await command(socket, "retryFinalization", {}, true);
   if (injected.ok || injected.status.status !== "recoverable") {
@@ -75,7 +83,7 @@ try {
   }
   const saved = await command(socket, "retryFinalization");
   if (saved.status.status !== "saved" || !saved.status.outputPath) throw new Error("Finalization retry did not save MP3");
-  if (JSON.stringify(saved.status.chunks.map((chunk) => chunk.id)) !== JSON.stringify(originalChunkIds)) {
+  if (saved.status.inventoryDigest !== originalInventory.digest || saved.status.chunkCount !== originalInventory.count) {
     throw new Error("Finalization retry changed the committed chunk set");
   }
   socket.close();
@@ -108,9 +116,9 @@ try {
     proof: "Meetless Milestone 2 fixture acceptance",
     runtimeRoot,
     listen,
-    rendererExit: { captureContinued: true, chunksAfterReconnect: afterRendererExit.status.chunks.length },
-    daemonRestart: { recovered: true, chunkIds: originalChunkIds },
-    retryWithoutRecording: { injectedFailure: injected.error, saved: true, sameChunkIds: true },
+    rendererExit: { captureContinued: true, chunksAfterReconnect: afterRendererExit.status.chunkCount },
+    daemonRestart: { recovered: true, inventory: originalInventory },
+    retryWithoutRecording: { injectedFailure: injected.error, saved: true, sameInventoryDigest: true },
     timestampTimeline: timeline,
     collision: { path: collisionPath, sha256: sha256(collisionBytes), unchanged: true, publishedPath: outputPath },
     output: { path: outputPath, sha256: await fileSha256(outputPath), probe, frequencyEvidence },
@@ -150,6 +158,20 @@ async function startDaemon(env, expectedSocket, ownedDaemons) {
     } catch (error) { lastClientError = error; return false; }
     finally { await client?.close().catch(() => undefined); }
   }, 30_000, () => `Meetless plugin catalog/RPC; last client error: ${lastClientError}; output:\n${output.join("")}`);
+  const bootstrapDaemon = new DaemonClient({
+    url: `ws://${env.MEETLESS_LISTEN}/ws`, clientId: `m2-proof-recording-bootstrap-${Date.now()}`,
+    clientType: "cli", reconnect: { enabled: false }, connectTimeoutMs: 10_000,
+  });
+  try {
+    await bootstrapDaemon.connect();
+    await callPluginRpc(
+      RecordingRuntimeBootstrapRpc,
+      (method, payload) => bootstrapDaemon.invokePluginRpc("meetless", method, payload),
+      { nonce: randomUUID(), deadlineEpochMs: Date.now() + 30_000 },
+    );
+  } finally {
+    await bootstrapDaemon.close().catch(() => undefined);
+  }
   await waitFor(
     async () => { try { return (await stat(expectedSocket)).isSocket(); } catch { return false; } },
     30_000,
