@@ -72,4 +72,35 @@ describe("companion meeting surface", () => {
     expect(onCreate).not.toHaveBeenCalled();
     renderer!.unmount();
   });
+
+  test("passes only the stable segment citation identity to the playback path", async () => {
+    const onCitation = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          canCreate={false}
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          meetings={[{ id: "m-1", title: "Sync", status: "ready", createdAt: "2026-08-18T10:00:00.000Z", updatedAt: "2026-08-18T10:00:00.000Z" }]}
+          onRefresh={async () => undefined}
+          onCitation={onCitation}
+          selectedMeetingId="m-1"
+          consentStatus="granted"
+          providerStatus="configured"
+          transcript={{
+            id: "t-1", meetingId: "m-1", recordingId: "r-1", status: "ready", plannerVersion: "m3-range-v1",
+            audioDurationMs: 1_000,
+            ranges: [{ ordinal: 0, startMs: 0, endMs: 1_000, segmentId: "segment-1" }],
+            segments: [{ range: { ordinal: 0, startMs: 0, endMs: 1_000, segmentId: "segment-1" }, text: "hello", completedAt: "2026-08-18T10:00:00.000Z", detectedLanguages: ["en"] }],
+            requestCount: 1, usage: null, detectedLanguages: ["en"], failureReason: null,
+          }}
+        />,
+      );
+    });
+    await act(async () => { renderer!.root.findByProps({ testID: "citation-segment-1" }).props.onPress(); });
+    expect(onCitation).toHaveBeenCalledWith({ meetingId: "m-1", segmentId: "segment-1" });
+    renderer!.unmount();
+  });
 });

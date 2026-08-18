@@ -5,10 +5,16 @@ import { MeetingStore } from "@meetless/meeting-store";
 import { RecordingService } from "./recording-service.js";
 import { RecordingControlServer } from "./control-server.js";
 import { assertProductionHostProvenance } from "./production-host.js";
+import { FfmpegAudioInspector, TranscriptionService } from "./transcription-service.js";
+import { NativeOpenAiTranscriptionProvider, UnixSocketNativeTranscriptionTransport } from "./transcription-provider.js";
+import { CitationPlaybackService, FfmpegCitationClipEncoder } from "./citation-playback.js";
+import { PrivateAudioSnapshotStore } from "./private-audio-snapshot.js";
 
 let store: MeetingStore | null = null;
 let recordingService: RecordingService | null = null;
 let controlServer: RecordingControlServer | null = null;
+let transcriptionService: TranscriptionService | null = null;
+let citationPlaybackService: CitationPlaybackService | null = null;
 let recordingStart: Promise<void> | null = null;
 let runtimeIdentity: { instanceId: string; startedAt: string } | null = null;
 
@@ -52,11 +58,32 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
   const ffprobe = requiredAbsolute("MEETLESS_FFPROBE");
   const exportRoot = requiredAbsolute("MEETLESS_EXPORT_ROOT");
   const socketPath = requiredAbsolute("MEETLESS_RECORDING_SOCKET");
+  const transcriptionSocket = process.env.MEETLESS_TRANSCRIPTION_SOCKET?.trim();
+  const transcriptionStaging = process.env.MEETLESS_TRANSCRIPTION_STAGING?.trim();
   await Promise.all([access(helperPath), access(ffmpeg), access(ffprobe)]);
   const fixedStamp = process.env.MEETLESS_FIXTURE_EXPORT_STAMP?.trim();
   const fixture = process.env.MEETLESS_CAPTURE_MODE === "fixture";
   if (!fixture) await assertProductionHostProvenance();
+  if (!fixture && (!transcriptionSocket || !path.isAbsolute(transcriptionSocket) || !transcriptionStaging || !path.isAbsolute(transcriptionStaging))) {
+    throw new Error("Production transcription requires the signed MeetlessHost native capability socket");
+  }
   const fixtureExportNow = resolveFixtureExportNow(fixture, fixedStamp);
+  const provider = transcriptionSocket
+    ? new NativeOpenAiTranscriptionProvider(new UnixSocketNativeTranscriptionTransport(transcriptionSocket))
+    : null;
+  const transcript = provider
+    ? new TranscriptionService(getMeetingStore(), provider, {
+      inspector: new FfmpegAudioInspector(
+        ffmpeg,
+        ffprobe,
+        transcriptionStaging ?? path.join(storeRoot, "transcription-ranges"),
+      ),
+      sourceSnapshots: new PrivateAudioSnapshotStore(
+        path.join(storeRoot, "transcription-source-snapshots"),
+        "transcription-source",
+      ),
+    })
+    : undefined;
   const service = new RecordingService({
     storeRoot, helperPath, ffmpeg, ffprobe, exportRoot,
     fixture,
@@ -64,6 +91,7 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
     fixtureStampApplied: fixtureExportNow !== undefined,
     failFinalizationOnce: process.env.MEETLESS_FIXTURE_FAIL_FINALIZATION_ONCE === "1",
     authorizeProductionStart: assertProductionHostProvenance,
+    transcription: transcript,
   }, getMeetingStore());
   const identity = {
     instanceId: randomUUID(),
@@ -77,6 +105,7 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
     assertBootstrapDeadline(deadlineEpochMs);
     recordingService = service;
     controlServer = server;
+    transcriptionService = transcript ?? null;
     runtimeIdentity = identity;
   } catch (error) {
     await server.close().catch(() => undefined);
@@ -87,13 +116,43 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
 
 export async function stopRecordingRuntime(): Promise<void> {
   const server = controlServer; const service = recordingService;
-  controlServer = null; recordingService = null;
+  controlServer = null; recordingService = null; transcriptionService = null;
   runtimeIdentity = null;
   await service?.shutdown();
   await server?.close();
 }
 
 export function recordingRuntimeForTest(): RecordingService | null { return recordingService; }
+
+export function getTranscriptionService(): TranscriptionService {
+  if (!transcriptionService) throw new Error("Meetless transcription runtime is not active");
+  return transcriptionService;
+}
+
+export function getCitationPlaybackService(): CitationPlaybackService {
+  if (citationPlaybackService) return citationPlaybackService;
+  const storeRoot = requiredAbsolute("MEETLESS_STORE_ROOT");
+  citationPlaybackService = new CitationPlaybackService(
+    getMeetingStore(),
+    new FfmpegCitationClipEncoder(
+      requiredAbsolute("MEETLESS_FFMPEG"),
+      path.join(storeRoot, "citation-clips"),
+    ),
+    new PrivateAudioSnapshotStore(
+      path.join(storeRoot, "citation-source-snapshots"),
+      "citation-source",
+    ),
+  );
+  return citationPlaybackService;
+}
+
+export async function transcriptionProviderStatus(): Promise<"configured" | "missing" | "invalid"> {
+  return getTranscriptionService().providerStatus();
+}
+
+export async function grantTranscriptionConsent(): Promise<{ status: "granted"; grantedAt: string }> {
+  return getTranscriptionService().grantConsent();
+}
 
 export function recordingRuntimeIdentity(): { instanceId: string; startedAt: string } {
   if (!runtimeIdentity) throw new Error("Meetless recording runtime is not active");

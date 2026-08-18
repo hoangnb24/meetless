@@ -2,8 +2,14 @@ import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { callPluginRpc } from "@paseo/plugin/host";
 import {
   MeetingCreateRpc,
+  MeetingCitationResolveRpc,
   MeetingListRpc,
+  MeetingTranscriptRpc,
+  MeetingTranscriptionConsentRpc,
   type MeetingWire,
+  type TranscriptWire,
+  type CitationWire,
+  type TranscriptionProviderStatusWire,
   RecordingControlResponseSchema,
   RecordingStatusEventSchema,
   type RecordingControlRequest,
@@ -256,6 +262,41 @@ export class MeetlessClient {
       {},
     );
     return output.meetings;
+  }
+
+  async getMeetingTranscript(meetingId: string): Promise<{
+    meeting: MeetingWire;
+    transcript: TranscriptWire | null;
+    consent: { status: "unknown" | "granted"; grantedAt?: string };
+    provider: TranscriptionProviderStatusWire;
+  }> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingTranscriptRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      { meetingId },
+    );
+  }
+
+  async grantTranscriptionConsent(): Promise<{
+    consent: { status: "unknown" | "granted"; grantedAt?: string };
+    provider: TranscriptionProviderStatusWire;
+  }> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingTranscriptionConsentRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      { accepted: true },
+    );
+  }
+
+  async resolveCitation(input: { meetingId: string; segmentId: string }): Promise<CitationWire> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingCitationResolveRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      input,
+    );
   }
 
   private requireReady(): void {

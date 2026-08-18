@@ -44,6 +44,18 @@ This plan records the product-owner decisions accepted on 2026-08-16:
 - A meeting citation can seek playback to the supporting audio interval.
 - User-selected document folders are additional local knowledge sources.
 - Mobile is for reading and question answering, not V1 system-audio recording.
+- Milestone 3 transcribes English, Vietnamese, and mixed English/Vietnamese
+  code-switching without translation through the official OpenAI audio
+  transcription endpoint using `gpt-transcribe` and the explicit language set
+  `["en", "vi"]`. No local speech model is part of Milestone 3.
+- The OpenAI credential is application-owned Keychain material under service
+  `com.meetless.openai-api-key` and the current macOS-user account. It must not
+  enter repository files, environment variables, command-line arguments,
+  manifests, logs, renderer state, daemon configuration, or meeting state.
+- Saved recordings transcribe automatically after one-time cloud-processing
+  disclosure/consent. Milestone 3 adds no recording-duration cap; retry and
+  live acceptance remain bounded and record request/usage metadata when the
+  endpoint returns it.
 
 Focused authority now lives in [`docs/product/`](../../product/README.md).
 The Paseo adoption and update contract lives in
@@ -613,13 +625,46 @@ both-side call evidence.
 
 ### Milestone 3: transcription and audio-grounded citations
 
-- Adapt Paseo speech components behind `TranscriptionProvider` without leaking
-  voice-session or agent types into meeting policy.
-- Persist ordered transcript segments with stable IDs and millisecond ranges.
-- Add retryable processing state and a player that seeks by segment citation.
+`FOUNDATION_CHECK v1` (2026-08-18): M2's saved-MP3 identity and atomic store are
+accepted prerequisites. Current HEAD has no transcript/citation model, and the
+pinned Paseo OpenAI adapter cannot satisfy the accepted model, bilingual, or
+credential boundary. Milestone 3 therefore first adds a Meetless-owned
+transcript foundation and does not route the key through Paseo, Node, Electron,
+the isolated daemon, or renderer.
 
-Acceptance boundary: a fixed audio fixture creates stable timed segments, and a
-real citation click plays the expected spoken interval.
+- The signed `MeetlessHost` owns a native OpenAI transcription capability. It
+  reads the exact Keychain item in process, calls only the official OpenAI
+  endpoint, and returns normalized transcript/status data over private IPC;
+  plaintext credentials never cross that boundary. A host-owned native secure
+  configuration/disclosure flow may create or import the final Keychain item.
+- `TranscriptionProvider` remains a Meetless interface. The sole production M3
+  adapter is the native OpenAI capability; provider SDK/request types do not
+  enter meeting policy, and no local provider is implemented.
+- Meetless deterministically plans half-open audio ranges `[startMs, endMs)`
+  from the exact saved MP3. Each checkpoint binds recording ID, MP3 SHA-256,
+  planner version, ordinal, and range. Segment IDs are derived from that stable
+  range identity, not provider wording, so retry text variation cannot break a
+  previously issued citation.
+- `MeetingStore` owns `pending -> transcribing -> ready | failed` transcript
+  lifecycle, bounded retry metadata, request/usage counters, startup
+  reconciliation, and immutable published transcript sidecars. Completed
+  ranges checkpoint durably; a crash can duplicate only the in-flight request
+  and cannot expose a partial transcript as authoritative.
+- A saved recording automatically creates/resumes transcription after consent.
+  `failed` remains retryable from the same MP3 without recording again;
+  `meeting: processing` becomes `ready` only after atomic transcript publish.
+- Citation APIs accept only a known stable segment ID, resolve its authoritative
+  saved-audio range in application code, and return/play a bounded audio
+  interval. Model-written timestamps are never playback authority.
+
+Acceptance boundary: committed minimal English, Vietnamese, and mixed-language
+fixtures pass real bounded OpenAI transcription without translation; repeated
+and restart/resume runs preserve segment IDs/ranges and completed checkpoints;
+transient failure proves bounded retry and usage/request accounting; negative
+inspection proves the credential is absent from process environments/arguments,
+logs, manifests, renderer messages, meeting state, and published evidence; and
+a real UI citation click audibly plays the expected spoken interval. M2
+recording integrity checks remain green.
 
 ### Milestone 4: coding-agent analysis
 
@@ -780,6 +825,22 @@ Recovery rules:
   after readable staging and durable publish intent. Source chunks may be
   cleaned only after the exact output is readable and the `saved` transition is
   durably complete; finalization retry always reuses committed chunks.
+- 2026-08-18: Milestone 3 uses only the official OpenAI audio transcription
+  endpoint with `gpt-transcribe` and explicit `languages: ["en", "vi"]`; mixed
+  code-switching is preserved without translation and no local speech provider
+  is implemented.
+- 2026-08-18: The signed native Meetless host is the only component allowed to
+  read the OpenAI Keychain item and make the authenticated OpenAI request. The
+  Node/Paseo daemon receives transcript/status data only; environment,
+  persisted Paseo configuration, argv, renderer, and a plaintext-key broker are
+  rejected credential paths.
+- 2026-08-18: Meetless owns deterministic audio ranges and range-derived stable
+  segment IDs. Provider text is segment payload, not identity or timing
+  authority. `MeetingStore` owns checkpoints, retry/restart reconciliation,
+  immutable publication, citation resolution, and meeting-ready transition.
+- 2026-08-18: Cloud-processing disclosure is one-time and precedes automatic
+  transcription. No Meetless duration cap is added; retries and acceptance
+  traffic are bounded, and request/usage metadata is recorded when available.
 
 Open decisions before affected implementation:
 

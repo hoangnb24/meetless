@@ -81,6 +81,8 @@ try {
     repositoryRoot,
     runtimeRoot: config.paths.root,
     listen: config.listen,
+    transcriptionSocket: config.paths.transcriptionSocket,
+    transcriptionStaging: config.paths.transcriptionStaging,
     nodePath: process.execPath,
     runtimeCliPath: path.join(repositoryRoot, "packages/runtime/dist/cli.js"),
     identityPath,
@@ -90,7 +92,11 @@ try {
     "-O",
     "-framework",
     "AppKit",
+    "-framework",
+    "Security",
     path.join(repositoryRoot, "native/macos-host/MeetlessHost.swift"),
+    path.join(repositoryRoot, "native/macos-host/TranscriptionCapability.swift"),
+    path.join(repositoryRoot, "native/macos-host/main.swift"),
     "-o",
     executable,
   ]);
@@ -140,6 +146,8 @@ async function hostSourceHash() {
   const files = [
     "native/macos-host/Info.plist",
     "native/macos-host/MeetlessHost.swift",
+    "native/macos-host/TranscriptionCapability.swift",
+    "native/macos-host/main.swift",
   ];
   const hash = createHash("sha256");
   for (const file of files) hash.update(await readFile(path.join(repositoryRoot, file)));

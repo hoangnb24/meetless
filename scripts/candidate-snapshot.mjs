@@ -9,6 +9,7 @@ const scope = [
   "tsconfig.base.json",
   "tsconfig.build.json",
   "vitest.config.ts",
+  "native",
   "packages",
   "scripts",
   "test",

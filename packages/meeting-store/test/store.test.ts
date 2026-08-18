@@ -449,6 +449,104 @@ describe("meeting store", () => {
       );
     }
   });
+
+  test("durably checkpoints and publishes a transcript sidecar, then reconciles a crash before state publication", async () => {
+    const root = await temporaryRoot();
+    const now = "2026-08-18T10:00:00.000Z";
+    const store = new MeetingStore({ root, now: () => now });
+    await store.create({ id: "m-1", title: "Transcript publication" });
+    await store.startRecording({ id: "r-1", meetingId: "m-1" });
+    await store.commitChunk("r-1", {
+      id: "mic-1", source: "microphone", storageKey: "sessions/r-1/mic-1.chunk",
+      byteLength: 128, sha256: "chunk-sha", committedAt: now,
+      logicalStartMs: 0, durationMs: 1_000, sampleRate: 16_000, channels: 1, format: "wav",
+    });
+    await completeInventory(store, "r-1", "chunk-set-sha");
+    await store.beginFinalization("r-1", {
+      openChunksDurablyClosed: true, chunkSetDigest: "chunk-set-sha",
+      destination: "meetings/r-1.mp3", expectedIdentity: { byteLength: 128, sha256: "audio-sha" },
+    });
+    await store.markRecordingSaved("r-1", {
+      destination: "meetings/r-1.mp3", identity: { byteLength: 128, sha256: "audio-sha" }, readable: true,
+    });
+    await expect(store.transcriptionConsent()).resolves.toEqual({ status: "unknown" });
+    await store.grantTranscriptionConsent();
+    await expect(store.grantTranscriptionConsent()).resolves.toMatchObject({ status: "granted" });
+
+    const created = await store.ensureTranscript({
+      meetingId: "m-1", recordingId: "r-1",
+      audio: { destination: "meetings/r-1.mp3", byteLength: 128, sha256: "audio-sha", durationMs: 1_000 },
+    });
+    const request = await store.beginTranscriptRequest(created.id);
+    expect(request?.range).toMatchObject({ startMs: 0, endMs: 1_000 });
+    await store.checkpointTranscriptRange(created.id, {
+      range: request!.range, attempts: request!.attempt, text: "Hello, xin chào",
+      usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9, durationSeconds: 1 },
+      detectedLanguages: ["en", "vi"],
+    });
+    const ready = await store.publishTranscript(created.id);
+    expect(ready.status).toBe("ready");
+    expect((await store.list())[0]).toMatchObject({ id: "m-1", status: "ready" });
+    await expect(store.resolveCitation("m-1", ready.ranges[0]!.segmentId)).resolves.toMatchObject({
+      audioPath: "meetings/r-1.mp3", startMs: 0, endMs: 1_000, text: "Hello, xin chào",
+    });
+
+    const persisted = JSON.parse(await readFile(store.filePath, "utf8")) as {
+      meetings: Array<{ status: string }>;
+      transcripts: Array<{ status: string; publication: unknown }>;
+    };
+    persisted.meetings[0]!.status = "processing";
+    persisted.transcripts[0]!.status = "pending";
+    persisted.transcripts[0]!.publication = null;
+    await writeFile(store.filePath, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
+
+    const restarted = new MeetingStore({ root, now: () => now });
+    await restarted.reconcileTranscriptPublications();
+    await expect(restarted.getTranscript(created.id)).resolves.toMatchObject({ status: "ready" });
+    await expect(restarted.list()).resolves.toMatchObject([{ id: "m-1", status: "ready" }]);
+  });
+
+  test("restart keeps in-flight work resumable only while its durable attempt budget remains", async () => {
+    const root = await temporaryRoot();
+    const now = "2026-08-18T10:00:00.000Z";
+    const store = new MeetingStore({ root, now: () => now });
+    for (const [meetingId, recordingId] of [["m-budget", "r-budget"], ["m-exhausted", "r-exhausted"]]) {
+      await store.create({ id: meetingId, title: meetingId });
+      await store.startRecording({ id: recordingId, meetingId });
+      await store.commitChunk(recordingId, {
+        id: `${recordingId}-mic`, source: "microphone", storageKey: `sessions/${recordingId}/mic.chunk`,
+        byteLength: 128, sha256: `${recordingId}-chunk`, committedAt: now,
+        logicalStartMs: 0, durationMs: 1_000, sampleRate: 16_000, channels: 1, format: "wav",
+      });
+      await completeInventory(store, recordingId, `${recordingId}-inventory`);
+      await store.beginFinalization(recordingId, {
+        openChunksDurablyClosed: true, chunkSetDigest: `${recordingId}-inventory`,
+        destination: `meetings/${recordingId}.mp3`, expectedIdentity: { byteLength: 128, sha256: `${recordingId}-audio` },
+      });
+      await store.markRecordingSaved(recordingId, {
+        destination: `meetings/${recordingId}.mp3`, identity: { byteLength: 128, sha256: `${recordingId}-audio` }, readable: true,
+      });
+    }
+    const resumable = await store.ensureTranscript({
+      meetingId: "m-budget", recordingId: "r-budget", maxAttempts: 2,
+      audio: { destination: "meetings/r-budget.mp3", byteLength: 128, sha256: "r-budget-audio", durationMs: 1_000 },
+    });
+    const exhausted = await store.ensureTranscript({
+      meetingId: "m-exhausted", recordingId: "r-exhausted", maxAttempts: 1,
+      audio: { destination: "meetings/r-exhausted.mp3", byteLength: 128, sha256: "r-exhausted-audio", durationMs: 1_000 },
+    });
+    await store.beginTranscriptRequest(resumable.id);
+    await store.beginTranscriptRequest(exhausted.id);
+
+    const restarted = new MeetingStore({ root, now: () => now });
+    await restarted.reconcileTranscriptPublications();
+
+    await expect(restarted.getTranscript(resumable.id)).resolves.toMatchObject({ status: "pending", requestCount: 1 });
+    await expect(restarted.getTranscript(exhausted.id)).resolves.toMatchObject({
+      status: "failed", requestCount: 1,
+      failureReason: "Transcription interrupted after the final allowed attempt",
+    });
+  });
 });
 
 async function completeInventory(store: MeetingStore, recordingId: string, digest: string): Promise<void> {

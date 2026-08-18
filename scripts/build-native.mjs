@@ -19,6 +19,19 @@ await run("xcrun", [
   "-o",
   "packages/runtime/dist/meetless-process-argv",
 ]);
+await run("xcrun", [
+  "swiftc",
+  "-framework",
+  "AppKit",
+  "-framework",
+  "Security",
+  "native/macos-host/MeetlessHost.swift",
+  "native/macos-host/TranscriptionCapability.swift",
+  "native/macos-host/TranscriptionCapabilityTests.swift",
+  "-o",
+  "/private/tmp/meetless-transcription-capability-tests",
+]);
+await run("/private/tmp/meetless-transcription-capability-tests", []);
 
 function run(command, arguments_) {
   return new Promise((resolve, reject) => {

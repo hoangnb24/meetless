@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { RecordingControlRequestSchema, RecordingStatusWireSchema } from "../src/index.js";
+import {
+  MeetingCitationResolveRpc,
+  RecordingControlRequestSchema,
+  RecordingStatusWireSchema,
+} from "../src/index.js";
 
 describe("private recording wire contracts", () => {
   test("accepts compact source-labelled inventory status", () => {
@@ -33,5 +37,18 @@ describe("private recording wire contracts", () => {
       sha256: "x", committedAt: "2026-08-18T00:00:00.000Z", logicalStartMs: index,
       durationMs: 1, sampleRate: 16_000, channels: 1, format: "wav",
     })) })).toThrow();
+  });
+
+  test("rejects malformed citation playback ranges", () => {
+    expect(() => MeetingCitationResolveRpc.output.parse({
+      meetingId: "m-1", recordingId: "r-1", segmentId: "segment-1",
+      startMs: 2_000, endMs: 2_000, text: "hello", audio: { mimeType: "audio/mpeg", base64: "AQID" },
+    })).toThrow(/bounded/);
+    expect(() => MeetingCitationResolveRpc.input.parse({ meetingId: "m-1", segmentId: "segment-1", audioPath: "secret" }))
+      .toThrow();
+    expect(MeetingCitationResolveRpc.output.parse({
+      meetingId: "m-1", recordingId: "r-1", segmentId: "segment-1",
+      startMs: 2_000, endMs: 4_000, text: "hello", audio: { mimeType: "audio/mpeg", base64: "AQID" },
+    })).not.toHaveProperty("audioPath");
   });
 });

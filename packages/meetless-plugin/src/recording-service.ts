@@ -7,6 +7,7 @@ import { CaptureHelper } from "./capture-helper.js";
 import { fileIdentity, Mp3Finalizer } from "./finalizer.js";
 import { readInventory, RecordingInventoryReconciler, resolveStorePath } from "./inventory.js";
 import type { CollisionEvidence } from "./readiness-protocol.js";
+import type { TranscriptionService } from "./transcription-service.js";
 
 export interface RecordingServiceConfig {
   storeRoot: string;
@@ -20,6 +21,7 @@ export interface RecordingServiceConfig {
   fixtureStampApplied?: boolean;
   failFinalizationOnce?: boolean;
   authorizeProductionStart?: () => Promise<void>;
+  transcription?: TranscriptionService;
 }
 
 export class RecordingService {
@@ -61,6 +63,7 @@ export class RecordingService {
       }
     }
     await this.emitStatus();
+    await this.config.transcription?.initialize();
     const startupRecoveryIds = (await this.store.listRecordings())
       .filter((recording) => recording.status === "recoverable" && recording.inventory.state !== "complete")
       .map((recording) => recording.id);
@@ -320,7 +323,7 @@ export class RecordingService {
     const intent = recording.finalization!.publishIntent;
     const verified = await this.finalizer.verify(intent.destination);
     if (!sameIdentity(verified.identity, intent.expectedIdentity)) throw new Error("Published MP3 identity changed");
-    await this.store.markRecordingSaved(recording.id, {
+    const saved = await this.store.markRecordingSaved(recording.id, {
       destination: intent.destination, identity: verified.identity, readable: true,
     });
     const cleanupInventory = await this.store.cleanupEligibleInventory(recording.id, {
@@ -334,6 +337,7 @@ export class RecordingService {
         process.stderr.write(`[meetless-recording] saved chunk cleanup deferred: ${describe(error)}\n`);
       });
     }
+    this.config.transcription?.schedule(saved);
   }
 
   private async recoverRecording(recording: RecordingSession): Promise<void> {

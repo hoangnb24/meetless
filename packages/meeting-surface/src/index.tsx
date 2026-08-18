@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { MeetingWire } from "@meetless/meeting-contracts";
 import type { RecordingStatusWire } from "@meetless/meeting-contracts";
+import type { CitationWire, TranscriptWire, TranscriptionProviderStatusWire } from "@meetless/meeting-contracts";
 
 export function RecordingStrip(props: {
   status: RecordingStatusWire;
@@ -68,6 +69,14 @@ export interface MeetingListSurfaceProps {
   connectionLabel: string;
   onCreate?(title: string): Promise<void>;
   onRefresh(): Promise<void>;
+  selectedMeetingId?: string | null;
+  transcript?: TranscriptWire | null;
+  transcriptError?: string | null;
+  consentStatus?: "unknown" | "granted";
+  providerStatus?: TranscriptionProviderStatusWire["status"];
+  onOpenTranscript?(meetingId: string): Promise<void>;
+  onGrantTranscriptionConsent?(): Promise<void>;
+  onCitation?(citation: Pick<CitationWire, "meetingId" | "segmentId">): Promise<void>;
 }
 
 export function MeetingListSurface({
@@ -80,6 +89,14 @@ export function MeetingListSurface({
   connectionLabel,
   onCreate,
   onRefresh,
+  selectedMeetingId = null,
+  transcript = null,
+  transcriptError = null,
+  consentStatus = "unknown",
+  providerStatus,
+  onOpenTranscript,
+  onGrantTranscriptionConsent,
+  onCitation,
 }: MeetingListSurfaceProps) {
   const [title, setTitle] = useState("");
   const responsive = surfaceLayout(compact);
@@ -151,10 +168,69 @@ export function MeetingListSurface({
                 <Text style={styles.cardTitle}>{meeting.title}</Text>
                 <Text style={styles.status}>{meeting.status}</Text>
                 <Text style={styles.timestamp}>{new Date(meeting.createdAt).toLocaleString()}</Text>
+                {onOpenTranscript ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => void onOpenTranscript(meeting.id)}
+                    style={styles.transcriptButton}
+                    testID={`meeting-transcript-${meeting.id}`}
+                  >
+                    <Text style={styles.refreshText}>{selectedMeetingId === meeting.id ? "Refresh transcript" : "Open transcript"}</Text>
+                  </Pressable>
+                ) : null}
               </View>
             ))
           )}
         </View>
+        {selectedMeetingId ? (
+          <View style={styles.transcriptPanel} testID="transcript-panel">
+            <Text style={styles.sectionTitle}>Transcript</Text>
+            {consentStatus !== "granted" && onGrantTranscriptionConsent ? (
+              <View style={styles.disclosure} testID="transcription-disclosure">
+                <Text style={styles.subtitle}>Meetless sends saved MP3 audio to OpenAI for transcription. English/Vietnamese code-switching is kept as spoken.</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={pending}
+                  onPress={() => void onGrantTranscriptionConsent()}
+                  style={styles.button}
+                  testID="transcription-consent"
+                >
+                  <Text style={styles.buttonText}>Allow cloud transcription</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {providerStatus ? <Text style={styles.provider} testID="transcription-provider">Provider: {providerStatus}</Text> : null}
+            {transcriptError ? <Text style={styles.error} testID="transcript-error">{transcriptError}</Text> : null}
+            {transcript ? (
+              <>
+                <Text style={styles.status} testID="transcript-status">{transcript.status} · {transcript.requestCount} requests</Text>
+                <View style={styles.segmentList} testID="transcript-segments">
+                  {transcript.segments.map((segment) => (
+                    <View key={segment.range.segmentId} style={styles.segment} testID={`transcript-segment-${segment.range.segmentId}`}>
+                      <Text style={styles.segmentRange}>{formatRange(segment.range.startMs, segment.range.endMs)}</Text>
+                      <Text style={styles.segmentText}>{segment.text || "(No spoken text returned for this range.)"}</Text>
+                      {onCitation && transcript.status === "ready" ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          onPress={() => void onCitation({
+                            meetingId: transcript.meetingId,
+                            segmentId: segment.range.segmentId,
+                          })}
+                          style={styles.transcriptButton}
+                          testID={`citation-${segment.range.segmentId}`}
+                        >
+                          <Text style={styles.refreshText}>Play cited audio</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              </>
+            ) : consentStatus === "granted" && !transcriptError ? (
+              <Text style={styles.empty}>Saved recordings will appear here while transcription runs.</Text>
+            ) : null}
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -192,4 +268,21 @@ const styles = StyleSheet.create({
   recordingAction: { backgroundColor: "#e66b3d", borderRadius: 8, minHeight: 40, justifyContent: "center", paddingHorizontal: 14 },
   recordingSecondary: { borderColor: "#565b64", borderRadius: 8, borderWidth: 1, minHeight: 40, justifyContent: "center", paddingHorizontal: 14 },
   recordingButtonText: { color: "#f4f1e8", fontWeight: "700" },
+  transcriptButton: { alignSelf: "flex-start", borderColor: "#565b64", borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 7 },
+  transcriptPanel: { backgroundColor: "#181a1e", borderColor: "#32353a", borderRadius: 12, borderWidth: 1, gap: 10, padding: 16 },
+  disclosure: { backgroundColor: "#24272c", borderRadius: 8, gap: 10, padding: 12 },
+  provider: { color: "#78b995", fontSize: 12, textTransform: "uppercase" },
+  segmentList: { gap: 8 },
+  segment: { backgroundColor: "#202226", borderColor: "#32353a", borderRadius: 8, borderWidth: 1, gap: 6, padding: 12 },
+  segmentRange: { color: "#e99a74", fontSize: 12, fontVariant: ["tabular-nums"] },
+  segmentText: { color: "#f4f1e8", lineHeight: 21 },
 });
+
+function formatRange(startMs: number, endMs: number): string {
+  return `${formatMilliseconds(startMs)}–${formatMilliseconds(endMs)}`;
+}
+
+function formatMilliseconds(value: number): string {
+  const seconds = Math.floor(value / 1_000);
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}

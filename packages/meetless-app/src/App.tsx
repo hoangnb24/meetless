@@ -3,9 +3,11 @@ import { Platform, SafeAreaView, StyleSheet, useWindowDimensions } from "react-n
 import { StatusBar } from "expo-status-bar";
 import { connectMeetlessClient, type ConnectedMeetlessClient } from "@meetless/client";
 import type { MeetingWire } from "@meetless/meeting-contracts";
+import type { CitationWire, TranscriptWire, TranscriptionProviderStatusWire } from "@meetless/meeting-contracts";
 import { MeetingListSurface, RecordingStrip } from "@meetless/meeting-surface";
 import { resolveAppMode, resolveDaemonUrl, supportsDesktopRecording } from "./runtime";
 import { RecordingProvider, useRecording } from "./recording-provider";
+import { playCitationAudio, type CitationPlaybackHandle } from "./playback";
 
 export function App() {
   const mode = useMemo(() => resolveAppMode(), []);
@@ -13,7 +15,7 @@ export function App() {
   return <RecordingProvider enabled={recordingEnabled}><AppContent mode={mode} /></RecordingProvider>;
 }
 
-function AppContent({ mode }: { mode: "desktop" | "companion" }) {
+export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const dimensions = useWindowDimensions();
   const recording = useRecording();
   const daemonUrl = useMemo(() => resolveDaemonUrl(), []);
@@ -22,6 +24,15 @@ function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [pending, setPending] = useState(false);
   const [status, setStatus] = useState("Connecting to Meetless host…");
   const [error, setError] = useState<string | null>(null);
+  const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<TranscriptWire | null>(null);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  const [consentStatus, setConsentStatus] = useState<"unknown" | "granted">("unknown");
+  const [providerStatus, setProviderStatus] = useState<TranscriptionProviderStatusWire["status"] | undefined>();
+  const playback = useRef<CitationPlaybackHandle | null>(null);
+  const selectionVersion = useRef(0);
+  const citationSequence = useRef(0);
+  const selectedMeetingIdRef = useRef<string | null>(null);
   const compact = Platform.OS !== "web" || dimensions.width < 700;
 
   const refresh = useCallback(async () => {
@@ -39,6 +50,91 @@ function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setStatus("Connected · daemon-owned meetings");
     setError(null);
   }, [mode]);
+
+  const openTranscript = useCallback(async (meetingId: string) => {
+    const active = connection.current;
+    if (!active) throw new Error("Meetless host is not connected yet");
+    const version = selectionVersion.current + 1;
+    selectionVersion.current = version;
+    citationSequence.current += 1;
+    playback.current?.stop();
+    playback.current = null;
+    selectedMeetingIdRef.current = meetingId;
+    setSelectedMeetingId(meetingId);
+    setTranscript(null);
+    setTranscriptError(null);
+    setConsentStatus("unknown");
+    setProviderStatus(undefined);
+    try {
+      const result = await active.client.getMeetingTranscript(meetingId);
+      if (selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+      setTranscript(result.transcript);
+      setConsentStatus(result.consent.status);
+      setProviderStatus(result.provider.status);
+    } catch (reason) {
+      if (selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+      setTranscriptError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, []);
+
+  const grantConsent = useCallback(async () => {
+    const active = connection.current;
+    if (!active) throw new Error("Meetless host is not connected yet");
+    setTranscriptError(null);
+    try {
+      const result = await active.client.grantTranscriptionConsent();
+      setConsentStatus(result.consent.status);
+      setProviderStatus(result.provider.status);
+      if (selectedMeetingIdRef.current) await openTranscript(selectedMeetingIdRef.current);
+    } catch (reason) {
+      setTranscriptError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, [openTranscript]);
+
+  const playCitation = useCallback(async (visibleCitation: Pick<CitationWire, "meetingId" | "segmentId">) => {
+    const active = connection.current;
+    if (!active) throw new Error("Meetless host is not connected yet");
+    const selection = selectionVersion.current;
+    const sequence = citationSequence.current + 1;
+    citationSequence.current = sequence;
+    if (selectedMeetingIdRef.current !== visibleCitation.meetingId) return;
+    playback.current?.stop();
+    playback.current = null;
+    try {
+      const citation = await active.client.resolveCitation({
+        meetingId: visibleCitation.meetingId,
+        segmentId: visibleCitation.segmentId,
+      });
+      if (
+        citationSequence.current !== sequence ||
+        selectionVersion.current !== selection ||
+        selectedMeetingIdRef.current !== citation.meetingId
+      ) return;
+      const handle = await playCitationAudio(citation);
+      if (
+        citationSequence.current !== sequence ||
+        selectionVersion.current !== selection ||
+        selectedMeetingIdRef.current !== citation.meetingId
+      ) {
+        handle.stop();
+        return;
+      }
+      playback.current = handle;
+      setTranscriptError(null);
+    } catch (reason) {
+      if (
+        citationSequence.current !== sequence ||
+        selectionVersion.current !== selection ||
+        selectedMeetingIdRef.current !== visibleCitation.meetingId
+      ) return;
+      setTranscriptError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, []);
+
+  useEffect(() => () => {
+    citationSequence.current += 1;
+    playback.current?.stop();
+  }, []);
 
   useEffect(() => {
     if (typeof document !== "undefined") document.title = "Meetless";
@@ -117,6 +213,14 @@ function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         onCreate={mode === "desktop" ? create : undefined}
         onRefresh={refresh}
         pending={pending}
+        onOpenTranscript={openTranscript}
+        selectedMeetingId={selectedMeetingId}
+        transcript={transcript}
+        transcriptError={transcriptError}
+        consentStatus={consentStatus}
+        providerStatus={providerStatus}
+        onGrantTranscriptionConsent={grantConsent}
+        onCitation={playCitation}
       />
     </SafeAreaView>
   );

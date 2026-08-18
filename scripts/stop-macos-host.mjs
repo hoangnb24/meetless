@@ -30,7 +30,7 @@ if (survivors.length > 0 || !(await released())) {
   throw new Error(
     `MeetlessHost PID ${pid} exited but owned runtime cleanup is incomplete ` +
     `(survivors=${survivors.join(",") || "none"}, listen=${identity.configuration.listen}, ` +
-    `socket=${config.paths.recordingSocket}). Inspect only this repo-owned tree; Paseo 6767 is out of scope.`,
+    `sockets=${config.paths.recordingSocket},${config.paths.transcriptionSocket}). Inspect only this repo-owned tree; Paseo 6767 is out of scope.`,
   );
 }
 process.stdout.write(`Stopped MeetlessHost PID ${pid}.\n`);
@@ -65,6 +65,11 @@ async function released() {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") socketGone = true;
     else throw new Error(`Cannot inspect recording socket during shutdown: ${String(error)}`);
   }
+  let transcriptionSocketGone = false;
+  try { await stat(config.paths.transcriptionSocket); } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") transcriptionSocketGone = true;
+    else throw new Error(`Cannot inspect transcription socket during shutdown: ${String(error)}`);
+  }
   const ports = [
     identity.configuration.listen.slice(identity.configuration.listen.lastIndexOf(":") + 1),
     new URL(config.rendererOrigin).port,
@@ -76,5 +81,5 @@ async function released() {
     if (listener.status !== 0) throw new Error(`Cannot inspect listener ${port}: lsof exited ${listener.status}`);
     if (listener.stdout.trim()) return false;
   }
-  return socketGone;
+  return socketGone && transcriptionSocketGone;
 }

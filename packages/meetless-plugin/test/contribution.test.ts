@@ -13,6 +13,9 @@ describe("Meetless plugin contribution", () => {
     expect(handle.mock.calls.map(([rpc]) => rpc.name)).toEqual([
       "meeting.create",
       "meeting.list",
+      "meeting.transcript",
+      "meeting.transcription.consent",
+      "meeting.citation.resolve",
       "runtime.readiness.bootstrap",
     ]);
     expect(addSurface).not.toHaveBeenCalled();

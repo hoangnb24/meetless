@@ -28,6 +28,8 @@ export interface RuntimePaths {
   plugin: string;
   captureHelper: string;
   recordingSocket: string;
+  transcriptionSocket: string;
+  transcriptionStaging: string;
   recordingExports: string;
 }
 
@@ -59,13 +61,15 @@ export function resolveRuntimeConfig(input: {
   userHome?: string;
   repositoryRoot?: string;
   rendererOrigin?: string;
+  environment?: NodeJS.ProcessEnv;
 } = {}): RuntimeConfig {
+  const sourceEnvironment = input.environment ?? process.env;
   const userHome = path.resolve(input.userHome ?? homedir());
   const repositoryRoot = path.resolve(input.repositoryRoot ?? REPOSITORY_ROOT);
   const root = path.resolve(input.runtimeRoot ?? path.join(repositoryRoot, ".meetless-runtime"));
   const listen = (input.listen ?? DEFAULT_MEETLESS_LISTEN).trim();
   const rendererOrigin = resolveRendererOrigin(
-    input.rendererOrigin ?? process.env.MEETLESS_RENDERER_ORIGIN ?? "http://127.0.0.1:8082",
+    input.rendererOrigin ?? sourceEnvironment.MEETLESS_RENDERER_ORIGIN ?? "http://127.0.0.1:8082",
   );
   const supervisorEntrypoint = path.join(
     repositoryRoot,
@@ -86,9 +90,12 @@ export function resolveRuntimeConfig(input: {
     plugin: path.join(repositoryRoot, "packages", "meetless-plugin"),
     captureHelper: path.join(repositoryRoot, "native", "macos-capture", ".build", "release", "meetless-capture"),
     recordingSocket: resolveRecordingSocket(path.join(root, "paseo-home")),
-    recordingExports: path.resolve(process.env.MEETLESS_EXPORT_ROOT?.trim() || path.join(userHome, "Documents", "meetings")),
+    transcriptionSocket: path.join(root, "transcription.sock"),
+    transcriptionStaging: path.join(root, "meeting-store", "transcription-ranges"),
+    recordingExports: path.resolve(sourceEnvironment.MEETLESS_EXPORT_ROOT?.trim() || path.join(userHome, "Documents", "meetings")),
   };
   assertIsolated(paths, listen, userHome);
+  const inheritedEnvironment = copyEnvironmentWithoutOpenAiSecrets(sourceEnvironment);
   return {
     listen,
     rendererOrigin,
@@ -99,7 +106,7 @@ export function resolveRuntimeConfig(input: {
       identity: path.join(userHome, "Library", "Application Support", "Meetless", "host-identity.json"),
     },
     environment: {
-      ...process.env,
+      ...inheritedEnvironment,
       PASEO_HOME: paths.paseoHome,
       PASEO_LISTEN: listen,
       PASEO_ELECTRON_USER_DATA_DIR: paths.electronUserData,
@@ -114,20 +121,39 @@ export function resolveRuntimeConfig(input: {
       PASEO_TEST_APP_NAME: "Meetless",
       MEETLESS_CAPTURE_HELPER: paths.captureHelper,
       MEETLESS_RECORDING_SOCKET: paths.recordingSocket,
+      MEETLESS_TRANSCRIPTION_SOCKET: paths.transcriptionSocket,
+      MEETLESS_TRANSCRIPTION_STAGING: paths.transcriptionStaging,
       MEETLESS_EXPORT_ROOT: paths.recordingExports,
-      MEETLESS_FFMPEG: resolveHostTool("MEETLESS_FFMPEG", "ffmpeg"),
-      MEETLESS_FFPROBE: resolveHostTool("MEETLESS_FFPROBE", "ffprobe"),
+      MEETLESS_FFMPEG: resolveHostTool("MEETLESS_FFMPEG", "ffmpeg", sourceEnvironment),
+      MEETLESS_FFPROBE: resolveHostTool("MEETLESS_FFPROBE", "ffprobe", sourceEnvironment),
     },
   };
 }
 
-function resolveHostTool(environmentName: string, executable: string): string {
-  const configured = process.env[environmentName]?.trim();
+export function copyEnvironmentWithoutOpenAiSecrets(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(environment).filter(([key, value]) => !isOpenAiSecretEnvironmentEntry(key, value)),
+  );
+}
+
+export function isOpenAiSecretEnvironmentEntry(key: string, value: string | undefined): boolean {
+  const normalizedKey = key.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const openAiSecretName = normalizedKey.includes("OPENAI") &&
+    ["KEY", "TOKEN", "SECRET", "CREDENTIAL", "PASSWORD"].some((marker) => normalizedKey.includes(marker));
+  const openAiSecretValue = /^sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{16,}$/.test(value?.trim() ?? "");
+  return openAiSecretName || openAiSecretValue;
+}
+
+function resolveHostTool(environmentName: string, executable: string, environment = process.env): string {
+  const configured = environment[environmentName]?.trim();
   if (configured) {
     if (!path.isAbsolute(configured)) throw new Error(`${environmentName} must be an absolute path`);
     return configured;
   }
-  const resolved = execFileSync("which", [executable], { encoding: "utf8" }).trim();
+  const resolved = execFileSync("which", [executable], {
+    encoding: "utf8",
+    env: copyEnvironmentWithoutOpenAiSecrets(environment),
+  }).trim();
   if (!path.isAbsolute(resolved)) throw new Error(`Could not resolve an absolute ${executable} path`);
   return resolved;
 }
@@ -156,7 +182,7 @@ export function assertIsolated(paths: RuntimePaths, listen: string, userHome = h
   for (const candidate of Object.values(paths)) {
     if (
       candidate === paths.plugin || candidate === paths.captureHelper ||
-      candidate === paths.recordingSocket || candidate === paths.recordingExports
+      candidate === paths.recordingSocket || candidate === paths.transcriptionSocket || candidate === paths.recordingExports
     ) continue;
     if (!isSameOrDescendant(candidate, paths.root)) {
       throw new IsolationViolationError(`Runtime path escapes the isolated root: ${candidate}`);
@@ -245,6 +271,7 @@ function assertPinnedPaseo(pluginPath: string): void {
   const actual = execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: paseoRoot,
     encoding: "utf8",
+    env: copyEnvironmentWithoutOpenAiSecrets(process.env),
   }).trim();
   if (actual !== PINNED_PASEO_COMMIT) {
     throw new Error(

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "authority": "docs/plans/active/v1-paseo-foundation.md#milestone-3-transcription-and-audio-grounded-citations",
+  "generator": "node scripts/generate-m3-fixtures.mjs",
+  "fixtures": [
+    {
+      "file": "english.mp3",
+      "languages": ["en"],
+      "voice": "Samantha (en_US)",
+      "expectedExactPhrase": "Meetless records clear English.",
+      "maximumDurationSeconds": 8
+    },
+    {
+      "file": "vietnamese.mp3",
+      "languages": ["vi"],
+      "voice": "Linh (vi_VN)",
+      "expectedExactPhrase": "Meetless ghi âm tiếng Việt rõ ràng.",
+      "maximumDurationSeconds": 8
+    },
+    {
+      "file": "mixed-en-vi.mp3",
+      "languages": ["en", "vi"],
+      "voice": "Samantha (en_US), then Linh (vi_VN)",
+      "expectedExactPhrase": "Meetless records the meeting. Và lưu bản ghi an toàn.",
+      "maximumDurationSeconds": 12
+    }
+  ]
+}

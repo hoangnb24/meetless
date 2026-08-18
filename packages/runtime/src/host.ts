@@ -13,6 +13,8 @@ const HostLaunchConfigurationSchema = z.object({
   repositoryRoot: z.string().min(1),
   runtimeRoot: z.string().min(1),
   listen: z.string().min(1),
+  transcriptionSocket: z.string().min(1),
+  transcriptionStaging: z.string().min(1),
   nodePath: z.string().min(1),
   runtimeCliPath: z.string().min(1),
   identityPath: z.string().min(1),
@@ -128,6 +130,8 @@ export async function assertInstalledHostIdentity(
     installed.configuration.repositoryRoot !== expectedConfiguration.repositoryRoot ||
     installed.configuration.runtimeRoot !== expectedConfiguration.runtimeRoot ||
     installed.configuration.listen !== expectedConfiguration.listen ||
+    installed.configuration.transcriptionSocket !== expectedConfiguration.transcriptionSocket ||
+    installed.configuration.transcriptionStaging !== expectedConfiguration.transcriptionStaging ||
     installed.configuration.runtimeCliPath !== expectedConfiguration.runtimeCliPath ||
     installed.configuration.identityPath !== expectedConfiguration.identityPath ||
     !path.isAbsolute(installed.configuration.nodePath)
@@ -178,6 +182,8 @@ export function expectedHostConfiguration(config: RuntimeConfig): HostLaunchConf
     repositoryRoot: path.resolve(config.paths.plugin, "..", ".."),
     runtimeRoot: config.paths.root,
     listen: config.listen,
+    transcriptionSocket: config.paths.transcriptionSocket,
+    transcriptionStaging: config.paths.transcriptionStaging,
     nodePath: process.execPath,
     runtimeCliPath: path.join(path.resolve(config.paths.plugin, "..", ".."), "packages", "runtime", "dist", "cli.js"),
     identityPath: config.host.identity,
