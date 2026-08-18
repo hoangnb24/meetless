@@ -19,6 +19,7 @@ const raw = execFileSync(
   ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...scope],
   { encoding: "utf8" },
 );
+const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const entries = raw
   .split("\0")
   .filter(Boolean)
@@ -34,7 +35,7 @@ const files = entries.map((entry) => {
     sha256: createHash("sha256").update(body).digest("hex"),
   };
 });
-const digest = createHash("sha256").update(JSON.stringify(files)).digest("hex");
+const digest = createHash("sha256").update(JSON.stringify({ head, files })).digest("hex");
 const publishedEvidenceRoot = "test/evidence";
 const publishedEvidenceFiles = files
   .filter((file) => file.path.startsWith(`${publishedEvidenceRoot}/`))
@@ -43,6 +44,7 @@ process.stdout.write(
   `${JSON.stringify(
     {
       algorithm: "sha256",
+      head,
       digest,
       publishedEvidence: {
         root: publishedEvidenceRoot,

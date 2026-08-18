@@ -14,7 +14,7 @@ import {
 } from "../scripts/m3-live-proof-lib.mjs";
 
 const roots: string[] = [];
-const candidate = { algorithm: "sha256", digest: "a".repeat(64) };
+const candidate = { algorithm: "sha256", head: "b".repeat(40), digest: "a".repeat(64) };
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));

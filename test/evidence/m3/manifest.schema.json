@@ -29,9 +29,10 @@
     "candidateSnapshot": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["algorithm", "digest"],
+      "required": ["algorithm", "head", "digest"],
       "properties": {
         "algorithm": { "const": "sha256" },
+        "head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
     },

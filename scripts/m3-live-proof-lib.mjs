@@ -91,7 +91,7 @@ export async function prepareM3Live(input, dependencies) {
     const context = {
       schema: "MEETLESS_M3_LIVE_CONTEXT v1",
       createdAt: new Date().toISOString(),
-      candidateSnapshot: { algorithm: candidate.algorithm, digest: candidate.digest },
+      candidateSnapshot: { algorithm: candidate.algorithm, head: candidate.head, digest: candidate.digest },
       runtimeRoot,
       storeRoot,
       listen,
