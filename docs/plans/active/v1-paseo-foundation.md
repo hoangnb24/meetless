@@ -530,14 +530,21 @@ frontier):
   and lock while preserving `recoverable/complete`, the pointer, digest, and
   every source WAV. Accessibility inspection did not yield a usable Electron
   window, so rendered Retry visibility remains explicitly unobserved.
+- **Partial-run finalization result:** `PASS` for durability/playability only.
+  The host-owned control protocol finalized the recovered inventory to
+  `/Users/tubakhuym/Documents/meetings/12-18-08-26.mp3`. FFprobe decoded MP3,
+  16 kHz mono, duration 2,504.567063 seconds, size 12,796,893 bytes. File
+  SHA-256 `afa8c84210fca393d35546145aa6819d6c5d8f975a9b035fd69928e14c7ddcca`
+  exactly matches MeetingStore's durable saved identity. Original WAV cleanup
+  occurred only after `saved`; the immutable inventory sidecar remains. This is
+  not M2 acceptance: the phone phrase has not been audibility-verified and no
+  local microphone phrase was supplied. The evidence manifest records that
+  boundary without upgrading either channel claim.
 - **Next production gate:** finalize this partial run through the real
-  Meetless-owned desktop control path. Verify a readable collision-safe MP3,
-  durable `saved` identity, and cleanup only after `saved`; retain the result as
-  partial system-channel evidence because the owner did not provide the local
-  microphone phrase. Then start a fresh production session and request the
-  bounded owner retry only after authoritative active status, exact production
-  helper identity, committed microphone and system chunks, and prepared
-  collision/finalization targets are all observed.
+  Meetless-owned desktop control path is complete. Start a fresh production
+  session and request the bounded owner retry only after authoritative active
+  status, exact production helper identity, committed microphone and system
+  chunks, and prepared collision/finalization targets are all observed.
 
 The first `RecordingSource` is one macOS 15+ Swift helper using one
 ScreenCaptureKit stream with separate `.audio` and `.microphone` outputs. The

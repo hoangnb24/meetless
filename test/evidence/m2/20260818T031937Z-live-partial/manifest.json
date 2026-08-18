@@ -2,9 +2,11 @@
   "schemaVersion": 1,
   "milestone": 2,
   "candidateCommit": "c82da856d25a2f4a59e24e7e46ea440a77ed5b7b",
+  "finalizationCandidateCommit": "b4e86f29c2e4200994101450b465f6d2cedbd3e3",
   "observedAt": "2026-08-18T03:19:37Z",
-  "kind": "meetless-host-production-live-partial-retention",
-  "result": "partial-recoverable-source-evidence",
+  "updatedAt": "2026-08-18T05:43:43.008Z",
+  "kind": "meetless-host-production-live-partial-saved",
+  "result": "partial-playable-artifact-not-m2-acceptance",
   "host": {
     "bundlePath": "/Users/tubakhuym/Applications/Meetless.app",
     "bundleIdentifier": "com.meetless.app",
@@ -37,6 +39,8 @@
   "sourceInventory": {
     "initialPreownerCheckpoint": { "microphone": 6558, "system": 3809 },
     "retainedAtManifest": { "microphone": 12926, "system": 7210, "total": 20136 },
+    "reconciledBeforeFinalization": { "microphone": 215718, "system": 125226, "total": 340944 },
+    "inventoryDigest": "cc9753501b16edbf1353ed58f91de07298b8bf54e3ee894bee554de9a8c1c31f",
     "root": "/Users/tubakhuym/projects/supervisors/meetless/.meetless-runtime/meeting-store",
     "representativeChunks": [
       {
@@ -97,12 +101,30 @@
     "systemPhraseAudibility": "unproven-by-executable-inspection",
     "microphonePhraseReported": null,
     "microphoneAcceptance": "unproven",
-    "playableMp3": "unproven-no-finalization-attempted"
+    "playableMp3": "proven-readable-partial-run"
+  },
+  "partialFinalization": {
+    "status": "saved",
+    "outputPath": "/Users/tubakhuym/Documents/meetings/12-18-08-26.mp3",
+    "byteLength": 12796893,
+    "sha256": "afa8c84210fca393d35546145aa6819d6c5d8f975a9b035fd69928e14c7ddcca",
+    "savedAt": "2026-08-18T05:43:43.008Z",
+    "probe": {
+      "format": "mp3",
+      "codec": "mp3",
+      "sampleRate": 16000,
+      "channels": 1,
+      "durationSeconds": 2504.567063
+    },
+    "durableIdentityMatchedFile": true,
+    "acceptanceScope": "Playable partial-run artifact only; microphone phrase and both-speaker acceptance remain unproved"
   },
   "preservation": {
     "chunksCopied": false,
-    "chunksDeleted": false,
-    "finalizationAttempted": false,
+    "chunksDeleted": true,
+    "chunksDeletedOnlyAfterDurableSaved": true,
+    "inventorySidecarRetained": true,
+    "finalizationAttempted": true,
     "newCollisionSentinelCreated": false
   }
 }
