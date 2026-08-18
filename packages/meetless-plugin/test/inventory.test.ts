@@ -64,6 +64,76 @@ describe("atomic recording inventory", () => {
     })).rejects.toThrow(/inventory reconciliation/);
   });
 
+  test("rejects overlapping source intervals while preserving forward gaps", async () => {
+    const fixture = await createRecordingFixture();
+    await createChunk(fixture, "microphone", 0, 0, 16);
+    await createChunk(fixture, "microphone", 1, 8, 16);
+    const recording = await fixture.store.prepareInventoryRecovery(fixture.recordingId, "capture closed");
+
+    await expect(new RecordingInventoryReconciler(fixture.root, fixture.store).reconcile(recording))
+      .rejects.toThrow(/source intervals overlap/);
+    expect((await fixture.store.listRecordings())[0]!.inventory).toMatchObject({ state: "blocked", pointer: null });
+
+    await rm(path.join(fixture.sessionDirectory, "chunk--microphone--000001--000000000008--000000000016--16000--1.wav"));
+    await createChunk(fixture, "microphone", 1, 32, 16);
+    const pointer = await new RecordingInventoryReconciler(fixture.root, fixture.store)
+      .reconcile((await fixture.store.listRecordings())[0]!);
+    expect(pointer.chunkCount).toBe(2);
+  });
+
+  test("ignores and preserves malformed unknown WAVs but blocks malformed committed WAVs", async () => {
+    const fixture = await createRecordingFixture();
+    const known = await createChunk(fixture, "microphone", 0, 0, 16);
+    await fixture.store.commitChunk(fixture.recordingId, known);
+    const unknownPath = path.join(
+      fixture.sessionDirectory,
+      "chunk--system--000099--000000001600--000000000016--16000--1.wav",
+    );
+    await writeFile(unknownPath, "RIFF malformed unknown");
+    let recording = await fixture.store.prepareInventoryRecovery(fixture.recordingId, "capture closed");
+    const pointer = await new RecordingInventoryReconciler(fixture.root, fixture.store).reconcile(recording);
+    expect(pointer.chunkCount).toBe(1);
+    await expect(access(unknownPath)).resolves.toBeUndefined();
+
+    const second = await createRecordingFixture();
+    const malformedKnown = await createChunk(second, "microphone", 0, 0, 16);
+    await second.store.commitChunk(second.recordingId, malformedKnown);
+    await writeFile(resolveStorePath(second.root, malformedKnown.storageKey), "RIFF malformed known");
+    recording = await second.store.prepareInventoryRecovery(second.recordingId, "capture closed");
+    await expect(new RecordingInventoryReconciler(second.root, second.store).reconcile(recording))
+      .rejects.toThrow(/Known committed media is malformed/);
+    expect((await second.store.listRecordings())[0]!.inventory.state).toBe("blocked");
+  });
+
+  test("blocks a previously committed WAV whose valid byte identity changed", async () => {
+    const fixture = await createRecordingFixture();
+    const known = await createChunk(fixture, "microphone", 0, 0, 16, 1_000);
+    await fixture.store.commitChunk(fixture.recordingId, known);
+    await writeFile(resolveStorePath(fixture.root, known.storageKey), pcmWav(16, 2_000));
+    const recording = await fixture.store.prepareInventoryRecovery(fixture.recordingId, "capture closed");
+
+    await expect(new RecordingInventoryReconciler(fixture.root, fixture.store).reconcile(recording))
+      .rejects.toThrow(/Known committed media changed identity/);
+    expect((await fixture.store.listRecordings())[0]!.inventory.state).toBe("blocked");
+  });
+
+  test("rejects same-size byte replacement after reconciliation before MP3 publication", async () => {
+    const fixture = await createRecordingFixture();
+    const chunk = await createChunk(fixture, "microphone", 0, 0, 16, 1_000);
+    const recovered = await fixture.store.prepareInventoryRecovery(fixture.recordingId, "capture closed");
+    const pointer = await new RecordingInventoryReconciler(fixture.root, fixture.store).reconcile(recovered);
+    await writeFile(resolveStorePath(fixture.root, chunk.storageKey), pcmWav(16, 2_000));
+    const commands: string[][] = [];
+    const finalizer = new Mp3Finalizer({
+      ffmpeg: "/opt/homebrew/bin/ffmpeg", ffprobe: "/opt/homebrew/bin/ffprobe",
+      exportRoot: path.join(fixture.root, "exports"), storeRoot: fixture.root,
+      observeCommand: (_executable, arguments_) => commands.push([...arguments_]),
+    });
+
+    await expect(finalizer.stage(fixture.recordingId, pointer)).rejects.toThrow(/byte identity changed/);
+    expect(commands).toEqual([]);
+  });
+
   test("finalization uses at most two source timelines, preserves gaps, and leaves raw WAVs", async () => {
     const fixture = await createRecordingFixture();
     const raw = [
@@ -103,22 +173,23 @@ async function createChunk(
   index: number,
   startFrame: number,
   frameCount = 1,
+  sampleValue = 1_000,
 ) {
   const id = `chunk--${source}--${String(index).padStart(6, "0")}--${String(startFrame).padStart(12, "0")}--${String(frameCount).padStart(12, "0")}--16000--1`;
   const filePath = path.join(fixture.sessionDirectory, `${id}.wav`);
   await mkdir(fixture.sessionDirectory, { recursive: true });
-  await writeFile(filePath, pcmWav(frameCount));
+  await writeFile(filePath, pcmWav(frameCount, sampleValue));
   return validateCommittedWavChunk({ filePath, sessionDirectory: fixture.sessionDirectory, storeRoot: fixture.root });
 }
 
-function pcmWav(frameCount: number): Buffer {
+function pcmWav(frameCount: number, sampleValue = 1_000): Buffer {
   const dataBytes = frameCount * 2;
   const data = Buffer.alloc(44 + dataBytes);
   data.write("RIFF", 0); data.writeUInt32LE(36 + dataBytes, 4); data.write("WAVEfmt ", 8);
   data.writeUInt32LE(16, 16); data.writeUInt16LE(1, 20); data.writeUInt16LE(1, 22);
   data.writeUInt32LE(16_000, 24); data.writeUInt32LE(32_000, 28); data.writeUInt16LE(2, 32);
   data.writeUInt16LE(16, 34); data.write("data", 36); data.writeUInt32LE(dataBytes, 40);
-  for (let offset = 44; offset < data.length; offset += 2) data.writeInt16LE(1_000, offset);
+  for (let offset = 44; offset < data.length; offset += 2) data.writeInt16LE(sampleValue, offset);
   return data;
 }
 

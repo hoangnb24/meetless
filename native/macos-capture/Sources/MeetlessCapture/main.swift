@@ -154,7 +154,13 @@ private final class ChunkWriter: @unchecked Sendable {
     var logicalStart = packet.presentationFrame - originPresentationFrame + sharedAdjustmentFrame
     guard logicalStart >= 0 else { throw NSError(domain: "MeetlessCapture", code: 20, userInfo: [NSLocalizedDescriptionKey: "Audio PTS predates the shared timeline origin"]) }
     if let expected = nextExpectedFrames[packet.source] {
-      if abs(logicalStart - expected) > Int64(callbackJitterToleranceFrames) {
+      if logicalStart < expected - Int64(callbackJitterToleranceFrames) {
+        throw NSError(
+          domain: "MeetlessCapture",
+          code: 21,
+          userInfo: [NSLocalizedDescriptionKey: "Audio PTS moved backwards beyond callback jitter tolerance"]
+        )
+      } else if logicalStart > expected + Int64(callbackJitterToleranceFrames) {
         try flush(packet.source)
         nextExpectedFrames[packet.source] = nil
       } else {
@@ -256,14 +262,16 @@ private final class FixtureSource: CaptureSource, @unchecked Sendable {
   private let writer: ChunkWriter
   private let timelineFixture: Bool
   private let jitterFixture: Bool
+  private let backwardPTSFixture: Bool
   private var timer: DispatchSourceTimer?
   private var micFrame: Int64 = 0
   private var systemFrame: Int64 = 0
   private var tickIndex: Int64 = 0
-  init(writer: ChunkWriter, timelineFixture: Bool, jitterFixture: Bool) {
+  init(writer: ChunkWriter, timelineFixture: Bool, jitterFixture: Bool, backwardPTSFixture: Bool) {
     self.writer = writer
     self.timelineFixture = timelineFixture
     self.jitterFixture = jitterFixture
+    self.backwardPTSFixture = backwardPTSFixture
   }
   func start() async throws {
     let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "meetless.fixture"))
@@ -287,7 +295,7 @@ private final class FixtureSource: CaptureSource, @unchecked Sendable {
     let jitter = jitterFixture ? [Int64(0), Int64(80), Int64(-64)][Int(tickIndex % 3)] : 0
     let micPresentation = timelineFixture
       ? base + (tickIndex == 0 ? 0 : (tickIndex + 1) * Int64(count))
-      : tickIndex * Int64(count) + jitter
+      : (backwardPTSFixture && tickIndex == 3 ? 0 : tickIndex * Int64(count) + jitter)
     let systemPresentation = timelineFixture
       ? base + Int64(sampleRate / 8) + tickIndex * Int64(count)
       : tickIndex * Int64(count) - jitter
@@ -297,7 +305,13 @@ private final class FixtureSource: CaptureSource, @unchecked Sendable {
       try writer.append(system, source: .system, presentationFrame: systemPresentation)
       if jitterFixture && tickIndex >= 600 { timer?.cancel(); timer = nil }
     }
-    catch { diagnostic("fixture write failed: \(error)") }
+    catch {
+      diagnostic("fixture write failed: \(error)")
+      if backwardPTSFixture {
+        emit(ProtocolEvent(event: "captureFailed", error: error.localizedDescription))
+        timer?.cancel(); timer = nil
+      }
+    }
   }
   func stop() async { timer?.cancel(); timer = nil }
 }
@@ -390,14 +404,16 @@ private final class Runtime: @unchecked Sendable {
   private let timelineFixture: Bool
   private let invalidClaimFixture: Bool
   private let jitterFixture: Bool
+  private let backwardPTSFixture: Bool
   private var writer: ChunkWriter?
   private var source: CaptureSource?
   private var stopped = false
-  init(fixture: Bool, timelineFixture: Bool, invalidClaimFixture: Bool, jitterFixture: Bool) {
+  init(fixture: Bool, timelineFixture: Bool, invalidClaimFixture: Bool, jitterFixture: Bool, backwardPTSFixture: Bool) {
     self.fixture = fixture
     self.timelineFixture = timelineFixture
     self.invalidClaimFixture = invalidClaimFixture
     self.jitterFixture = jitterFixture
+    self.backwardPTSFixture = backwardPTSFixture
   }
 
   func handle(_ command: Command) throws {
@@ -409,7 +425,12 @@ private final class Runtime: @unchecked Sendable {
       let writer = try ChunkWriter(directory: directory, invalidClaimFixture: invalidClaimFixture)
       self.writer = writer
       let source: CaptureSource = fixture
-        ? FixtureSource(writer: writer, timelineFixture: timelineFixture, jitterFixture: jitterFixture)
+        ? FixtureSource(
+            writer: writer,
+            timelineFixture: timelineFixture,
+            jitterFixture: jitterFixture,
+            backwardPTSFixture: backwardPTSFixture
+          )
         : ScreenCaptureSource(writer: writer)
       self.source = source
       let semaphore = DispatchSemaphore(value: 0)
@@ -449,11 +470,13 @@ private final class Runtime: @unchecked Sendable {
 private let timelineFixture = CommandLine.arguments.contains("--timeline-fixture")
 private let invalidClaimFixture = CommandLine.arguments.contains("--invalid-claim-fixture")
 private let jitterFixture = CommandLine.arguments.contains("--jitter-fixture")
+private let backwardPTSFixture = CommandLine.arguments.contains("--backward-pts-fixture")
 private let runtime = Runtime(
-  fixture: CommandLine.arguments.contains("--fixture") || timelineFixture || invalidClaimFixture || jitterFixture,
+  fixture: CommandLine.arguments.contains("--fixture") || timelineFixture || invalidClaimFixture || jitterFixture || backwardPTSFixture,
   timelineFixture: timelineFixture,
   invalidClaimFixture: invalidClaimFixture,
-  jitterFixture: jitterFixture
+  jitterFixture: jitterFixture,
+  backwardPTSFixture: backwardPTSFixture
 )
 while let line = readLine() {
   guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }

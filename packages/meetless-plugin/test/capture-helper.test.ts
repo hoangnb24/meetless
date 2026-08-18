@@ -147,6 +147,34 @@ describe("capture helper supervision", () => {
     }
   }, 15_000);
 
+  test("rejects a backward PTS jump before it can commit an overlapping interval", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-backward-pts-helper-"));
+    const sessionDirectory = path.join(root, "sessions", "backward");
+    const child = spawn(path.resolve("native/macos-capture/.build/release/meetless-capture"), ["--backward-pts-fixture"], {
+      stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH },
+    });
+    const events: Array<Record<string, unknown>> = [];
+    let stdout = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      while (stdout.includes("\n")) {
+        const newline = stdout.indexOf("\n");
+        const line = stdout.slice(0, newline).trim(); stdout = stdout.slice(newline + 1);
+        if (line) events.push(JSON.parse(line) as Record<string, unknown>);
+      }
+    });
+    try {
+      send(child, { version: 1, command: "start", sessionDirectory, elapsedMs: 0 });
+      await waitFor(() => events.some((event) => event.event === "captureFailed"));
+      expect(events.find((event) => event.event === "captureFailed")?.error).toMatch(/PTS moved backwards/);
+      expect(chunkStarts(events, "microphone")).toEqual([]);
+    } finally {
+      child.kill("SIGKILL");
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   test("commits source-labelled timeline chunks and bounded cleanup leaves no helper process", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-helper-test-"));
     const sessionDirectory = path.join(root, "sessions", "r-1");

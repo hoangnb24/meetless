@@ -52,11 +52,18 @@ export class RecordingInventoryReconciler {
       for await (const entry of directory) {
         throwIfAborted(options.signal);
         if (!entry.name.endsWith(".wav")) continue;
-        const chunk = await validateCommittedWavChunk({
-          filePath: path.join(sessionDirectory, entry.name), sessionDirectory, storeRoot: this.storeRoot,
-          resolvedSessionDirectory, resolvedStoreRoot,
-        });
-        const expected = known.get(chunk.id);
+        const claimedId = committedIdFromFilename(entry.name);
+        const expected = claimedId ? known.get(claimedId) : undefined;
+        let chunk: CommittedRecordingChunk;
+        try {
+          chunk = await validateCommittedWavChunk({
+            filePath: path.join(sessionDirectory, entry.name), sessionDirectory, storeRoot: this.storeRoot,
+            resolvedSessionDirectory, resolvedStoreRoot,
+          });
+        } catch (error) {
+          if (expected) throw new Error(`Known committed media is malformed: ${expected.id}: ${describe(error)}`);
+          continue;
+        }
         if (expected && !sameChunkIdentity(expected, chunk)) {
           throw new Error(`Known committed media changed identity: ${chunk.id}`);
         }
@@ -98,6 +105,9 @@ export class RecordingInventoryReconciler {
         storageKey: path.relative(this.storeRoot, finalPath), digest, chunkCount,
         microphoneCount, systemCount, publishedAt: new Date().toISOString(),
       };
+      for await (const _chunk of readInventory(this.storeRoot, pointer)) {
+        // Fully consume the immutable candidate before making it authoritative.
+      }
       await options.hooks?.afterSidecarPublished?.(pointer);
       throwIfAborted(options.signal);
       await this.store.publishInventory(recording.id, pointer);
@@ -127,12 +137,28 @@ export async function* readInventory(storeRoot: string, pointer: RecordingInvent
   let microphoneCount = 0;
   let systemCount = 0;
   let previousSortKey = "";
+  const previousIntervals = new Map<string, { endNumerator: bigint; sampleRate: bigint; id: string }>();
   for await (const line of lines) {
     if (!line) continue;
     const { sortKey, ...chunk } = InventoryLineSchema.parse(JSON.parse(line));
-    if (sortKey !== inventorySortKey(chunk) || (previousSortKey && sortKey < previousSortKey)) {
+    if (sortKey !== inventorySortKey(chunk) || (previousSortKey && sortKey <= previousSortKey)) {
       throw new Error(`Inventory sidecar timeline order is invalid: ${pointer.storageKey}`);
     }
+    const interval = chunkInterval(chunk);
+    const previousInterval = previousIntervals.get(chunk.source);
+    if (
+      previousInterval &&
+      interval.startFrame * previousInterval.sampleRate < previousInterval.endNumerator * interval.sampleRate
+    ) {
+      throw new Error(
+        `Inventory source intervals overlap: ${previousInterval.id} then ${chunk.id} (${pointer.storageKey})`,
+      );
+    }
+    previousIntervals.set(chunk.source, {
+      endNumerator: interval.startFrame + interval.frameCount,
+      sampleRate: interval.sampleRate,
+      id: chunk.id,
+    });
     previousSortKey = sortKey;
     count += 1;
     if (chunk.source === "microphone") microphoneCount += 1;
@@ -155,6 +181,24 @@ export function resolveStorePath(storeRoot: string, storageKey: string): string 
 
 function inventorySortKey(chunk: CommittedRecordingChunk): string {
   return `${chunk.source}:${String(chunk.logicalStartMs).padStart(16, "0")}:${chunk.id}`;
+}
+
+function committedIdFromFilename(name: string): string | null {
+  return /^(chunk--(?:microphone|system)--\d{6}--\d{12}--\d{12}--\d+--\d+)\.wav$/u.exec(name)?.[1] ?? null;
+}
+
+function chunkInterval(chunk: CommittedRecordingChunk): {
+  startFrame: bigint;
+  frameCount: bigint;
+  sampleRate: bigint;
+} {
+  const match = /^chunk--(?:microphone|system)--\d{6}--(\d{12})--(\d{12})--(\d+)--\d+$/u.exec(chunk.id);
+  if (!match) throw new Error(`Inventory chunk has invalid timeline identity: ${chunk.id}`);
+  const startFrame = BigInt(match[1]!);
+  const frameCount = BigInt(match[2]!);
+  const sampleRate = BigInt(match[3]!);
+  if (frameCount <= 0n || sampleRate <= 0n) throw new Error(`Inventory chunk has invalid timeline identity: ${chunk.id}`);
+  return { startFrame, frameCount, sampleRate };
 }
 
 function sameChunkIdentity(left: CommittedRecordingChunk, right: CommittedRecordingChunk): boolean {
