@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "milestone": 2,
+  "candidateCommit": "26b29ec38c6f1c21eef61064aea514f67fef4485",
+  "observedAt": "2026-08-18T15:26:54Z",
+  "kind": "meetless-host-production-final-live-acceptance",
+  "result": "accepted-functional-boundary-with-degraded-audio-quality",
+  "meeting": {
+    "id": "9e94906d-00c5-462d-994b-cc13f80a3ae4",
+    "recordingId": "b2d0f270-1a8b-48a1-b1d5-936cdef24481",
+    "link": "https://meet.google.com/iir-kqyx-aus",
+    "startedAt": "2026-08-18T15:07:21.534Z",
+    "savedAt": "2026-08-18T15:12:35.134Z",
+    "elapsedMs": 312864,
+    "temporaryMeetEnded": true,
+    "cameraOff": true,
+    "invitationsSent": false
+  },
+  "productionPreflight": {
+    "captureMode": "production",
+    "hostBundleIdentifier": "com.meetless.app",
+    "hostPid": 51429,
+    "desktopPid": 51468,
+    "supervisorPid": 51855,
+    "daemonPid": 51960,
+    "pluginPid": 52138,
+    "runtimeInstanceId": "0bc9ae3e-5313-4283-9cd5-7f4190c23824",
+    "socketInode": 31815652,
+    "helper": {
+      "historicalPid": 55132,
+      "path": "/Users/tubakhuym/projects/supervisors/meetless/native/macos-capture/.build/release/meetless-capture",
+      "sha256": "7e0916eab4b353afc22691524292193135255ceae202dbb86e38ab21bfa7cc95",
+      "arguments": []
+    },
+    "authoritativeStatus": "recording",
+    "microphoneChunksBeforeOwner": 5,
+    "systemChunksBeforeOwner": 5,
+    "stopTargetPrepared": true,
+    "collisionTargetPrepared": true
+  },
+  "sourceInventory": {
+    "state": "complete",
+    "total": 685,
+    "microphone": 337,
+    "system": 348,
+    "digest": "be566dd305bdc29f0707cd4ba5b118537296b5580e98bc6d052220d18d3988e9",
+    "rawChunksDeletedOnlyAfterSaved": true,
+    "immutableSidecarRetained": true
+  },
+  "phraseEvidence": {
+    "system": {
+      "expected": "Phone audio confirms the system recording channel",
+      "clipPath": "/Users/tubakhuym/Documents/meetings/.evidence/20260818-final-m2/system-phrase.mp3",
+      "clipSha256": "22729d1725164cc4ec9d14f5fc1468d6c6a5b67b2dc27cd3cad19a3558bd460f",
+      "source": "system",
+      "ownerObservation": "exact phrase audible; noticeably distorted/static-like (khá rè)",
+      "audible": true,
+      "quality": "distorted-static-like"
+    },
+    "microphone": {
+      "expected": "Mac microphone confirms the local recording channel",
+      "clipPath": "/Users/tubakhuym/Documents/meetings/.evidence/20260818-final-m2/microphone-phrase.mp3",
+      "clipSha256": "a8b6c089e6546dd71f964f03913ea8333fb3f3d02adc0297655f2f90e57c62ca",
+      "source": "microphone",
+      "ownerObservation": "exact phrase audible; noticeably distorted/static-like (nghe được câu thoại nhưng rè)",
+      "audible": true,
+      "quality": "distorted-static-like"
+    },
+    "method": "Source-labelled committed WAVs were concatenated before post-save cleanup; short system-first and microphone-second clips were replayed locally and observed separately by the owner. No transcription was used."
+  },
+  "collisionEvidence": {
+    "sentinelPath": "/Users/tubakhuym/Documents/meetings/22-18-08-26.mp3",
+    "sentinelByteLength": 201,
+    "sentinelSha256Before": "64ce7df41c2932092493557e47f6d31db24db2b091d96ce12a3bafb4f2750eab",
+    "sentinelSha256After": "64ce7df41c2932092493557e47f6d31db24db2b091d96ce12a3bafb4f2750eab",
+    "sentinelInodeBefore": 31815858,
+    "sentinelInodeAfter": 31815858,
+    "sentinelMtimeBefore": 1787065648,
+    "sentinelMtimeAfter": 1787065648,
+    "unchanged": true,
+    "publishedPath": "/Users/tubakhuym/Documents/meetings/22-18-08-26-2.mp3"
+  },
+  "output": {
+    "path": "/Users/tubakhuym/Documents/meetings/22-18-08-26-2.mp3",
+    "byteLength": 1619613,
+    "sha256": "a9f09af447c734087e882eeaf52b0b9aef2c9265bca9943d8f92aedc7d8e9463",
+    "format": "mp3",
+    "codec": "mp3",
+    "sampleRate": 16000,
+    "channels": 1,
+    "durationSeconds": 309.033375,
+    "rmsDb": -34.773841,
+    "peakDb": -0.976625,
+    "readable": true,
+    "durableSavedIdentityMatchedFile": true
+  },
+  "durabilityEvidence": {
+    "realProductionRecovery": "The prior retained production session reconciled 340944 WAVs to an immutable inventory and survived clean host shutdown before finalization; recorded in the active plan and the 20260818T031937Z evidence manifest.",
+    "forcedRendererExitAndRetry": "Executable npm run proof:m2 evidence at the accepted integrated candidate proves renderer reconnect, daemon restart recovery, retry from the same inventory, readable publication, and saved-before-cleanup.",
+    "finalCall": "Finalization durably stored the exact output path, size, SHA-256, and inventory digest before raw WAV cleanup; the immutable inventory sidecar remains."
+  },
+  "shutdown": {
+    "runtimeRunning": false,
+    "pidLockPresent": false,
+    "recordingSocketPresent": false,
+    "port6777Listening": false,
+    "port8082Listening": false,
+    "helperPresent": false
+  },
+  "leadDecision": {
+    "milestone2Accepted": true,
+    "boundary": "The documented M2 gate requires intelligible distinguishable speakers, recoverability, a playable MP3, and no overwrite. Those are observed.",
+    "qualityClaim": "No clean or normal-quality claim is made. Both channels were distorted/static-like in the source-separated listening clips.",
+    "residualRisk": "Determine and remediate the distortion cause before Milestone 7 release acceptance; do not advertise normal recording quality from this evidence."
+  }
+}

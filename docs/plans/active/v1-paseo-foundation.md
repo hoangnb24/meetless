@@ -559,6 +559,27 @@ frontier):
   phrase, mute the phone, then say the local microphone phrase toward the Mac.
   Lead must again prove active production readiness before supplying that call
   link and must inspect the finalized artifact before accepting M2.
+- **Final live acceptance (2026-08-18):** `ACCEPT` for the documented M2
+  functional boundary at candidate
+  `26b29ec38c6f1c21eef61064aea514f67fef4485`. A fresh MeetlessHost production
+  preflight attested the exact helper with no fixture arguments, authoritative
+  active status, committed microphone/system chunks, and prepared stop and
+  collision targets before temporary Google Meet `iir-kqyx-aus` was created.
+  The owner separately heard the exact phone phrase in the source-labelled
+  system clip and the exact local phrase in the source-labelled microphone
+  clip. Both were intelligible but noticeably distorted/static-like; no clean
+  or normal-quality claim is made. Stop published readable MP3
+  `22-18-08-26-2.mp3` without changing the prepared `22-18-08-26.mp3`
+  sentinel, durably saved the exact path/size/hash before raw cleanup, retained
+  the immutable inventory sidecar, and the full Meetless runtime then shut down
+  cleanly.
+- **Acceptance ruling:** degraded-but-intelligible audio satisfies the existing
+  M2 boundary of distinguishable speakers plus playable durable recording; the
+  boundary did not specify clean/studio-quality audio, so Lead does not add
+  that criterion retroactively. The distortion is nevertheless a real
+  release-quality risk: its cause and remediation must be decided before M7
+  release acceptance, and this evidence must not be presented as normal audio
+  quality.
 
 The first `RecordingSource` is one macOS 15+ Swift helper using one
 ScreenCaptureKit stream with separate `.audio` and `.microphone` outputs. The
@@ -691,7 +712,7 @@ Recovery rules:
 - [x] Inventory the pinned Paseo P0 package and file seams.
 - [x] Run the microphone plus system-audio Zoom/Meet capture spike.
 - [x] Complete Milestone 1: shell and meeting domain.
-- [ ] Complete Milestone 2: durable desktop recording.
+- [x] Complete Milestone 2: durable desktop recording.
 - [ ] Complete Milestone 3: transcription and citation playback.
 - [ ] Complete Milestone 4: coding-agent analysis.
 - [ ] Complete Milestone 5: grounded Q&A and document folders.
@@ -763,6 +784,9 @@ Recovery rules:
 Open decisions before affected implementation:
 
 - Exact macOS hardware/version release matrix beyond the first proven host.
+- Minimum release-quality threshold and remediation for the static-like
+  distortion observed on both intelligible M2 production source clips. This is
+  an M7 release decision; M2 makes no normal-quality claim.
 - Supported document formats and exact source-location behavior for each.
 - Whether remote companion access uses direct LAN pairing only or also Paseo's
   encrypted relay in V1.
@@ -858,3 +882,11 @@ breaking forced upgrades were not substituted for the accepted pin. CocoaPods
 1.17.0 was installed globally through Homebrew at
 `2026-08-16T22:23:32+07:00` to build the simulator proof. The project owner
 accepted retaining that installation; it must not be removed as M1 cleanup.
+
+Milestone 2 is complete against its documented functional boundary. The final
+production Google Meet run captured separately audible system and microphone
+phrases, published a readable collision-safe MP3, durably recorded saved state
+before raw cleanup, and shut down the Meetless-owned runtime cleanly. Both
+source-separated listening clips were intelligible but distorted/static-like;
+that quality limitation is explicit evidence and remains an M7 release risk,
+not a clean-audio claim.
