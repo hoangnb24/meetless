@@ -3,7 +3,10 @@ import { stat } from "node:fs/promises";
 import { assertInstalledHostIdentity } from "../packages/runtime/dist/host.js";
 import { resolveRuntimeConfig } from "../packages/runtime/dist/config.js";
 
-const config = resolveRuntimeConfig();
+const config = resolveRuntimeConfig({
+  runtimeRoot: process.env.MEETLESS_RUNTIME_ROOT,
+  listen: process.env.MEETLESS_LISTEN,
+});
 const identity = await assertInstalledHostIdentity(config);
 const inspected = spawnSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
 if (inspected.error || inspected.status !== 0) throw new Error("Cannot inspect the MeetlessHost process");

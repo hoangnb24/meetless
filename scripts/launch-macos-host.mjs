@@ -6,7 +6,10 @@ import { assertInstalledHostIdentity } from "../packages/runtime/dist/host.js";
 import { resolveRuntimeConfig } from "../packages/runtime/dist/config.js";
 
 const execFileAsync = promisify(execFile);
-const config = resolveRuntimeConfig();
+const config = resolveRuntimeConfig({
+  runtimeRoot: process.env.MEETLESS_RUNTIME_ROOT,
+  listen: process.env.MEETLESS_LISTEN,
+});
 const identity = await assertInstalledHostIdentity(config);
 await execFileAsync("open", ["-g", "-a", identity.bundleRealPath]);
 const deadline = Date.now() + 5_000;

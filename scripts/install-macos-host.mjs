@@ -11,7 +11,11 @@ import { resolveRuntimeConfig } from "../packages/runtime/dist/config.js";
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const replace = process.argv.includes("--replace");
-const config = resolveRuntimeConfig({ repositoryRoot, runtimeRoot: process.env.MEETLESS_RUNTIME_ROOT });
+const config = resolveRuntimeConfig({
+  repositoryRoot,
+  runtimeRoot: process.env.MEETLESS_RUNTIME_ROOT,
+  listen: process.env.MEETLESS_LISTEN,
+});
 const target = config.host.bundle;
 const identityPath = config.host.identity;
 const exclusionPath = path.join(config.paths.root, "meetless-host.lock");
