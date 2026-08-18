@@ -392,9 +392,9 @@ frontier):
   runtime whose supervisor chain is not
   `MeetlessHost -> desktop CLI -> Paseo Supervisor`.
 - **Observed local identity:** designated requirement
-  `cdhash H"76536284825363070b36ad5695bb3fa6b04b21b1"`, CDHash
-  `76536284825363070b36ad5695bb3fa6b04b21b1`, and host binary SHA-256
-  `30a7b5034380247dfe9b8817f9c6f8169d6e71c94f8371d2a82eee8899c2aeb8`.
+  `cdhash H"63923ac54863b9f1733cb5203cfd60ca77a43dc3"`, CDHash
+  `63923ac54863b9f1733cb5203cfd60ca77a43dc3`, and host binary SHA-256
+  `778cecc4cf526724c7dc525b3bbc806c841e35d65a42016782825b112d83213d`.
   Repeated corrected LaunchServices starts retained that identity. The final
   observed chain was host PID `64735`, desktop PID `64738`, supervisor PID
   `65262`, daemon PID `65319`, and plugin PID `65328`.
@@ -456,6 +456,60 @@ frontier):
   preflight, physical presence near the Mac with the phone is still required
   for both the microphone and system phrases. This handoff does not request
   that action.
+
+`FOUNDATION_CHECK v1 — M2 scalable inventory recovery` (2026-08-18):
+
+- **Trigger evidence:** production validation at candidate `b0fa863` found
+  340,944 committed-name WAV files for recording
+  `c6bc6fd6-a254-4ea3-8b00-480b2bc1ed84`, while MeetingStore knew 20,136
+  before the attempt. The synchronous orphan loop adopted 567 entries through
+  567 whole-store rewrites, then the bootstrap RPC timed out after 30 seconds.
+  Durable state remained stale `recording`; 320,241 unknown WAVs remained.
+- **State owner:** MeetingStore remains the sole recording lifecycle authority.
+  A recording-owned immutable inventory sidecar is durable media metadata, not
+  a second lifecycle store. MeetingStore atomically publishes its path, digest,
+  counts, and reconciliation state.
+- **Lifecycle:** stale capture first becomes
+  `recoverable + inventory: pending` in one bounded atomic store mutation. The
+  control socket and compact authoritative status may then open while a
+  cancellable background scan builds an unreferenced candidate inventory.
+  Only a fully validated, synced, content-addressed inventory may atomically
+  transition to `inventory: complete`. Missing or identity-changing previously
+  committed chunks transition reconciliation to `blocked` rather than silently
+  dropping media.
+- **Cross-boundary invariants:** Start remains blocked by the unresolved
+  session. Retry/finalization and cleanup are forbidden while inventory is
+  pending, scanning, or blocked. Finalization freezes and consumes the exact
+  completed inventory digest. Every original WAV remains until a readable MP3
+  exists and `saved` is durably committed. Cancellation or crash may leave an
+  unreferenced candidate sidecar, but never a partially authoritative inventory.
+- **Required mechanisms:** stream directory entries with bounded concurrency;
+  validate containment, filename/timeline identity, WAV readability, size, and
+  hash; publish one immutable inventory with one MeetingStore pointer commit;
+  expose bounded source counts/reconciliation/retry eligibility instead of the
+  complete chunk array; build at most one staged timeline per source before the
+  final MP3 mix. Do not construct one FFmpeg input/filter per raw WAV.
+- **Recurrence prevention:** normal ScreenCaptureKit callback jitter must not
+  flush a chunk. The helper targets approximately one-second chunks and closes
+  early only for pause, stop, or a genuine timeline discontinuity. Real gaps
+  remain represented by timestamps. Validation includes an explicit upper
+  bound on chunks produced per recorded minute.
+- **Dependency direction:** recorder status/UI and finalization consume the
+  compact inventory policy; the scanner, sidecar codec, filesystem, helper,
+  and FFmpeg remain outer details. No renderer-owned capture or lifecycle state
+  is introduced.
+- **Required proof:** a 340,944-file production-derived scale case reaches
+  authoritative `recoverable/pending` within the desktop startup bound; retry
+  is unavailable before completion; cancellation at scan and publish boundaries
+  never changes the authoritative partial count; completed counts include every
+  valid microphone/system file and all previously committed identities; the
+  bounded two-source finalizer produces a readable MP3 without deleting source
+  WAVs before durable `saved`.
+- **Status:** `FOUNDATION_REQUIRED`. Candidate `b0fa863` remains accepted for
+  renderer failure-status propagation, but its production-recovery claim is
+  rejected. Do not rerun the preserved session until this foundation is
+  implemented and independently reviewed; each old launch can adopt another
+  arbitrary prefix.
 
 The first `RecordingSource` is one macOS 15+ Swift helper using one
 ScreenCaptureKit stream with separate `.audio` and `.microphone` outputs. The
