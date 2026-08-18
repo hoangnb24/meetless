@@ -27,6 +27,10 @@ interface DesktopBridge {
 export class DesktopRecordingClient {
   private sessionId: string | null = null;
   private unlisten: (() => void) | null = null;
+  private socketPath: string | null = null;
+  private connectPromise: Promise<RecordingStatusWire> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectEnabled = false;
   private sequence = 0;
   private readonly pending = new Map<string, { resolve(status: RecordingStatusWire): void; reject(error: Error): void }>();
   private readonly listeners = new Set<(status: RecordingStatusWire) => void>();
@@ -40,18 +44,36 @@ export class DesktopRecordingClient {
   }
 
   async connect(): Promise<RecordingStatusWire> {
+    this.reconnectEnabled = true;
     if (this.sessionId) return this.request("status");
-    this.unlisten = await this.bridge.events!.on("local-daemon-transport-event", (payload) => this.handleTransportEvent(payload));
-    const daemonStatus = await this.bridge.invoke!("desktop_daemon_status") as { home?: unknown };
-    if (typeof daemonStatus?.home !== "string" || !daemonStatus.home.startsWith("/")) {
-      throw new Error("Desktop daemon did not expose an absolute isolated home");
+    if (this.connectPromise) return this.connectPromise;
+    this.connectPromise = this.connectOnce();
+    try {
+      return await this.connectPromise;
+    } catch (error) {
+      this.scheduleReconnect();
+      throw error;
+    } finally {
+      this.connectPromise = null;
     }
-    const socketPath = await resolveRecordingSocket(daemonStatus.home.replace(/\/$/u, ""));
+  }
+
+  private async connectOnce(): Promise<RecordingStatusWire> {
+    if (!this.unlisten) {
+      this.unlisten = await this.bridge.events!.on("local-daemon-transport-event", (payload) => this.handleTransportEvent(payload));
+    }
+    if (!this.socketPath) {
+      const daemonStatus = await this.bridge.invoke!("desktop_daemon_status") as { home?: unknown };
+      if (typeof daemonStatus?.home !== "string" || !daemonStatus.home.startsWith("/")) {
+        throw new Error("Desktop daemon did not expose an absolute isolated home");
+      }
+      this.socketPath = await resolveRecordingSocket(daemonStatus.home.replace(/\/$/u, ""));
+    }
     let session: unknown;
     let lastError: unknown;
     for (let attempt = 0; attempt < 30; attempt += 1) {
       try {
-        session = await this.bridge.invoke!("open_local_daemon_transport", { transportType: "socket", transportPath: socketPath });
+        session = await this.bridge.invoke!("open_local_daemon_transport", { transportType: "socket", transportPath: this.socketPath });
         break;
       } catch (error) {
         lastError = error;
@@ -59,7 +81,6 @@ export class DesktopRecordingClient {
       }
     }
     if (session === undefined && lastError) {
-      this.unlisten?.(); this.unlisten = null;
       throw lastError;
     }
     if (typeof session !== "string" || !session) throw new Error("Desktop recording transport did not return a session ID");
@@ -79,6 +100,9 @@ export class DesktopRecordingClient {
   retryFinalization(): Promise<RecordingStatusWire> { return this.request("retryFinalization"); }
 
   async close(): Promise<void> {
+    this.reconnectEnabled = false;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     const sessionId = this.sessionId; this.sessionId = null;
     if (sessionId) await this.bridge.invoke!("close_local_daemon_transport", { sessionId }).catch(() => undefined);
     this.unlisten?.(); this.unlisten = null;
@@ -90,23 +114,36 @@ export class DesktopRecordingClient {
     if (!sessionId) throw new Error("Desktop recording transport is not connected");
     const requestId = `recording-${Date.now()}-${++this.sequence}`;
     const response = new Promise<RecordingStatusWire>((resolve, reject) => this.pending.set(requestId, { resolve, reject }));
-    await this.bridge.invoke!("send_local_daemon_transport_message", {
-      sessionId,
-      text: JSON.stringify({ version: 1, requestId, command, ...(title === undefined ? {} : { title }) }),
-    });
+    try {
+      await this.bridge.invoke!("send_local_daemon_transport_message", {
+        sessionId,
+        text: JSON.stringify({ version: 1, requestId, command, ...(title === undefined ? {} : { title }) }),
+      });
+    } catch (error) {
+      this.disconnect(sessionId, error instanceof Error ? error : new Error(String(error)));
+      return response;
+    }
     return response;
   }
 
   private handleTransportEvent(payload: unknown): void {
     if (!payload || typeof payload !== "object") return;
-    const event = payload as { sessionId?: unknown; kind?: unknown; text?: unknown; error?: unknown };
+    const event = payload as { sessionId?: unknown; kind?: unknown; text?: unknown; binaryBase64?: unknown; error?: unknown };
     if (event.sessionId !== this.sessionId) return;
     if (event.kind === "close" || event.kind === "error") {
-      this.rejectPending(new Error(typeof event.error === "string" ? event.error : "Desktop recording transport disconnected"));
+      this.disconnect(String(event.sessionId), new Error(
+        typeof event.error === "string" ? event.error : "Desktop recording transport disconnected",
+      ));
       return;
     }
-    if (event.kind !== "message" || typeof event.text !== "string") return;
-    const decoded: unknown = JSON.parse(event.text);
+    if (event.kind !== "message") return;
+    const text = typeof event.text === "string"
+      ? event.text
+      : typeof event.binaryBase64 === "string"
+        ? decodeUtf8Base64(event.binaryBase64)
+        : null;
+    if (text === null) return;
+    const decoded: unknown = JSON.parse(text);
     const statusEvent = RecordingStatusEventSchema.safeParse(decoded);
     if (statusEvent.success) {
       for (const listener of this.listeners) listener(statusEvent.data.status);
@@ -124,6 +161,30 @@ export class DesktopRecordingClient {
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
   }
+
+  private disconnect(sessionId: string, error: Error): void {
+    if (sessionId !== this.sessionId) return;
+    this.sessionId = null;
+    this.rejectPending(error);
+    void this.bridge.invoke!("close_local_daemon_transport", { sessionId }).catch(() => undefined);
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (!this.reconnectEnabled || this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.reconnectEnabled || this.sessionId) return;
+      void this.connect().then((status) => {
+        for (const listener of this.listeners) listener(status);
+      }).catch(() => undefined);
+    }, 100);
+  }
+}
+
+function decodeUtf8Base64(value: string): string {
+  const bytes = Uint8Array.from(globalThis.atob(value), (character) => character.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 }
 
 function delay(milliseconds: number): Promise<void> {

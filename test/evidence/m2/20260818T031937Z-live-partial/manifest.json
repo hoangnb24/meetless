@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "milestone": 2,
+  "candidateCommit": "c82da856d25a2f4a59e24e7e46ea440a77ed5b7b",
+  "observedAt": "2026-08-18T03:19:37Z",
+  "kind": "meetless-host-production-live-partial-retention",
+  "result": "partial-recoverable-source-evidence",
+  "host": {
+    "bundlePath": "/Users/tubakhuym/Applications/Meetless.app",
+    "bundleIdentifier": "com.meetless.app",
+    "binaryPath": "/Users/tubakhuym/Applications/Meetless.app/Contents/MacOS/MeetlessHost",
+    "binarySha256": "778cecc4cf526724c7dc525b3bbc806c841e35d65a42016782825b112d83213d",
+    "cdHash": "63923ac54863b9f1733cb5203cfd60ca77a43dc3",
+    "designatedRequirement": "cdhash H\"63923ac54863b9f1733cb5203cfd60ca77a43dc3\""
+  },
+  "runtime": {
+    "instanceId": "e2ab0bfc-1e01-495e-8bcc-f17a37737bb3",
+    "identityEvidence": ".meetless-runtime/logs/host-runtime.log authoritative status immediately preceding the production Start",
+    "recordingSocket": "/Users/tubakhuym/projects/supervisors/meetless/.meetless-runtime/paseo-home/recording-control.sock",
+    "captureHelper": {
+      "historicalPid": 39773,
+      "path": "/Users/tubakhuym/projects/supervisors/meetless/native/macos-capture/.build/release/meetless-capture",
+      "sha256": "a0fd59c4c1c6fd8260f35c791e8e447187ce1065a77458fd9ced40d5125bb128",
+      "mode": "production"
+    }
+  },
+  "meeting": {
+    "id": "1c982821-c225-4c6b-af0a-0190c3da8446",
+    "recordingId": "c6bc6fd6-a254-4ea3-8b00-480b2bc1ed84",
+    "link": "https://meet.google.com/pwi-yokc-brd",
+    "startedAt": "2026-08-18T02:20:49.495Z",
+    "lastCommittedAt": "2026-08-18T02:23:20.291Z",
+    "durableStatusAtManifest": "recording",
+    "helperLiveAtManifest": false,
+    "requiredRecoveryStatus": "recoverable"
+  },
+  "sourceInventory": {
+    "initialPreownerCheckpoint": { "microphone": 6558, "system": 3809 },
+    "retainedAtManifest": { "microphone": 12926, "system": 7210, "total": 20136 },
+    "root": "/Users/tubakhuym/projects/supervisors/meetless/.meetless-runtime/meeting-store",
+    "representativeChunks": [
+      {
+        "source": "microphone",
+        "id": "chunk--microphone--000000--000000001382--000000000179--16000--1",
+        "path": "/Users/tubakhuym/projects/supervisors/meetless/.meetless-runtime/meeting-store/sessions/c6bc6fd6-a254-4ea3-8b00-480b2bc1ed84/chunk--microphone--000000--000000001382--000000000179--16000--1.wav",
+        "byteLength": 402,
+        "sha256": "6176c159d5dbace372ab08f8fbd085d0294d79e6c3d3899c307296860c6abe4c"
+      },
+      {
+        "source": "microphone",
+        "id": "chunk--microphone--006463--000001201946--000000000179--16000--1",
+        "path": "/Users/tubakhuym/projects/supervisors/meetless/.meetless-runtime/meeting-store/sessions/c6bc6fd6-a254-4ea3-8b00-480b2bc1ed84/chunk--microphone--006463--000001201946--000000000179--16000--1.wav",
+        "byteLength": 402,
+        "sha256": "15cafab0ed0022762272f17d2ee0c887f8cc3947e0ee852622995e1b2b26a1f6"
+      },
+      {
+        "source": "microphone",
+        "id": "chunk--microphone--012925--000002402325--000000000179--16000--1",
+        "path": "/Users/tubakhuym/projects/supervisors/meetless/.meetless-runtime/meeting-store/sessions/c6bc6fd6-a254-4ea3-8b00-480b2bc1ed84/chunk--microphone--012925--000002402325--000000000179--16000--1.wav",
+        "byteLength": 402,
+        "sha256": "ba095d5a99fd835add943c863d67adaf124411156a067b20657adbc51aad02ff"
+      },
+      {
+        "source": "system",
+        "id": "chunk--system--000000--000000000000--000000000314--16000--1",
+        "path": "/Users/tubakhuym/projects/supervisors/meetless/.meetless-runtime/meeting-store/sessions/c6bc6fd6-a254-4ea3-8b00-480b2bc1ed84/chunk--system--000000--000000000000--000000000314--16000--1.wav",
+        "byteLength": 672,
+        "sha256": "90ca144f8e2cdb1e95d083fac4f1eb5924ac5444b6afe829db23c1ed65daabf4"
+      },
+      {
+        "source": "system",
+        "id": "chunk--system--003605--000001153600--000000000314--16000--1",
+        "path": "/Users/tubakhuym/projects/supervisors/meetless/.meetless-runtime/meeting-store/sessions/c6bc6fd6-a254-4ea3-8b00-480b2bc1ed84/chunk--system--003605--000001153600--000000000314--16000--1.wav",
+        "byteLength": 672,
+        "sha256": "90ca144f8e2cdb1e95d083fac4f1eb5924ac5444b6afe829db23c1ed65daabf4"
+      },
+      {
+        "source": "system",
+        "id": "chunk--system--007209--000002306880--000000000314--16000--1",
+        "path": "/Users/tubakhuym/projects/supervisors/meetless/.meetless-runtime/meeting-store/sessions/c6bc6fd6-a254-4ea3-8b00-480b2bc1ed84/chunk--system--007209--000002306880--000000000314--16000--1.wav",
+        "byteLength": 672,
+        "sha256": "90ca144f8e2cdb1e95d083fac4f1eb5924ac5444b6afe829db23c1ed65daabf4"
+      }
+    ]
+  },
+  "collisionEvidence": {
+    "path": "/Users/tubakhuym/Documents/meetings/09-18-08-26.mp3",
+    "plannedPublishedPath": "/Users/tubakhuym/Documents/meetings/09-18-08-26-2.mp3",
+    "byteLength": 201,
+    "inode": 30078979,
+    "mode": "0600",
+    "sha256": null,
+    "hashStatus": "unavailable: two bounded content reads blocked; read-only brctl materialization rejected because the path is outside CloudDocs. The sentinel was not regenerated, replaced, or deleted."
+  },
+  "ownerHandback": {
+    "systemPhraseReported": "Phone audio confirms the system recording channel",
+    "systemPhraseAudibility": "unproven-by-executable-inspection",
+    "microphonePhraseReported": null,
+    "microphoneAcceptance": "unproven",
+    "playableMp3": "unproven-no-finalization-attempted"
+  },
+  "preservation": {
+    "chunksCopied": false,
+    "chunksDeleted": false,
+    "finalizationAttempted": false,
+    "newCollisionSentinelCreated": false
+  }
+}

@@ -69,6 +69,73 @@ const recordingStatus: RecordingStatusWire = {
 };
 
 describe("Electron-only recording transport", () => {
+  test("decodes real Electron binary-shaped text frames so Start returns authoritative recording", async () => {
+    let handler: ((payload: unknown) => void) | null = null;
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "desktop_daemon_status") return { home: "/private/runtime/paseo-home" };
+      if (command === "open_local_daemon_transport") return "session-binary";
+      if (command === "send_local_daemon_transport_message") {
+        const request = JSON.parse(String(args?.text)) as { requestId: string; command: string };
+        const response = JSON.stringify({
+          version: 1, requestId: request.requestId, ok: true, status: recordingStatus, error: null,
+        });
+        queueMicrotask(() => handler?.({
+          sessionId: args?.sessionId,
+          kind: "message",
+          binaryBase64: Buffer.from(response, "utf8").toString("base64"),
+        }));
+      }
+      return undefined;
+    });
+    const client = new DesktopRecordingClient({
+      platform: "darwin", invoke,
+      events: { on: async (_event, next) => { handler = next; return () => { handler = null; }; } },
+    });
+
+    await client.connect();
+    await expect(client.start("Production call")).resolves.toEqual(recordingStatus);
+    expect(invoke).toHaveBeenLastCalledWith("send_local_daemon_transport_message", expect.objectContaining({
+      text: expect.stringContaining('"command":"start"'),
+    }));
+    await client.close();
+  });
+
+  test("reopens the same private socket after disconnect and publishes recovered authoritative status", async () => {
+    let handler: ((payload: unknown) => void) | null = null;
+    let session = 0;
+    const recovered = { ...recordingStatus, status: "recoverable" as const, error: "daemon restarted while capture was active" };
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "desktop_daemon_status") return { home: "/private/runtime/paseo-home" };
+      if (command === "open_local_daemon_transport") return `session-${++session}`;
+      if (command === "send_local_daemon_transport_message") {
+        const request = JSON.parse(String(args?.text)) as { requestId: string };
+        const status = session === 1 ? recordingStatus : recovered;
+        queueMicrotask(() => handler?.({
+          sessionId: args?.sessionId, kind: "message",
+          binaryBase64: Buffer.from(JSON.stringify({
+            version: 1, requestId: request.requestId, ok: true, status, error: null,
+          })).toString("base64"),
+        }));
+      }
+      return undefined;
+    });
+    const client = new DesktopRecordingClient({
+      platform: "darwin", invoke,
+      events: { on: async (_event, next) => { handler = next; return () => { handler = null; }; } },
+    });
+    const observed: RecordingStatusWire[] = [];
+    client.subscribe((status) => observed.push(status));
+    await client.connect();
+    handler?.({ sessionId: "session-1", kind: "close" });
+
+    await vi.waitFor(() => expect(observed).toContainEqual(recovered));
+    expect(session).toBe(2);
+    expect(invoke).toHaveBeenCalledWith("open_local_daemon_transport", {
+      transportType: "socket", transportPath: "/private/runtime/paseo-home/recording-control.sock",
+    });
+    await client.close();
+  });
+
   test("derives the same short private socket for an overlong isolated daemon home", async () => {
     let handler: ((payload: unknown) => void) | null = null;
     const home = `/private/var/folders/${"long-runtime-segment/".repeat(8)}paseo-home`;

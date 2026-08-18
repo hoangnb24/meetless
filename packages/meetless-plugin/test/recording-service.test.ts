@@ -195,6 +195,79 @@ describe("daemon recording service", () => {
     expect(recovered.chunks.some((chunk) => chunk.id === malformedOrphan)).toBe(false);
   }, 30_000);
 
+  test("graceful shutdown drains a delayed final callback before exact recoverable inventory assessment", async () => {
+    const config = await fixtureConfig();
+    const service = new RecordingService(config); services.add(service); await service.initialize();
+    const committedIds: string[] = [];
+    const originalCommit = service.store.commitChunk.bind(service.store);
+    let delayNext = false;
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const delayedCommitEntered = new Promise<void>((resolve) => { entered = resolve; });
+    service.store.commitChunk = async (recordingId, chunk) => {
+      committedIds.push(chunk.id);
+      if (delayNext) {
+        delayNext = false;
+        entered();
+        await gate;
+      }
+      return originalCommit(recordingId, chunk);
+    };
+
+    await service.execute({ version: 1, requestId: "start-delayed", command: "start", title: "Delayed shutdown" });
+    await waitFor(async () => committedIds.length >= 2);
+    delayNext = true;
+    await delayedCommitEntered;
+    const shutdown = service.shutdown();
+    release();
+    await shutdown;
+    services.delete(service);
+
+    const recovered = await service.status();
+    expect(recovered.status).toBe("recoverable");
+    expect(recovered.chunks.map((chunk) => chunk.id).sort()).toEqual([...committedIds].sort());
+    expect(recovered.chunks.length).toBe(committedIds.length);
+  }, 30_000);
+
+  test("crash-style stale recording restart becomes recoverable without replacing committed chunks", async () => {
+    const config = await fixtureConfig();
+    const seed = new MeetingStore({ root: config.storeRoot });
+    const meeting = await seed.create({ title: "Crash recovery" });
+    const recording = await seed.startRecording({ meetingId: meeting.id });
+    await seedRecoverableChunk(seed, config, recording.id, "microphone", 440, "2026-08-18T02:20:50.000Z");
+    const before = (await seed.listRecordings())[0]!.chunks;
+
+    const restarted = new RecordingService(config); services.add(restarted); await restarted.initialize();
+    const recovered = await restarted.status();
+    expect(recovered).toMatchObject({ status: "recoverable", recordingId: recording.id });
+    expect(recovered.chunks).toEqual(before);
+    expect(recovered.error).toBe("daemon restarted while capture was active");
+  }, 30_000);
+
+  test("restart does not reopen every already-committed chunk before exposing recovery", async () => {
+    const config = await fixtureConfig();
+    const seed = new MeetingStore({ root: config.storeRoot });
+    const meeting = await seed.create({ title: "Bounded known inventory" });
+    const recording = await seed.startRecording({ meetingId: meeting.id });
+    const id = "chunk--microphone--000000--000000000000--000000016000--16000--1";
+    const sessionDirectory = path.join(config.storeRoot, "sessions", recording.id);
+    const storageKey = path.join("sessions", recording.id, `${id}.wav`);
+    await mkdir(sessionDirectory, { recursive: true });
+    await execFileAsync("mkfifo", [path.join(config.storeRoot, storageKey)]);
+    await seed.commitChunk(recording.id, {
+      id, source: "microphone", storageKey, byteLength: 1, sha256: "a".repeat(64),
+      committedAt: "2026-08-18T02:20:50.000Z", logicalStartMs: 0, durationMs: 1_000,
+      sampleRate: 16_000, channels: 1, format: "wav",
+    });
+
+    const restarted = new RecordingService(config); services.add(restarted);
+    await restarted.initialize();
+    expect(await restarted.status()).toMatchObject({
+      status: "recoverable", recordingId: recording.id, chunks: [{ id }],
+    });
+  }, 5_000);
+
   test("adopts only the exact decode-readable publish intent after publication-before-saved crash", async () => {
     const config = await fixtureConfig();
     const service = new RecordingService(config); services.add(service); await service.initialize();

@@ -89,8 +89,8 @@ export async function stopRecordingRuntime(): Promise<void> {
   const server = controlServer; const service = recordingService;
   controlServer = null; recordingService = null;
   runtimeIdentity = null;
-  await server?.close();
   await service?.shutdown();
+  await server?.close();
 }
 
 export function recordingRuntimeForTest(): RecordingService | null { return recordingService; }

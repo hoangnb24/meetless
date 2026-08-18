@@ -32,6 +32,7 @@ export class RecordingService {
   private failFinalizationOnce: boolean;
   private shuttingDown = false;
   private preparedCollision: CollisionEvidence | null = null;
+  private statusTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(readonly config: RecordingServiceConfig, store?: MeetingStore) {
     this.store = store ?? new MeetingStore({ root: config.storeRoot });
@@ -91,6 +92,8 @@ export class RecordingService {
     this.shuttingDown = true;
     await this.helper?.terminate();
     this.helper = null;
+    if (this.statusTimer) clearTimeout(this.statusTimer);
+    this.statusTimer = null;
     await this.serialize(async () => {
       const current = await this.status();
       if (current.status === "recording" && current.recordingId) {
@@ -156,7 +159,10 @@ export class RecordingService {
         storeRoot: this.config.storeRoot,
         fixture: this.config.fixture,
         arguments: this.config.helperArguments,
-        onChunk: (chunk) => this.store.commitChunk(recording.id, chunk).then(() => this.emitStatus()),
+        onChunk: async (chunk) => {
+          await this.store.commitChunk(recording.id, chunk);
+          this.scheduleStatus();
+        },
         onFailure: (reason) => this.handleHelperFailure(recording.id, reason),
         onDiagnostic: (line) => process.stderr.write(`[meetless-capture] ${line}\n`),
       });
@@ -330,6 +336,7 @@ export class RecordingService {
     const known = new Set(recording.chunks.map((chunk) => chunk.id));
     for (const name of names.sort()) {
       if (name.endsWith(".partial") || name.startsWith(".")) continue;
+      if (name.endsWith(".wav") && known.has(name.slice(0, -4))) continue;
       const filePath = path.join(directory, name);
       try {
         const chunk = await validateCommittedWavChunk({
@@ -403,6 +410,15 @@ export class RecordingService {
   }
 
   private async emitStatus(): Promise<void> { this.notify(await this.status()); }
+  private scheduleStatus(): void {
+    if (this.shuttingDown || this.statusTimer) return;
+    this.statusTimer = setTimeout(() => {
+      this.statusTimer = null;
+      void this.emitStatus().catch((error) => {
+        process.stderr.write(`[meetless-recording] status notification deferred: ${describe(error)}\n`);
+      });
+    }, 100);
+  }
   private notify(status: RecordingStatusWire): void { for (const listener of this.listeners) listener(status); }
 }
 

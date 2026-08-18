@@ -51,6 +51,35 @@ describe("production recording readiness invariant", () => {
     expect(verifyOwnership).toHaveBeenCalledTimes(2);
   });
 
+  test("immediate relaunch waits for exact catalog bootstrap, rejects stale socket state, and reaches recoverable", async () => {
+    const config = resolveRuntimeConfig({ runtimeRoot: await temporaryRoot() });
+    const recovered = { ...idleStatus(), status: "recoverable" as const, recordingId: "retained-recording", meetingId: "retained-meeting", error: "daemon restarted while capture was active" };
+    const response = await runtimeResponse(config, { status: recovered });
+    let bootstrapAttempts = 0;
+    let statusAttempts = 0;
+    const result = await waitForRecordingRuntime(config, {
+      timeoutMs: 500,
+      retryMs: 1,
+      dependencies: {
+        bootstrapPlugin: async () => {
+          bootstrapAttempts += 1;
+          if (bootstrapAttempts < 3) throw new Error('daemon catalog does not contain the required "meetless" plugin yet');
+          return daemonAttestation(config, response);
+        },
+        requestReadiness: async () => {
+          statusAttempts += 1;
+          if (statusAttempts === 1) throw new Error("stale recording socket closed before response");
+          return response;
+        },
+        verifyOwnership: async () => undefined,
+      },
+    });
+
+    expect(bootstrapAttempts).toBe(3);
+    expect(statusAttempts).toBe(2);
+    expect(result.status).toEqual(recovered);
+  });
+
   test("outer startup timeout bounds a hung catalog/bootstrap operation", async () => {
     const config = resolveRuntimeConfig({ runtimeRoot: await temporaryRoot() });
     const started = Date.now();
@@ -460,7 +489,7 @@ async function runtimeResponse(config: RuntimeConfig, overrides: {
   arguments?: string[];
   exportRoot?: string;
   socketIdentity?: { device: number; inode: number };
-  status?: ReturnType<typeof idleStatus> | ReturnType<typeof activeStatus>;
+  status?: RecordingRuntimeReadinessResponse["status"];
   collision?: RecordingRuntimeReadinessResponse["collision"];
 } = {}): Promise<RecordingRuntimeReadinessResponse> {
   const [helperInfo, helperRealPath, helperBytes] = await Promise.all([

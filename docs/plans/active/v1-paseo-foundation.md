@@ -428,6 +428,35 @@ frontier):
   production packaging, clean-install attribution, and distribution remain M7
   gates. They are not added to this bounded local M2 host.
 
+`LIVE_PARTIAL_RECOVERY_HANDOFF v1` (2026-08-18):
+
+- **Candidate and route:** candidate
+  `c82da856d25a2f4a59e24e7e46ea440a77ed5b7b` ran through the installed
+  `~/Applications/Meetless.app` host and real Electron controls. Production
+  recording `c6bc6fd6-a254-4ea3-8b00-480b2bc1ed84` started with helper PID
+  `39773`; both source types committed and pre-owner collision evidence was
+  prepared.
+- **Partial result:** the owner reported only the phone/system phrase, “Phone
+  audio confirms the system recording channel.” No local microphone phrase was
+  supplied. Phrase audibility and a playable MP3 remain unproved; no
+  finalization or source cleanup occurred.
+- **Retained source state:** after host shutdown and queued-event drain, the
+  daemon store retained 20,136 committed chunks (12,926 microphone and 7,210
+  system). The durable record incorrectly remained `recording` with no helper;
+  immediate relaunch then timed out while bootstrap revalidated every known
+  chunk. The correction must expose this retained session as `recoverable`
+  without replacing or deleting its chunks.
+- **Evidence:** the compact identity manifest is
+  [`test/evidence/m2/20260818T031937Z-live-partial/manifest.json`](../../../test/evidence/m2/20260818T031937Z-live-partial/manifest.json).
+  The collision sentinel remains intact at
+  `/Users/tubakhuym/Documents/meetings/09-18-08-26.mp3`, with planned output
+  `09-18-08-26-2.mp3`; its content hash is explicitly unclaimed because bounded
+  reads from the protected Documents location did not complete.
+- **Later owner action:** after Lead accepts recovery and a fresh production
+  preflight, physical presence near the Mac with the phone is still required
+  for both the microphone and system phrases. This handoff does not request
+  that action.
+
 The first `RecordingSource` is one macOS 15+ Swift helper using one
 ScreenCaptureKit stream with separate `.audio` and `.microphone` outputs. The
 daemon plugin supervises it over a small source-labelled control/event
