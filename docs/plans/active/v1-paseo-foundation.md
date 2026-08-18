@@ -513,12 +513,26 @@ frontier):
   adoption, overlap/backward-PTS rejection, current-byte revalidation, bounded
   two-source finalization, and compact status. Candidate `b0fa863` remains
   accepted only for renderer failure-status propagation.
-- **Next production gate:** launch only through the installed MeetlessHost and
-  validate preserved session `c6bc6fd6-a254-4ea3-8b00-480b2bc1ed84`. It must
-  expose `recoverable` within the desktop startup bound, complete or truthfully
-  block reconciliation without deleting source files, leave the helper absent,
-  show Retry only after complete inventory publication, and stop cleanly. Do
-  not retry/finalize or involve the owner during this recovery-only run.
+- **Production recovery result:** `PASS` at repository candidate
+  `ced1ad95bf17568e77e1af13903943b8f112c338`. Launch through the installed
+  MeetlessHost exposed authoritative `recoverable/scanning` within 20 seconds,
+  with Retry unavailable and no helper. Reconciliation then atomically
+  published a 340,944-entry inventory (215,718 microphone, 125,226 system),
+  cleared inline chunks, and enabled Retry. The immutable sidecar contained
+  exactly 340,944 lines and its SHA-256 matched the durable pointer digest
+  `cc9753501b16edbf1353ed58f91de07298b8bf54e3ee894bee554de9a8c1c31f`.
+  MeetlessHost shutdown removed the complete owned runtime tree, ports, socket,
+  and lock while preserving `recoverable/complete`, the pointer, digest, and
+  every source WAV. Accessibility inspection did not yield a usable Electron
+  window, so rendered Retry visibility remains explicitly unobserved.
+- **Next production gate:** finalize this partial run through the real
+  Meetless-owned desktop control path. Verify a readable collision-safe MP3,
+  durable `saved` identity, and cleanup only after `saved`; retain the result as
+  partial system-channel evidence because the owner did not provide the local
+  microphone phrase. Then start a fresh production session and request the
+  bounded owner retry only after authoritative active status, exact production
+  helper identity, committed microphone and system chunks, and prepared
+  collision/finalization targets are all observed.
 
 The first `RecordingSource` is one macOS 15+ Swift helper using one
 ScreenCaptureKit stream with separate `.audio` and `.microphone` outputs. The
