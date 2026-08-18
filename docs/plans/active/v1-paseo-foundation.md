@@ -513,6 +513,11 @@ frontier):
   adoption, overlap/backward-PTS rejection, current-byte revalidation, bounded
   two-source finalization, and compact status. Candidate `b0fa863` remains
   accepted only for renderer failure-status propagation.
+- **Source-failure review disposition:** `CLOSED`. At current HEAD, the
+  production ScreenCapture callback emits authoritative `captureFailed` when a
+  writer rejects backward PTS instead of swallowing the error. A fresh
+  `npm run build:native` and the seven-test capture-helper supervision suite
+  passed on 2026-08-18; no capture or owner action was used for this check.
 - **Production recovery result:** `PASS` at repository candidate
   `ced1ad95bf17568e77e1af13903943b8f112c338`. Launch through the installed
   MeetlessHost exposed authoritative `recoverable/scanning` within 20 seconds,
