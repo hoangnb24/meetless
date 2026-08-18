@@ -69,6 +69,52 @@ const recordingStatus: RecordingStatusWire = {
 };
 
 describe("Electron-only recording transport", () => {
+  test.each([
+    ["Start without chunks", "start", { ...recordingStatus, status: "failed" as const, error: "capture start failed" }],
+    ["Start with retained chunks", "start", { ...recordingStatus, status: "recoverable" as const, error: "capture start interrupted" }],
+    ["Stop", "stop", { ...recordingStatus, status: "recoverable" as const, error: "finalization interrupted" }],
+    ["finalization retry", "retryFinalization", { ...recordingStatus, status: "recoverable" as const, error: "MP3 retry failed" }],
+  ] as const)("publishes authoritative %s failure status before rejecting and clears the pending request", async (_label, command, failureStatus) => {
+    let handler: ((payload: unknown) => void) | null = null;
+    const invoke = vi.fn(async (bridgeCommand: string, args?: Record<string, unknown>) => {
+      if (bridgeCommand === "desktop_daemon_status") return { home: "/private/runtime/paseo-home" };
+      if (bridgeCommand === "open_local_daemon_transport") return "session-error-status";
+      if (bridgeCommand === "send_local_daemon_transport_message") {
+        const request = JSON.parse(String(args?.text)) as { requestId: string; command: string };
+        const failed = request.command === command;
+        queueMicrotask(() => handler?.({
+          sessionId: args?.sessionId,
+          kind: "message",
+          binaryBase64: Buffer.from(JSON.stringify({
+            version: 1,
+            requestId: request.requestId,
+            ok: !failed,
+            status: failed ? failureStatus : recordingStatus,
+            error: failed ? `${command} rejected` : null,
+          })).toString("base64"),
+        }));
+      }
+      return undefined;
+    });
+    const client = new DesktopRecordingClient({
+      platform: "darwin", invoke,
+      events: { on: async (_event, next) => { handler = next; return () => { handler = null; }; } },
+    });
+    const observed: RecordingStatusWire[] = [];
+    client.subscribe((status) => observed.push(status));
+    await client.connect();
+
+    const operation = command === "start"
+      ? client.start("Failure")
+      : command === "stop"
+        ? client.stop()
+        : client.retryFinalization();
+    await expect(operation).rejects.toThrow(`${command} rejected`);
+    expect(observed).toEqual([failureStatus]);
+    await expect(client.status()).resolves.toEqual(recordingStatus);
+    await client.close();
+  });
+
   test("decodes real Electron binary-shaped text frames so Start returns authoritative recording", async () => {
     let handler: ((payload: unknown) => void) | null = null;
     const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {

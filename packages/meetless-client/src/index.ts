@@ -154,7 +154,10 @@ export class DesktopRecordingClient {
     if (!pending) return;
     this.pending.delete(response.requestId);
     if (response.ok) pending.resolve(response.status);
-    else pending.reject(new Error(response.error ?? "Recording command failed"));
+    else {
+      for (const listener of this.listeners) listener(response.status);
+      pending.reject(new Error(response.error ?? "Recording command failed"));
+    }
   }
 
   private rejectPending(error: Error): void {

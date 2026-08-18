@@ -81,4 +81,88 @@ describe("production recording UI status delivery", () => {
     expect(renderer!.root.findByProps({ testID: "recording-pause-resume" })).toBeTruthy();
     expect(renderer!.root.findAllByType("Text").map((node) => node.children.join(""))).toContain("00:01 · recording");
   });
+
+  test.each([
+    {
+      caseName: "Start failure without chunks",
+      command: "start",
+      initial: idle,
+      response: { ...recording, status: "failed" as const, error: "capture start failed" },
+      expectedError: "start rejected",
+      retryVisible: false,
+    },
+    {
+      caseName: "Start failure with retained chunks",
+      command: "start",
+      initial: idle,
+      response: { ...recording, status: "recoverable" as const, error: "capture start interrupted" },
+      expectedError: "start rejected with retained chunks",
+      retryVisible: true,
+    },
+    {
+      caseName: "Stop failure",
+      command: "stop",
+      initial: recording,
+      response: { ...recording, status: "recoverable" as const, error: "finalization interrupted" },
+      expectedError: "stop rejected",
+      retryVisible: true,
+    },
+    {
+      caseName: "Finalization retry failure",
+      command: "retryFinalization",
+      initial: { ...recording, status: "recoverable" as const, error: "previous interruption" },
+      response: { ...recording, status: "recoverable" as const, error: "MP3 retry failed" },
+      expectedError: "retryFinalization rejected",
+      retryVisible: true,
+    },
+  ])("uses the correlated $caseName status when no separate status event arrives", async ({ command, initial, response, expectedError, retryVisible }) => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    let handler: ((payload: unknown) => void) | null = null;
+    const invoke = vi.fn(async (bridgeCommand: string, args?: Record<string, unknown>) => {
+      if (bridgeCommand === "desktop_daemon_status") return { home: "/private/runtime/paseo-home" };
+      if (bridgeCommand === "open_local_daemon_transport") return "production-failure-session";
+      if (bridgeCommand === "send_local_daemon_transport_message") {
+        const request = JSON.parse(String(args?.text)) as { requestId: string; command: string };
+        const failed = request.command === command;
+        queueMicrotask(() => handler?.({
+          sessionId: args?.sessionId,
+          kind: "message",
+          binaryBase64: Buffer.from(JSON.stringify({
+            version: 1,
+            requestId: request.requestId,
+            ok: !failed,
+            status: failed ? response : initial,
+            error: failed ? expectedError : null,
+          })).toString("base64"),
+        }));
+      }
+      return undefined;
+    });
+    vi.stubGlobal("window", {
+      paseoDesktop: {
+        platform: "darwin", invoke,
+        events: { on: async (_event: string, next: (payload: unknown) => void) => {
+          handler = next; return () => { handler = null; };
+        } },
+      },
+    });
+
+    await act(async () => {
+      renderer = create(<RecordingProvider enabled><ConnectedStrip /></RecordingProvider>);
+    });
+    await vi.waitFor(() => expect(renderer!.root.findByType(RecordingStrip).props.status).toEqual(initial));
+    await act(async () => {
+      const strip = renderer!.root.findByType(RecordingStrip).props;
+      const operation = command === "start"
+        ? strip.onStart("Failure")
+        : command === "stop"
+          ? strip.onStop()
+          : strip.onRetry();
+      await operation.catch(() => undefined);
+    });
+
+    expect(renderer!.root.findByType(RecordingStrip).props.status).toEqual(response);
+    expect(renderer!.root.findByProps({ testID: "recording-error" }).children.join("")).toBe(expectedError);
+    expect(renderer!.root.findAllByProps({ testID: "recording-retry" }).length).toBe(retryVisible ? 1 : 0);
+  });
 });
