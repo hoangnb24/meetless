@@ -540,11 +540,25 @@ frontier):
   not M2 acceptance: the phone phrase has not been audibility-verified and no
   local microphone phrase was supplied. The evidence manifest records that
   boundary without upgrading either channel claim.
-- **Next production gate:** finalize this partial run through the real
-  Meetless-owned desktop control path is complete. Start a fresh production
-  session and request the bounded owner retry only after authoritative active
-  status, exact production helper identity, committed microphone and system
-  chunks, and prepared collision/finalization targets are all observed.
+- **Next production gate:** when the owner is physically at the Mac, start a
+  fresh production session and request the bounded owner retry only after
+  authoritative active status, exact production helper identity, committed
+  microphone and system chunks, and prepared collision/finalization targets
+  are all observed.
+- **Remote-owner retry result:** `PARTIAL`, not M2 acceptance. After the closed
+  backward-PTS failure-propagation proof and a fresh production pre-owner pass,
+  temporary Meet `xch-vupi-wuc` captured the owner's reported phone/system
+  phrase only. The owner was not physically near the Mac, so no local
+  microphone phrase was supplied. Stop durably saved a readable 16 kHz mono MP3
+  at `13-18-08-26-2.mp3`; the prepared `13-18-08-26.mp3` collision sentinel
+  remained byte-identical. The evidence manifest preserves the playable and
+  no-overwrite facts while explicitly leaving phrase audibility, microphone,
+  and both-speaker acceptance unproved.
+- **Precise remaining owner action:** at a later time when physically beside
+  the Mac with the phone, complete one fresh bounded call: say the phone/system
+  phrase, mute the phone, then say the local microphone phrase toward the Mac.
+  Lead must again prove active production readiness before supplying that call
+  link and must inspect the finalized artifact before accepting M2.
 
 The first `RecordingSource` is one macOS 15+ Swift helper using one
 ScreenCaptureKit stream with separate `.audio` and `.microphone` outputs. The

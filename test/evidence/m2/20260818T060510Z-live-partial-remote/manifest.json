@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "milestone": 2,
+  "candidateCommit": "fa01a288cbd4feefd3bd16ebcb63e3c464c70e74",
+  "observedAt": "2026-08-18T06:05:10Z",
+  "kind": "meetless-host-production-live-partial-remote-saved",
+  "result": "partial-system-evidence-not-m2-acceptance",
+  "host": {
+    "bundlePath": "/Users/tubakhuym/Applications/Meetless.app",
+    "bundleIdentifier": "com.meetless.app",
+    "binarySha256": "778cecc4cf526724c7dc525b3bbc806c841e35d65a42016782825b112d83213d",
+    "cdHash": "63923ac54863b9f1733cb5203cfd60ca77a43dc3",
+    "hostPid": 78462,
+    "desktopPid": 78492
+  },
+  "runtime": {
+    "instanceId": "ff1dfba5-a47c-4353-bc62-b1ed8f6d5843",
+    "supervisorPid": 78950,
+    "daemonPid": 79041,
+    "pluginPid": 79182,
+    "recordingSocketInode": 31755740,
+    "captureHelper": {
+      "historicalPid": 18939,
+      "path": "/Users/tubakhuym/projects/supervisors/meetless/native/macos-capture/.build/release/meetless-capture",
+      "sha256": "7e0916eab4b353afc22691524292193135255ceae202dbb86e38ab21bfa7cc95",
+      "arguments": [],
+      "mode": "production"
+    }
+  },
+  "meeting": {
+    "id": "a962f7a5-960f-4866-813c-31b89909b2f8",
+    "recordingId": "d97366e1-8225-424c-bd6c-6707543fa2f0",
+    "link": "https://meet.google.com/xch-vupi-wuc",
+    "startedAt": "2026-08-18T06:01:45.794Z",
+    "savedAt": "2026-08-18T06:04:41.279Z",
+    "elapsedMs": 175024,
+    "temporaryMeetEnded": true
+  },
+  "ownerHandback": {
+    "systemPhraseReported": "Phone audio confirms the system recording channel",
+    "systemPhraseAudibility": "unproven-by-listening",
+    "microphonePhraseReported": null,
+    "microphoneAudibility": "unproven-owner-not-at-mac",
+    "m2Acceptance": false
+  },
+  "inventory": {
+    "state": "complete",
+    "total": 380,
+    "microphone": 187,
+    "system": 193,
+    "digest": "48eb7920ba5f3d0d8889ca9c55e86e2b6db8cf65ef58b6a750e8e7982450cbe0",
+    "rawChunksDeletedOnlyAfterSaved": true,
+    "immutableSidecarRetained": true
+  },
+  "collisionEvidence": {
+    "sentinelPath": "/Users/tubakhuym/Documents/meetings/13-18-08-26.mp3",
+    "sentinelByteLength": 201,
+    "sentinelSha256Before": "71eab6ba7654d2ba4dbb6874531435377390da86b1e04a590cc548f0eb228e35",
+    "sentinelSha256After": "71eab6ba7654d2ba4dbb6874531435377390da86b1e04a590cc548f0eb228e35",
+    "sentinelInodeBefore": 31762263,
+    "sentinelInodeAfter": 31762263,
+    "sentinelMtimeBefore": 1787032909,
+    "sentinelMtimeAfter": 1787032909,
+    "unchanged": true,
+    "publishedPath": "/Users/tubakhuym/Documents/meetings/13-18-08-26-2.mp3"
+  },
+  "output": {
+    "path": "/Users/tubakhuym/Documents/meetings/13-18-08-26-2.mp3",
+    "byteLength": 897093,
+    "sha256": "110a890ac45161bc3c4cd5a483188333947a1bfdc1e988b864132ee94ed0dc91",
+    "format": "mp3",
+    "codec": "mp3",
+    "sampleRate": 16000,
+    "channels": 1,
+    "durationSeconds": 171.295375,
+    "readable": true,
+    "durableSavedIdentityMatchedFile": true
+  },
+  "acceptanceBoundary": "Playable partial artifact and no-overwrite are proven; both-speaker and microphone acceptance are not proven"
+}
