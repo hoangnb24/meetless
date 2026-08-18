@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meetless.local/evidence/m3/manifest.schema.json",
+  "title": "Meetless M3 live evidence manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "status",
+    "runId",
+    "observedAt",
+    "candidateSnapshot",
+    "authority",
+    "runtime",
+    "providerStatus",
+    "meetings",
+    "restart",
+    "privacyScan",
+    "playback",
+    "identities",
+    "artifacts",
+    "preservation"
+  ],
+  "properties": {
+    "schema": { "const": "MEETLESS_M3_LIVE_EVIDENCE v1" },
+    "status": { "const": "passed" },
+    "runId": { "type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z-[a-z0-9-]{1,40}$" },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "candidateSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "digest"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "authority": { "type": "string" },
+    "runtime": { "type": "object" },
+    "providerStatus": { "enum": ["configured", "missing", "invalid"] },
+    "meetings": { "type": "array", "minItems": 3, "maxItems": 3 },
+    "restart": { "type": "object" },
+    "privacyScan": { "type": "object" },
+    "playback": { "type": "object" },
+    "identities": { "type": "object" },
+    "artifacts": { "type": "object" },
+    "preservation": { "type": "object" }
+  }
+}
