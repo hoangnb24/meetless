@@ -505,11 +505,20 @@ frontier):
   valid microphone/system file and all previously committed identities; the
   bounded two-source finalizer produces a readable MP3 without deleting source
   WAVs before durable `saved`.
-- **Status:** `FOUNDATION_REQUIRED`. Candidate `b0fa863` remains accepted for
-  renderer failure-status propagation, but its production-recovery claim is
-  rejected. Do not rerun the preserved session until this foundation is
-  implemented and independently reviewed; each old launch can adopt another
-  arbitrary prefix.
+- **Status:** `STABLE` at candidate
+  `6921456f451ca51f49d09b661a2e8d2e4f897b77`, which includes scalable inventory
+  candidate `384102a1d9fb0d2c8939bbeaa082eed78a68484c` plus authoritative native
+  source-failure propagation. The accepted proof covers 340,944 entries,
+  exact known identities and canonical digest, cancellation without partial
+  adoption, overlap/backward-PTS rejection, current-byte revalidation, bounded
+  two-source finalization, and compact status. Candidate `b0fa863` remains
+  accepted only for renderer failure-status propagation.
+- **Next production gate:** launch only through the installed MeetlessHost and
+  validate preserved session `c6bc6fd6-a254-4ea3-8b00-480b2bc1ed84`. It must
+  expose `recoverable` within the desktop startup bound, complete or truthfully
+  block reconciliation without deleting source files, leave the helper absent,
+  show Retry only after complete inventory publication, and stop cleanly. Do
+  not retry/finalize or involve the owner during this recovery-only run.
 
 The first `RecordingSource` is one macOS 15+ Swift helper using one
 ScreenCaptureKit stream with separate `.audio` and `.microphone` outputs. The
