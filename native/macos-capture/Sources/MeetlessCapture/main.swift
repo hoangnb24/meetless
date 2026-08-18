@@ -354,7 +354,11 @@ private final class ScreenCaptureSource: NSObject, CaptureSource, SCStreamOutput
     }
     let presentationFrame = Int64((presentationSeconds * Double(sampleRate)).rounded())
     do { try writer.append(try normalizedSamples(buffer), source: source, presentationFrame: presentationFrame) }
-    catch { diagnostic("\(source.rawValue) buffer rejected: \(error)") }
+    catch {
+      let reason = "\(source.rawValue) capture failed: \(error.localizedDescription)"
+      diagnostic(reason)
+      emit(ProtocolEvent(event: "captureFailed", error: reason))
+    }
   }
 
   func stream(_ stream: SCStream, didStopWithError error: any Error) {

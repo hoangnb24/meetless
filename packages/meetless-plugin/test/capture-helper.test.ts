@@ -175,6 +175,29 @@ describe("capture helper supervision", () => {
     }
   }, 15_000);
 
+  test("propagates a backward PTS capture failure through helper supervision", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-backward-pts-supervision-"));
+    const sessionDirectory = path.join(root, "sessions", "backward-supervised");
+    let resolveFailure!: (reason: string) => void;
+    const failure = new Promise<string>((resolve) => { resolveFailure = resolve; });
+    const helper = new CaptureHelper({
+      executable: path.resolve("native/macos-capture/.build/release/meetless-capture"),
+      sessionDirectory,
+      storeRoot: root,
+      fixture: true,
+      arguments: ["--backward-pts-fixture"],
+      onChunk: async () => undefined,
+      onFailure: async (reason) => { resolveFailure(reason); },
+    });
+    try {
+      await helper.start();
+      await expect(failure).resolves.toMatch(/PTS moved backwards/);
+    } finally {
+      await helper.terminate();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   test("commits source-labelled timeline chunks and bounded cleanup leaves no helper process", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-helper-test-"));
     const sessionDirectory = path.join(root, "sessions", "r-1");
