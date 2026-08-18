@@ -666,6 +666,18 @@ logs, manifests, renderer messages, meeting state, and published evidence; and
 a real UI citation click audibly plays the expected spoken interval. M2
 recording integrity checks remain green.
 
+Live acceptance checkpoint (2026-08-19): the signed host and isolated runtime
+presented the one-time disclosure through the real Meetless UI and reported the
+bootstrap item as `configured`. Consent scheduled only the three committed M3
+fixtures. The live requests then failed closed and the inspection surface
+reported `invalid`; no transcript or citation evidence was published. A
+count-only scan of 17 isolated runtime text/log/state files found zero
+key-shaped values and zero OpenAI secret names. The isolated host was stopped,
+its in-flight work was cancelled, and the default application bundle was
+restored. Completion remains blocked until the owner reauthorizes or replaces
+the Keychain item for the final installed bundle and the full live acceptance
+boundary passes.
+
 ### Milestone 4: coding-agent analysis
 
 - Reuse Paseo provider/model discovery and agent execution.
@@ -861,6 +873,12 @@ Open decisions before affected implementation:
   allowlisted document paths.
 - **Adapter proof:** controlled fixtures for recording, MP3 finalization,
   transcription timing, retrieval updates, provider failure, and reconnect.
+- 2026-08-19: M3 implementation and non-secret validation are complete in local
+  commits `a32e343`, `31d871a`, `0f130ec`, and `6b697a9`. Full validation passed
+  180 tests across 36 files plus native boundary tests, composition, native and
+  TypeScript builds, and Expo export. Live acceptance remains open because the
+  configured Keychain item could not complete a native transcription request
+  after the final application replacement; Meetless exposed only `invalid`.
 - **Milestone 2 invariant proof:** positive cases preserve valid chunks and
   publish a readable MP3; negative cases inject collisions, encoder failure,
   renderer exit, helper/daemon interruption, and a crash after publication but
