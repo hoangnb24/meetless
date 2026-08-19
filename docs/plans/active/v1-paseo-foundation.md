@@ -666,23 +666,27 @@ logs, manifests, renderer messages, meeting state, and published evidence; and
 a real UI citation click audibly plays the expected spoken interval. M2
 recording integrity checks remain green.
 
-Live acceptance checkpoint (2026-08-19): the signed host and isolated runtime
-presented the one-time disclosure through the real Meetless UI and reported the
-bootstrap item as `configured`. After the owner deleted and recreated that item
-for the unchanged installed bundle, a second bounded run again scheduled only
-the three committed M3 fixtures. On the real request path the application-owned
-provider transitioned from `configured` to the normalized `invalid` state;
-Vietnamese and mixed each exhausted three bounded attempts with the redacted
-`Native transcription request failed`, while the English request remained
-in-flight and was cancelled during safe shutdown. The official API reference
-still lists `gpt-transcribe`, `languages[]`, and `/v1/audio/transcriptions` as
-the accepted contract, so no model substitution is authorized by this result.
-No passing transcript, citation-click, privacy report, or evidence bundle was
-published. The isolated process groups were stopped and the original production
-meeting state was restored byte-for-byte (12,871 bytes; SHA-256
+Live acceptance checkpoint (2026-08-19): after the owner proved the exact
+Keychain credential and accepted request contract with a bounded direct HTTP
+200 probe, the signed host and isolated Meetless runtime again presented the
+one-time disclosure through the real UI and reported only `configured`. Consent
+scheduled exactly the three committed M3 fixtures. The Meetless-owned native
+path completed each fixture in one OpenAI request (reported usage: English 2s,
+Vietnamese 3s, mixed 4s), proving the former credential/request blocker closed.
+English published `Meetless records clear English.` and mixed published
+`Meetless records the meeting và lưu bản ghi an toàn.` Vietnamese instead
+published `Mecles vi âm tiếng Việt rõ ràng.`; this retained only 5 of the 7
+expected tokens and failed the repository's 75% no-translation content gate
+for `Meetless ghi âm tiếng Việt rõ ràng.` The harness stopped before citation
+publication. No passing evidence bundle was created. The repository scanner
+found zero credential-name or key-shaped hits in the archived runtime files;
+process arguments/environments were not re-read after shutdown. The exact
+isolated process tree stopped, and the original production meeting state was
+restored byte-for-byte (12,871 bytes; SHA-256
 `79cfbbbb64720b353d87d19553e058f6738edc0c7237456ee9216ca2f7334964`).
-Completion remains blocked on resolving the application-normalized `invalid`
-credential/request outcome and rerunning the full live acceptance boundary.
+Completion is now blocked only on a committed Vietnamese fixture/request result
+that passes the accepted spoken-word retention boundary, followed by the still
+unexecuted real citation-click playback and evidence publication.
 
 ### Milestone 4: coding-agent analysis
 
