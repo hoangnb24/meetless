@@ -668,15 +668,21 @@ recording integrity checks remain green.
 
 Live acceptance checkpoint (2026-08-19): the signed host and isolated runtime
 presented the one-time disclosure through the real Meetless UI and reported the
-bootstrap item as `configured`. Consent scheduled only the three committed M3
-fixtures. The live requests then failed closed and the inspection surface
-reported `invalid`; no transcript or citation evidence was published. A
-count-only scan of 17 isolated runtime text/log/state files found zero
-key-shaped values and zero OpenAI secret names. The isolated host was stopped,
-its in-flight work was cancelled, and the default application bundle was
-restored. Completion remains blocked until the owner reauthorizes or replaces
-the Keychain item for the final installed bundle and the full live acceptance
-boundary passes.
+bootstrap item as `configured`. After the owner deleted and recreated that item
+for the unchanged installed bundle, a second bounded run again scheduled only
+the three committed M3 fixtures. On the real request path the application-owned
+provider transitioned from `configured` to the normalized `invalid` state;
+Vietnamese and mixed each exhausted three bounded attempts with the redacted
+`Native transcription request failed`, while the English request remained
+in-flight and was cancelled during safe shutdown. The official API reference
+still lists `gpt-transcribe`, `languages[]`, and `/v1/audio/transcriptions` as
+the accepted contract, so no model substitution is authorized by this result.
+No passing transcript, citation-click, privacy report, or evidence bundle was
+published. The isolated process groups were stopped and the original production
+meeting state was restored byte-for-byte (12,871 bytes; SHA-256
+`79cfbbbb64720b353d87d19553e058f6738edc0c7237456ee9216ca2f7334964`).
+Completion remains blocked on resolving the application-normalized `invalid`
+credential/request outcome and rerunning the full live acceptance boundary.
 
 ### Milestone 4: coding-agent analysis
 
