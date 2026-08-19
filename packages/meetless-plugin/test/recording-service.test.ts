@@ -56,6 +56,10 @@ describe("daemon recording service", () => {
 
   test("revalidates host provenance immediately before helper construction", async () => {
     let inspections = 0;
+    let releaseScan!: () => void;
+    let scanEntered!: () => void;
+    const scanGate = new Promise<void>((resolve) => { releaseScan = resolve; });
+    const scanStarted = new Promise<void>((resolve) => { scanEntered = resolve; });
     const config = await fixtureConfig({
       fixture: false,
       authorizeProductionStart: async () => {
@@ -64,11 +68,25 @@ describe("daemon recording service", () => {
       },
     });
     const service = new RecordingService(config); services.add(service); await service.initialize();
-    await expect(service.execute({ version: 1, requestId: "changed", command: "start", title: "Changed host" }))
-      .rejects.toThrow("live host identity changed before helper spawn");
+    const originalMarkScanning = service.store.markInventoryScanning.bind(service.store);
+    service.store.markInventoryScanning = async (recordingId) => {
+      scanEntered();
+      await scanGate;
+      return originalMarkScanning(recordingId);
+    };
+    let startSettled = false;
+    const startResult = service.execute({ version: 1, requestId: "changed", command: "start", title: "Changed host" })
+      .then(
+        () => { startSettled = true; return new Error("start unexpectedly resolved"); },
+        (error: unknown) => { startSettled = true; return error; },
+      );
+    await scanStarted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(startSettled).toBe(false);
+    releaseScan();
+    await expect(startResult).resolves.toMatchObject({ message: "live host identity changed before helper spawn" });
     expect(inspections).toBe(2);
     expect(service.helperRuntime().pid).toBeNull();
-    await waitFor(async () => (await service.status()).status === "failed");
     expect(await service.status()).toMatchObject({
       status: "failed", inventoryState: "pending", chunkCount: 0, retryEligible: false,
       error: "No valid committed media survived inventory reconciliation",

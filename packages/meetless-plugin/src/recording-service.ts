@@ -373,7 +373,7 @@ export class RecordingService {
     const current = await this.findRecording(recordingId);
     if (current.status === "recording") {
       const recovered = await this.store.prepareInventoryRecovery(recordingId, reason);
-      this.startInventoryScan(recovered);
+      await this.startInventoryScan(recovered);
       return;
     }
     const interrupted = await this.store.interruptRecording(recordingId, reason);
@@ -383,8 +383,10 @@ export class RecordingService {
     });
   }
 
-  private startInventoryScan(recording: RecordingSession): void {
-    if (this.shuttingDown || this.scans.has(recording.id)) return;
+  private startInventoryScan(recording: RecordingSession): Promise<void> {
+    if (this.shuttingDown) return Promise.resolve();
+    const existing = this.scans.get(recording.id);
+    if (existing) return existing.promise;
     const controller = new AbortController();
     const promise = this.reconcileInventory(recording, controller.signal)
       .catch((error) => {
@@ -398,6 +400,7 @@ export class RecordingService {
         if (!this.shuttingDown) await this.emitStatus().catch(() => undefined);
       });
     this.scans.set(recording.id, { controller, promise });
+    return promise;
   }
 
   private async startPendingInventoryScans(recordingIds: readonly string[]): Promise<void> {

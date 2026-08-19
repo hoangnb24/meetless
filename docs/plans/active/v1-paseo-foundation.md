@@ -725,7 +725,7 @@ stopped, and the original production meeting state was restored byte-for-byte
   transcript/citation contracts. Rerun M1 coexistence proof only if isolation,
   desktop authority, plugin transport, or shared app composition changes.
 
-`POST-M3-ZERO-FIX` correction record (2026-08-19):
+`POST-M3-ZERO-FIX` corrected candidate record (2026-08-20):
 
 - **Diagnosis:** capture startup/helper interruption correctly enters inventory
   recovery before classification because zero store-known chunks can still hide
@@ -733,32 +733,28 @@ stopped, and the original production meeting state was restored byte-for-byte
   `chunkCount === 0` branch: it treated a conclusive zero-media scan as an
   ordinary scan error, so `MeetingStore` persisted `recoverable/blocked` rather
   than lifecycle `failed`.
-- **Candidate:** the bounded correction adds a domain-owned transition that is
-  legal only for a recoverable, scanning inventory with zero known chunks;
-  `MeetingStore` delegates and persists it; and the inventory adapter reports a
-  typed `ZeroValidMediaError` without routing it through the blocked-I/O path.
-  Missing, malformed, or identity-changing previously committed media and
-  transient scan/I/O errors retain blocked recovery. The exact immutable local
-  candidate commit is recorded in the `POST-M3-ZERO-FIX` peer disposition.
-- **Behavior proof:** 44 focused domain/store/inventory/service tests pass. The
-  negative service path now persists `failed`, zero chunks, pending inventory,
-  and no retry eligibility after a complete empty scan. The positive startup
-  path discovers a valid store-unknown orphan WAV, publishes a one-chunk
-  complete inventory, and remains `recoverable` with retry enabled. Existing
-  missing/identity-changing committed-media tests remain blocked.
+- **Candidate:** baseline `266f4e5` correctly added the domain-owned zero-media
+  transition, MeetingStore delegation, and typed `ZeroValidMediaError`, but
+  review found its start control response could settle while inventory was
+  still `recoverable/pending`. The corrected descendant makes
+  `startInventoryScan` return its existing scan promise and awaits that promise
+  only in the recording-state start-failure path before rethrowing the original
+  start error. Existing asynchronous startup/helper reconciliation and the M2
+  `assessInterruptedRecording`/`MeetingStore.assessInterruption` API are
+  unchanged. The exact correction commit is recorded in the peer disposition.
+- **Behavior proof:** 44 focused domain/store/inventory/service tests pass. A
+  gated scan proves the rejected start promise remains unsettled until the store
+  already contains `failed`, zero chunks, pending inventory, and no retry
+  eligibility. The positive startup path still discovers a valid store-unknown
+  orphan WAV, publishes a one-chunk complete inventory, and remains
+  `recoverable` with retry enabled. Missing/identity-changing committed media
+  remains blocked.
 - **Repository validation:** `npm run typecheck` passes. `npm run test:focused`
-  completes with 172 passing tests and one failure: the unchanged runtime host
-  test times out waiting for a
-  direct desktop subprocess and produces empty stderr, both with the active
-  runtime root and with an isolated `MEETLESS_RUNTIME_ROOT`. Its four sibling
-  host tests pass, and no changed package is in that failure path. Repository-
-  root plugin proof passes 58/58 tests; package-native domain and store proof
-  passes 12/12 and 13/13. The plugin workspace script itself fails because its
-  package working directory misresolves the native helper to
-  `packages/meetless-plugin/native/...` (`ENOENT`); the same full plugin suite
-  passes from the repository root where the configured path is valid. The exact
-  final `git diff --check` result is recorded with the candidate disposition.
-- **Live-proof readiness:** the automated correction candidate is ready for a
+  completes with 172 passing tests and one unchanged runtime readiness timing
+  failure (inner socket-request timeout text won a race against the expected
+  outer startup-deadline text); that readiness file passes 18/18 in isolation.
+  The exact final `git diff --check` result is recorded in the disposition.
+- **Live-proof readiness:** the corrected automated candidate is ready for a
   fresh production capture-start failure and valid-media interruption handoff.
   No live product journey was attempted in this bounded writer scope; an
   existing Meetless desktop-managed runtime predates this frontier and was not
@@ -1071,8 +1067,9 @@ The signed host transcribed the committed English, Vietnamese, and mixed
 fixtures through the official OpenAI path without translation; durable ranges
 and stable segment IDs survived restart; credential inspection was clean; and
 a real citation click audibly played its authoritative interval. This proof is
-not a long-meeting or release-readiness claim. The `POST-M3-ZERO-FIX` automated
-candidate now classifies conclusively empty inventory as failed while preserving
-valid orphan/committed media as recoverable; Lead acceptance and any separately
-owned live handoff remain the correction gate before M4 depends on newly
-recorded input.
+not a long-meeting or release-readiness claim. The corrected
+`POST-M3-ZERO-FIX` automated candidate now delays a failed start response until
+conclusively empty inventory is durably failed while preserving valid
+orphan/committed media as recoverable; Lead acceptance and any separately owned
+live handoff remain the correction gate before M4 depends on newly recorded
+input.
