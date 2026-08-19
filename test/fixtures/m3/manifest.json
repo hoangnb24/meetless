@@ -13,7 +13,7 @@
     {
       "file": "vietnamese.mp3",
       "languages": ["vi"],
-      "voice": "Linh (vi_VN)",
+      "voice": "Samantha (en_US) for the brand name, then Linh (vi_VN)",
       "expectedExactPhrase": "Meetless ghi âm tiếng Việt rõ ràng.",
       "maximumDurationSeconds": 8
     },
