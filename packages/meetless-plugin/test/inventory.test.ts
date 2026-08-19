@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { MeetingStore } from "@meetless/meeting-store";
 import { Mp3Finalizer } from "../src/finalizer.js";
-import { readInventory, RecordingInventoryReconciler, resolveStorePath } from "../src/inventory.js";
+import { readInventory, RecordingInventoryReconciler, resolveStorePath, ZeroValidMediaError } from "../src/inventory.js";
 import { validateCommittedWavChunk } from "../src/chunk-validator.js";
 
 const roots = new Set<string>();
@@ -15,6 +15,20 @@ afterEach(async () => {
 });
 
 describe("atomic recording inventory", () => {
+  test("persists failed after a complete scan proves zero valid media", async () => {
+    const fixture = await createRecordingFixture();
+    const recording = await fixture.store.prepareInventoryRecovery(fixture.recordingId, "helper startup failed");
+
+    await expect(new RecordingInventoryReconciler(fixture.root, fixture.store).reconcile(recording))
+      .rejects.toBeInstanceOf(ZeroValidMediaError);
+    expect((await fixture.store.listRecordings())[0]).toMatchObject({
+      status: "failed",
+      chunks: [],
+      failureReason: "No valid committed media survived inventory reconciliation",
+      inventory: { state: "pending", knownChunkCount: 0, pointer: null, error: null },
+    });
+  });
+
   test("cancellation before and after sidecar publication never adopts a partial count", async () => {
     const fixture = await createRecordingFixture();
     const known = await createChunk(fixture, "microphone", 0, 0);

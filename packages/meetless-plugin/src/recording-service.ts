@@ -5,7 +5,7 @@ import { recordingElapsedMs, type RecordingSession } from "@meetless/meeting-dom
 import type { RecordingControlRequest, RecordingStatusWire } from "@meetless/meeting-contracts";
 import { CaptureHelper } from "./capture-helper.js";
 import { fileIdentity, Mp3Finalizer } from "./finalizer.js";
-import { readInventory, RecordingInventoryReconciler, resolveStorePath } from "./inventory.js";
+import { readInventory, RecordingInventoryReconciler, resolveStorePath, ZeroValidMediaError } from "./inventory.js";
 import type { CollisionEvidence } from "./readiness-protocol.js";
 import type { TranscriptionService } from "./transcription-service.js";
 
@@ -389,7 +389,8 @@ export class RecordingService {
     const promise = this.reconcileInventory(recording, controller.signal)
       .catch((error) => {
         if (!(error instanceof Error && error.name === "AbortError")) {
-          process.stderr.write(`[meetless-recording] inventory reconciliation blocked: ${describe(error)}\n`);
+          const outcome = error instanceof ZeroValidMediaError ? "failed with zero valid media" : "blocked";
+          process.stderr.write(`[meetless-recording] inventory reconciliation ${outcome}: ${describe(error)}\n`);
         }
       })
       .finally(async () => {

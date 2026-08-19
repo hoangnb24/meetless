@@ -8,6 +8,7 @@ import {
   interruptRecording,
   markRecordingSaved,
   markRecordingInventoryScanning,
+  failRecordingWithNoValidMedia,
   pauseRecording,
   prepareRecordingInventoryRecovery,
   publishRecordingInventory,
@@ -119,6 +120,43 @@ describe("recording policy", () => {
       now: "2026-08-17T10:00:02.000Z",
     });
     expect(failed).toMatchObject({ status: "failed", failureReason: "No readable chunks" });
+  });
+
+  test("fails only a fully scanned recovery with conclusively zero valid media", () => {
+    const empty = prepareRecordingInventoryRecovery(
+      startRecording({ id: "r-empty", meetingId: "m-empty", now: "2026-08-17T10:00:00.000Z" }),
+      { now: "2026-08-17T10:00:01.000Z", reason: "helper startup failed" },
+    );
+    expect(() => failRecordingWithNoValidMedia(empty, {
+      now: "2026-08-17T10:00:02.000Z",
+      reason: "No valid committed media survived inventory reconciliation",
+    })).toThrow(/completed recovery scan/);
+
+    const failed = failRecordingWithNoValidMedia(
+      markRecordingInventoryScanning(empty, "2026-08-17T10:00:02.000Z"),
+      {
+        now: "2026-08-17T10:00:03.000Z",
+        reason: "No valid committed media survived inventory reconciliation",
+      },
+    );
+    expect(failed).toMatchObject({
+      status: "failed",
+      chunks: [],
+      failureReason: "No valid committed media survived inventory reconciliation",
+      inventory: { state: "pending", knownChunkCount: 0, pointer: null, error: null },
+    });
+
+    const withMedia = markRecordingInventoryScanning(prepareRecordingInventoryRecovery(
+      commitRecordingChunk(
+        startRecording({ id: "r-media", meetingId: "m-media", now: "2026-08-17T10:00:00.000Z" }),
+        chunk("mic-survived"),
+      ),
+      { now: "2026-08-17T10:00:01.000Z", reason: "helper interrupted" },
+    ), "2026-08-17T10:00:02.000Z");
+    expect(() => failRecordingWithNoValidMedia(withMedia, {
+      now: "2026-08-17T10:00:03.000Z",
+      reason: "must not discard media",
+    })).toThrow(/known committed media/);
   });
 
   test("keeps the finalization digest and chunks immutable across interruption and retry", () => {

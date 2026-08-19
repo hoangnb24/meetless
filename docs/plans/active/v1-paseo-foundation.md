@@ -593,6 +593,12 @@ frontier):
   release acceptance, and this evidence must not be presented as normal audio
   quality.
 
+Reconciliation note (2026-08-19): the earlier partial-run “next production
+gate” and “remaining owner action” entries above are retained as historical
+evidence and were superseded by final acceptance. Runtime candidate `26b29ec`
+produced the accepted call; commit `55e5c2e` published the final evidence and
+acceptance record.
+
 The first `RecordingSource` is one macOS 15+ Swift helper using one
 ScreenCaptureKit stream with separate `.audio` and `.microphone` outputs. The
 daemon plugin supervises it over a small source-labelled control/event
@@ -688,6 +694,78 @@ stopped, and the original production meeting state was restored byte-for-byte
 (12,871 bytes; SHA-256
 `79cfbbbb64720b353d87d19553e058f6738edc0c7237456ee9216ca2f7334964`).
 
+#### Post-M3 plan reconciliation
+
+`PLAN_RECONCILIATION v1` (2026-08-19, after M1-M3 acceptance):
+
+- **Accepted foundation:** M1 remains the frozen isolated Paseo composition;
+  M2 remains accepted against its durable-recording boundary; M3 remains
+  accepted against its bounded bilingual fixture, credential-isolation,
+  restart, and citation-playback boundary. Milestone completion records the
+  accepted evidence at that boundary, not a claim that Meetless is already
+  product-ready.
+- **Current correction gate:** a later manual product journey observed Start
+  Recording fail during TCC/capture startup and leave a zero-chunk session in
+  `recoverable`. With no committed media, that state contradicts M2's lifecycle
+  contract and blocks the normal `record -> transcribe` path. Resolve this
+  bounded regression and prove failure classification plus a fresh recording
+  handoff before M4 relies on newly recorded input. M4 may use already
+  published M3 transcript fixtures while the correction is isolated, but must
+  not present that as end-to-end product proof.
+- **Deferred release gaps:** static-like recording distortion, stable signing
+  and permission attribution across replacement/update, packaging/notarization,
+  long-recording transcription coverage, physical-device/LAN-or-relay companion
+  proof, and single-window/visual-quality acceptance remain open. Audio,
+  signing, packaging, and permission persistence are M7 gates; companion
+  connectivity is M6/M7 work. Single-window behavior and visual quality need
+  explicit acceptance authority before implementation rather than being
+  inferred from M1's functional create/list proof.
+- **Next dependency order:** reconcile and close the zero-chunk recording
+  correction; then implement M4 against the accepted MeetingStore and M3
+  transcript/citation contracts. Rerun M1 coexistence proof only if isolation,
+  desktop authority, plugin transport, or shared app composition changes.
+
+`POST-M3-ZERO-FIX` correction record (2026-08-19):
+
+- **Diagnosis:** capture startup/helper interruption correctly enters inventory
+  recovery before classification because zero store-known chunks can still hide
+  valid durably renamed orphan WAVs. The defect was the reconciler's terminal
+  `chunkCount === 0` branch: it treated a conclusive zero-media scan as an
+  ordinary scan error, so `MeetingStore` persisted `recoverable/blocked` rather
+  than lifecycle `failed`.
+- **Candidate:** the bounded correction adds a domain-owned transition that is
+  legal only for a recoverable, scanning inventory with zero known chunks;
+  `MeetingStore` delegates and persists it; and the inventory adapter reports a
+  typed `ZeroValidMediaError` without routing it through the blocked-I/O path.
+  Missing, malformed, or identity-changing previously committed media and
+  transient scan/I/O errors retain blocked recovery. The exact immutable local
+  candidate commit is recorded in the `POST-M3-ZERO-FIX` peer disposition.
+- **Behavior proof:** 44 focused domain/store/inventory/service tests pass. The
+  negative service path now persists `failed`, zero chunks, pending inventory,
+  and no retry eligibility after a complete empty scan. The positive startup
+  path discovers a valid store-unknown orphan WAV, publishes a one-chunk
+  complete inventory, and remains `recoverable` with retry enabled. Existing
+  missing/identity-changing committed-media tests remain blocked.
+- **Repository validation:** `npm run typecheck` passes. `npm run test:focused`
+  completes with 172 passing tests and one failure: the unchanged runtime host
+  test times out waiting for a
+  direct desktop subprocess and produces empty stderr, both with the active
+  runtime root and with an isolated `MEETLESS_RUNTIME_ROOT`. Its four sibling
+  host tests pass, and no changed package is in that failure path. Repository-
+  root plugin proof passes 58/58 tests; package-native domain and store proof
+  passes 12/12 and 13/13. The plugin workspace script itself fails because its
+  package working directory misresolves the native helper to
+  `packages/meetless-plugin/native/...` (`ENOENT`); the same full plugin suite
+  passes from the repository root where the configured path is valid. The exact
+  final `git diff --check` result is recorded with the candidate disposition.
+- **Live-proof readiness:** the automated correction candidate is ready for a
+  fresh production capture-start failure and valid-media interruption handoff.
+  No live product journey was attempted in this bounded writer scope; an
+  existing Meetless desktop-managed runtime predates this frontier and was not
+  changed or stopped. M4 remains unopened and newly recorded M4 input remains
+  gated on Lead acceptance of this correction and any separately owned live
+  handoff.
+
 ### Milestone 4: coding-agent analysis
 
 - Reuse Paseo provider/model discovery and agent execution.
@@ -781,6 +859,8 @@ Recovery rules:
 - [x] Complete Milestone 1: shell and meeting domain.
 - [x] Complete Milestone 2: durable desktop recording.
 - [x] Complete Milestone 3: transcription and citation playback.
+- [x] Correct the post-M3 zero-chunk recording failure before M4 depends on a
+  newly recorded meeting.
 - [ ] Complete Milestone 4: coding-agent analysis.
 - [ ] Complete Milestone 5: grounded Q&A and document folders.
 - [ ] Complete Milestone 6: companion web/mobile experience.
@@ -883,12 +963,16 @@ Open decisions before affected implementation:
   allowlisted document paths.
 - **Adapter proof:** controlled fixtures for recording, MP3 finalization,
   transcription timing, retrieval updates, provider failure, and reconnect.
-- 2026-08-19: M3 implementation and non-secret validation are complete in local
-  commits `a32e343`, `31d871a`, `0f130ec`, and `6b697a9`. Full validation passed
-  180 tests across 36 files plus native boundary tests, composition, native and
-  TypeScript builds, and Expo export. Live acceptance remains open because the
-  configured Keychain item could not complete a native transcription request
-  after the final application replacement; Meetless exposed only `invalid`.
+- 2026-08-19: M3 implementation and non-secret validation completed in commits
+  `a32e343`, `31d871a`, `0f130ec`, and `6b697a9`; the earlier `invalid`
+  Keychain/live-provider blocker was superseded by trusted-host correction
+  `955633f` and final evidence commit `1f3ea3f`. The accepted live manifest at
+  `test/evidence/m3/20260819T153402Z-live/` records bounded English 4/4,
+  Vietnamese 6/7, and mixed 10/10 transcription, restart without another
+  provider request, negative credential inspection, and audible citation
+  playback. The final Expo-export rerun was killed by macOS memory pressure
+  after the other checks passed; an earlier export at the accepted M3
+  implementation boundary was green.
 - **Milestone 2 invariant proof:** positive cases preserve valid chunks and
   publish a readable MP3; negative cases inject collisions, encoder failure,
   renderer exit, helper/daemon interruption, and a crash after publication but
@@ -899,9 +983,11 @@ Open decisions before affected implementation:
   interruption and recovery; real Codex analysis; citation-to-audio playback.
 - **End-to-end proof:** Zoom/Meet both-side recording through summary/action
   items/Q&A; paired web/mobile question and playback through the host daemon.
-- **Repository-required checks:** define build, typecheck, lint, targeted test,
-  and package/license checks after the Paseo adoption strategy establishes the
-  repository toolchain. Do not claim them before those commands exist.
+- **Repository-required checks:** M1 established `npm run check`,
+  `npm run test:focused`, and `npm run validate:isolation`. Add or change
+  milestone-specific checks only with the affected boundary; local command
+  availability does not imply CI, hook, merge, or branch-protection
+  enforcement.
 - **Milestone 0 documentation proof:** `git diff --check`, local Markdown-link
   resolution, and targeted searches for stale open decisions or false capture
   completion.
@@ -979,3 +1065,14 @@ before raw cleanup, and shut down the Meetless-owned runtime cleanly. Both
 source-separated listening clips were intelligible but distorted/static-like;
 that quality limitation is explicit evidence and remains an M7 release risk,
 not a clean-audio claim.
+
+Milestone 3 is complete against its documented bounded acceptance boundary.
+The signed host transcribed the committed English, Vietnamese, and mixed
+fixtures through the official OpenAI path without translation; durable ranges
+and stable segment IDs survived restart; credential inspection was clean; and
+a real citation click audibly played its authoritative interval. This proof is
+not a long-meeting or release-readiness claim. The `POST-M3-ZERO-FIX` automated
+candidate now classifies conclusively empty inventory as failed while preserving
+valid orphan/committed media as recoverable; Lead acceptance and any separately
+owned live handoff remain the correction gate before M4 depends on newly
+recorded input.

@@ -21,6 +21,13 @@ export interface InventoryReconcileHooks {
   afterSidecarPublished?(pointer: RecordingInventoryPointer): Promise<void> | void;
 }
 
+export class ZeroValidMediaError extends Error {
+  constructor(readonly recordingId: string) {
+    super("No valid committed media survived inventory reconciliation");
+    this.name = "ZeroValidMediaError";
+  }
+}
+
 export class RecordingInventoryReconciler {
   constructor(
     private readonly storeRoot: string,
@@ -82,7 +89,11 @@ export class RecordingInventoryReconciler {
       if (known.size > 0) {
         throw new Error(`Previously committed media is missing: ${[...known.keys()].slice(0, 3).join(", ")}`);
       }
-      if (chunkCount === 0) throw new Error("No readable committed WAV files survived inventory reconciliation");
+      if (chunkCount === 0) {
+        const error = new ZeroValidMediaError(recording.id);
+        await this.store.failInventoryWithNoValidMedia(recording.id, error.message);
+        throw error;
+      }
       if (buffered) await candidateHandle.write(buffered);
       await candidateHandle.sync();
       await candidateHandle.close();
@@ -114,7 +125,7 @@ export class RecordingInventoryReconciler {
       return pointer;
     } catch (error) {
       await candidateHandle.close().catch(() => undefined);
-      if (!isAbort(error)) {
+      if (!isAbort(error) && !(error instanceof ZeroValidMediaError)) {
         await this.store.blockInventory(recording.id, describe(error)).catch(() => undefined);
       }
       throw error;

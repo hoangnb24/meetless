@@ -27,6 +27,7 @@ import {
   checkpointTranscriptRange,
   createTranscript,
   failTranscript,
+  failRecordingWithNoValidMedia,
   publishTranscript,
   reconcileTranscriptAfterRestart,
   resolveTranscriptCitation,
@@ -834,6 +835,12 @@ export class MeetingStore {
   blockInventory(id: string, reason: string): Promise<RecordingSession> {
     return this.changeRecording(id, (recording) =>
       blockRecordingInventory(recording, { now: this.now(), reason }),
+    );
+  }
+
+  failInventoryWithNoValidMedia(id: string, reason: string): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) =>
+      failRecordingWithNoValidMedia(recording, { now: this.now(), reason }),
     );
   }
 

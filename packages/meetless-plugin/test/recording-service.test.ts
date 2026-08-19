@@ -68,9 +68,10 @@ describe("daemon recording service", () => {
       .rejects.toThrow("live host identity changed before helper spawn");
     expect(inspections).toBe(2);
     expect(service.helperRuntime().pid).toBeNull();
-    await waitFor(async () => (await service.status()).inventoryState === "blocked");
+    await waitFor(async () => (await service.status()).status === "failed");
     expect(await service.status()).toMatchObject({
-      status: "recoverable", inventoryState: "blocked", error: "No readable committed WAV files survived inventory reconciliation",
+      status: "failed", inventoryState: "pending", chunkCount: 0, retryEligible: false,
+      error: "No valid committed media survived inventory reconciliation",
     });
   });
 
@@ -248,6 +249,32 @@ describe("daemon recording service", () => {
     expect(recovered).toMatchObject({ status: "recoverable", recordingId: recording.id, inventoryState: "pending", retryEligible: false });
     expect(recovered.chunks).toEqual(before);
     expect(recovered.error).toBe("daemon restarted while capture was active");
+  }, 30_000);
+
+  test("startup reconciliation adopts a valid orphan WAV and keeps retry enabled", async () => {
+    const config = await fixtureConfig();
+    const seed = new MeetingStore({ root: config.storeRoot });
+    const meeting = await seed.create({ title: "Orphan recovery" });
+    const recording = await seed.startRecording({ meetingId: meeting.id });
+    const sessionDirectory = path.join(config.storeRoot, "sessions", recording.id);
+    const orphanId = "chunk--system--000000--000000000000--000000016000--16000--1";
+    await mkdir(sessionDirectory, { recursive: true });
+    await execFileAsync(config.ffmpeg, [
+      "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+      "sine=frequency=880:duration=1:sample_rate=16000", "-ar", "16000", "-ac", "1",
+      path.join(sessionDirectory, `${orphanId}.wav`),
+    ]);
+
+    const restarted = new RecordingService(config); services.add(restarted); await restarted.initialize();
+    await waitFor(async () => (await restarted.status()).retryEligible);
+    expect(await restarted.status()).toMatchObject({
+      status: "recoverable",
+      recordingId: recording.id,
+      inventoryState: "complete",
+      chunkCount: 1,
+      systemCount: 1,
+      retryEligible: true,
+    });
   }, 30_000);
 
   test("restart does not reopen every already-committed chunk before exposing recovery", async () => {

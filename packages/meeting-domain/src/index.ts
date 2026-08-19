@@ -426,6 +426,30 @@ export function blockRecordingInventory(session: RecordingSession, input: { now:
   };
 }
 
+export function failRecordingWithNoValidMedia(
+  session: RecordingSession,
+  input: { now: string; reason: string },
+): RecordingSession {
+  if (session.status !== "recoverable" || session.inventory.state !== "scanning") {
+    throw recordingViolation(
+      "Zero-media failure requires a completed recovery scan",
+      "Finish inventory discovery before classifying the recording.",
+    );
+  }
+  if (session.inventory.knownChunkCount !== 0 || session.chunks.length !== 0) {
+    throw recordingViolation(
+      "A recording with known committed media cannot become a zero-media failure",
+      "Preserve the discovered media and continue recoverable inventory reconciliation.",
+    );
+  }
+  return {
+    ...updated(session, input.now),
+    status: "failed",
+    failureReason: requireRecordingText(input.reason, "failure reason"),
+    inventory: { ...session.inventory, state: "pending", pointer: null, error: null },
+  };
+}
+
 function checkInventoryPointer(pointer: RecordingInventoryPointer): RecordingInventoryPointer {
   const checked = {
     storageKey: requireRecordingText(pointer.storageKey, "inventory storage key"),
