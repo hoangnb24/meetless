@@ -15,26 +15,17 @@ const common = [
 try {
   mkdirSync(outputRoot, { recursive: true, mode: 0o755 });
   const english = path.join(workingRoot, "english.aiff");
-  const vietnameseBrand = path.join(workingRoot, "vietnamese-brand.aiff");
-  const vietnameseClause = path.join(workingRoot, "vietnamese-clause.aiff");
+  const vietnamese = path.join(workingRoot, "vietnamese.aiff");
   const mixedEnglish = path.join(workingRoot, "mixed-english.aiff");
   const mixedVietnamese = path.join(workingRoot, "mixed-vietnamese.aiff");
   say("Samantha", "Meetless records clear English.", english);
-  // Separate the brand syllables and clause acoustically so the short fixture
-  // remains intelligible without changing the spoken sentence.
-  say("Samantha", "Meet less", vietnameseBrand, 155);
-  say("Linh", "ghi âm tiếng Việt rõ ràng.", vietnameseClause, 150);
+  // The comma creates a natural boundary before the Vietnamese verb without
+  // changing the sentence's words or language.
+  say("Linh", "Meetless, ghi âm tiếng Việt rõ ràng.", vietnamese, 145);
   say("Samantha", "Meetless records the meeting.", mixedEnglish);
   say("Linh", "Và lưu bản ghi an toàn.", mixedVietnamese);
   encode(["-i", english], "english.mp3");
-  encode(
-    [
-      "-i", vietnameseBrand,
-      "-i", vietnameseClause,
-      "-filter_complex", "[1:a]adelay=250:all=1[vi];[0:a][vi]concat=n=2:v=0:a=1",
-    ],
-    "vietnamese.mp3",
-  );
+  encode(["-i", vietnamese], "vietnamese.mp3");
   encode(
     ["-i", mixedEnglish, "-i", mixedVietnamese, "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1"],
     "mixed-en-vi.mp3",
