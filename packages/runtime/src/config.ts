@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { open, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, open, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -236,6 +236,13 @@ export async function prepareRuntime(config: RuntimeConfig): Promise<void> {
       config.paths.logs,
     ].map((directory) => mkdir(directory, { recursive: true, mode: 0o700 })),
   );
+  const toolDirectory = path.join(config.paths.root, "media-tools");
+  const [ffmpeg, ffprobe] = await Promise.all([
+    snapshotRuntimeTool(config.environment.MEETLESS_FFMPEG, path.join(toolDirectory, "ffmpeg"), "ffmpeg"),
+    snapshotRuntimeTool(config.environment.MEETLESS_FFPROBE, path.join(toolDirectory, "ffprobe"), "ffprobe"),
+  ]);
+  config.environment.MEETLESS_FFMPEG = ffmpeg;
+  config.environment.MEETLESS_FFPROBE = ffprobe;
   await assertExistingConfigReadable(config.paths.config);
   const daemonConfig = {
     version: 1,
@@ -264,6 +271,29 @@ export async function prepareRuntime(config: RuntimeConfig): Promise<void> {
   };
   await writeJsonAtomic(config.paths.config, daemonConfig);
   await writeJsonAtomic(config.paths.manifest, manifest);
+}
+
+async function snapshotRuntimeTool(sourceValue: string | undefined, target: string, label: string): Promise<string> {
+  if (!sourceValue || !path.isAbsolute(sourceValue)) throw new Error(`Resolved ${label} path must be absolute`);
+  const source = await realpath(sourceValue);
+  if (source === target) return target;
+  const sourceStats = await stat(source);
+  if (!sourceStats.isFile() || sourceStats.size <= 0) throw new Error(`${label} must resolve to a regular non-empty file`);
+  await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await copyFile(source, temporary);
+    await chmod(temporary, 0o700);
+    const [sourceBytes, copiedBytes] = await Promise.all([readFile(source), readFile(temporary)]);
+    const identity = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+    if (sourceBytes.byteLength !== copiedBytes.byteLength || identity(sourceBytes) !== identity(copiedBytes)) {
+      throw new Error(`${label} runtime snapshot identity changed during copy`);
+    }
+    await rename(temporary, target);
+    return target;
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 function assertPinnedPaseo(pluginPath: string): void {

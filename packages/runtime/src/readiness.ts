@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { WebSocketLike } from "@getpaseo/client/internal/daemon-client-transport-types";
 import {
   RecordingRuntimeBootstrapOutputSchema,
   RecordingRuntimeReadinessResponseSchema,
@@ -104,6 +105,8 @@ const defaultDependencies: RecordingReadinessDependencies = {
       url: `ws://${config.listen}/ws`,
       clientId: `meetless-readiness-${process.pid}-${randomUUID()}`,
       clientType: "cli",
+      webSocketFactory: (url, options) =>
+        new WebSocket(url, options?.protocols, { headers: options?.headers }) as unknown as WebSocketLike,
       reconnect: { enabled: false },
       connectTimeoutMs: Math.max(1, context.deadline - Date.now()),
     });

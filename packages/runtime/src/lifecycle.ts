@@ -121,7 +121,7 @@ export function assertStopAuthorization(input: {
     );
   };
   if (!live.running) refuse("the recorded process is not running");
-  if (lock.listen !== expectedListen) {
+  if (lock.listen !== null && lock.listen !== expectedListen) {
     refuse(`lock endpoint ${lock.listen} does not match isolated endpoint ${expectedListen}`);
   }
   if (lock.hostname !== live.hostname) {

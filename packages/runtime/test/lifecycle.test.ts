@@ -94,4 +94,8 @@ describe("isolated daemon stop authorization", () => {
       /lock endpoint.*does not match isolated endpoint/,
     );
   });
+
+  test("accepts Paseo's desktop-managed null lock endpoint when live ownership proves the endpoint", () => {
+    expect(() => authorize({ lock: { listen: null } })).not.toThrow();
+  });
 });

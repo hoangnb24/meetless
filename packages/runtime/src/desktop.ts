@@ -59,10 +59,10 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
     if (!process.env.MEETLESS_RENDERER_URL) {
       const appPort = new URL(config.rendererOrigin).port;
       renderer = spawn(
-        "npm",
-        ["run", "start:web", "--workspace=@meetless/app", "--", "--port", appPort],
+        process.execPath,
+        [path.join(REPOSITORY_ROOT, "node_modules", "expo", "bin", "cli"), "start", "--web", "--port", appPort],
         {
-          cwd: REPOSITORY_ROOT,
+          cwd: path.join(REPOSITORY_ROOT, "packages", "meetless-app"),
           env: {
             ...config.environment,
             CI: "1",
@@ -271,7 +271,15 @@ async function waitForDaemon(config: RuntimeConfig, child: ChildProcess, signal:
     signal.throwIfAborted();
     if (child.exitCode !== null) throw new Error(`Meetless daemon exited during startup (${child.exitCode})`);
     const lock = await readPidLock(config.paths.pidLock).catch(() => null);
-    if (lock?.listen === config.listen && processIsRunning(lock.pid)) return lock;
+    if (lock?.desktopManaged === true && processIsRunning(lock.pid)) {
+      const live = inspectLiveProcess({
+        pid: lock.pid,
+        expectedListen: config.listen,
+        expectedPaseoHome: config.paths.paseoHome,
+        expectedSupervisorEntrypoint: config.supervisorEntrypoint,
+      });
+      if (live.listener?.address === config.listen && live.listener.belongsToSupervisor) return lock;
+    }
     await delay(100);
   }
   throw new Error(`Timed out starting isolated Meetless daemon at ${config.listen}`);

@@ -25,6 +25,8 @@ describe("daemon isolation invariant", () => {
   test("fixes every runtime-owned path and the plugin catalog before Paseo loads", async () => {
     const root = await temporaryRoot();
     const config = resolveRuntimeConfig({ runtimeRoot: root, repositoryRoot: process.cwd() });
+    const ffmpegSource = await readFile(config.environment.MEETLESS_FFMPEG!);
+    const ffprobeSource = await readFile(config.environment.MEETLESS_FFPROBE!);
     await prepareRuntime(config);
     const persisted = JSON.parse(await readFile(config.paths.config, "utf8"));
 
@@ -33,7 +35,11 @@ describe("daemon isolation invariant", () => {
       PASEO_HOME: path.join(root, "paseo-home"),
       PASEO_ELECTRON_USER_DATA_DIR: path.join(root, "electron-user-data"),
       MEETLESS_STORE_ROOT: path.join(root, "meeting-store"),
+      MEETLESS_FFMPEG: path.join(root, "media-tools", "ffmpeg"),
+      MEETLESS_FFPROBE: path.join(root, "media-tools", "ffprobe"),
     });
+    expect(await readFile(config.environment.MEETLESS_FFMPEG!)).toEqual(ffmpegSource);
+    expect(await readFile(config.environment.MEETLESS_FFPROBE!)).toEqual(ffprobeSource);
     expect(persisted).toMatchObject({
       daemon: { listen: DEFAULT_MEETLESS_LISTEN, relay: { enabled: false } },
       pluginsEnabled: true,
