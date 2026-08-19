@@ -20,7 +20,9 @@ import {
   open,
   readFile,
   readdir,
+  rename,
   stat,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -34,11 +36,81 @@ const KEY_SHAPE = /\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{16,}\b/gu;
 const MAXIMUM_SCAN_FILE_BYTES = 2 * 1024 * 1024;
 const MAXIMUM_SCREENSHOT_BYTES = 12 * 1024 * 1024;
 const MAXIMUM_CITATION_BYTES = 2 * 1024 * 1024;
+const DEFAULT_RUNTIME_MARKER_SCHEMA = "MEETLESS_M3_DEFAULT_RUNTIME_PRESERVATION v1";
+
+export async function parkDefaultRuntime(input, dependencies) {
+  const repositoryRoot = path.resolve(dependencies.repositoryRoot);
+  const defaultRuntimeRoot = path.join(repositoryRoot, ".meetless-runtime");
+  const preservedRuntimeRoot = assertPreservedRuntimePath(input.preservedRuntimeRoot, repositoryRoot);
+  const markerPath = `${preservedRuntimeRoot}.json`;
+  assert(!existsSync(preservedRuntimeRoot) && !existsSync(markerPath), "M3 preserved runtime and marker targets must not already exist");
+  const defaultStats = await lstat(defaultRuntimeRoot);
+  assert(defaultStats.isDirectory() && !defaultStats.isSymbolicLink(), "Default Meetless runtime must be a real directory before preservation");
+  const originalStateIdentity = await fileIdentity(path.join(defaultRuntimeRoot, "meeting-store/meetings.json"));
+  const marker = {
+    schema: DEFAULT_RUNTIME_MARKER_SCHEMA,
+    parkedAt: new Date().toISOString(),
+    defaultRuntimeRoot,
+    preservedRuntimeRoot,
+    originalStateIdentity,
+  };
+  assertNoSecretObject(marker, "default runtime preservation marker");
+  await rename(defaultRuntimeRoot, preservedRuntimeRoot);
+  try {
+    await writeFile(markerPath, `${JSON.stringify(marker, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    syncDirectory(repositoryRoot);
+  } catch (error) {
+    await rename(preservedRuntimeRoot, defaultRuntimeRoot).catch(() => undefined);
+    throw error;
+  }
+  return { status: "parked", markerPath, ...marker };
+}
+
+export async function restoreDefaultRuntime(input, dependencies) {
+  const repositoryRoot = path.resolve(dependencies.repositoryRoot);
+  const context = await readContext(input.contextPath);
+  const defaultRuntimeRoot = path.join(repositoryRoot, ".meetless-runtime");
+  assert(context.runtimeRoot === defaultRuntimeRoot && context.preservation?.defaultRuntimeStaged === true,
+    "Restore requires a context prepared at the staged default runtime");
+  const preservedRuntimeRoot = assertPreservedRuntimePath(context.preservation.preservedRuntimeRoot, repositoryRoot);
+  const markerPath = `${preservedRuntimeRoot}.json`;
+  const marker = await readPreservationMarker(markerPath, repositoryRoot, preservedRuntimeRoot);
+  const preservedIdentity = await fileIdentity(path.join(preservedRuntimeRoot, "meeting-store/meetings.json"));
+  assert(sameIdentity(preservedIdentity, marker.originalStateIdentity), "Preserved production meeting state changed; refusing automatic restore");
+  const liveState = JSON.parse(await readFile(path.join(defaultRuntimeRoot, "meeting-store/meetings.json"), "utf8"));
+  const liveMeetingIds = (liveState.meetings ?? []).map((item) => item.id).sort();
+  const expectedMeetingIds = context.meetings.map((item) => item.meetingId).sort();
+  assert(JSON.stringify(liveMeetingIds) === JSON.stringify(expectedMeetingIds),
+    "Active default runtime is not the exact three-fixture M3 runtime; refusing automatic restore");
+  const archiveRuntimeRoot = assertArchiveRuntimePath(input.archiveRuntimeRoot);
+  assert(!existsSync(archiveRuntimeRoot), "M3 completed runtime archive target must not already exist");
+  await rename(defaultRuntimeRoot, archiveRuntimeRoot);
+  try {
+    await rename(preservedRuntimeRoot, defaultRuntimeRoot);
+    await unlink(markerPath);
+    syncDirectory(repositoryRoot);
+  } catch (error) {
+    await rename(archiveRuntimeRoot, defaultRuntimeRoot).catch(() => undefined);
+    throw error;
+  }
+  const restoredIdentity = await fileIdentity(path.join(defaultRuntimeRoot, "meeting-store/meetings.json"));
+  assert(sameIdentity(restoredIdentity, marker.originalStateIdentity), "Restored production meeting state identity changed");
+  return { status: "restored", defaultRuntimeRoot, archiveRuntimeRoot, originalStateIdentity: marker.originalStateIdentity };
+}
 
 export async function prepareM3Live(input, dependencies) {
   const repositoryRoot = path.resolve(dependencies.repositoryRoot);
-  const runtimeRoot = assertFreshRuntimeRoot(input.runtimeRoot, repositoryRoot);
-  const listen = assertListen(input.listen);
+  const defaultRuntimeRoot = path.join(repositoryRoot, ".meetless-runtime");
+  const stagedDefault = path.resolve(input.runtimeRoot) === defaultRuntimeRoot;
+  let preservation = null;
+  if (stagedDefault) {
+    const preservedRuntimeRoot = assertPreservedRuntimePath(input.preservedRuntimeRoot, repositoryRoot);
+    preservation = await readPreservationMarker(`${preservedRuntimeRoot}.json`, repositoryRoot, preservedRuntimeRoot);
+    const preservedIdentity = await fileIdentity(path.join(preservedRuntimeRoot, "meeting-store/meetings.json"));
+    assert(sameIdentity(preservedIdentity, preservation.originalStateIdentity), "Preserved production meeting state changed before M3 preparation");
+  }
+  const runtimeRoot = assertFreshRuntimeRoot(input.runtimeRoot, repositoryRoot, stagedDefault);
+  const listen = assertListen(input.listen, stagedDefault);
   const fixtureRoot = path.join(repositoryRoot, "test/fixtures/m3");
   const manifest = JSON.parse((await boundedRegularFile(path.join(fixtureRoot, "manifest.json"), 64 * 1024, "M3 fixture manifest")).toString("utf8"));
   assertFixtureManifest(manifest);
@@ -100,17 +172,20 @@ export async function prepareM3Live(input, dependencies) {
       meetings: fixtures,
       consent: "unknown",
       leadSteps: {
-        configureIsolatedHost: `MEETLESS_RUNTIME_ROOT=${shellQuote(runtimeRoot)} MEETLESS_LISTEN=${shellQuote(listen)} npm run host:install`,
-        launchIsolatedHost: `MEETLESS_RUNTIME_ROOT=${shellQuote(runtimeRoot)} MEETLESS_LISTEN=${shellQuote(listen)} npm run runtime:host`,
-        stopIsolatedHost: `MEETLESS_RUNTIME_ROOT=${shellQuote(runtimeRoot)} MEETLESS_LISTEN=${shellQuote(listen)} npm run runtime:host:stop`,
-        restoreDefaultHostConfiguration: "env -u MEETLESS_RUNTIME_ROOT -u MEETLESS_LISTEN npm run host:install",
-        cleanupOwnedRootAfterEvidence: `rm -rf -- ${shellQuote(runtimeRoot)}`,
+        configureIsolatedHost: stagedDefault ? "Use the already-installed Keychain-trusted Meetless.app without replacement" : `MEETLESS_RUNTIME_ROOT=${shellQuote(runtimeRoot)} MEETLESS_LISTEN=${shellQuote(listen)} npm run host:install`,
+        launchIsolatedHost: stagedDefault ? "npm run runtime:host" : `MEETLESS_RUNTIME_ROOT=${shellQuote(runtimeRoot)} MEETLESS_LISTEN=${shellQuote(listen)} npm run runtime:host`,
+        stopIsolatedHost: stagedDefault ? "npm run runtime:host:stop" : `MEETLESS_RUNTIME_ROOT=${shellQuote(runtimeRoot)} MEETLESS_LISTEN=${shellQuote(listen)} npm run runtime:host:stop`,
+        restoreDefaultHostConfiguration: stagedDefault ? "npm run proof:m3:restore-default -- --context <context> --archive-runtime-root <archive>" : "env -u MEETLESS_RUNTIME_ROOT -u MEETLESS_LISTEN npm run host:install",
+        cleanupOwnedRootAfterEvidence: stagedDefault ? "Restore first; the command archives only the three-fixture runtime and must never delete the restored default root" : `rm -rf -- ${shellQuote(runtimeRoot)}`,
       },
       preservation: {
-        defaultRuntimeUntouched: true,
+        defaultRuntimeUntouched: !stagedDefault,
+        defaultRuntimeStaged: stagedDefault,
+        preservedRuntimeRoot: preservation?.preservedRuntimeRoot,
+        originalStateIdentity: preservation?.originalStateIdentity,
         keychainUntouched: true,
         installedAppUntouched: true,
-        cleanupOwner: runtimeRoot,
+        cleanupOwner: stagedDefault ? null : runtimeRoot,
       },
     };
     assertNoSecretObject(context, "prepared context");
@@ -201,7 +276,7 @@ export async function publishM3Evidence(input, dependencies) {
     observedAt: new Date().toISOString(),
     candidateSnapshot: context.candidateSnapshot,
     authority: "docs/plans/active/v1-paseo-foundation.md#milestone-3-transcription-and-audio-grounded-citations",
-    runtime: { isolated: true, listen: context.listen, rootOwnedByRun: true },
+    runtime: { isolated: true, listen: context.listen, rootOwnedByRun: context.preservation?.defaultRuntimeStaged !== true },
     providerStatus: inspection.providerStatus,
     meetings: inspection.meetings,
     restart: inspection.restart,
@@ -444,9 +519,14 @@ async function readContext(contextPath) {
   return context;
 }
 
-function assertFreshRuntimeRoot(runtimeRootInput, repositoryRoot) {
+function assertFreshRuntimeRoot(runtimeRootInput, repositoryRoot, allowStagedDefault = false) {
   assert(typeof runtimeRootInput === "string" && path.isAbsolute(runtimeRootInput), "--runtime-root must be an explicit absolute path");
   const runtimeRoot = path.resolve(runtimeRootInput);
+  const defaultRuntimeRoot = path.join(repositoryRoot, ".meetless-runtime");
+  if (allowStagedDefault && runtimeRoot === defaultRuntimeRoot) {
+    assert(!existsSync(runtimeRoot), "Staged default runtime root must be absent after production preservation");
+    return runtimeRoot;
+  }
   const allowedParents = new Set([path.resolve("/private/tmp"), path.resolve(tmpdir())]);
   assert(allowedParents.has(path.dirname(runtimeRoot)), "M3 runtime root must be a direct child of /private/tmp or the system temporary directory");
   assert(/^meetless-m3-live-[A-Za-z0-9._-]+$/u.test(path.basename(runtimeRoot)), "M3 runtime root basename must start with meetless-m3-live-");
@@ -455,11 +535,44 @@ function assertFreshRuntimeRoot(runtimeRootInput, repositoryRoot) {
   return runtimeRoot;
 }
 
-function assertListen(value) {
+function assertListen(value, allowDefault = false) {
   assert(typeof value === "string" && /^127\.0\.0\.1:(?:[1-9][0-9]{3,4})$/u.test(value), "--listen must be an explicit 127.0.0.1 high port");
   const port = Number(value.split(":")[1]);
-  assert(port > 1024 && port < 65536 && port !== 6767 && port !== 6777, "M3 live proof listen port must be isolated from default Paseo and Meetless ports");
+  assert(port > 1024 && port < 65536 && port !== 6767 && (allowDefault || port !== 6777), "M3 live proof listen port must be isolated from default Paseo and Meetless ports");
+  if (allowDefault) assert(port === 6777, "Staged default runtime must use the installed host's fixed 127.0.0.1:6777 listener");
   return value;
+}
+
+function assertPreservedRuntimePath(value, repositoryRoot) {
+  assert(typeof value === "string" && path.isAbsolute(value), "--preserved-runtime-root must be an explicit absolute path");
+  const resolved = path.resolve(value);
+  assert(path.dirname(resolved) === repositoryRoot, "Preserved runtime must be a sibling of the default runtime");
+  assert(/^\.meetless-runtime\.m3-preserved-[A-Za-z0-9._-]+$/u.test(path.basename(resolved)),
+    "Preserved runtime basename must start with .meetless-runtime.m3-preserved-");
+  return resolved;
+}
+
+function assertArchiveRuntimePath(value) {
+  assert(typeof value === "string" && path.isAbsolute(value), "--archive-runtime-root must be an explicit absolute path");
+  const resolved = path.resolve(value);
+  const allowedParents = new Set([path.resolve("/private/tmp"), path.resolve(tmpdir())]);
+  assert(allowedParents.has(path.dirname(resolved)), "Completed M3 runtime archive must be a direct child of /private/tmp or the system temporary directory");
+  assert(/^meetless-m3-live-[A-Za-z0-9._-]+-completed$/u.test(path.basename(resolved)),
+    "Completed M3 runtime archive basename must start with meetless-m3-live- and end with -completed");
+  return resolved;
+}
+
+async function readPreservationMarker(markerPath, repositoryRoot, preservedRuntimeRoot) {
+  const marker = await readBoundedJson(markerPath, "default runtime preservation marker");
+  assert(marker.schema === DEFAULT_RUNTIME_MARKER_SCHEMA, "Invalid default runtime preservation marker schema");
+  assert(marker.defaultRuntimeRoot === path.join(repositoryRoot, ".meetless-runtime") && marker.preservedRuntimeRoot === preservedRuntimeRoot,
+    "Default runtime preservation marker does not match the requested roots");
+  assert(marker.originalStateIdentity?.byteLength > 0 && /^[0-9a-f]{64}$/u.test(marker.originalStateIdentity.sha256),
+    "Default runtime preservation marker has an invalid state identity");
+  assertNoSecretObject(marker, "default runtime preservation marker");
+  const stats = await lstat(preservedRuntimeRoot);
+  assert(stats.isDirectory() && !stats.isSymbolicLink(), "Preserved production runtime must remain a real directory");
+  return marker;
 }
 
 function assertFixtureManifest(manifest) {

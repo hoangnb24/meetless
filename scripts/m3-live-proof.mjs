@@ -4,8 +4,10 @@ import {
   candidateSnapshot,
   defaultCommittedFixtureAssertion,
   inspectM3Live,
+  parkDefaultRuntime,
   prepareM3Live,
   publishM3Evidence,
+  restoreDefaultRuntime,
   scanForbiddenArtifacts,
 } from "./m3-live-proof-lib.mjs";
 
@@ -17,13 +19,29 @@ try {
   if (command === "prepare") {
     const { MeetingStore } = await import("../packages/meeting-store/dist/index.js");
     const result = await prepareM3Live(
-      { runtimeRoot: required("runtime-root"), listen: required("listen") },
+      {
+        runtimeRoot: required("runtime-root"),
+        listen: required("listen"),
+        preservedRuntimeRoot: optional("preserved-runtime-root"),
+      },
       {
         repositoryRoot,
         MeetingStore,
         assertCommittedFixture: defaultCommittedFixtureAssertion(repositoryRoot),
         candidateSnapshot: () => candidateSnapshot(repositoryRoot),
       },
+    );
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else if (command === "park-default") {
+    const result = await parkDefaultRuntime(
+      { preservedRuntimeRoot: required("preserved-runtime-root") },
+      { repositoryRoot },
+    );
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else if (command === "restore-default") {
+    const result = await restoreDefaultRuntime(
+      { contextPath: required("context"), archiveRuntimeRoot: required("archive-runtime-root") },
+      { repositoryRoot },
     );
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else if (command === "inspect") {
@@ -63,7 +81,7 @@ try {
     );
     process.stdout.write(`${JSON.stringify({ status: "passed", evidenceDirectory: path.relative(repositoryRoot, result.destination) }, null, 2)}\n`);
   } else {
-    throw new Error("Usage: m3-live-proof.mjs prepare|inspect|publish with explicit phase options");
+    throw new Error("Usage: m3-live-proof.mjs park-default|prepare|inspect|publish|restore-default with explicit phase options");
   }
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
@@ -96,4 +114,8 @@ function optionalInteger(name) {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`--${name} must be a positive integer`);
   return parsed;
+}
+
+function optional(name) {
+  return options.get(name);
 }

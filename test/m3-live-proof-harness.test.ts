@@ -8,8 +8,10 @@ import { planTranscriptRanges } from "../packages/meeting-domain/src/index.js";
 import {
   assertExpectedText,
   inspectM3Live,
+  parkDefaultRuntime,
   prepareM3Live,
   publishM3Evidence,
+  restoreDefaultRuntime,
   scanForbiddenArtifacts,
 } from "../scripts/m3-live-proof-lib.mjs";
 
@@ -58,8 +60,54 @@ describe("M3 isolated live proof harness", () => {
     await expect(prepareM3Live({ runtimeRoot: existing, listen: "127.0.0.1:6793" }, dependencies(fixtureRepository)))
       .rejects.toThrow(/must not already exist/);
     await expect(prepareM3Live({ runtimeRoot: path.join(fixtureRepository, ".meetless-runtime"), listen: "127.0.0.1:6793" }, dependencies(fixtureRepository)))
-      .rejects.toThrow(/direct child/);
+      .rejects.toThrow(/preserved-runtime-root/);
     expect(await readFile(path.join(fixtureRepository, "test/fixtures/m3/manifest.json"), "utf8")).toContain("english.mp3");
+  });
+
+  test("staged default mode preserves production state, seeds only fixtures, and restores the exact original bytes", async () => {
+    const fixtureRepository = await fakeFixtureRepository();
+    const defaultRuntime = path.join(fixtureRepository, ".meetless-runtime");
+    const preservedRuntime = path.join(fixtureRepository, ".meetless-runtime.m3-preserved-positive");
+    const originalState = Buffer.from('{"version":3,"meetings":[{"id":"production"}],"recordings":[]}\n');
+    await mkdir(path.join(defaultRuntime, "meeting-store"), { recursive: true });
+    await writeFile(path.join(defaultRuntime, "meeting-store/meetings.json"), originalState);
+
+    const parked = await parkDefaultRuntime({ preservedRuntimeRoot: preservedRuntime }, { repositoryRoot: fixtureRepository });
+    expect(parked).toMatchObject({ status: "parked", defaultRuntimeRoot: defaultRuntime, preservedRuntimeRoot: preservedRuntime });
+    const prepared = await prepareM3Live(
+      { runtimeRoot: defaultRuntime, listen: "127.0.0.1:6777", preservedRuntimeRoot: preservedRuntime },
+      dependencies(fixtureRepository),
+    );
+    expect(prepared.context).toMatchObject({
+      runtimeRoot: defaultRuntime,
+      listen: "127.0.0.1:6777",
+      preservation: { defaultRuntimeStaged: true, installedAppUntouched: true },
+    });
+    const archiveRuntime = path.join(tmpdir(), `meetless-m3-live-${randomUUID()}-completed`);
+    roots.push(archiveRuntime);
+    const restored = await restoreDefaultRuntime(
+      { contextPath: prepared.contextPath, archiveRuntimeRoot: archiveRuntime },
+      { repositoryRoot: fixtureRepository },
+    );
+    expect(restored.status).toBe("restored");
+    expect(await readFile(path.join(defaultRuntime, "meeting-store/meetings.json"))).toEqual(originalState);
+    expect(JSON.parse(await readFile(path.join(archiveRuntime, "meeting-store/meetings.json"), "utf8")).meetings)
+      .toHaveLength(3);
+  });
+
+  test("staged default mode fails closed when the preserved production state changes", async () => {
+    const fixtureRepository = await fakeFixtureRepository();
+    const defaultRuntime = path.join(fixtureRepository, ".meetless-runtime");
+    const preservedRuntime = path.join(fixtureRepository, ".meetless-runtime.m3-preserved-negative");
+    await mkdir(path.join(defaultRuntime, "meeting-store"), { recursive: true });
+    await writeFile(path.join(defaultRuntime, "meeting-store/meetings.json"), '{"version":3,"meetings":[],"recordings":[]}\n');
+    await parkDefaultRuntime({ preservedRuntimeRoot: preservedRuntime }, { repositoryRoot: fixtureRepository });
+    await writeFile(path.join(preservedRuntime, "meeting-store/meetings.json"), '{"tampered":true}\n');
+    await expect(prepareM3Live(
+      { runtimeRoot: defaultRuntime, listen: "127.0.0.1:6777", preservedRuntimeRoot: preservedRuntime },
+      dependencies(fixtureRepository),
+    )).rejects.toThrow(/Preserved production meeting state changed/u);
+    expect(await readFile(path.join(preservedRuntime, "meeting-store/meetings.json"), "utf8")).toContain("tampered");
   });
 
   test("inspect validates fake non-network RPC, stable checkpoints, citation bounds, restart, and count-only privacy scan", async () => {
