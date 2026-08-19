@@ -666,27 +666,27 @@ logs, manifests, renderer messages, meeting state, and published evidence; and
 a real UI citation click audibly plays the expected spoken interval. M2
 recording integrity checks remain green.
 
-Live acceptance checkpoint (2026-08-19): after the owner proved the exact
-Keychain credential and accepted request contract with a bounded direct HTTP
-200 probe, the signed host and isolated Meetless runtime again presented the
-one-time disclosure through the real UI and reported only `configured`. Consent
-scheduled exactly the three committed M3 fixtures. The Meetless-owned native
-path completed each fixture in one OpenAI request (reported usage: English 2s,
-Vietnamese 3s, mixed 4s), proving the former credential/request blocker closed.
-English published `Meetless records clear English.` and mixed published
-`Meetless records the meeting và lưu bản ghi an toàn.` Vietnamese instead
-published `Mecles vi âm tiếng Việt rõ ràng.`; this retained only 5 of the 7
-expected tokens and failed the repository's 75% no-translation content gate
-for `Meetless ghi âm tiếng Việt rõ ràng.` The harness stopped before citation
-publication. No passing evidence bundle was created. The repository scanner
-found zero credential-name or key-shaped hits in the archived runtime files;
-process arguments/environments were not re-read after shutdown. The exact
-isolated process tree stopped, and the original production meeting state was
-restored byte-for-byte (12,871 bytes; SHA-256
+Live acceptance checkpoint (2026-08-19): the accepted OpenAI-only path passed
+through the signed Keychain-trusted host and real Meetless UI. The final bounded
+run scheduled exactly the three committed fixtures and completed each in one
+request: English retained 4/4 expected tokens, Vietnamese retained 6/7 (85.7%),
+and mixed English/Vietnamese retained 10/10 without translation. The narrow
+Vietnamese correction preserved the exact phrase and Linh voice while slowing
+delivery and adding a natural clause boundary; no provider, model, endpoint,
+language, or acceptance-threshold change was made. All meetings became ready,
+stable ranges/segment IDs resolved bounded MP3 citations, and restart
+reconciliation retained all three published transcripts without another
+provider request. A real Chrome click played the Vietnamese citation's
+authoritative `[0, 3204)` ms interval with output temporarily unmuted at 20%; no
+load/playback error appeared during the 4.06-second observation, and the prior
+muted/0 output setting was restored immediately afterward. Live inspection of
+23 process argument/environment sets plus runtime logs, manifests, renderer
+artifacts, and meeting state found zero credential-name or key-shaped hits.
+Passing evidence was atomically published at
+`test/evidence/m3/20260819T153402Z-live/`. The exact isolated process tree then
+stopped, and the original production meeting state was restored byte-for-byte
+(12,871 bytes; SHA-256
 `79cfbbbb64720b353d87d19553e058f6738edc0c7237456ee9216ca2f7334964`).
-Completion is now blocked only on a committed Vietnamese fixture/request result
-that passes the accepted spoken-word retention boundary, followed by the still
-unexecuted real citation-click playback and evidence publication.
 
 ### Milestone 4: coding-agent analysis
 
@@ -780,7 +780,7 @@ Recovery rules:
 - [x] Run the microphone plus system-audio Zoom/Meet capture spike.
 - [x] Complete Milestone 1: shell and meeting domain.
 - [x] Complete Milestone 2: durable desktop recording.
-- [ ] Complete Milestone 3: transcription and citation playback.
+- [x] Complete Milestone 3: transcription and citation playback.
 - [ ] Complete Milestone 4: coding-agent analysis.
 - [ ] Complete Milestone 5: grounded Q&A and document folders.
 - [ ] Complete Milestone 6: companion web/mobile experience.

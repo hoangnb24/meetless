@@ -1,0 +1,252 @@
+{
+  "schema": "MEETLESS_M3_LIVE_EVIDENCE v1",
+  "status": "passed",
+  "runId": "20260819T153402Z-live",
+  "observedAt": "2026-08-19T15:37:29.844Z",
+  "candidateSnapshot": {
+    "algorithm": "sha256",
+    "head": "2fa0cc8ff35591fa4153376e6466637fdb3e9f59",
+    "digest": "998879a783967f81f358c9030fcd2ab13e7b5a64fde6d464653128eb8b99b67b"
+  },
+  "authority": "docs/plans/active/v1-paseo-foundation.md#milestone-3-transcription-and-audio-grounded-citations",
+  "runtime": {
+    "isolated": true,
+    "listen": "127.0.0.1:6777",
+    "rootOwnedByRun": false
+  },
+  "providerStatus": "configured",
+  "meetings": [
+    {
+      "file": "english.mp3",
+      "meetingId": "m3-live-english-meeting",
+      "recordingId": "m3-live-english-recording",
+      "outputIdentity": {
+        "byteLength": 7220,
+        "sha256": "74bc085b07b44eac813fb69c2c33b88f5332e6834ade50da1f03c5c0c7350eb7"
+      },
+      "inventory": {
+        "storageKey": "sessions/m3-live-english-recording/inventory.ndjson",
+        "digest": "9312c061a80df08a327766a5bebafd7c457bf6c7ee22e58cdf79d3df65204bfd"
+      },
+      "transcript": {
+        "id": "transcript-m3-live-english-recording",
+        "status": "ready",
+        "segmentId": "segment-ed164440c825279d946c949954b2d739",
+        "range": {
+          "startMs": 0,
+          "endMs": 1800
+        },
+        "requestCount": 1,
+        "usage": {
+          "durationSeconds": 2
+        },
+        "publication": {
+          "storageKey": "transcripts/transcript-m3-live-english-recording.json",
+          "byteLength": 988,
+          "sha256": "f382d91b6930e1a35977c95ffa6779ea9d221572f412dd44ddf58f415c0bf673",
+          "publishedAt": "2026-08-19T15:34:23.330Z"
+        },
+        "textCheck": {
+          "expectedTokenCount": 4,
+          "matchedTokenCount": 4,
+          "coverage": 1,
+          "languagesRetained": [
+            "en"
+          ]
+        }
+      },
+      "citation": {
+        "mimeType": "audio/mpeg",
+        "byteLength": 7713,
+        "sha256": "f8b3bad6ad65d05ce2c75259fda6f29496052eb6662b9ebe032dc81a28f77038",
+        "bounded": true
+      }
+    },
+    {
+      "file": "vietnamese.mp3",
+      "meetingId": "m3-live-vietnamese-meeting",
+      "recordingId": "m3-live-vietnamese-recording",
+      "outputIdentity": {
+        "byteLength": 12836,
+        "sha256": "ba8233ab47aa86540e28daa550a836e8c43aad629a79907b968fdde53a62a5ee"
+      },
+      "inventory": {
+        "storageKey": "sessions/m3-live-vietnamese-recording/inventory.ndjson",
+        "digest": "acb99940f3a802b411970c8469a72ea8d904de71a9bb12dee9bbfaca516e85be"
+      },
+      "transcript": {
+        "id": "transcript-m3-live-vietnamese-recording",
+        "status": "ready",
+        "segmentId": "segment-1057d220aa17b239d2a9005346067d93",
+        "range": {
+          "startMs": 0,
+          "endMs": 3204
+        },
+        "requestCount": 1,
+        "usage": {
+          "durationSeconds": 4
+        },
+        "publication": {
+          "storageKey": "transcripts/transcript-m3-live-vietnamese-recording.json",
+          "byteLength": 1012,
+          "sha256": "d857c4e3c1c2cb1a00ab168e359ad117c3c49f8dbbba9e70d837c926a10bf9e7",
+          "publishedAt": "2026-08-19T15:34:24.851Z"
+        },
+        "textCheck": {
+          "expectedTokenCount": 7,
+          "matchedTokenCount": 6,
+          "coverage": 0.8571428571428571,
+          "languagesRetained": [
+            "vi"
+          ]
+        }
+      },
+      "citation": {
+        "mimeType": "audio/mpeg",
+        "byteLength": 13329,
+        "sha256": "abf8ea475ee4abb2ba44bb03888346c1663667dedd99ac4a9ea8c1f887435c3a",
+        "bounded": true
+      }
+    },
+    {
+      "file": "mixed-en-vi.mp3",
+      "meetingId": "m3-live-mixed-en-vi-meeting",
+      "recordingId": "m3-live-mixed-en-vi-recording",
+      "outputIdentity": {
+        "byteLength": 13700,
+        "sha256": "1e5b6bc4819e9daef17e409bbd8ea8bc892591cc24246283eba1ab56de0c73a3"
+      },
+      "inventory": {
+        "storageKey": "sessions/m3-live-mixed-en-vi-recording/inventory.ndjson",
+        "digest": "979a7a5d0ea0e5af6cb9ada3980be21c077306bb82c0008bd044993fc0cb88e0"
+      },
+      "transcript": {
+        "id": "transcript-m3-live-mixed-en-vi-recording",
+        "status": "ready",
+        "segmentId": "segment-7491734eb1d3848572993b9b79738e27",
+        "range": {
+          "startMs": 0,
+          "endMs": 3420
+        },
+        "requestCount": 1,
+        "usage": {
+          "durationSeconds": 4
+        },
+        "publication": {
+          "storageKey": "transcripts/transcript-m3-live-mixed-en-vi-recording.json",
+          "byteLength": 1031,
+          "sha256": "d4e4fffd5cb990858046ebb24a3feff7a909e26a3c01fc77bb511413ff8442a2",
+          "publishedAt": "2026-08-19T15:34:24.278Z"
+        },
+        "textCheck": {
+          "expectedTokenCount": 10,
+          "matchedTokenCount": 10,
+          "coverage": 1,
+          "languagesRetained": [
+            "en",
+            "vi"
+          ]
+        }
+      },
+      "citation": {
+        "mimeType": "audio/mpeg",
+        "byteLength": 14193,
+        "sha256": "793bff97036c3d163ca74bc3ca8c256d183999a77e125eda9888726f57ce7078",
+        "bounded": true
+      }
+    }
+  ],
+  "restart": {
+    "readyTranscriptCount": 3,
+    "stateBytesUnchanged": true,
+    "noProviderCall": true
+  },
+  "privacyScan": {
+    "processArgv": {
+      "scanned": 23,
+      "credentialNameHits": 0,
+      "keyShapeHits": 0
+    },
+    "processEnvironment": {
+      "scanned": 23,
+      "credentialNameHits": 0,
+      "keyShapeHits": 0
+    },
+    "runtimeFiles": {
+      "log": {
+        "scanned": 6,
+        "credentialNameHits": 0,
+        "keyShapeHits": 0
+      },
+      "manifest": {
+        "scanned": 30,
+        "credentialNameHits": 0,
+        "keyShapeHits": 0
+      },
+      "renderer": {
+        "scanned": 347,
+        "credentialNameHits": 0,
+        "keyShapeHits": 0
+      },
+      "other": {
+        "scanned": 43,
+        "credentialNameHits": 0,
+        "keyShapeHits": 0
+      }
+    }
+  },
+  "playback": {
+    "meetingId": "m3-live-vietnamese-meeting",
+    "segmentId": "segment-1057d220aa17b239d2a9005346067d93",
+    "started": true,
+    "audible": true,
+    "observedDurationMs": 4062
+  },
+  "identities": {
+    "tools": {
+      "tools": [
+        {
+          "name": "Meetless private ffmpeg snapshot",
+          "path": "/Users/tubakhuym/projects/supervisors/meetless/.meetless-runtime/media-tools/ffmpeg",
+          "sha256": "00d01197255300c02122c783dd0126a9e7f47d6c6a19faafae2e6610efd071d3"
+        }
+      ]
+    },
+    "apps": {
+      "apps": [
+        {
+          "name": "Keychain-trusted MeetlessHost",
+          "path": "/Users/tubakhuym/Applications/Meetless.app/Contents/MacOS/MeetlessHost",
+          "sha256": "dd89bbc33a4bd2ebf61b88754a7c5794b2ac22ec87cba9ef4fd851d0ab7c8ba3"
+        }
+      ]
+    }
+  },
+  "artifacts": {
+    "uiScreenshot": {
+      "name": "ui-screenshot.png",
+      "kind": "ui-screenshot",
+      "byteLength": 69406,
+      "sha256": "4243717a8678ca959ed8b49e58a26234750169e993a19c71394b695e2df29ae6"
+    },
+    "citedAudio": {
+      "name": "cited-audio.mp3",
+      "kind": "cited-audio",
+      "byteLength": 13329,
+      "sha256": "abf8ea475ee4abb2ba44bb03888346c1663667dedd99ac4a9ea8c1f887435c3a"
+    },
+    "inspection": {
+      "name": "inspection.json",
+      "kind": "inspection",
+      "byteLength": 5865,
+      "sha256": "b60cf5f7d2b8b522a267ad90821cf3e787b91a8609d0cb9b154ae1c37ad502e2"
+    }
+  },
+  "preservation": {
+    "defaultRuntimeDeleted": false,
+    "existingRecordingsDeleted": false,
+    "keychainChanged": false,
+    "installedAppChangedByHarness": false,
+    "restoreDefaultHostConfiguration": "npm run proof:m3:restore-default -- --context <context> --archive-runtime-root <archive>"
+  }
+}
