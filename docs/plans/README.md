@@ -34,8 +34,8 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
   local-first Zoom/Meet recording, coding-agent analysis, grounded Q&A, and
   cross-platform companion clients.
 
-## Active Harness Improvements
+## Completed Harness Improvements
 
-- [Correlated Electron recording proof](active/post-m3-electron-harness-improvement.md)
-  — owner-authorized capability experiment; Awaiting fresh rerun until a
-  materially equivalent fresh-agent rerun exercises the intervention.
+- [Correlated Electron recording proof](completed/post-m3-electron-harness-improvement.md)
+  — kept after a materially equivalent fresh-agent rerun exercised the bounded
+  POC capability without owner intervention.

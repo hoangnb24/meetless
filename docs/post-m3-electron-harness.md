@@ -1,10 +1,12 @@
 # Post-M3 Electron Harness
 
-Status: Awaiting fresh rerun
+Status: Accepted POC capability; native/live-source gate incomplete
 
 Revision 1 corrects the POC review blockers. Base candidate
 `83b981bd6a02e6155269dc4849f7e69a89e2984b` is superseded; the replacement
 candidate is `POST-M3-E2E-IMPL-R1`.
+The accepted implementation commit is
+`1cbba679f35b0fcc7117305dc0ea3c8197d9139c`.
 
 This runbook covers the owner-authorized post-M3 capability for capabilities 1,
 3, 4, and 5. M4 remains closed. It preserves the accepted

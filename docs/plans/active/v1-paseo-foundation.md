@@ -6,7 +6,8 @@ Date: 2026-08-16
 
 Active
 
-Post-M3 Electron Harness gate: Awaiting fresh rerun. M4 remains closed.
+Post-M3 Electron Harness POC: accepted after fresh rerun. The native/live-source
+gate is incomplete, so M4 remains closed.
 
 ## Outcome
 
@@ -849,12 +850,12 @@ stopped, and the original production meeting state was restored byte-for-byte
   harness, production accessibility leakage, missing or mismatched
   renderer/socket/store/helper/chunk/MP3/transcript correlation, and regression
   to the old title-bar overlap must fail with actionable diagnostics.
-- **Harness experiment:** the active record is
-  [`post-m3-electron-harness-improvement.md`](post-m3-electron-harness-improvement.md).
+- **Harness experiment:** the completed record is
+  [`post-m3-electron-harness-improvement.md`](../completed/post-m3-electron-harness-improvement.md).
   It preserves the false-positive preflights, wrong identity, pointer overlap,
-  Computer Use attachment failure, and owner interventions. Its current status
-  is **Awaiting fresh rerun**: a materially equivalent fresh agent must discover
-  and exercise the new repository capability before the gate is closed.
+  Computer Use attachment failure, and owner interventions. A materially
+  equivalent fresh agent discovered and exercised the capability without owner
+  UI intervention; the bounded POC Harness decision is **Keep**.
 - **Dependency:** M4 remains closed until the implementation is accepted and
   the handback states separately whether deterministic automation and the
   original fresh real recording/TCC gate have each been satisfied.
@@ -885,9 +886,9 @@ stopped, and the original production meeting state was restored byte-for-byte
   substituting fake evidence.
 - **Mechanical negatives:** source/envelope tests cover generic identity,
   production accessibility leakage, invalid/missing envelope, each important
-  correlation stage, and the accepted 29 px title-bar geometry. The active
-  Harness record and this gate remain **Awaiting fresh rerun**. M4 remains
-  closed.
+  correlation stage, and the accepted 29 px title-bar geometry. At the base
+  candidate checkpoint, the Harness record still awaited a fresh rerun and M4
+  remained closed.
 - **Candidate validation:** `npm run test:post-m3` passed 29 tests;
   `npm run validate:isolation` passed 46; `npm run test:composition` passed 1;
   `npm run test:focused` passed 194; `npm run typecheck` passed;
@@ -895,7 +896,8 @@ stopped, and the original production meeting state was restored byte-for-byte
   package-level `proof:post-m3` passed deterministic fake evidence while
   reporting native capability `invalid` as an explicit no-substitution skip.
 
-`POST-M3-E2E-IMPL-R1` remains Awaiting fresh rerun. It corrects only the
+`POST-M3-E2E-IMPL-R1` is accepted at commit
+`1cbba679f35b0fcc7117305dc0ea3c8197d9139c`. It corrects only the
 accepted POC blockers: active marker host/desktop PID-start binding and owned
 shutdown removal, same-UID `0700`/`0600` runtime-file enforcement, independent
 installed-host/socket `runtime.uiTest`/trusted-bridge correlation with exact
@@ -910,6 +912,16 @@ exited 1 with explicit `incomplete`/`native-provider-unavailable` and no fake
 substitution; and combined `proof:post-m3` exited 1 with fake `passed` plus
 native `incomplete`. Both proof manifests reported cleanup `passed`, including
 staged-root removal, original-root restoration, and owned run-state removal.
+
+The required fresh-agent rerun independently discovered the runbook and package
+commands, passed the experimental renderer smoke, passed the complete
+deterministic fixture correlation with the same 5,589-byte MP3 identity, and
+passed 37 focused tests without retries or owner UI action. Native proof exited
+1 as `incomplete` because the signed-host capability remains invalid, with no
+fake substitution. Cleanup restored the original runtime digest and left no
+owned processes or run-state files. This closes the Harness-improvement rerun,
+not the original native/physical/TCC/live-source recording gate; M4 stays
+closed.
 
 ### Milestone 4: coding-agent analysis
 
@@ -1008,9 +1020,8 @@ Recovery rules:
   newly recorded meeting.
 - [x] Restore physically pointer-interactive recording input in the accepted
   LaunchServices host and repository Electron chain before M4 begins.
-- [ ] Freshly rerun the correlated post-M3 Electron recording Harness candidate
-  without weakening production identity, TCC, or accessibility (status:
-  Awaiting fresh rerun).
+- [x] Freshly rerun and accept the correlated post-M3 Electron recording Harness
+  POC without weakening production identity, TCC, or accessibility.
 - [ ] Complete Milestone 4: coding-agent analysis.
 - [ ] Complete Milestone 5: grounded Q&A and document folders.
 - [ ] Complete Milestone 6: companion web/mobile experience.
@@ -1227,14 +1238,13 @@ conclusively empty inventory is durably failed while preserving valid
 orphan/committed media as recoverable. The integrated correction candidate
 through `db58b52` is mechanically accepted: focused lifecycle, inventory,
 startup-order, composition, and pointer-geometry proofs pass, including
-independent old-overlap and corrected hit-region assertions. The autonomous
-live handoff is currently blocked at the
-Computer Use/WindowServer boundary: after one clean restart of the accepted
-`com.meetless.app` host and its repo-owned `com.github.Electron` child,
-Computer Use could list the running Electron app but timed out establishing
-fresh state by both display name and exact bundle path. It therefore rejected
-all actions as lacking an active target. No Start click was issued. The
-authoritative recording socket remained `failed` for recording
-`c5bdb56e-3bbd-4ed6-b209-46f69a7ae489` with zero chunks, and no capture helper
-was running. A fresh real recording and M3 transcription handoff are still
-required; M4 remains closed.
+independent old-overlap and corrected hit-region assertions. The completed
+post-M3 Harness improvement preserves the later Computer Use/WindowServer
+attachment failure as baseline evidence, then replaces ambiguous UI preflights
+with the accepted `1cbba679` POC capability. A fresh agent discovered and ran
+the experimental renderer smoke and the identity-bound deterministic chain from
+UI through socket/store, fixture helper and chunks, MP3, and ready fixture
+transcription without owner intervention. Native proof remained truthfully
+`incomplete` because the signed-host capability is invalid, and it performed no
+fake substitution. Therefore a fresh real recording and native M3 transcription
+handoff are still required; M4 remains closed.

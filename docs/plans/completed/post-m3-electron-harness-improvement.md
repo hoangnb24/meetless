@@ -4,7 +4,7 @@ Date: 2026-08-20
 
 ## Status
 
-Awaiting fresh rerun
+Completed
 
 ## Representative Job
 
@@ -12,7 +12,7 @@ Complete the bounded post-M3 recording correction without owner-operated UI by
 adding repository-native automation for capabilities 1, 3, 4, and 5 in the
 2026-08-20 project-owner directive. The fixed worker starts from repository
 revision `c4a4640`, uses the accepted M1-M3 authority in
-[`v1-paseo-foundation.md`](v1-paseo-foundation.md), preserves
+[`v1-paseo-foundation.md`](../active/v1-paseo-foundation.md), preserves
 `com.meetless.app` as the sole production host/TCC authority, excludes
 XCUITest, keeps M4 closed, does not push, and stops rather than claiming a
 physical or live-source result from fixture, DevTools, or accessibility events.
@@ -154,20 +154,41 @@ Observed R1 validation:
 
 ## Fresh Rerun
 
-Awaiting fresh rerun. A materially equivalent fresh agent must discover the
-capability from repository guidance, invoke it from the accepted starting
-conditions, and produce the correlated result without owner UI intervention.
-The baseline above remains preserved until that rerun and Lead acceptance.
+A materially equivalent fresh agent started from clean candidate
+`1cbba679f35b0fcc7117305dc0ea3c8197d9139c`, discovered the capability through
+`docs/WORKFLOW.md`, `docs/README.md`, this runbook, this Harness record, the V1
+plan, and package scripts, then exercised it without owner intervention or
+retries.
+
+- `proof:post-m3:smoke` passed and retained its experimental renderer-only
+  labels: recording, TCC, physical-click, and live-source claims were false.
+- `proof:post-m3:fake` passed the correlated UI -> socket/store -> fixture
+  helper -> microphone/system WAV chunks -> finalized MP3 -> ready fixture
+  transcript chain. The 5,589-byte MP3 had SHA-256
+  `217912dbe5ba083f0dd4641bde079cb82db4fd6bb10982c8d4775c0b5aee333b`.
+- `proof:post-m3:native` exited 1 with `status: incomplete`, evidence class
+  `native-provider-unavailable`, and `noFakeSubstitution: true`.
+- `test:post-m3` passed 5 files and 37 tests.
+- Cleanup removed the envelope/marker and owned processes and restored the
+  original runtime root byte-for-byte; its digest before and after was
+  `a95ee44af4e0f2b77a30458511cf1d1b5f902c743b37ce2206f1fe6a63f2fb69`.
+
+The rerun retrieved and used the intervention, improved the deterministic
+repository-wiring outcome, and needed no owner UI action. It did not establish
+a physical WindowServer click, TCC permission, native provider handoff, or live
+Zoom/Meet source.
 
 ## Decision
 
-Candidate implementation was ready for Lead review, but the base candidate is
-superseded by `POST-M3-E2E-IMPL-R1` for the focused POC corrections: active
-marker PID/start binding, same-UID mode checks, independent host/socket/bridge
-identity, nonzero native-incomplete semantics, and manifest-level cleanup
-failure reporting. Decision remains pending the required fresh rerun.
+Keep. Lead accepts `1cbba679f35b0fcc7117305dc0ea3c8197d9139c` as the bounded
+POC implementation for capabilities 1, 3, 4, and 5. The fresh rerun discovered
+and exercised the intervention with the same positive result and truthful
+negative native result. The intervention remains useful because it replaces
+ambiguous app/window preflights with one identity-bound, stage-correlated proof.
 
 ## Result
 
-Implementation candidate complete and awaiting fresh-agent rerun. Candidate
-commit identity is recorded in the peer disposition. M4 remains closed.
+Harness improvement completed and retained. The deterministic repository
+capability is accepted at POC level. The broader post-M3 gate is not closed:
+native signed-host capability, physical/TCC evidence, and a fresh live-source
+recording into the accepted M3 path remain unproved. M4 remains closed.
