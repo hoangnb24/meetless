@@ -1081,6 +1081,38 @@ segment timestamp to hear the expected audio interval.
 
 ### Milestone 5: chat with one meeting
 
+`FOUNDATION_CHECK v1 — M5` (2026-08-21):
+
+- **State owner:** `MeetingStore` is the sole durable owner of one V1 chat
+  thread per meeting, ordered messages, attempts, provider/model values,
+  retrieved segment IDs, validated citations, and failure/retry state.
+- **Lifecycle:** chat is `ready -> running -> ready | failed`. Starting a turn
+  atomically appends one user question and one running attempt. Only one turn
+  can run. Retry reuses that user message and creates a new attempt. Restart
+  changes running work to retryable failed and never replays it.
+- **Cross-boundary invariants:** durable chat contains only Meetless IDs and
+  plain values. A supported answer has at least one unique citation. Every
+  citation was retrieved by that attempt and resolves through the thread
+  meeting's immutable ready M3 transcript. Insufficient evidence has no answer
+  text and no citations; the surface renders its canonical status wording.
+  Provider, timeout, and malformed-output failures stay operational failures.
+  Durable Meetless messages are the only later context authority.
+- **Required mechanisms:** schema v4 with lossless v1-v3 migration; strict
+  corruption gates; one-thread and one-active-turn checks; serialized atomic
+  store mutation; separate completion and operational-failure transitions;
+  explicit restart reconciliation with no replay.
+- **Dependency direction:** meeting chat policy uses plain values; `MeetingStore`
+  binds citations to the M3 transcript. Later coding-agent and retrieval
+  adapters depend on this foundation. No Paseo agent, workspace, session, or
+  timeline identity enters domain or store state. The accepted neutral shared
+  execution cwd and one auto-archived agent per question remain later adapter
+  concerns and are not persisted here.
+- **Status:** `FOUNDATION_REQUIRED`. Lead acceptance is pending.
+- **Candidate evidence:** the commit containing this record is the M5 foundation
+  candidate. `npm run test:focused` passed 36 files and 236 tests;
+  `npm run typecheck` passed; the focused domain/store rerun passed 6 files and
+  48 tests; and `git diff --check` passed. The M5 progress item remains open.
+
 - Reuse Paseo provider/model discovery, provider selection, agent execution,
   streaming, chat composer, and message presentation where their behavior fits.
 - Scope each chat thread and every retrieval call to the currently open meeting.

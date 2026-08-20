@@ -1116,3 +1116,363 @@ export function resolveTranscriptCitation(
     text: checkpoint.text,
   };
 }
+
+export const CHAT_THREAD_STATUSES = ["ready", "running", "failed"] as const;
+export const CHAT_ATTEMPT_STATUSES = ["running", "completed", "failed"] as const;
+export const CHAT_ANSWER_OUTCOMES = ["supported", "insufficient_evidence"] as const;
+
+export type ChatThreadStatus = (typeof CHAT_THREAD_STATUSES)[number];
+export type ChatAttemptStatus = (typeof CHAT_ATTEMPT_STATUSES)[number];
+export type ChatAnswerOutcome = (typeof CHAT_ANSWER_OUTCOMES)[number];
+
+export interface ChatProviderSelection {
+  provider: string;
+  model: string;
+}
+
+export interface ChatCitation {
+  segmentId: string;
+}
+
+export interface ChatUserMessage {
+  id: string;
+  role: "user";
+  text: string;
+  createdAt: string;
+}
+
+interface ChatAssistantMessageBase {
+  id: string;
+  role: "assistant";
+  attemptId: string;
+  createdAt: string;
+}
+
+export interface ChatSupportedAssistantMessage extends ChatAssistantMessageBase {
+  outcome: "supported";
+  text: string;
+  citations: ChatCitation[];
+}
+
+export interface ChatInsufficientEvidenceMessage extends ChatAssistantMessageBase {
+  outcome: "insufficient_evidence";
+  text: null;
+  citations: ChatCitation[];
+}
+
+export type ChatAssistantMessage =
+  | ChatSupportedAssistantMessage
+  | ChatInsufficientEvidenceMessage;
+
+export type ChatMessage = ChatUserMessage | ChatAssistantMessage;
+
+export interface ChatAttempt extends ChatProviderSelection {
+  id: string;
+  userMessageId: string;
+  status: ChatAttemptStatus;
+  retrievedSegmentIds: string[];
+  startedAt: string;
+  completedAt: string | null;
+  failureReason: string | null;
+}
+
+export interface MeetingChatThread {
+  id: string;
+  meetingId: string;
+  status: ChatThreadStatus;
+  messages: ChatMessage[];
+  attempts: ChatAttempt[];
+  activeAttemptId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export class ChatPolicyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ChatPolicyError";
+  }
+}
+
+function chatViolation(rule: string, nextAction: string): ChatPolicyError {
+  return new ChatPolicyError(
+    `${rule} (docs/product/knowledge-and-citations.md). ${nextAction}`,
+  );
+}
+
+function chatText(value: string, field: string): string {
+  const normalized = value.trim();
+  if (!normalized) throw chatViolation(`${field} must not be empty`, `Provide a valid ${field}.`);
+  return normalized;
+}
+
+function chatInstant(value: string, field: string): string {
+  const normalized = chatText(value, field);
+  if (!Number.isFinite(Date.parse(normalized))) {
+    throw chatViolation(`${field} must be an ISO timestamp`, `Provide a valid ${field}.`);
+  }
+  return normalized;
+}
+
+function chatProvider(input: ChatProviderSelection): ChatProviderSelection {
+  return {
+    provider: chatText(input.provider, "chat provider"),
+    model: chatText(input.model, "chat model"),
+  };
+}
+
+export function createMeetingChatThread(input: {
+  id: string;
+  meetingId: string;
+  now: string;
+}): MeetingChatThread {
+  const now = chatInstant(input.now, "chat thread timestamp");
+  return {
+    id: chatText(input.id, "chat thread id"),
+    meetingId: chatText(input.meetingId, "chat meeting id"),
+    status: "ready",
+    messages: [],
+    attempts: [],
+    activeAttemptId: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function startChatQuestion(
+  thread: MeetingChatThread,
+  input: {
+    userMessageId: string;
+    attemptId: string;
+    question: string;
+    provider: string;
+    model: string;
+    now: string;
+  },
+): MeetingChatThread {
+  if (thread.status !== "ready" || thread.activeAttemptId !== null) {
+    throw chatViolation("A chat thread can run only one turn at a time", "Complete or fail the active turn first.");
+  }
+  const now = chatInstant(input.now, "chat question timestamp");
+  const userMessage: ChatUserMessage = {
+    id: chatText(input.userMessageId, "user message id"),
+    role: "user",
+    text: chatText(input.question, "chat question"),
+    createdAt: now,
+  };
+  const attemptId = chatText(input.attemptId, "chat attempt id");
+  if (thread.messages.some((message) => message.id === userMessage.id)) {
+    throw chatViolation(`Chat message already exists: ${userMessage.id}`, "Use a new message ID.");
+  }
+  if (thread.attempts.some((attempt) => attempt.id === attemptId)) {
+    throw chatViolation(`Chat attempt already exists: ${attemptId}`, "Use a new attempt ID.");
+  }
+  const attempt: ChatAttempt = {
+    id: attemptId,
+    userMessageId: userMessage.id,
+    status: "running",
+    ...chatProvider(input),
+    retrievedSegmentIds: [],
+    startedAt: now,
+    completedAt: null,
+    failureReason: null,
+  };
+  return {
+    ...thread,
+    status: "running",
+    messages: [...thread.messages, userMessage],
+    attempts: [...thread.attempts, attempt],
+    activeAttemptId: attempt.id,
+    updatedAt: now,
+  };
+}
+
+export function recordChatRetrieval(
+  thread: MeetingChatThread,
+  input: {
+    attemptId: string;
+    segmentIds: readonly string[];
+    availableSegmentIds: readonly string[];
+    now: string;
+  },
+): MeetingChatThread {
+  const attemptIndex = activeChatAttemptIndex(thread, input.attemptId);
+  const available = new Set(input.availableSegmentIds);
+  const retrieved = input.segmentIds.map((segmentId) => chatText(segmentId, "retrieved segment id"));
+  const unknown = retrieved.find((segmentId) => !available.has(segmentId));
+  if (unknown) {
+    throw chatViolation(`Unknown or cross-meeting retrieved segment: ${unknown}`, "Retrieve only from this thread's immutable meeting transcript.");
+  }
+  const attempt = thread.attempts[attemptIndex]!;
+  const nextAttempt = {
+    ...attempt,
+    retrievedSegmentIds: [...new Set([...attempt.retrievedSegmentIds, ...retrieved])],
+  };
+  const attempts = [...thread.attempts];
+  attempts[attemptIndex] = nextAttempt;
+  return { ...thread, attempts, updatedAt: chatInstant(input.now, "chat retrieval timestamp") };
+}
+
+export function completeChatAttempt(
+  thread: MeetingChatThread,
+  input: {
+    attemptId: string;
+    assistantMessageId: string;
+    availableSegmentIds: readonly string[];
+    now: string;
+  } & (
+    | { outcome: "supported"; text: string; citationSegmentIds: readonly string[] }
+    | { outcome: "insufficient_evidence"; text?: null; citationSegmentIds: readonly [] }
+  ),
+): MeetingChatThread {
+  const attemptIndex = activeChatAttemptIndex(thread, input.attemptId);
+  const attempt = thread.attempts[attemptIndex]!;
+  if (!CHAT_ANSWER_OUTCOMES.includes(input.outcome)) {
+    throw chatViolation("Chat completion outcome is malformed", "Record provider or parse failure as an operational failure.");
+  }
+  const citationSegmentIds = input.citationSegmentIds.map((segmentId) =>
+    chatText(segmentId, "citation segment id"));
+  if (new Set(citationSegmentIds).size !== citationSegmentIds.length) {
+    throw chatViolation("A supported answer cannot contain duplicate citations", "Cite each retrieved segment once.");
+  }
+  if (input.outcome === "supported" && citationSegmentIds.length === 0) {
+    throw chatViolation("A supported answer requires at least one citation", "Cite a retrieved transcript segment or return insufficient evidence.");
+  }
+  if (input.outcome === "insufficient_evidence" && citationSegmentIds.length !== 0) {
+    throw chatViolation("An insufficient-evidence outcome cannot contain citations", "Remove citations from the explicit insufficient-evidence result.");
+  }
+  if (input.outcome === "insufficient_evidence" && input.text !== undefined && input.text !== null) {
+    throw chatViolation("An insufficient-evidence outcome cannot contain answer text", "Return only the tagged insufficient-evidence result.");
+  }
+  const available = new Set(input.availableSegmentIds);
+  const unresolved = citationSegmentIds.find((segmentId) => !available.has(segmentId));
+  if (unresolved) {
+    throw chatViolation(`Unknown, cross-meeting, or unresolved citation: ${unresolved}`, "Cite only this thread's immutable ready transcript.");
+  }
+  const unretrieved = citationSegmentIds.find((segmentId) => !attempt.retrievedSegmentIds.includes(segmentId));
+  if (unretrieved) {
+    throw chatViolation(`Citation was not retrieved during this turn: ${unretrieved}`, "Cite only segment IDs retrieved by the active attempt.");
+  }
+  const now = chatInstant(input.now, "chat completion timestamp");
+  const messageBase: ChatAssistantMessageBase = {
+    id: chatText(input.assistantMessageId, "assistant message id"),
+    role: "assistant",
+    attemptId: attempt.id,
+    createdAt: now,
+  };
+  const assistantMessage: ChatAssistantMessage = input.outcome === "supported"
+    ? {
+        ...messageBase,
+        outcome: "supported",
+        text: chatText(input.text, "assistant answer"),
+        citations: citationSegmentIds.map((segmentId) => ({ segmentId })),
+      }
+    : {
+        ...messageBase,
+        outcome: "insufficient_evidence",
+        text: null,
+        citations: [],
+      };
+  if (thread.messages.some((message) => message.id === assistantMessage.id)) {
+    throw chatViolation(`Chat message already exists: ${assistantMessage.id}`, "Use a new message ID.");
+  }
+  const attempts = [...thread.attempts];
+  attempts[attemptIndex] = {
+    ...attempt,
+    status: "completed",
+    completedAt: now,
+    failureReason: null,
+  };
+  return {
+    ...thread,
+    status: "ready",
+    messages: [...thread.messages, assistantMessage],
+    attempts,
+    activeAttemptId: null,
+    updatedAt: now,
+  };
+}
+
+export function failChatAttempt(
+  thread: MeetingChatThread,
+  input: { attemptId: string; reason: string; now: string },
+): MeetingChatThread {
+  const attemptIndex = activeChatAttemptIndex(thread, input.attemptId);
+  const now = chatInstant(input.now, "chat failure timestamp");
+  const attempts = [...thread.attempts];
+  attempts[attemptIndex] = {
+    ...attempts[attemptIndex]!,
+    status: "failed",
+    completedAt: now,
+    failureReason: chatText(input.reason, "chat failure reason"),
+  };
+  return {
+    ...thread,
+    status: "failed",
+    attempts,
+    activeAttemptId: null,
+    updatedAt: now,
+  };
+}
+
+export function retryChatAttempt(
+  thread: MeetingChatThread,
+  input: { attemptId: string; provider: string; model: string; now: string },
+): MeetingChatThread {
+  if (thread.status !== "failed" || thread.activeAttemptId !== null) {
+    throw chatViolation("Only a failed chat turn can be retried", "Wait for the active turn to fail.");
+  }
+  const previous = thread.attempts.at(-1);
+  if (!previous || previous.status !== "failed") {
+    throw chatViolation("Chat retry requires the latest failed attempt", "Preserve the failed attempt before retrying.");
+  }
+  const attemptId = chatText(input.attemptId, "chat retry attempt id");
+  if (thread.attempts.some((attempt) => attempt.id === attemptId)) {
+    throw chatViolation(`Chat attempt already exists: ${attemptId}`, "Use a new retry attempt ID.");
+  }
+  const now = chatInstant(input.now, "chat retry timestamp");
+  const attempt: ChatAttempt = {
+    id: attemptId,
+    userMessageId: previous.userMessageId,
+    status: "running",
+    ...chatProvider(input),
+    retrievedSegmentIds: [],
+    startedAt: now,
+    completedAt: null,
+    failureReason: null,
+  };
+  return {
+    ...thread,
+    status: "running",
+    attempts: [...thread.attempts, attempt],
+    activeAttemptId: attempt.id,
+    updatedAt: now,
+  };
+}
+
+export function reconcileChatAfterRestart(
+  thread: MeetingChatThread,
+  nowInput: string,
+): MeetingChatThread {
+  if (thread.status !== "running") return thread;
+  if (!thread.activeAttemptId) {
+    throw chatViolation("A running chat thread must identify its active attempt", "Repair the corrupt durable thread before restart reconciliation.");
+  }
+  return failChatAttempt(thread, {
+    attemptId: thread.activeAttemptId,
+    reason: "Chat execution was interrupted by restart; retry is available",
+    now: nowInput,
+  });
+}
+
+function activeChatAttemptIndex(thread: MeetingChatThread, attemptIdInput: string): number {
+  const attemptId = chatText(attemptIdInput, "chat attempt id");
+  if (thread.status !== "running" || thread.activeAttemptId !== attemptId) {
+    throw chatViolation("Chat operation requires the active running attempt", "Use the thread's current active attempt ID.");
+  }
+  const index = thread.attempts.findIndex((attempt) => attempt.id === attemptId);
+  if (index < 0 || thread.attempts[index]?.status !== "running") {
+    throw chatViolation("The active chat attempt is missing or not running", "Repair the corrupt durable thread before continuing.");
+  }
+  return index;
+}

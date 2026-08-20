@@ -59,7 +59,7 @@ describe("meeting store", () => {
     expect(meetings).toHaveLength(40);
     expect(new Set(meetings.map((meeting) => meeting.id))).toHaveLength(40);
     expect((await readdir(root)).sort()).toEqual(["meetings.json"]);
-    expect(JSON.parse(await readFile(store.filePath, "utf8"))).toMatchObject({ version: 3 });
+    expect(JSON.parse(await readFile(store.filePath, "utf8"))).toMatchObject({ version: 4 });
   });
 
   test("fails closed and preserves corrupt state", async () => {
@@ -91,7 +91,7 @@ describe("meeting store", () => {
 
     expect(await store.list()).toEqual([meeting]);
     expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({
-      version: 3,
+      version: 4,
       meetings: [meeting],
       recordings: [],
     });

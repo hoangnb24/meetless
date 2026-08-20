@@ -38,6 +38,16 @@ import {
   type TranscriptState,
   type TranscriptUsage,
   DEFAULT_TRANSCRIPT_MAX_ATTEMPTS,
+  CHAT_ATTEMPT_STATUSES,
+  CHAT_THREAD_STATUSES,
+  completeChatAttempt,
+  createMeetingChatThread,
+  failChatAttempt,
+  reconcileChatAfterRestart,
+  recordChatRetrieval,
+  retryChatAttempt,
+  startChatQuestion,
+  type MeetingChatThread,
   transitionMeeting,
   type CommittedRecordingChunk,
   type Meeting,
@@ -426,7 +436,7 @@ const TranscriptSidecarSchema = z.object({
   publishedAt: z.string().datetime(),
 }).strict();
 
-const MeetingStateSchema = z.object({
+const StateV3Schema = z.object({
   version: z.literal(3), meetings: z.array(MeetingSchema), recordings: z.array(RecordingSchema),
   transcripts: z.array(TranscriptSchema).optional(),
   cloudConsent: z.object({ status: z.literal("granted"), grantedAt: z.string().datetime() }).strict().optional(),
@@ -455,17 +465,176 @@ const MeetingStateSchema = z.object({
   }
 });
 
+const ChatCitationSchema = z.object({
+  segmentId: z.string().trim().min(1),
+}).strict();
+
+const ChatMessageSchema = z.union([
+  z.object({
+    id: z.string().trim().min(1),
+    role: z.literal("user"),
+    text: z.string().trim().min(1),
+    createdAt: z.string().datetime(),
+  }).strict(),
+  z.object({
+    id: z.string().trim().min(1),
+    role: z.literal("assistant"),
+    attemptId: z.string().trim().min(1),
+    outcome: z.literal("supported"),
+    text: z.string().trim().min(1),
+    citations: z.array(ChatCitationSchema).min(1),
+    createdAt: z.string().datetime(),
+  }).strict(),
+  z.object({
+    id: z.string().trim().min(1),
+    role: z.literal("assistant"),
+    attemptId: z.string().trim().min(1),
+    outcome: z.literal("insufficient_evidence"),
+    text: z.null(),
+    citations: z.array(ChatCitationSchema).length(0),
+    createdAt: z.string().datetime(),
+  }).strict(),
+]);
+
+const ChatAttemptSchema = z.object({
+  id: z.string().trim().min(1),
+  userMessageId: z.string().trim().min(1),
+  status: z.enum(CHAT_ATTEMPT_STATUSES),
+  provider: z.string().trim().min(1),
+  model: z.string().trim().min(1),
+  retrievedSegmentIds: z.array(z.string().trim().min(1)),
+  startedAt: z.string().datetime(),
+  completedAt: z.string().datetime().nullable(),
+  failureReason: z.string().trim().min(1).nullable(),
+}).strict().superRefine((attempt, context) => {
+  if (new Set(attempt.retrievedSegmentIds).size !== attempt.retrievedSegmentIds.length) {
+    context.addIssue({ code: "custom", path: ["retrievedSegmentIds"], message: "Retrieved chat segment IDs must be unique" });
+  }
+  if (attempt.status === "running" && (attempt.completedAt !== null || attempt.failureReason !== null)) {
+    context.addIssue({ code: "custom", path: ["completedAt"], message: "Running chat attempt cannot be complete or failed" });
+  }
+  if (attempt.status === "completed" && (attempt.completedAt === null || attempt.failureReason !== null)) {
+    context.addIssue({ code: "custom", path: ["completedAt"], message: "Completed chat attempt requires completion time and no failure" });
+  }
+  if (attempt.status === "failed" && (attempt.completedAt === null || attempt.failureReason === null)) {
+    context.addIssue({ code: "custom", path: ["failureReason"], message: "Failed chat attempt requires completion time and retry reason" });
+  }
+});
+
+const ChatThreadSchema = z.object({
+  id: z.string().trim().min(1),
+  meetingId: z.string().trim().min(1),
+  status: z.enum(CHAT_THREAD_STATUSES),
+  messages: z.array(ChatMessageSchema),
+  attempts: z.array(ChatAttemptSchema),
+  activeAttemptId: z.string().trim().min(1).nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+}).strict().superRefine((thread, context) => {
+  const messageIds = new Set<string>();
+  thread.messages.forEach((message, index) => {
+    if (messageIds.has(message.id)) context.addIssue({ code: "custom", path: ["messages", index, "id"], message: `Duplicate chat message id: ${message.id}` });
+    messageIds.add(message.id);
+  });
+  const attemptIds = new Set<string>();
+  thread.attempts.forEach((attempt, index) => {
+    if (attemptIds.has(attempt.id)) context.addIssue({ code: "custom", path: ["attempts", index, "id"], message: `Duplicate chat attempt id: ${attempt.id}` });
+    attemptIds.add(attempt.id);
+    const userIndex = thread.messages.findIndex((message) => message.id === attempt.userMessageId && message.role === "user");
+    if (userIndex < 0) context.addIssue({ code: "custom", path: ["attempts", index, "userMessageId"], message: `Chat attempt ${attempt.id} references a missing user message` });
+    const assistantIndexes = thread.messages.flatMap((message, messageIndex) =>
+      message.role === "assistant" && message.attemptId === attempt.id ? [messageIndex] : []);
+    if (attempt.status === "completed" && assistantIndexes.length !== 1) {
+      context.addIssue({ code: "custom", path: ["attempts", index], message: `Completed chat attempt ${attempt.id} requires exactly one assistant answer` });
+    }
+    if (attempt.status !== "completed" && assistantIndexes.length !== 0) {
+      context.addIssue({ code: "custom", path: ["attempts", index], message: `Unfinished chat attempt ${attempt.id} cannot own an assistant answer` });
+    }
+    if (assistantIndexes.some((assistantIndex) => assistantIndex <= userIndex)) {
+      context.addIssue({ code: "custom", path: ["messages"], message: `Assistant answer for ${attempt.id} must follow its user question` });
+    }
+  });
+  thread.messages.forEach((message, index) => {
+    if (message.role !== "assistant") return;
+    const attempt = thread.attempts.find((candidate) => candidate.id === message.attemptId);
+    if (!attempt) context.addIssue({ code: "custom", path: ["messages", index, "attemptId"], message: `Assistant message references missing attempt ${message.attemptId}` });
+    const citationIds = message.citations.map((citation) => citation.segmentId);
+    if (new Set(citationIds).size !== citationIds.length) context.addIssue({ code: "custom", path: ["messages", index, "citations"], message: "Assistant citations must be unique" });
+    if (message.outcome === "supported" && citationIds.length === 0) context.addIssue({ code: "custom", path: ["messages", index, "citations"], message: "Supported answer requires at least one citation" });
+    if (message.outcome === "insufficient_evidence" && citationIds.length !== 0) context.addIssue({ code: "custom", path: ["messages", index, "citations"], message: "Insufficient-evidence answer cannot contain citations" });
+    if (attempt && citationIds.some((segmentId) => !attempt.retrievedSegmentIds.includes(segmentId))) {
+      context.addIssue({ code: "custom", path: ["messages", index, "citations"], message: "Assistant cited a segment not retrieved during its attempt" });
+    }
+  });
+  const running = thread.attempts.filter((attempt) => attempt.status === "running");
+  if (thread.status === "running" && (running.length !== 1 || running[0]?.id !== thread.activeAttemptId)) {
+    context.addIssue({ code: "custom", path: ["activeAttemptId"], message: "Running chat thread requires exactly one matching active attempt" });
+  }
+  if (thread.status !== "running" && (thread.activeAttemptId !== null || running.length !== 0)) {
+    context.addIssue({ code: "custom", path: ["activeAttemptId"], message: "Only a running chat thread can own an active attempt" });
+  }
+  const latest = thread.attempts.at(-1);
+  if (thread.status === "failed" && latest?.status !== "failed") context.addIssue({ code: "custom", path: ["status"], message: "Failed chat thread requires the latest failed attempt" });
+  if (thread.status === "ready" && latest && latest.status !== "completed") context.addIssue({ code: "custom", path: ["status"], message: "Ready non-empty chat thread requires the latest completed attempt" });
+});
+
+const MeetingStateSchema = z.object({
+  version: z.literal(4),
+  meetings: z.array(MeetingSchema),
+  recordings: z.array(RecordingSchema),
+  transcripts: z.array(TranscriptSchema).optional(),
+  cloudConsent: z.object({ status: z.literal("granted"), grantedAt: z.string().datetime() }).strict().optional(),
+  chatThreads: z.array(ChatThreadSchema).optional(),
+}).strict().superRefine((state, context) => {
+  const v3Shape = {
+    version: 3 as const,
+    meetings: state.meetings,
+    recordings: state.recordings,
+    ...(state.transcripts ? { transcripts: state.transcripts } : {}),
+    ...(state.cloudConsent ? { cloudConsent: state.cloudConsent } : {}),
+  };
+  const v3 = StateV3Schema.safeParse(v3Shape);
+  if (!v3.success) {
+    for (const issue of v3.error.issues) context.addIssue({ ...issue, path: issue.path });
+  }
+  const threadIds = new Set<string>();
+  const threadMeetingIds = new Set<string>();
+  for (const [index, thread] of (state.chatThreads ?? []).entries()) {
+    if (threadIds.has(thread.id)) context.addIssue({ code: "custom", path: ["chatThreads", index, "id"], message: `Duplicate chat thread id: ${thread.id}` });
+    threadIds.add(thread.id);
+    if (threadMeetingIds.has(thread.meetingId)) context.addIssue({ code: "custom", path: ["chatThreads", index, "meetingId"], message: `Meeting has more than one V1 chat thread: ${thread.meetingId}` });
+    threadMeetingIds.add(thread.meetingId);
+    if (!state.meetings.some((meeting) => meeting.id === thread.meetingId)) context.addIssue({ code: "custom", path: ["chatThreads", index, "meetingId"], message: `Chat thread references missing meeting ${thread.meetingId}` });
+    const transcript = state.transcripts?.find((candidate) => candidate.meetingId === thread.meetingId);
+    if (!transcript || transcript.status !== "ready" || transcript.publication === null) {
+      context.addIssue({ code: "custom", path: ["chatThreads", index, "meetingId"], message: `Chat thread ${thread.id} requires its meeting's immutable ready transcript` });
+      continue;
+    }
+    const segmentIds = new Set(transcript.checkpoints.map((checkpoint) => checkpoint.range.segmentId));
+    for (const [attemptIndex, attempt] of thread.attempts.entries()) {
+      const invalid = attempt.retrievedSegmentIds.find((segmentId) => !segmentIds.has(segmentId));
+      if (invalid) context.addIssue({ code: "custom", path: ["chatThreads", index, "attempts", attemptIndex, "retrievedSegmentIds"], message: `Retrieved segment does not resolve through meeting ${thread.meetingId}: ${invalid}` });
+    }
+    for (const [messageIndex, message] of thread.messages.entries()) {
+      if (message.role !== "assistant") continue;
+      const invalid = message.citations.find((citation) => !segmentIds.has(citation.segmentId));
+      if (invalid) context.addIssue({ code: "custom", path: ["chatThreads", index, "messages", messageIndex, "citations"], message: `Citation does not resolve through meeting ${thread.meetingId}: ${invalid.segmentId}` });
+    }
+  }
+});
+
 function recordingParentStatuses(recording: { status: RecordingSession["status"]; finalization: unknown | null }): readonly MeetingStatus[] {
   if (recording.status === "saved") return ["processing", "ready", "archived"];
   return recording.finalization === null ? ["recording"] : ["processing"];
 }
 
 interface MeetingState {
-  version: 3;
+  version: 4;
   meetings: Meeting[];
   recordings: RecordingSession[];
   transcripts: TranscriptState[];
   cloudConsent: { status: "granted"; grantedAt: string } | null;
+  chatThreads: MeetingChatThread[];
 }
 
 export class MeetingStoreCorruptError extends Error {
@@ -695,6 +864,125 @@ export class MeetingStore {
     if (!transcript) throw new Error(`Transcript not found for meeting: ${meetingId}`);
     await this.assertTranscriptSidecar(transcript);
     return resolveTranscriptCitation(transcript, { meetingId, segmentId });
+  }
+
+  async listChatThreads(): Promise<MeetingChatThread[]> {
+    await this.mutationTail;
+    const state = await this.readState();
+    for (const thread of state.chatThreads) {
+      await this.assertTranscriptSidecar(this.chatTranscript(state, thread));
+    }
+    return state.chatThreads.map((thread) => structuredClone(thread));
+  }
+
+  async getChatThread(meetingId: string): Promise<MeetingChatThread | null> {
+    await this.mutationTail;
+    const state = await this.readState();
+    const thread = state.chatThreads.find((candidate) => candidate.meetingId === meetingId);
+    if (!thread) return null;
+    await this.assertTranscriptSidecar(this.chatTranscript(state, thread));
+    return structuredClone(thread);
+  }
+
+  startChatQuestion(input: {
+    meetingId: string;
+    question: string;
+    provider: string;
+    model: string;
+    threadId?: string;
+    userMessageId?: string;
+    attemptId?: string;
+  }): Promise<MeetingChatThread> {
+    return this.mutate(async (state) => {
+      const meeting = state.meetings.find((candidate) => candidate.id === input.meetingId);
+      if (!meeting || (meeting.status !== "ready" && meeting.status !== "archived")) {
+        throw new Error(`Chat requires a ready meeting: ${input.meetingId}`);
+      }
+      const transcript = state.transcripts.find((candidate) => candidate.meetingId === input.meetingId);
+      if (!transcript || transcript.status !== "ready" || !transcript.publication) {
+        throw new Error(`Chat requires the immutable ready transcript for meeting: ${input.meetingId}`);
+      }
+      await this.assertTranscriptSidecar(transcript);
+      let threadIndex = state.chatThreads.findIndex((candidate) => candidate.meetingId === input.meetingId);
+      if (threadIndex < 0) {
+        const thread = createMeetingChatThread({
+          id: input.threadId ?? this.createId(), meetingId: input.meetingId, now: this.now(),
+        });
+        if (state.chatThreads.some((candidate) => candidate.id === thread.id)) {
+          throw new Error(`Chat thread already exists: ${thread.id}`);
+        }
+        state.chatThreads.push(thread);
+        threadIndex = state.chatThreads.length - 1;
+      }
+      const next = startChatQuestion(state.chatThreads[threadIndex]!, {
+        userMessageId: input.userMessageId ?? this.createId(),
+        attemptId: input.attemptId ?? this.createId(),
+        question: input.question,
+        provider: input.provider,
+        model: input.model,
+        now: this.now(),
+      });
+      state.chatThreads[threadIndex] = next;
+      return structuredClone(next);
+    });
+  }
+
+  recordChatRetrieval(
+    meetingId: string,
+    attemptId: string,
+    segmentIds: readonly string[],
+  ): Promise<MeetingChatThread> {
+    return this.changeChatThread(meetingId, async (state, thread) => {
+      const transcript = this.chatTranscript(state, thread);
+      await this.assertTranscriptSidecar(transcript);
+      return recordChatRetrieval(thread, {
+        attemptId, segmentIds, availableSegmentIds: this.transcriptSegmentIds(transcript), now: this.now(),
+      });
+    });
+  }
+
+  completeChatTurn(meetingId: string, input: {
+    attemptId: string;
+    assistantMessageId?: string;
+  } & (
+    | { outcome: "supported"; text: string; citationSegmentIds: readonly string[] }
+    | { outcome: "insufficient_evidence"; text?: null; citationSegmentIds: readonly [] }
+  )): Promise<MeetingChatThread> {
+    return this.changeChatThread(meetingId, async (state, thread) => {
+      const transcript = this.chatTranscript(state, thread);
+      await this.assertTranscriptSidecar(transcript);
+      return completeChatAttempt(thread, {
+        ...input,
+        assistantMessageId: input.assistantMessageId ?? this.createId(),
+        availableSegmentIds: this.transcriptSegmentIds(transcript),
+        now: this.now(),
+      });
+    });
+  }
+
+  failChatTurn(meetingId: string, attemptId: string, reason: string): Promise<MeetingChatThread> {
+    return this.changeChatThread(meetingId, async (_state, thread) =>
+      failChatAttempt(thread, { attemptId, reason, now: this.now() }));
+  }
+
+  retryChatTurn(meetingId: string, input: {
+    attemptId?: string;
+    provider: string;
+    model: string;
+  }): Promise<MeetingChatThread> {
+    return this.changeChatThread(meetingId, async (state, thread) => {
+      await this.assertTranscriptSidecar(this.chatTranscript(state, thread));
+      return retryChatAttempt(thread, {
+        attemptId: input.attemptId ?? this.createId(), provider: input.provider, model: input.model, now: this.now(),
+      });
+    });
+  }
+
+  reconcileChatAfterRestart(): Promise<MeetingChatThread[]> {
+    return this.mutate(async (state) => {
+      state.chatThreads = state.chatThreads.map((thread) => reconcileChatAfterRestart(thread, this.now()));
+      return state.chatThreads.map((thread) => structuredClone(thread));
+    });
   }
 
   migrateSchemaV1(): Promise<void> {
@@ -943,6 +1231,34 @@ export class MeetingStore {
     });
   }
 
+  private changeChatThread(
+    meetingId: string,
+    change: (state: MeetingState, thread: MeetingChatThread) => Promise<MeetingChatThread>,
+  ): Promise<MeetingChatThread> {
+    return this.mutate(async (state) => {
+      const index = state.chatThreads.findIndex((thread) => thread.meetingId === meetingId);
+      if (index < 0) throw new Error(`Chat thread not found for meeting: ${meetingId}`);
+      const next = await change(state, state.chatThreads[index]!);
+      state.chatThreads[index] = next;
+      return structuredClone(next);
+    });
+  }
+
+  private chatTranscript(state: MeetingState, thread: MeetingChatThread): TranscriptState {
+    const transcript = state.transcripts.find((candidate) => candidate.meetingId === thread.meetingId);
+    if (!transcript || transcript.status !== "ready" || !transcript.publication) {
+      throw new MeetingStoreCorruptError(
+        this.filePath,
+        new Error(`Chat thread ${thread.id} requires the immutable ready transcript for meeting ${thread.meetingId}`),
+      );
+    }
+    return transcript;
+  }
+
+  private transcriptSegmentIds(transcript: TranscriptState): string[] {
+    return transcript.checkpoints.map((checkpoint) => checkpoint.range.segmentId);
+  }
+
   private transcriptIndex(state: MeetingState, id: string): number {
     const index = state.transcripts.findIndex((transcript) => transcript.id === id);
     if (index < 0) throw new Error(`Transcript not found: ${id}`);
@@ -1099,22 +1415,32 @@ export class MeetingStore {
     try {
       contents = await readFile(this.filePath, "utf8");
     } catch (error) {
-      if (isErrno(error, "ENOENT")) return { version: 3, meetings: [], recordings: [], transcripts: [], cloudConsent: null };
+      if (isErrno(error, "ENOENT")) return { version: 4, meetings: [], recordings: [], transcripts: [], cloudConsent: null, chatThreads: [] };
       throw error;
     }
     try {
       const decoded: unknown = JSON.parse(contents);
       const v1 = StateV1Schema.safeParse(decoded);
-      if (v1.success) return { version: 3, meetings: v1.data.meetings, recordings: [], transcripts: [], cloudConsent: null };
+      if (v1.success) return { version: 4, meetings: v1.data.meetings, recordings: [], transcripts: [], cloudConsent: null, chatThreads: [] };
       const v2 = MeetingStateV2Schema.safeParse(decoded);
       if (v2.success) return migrateV2(v2.data);
+      const v3 = StateV3Schema.safeParse(decoded);
+      if (v3.success) return {
+        version: 4,
+        meetings: v3.data.meetings,
+        recordings: v3.data.recordings,
+        transcripts: v3.data.transcripts ?? [],
+        cloudConsent: v3.data.cloudConsent ?? null,
+        chatThreads: [],
+      };
       const parsed = MeetingStateSchema.parse(decoded);
       return {
-        version: 3,
+        version: 4,
         meetings: parsed.meetings,
         recordings: parsed.recordings,
         transcripts: parsed.transcripts ?? [],
         cloudConsent: parsed.cloudConsent ?? null,
+        chatThreads: parsed.chatThreads ?? [],
       };
     } catch (error) {
       throw new MeetingStoreCorruptError(this.filePath, error);
@@ -1128,6 +1454,7 @@ export class MeetingStore {
       recordings: state.recordings,
       ...(state.transcripts.length > 0 ? { transcripts: state.transcripts } : {}),
       ...(state.cloudConsent ? { cloudConsent: state.cloudConsent } : {}),
+      ...(state.chatThreads.length > 0 ? { chatThreads: state.chatThreads } : {}),
     });
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const temporaryPath = path.join(this.root, `.meetings.${process.pid}.${randomUUID()}.tmp`);
@@ -1174,10 +1501,11 @@ async function fileIdentity(filePath: string): Promise<{ byteLength: number; sha
 
 function migrateV2(state: z.infer<typeof MeetingStateV2Schema>): MeetingState {
   return {
-    version: 3,
+    version: 4,
     meetings: state.meetings,
     transcripts: [],
     cloudConsent: null,
+    chatThreads: [],
     recordings: state.recordings.map((recording) => {
       const microphoneCount = recording.chunks.filter((chunk) => chunk.source === "microphone").length;
       const systemCount = recording.chunks.length - microphoneCount;
