@@ -26,7 +26,7 @@
     "test": "vitest run --config vitest.config.ts",
     "test:focused": "vitest run --config vitest.config.ts packages/meeting-domain packages/meeting-store packages/meeting-surface packages/meetless-client packages/meetless-plugin packages/meetless-app packages/runtime",
     "validate:isolation": "node packages/runtime/dist/source-guard.js && node packages/runtime/dist/app-boundary.js && vitest run --config vitest.config.ts packages/runtime/test/isolation.test.ts packages/runtime/test/source-guard.test.ts packages/runtime/test/app-boundary.test.ts packages/runtime/test/lifecycle.test.ts packages/runtime/test/proof-publication.test.ts packages/runtime/test/ui-test-envelope.test.ts packages/runtime/test/post-m3-correlation.test.ts packages/runtime/test/post-m3-cleanup.test.ts",
-    "test:composition": "vitest run --config vitest.config.ts test/composition/meeting-path.test.ts --maxWorkers=1",
+    "test:composition": "vitest run --config vitest.config.ts test/composition --maxWorkers=1",
     "test:post-m3": "vitest run --config vitest.config.ts packages/runtime/test/ui-test-envelope.test.ts packages/runtime/test/post-m3-correlation.test.ts packages/runtime/test/post-m3-cleanup.test.ts packages/runtime/test/source-guard.test.ts packages/meeting-surface/test/surface.test.tsx",
     "check": "npm run typecheck && npm run test && npm run build",
     "runtime:daemon": "node packages/runtime/dist/cli.js daemon",

@@ -16,11 +16,15 @@ describe("Meetless plugin contribution", () => {
       "meeting.transcript",
       "meeting.transcription.consent",
       "meeting.citation.resolve",
+      "meeting.chat.providers",
+      "meeting.chat.get",
+      "meeting.chat.ask",
+      "meeting.chat.retry",
       "runtime.readiness.bootstrap",
     ]);
     expect(addSurface).not.toHaveBeenCalled();
     expect(addSidebarItem).not.toHaveBeenCalled();
-    expect(cleanup()).toBeUndefined();
+    await expect(cleanup()).resolves.toBeUndefined();
     expect(handle.mock.calls.map(([rpc]) => rpc.name)).not.toContain("recording.start");
     const readiness = handle.mock.calls.find(([rpc]) => rpc.name === "runtime.readiness.bootstrap")![0];
     expect(() => readiness.input.parse({ nonce: randomUUID() })).toThrow();

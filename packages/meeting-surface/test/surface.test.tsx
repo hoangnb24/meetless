@@ -146,6 +146,66 @@ describe("companion meeting surface", () => {
     expect(onCitation).toHaveBeenCalledWith({ meetingId: "m-1", segmentId: "segment-1" });
     renderer!.unmount();
   });
+
+  test("renders durable chat, canonical insufficient evidence, and retry state", async () => {
+    const onRetry = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          canCreate={false} compact connectionLabel="Connected" hostLabel="isolated host"
+          meetings={[meeting("m-1")]} onRefresh={async () => undefined}
+          selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
+          chatProviders={[{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }]}
+          chatProvider="codex" chatModel="gpt-5"
+          chatThread={{
+            meetingId: "m-1", status: "failed",
+            messages: [
+              { role: "user", text: "Unknown?", createdAt: "2026-08-21T00:00:00.000Z" },
+              { role: "assistant", outcome: "insufficient_evidence", text: null, citations: [], createdAt: "2026-08-21T00:00:01.000Z" },
+            ],
+            selection: { provider: "codex", model: "gpt-5" },
+            failure: { message: "provider timeout", retryable: true },
+          }}
+          onRetryQuestion={onRetry}
+        />,
+      );
+    });
+    expect(renderer!.root.findByProps({ testID: "meeting-chat" })).toBeTruthy();
+    expect(renderer!.root.findAllByType("Text").some((node) =>
+      node.props.children === "The meeting does not contain enough evidence.")).toBe(true);
+    await act(async () => { renderer!.root.findByProps({ testID: "chat-retry" }).props.onPress(); });
+    expect(onRetry).toHaveBeenCalledOnce();
+    renderer!.unmount();
+  });
+
+  test("submits a selected-model question and forwards only the chat citation identity", async () => {
+    const onAsk = vi.fn(async () => undefined);
+    const onCitation = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          canCreate={false} compact connectionLabel="Connected" hostLabel="isolated host"
+          meetings={[meeting("m-1")]} onRefresh={async () => undefined}
+          selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
+          chatProviders={[{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }]}
+          chatProvider="codex" chatModel="gpt-5" onAskQuestion={onAsk} onCitation={onCitation}
+          chatThread={{
+            meetingId: "m-1", status: "ready",
+            messages: [{ role: "assistant", outcome: "supported", text: "Decision", citations: [{ meetingId: "m-1", segmentId: "segment-1" }], createdAt: "2026-08-21T00:00:01.000Z" }],
+            selection: { provider: "codex", model: "gpt-5" }, failure: null,
+          }}
+        />,
+      );
+    });
+    await act(async () => { renderer!.root.findByProps({ testID: "chat-question-input" }).props.onChangeText(" Next step? "); });
+    await act(async () => { renderer!.root.findByProps({ testID: "chat-ask" }).props.onPress(); });
+    expect(onAsk).toHaveBeenCalledWith("Next step?");
+    await act(async () => { renderer!.root.findByProps({ testID: "chat-citation-segment-1" }).props.onPress(); });
+    expect(onCitation).toHaveBeenCalledWith({ meetingId: "m-1", segmentId: "segment-1" });
+    renderer!.unmount();
+  });
 });
 
 describe("responsive meeting sidebar and transcript detail", () => {

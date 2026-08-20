@@ -120,6 +120,100 @@ export const MeetingCitationResolveRpc = defineRpc({
 
 export type CitationWire = z.infer<typeof MeetingCitationResolveRpc.output>;
 
+export const ChatProviderModelWireSchema = z.object({
+  id: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+  isDefault: z.boolean(),
+}).strict();
+
+export const ChatProviderWireSchema = z.object({
+  id: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+  models: z.array(ChatProviderModelWireSchema).min(1),
+}).strict();
+
+export type ChatProviderWire = z.infer<typeof ChatProviderWireSchema>;
+
+const ChatUserMessageWireSchema = z.object({
+  role: z.literal("user"),
+  text: z.string().trim().min(1),
+  createdAt: z.string().datetime(),
+}).strict();
+
+const ChatSupportedMessageWireSchema = z.object({
+  role: z.literal("assistant"),
+  outcome: z.literal("supported"),
+  text: z.string().trim().min(1),
+  citations: z.array(z.object({
+    meetingId: z.string().trim().min(1),
+    segmentId: z.string().trim().min(1),
+  }).strict()).min(1),
+  createdAt: z.string().datetime(),
+}).strict();
+
+const ChatInsufficientMessageWireSchema = z.object({
+  role: z.literal("assistant"),
+  outcome: z.literal("insufficient_evidence"),
+  text: z.null(),
+  citations: z.array(z.never()).length(0),
+  createdAt: z.string().datetime(),
+}).strict();
+
+export const ChatMessageWireSchema = z.union([
+  ChatUserMessageWireSchema,
+  ChatSupportedMessageWireSchema,
+  ChatInsufficientMessageWireSchema,
+]);
+
+export const MeetingChatThreadWireSchema = z.object({
+  meetingId: z.string().trim().min(1),
+  status: z.enum(["ready", "running", "failed"]),
+  messages: z.array(ChatMessageWireSchema),
+  selection: z.object({
+    provider: z.string().trim().min(1),
+    model: z.string().trim().min(1),
+  }).strict().nullable(),
+  failure: z.object({
+    message: z.string().trim().min(1),
+    retryable: z.literal(true),
+  }).strict().nullable(),
+}).strict();
+
+export type MeetingChatThreadWire = z.infer<typeof MeetingChatThreadWireSchema>;
+
+export const MeetingChatProvidersRpc = defineRpc({
+  name: "meeting.chat.providers",
+  input: z.object({}).strict(),
+  output: z.object({
+    providers: z.array(ChatProviderWireSchema),
+    compatibilityCheck: z.literal("on_question_start"),
+  }).strict(),
+});
+
+export const MeetingChatGetRpc = defineRpc({
+  name: "meeting.chat.get",
+  input: z.object({ meetingId: z.string().trim().min(1) }).strict(),
+  output: z.object({ thread: MeetingChatThreadWireSchema.nullable() }).strict(),
+});
+
+const ChatQuestionInputSchema = z.object({
+  meetingId: z.string().trim().min(1),
+  provider: z.string().trim().min(1),
+  model: z.string().trim().min(1),
+}).strict();
+
+export const MeetingChatAskRpc = defineRpc({
+  name: "meeting.chat.ask",
+  input: ChatQuestionInputSchema.extend({ question: z.string().trim().min(1).max(4_000) }).strict(),
+  output: MeetingChatThreadWireSchema,
+});
+
+export const MeetingChatRetryRpc = defineRpc({
+  name: "meeting.chat.retry",
+  input: ChatQuestionInputSchema,
+  output: MeetingChatThreadWireSchema,
+});
+
 export const RecordingChunkWireSchema = z.object({
   id: z.string().trim().min(1),
   source: z.enum(["microphone", "system"]),

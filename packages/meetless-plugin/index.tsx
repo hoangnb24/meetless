@@ -1,5 +1,9 @@
 import type { PluginContext } from "@paseo/plugin";
 import {
+  MeetingChatAskRpc,
+  MeetingChatGetRpc,
+  MeetingChatProvidersRpc,
+  MeetingChatRetryRpc,
   MeetingCitationResolveRpc,
   MeetingCreateRpc,
   MeetingListRpc,
@@ -10,6 +14,7 @@ import { RecordingRuntimeBootstrapRpc } from "./src/readiness-protocol.js";
 
 export default function contribute(plugin: PluginContext) {
   let cleanup: (() => Promise<void>) | null = null;
+  let chatCleanup: (() => Promise<void>) | null = null;
   plugin.handle(MeetingCreateRpc, async ({ title }) => {
     const server = await import("./src/server.js");
     return server.getMeetingStore().create({ title });
@@ -40,6 +45,29 @@ export default function contribute(plugin: PluginContext) {
     const server = await import("./src/server.js");
     return server.getCitationPlaybackService().resolve({ meetingId, segmentId });
   });
+  plugin.handle(MeetingChatProvidersRpc, async (_input, { paseo }) => {
+    const server = await import("./src/server.js");
+    chatCleanup = server.stopMeetingChatService;
+    return {
+      providers: await (await server.getMeetingChatService(paseo)).providers(),
+      compatibilityCheck: "on_question_start" as const,
+    };
+  });
+  plugin.handle(MeetingChatGetRpc, async ({ meetingId }, { paseo }) => {
+    const server = await import("./src/server.js");
+    chatCleanup = server.stopMeetingChatService;
+    return { thread: await (await server.getMeetingChatService(paseo)).get(meetingId) };
+  });
+  plugin.handle(MeetingChatAskRpc, async (input, { paseo }) => {
+    const server = await import("./src/server.js");
+    chatCleanup = server.stopMeetingChatService;
+    return (await server.getMeetingChatService(paseo)).ask(input);
+  });
+  plugin.handle(MeetingChatRetryRpc, async (input, { paseo }) => {
+    const server = await import("./src/server.js");
+    chatCleanup = server.stopMeetingChatService;
+    return (await server.getMeetingChatService(paseo)).retry(input);
+  });
   plugin.handle(RecordingRuntimeBootstrapRpc, async ({ nonce, deadlineEpochMs }) => {
     const server = await import("./src/server.js");
     await server.startRecordingRuntime(deadlineEpochMs);
@@ -47,7 +75,10 @@ export default function contribute(plugin: PluginContext) {
     const identity = server.recordingRuntimeIdentity();
     return { nonce, runtimeInstanceId: identity.instanceId, pluginPid: process.pid };
   });
-  return () => cleanup?.();
+  return async () => {
+    await chatCleanup?.();
+    await cleanup?.();
+  };
 }
 
 function toTranscriptWire(transcript: import("@meetless/meeting-domain").TranscriptState) {

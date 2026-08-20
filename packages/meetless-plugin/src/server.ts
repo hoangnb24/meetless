@@ -15,6 +15,12 @@ import {
 import { CitationPlaybackService, FfmpegCitationClipEncoder } from "./citation-playback.js";
 import { PrivateAudioSnapshotStore } from "./private-audio-snapshot.js";
 import { UiTestIdentitySchema, type UiTestIdentity } from "./readiness-protocol.js";
+import type { PluginHandlerContext } from "@paseo/plugin";
+import {
+  MeetingChatService,
+  PaseoMeetingChatAgentPort,
+  resolveChatExecutionRoot,
+} from "./chat-service.js";
 
 let store: MeetingStore | null = null;
 let recordingService: RecordingService | null = null;
@@ -23,6 +29,7 @@ let transcriptionService: TranscriptionService | null = null;
 let citationPlaybackService: CitationPlaybackService | null = null;
 let recordingStart: Promise<void> | null = null;
 let runtimeIdentity: { instanceId: string; startedAt: string; uiTest: UiTestIdentity | null } | null = null;
+let chatService: MeetingChatService | null = null;
 
 export function getMeetingStore(): MeetingStore {
   if (store) return store;
@@ -34,6 +41,23 @@ export function getMeetingStore(): MeetingStore {
   }
   store = new MeetingStore({ root: configuredRoot });
   return store;
+}
+
+export async function getMeetingChatService(
+  paseo: PluginHandlerContext["paseo"],
+): Promise<MeetingChatService> {
+  chatService ??= new MeetingChatService(
+    getMeetingStore(),
+    new PaseoMeetingChatAgentPort(paseo, resolveChatExecutionRoot()),
+  );
+  await chatService.initialize();
+  return chatService;
+}
+
+export async function stopMeetingChatService(): Promise<void> {
+  const current = chatService;
+  chatService = null;
+  await current?.close();
 }
 
 export async function startRecordingRuntime(deadlineEpochMs = Number.POSITIVE_INFINITY): Promise<void> {

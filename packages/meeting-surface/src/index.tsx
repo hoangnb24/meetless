@@ -1,6 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import type { MeetingWire } from "@meetless/meeting-contracts";
+import type {
+  ChatProviderWire,
+  MeetingChatThreadWire,
+  MeetingWire,
+} from "@meetless/meeting-contracts";
 import type { RecordingStatusWire } from "@meetless/meeting-contracts";
 import type { CitationWire, TranscriptWire, TranscriptionProviderStatusWire } from "@meetless/meeting-contracts";
 
@@ -104,6 +108,15 @@ export interface MeetingListSurfaceProps {
   onBack?(): void;
   onGrantTranscriptionConsent?(): Promise<void>;
   onCitation?(citation: Pick<CitationWire, "meetingId" | "segmentId">): void | Promise<void>;
+  chatProviders?: ChatProviderWire[];
+  chatThread?: MeetingChatThreadWire | null;
+  chatLoading?: boolean;
+  chatError?: string | null;
+  chatProvider?: string | null;
+  chatModel?: string | null;
+  onChatSelection?(provider: string, model: string): void;
+  onAskQuestion?(question: string): Promise<void>;
+  onRetryQuestion?(): Promise<void>;
 }
 
 export function MeetingListSurface({
@@ -126,6 +139,15 @@ export function MeetingListSurface({
   onBack,
   onGrantTranscriptionConsent,
   onCitation,
+  chatProviders = [],
+  chatThread = null,
+  chatLoading = false,
+  chatError = null,
+  chatProvider = null,
+  chatModel = null,
+  onChatSelection,
+  onAskQuestion,
+  onRetryQuestion,
 }: MeetingListSurfaceProps) {
   const [title, setTitle] = useState("");
   const create = useCallback(async () => {
@@ -171,6 +193,15 @@ export function MeetingListSurface({
       transcript={transcript}
       transcriptError={transcriptError}
       transcriptLoading={transcriptLoading}
+      chatProviders={chatProviders}
+      chatThread={chatThread}
+      chatLoading={chatLoading}
+      chatError={chatError}
+      chatProvider={chatProvider}
+      chatModel={chatModel}
+      onChatSelection={onChatSelection}
+      onAskQuestion={onAskQuestion}
+      onRetryQuestion={onRetryQuestion}
     />
   );
 
@@ -321,6 +352,15 @@ interface MeetingDetailProps {
   transcript: TranscriptWire | null;
   transcriptError: string | null;
   transcriptLoading: boolean;
+  chatProviders: ChatProviderWire[];
+  chatThread: MeetingChatThreadWire | null;
+  chatLoading: boolean;
+  chatError: string | null;
+  chatProvider: string | null;
+  chatModel: string | null;
+  onChatSelection?: (provider: string, model: string) => void;
+  onAskQuestion?: (question: string) => Promise<void>;
+  onRetryQuestion?: () => Promise<void>;
 }
 
 function MeetingDetail({
@@ -336,6 +376,15 @@ function MeetingDetail({
   transcript,
   transcriptError,
   transcriptLoading,
+  chatProviders,
+  chatThread,
+  chatLoading,
+  chatError,
+  chatProvider,
+  chatModel,
+  onChatSelection,
+  onAskQuestion,
+  onRetryQuestion,
 }: MeetingDetailProps) {
   if (!selectedMeetingId && !transcript) {
     return (
@@ -390,7 +439,135 @@ function MeetingDetail({
           transcriptLoading={transcriptLoading}
           providerStatus={providerStatus}
         />
+        {transcript?.status === "ready" ? (
+          <MeetingChatPanel
+            error={chatError}
+            loading={chatLoading}
+            model={chatModel}
+            onAsk={onAskQuestion}
+            onCitation={onCitation}
+            onRetry={onRetryQuestion}
+            onSelection={onChatSelection}
+            provider={chatProvider}
+            providers={chatProviders}
+            thread={chatThread}
+          />
+        ) : null}
       </ScrollView>
+    </View>
+  );
+}
+
+function MeetingChatPanel({
+  error,
+  loading,
+  model,
+  onAsk,
+  onCitation,
+  onRetry,
+  onSelection,
+  provider,
+  providers,
+  thread,
+}: {
+  error: string | null;
+  loading: boolean;
+  model: string | null;
+  onAsk?: (question: string) => Promise<void>;
+  onCitation?: (citation: Pick<CitationWire, "meetingId" | "segmentId">) => void | Promise<void>;
+  onRetry?: () => Promise<void>;
+  onSelection?: (provider: string, model: string) => void;
+  provider: string | null;
+  providers: ChatProviderWire[];
+  thread: MeetingChatThreadWire | null;
+}) {
+  const [question, setQuestion] = useState("");
+  const running = thread?.status === "running" || loading;
+  return (
+    <View style={styles.chat} testID="meeting-chat">
+      <Text style={styles.chatTitle}>Ask this meeting</Text>
+      <Text style={styles.chatHint}>Provider compatibility is checked when the question starts.</Text>
+      <View style={styles.chatChoices} testID="chat-provider-options">
+        {providers.map((option) => (
+          <View key={option.id} style={styles.chatChoiceGroup}>
+            <Text style={styles.chatChoiceLabel}>{option.label}</Text>
+            <View style={styles.chatModelRow}>
+              {option.models.map((candidate) => {
+                const selected = provider === option.id && model === candidate.id;
+                return (
+                  <Pressable
+                    key={candidate.id}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => onSelection?.(option.id, candidate.id)}
+                    style={[styles.chatModel, selected && styles.chatModelSelected]}
+                    testID={`chat-model-${option.id}-${candidate.id}`}
+                  >
+                    <Text style={styles.chatModelText}>{candidate.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ))}
+      </View>
+      <View style={styles.chatMessages} testID="chat-messages">
+        {(thread?.messages ?? []).map((message, index) => (
+          <View key={`${message.createdAt}-${index}`} style={message.role === "user" ? styles.chatUser : styles.chatAssistant}>
+            <Text style={styles.chatRole}>{message.role === "user" ? "You" : "Meetless"}</Text>
+            <Text style={styles.chatText}>
+              {message.role === "assistant" && message.outcome === "insufficient_evidence"
+                ? "The meeting does not contain enough evidence."
+                : message.text}
+            </Text>
+            {message.role === "assistant" && message.outcome === "supported" ? (
+              <View style={styles.chatCitations}>
+                {message.citations.map((citation) => (
+                  <Pressable
+                    key={citation.segmentId}
+                    accessibilityRole="button"
+                    onPress={() => void onCitation?.(citation)}
+                    style={styles.chatCitation}
+                    testID={`chat-citation-${citation.segmentId}`}
+                  >
+                    <Text style={styles.segmentRange}>Play citation</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        ))}
+      </View>
+      {thread?.failure ? (
+        <View style={styles.chatFailure} testID="chat-failure">
+          <Text style={styles.error}>{thread.failure.message}</Text>
+          <Pressable disabled={running || !provider || !model} onPress={() => void onRetry?.()} style={styles.refreshButton} testID="chat-retry">
+            <Text style={styles.refreshText}>Retry question</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {error ? <Text style={styles.error} testID="chat-error">{error}</Text> : null}
+      {running ? <Text style={styles.chatHint} testID="chat-running">Reading the meeting…</Text> : null}
+      <View style={styles.chatComposer}>
+        <TextInput
+          accessibilityLabel="Ask this meeting"
+          editable={!running}
+          onChangeText={setQuestion}
+          placeholder="Ask a question about this meeting"
+          placeholderTextColor="#777b82"
+          style={styles.chatInput}
+          testID="chat-question-input"
+          value={question}
+        />
+        <Pressable
+          disabled={running || !question.trim() || !provider || !model || !onAsk}
+          onPress={() => void onAsk?.(question.trim()).then(() => setQuestion(""))}
+          style={styles.button}
+          testID="chat-ask"
+        >
+          <Text style={styles.buttonText}>Ask</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -547,6 +724,26 @@ const styles = StyleSheet.create({
   segmentTimestamp: { alignSelf: "flex-start", borderRadius: 6, paddingHorizontal: 4, paddingVertical: 2 },
   segmentRange: { color: "#e99a74", fontSize: 12, fontVariant: ["tabular-nums"], textDecorationLine: "underline" },
   segmentText: { color: "#f4f1e8", lineHeight: 21 },
+  chat: { borderTopColor: "#34373d", borderTopWidth: 1, gap: 12, marginTop: 12, paddingTop: 20 },
+  chatTitle: { color: "#f4f1e8", fontSize: 18, fontWeight: "700" },
+  chatHint: { color: "#a9aaad", fontSize: 12 },
+  chatChoices: { gap: 10 },
+  chatChoiceGroup: { gap: 6 },
+  chatChoiceLabel: { color: "#d5d2cb", fontSize: 13, fontWeight: "600" },
+  chatModelRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  chatModel: { borderColor: "#454a53", borderRadius: 7, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 7 },
+  chatModelSelected: { backgroundColor: "#343840", borderColor: "#e66b3d" },
+  chatModelText: { color: "#f4f1e8", fontSize: 12 },
+  chatMessages: { gap: 8 },
+  chatUser: { alignSelf: "flex-end", backgroundColor: "#3a2a24", borderRadius: 10, gap: 4, maxWidth: "85%", padding: 10 },
+  chatAssistant: { alignSelf: "flex-start", backgroundColor: "#202226", borderRadius: 10, gap: 6, maxWidth: "92%", padding: 10 },
+  chatRole: { color: "#e99a74", fontSize: 11, fontWeight: "700", textTransform: "uppercase" },
+  chatText: { color: "#f4f1e8", lineHeight: 20 },
+  chatCitations: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  chatCitation: { borderColor: "#565b64", borderRadius: 6, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 5 },
+  chatFailure: { backgroundColor: "#2a2020", borderRadius: 8, gap: 8, padding: 10 },
+  chatComposer: { alignItems: "stretch", flexDirection: "row", gap: 8 },
+  chatInput: { backgroundColor: "#202226", borderColor: "#3a3d43", borderRadius: 10, borderWidth: 1, color: "#f4f1e8", flex: 1, minHeight: 46, paddingHorizontal: 14 },
 });
 
 function formatRange(startMs: number, endMs: number): string {

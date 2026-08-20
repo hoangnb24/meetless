@@ -1,6 +1,10 @@
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { callPluginRpc } from "@paseo/plugin/host";
 import {
+  MeetingChatAskRpc,
+  MeetingChatGetRpc,
+  MeetingChatProvidersRpc,
+  MeetingChatRetryRpc,
   MeetingCreateRpc,
   MeetingCitationResolveRpc,
   MeetingListRpc,
@@ -9,6 +13,8 @@ import {
   type MeetingWire,
   type TranscriptWire,
   type CitationWire,
+  type ChatProviderWire,
+  type MeetingChatThreadWire,
   type TranscriptionProviderStatusWire,
   RecordingControlResponseSchema,
   RecordingStatusEventSchema,
@@ -294,6 +300,55 @@ export class MeetlessClient {
     this.requireReady();
     return callPluginRpc(
       MeetingCitationResolveRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      input,
+    );
+  }
+
+  async listChatProviders(): Promise<{
+    providers: ChatProviderWire[];
+    compatibilityCheck: "on_question_start";
+  }> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingChatProvidersRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      {},
+    );
+  }
+
+  async getMeetingChat(meetingId: string): Promise<MeetingChatThreadWire | null> {
+    this.requireReady();
+    const output = await callPluginRpc(
+      MeetingChatGetRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      { meetingId },
+    );
+    return output.thread;
+  }
+
+  async askMeetingQuestion(input: {
+    meetingId: string;
+    question: string;
+    provider: string;
+    model: string;
+  }): Promise<MeetingChatThreadWire> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingChatAskRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      input,
+    );
+  }
+
+  async retryMeetingQuestion(input: {
+    meetingId: string;
+    provider: string;
+    model: string;
+  }): Promise<MeetingChatThreadWire> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingChatRetryRpc,
       (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
       input,
     );

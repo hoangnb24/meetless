@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, SafeAreaView, StyleSheet, useWindowDimensions } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { connectMeetlessClient, type ConnectedMeetlessClient } from "@meetless/client";
-import type { MeetingWire } from "@meetless/meeting-contracts";
+import type { ChatProviderWire, MeetingChatThreadWire, MeetingWire } from "@meetless/meeting-contracts";
 import type { CitationWire, TranscriptWire, TranscriptionProviderStatusWire } from "@meetless/meeting-contracts";
 import { MeetingListSurface, RecordingStrip } from "@meetless/meeting-surface";
 import { resolveAppMode, resolveDaemonUrl, supportsDesktopRecording } from "./runtime";
@@ -30,6 +30,12 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [consentStatus, setConsentStatus] = useState<"unknown" | "granted">("unknown");
   const [providerStatus, setProviderStatus] = useState<TranscriptionProviderStatusWire["status"] | undefined>();
+  const [chatProviders, setChatProviders] = useState<ChatProviderWire[]>([]);
+  const [chatThread, setChatThread] = useState<MeetingChatThreadWire | null>(null);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatProvider, setChatProvider] = useState<string | null>(null);
+  const [chatModel, setChatModel] = useState<string | null>(null);
   const playback = useRef<CitationPlaybackHandle | null>(null);
   const selectionVersion = useRef(0);
   const citationSequence = useRef(0);
@@ -67,6 +73,12 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setTranscriptError(null);
     setConsentStatus("unknown");
     setProviderStatus(undefined);
+    setChatProviders([]);
+    setChatThread(null);
+    setChatLoading(false);
+    setChatError(null);
+    setChatProvider(null);
+    setChatModel(null);
     try {
       const result = await active.client.getMeetingTranscript(meetingId);
       if (selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
@@ -75,6 +87,35 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
       setTranscriptLoading(false);
       setConsentStatus(result.consent.status);
       setProviderStatus(result.provider.status);
+      if (result.transcript?.status === "ready") {
+        setChatLoading(true);
+        try {
+          const [providerResult, thread] = await Promise.all([
+            active.client.listChatProviders(),
+            active.client.getMeetingChat(meetingId),
+          ]);
+          if (selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+          setChatProviders(providerResult.providers);
+          setChatThread(thread);
+          const selectedProvider = thread?.selection?.provider ?? providerResult.providers[0]?.id ?? null;
+          const provider = providerResult.providers.find((candidate) => candidate.id === selectedProvider);
+          const selectedModel = thread?.selection?.model
+            ?? provider?.models.find((candidate) => candidate.isDefault)?.id
+            ?? provider?.models[0]?.id
+            ?? null;
+          setChatProvider(selectedProvider);
+          setChatModel(selectedModel);
+          setChatError(null);
+        } catch (chatReason) {
+          if (selectionVersion.current === version && selectedMeetingIdRef.current === meetingId) {
+            setChatError(chatReason instanceof Error ? chatReason.message : String(chatReason));
+          }
+        } finally {
+          if (selectionVersion.current === version && selectedMeetingIdRef.current === meetingId) {
+            setChatLoading(false);
+          }
+        }
+      }
     } catch (reason) {
       if (selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
       setTranscriptLoading(false);
@@ -94,7 +135,80 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setTranscriptError(null);
     setConsentStatus("unknown");
     setProviderStatus(undefined);
+    setChatProviders([]);
+    setChatThread(null);
+    setChatLoading(false);
+    setChatError(null);
+    setChatProvider(null);
+    setChatModel(null);
   }, []);
+
+  const selectChatModel = useCallback((provider: string, model: string) => {
+    setChatProvider(provider);
+    setChatModel(model);
+    setChatError(null);
+  }, []);
+
+  const askQuestion = useCallback(async (question: string) => {
+    const active = connection.current;
+    const meetingId = selectedMeetingIdRef.current;
+    if (!active || !meetingId || !chatProvider || !chatModel) {
+      throw new Error("Select an available chat provider and model first");
+    }
+    setChatLoading(true);
+    setChatError(null);
+    try {
+      const thread = await active.client.askMeetingQuestion({
+        meetingId, question, provider: chatProvider, model: chatModel,
+      });
+      if (selectedMeetingIdRef.current === meetingId) setChatThread(thread);
+    } catch (reason) {
+      if (selectedMeetingIdRef.current === meetingId) {
+        setChatError(reason instanceof Error ? reason.message : String(reason));
+      }
+    } finally {
+      if (selectedMeetingIdRef.current === meetingId) setChatLoading(false);
+    }
+  }, [chatModel, chatProvider]);
+
+  const retryQuestion = useCallback(async () => {
+    const active = connection.current;
+    const meetingId = selectedMeetingIdRef.current;
+    if (!active || !meetingId || !chatProvider || !chatModel) return;
+    setChatLoading(true);
+    setChatError(null);
+    try {
+      const thread = await active.client.retryMeetingQuestion({
+        meetingId, provider: chatProvider, model: chatModel,
+      });
+      if (selectedMeetingIdRef.current === meetingId) setChatThread(thread);
+    } catch (reason) {
+      if (selectedMeetingIdRef.current === meetingId) {
+        setChatError(reason instanceof Error ? reason.message : String(reason));
+      }
+    } finally {
+      if (selectedMeetingIdRef.current === meetingId) setChatLoading(false);
+    }
+  }, [chatModel, chatProvider]);
+
+  useEffect(() => {
+    if (chatThread?.status !== "running" || !selectedMeetingId) return;
+    const meetingId = selectedMeetingId;
+    const timer = setInterval(() => {
+      const active = connection.current;
+      if (!active || selectedMeetingIdRef.current !== meetingId) return;
+      void active.client.getMeetingChat(meetingId).then((thread) => {
+        if (selectedMeetingIdRef.current !== meetingId || !thread) return;
+        setChatThread(thread);
+        if (thread.status !== "running") setChatLoading(false);
+      }).catch((reason) => {
+        if (selectedMeetingIdRef.current === meetingId) {
+          setChatError(reason instanceof Error ? reason.message : String(reason));
+        }
+      });
+    }, 500);
+    return () => clearInterval(timer);
+  }, [chatThread?.status, selectedMeetingId]);
 
   const grantConsent = useCallback(async () => {
     const active = connection.current;
@@ -247,6 +361,15 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         providerStatus={providerStatus}
         onGrantTranscriptionConsent={grantConsent}
         onCitation={playCitation}
+        chatProviders={chatProviders}
+        chatThread={chatThread}
+        chatLoading={chatLoading}
+        chatError={chatError}
+        chatProvider={chatProvider}
+        chatModel={chatModel}
+        onChatSelection={selectChatModel}
+        onAskQuestion={askQuestion}
+        onRetryQuestion={retryQuestion}
       />
     </SafeAreaView>
   );

@@ -61,6 +61,36 @@ describe("Meetless capability gate", () => {
     await expect(client.initialize()).rejects.toThrow('required "meetless" plugin');
     expect(port.invokePluginRpc).not.toHaveBeenCalled();
   });
+
+  test("routes strict chat discovery, durable get, ask, and retry RPCs", async () => {
+    const thread = {
+      meetingId: "m-1", status: "running" as const,
+      messages: [{ role: "user" as const, text: "Question", createdAt: "2026-08-21T00:00:00.000Z" }],
+      selection: { provider: "codex", model: "gpt-5" }, failure: null,
+    };
+    const invokePluginRpc = vi.fn(async (_id: string, method: string) => {
+      if (method === "meeting.chat.providers") return {
+        providers: [{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }],
+        compatibilityCheck: "on_question_start",
+      };
+      if (method === "meeting.chat.get") return { thread };
+      return thread;
+    });
+    const client = new MeetlessClient(daemon({ invokePluginRpc }));
+    await client.initialize();
+
+    await expect(client.listChatProviders()).resolves.toMatchObject({ compatibilityCheck: "on_question_start" });
+    await expect(client.getMeetingChat("m-1")).resolves.toEqual(thread);
+    await expect(client.askMeetingQuestion({
+      meetingId: "m-1", question: "Question", provider: "codex", model: "gpt-5",
+    })).resolves.toEqual(thread);
+    await expect(client.retryMeetingQuestion({
+      meetingId: "m-1", provider: "codex", model: "gpt-5",
+    })).resolves.toEqual(thread);
+    expect(invokePluginRpc.mock.calls.map((call) => call[1])).toEqual([
+      "meeting.chat.providers", "meeting.chat.get", "meeting.chat.ask", "meeting.chat.retry",
+    ]);
+  });
 });
 
 const recordingStatus: RecordingStatusWire = {
