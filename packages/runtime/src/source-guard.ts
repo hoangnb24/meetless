@@ -27,6 +27,17 @@ export function assertLauncherOrdering(input: {
     ['app.setPath("userData", userData)', "await import("],
     "Electron bootstrap",
   );
+  requireOrder(
+    input.electronBootstrap,
+    [
+      'app.on("browser-window-created"',
+      'window.once("ready-to-show"',
+      "app.focus({ steal: true })",
+      "window.show()",
+      "window.focus()",
+    ],
+    "Electron interactive-window activation",
+  );
   const forbiddenStaticImport = /^import\s+.*(?:@getpaseo|vendor\/paseo)/mu;
   for (const [label, source] of [
     ["daemon launcher", input.daemonLauncher],
@@ -50,8 +61,8 @@ function requireOrder(source: string, markers: string[], label: string): void {
 
 function fail(reason: string): never {
   throw new Error(
-    `${reason}. Isolation invariant (${ISOLATION_AUTHORITY}): fix paths, endpoint, and Electron ` +
-      "user-data before importing or starting Paseo.",
+    `${reason}. Meetless launcher invariant (${ISOLATION_AUTHORITY}): fix paths, endpoint, and Electron ` +
+      "user-data before importing Paseo; activate and focus each BrowserWindow after it is ready to show.",
   );
 }
 

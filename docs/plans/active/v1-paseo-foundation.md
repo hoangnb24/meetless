@@ -762,6 +762,41 @@ stopped, and the original production meeting state was restored byte-for-byte
   gated on Lead acceptance of this correction and any separately owned live
   handoff.
 
+`POST-M3-LIVE-INPUT` candidate record (2026-08-20):
+
+- **Observed cause:** LaunchServices owns the accepted accessory host at
+  `~/Applications/Meetless.app` (`com.meetless.app`, `LSUIElement=true`), which
+  starts runtime desktop and then spawns the repository Electron.app
+  (`com.github.Electron`). Paseo creates that BrowserWindow hidden and its
+  `ready-to-show` path only called `show()`. The spawned Electron application
+  therefore rendered visibly without becoming the active app or focused
+  window: Computer Use saw only the outer container and pointer/keyboard input
+  did not reach the renderer. Invoking the exact window's macOS Raise action
+  immediately activated it, exposed the HTML accessibility tree, and revealed
+  both inputs as settable. The concurrent DerivedData SwiftUI application
+  (`com.themrb.meetless`) is a separate identity and was neither used nor
+  changed.
+- **Candidate:** the Meetless Electron bootstrap now activates
+  `com.github.Electron` with `app.focus({ steal: true })`, then shows and focuses
+  each BrowserWindow when it is ready. The existing launcher source guard
+  mechanically requires that ordering. Positive checked-in proof and negative
+  missing-app-activation/missing-window-focus fixtures name the active-plan
+  authority and required correction. Host ownership, recording lifecycle,
+  renderer UI, native applications, signing, and permissions are unchanged.
+- **Live proof:** the repository-owned accepted chain was stopped and restarted
+  through `npm run runtime:host:stop` and `npm run runtime:host`; LaunchServices
+  relaunched `com.meetless.app` at the accepted path and the desktop-managed
+  runtime became ready. Without a Raise action, Computer Use immediately saw
+  the exact repository Electron HTML tree. Recording title accepted
+  `POST-M3 live input proof`; Tab moved focus directly to Start, mechanically
+  proving it enabled. Start was not invoked, no recording was created, and the
+  proof title was cleared afterward. No OS permission was altered.
+- **Validation:** launcher guard and its positive/negative tests pass 6/6;
+  relevant composition passes 1/1; `npm run typecheck` passes. `npm run
+  test:focused` completes with 174 passing tests and the same unchanged runtime
+  host direct-launch timeout (empty stderr after five seconds). `git diff
+  --check` and the exact candidate commit are recorded in the peer disposition.
+
 ### Milestone 4: coding-agent analysis
 
 - Reuse Paseo provider/model discovery and agent execution.
@@ -857,6 +892,8 @@ Recovery rules:
 - [x] Complete Milestone 3: transcription and citation playback.
 - [x] Correct the post-M3 zero-chunk recording failure before M4 depends on a
   newly recorded meeting.
+- [x] Restore interactive recording input in the accepted LaunchServices host
+  and repository Electron chain before M4 begins.
 - [ ] Complete Milestone 4: coding-agent analysis.
 - [ ] Complete Milestone 5: grounded Q&A and document folders.
 - [ ] Complete Milestone 6: companion web/mobile experience.

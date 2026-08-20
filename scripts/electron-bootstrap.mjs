@@ -13,6 +13,11 @@ app.setName("Meetless");
 app.setPath("userData", userData);
 app.on("browser-window-created", (_event, window) => {
   window.setTitle("Meetless");
+  window.once("ready-to-show", () => {
+    app.focus({ steal: true });
+    window.show();
+    window.focus();
+  });
   window.webContents.on("page-title-updated", (event) => {
     event.preventDefault();
     window.setTitle("Meetless");
