@@ -15,12 +15,18 @@ beforeAll(() => {
 
 describe("global recording strip", () => {
   test("clears desktop recording controls below the Electron titlebar hit-test region", async () => {
-    const oldGeometry = recordingStripPointerGeometry(0);
-    expect(oldGeometry.controlCenterY).toBe(ELECTRON_TITLEBAR_HIT_TEST_HEIGHT);
-    expect(clearsElectronTitlebarHitTest(oldGeometry.controlCenterY)).toBe(false);
+    const oldStripStyle = { minHeight: 64, paddingVertical: 9 };
+    const controlHeight = 40;
+    const oldControlTopY = oldStripStyle.paddingVertical;
+    const oldControlCenterY = oldControlTopY + controlHeight / 2;
+    expect(oldStripStyle).toEqual({ minHeight: 64, paddingVertical: 9 });
+    expect(oldControlTopY).toBe(9);
+    expect(oldControlCenterY).toBe(29);
+    expect(clearsElectronTitlebarHitTest(oldControlCenterY)).toBe(false);
 
+    expect(ELECTRON_TITLEBAR_HIT_TEST_HEIGHT).toBe(29);
     const corrected = recordingStripPointerGeometry(ELECTRON_TITLEBAR_HIT_TEST_HEIGHT);
-    expect(corrected.controlTopY).toBeGreaterThan(ELECTRON_TITLEBAR_HIT_TEST_HEIGHT);
+    expect(corrected).toEqual({ controlTopY: 38, controlCenterY: 58, stripMinHeight: 87 });
     expect(clearsElectronTitlebarHitTest(corrected.controlCenterY)).toBe(true);
 
     let renderer: TestRenderer.ReactTestRenderer;
@@ -35,8 +41,8 @@ describe("global recording strip", () => {
           outputPath: null, error: "No valid committed media survived inventory reconciliation" }} />);
     });
     expect(renderer!.root.findByProps({ testID: "global-recording-strip" }).props.style).toMatchObject({
-      minHeight: corrected.stripMinHeight,
-      paddingTop: corrected.controlTopY,
+      minHeight: 87,
+      paddingTop: 38,
     });
     expect(renderer!.root.findByProps({ testID: "recording-error" }).props.children)
       .toBe("No valid committed media survived inventory reconciliation");
