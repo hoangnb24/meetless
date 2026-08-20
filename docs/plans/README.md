@@ -33,3 +33,9 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 - [Meetless V1 on top of Paseo](active/v1-paseo-foundation.md) — personal,
   local-first Zoom/Meet recording, coding-agent analysis, grounded Q&A, and
   cross-platform companion clients.
+
+## Active Harness Improvements
+
+- [Correlated Electron recording proof](active/post-m3-electron-harness-improvement.md)
+  — owner-authorized capability experiment; active until a materially
+  equivalent fresh-agent rerun exercises the intervention.

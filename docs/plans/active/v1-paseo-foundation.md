@@ -830,6 +830,33 @@ stopped, and the original production meeting state was restored byte-for-byte
   composition passes 1/1; `npm run typecheck` passes. Final diff validation and
   candidate identity are recorded in the peer disposition.
 
+`POST-M3-ELECTRON-HARNESS` authority and gate (2026-08-20):
+
+- **Owner authority:** the 2026-08-20 project-owner directive extends this
+  correction through capabilities 1, 3, 4, and 5 only. Playwright Electron
+  renderer automation, a stable unique tested desktop identity, controlled
+  UI-test-only accessibility, and one correlated UI-to-M3 proof are required;
+  XCUITest is excluded.
+- **Allowed boundary:** deterministic fixture capture and a controlled
+  transcription provider may prove repository composition when they are
+  explicitly labeled. Production keeps `com.meetless.app` as its sole host/TCC
+  authority and must not force Chromium accessibility. Playwright/DevTools and
+  AX events do not establish physical WindowServer pointer delivery or live
+  Zoom/Meet source capture.
+- **Forbidden boundary:** generic `com.github.Electron` identity in the new
+  harness, production accessibility leakage, missing or mismatched
+  renderer/socket/store/helper/chunk/MP3/transcript correlation, and regression
+  to the old title-bar overlap must fail with actionable diagnostics.
+- **Harness experiment:** the active record is
+  [`post-m3-electron-harness-improvement.md`](post-m3-electron-harness-improvement.md).
+  It preserves the false-positive preflights, wrong identity, pointer overlap,
+  Computer Use attachment failure, and owner interventions. It remains active
+  until a materially equivalent fresh agent discovers and exercises the new
+  repository capability.
+- **Dependency:** M4 remains closed until the implementation is accepted and
+  the handback states separately whether deterministic automation and the
+  original fresh real recording/TCC gate have each been satisfied.
+
 ### Milestone 4: coding-agent analysis
 
 - Reuse Paseo provider/model discovery and agent execution.
@@ -927,6 +954,8 @@ Recovery rules:
   newly recorded meeting.
 - [x] Restore physically pointer-interactive recording input in the accepted
   LaunchServices host and repository Electron chain before M4 begins.
+- [ ] Add and freshly rerun the correlated post-M3 Electron recording Harness
+  capability without weakening production identity, TCC, or accessibility.
 - [ ] Complete Milestone 4: coding-agent analysis.
 - [ ] Complete Milestone 5: grounded Q&A and document folders.
 - [ ] Complete Milestone 6: companion web/mobile experience.
