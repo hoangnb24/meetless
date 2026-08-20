@@ -361,7 +361,7 @@ async function handleMcpMessage(message: unknown, input: ChatExecutionInput): Pr
   if (envelope.method === "ping") return success({});
   if (envelope.method === "tools/list") return success({ tools: MCP_TOOLS });
   if (envelope.method === "tools/call") {
-    const call = z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()).default({}) }).strict()
+    const call = z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()).default({}) }).passthrough()
       .parse(envelope.params);
     if (call.name === "search_meeting_transcript") {
       const { query } = z.object({ query: z.string().trim().min(1).max(500) }).strict().parse(call.arguments);

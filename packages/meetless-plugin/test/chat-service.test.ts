@@ -100,7 +100,11 @@ describe("Paseo execution adapter", () => {
       await expect(client.listTools()).resolves.toMatchObject({ tools: [
         { name: "search_meeting_transcript" }, { name: "get_meeting_segments" },
       ] });
-      const result = await client.callTool({ name: "search_meeting_transcript", arguments: { query: "local-first" } });
+      const result = await client.callTool({
+        name: "search_meeting_transcript",
+        arguments: { query: "local-first" },
+        _meta: { progressToken: "m5-test" },
+      });
       expect(result.structuredContent).toMatchObject({ segments: [{ segmentId: "segment-1" }] });
       expect(recordRetrieved).toHaveBeenCalledWith(["segment-1"]);
     } finally {
