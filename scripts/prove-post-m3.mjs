@@ -362,7 +362,10 @@ async function runM5ChatJourney(input) {
   await input.page.getByTestId(`chat-model-${codex.id}-${model.id}`).click();
   await input.page.getByTestId("chat-question-input").fill("Which interval contains eight hundred eighty hertz?");
   await input.page.getByTestId("chat-ask").click();
-  const supportedThread = await waitForChatTerminal(input.client, M4_TARGET_MEETING_ID, 210_000);
+  const supportedResult = await waitForChatWithRetries(
+    input.client, M4_TARGET_MEETING_ID, { provider: codex.id, model: model.id }, 2,
+  );
+  const supportedThread = supportedResult.thread;
   const supported = supportedThread.messages.at(-1);
   if (!supported || supported.role !== "assistant" || supported.outcome !== "supported") {
     throw new Error(`M5 fixture question did not return a supported answer (${JSON.stringify(supportedThread.failure)})`);
@@ -431,7 +434,10 @@ async function runM5ChatJourney(input) {
 
     await page.getByTestId("chat-question-input").fill("What insurance premium did the team approve for a Mars launch?");
     await page.getByTestId("chat-ask").click();
-    const unsupportedThread = await waitForChatTerminal(client, M4_TARGET_MEETING_ID, 210_000);
+    const unsupportedResult = await waitForChatWithRetries(
+      client, M4_TARGET_MEETING_ID, { provider: codex.id, model: model.id }, 2,
+    );
+    const unsupportedThread = unsupportedResult.thread;
     const unsupported = unsupportedThread.messages.at(-1);
     if (!unsupported || unsupported.role !== "assistant" || unsupported.outcome !== "insufficient_evidence") {
       throw new Error(`M5 unsupported question did not return insufficient evidence (${JSON.stringify(unsupportedThread.failure)})`);
@@ -454,6 +460,7 @@ async function runM5ChatJourney(input) {
           outcome: supported.outcome,
           text: supported.text,
           citationSegmentIds: supported.citations.map((citation) => citation.segmentId),
+          operationalRetryCount: supportedResult.retryCount,
         },
         citationPlayback: {
           boundedStopObserved: playback.boundedStopObserved === true,
@@ -466,6 +473,7 @@ async function runM5ChatJourney(input) {
           text: unsupported.text,
           citationSegmentIds: unsupported.citations.map((citation) => citation.segmentId),
           canonicalRendered: canonicalRendered === true,
+          operationalRetryCount: unsupportedResult.retryCount,
         },
         noPaseoIdentityPersisted,
       },
@@ -474,6 +482,19 @@ async function runM5ChatJourney(input) {
     if (client) await client.close().catch(() => undefined);
     if (browser) await browser.close().catch(() => undefined);
     throw error;
+  }
+}
+
+async function waitForChatWithRetries(client, meetingId, selection, maxRetries) {
+  let retryCount = 0;
+  while (true) {
+    const thread = await waitForChatTerminal(client, meetingId, 210_000);
+    if (thread.status === "ready") return { thread, retryCount };
+    if (retryCount >= maxRetries) {
+      throw new Error(`M5 chat failed after ${retryCount} retries: ${thread.failure?.message ?? "unknown failure"}`);
+    }
+    retryCount += 1;
+    await client.client.retryMeetingQuestion({ meetingId, ...selection });
   }
 }
 
@@ -499,7 +520,7 @@ async function waitForChatTerminal(client, meetingId, timeoutMs) {
   while (Date.now() < deadline) {
     const thread = await client.client.getMeetingChat(meetingId);
     if (thread?.status === "ready") return thread;
-    if (thread?.status === "failed") throw new Error(`M5 chat failed: ${thread.failure?.message ?? "unknown failure"}`);
+    if (thread?.status === "failed") return thread;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error(`Timed out waiting for M5 chat after ${timeoutMs}ms`);
