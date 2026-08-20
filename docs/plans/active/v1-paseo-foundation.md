@@ -801,6 +801,35 @@ stopped, and the original production meeting state was restored byte-for-byte
   host direct-launch timeout (empty stderr after five seconds). `git diff
   --check` and the exact candidate commit are recorded in the peer disposition.
 
+`POST-M3-POINTER-HIT` candidate record (2026-08-20):
+
+- **Corrected diagnosis:** the prior AX/set-value handback did not prove physical
+  pointer interaction and the owner still reproduced failure. The pinned
+  Electron hidden-titlebar overlay owns roughly y=0–29 while the old recording
+  controls began at y=9 and placed their modeled center at y=29. Owner evidence
+  confirmed a center click around y=25 missed while a lower-edge click at y=38
+  reached the field. Durable `failed` state and its visible zero-media message
+  do not disable Start; this was a hit-test overlap, not lifecycle policy.
+- **Candidate:** only the desktop-gated global recording strip receives
+  titlebar clearance. A pure pointer-geometry model sets the control top below
+  the 29 px overlay plus the existing 9 px visual gap, yielding modeled
+  `top=38`, `center=58`, and `minHeight=87`. The style consumes the same model.
+  Negative proof shows the old center does not clear the titlebar; positive
+  proof shows the corrected top and center do, while rendering preserves the
+  authoritative failure message. No broader meeting UI or runtime/lifecycle
+  code changed.
+- **Physical live proof:** after repository-owned host stop/start, the 1490×768
+  Electron window rendered title and Start at approximately y=30–61. A real
+  coordinate click at title center `(533,46)` focused the recording title, and
+  normal queued typing entered `POINTER-HIT-0836`. A non-invoking right-click at
+  Start center `(1114,46)` opened the renderer context menu, proving pointer
+  delivery below the titlebar without starting recording. The proof title was
+  cleared afterward; zero-media failure remained visible and no recording was
+  created.
+- **Validation:** focused meeting-surface/meetless-app tests pass 22/22;
+  composition passes 1/1; `npm run typecheck` passes. Final diff validation and
+  candidate identity are recorded in the peer disposition.
+
 ### Milestone 4: coding-agent analysis
 
 - Reuse Paseo provider/model discovery and agent execution.
@@ -896,8 +925,8 @@ Recovery rules:
 - [x] Complete Milestone 3: transcription and citation playback.
 - [x] Correct the post-M3 zero-chunk recording failure before M4 depends on a
   newly recorded meeting.
-- [x] Restore interactive recording input in the accepted LaunchServices host
-  and repository Electron chain before M4 begins.
+- [x] Restore physically pointer-interactive recording input in the accepted
+  LaunchServices host and repository Electron chain before M4 begins.
 - [ ] Complete Milestone 4: coding-agent analysis.
 - [ ] Complete Milestone 5: grounded Q&A and document folders.
 - [ ] Complete Milestone 6: companion web/mobile experience.

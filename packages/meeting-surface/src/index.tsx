@@ -4,6 +4,31 @@ import type { MeetingWire } from "@meetless/meeting-contracts";
 import type { RecordingStatusWire } from "@meetless/meeting-contracts";
 import type { CitationWire, TranscriptWire, TranscriptionProviderStatusWire } from "@meetless/meeting-contracts";
 
+export const ELECTRON_TITLEBAR_HIT_TEST_HEIGHT = 29;
+const RECORDING_CONTROL_HEIGHT = 40;
+const RECORDING_STRIP_VERTICAL_PADDING = 9;
+
+export interface RecordingStripPointerGeometry {
+  controlTopY: number;
+  controlCenterY: number;
+  stripMinHeight: number;
+}
+
+export function recordingStripPointerGeometry(titlebarClearance: number): RecordingStripPointerGeometry {
+  const controlTopY = titlebarClearance + RECORDING_STRIP_VERTICAL_PADDING;
+  return {
+    controlTopY,
+    controlCenterY: controlTopY + RECORDING_CONTROL_HEIGHT / 2,
+    stripMinHeight: controlTopY + RECORDING_CONTROL_HEIGHT + RECORDING_STRIP_VERTICAL_PADDING,
+  };
+}
+
+export function clearsElectronTitlebarHitTest(pointY: number): boolean {
+  return pointY > ELECTRON_TITLEBAR_HIT_TEST_HEIGHT;
+}
+
+const recordingStripGeometry = recordingStripPointerGeometry(ELECTRON_TITLEBAR_HIT_TEST_HEIGHT);
+
 export function RecordingStrip(props: {
   status: RecordingStatusWire;
   elapsedMs: number;
@@ -260,7 +285,7 @@ const styles = StyleSheet.create({
   cardTitle: { color: "#f4f1e8", fontSize: 17, fontWeight: "600" },
   status: { color: "#e99a74", fontSize: 12, textTransform: "uppercase" },
   timestamp: { color: "#85898f", fontSize: 12 },
-  recordingStrip: { alignItems: "center", backgroundColor: "#191b1f", borderBottomColor: "#34373d", borderBottomWidth: 1, flexDirection: "row", gap: 10, minHeight: 64, paddingHorizontal: 16, paddingVertical: 9 },
+  recordingStrip: { alignItems: "center", backgroundColor: "#191b1f", borderBottomColor: "#34373d", borderBottomWidth: 1, flexDirection: "row", gap: 10, minHeight: recordingStripGeometry.stripMinHeight, paddingBottom: RECORDING_STRIP_VERTICAL_PADDING, paddingHorizontal: 16, paddingTop: recordingStripGeometry.controlTopY },
   recordingInput: { backgroundColor: "#202226", borderColor: "#3a3d43", borderRadius: 8, borderWidth: 1, color: "#f4f1e8", flex: 1, minHeight: 40, paddingHorizontal: 12 },
   recordingIdentity: { flex: 1, gap: 2 },
   recordingTitle: { color: "#f4f1e8", fontWeight: "700" },

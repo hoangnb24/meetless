@@ -1,13 +1,48 @@
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { MeetingListSurface, RecordingStrip } from "../src/index.js";
+import {
+  clearsElectronTitlebarHitTest,
+  ELECTRON_TITLEBAR_HIT_TEST_HEIGHT,
+  MeetingListSurface,
+  RecordingStrip,
+  recordingStripPointerGeometry,
+} from "../src/index.js";
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
 describe("global recording strip", () => {
+  test("clears desktop recording controls below the Electron titlebar hit-test region", async () => {
+    const oldGeometry = recordingStripPointerGeometry(0);
+    expect(oldGeometry.controlCenterY).toBe(ELECTRON_TITLEBAR_HIT_TEST_HEIGHT);
+    expect(clearsElectronTitlebarHitTest(oldGeometry.controlCenterY)).toBe(false);
+
+    const corrected = recordingStripPointerGeometry(ELECTRON_TITLEBAR_HIT_TEST_HEIGHT);
+    expect(corrected.controlTopY).toBeGreaterThan(ELECTRON_TITLEBAR_HIT_TEST_HEIGHT);
+    expect(clearsElectronTitlebarHitTest(corrected.controlCenterY)).toBe(true);
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<RecordingStrip
+        elapsedMs={0} error="No valid committed media survived inventory reconciliation"
+        onPause={async () => undefined} onResume={async () => undefined}
+        onRetry={async () => undefined} onStart={async () => undefined} onStop={async () => undefined}
+        pending={false} status={{ status: "failed", recordingId: "r-1", meetingId: "m-1", title: "Failed",
+          elapsedMs: 0, paused: false, chunks: [], inventoryState: "pending", chunkCount: 0,
+          microphoneCount: 0, systemCount: 0, inventoryDigest: null, retryEligible: false,
+          outputPath: null, error: "No valid committed media survived inventory reconciliation" }} />);
+    });
+    expect(renderer!.root.findByProps({ testID: "global-recording-strip" }).props.style).toMatchObject({
+      minHeight: corrected.stripMinHeight,
+      paddingTop: corrected.controlTopY,
+    });
+    expect(renderer!.root.findByProps({ testID: "recording-error" }).props.children)
+      .toBe("No valid committed media survived inventory reconciliation");
+    renderer!.unmount();
+  });
+
   test("renders authoritative recoverable retry state independently of meeting-list content", async () => {
     const retry = vi.fn(async () => undefined);
     let renderer: TestRenderer.ReactTestRenderer;
