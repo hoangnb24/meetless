@@ -1,0 +1,179 @@
+{
+  "schema": "MEETLESS_M5_COMPOSITION_PROOF v1",
+  "status": "passed",
+  "frontierId": "M5-PROOF",
+  "runId": "m5-proof-1787249791862-002f5f6c",
+  "acceptedHost": {
+    "bundleIdentifier": "com.meetless.app",
+    "cdHash": "44bf59b973dfcd64f49f86af4f3bcbe996381679",
+    "launchRoute": "LaunchServices"
+  },
+  "observation": {
+    "schema": "MEETLESS_M5_COMPOSITION_OBSERVATION v1",
+    "evidencePolicy": {
+      "generatedFixture": true,
+      "liveSource": false,
+      "nativeProvider": false,
+      "fakeNativeSubstitution": false
+    },
+    "identity": {
+      "exactInstalledHost": true,
+      "exactRunMarker": true,
+      "trustedRendererBridge": true
+    },
+    "sidebar": {
+      "meetingIds": [
+        "m4-proof-distractor",
+        "m4-proof-target"
+      ],
+      "selectedMeetingId": "m4-proof-target",
+      "selectedAccessibility": true,
+      "detailMeetingId": "m4-proof-target"
+    },
+    "authoritativeTranscript": {
+      "meetingId": "m4-proof-target",
+      "recordingId": "m4-proof-recording",
+      "segments": [
+        {
+          "ordinal": 0,
+          "startMs": 0,
+          "endMs": 30000,
+          "segmentId": "segment-e73c9fe1a0914aaf2d0d0fe7e5938bdd",
+          "text": "First interval: four hundred forty hertz."
+        },
+        {
+          "ordinal": 1,
+          "startMs": 30000,
+          "endMs": 60000,
+          "segmentId": "segment-dccee56c2e53f04a3af73112e7dc927e",
+          "text": "Second interval: six hundred sixty hertz."
+        },
+        {
+          "ordinal": 2,
+          "startMs": 60000,
+          "endMs": 65000,
+          "segmentId": "segment-3a17529bbc01e9af092c607d00a46adf",
+          "text": "Third interval: eight hundred eighty hertz."
+        }
+      ]
+    },
+    "rpcTranscript": {
+      "meetingId": "m4-proof-target",
+      "recordingId": "m4-proof-recording",
+      "segments": [
+        {
+          "ordinal": 0,
+          "startMs": 0,
+          "endMs": 30000,
+          "segmentId": "segment-e73c9fe1a0914aaf2d0d0fe7e5938bdd",
+          "text": "First interval: four hundred forty hertz."
+        },
+        {
+          "ordinal": 1,
+          "startMs": 30000,
+          "endMs": 60000,
+          "segmentId": "segment-dccee56c2e53f04a3af73112e7dc927e",
+          "text": "Second interval: six hundred sixty hertz."
+        },
+        {
+          "ordinal": 2,
+          "startMs": 60000,
+          "endMs": 65000,
+          "segmentId": "segment-3a17529bbc01e9af092c607d00a46adf",
+          "text": "Third interval: eight hundred eighty hertz."
+        }
+      ]
+    },
+    "renderedTranscript": {
+      "segments": [
+        {
+          "ordinal": 0,
+          "startMs": 0,
+          "endMs": 30000,
+          "segmentId": "segment-e73c9fe1a0914aaf2d0d0fe7e5938bdd",
+          "text": "First interval: four hundred forty hertz."
+        },
+        {
+          "ordinal": 1,
+          "startMs": 30000,
+          "endMs": 60000,
+          "segmentId": "segment-dccee56c2e53f04a3af73112e7dc927e",
+          "text": "Second interval: six hundred sixty hertz."
+        },
+        {
+          "ordinal": 2,
+          "startMs": 60000,
+          "endMs": 65000,
+          "segmentId": "segment-3a17529bbc01e9af092c607d00a46adf",
+          "text": "Third interval: eight hundred eighty hertz."
+        }
+      ],
+      "distractorSentinelPresent": false
+    },
+    "citation": {
+      "meetingId": "m4-proof-target",
+      "recordingId": "m4-proof-recording",
+      "segmentId": "segment-3a17529bbc01e9af092c607d00a46adf",
+      "text": "Third interval: eight hundred eighty hertz.",
+      "startMs": 60000,
+      "endMs": 65000
+    },
+    "playback": {
+      "audioAccepted": true,
+      "playResolved": true,
+      "maximumCurrentTime": 5,
+      "boundedStopObserved": true,
+      "clipDurationSeconds": 5,
+      "markerHz": 880,
+      "markerPowerRatio": 312636500.42
+    },
+    "chat": {
+      "realCodex": true,
+      "provider": "codex",
+      "model": "gpt-5.6-sol",
+      "transcriptRangeCount": 3,
+      "supported": {
+        "outcome": "supported",
+        "text": "The third interval contains 880 hertz.",
+        "citationSegmentIds": [
+          "segment-3a17529bbc01e9af092c607d00a46adf"
+        ]
+      },
+      "citationPlayback": {
+        "boundedStopObserved": true,
+        "markerHz": 880,
+        "markerPowerRatio": 312636500.42
+      },
+      "restart": {
+        "exactInstalledHost": true,
+        "historyRestored": true
+      },
+      "unsupported": {
+        "outcome": "insufficient_evidence",
+        "text": null,
+        "citationSegmentIds": [],
+        "canonicalRendered": true
+      },
+      "noPaseoIdentityPersisted": true
+    }
+  },
+  "cleanup": {
+    "status": "passed",
+    "stagedRootRemoved": true,
+    "originalRootRestored": true,
+    "runStateRemoved": true,
+    "proofArtifactRootRemoved": true,
+    "liveHostPids": [],
+    "errors": []
+  },
+  "restoration": {
+    "originalRootExisted": true,
+    "matched": true,
+    "beforeDigest": "fd0bcd22dc1814b81dc89ce4b777ba1f1107bac04cfbc32678dff27e0c145ac8",
+    "afterDigest": "fd0bcd22dc1814b81dc89ce4b777ba1f1107bac04cfbc32678dff27e0c145ac8"
+  },
+  "evidence": {
+    "screenshot": "screenshot.png"
+  },
+  "evidenceLimit": "Machine-observed browser Audio playback only; this does not prove that a human heard speaker output."
+}
