@@ -167,6 +167,8 @@ describe("Paseo execution adapter", () => {
     });
     expect(JSON.stringify(options)).not.toContain("meeting-1");
     expect(options.config.mcpServers.meeting.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/capability\/[0-9a-f-]+$/u);
+    expect(options.prompt).toContain('{"outcome":"insufficient_evidence","text":null,"citationSegmentIds":[]}');
+    expect(options.prompt).toContain("Do not use Markdown or code fences");
     expect(archive).toHaveBeenCalledOnce();
     await port.close();
     expect(archiveWorkspace).toHaveBeenCalledOnce();

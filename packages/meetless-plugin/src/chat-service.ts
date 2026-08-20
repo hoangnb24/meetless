@@ -453,8 +453,11 @@ function buildPrompt(messages: ChatExecutionInput["messages"]): string {
   return [
     "Answer the newest user question using only the meeting retrieval tools.",
     "Do not use filesystem, shell, web, workspace, or memory as evidence.",
-    "Return JSON matching the output schema. Cite only segment IDs returned by tools in this turn.",
-    "If the meeting does not support an answer, return insufficient_evidence with null text and no citations.",
+    "Return exactly one JSON object matching the output schema. Do not use Markdown or code fences.",
+    "Cite only segment IDs returned by tools in this turn.",
+    'Supported form: {"outcome":"supported","text":"answer","citationSegmentIds":["retrieved-segment-id"]}.',
+    'Insufficient form: {"outcome":"insufficient_evidence","text":null,"citationSegmentIds":[]}.',
+    "For insufficient evidence, use the exact insufficient form. Do not add an explanation.",
     "Conversation:",
     ...messages.map((message) => `${message.role}: ${message.text}`),
   ].join("\n");
