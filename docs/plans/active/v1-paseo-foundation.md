@@ -1131,6 +1131,47 @@ transcript/audio interval; after an app restart the meeting restores that chat
 history and can continue it; and an unsupported question returns the explicit
 insufficient-evidence response.
 
+`LEAD_ACCEPTANCE v1 — M5` (2026-08-21):
+
+- **Decision:** accept candidate
+  `e0b7e067ac11947991955bf41eafdc36eda6184e` and close Milestone 5.
+- **Candidate:** the accepted boundary includes the
+  accepted durable foundation, strict chat RPC contracts, Paseo provider/model
+  selection, one disposable neutral agent per question, opaque meeting-scoped
+  MCP retrieval, validated same-run citations, restart/retry behavior, chat UI,
+  composition proof, and durable evidence.
+- **Real composition:** installed-host run
+  `m5-proof-1787252645153-a13cc0c1` used real Codex `gpt-5.6-sol`. It answered
+  the supported 880 Hz question with the third segment, opened and bounded the
+  cited five-second 880 Hz audio interval, restored the durable thread after an
+  exact-host restart, and returned `insufficient_evidence` with null text and
+  no citations for the unsupported question. Both turns used zero operational
+  retries.
+- **Privacy and cleanup:** the persisted meeting state contained no Paseo agent,
+  workspace, session, or timeline identity. Raw provider errors are replaced
+  before durable or wire state. The neutral workspace was absent from the
+  active registry after restart. Archive failures stay observable and retain
+  ownership for retry. The run removed all owned process, state, staging, and
+  artifact roots. The original runtime was restored byte-for-byte with digest
+  `fd0bcd22dc1814b81dc89ce4b777ba1f1107bac04cfbc32678dff27e0c145ac8`.
+- **Repository proof:** typecheck passed; focused tests passed 37 files and 248
+  tests; composition passed 2 files and 2 tests; the full suite passed 46 files
+  and 299 tests; the M5 evidence validator passed 14 tests; and `git diff
+  --check` passed.
+- **Evidence:** manifest
+  `test/evidence/m5/m5-proof-1787252645153-a13cc0c1/manifest.json` has SHA-256
+  `0dd6bae129df0b27d9c00aa675b82f2b37e5c1646fd79961cbce181ed2fd0164`;
+  screenshot SHA-256 is
+  `63a4b938a4b6223b3c72d2af4e69951520a974bfd1bf2025a2fbf4e8698a05bb`.
+- **Independent review:** DEEP review found and closed
+  `M5-P1-PRIVACY-001`, `M5-P2-CLEANUP-001`, and
+  `M5-P2-CLEANUP-002`. Final CLOSEOUT on candidate `e0b7e06` returned
+  `CLOSEOUT_NO_FINDINGS` with no new material direct regression.
+- **Evidence limit:** this is generated-fixture, machine-observed browser audio
+  evidence. It does not prove live Zoom/Meet capture, native-provider
+  transcription, human-heard speaker output, CI or branch enforcement, or
+  release readiness.
+
 ### Milestone 6: cross-meeting Q&A and document folders
 
 - Implement meeting and document indexing behind `KnowledgeIndex`.
@@ -1221,7 +1262,7 @@ Recovery rules:
   recording -> transcript -> audible cited-audio flow and open the M4
   dependency without promoting it to release-readiness evidence.
 - [x] Complete Milestone 4: meeting sidebar and transcript reader.
-- [ ] Complete Milestone 5: chat with one meeting.
+- [x] Complete Milestone 5: chat with one meeting.
 - [ ] Complete Milestone 6: cross-meeting Q&A and document folders.
 - [ ] Complete Milestone 7: companion web/mobile experience.
 - [ ] Complete Milestone 8: V1 acceptance and release readiness.
