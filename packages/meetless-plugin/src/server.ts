@@ -56,8 +56,9 @@ export async function getMeetingChatService(
 
 export async function stopMeetingChatService(): Promise<void> {
   const current = chatService;
-  chatService = null;
-  await current?.close();
+  if (!current) return;
+  await current.close();
+  if (chatService === current) chatService = null;
 }
 
 export async function startRecordingRuntime(deadlineEpochMs = Number.POSITIVE_INFINITY): Promise<void> {

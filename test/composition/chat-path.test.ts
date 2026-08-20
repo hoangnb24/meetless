@@ -24,10 +24,15 @@ describe("Meetless chat plugin/client composition", () => {
     await readyMeeting(store);
 
     const archive = vi.fn(async () => ({ archivedAt: new Date().toISOString() }));
-    const archiveWorkspace = vi.fn(async () => ({
-      requestId: "archive-workspace", workspaceId: "paseo-workspace-secret",
-      archivedAt: new Date().toISOString(), error: null,
-    }));
+    const archiveWorkspace = vi.fn()
+      .mockResolvedValueOnce({
+        requestId: "archive-failed", workspaceId: "paseo-workspace-secret",
+        archivedAt: null, error: "archive failed with workspaceId=paseo-workspace-secret",
+      })
+      .mockResolvedValueOnce({
+        requestId: "archive-retry", workspaceId: "paseo-workspace-secret",
+        archivedAt: new Date().toISOString(), error: null,
+      });
     let agentCount = 0;
     const paseo = {
       providers: { waitForReady: async () => ({ entries: [{
@@ -87,8 +92,9 @@ describe("Meetless chat plugin/client composition", () => {
     const persisted = await readFile(path.join(root, "meeting-store", "meetings.json"), "utf8");
     expect(persisted).not.toMatch(/agentId|workspaceId|sessionId|timeline|paseo-agent|paseo-workspace|paseo-session/u);
     expect(archive).toHaveBeenCalledTimes(2);
-    await cleanup();
-    expect(archiveWorkspace).toHaveBeenCalledOnce();
+    await expect(cleanup()).rejects.toThrow("Meeting chat workspace cleanup failed");
+    await expect(cleanup()).resolves.toBeUndefined();
+    expect(archiveWorkspace).toHaveBeenCalledTimes(2);
   });
 });
 

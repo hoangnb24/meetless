@@ -243,8 +243,13 @@ export class PaseoMeetingChatAgentPort implements MeetingChatAgentPort {
     await Promise.allSettled([...this.resources].map((resource) => resource.close()));
     this.resources.clear();
     const workspace = this.workspace;
-    this.workspace = null;
-    if (workspace) await workspace.archive();
+    if (workspace) {
+      const result = await workspace.archive();
+      if (result.error || !result.archivedAt) {
+        throw new Error("Meeting chat workspace cleanup failed");
+      }
+      this.workspace = null;
+    }
   }
 }
 

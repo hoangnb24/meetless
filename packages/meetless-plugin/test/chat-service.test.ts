@@ -175,6 +175,41 @@ describe("Paseo execution adapter", () => {
     await port.close();
     expect(archiveWorkspace).toHaveBeenCalledOnce();
   });
+
+  test("keeps workspace ownership when archive reports an error and retries close", async () => {
+    const executionRoot = await mkdtemp(path.join(tmpdir(), "meetless-neutral-chat-retry-"));
+    roots.push(executionRoot);
+    const archiveWorkspace = vi.fn()
+      .mockResolvedValueOnce({
+        requestId: "archive-failed", workspaceId: "workspace-private",
+        archivedAt: null, error: "archive failed with workspaceId=workspace-private",
+      })
+      .mockResolvedValueOnce({
+        requestId: "archive-retry", workspaceId: "workspace-private",
+        archivedAt: new Date().toISOString(), error: null,
+      });
+    const paseo = {
+      workspaces: { open: async () => ({
+        archive: archiveWorkspace,
+        agents: { create: async () => ({
+          waitForFinish: async () => ({
+            status: "idle", final: null, error: null,
+            lastMessage: JSON.stringify({ outcome: "insufficient_evidence", text: null, citationSegmentIds: [] }),
+          }),
+          archive: async () => ({ archivedAt: new Date().toISOString() }),
+        }) },
+      }) },
+    };
+    const port = new PaseoMeetingChatAgentPort(paseo as never, executionRoot);
+    await port.execute({
+      provider: "codex", model: "gpt-5", messages: [{ role: "user", text: "Question" }],
+      transcript: transcript(), recordRetrieved: async () => undefined,
+    });
+
+    await expect(port.close()).rejects.toThrow("Meeting chat workspace cleanup failed");
+    await expect(port.close()).resolves.toBeUndefined();
+    expect(archiveWorkspace).toHaveBeenCalledTimes(2);
+  });
 });
 
 function fakeAgent(execute: (input: ChatExecutionInput) => Promise<AgentAnswer>): MeetingChatAgentPort {
