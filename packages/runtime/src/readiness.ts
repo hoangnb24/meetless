@@ -13,6 +13,7 @@ import {
 import WebSocket from "ws";
 import { REPOSITORY_ROOT, type RuntimeConfig } from "./config.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
+import { readConsumedUiTestMarkerSync } from "./ui-test-envelope.js";
 
 export const RECORDING_READINESS_AUTHORITY = "docs/plans/active/v1-paseo-foundation.md";
 
@@ -59,7 +60,7 @@ export interface RecordingReadinessDependencies {
 
 export interface RuntimeReadinessReport {
   authority: string;
-  captureMode: "production";
+  captureMode: "production" | "fixture";
   supervisor: { pid: number; live: boolean };
   daemon: { pid: number; listen: string };
   plugin: {
@@ -81,7 +82,7 @@ export interface RuntimeReadinessReport {
   helper: null | {
     pid: number;
     live: true;
-    mode: "production";
+    mode: "production" | "fixture";
     path: string;
     realPath: string;
     sha256: string;
@@ -317,7 +318,7 @@ export async function inspectRuntimeReadiness(
   const capture = attestation.runtime.capture;
   return {
     authority: RECORDING_READINESS_AUTHORITY,
-    captureMode: "production",
+    captureMode: capture.mode,
     supervisor: { pid: lock.pid, live: true },
     daemon: { pid: daemonPid, listen: config.listen },
     plugin: {
@@ -338,7 +339,7 @@ export async function inspectRuntimeReadiness(
     helper: capture.helperPid ? {
       pid: capture.helperPid,
       live: true,
-      mode: "production",
+      mode: capture.mode,
       path: capture.executable.configuredPath,
       realPath: capture.executable.realPath,
       sha256: capture.executable.sha256,
@@ -513,7 +514,7 @@ export async function assertAttestedProcessOwnership(input: {
 }
 
 function assertProductionCapture(config: RuntimeConfig): void {
-  if (config.environment.MEETLESS_CAPTURE_MODE === "fixture") {
+  if (config.environment.MEETLESS_CAPTURE_MODE === "fixture" && !controlledUiTestMarker(config)) {
     throw new Error(
       `Production desktop readiness rejects MEETLESS_CAPTURE_MODE=fixture. Remove fixture mode and rebuild before owner participation. ` +
         `Authority: ${RECORDING_READINESS_AUTHORITY}.`,
@@ -526,24 +527,35 @@ async function assertRuntimeAttestation(
   response: RecordingRuntimeReadinessResponse,
 ): Promise<void> {
   const runtime = response.runtime;
+  const uiTest = controlledUiTestMarker(config);
   if (runtime.socketPath !== config.paths.recordingSocket) {
     throw readinessFailure("recording socket ownership", config, new Error(`plugin attested unexpected socket ${runtime.socketPath}`));
   }
-  if (runtime.capture.mode !== "production") {
+  if (runtime.capture.mode === "fixture" && !uiTest) {
     throw readinessFailure("production capture helper", config, new Error(`plugin attested ${runtime.capture.mode} capture mode`));
   }
-  if (runtime.capture.arguments.length > 0) {
+  if (runtime.capture.mode === "production" && runtime.capture.arguments.length > 0) {
     throw readinessFailure(
       "production capture helper",
       config,
       new Error(`helper arguments are forbidden in production: ${runtime.capture.arguments.join(" ")}`),
     );
   }
-  if (runtime.export.fixtureStampApplied) {
+  if (runtime.capture.mode === "production" && runtime.export.fixtureStampApplied) {
     throw readinessFailure("production export configuration", config, new Error("fixture export stamp affected production runtime"));
   }
   if (path.resolve(runtime.export.root) !== path.resolve(config.paths.recordingExports)) {
     throw readinessFailure("production export configuration", config, new Error("daemon export root differs from launcher configuration"));
+  }
+  if (uiTest) {
+    if (runtime.capture.mode !== "fixture") {
+      throw readinessFailure("controlled UI-test identity", config, new Error("controlled run did not attest fixture capture"));
+    }
+    if (!runtime.uiTest || JSON.stringify(runtime.uiTest) !== JSON.stringify(uiTest.identity)) {
+      throw readinessFailure("controlled UI-test identity", config, new Error("socket runtime identity differs from consumed run marker"));
+    }
+  } else if (runtime.uiTest) {
+    throw readinessFailure("production UI-test identity", config, new Error("production runtime exposed controlled UI-test identity"));
   }
   const [configuredInfo, configuredRealPath, helperBytes] = await Promise.all([
     stat(config.paths.captureHelper),
@@ -562,6 +574,22 @@ async function assertRuntimeAttestation(
   ) {
     throw readinessFailure("production capture helper", config, new Error("daemon helper executable identity differs from launcher configuration"));
   }
+}
+
+function controlledUiTestMarker(config: RuntimeConfig) {
+  const marker = readConsumedUiTestMarkerSync(config.paths.root);
+  if (
+    !marker ||
+    config.environment.MEETLESS_UI_TEST_MODE !== "1" ||
+    config.environment.MEETLESS_UI_TEST_RUN_ID !== marker.runId ||
+    path.resolve(config.environment.MEETLESS_UI_TEST_MARKER ?? "") !== path.resolve(markerPath(config)) ||
+    path.resolve(config.paths.recordingExports) !== path.join(path.resolve(config.paths.root), "ui-test-exports")
+  ) return null;
+  return marker;
+}
+
+function markerPath(config: RuntimeConfig): string {
+  return path.join(config.paths.root, "ui-test-run.json");
 }
 
 async function assertDaemonPluginAttestation(

@@ -27,6 +27,25 @@ export interface TranscriptionProvider {
   transcribe(request: TranscriptionRequest): Promise<TranscriptionResult>;
 }
 
+/**
+ * Deterministic repository wiring only. This provider never represents native
+ * host capability or live provider evidence; the controlled run labels it as
+ * generated fixture transcription in its proof manifest.
+ */
+export class DeterministicFixtureTranscriptionProvider implements TranscriptionProvider {
+  async status(): Promise<TranscriptionProviderStatus> {
+    return "configured";
+  }
+
+  async transcribe(request: TranscriptionRequest): Promise<TranscriptionResult> {
+    return {
+      text: `Meetless fixture range ${request.range.ordinal + 1}: hello xin chào.`,
+      detectedLanguages: ["en", "vi"],
+      usage: { durationSeconds: (request.range.endMs - request.range.startMs) / 1_000 },
+    };
+  }
+}
+
 export interface NativeTranscriptionRequest {
   operation: "status" | "transcribe";
   recordingId?: string;

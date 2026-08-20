@@ -6,6 +6,7 @@ import type { RuntimeConfig } from "./config.js";
 import { prepareRuntime, REPOSITORY_ROOT } from "./config.js";
 import { assertDesktopLaunchedByHost, assertSupervisorOwnedByHost } from "./host.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
+import { activateUiTestRun } from "./ui-test-envelope.js";
 
 export function buildRendererUrl(config: RuntimeConfig): string {
   const configured = process.env.MEETLESS_RENDERER_URL?.trim();
@@ -16,6 +17,10 @@ export function buildRendererUrl(config: RuntimeConfig): string {
     );
   }
   url.searchParams.set("daemon", `ws://${config.listen}/ws`);
+  if (config.environment.MEETLESS_UI_TEST_MODE === "1" && config.environment.MEETLESS_UI_TEST_RUN_ID) {
+    url.searchParams.set("uiTestRunId", config.environment.MEETLESS_UI_TEST_RUN_ID);
+    url.searchParams.set("uiTestDesktopId", "com.meetless.desktop");
+  }
   return url.toString();
 }
 
@@ -27,7 +32,8 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
   let electron: ChildProcess | null = null;
   let daemonOwned = false;
   try {
-    await assertDesktopLaunchedByHost(config);
+    const hostIdentity = await assertDesktopLaunchedByHost(config);
+    const uiTest = await activateUiTestRun(config, hostIdentity);
     shutdown.signal.throwIfAborted();
     await prepareRuntime(config);
     const { waitForRecordingRuntime } = await import("./readiness.js");
@@ -52,7 +58,8 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
 
     const recorder = await waitForRecordingRuntime(config, { signal: shutdown.signal });
     process.stdout.write(
-      `Meetless production recorder instance ${recorder.runtime.instanceId} answered authoritative status: ${recorder.status.status}.\n`,
+      `Meetless ${uiTest ? `controlled ${uiTest.transcriptionMode}` : "production"} recorder instance ` +
+        `${recorder.runtime.instanceId} answered authoritative status: ${recorder.status.status}.\n`,
     );
 
     const rendererUrl = buildRendererUrl(config);

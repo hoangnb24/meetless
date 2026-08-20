@@ -2,6 +2,7 @@ import { open, type FileHandle } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { prepareRuntime, resolveRuntimeConfig } from "./config.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
+import { activateUiTestRun } from "./ui-test-envelope.js";
 
 let supervisorOwnershipMarker: FileHandle | undefined;
 
@@ -12,6 +13,7 @@ async function main(): Promise<void> {
     listen: process.env.MEETLESS_LISTEN,
   });
   if (command === "daemon") {
+    await activateUiTestRun(config);
     await prepareRuntime(config);
     Object.assign(process.env, config.environment);
     supervisorOwnershipMarker = await open(config.paths.supervisorMarker, "w+", 0o600);

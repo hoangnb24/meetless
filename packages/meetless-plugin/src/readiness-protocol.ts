@@ -1,6 +1,26 @@
 import { RecordingStatusWireSchema } from "@meetless/meeting-contracts";
 import { z } from "zod";
 
+export const MEETLESS_DESKTOP_LOGICAL_ID = "com.meetless.desktop" as const;
+
+export const UiTestIdentitySchema = z.object({
+  version: z.literal(1),
+  logicalDesktopId: z.literal(MEETLESS_DESKTOP_LOGICAL_ID),
+  hostBundleIdentifier: z.literal("com.meetless.app"),
+  hostBundlePath: z.string().min(1),
+  hostCdHash: z.string().regex(/^[a-f0-9]{40}$/u),
+  hostPid: z.number().int().positive(),
+  desktopPid: z.number().int().positive(),
+  runId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/u),
+  cdpAddress: z.literal("127.0.0.1"),
+  cdpPort: z.number().int().min(1024).max(65535),
+  captureMode: z.literal("fixture"),
+  transcriptionMode: z.enum(["fake", "native"]),
+  accessibility: z.enum(["forced-controlled-runtime", "labels-only-controlled-runtime"]),
+}).strict();
+
+export type UiTestIdentity = z.infer<typeof UiTestIdentitySchema>;
+
 export const RecordingRuntimeBootstrapInputSchema = z.object({
   nonce: z.string().uuid(),
   deadlineEpochMs: z.number().int().positive(),
@@ -71,6 +91,7 @@ export const RecordingRuntimeReadinessResponseSchema = z.object({
       root: z.string().min(1),
       fixtureStampApplied: z.boolean(),
     }).strict(),
+    uiTest: UiTestIdentitySchema.nullable().optional(),
   }).strict(),
   status: RecordingStatusWireSchema,
   collision: CollisionEvidenceSchema.nullable(),

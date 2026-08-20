@@ -48,14 +48,14 @@ export function RecordingStrip(props: {
     <View style={styles.recordingStrip} testID="global-recording-strip">
       {props.status.status === "idle" || props.status.status === "saved" || props.status.status === "failed" ? (
         <>
-          <TextInput accessibilityLabel="Recording title" placeholder="Meeting title" placeholderTextColor="#777b82" style={styles.recordingInput} value={title} onChangeText={setTitle} testID="recording-title-input" />
-          <Pressable disabled={props.pending || !title.trim()} onPress={() => void props.onStart(title.trim()).then(() => setTitle(""))} style={styles.recordingAction} testID="recording-start"><Text style={styles.buttonText}>Start recording</Text></Pressable>
+          <TextInput accessibilityLabel="Recording title" accessibilityRole="text" placeholder="Meeting title" placeholderTextColor="#777b82" style={styles.recordingInput} value={title} onChangeText={setTitle} testID="recording-title-input" />
+          <Pressable accessibilityLabel="Start recording" accessibilityRole="button" disabled={props.pending || !title.trim()} onPress={() => void props.onStart(title.trim()).then(() => setTitle(""))} style={styles.recordingAction} testID="recording-start"><Text style={styles.buttonText}>Start recording</Text></Pressable>
         </>
       ) : (
         <>
           <View style={styles.recordingIdentity}><Text style={styles.recordingTitle}>{props.status.title ?? "Meeting"}</Text><Text style={styles.recordingTime}>{String(Math.floor(seconds / 60)).padStart(2, "0")}:{String(seconds % 60).padStart(2, "0")} · {props.status.status}</Text></View>
           {active ? <Pressable disabled={props.pending} onPress={() => void (props.status.paused ? props.onResume() : props.onPause())} style={styles.recordingSecondary} testID="recording-pause-resume"><Text style={styles.recordingButtonText}>{props.status.paused ? "Resume" : "Pause"}</Text></Pressable> : null}
-          {active ? <Pressable disabled={props.pending} onPress={() => void props.onStop()} style={styles.recordingAction} testID="recording-stop"><Text style={styles.buttonText}>Stop</Text></Pressable> : null}
+          {active ? <Pressable accessibilityLabel="Stop recording" accessibilityRole="button" disabled={props.pending} onPress={() => void props.onStop()} style={styles.recordingAction} testID="recording-stop"><Text style={styles.buttonText}>Stop</Text></Pressable> : null}
           {recoverable ? <Pressable disabled={props.pending} onPress={() => void props.onRetry()} style={styles.recordingAction} testID="recording-retry"><Text style={styles.buttonText}>Retry MP3</Text></Pressable> : null}
         </>
       )}

@@ -95,7 +95,9 @@ export function resolveRuntimeConfig(input: {
     recordingExports: path.resolve(sourceEnvironment.MEETLESS_EXPORT_ROOT?.trim() || path.join(userHome, "Documents", "meetings")),
   };
   assertIsolated(paths, listen, userHome);
-  const inheritedEnvironment = copyEnvironmentWithoutOpenAiSecrets(sourceEnvironment);
+  const inheritedEnvironment = copyEnvironmentWithoutUiTestControls(
+    copyEnvironmentWithoutOpenAiSecrets(sourceEnvironment),
+  );
   return {
     listen,
     rendererOrigin,
@@ -134,6 +136,19 @@ export function copyEnvironmentWithoutOpenAiSecrets(environment: NodeJS.ProcessE
   return Object.fromEntries(
     Object.entries(environment).filter(([key, value]) => !isOpenAiSecretEnvironmentEntry(key, value)),
   );
+}
+
+export function copyEnvironmentWithoutUiTestControls(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const controls = new Set([
+    "MEETLESS_CAPTURE_MODE",
+    "MEETLESS_TRANSCRIPTION_MODE",
+    "MEETLESS_UI_TEST_MODE",
+    "MEETLESS_UI_TEST_RUN_ID",
+    "MEETLESS_UI_TEST_MARKER",
+    "MEETLESS_UI_TEST_IDENTITY",
+    "PASEO_ELECTRON_FLAGS",
+  ]);
+  return Object.fromEntries(Object.entries(environment).filter(([key]) => !controls.has(key)));
 }
 
 export function isOpenAiSecretEnvironmentEntry(key: string, value: string | undefined): boolean {

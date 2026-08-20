@@ -35,6 +35,16 @@ export function assertLauncherOrdering(input: {
     ],
     "Electron complete interactive startup",
   );
+  if (/setAccessibilitySupportEnabled\(\s*true\s*\)|accessibilitySupportEnabled\s*=|appendSwitch\(\s*["']force-renderer-accessibility["']/.test(input.electronBootstrap)) {
+    const markerIndex = input.electronBootstrap.indexOf("readConsumedUiTestMarkerSync");
+    const guardIndex = input.electronBootstrap.indexOf("if (uiTestMarker?.forceAccessibility === true)");
+    const accessibilityIndex = input.electronBootstrap.indexOf("app.setAccessibilitySupportEnabled(true)");
+    const switchIndex = input.electronBootstrap.indexOf('app.commandLine.appendSwitch("force-renderer-accessibility")');
+    const enabledIndex = accessibilityIndex >= 0 ? accessibilityIndex : switchIndex;
+    if (markerIndex < 0 || guardIndex < 0 || enabledIndex < 0 || guardIndex > enabledIndex) {
+      fail("Electron enables accessibility without a consumed one-shot UI-test envelope");
+    }
+  }
   const forbiddenStaticImport = /^import\s+.*(?:@getpaseo|vendor\/paseo)/mu;
   for (const [label, source] of [
     ["daemon launcher", input.daemonLauncher],

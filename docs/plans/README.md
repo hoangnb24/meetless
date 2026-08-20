@@ -37,5 +37,5 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 ## Active Harness Improvements
 
 - [Correlated Electron recording proof](active/post-m3-electron-harness-improvement.md)
-  — owner-authorized capability experiment; active until a materially
-  equivalent fresh-agent rerun exercises the intervention.
+  — owner-authorized capability experiment; Awaiting fresh rerun until a
+  materially equivalent fresh-agent rerun exercises the intervention.

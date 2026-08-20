@@ -4,7 +4,7 @@ Date: 2026-08-20
 
 ## Status
 
-Active
+Awaiting fresh rerun
 
 ## Representative Job
 
@@ -83,27 +83,58 @@ intervention must be removed or revised if it creates another production/TCC
 permission owner, enables accessibility outside controlled UI-test mode, or
 requires maintaining a second recording/transcription policy path.
 
+## Implementation Candidate
+
+`POST-M3-E2E-IMPL` (2026-08-20) adds the repository-native capability in the
+accepted owner scope. The candidate keeps `com.meetless.app/MeetlessHost` as
+the only production host and uses the logical tested identity
+`com.meetless.desktop` plus the exact accepted host path/CDHash, PID ancestry,
+runtime instance ID, and fresh run ID. A consumed one-shot envelope under the
+runtime root controls CDP, renderer markers, fixture/provider mode, and the
+optional forced accessibility path; invalid or missing envelopes remain
+production mode, and production does not enable accessibility.
+
+The integrated proof launches the accepted host through LaunchServices and
+attaches Playwright to its run-scoped renderer CDP endpoint. The deterministic
+fake-provider proof correlates renderer title/Start/Stop, recording socket
+`recording`/`saved`/post-stop `idle`, MeetingStore identifiers, helper PID and
+argv, microphone/system chunk identities, MP3 identity, and a ready fixture
+transcript. The separate `_electron.launch()` smoke is explicitly
+experimental and renderer-only. No result claims a physical click, TCC grant,
+or live Zoom/Meet source. M4 remains closed.
+
 ## Native Validation
 
-Pending implementation. Required evidence includes allowed and recoverable
-forbidden cases for the unique identity, test-only accessibility, complete
-correlation, and the already accepted title-bar geometry. Local command,
-optional hook, checked-in CI invocation, and external branch-protection
-enforcement will be reported separately; no hook, CI workflow/provider,
-external permission, or branch-protection change is authorized.
+The candidate's local evidence includes allowed and recoverable forbidden cases
+for generic Electron identity, invalid/missing envelope, production
+accessibility leakage, every correlation stage, and the accepted title-bar
+geometry. `npm run proof:post-m3:smoke` passes as experimental renderer-only
+support. The deterministic integrated proof passes with generated fixture
+labels. The native attempt reports the current accepted host capability as
+invalid and skips without fake substitution. Local command enforcement is
+present; no hook, CI workflow/provider, external permission, or branch-
+protection change is authorized.
+
+Observed validation: `npm run test:post-m3` passed 29 tests;
+`npm run validate:isolation` passed 46 tests; `npm run test:composition` passed
+1 test; `npm run test:focused` passed 194 tests; and `npm run typecheck` passed.
+The package-level `npm run proof:post-m3` passed its deterministic fake result
+and reported native `invalid` as `native-provider-unavailable` with
+`noFakeSubstitution: true`.
 
 ## Fresh Rerun
 
-Pending. A materially equivalent fresh agent must discover the capability from
-repository guidance, invoke it from the accepted starting conditions, and
-produce the correlated result without owner UI intervention. This record must
-remain active or awaiting fresh rerun until that succeeds.
+Awaiting fresh rerun. A materially equivalent fresh agent must discover the
+capability from repository guidance, invoke it from the accepted starting
+conditions, and produce the correlated result without owner UI intervention.
+The baseline above remains preserved until that rerun and Lead acceptance.
 
 ## Decision
 
-Pending fresh rerun.
+Candidate implementation is ready for Lead review; decision remains pending the
+required fresh rerun.
 
 ## Result
 
-Pending implementation, frozen-candidate review, and the fresh-agent rerun.
-M4 remains closed.
+Implementation candidate complete and awaiting fresh-agent rerun. Candidate
+commit identity is recorded in the peer disposition. M4 remains closed.

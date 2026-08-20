@@ -1,14 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { MeetingStore } from "@meetless/meeting-store";
 import { RecordingService } from "./recording-service.js";
 import { RecordingControlServer } from "./control-server.js";
 import { assertProductionHostProvenance } from "./production-host.js";
 import { FfmpegAudioInspector, TranscriptionService } from "./transcription-service.js";
-import { NativeOpenAiTranscriptionProvider, UnixSocketNativeTranscriptionTransport } from "./transcription-provider.js";
+import {
+  DeterministicFixtureTranscriptionProvider,
+  NativeOpenAiTranscriptionProvider,
+  UnixSocketNativeTranscriptionTransport,
+  type TranscriptionProvider,
+} from "./transcription-provider.js";
 import { CitationPlaybackService, FfmpegCitationClipEncoder } from "./citation-playback.js";
 import { PrivateAudioSnapshotStore } from "./private-audio-snapshot.js";
+import { UiTestIdentitySchema, type UiTestIdentity } from "./readiness-protocol.js";
 
 let store: MeetingStore | null = null;
 let recordingService: RecordingService | null = null;
@@ -16,7 +22,7 @@ let controlServer: RecordingControlServer | null = null;
 let transcriptionService: TranscriptionService | null = null;
 let citationPlaybackService: CitationPlaybackService | null = null;
 let recordingStart: Promise<void> | null = null;
-let runtimeIdentity: { instanceId: string; startedAt: string } | null = null;
+let runtimeIdentity: { instanceId: string; startedAt: string; uiTest: UiTestIdentity | null } | null = null;
 
 export function getMeetingStore(): MeetingStore {
   if (store) return store;
@@ -60,17 +66,29 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
   const socketPath = requiredAbsolute("MEETLESS_RECORDING_SOCKET");
   const transcriptionSocket = process.env.MEETLESS_TRANSCRIPTION_SOCKET?.trim();
   const transcriptionStaging = process.env.MEETLESS_TRANSCRIPTION_STAGING?.trim();
+  const uiTest = await readControlledUiTestIdentity();
   await Promise.all([access(helperPath), access(ffmpeg), access(ffprobe)]);
   const fixedStamp = process.env.MEETLESS_FIXTURE_EXPORT_STAMP?.trim();
   const fixture = process.env.MEETLESS_CAPTURE_MODE === "fixture";
+  if (fixture && !uiTest) {
+    throw new Error(
+      "Fixture capture requires a valid consumed one-shot UI-test envelope; normal production has no fixture fallback",
+    );
+  }
   if (!fixture) await assertProductionHostProvenance();
   if (!fixture && (!transcriptionSocket || !path.isAbsolute(transcriptionSocket) || !transcriptionStaging || !path.isAbsolute(transcriptionStaging))) {
     throw new Error("Production transcription requires the signed MeetlessHost native capability socket");
   }
   const fixtureExportNow = resolveFixtureExportNow(fixture, fixedStamp);
-  const provider = transcriptionSocket
-    ? new NativeOpenAiTranscriptionProvider(new UnixSocketNativeTranscriptionTransport(transcriptionSocket))
-    : null;
+  const transcriptionMode = uiTest?.transcriptionMode ?? "native";
+  const provider: TranscriptionProvider | null = transcriptionMode === "fake"
+    ? new DeterministicFixtureTranscriptionProvider()
+    : transcriptionSocket
+      ? new NativeOpenAiTranscriptionProvider(new UnixSocketNativeTranscriptionTransport(transcriptionSocket))
+      : null;
+  if (fixture && !provider) {
+    throw new Error("Controlled native transcription requires the signed host capability socket");
+  }
   const transcript = provider
     ? new TranscriptionService(getMeetingStore(), provider, {
       inspector: new FfmpegAudioInspector(
@@ -96,6 +114,7 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
   const identity = {
     instanceId: randomUUID(),
     startedAt: new Date().toISOString(),
+    uiTest,
   };
   const server = new RecordingControlServer(socketPath, service, identity);
   try {
@@ -157,6 +176,32 @@ export async function grantTranscriptionConsent(): Promise<{ status: "granted"; 
 export function recordingRuntimeIdentity(): { instanceId: string; startedAt: string } {
   if (!runtimeIdentity) throw new Error("Meetless recording runtime is not active");
   return runtimeIdentity;
+}
+
+async function readControlledUiTestIdentity(): Promise<UiTestIdentity | null> {
+  if (process.env.MEETLESS_UI_TEST_MODE !== "1") return null;
+  const markerPath = process.env.MEETLESS_UI_TEST_MARKER?.trim();
+  const runtimeRoot = process.env.MEETLESS_RUNTIME_ROOT?.trim();
+  if (!markerPath || !runtimeRoot || path.resolve(markerPath) !== path.join(path.resolve(runtimeRoot), "ui-test-run.json")) {
+    throw new Error("Controlled UI-test mode requires the exact runtime-root consumed marker");
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(await readFile(markerPath, "utf8"));
+  } catch {
+    throw new Error("Controlled UI-test mode requires a readable consumed marker");
+  }
+  const identity = UiTestIdentitySchema.parse(
+    decoded && typeof decoded === "object" && "identity" in decoded ? decoded.identity : undefined,
+  );
+  if (
+    process.env.MEETLESS_UI_TEST_RUN_ID !== identity.runId ||
+    process.env.MEETLESS_CAPTURE_MODE !== identity.captureMode ||
+    (process.env.MEETLESS_TRANSCRIPTION_MODE ?? "") !== identity.transcriptionMode
+  ) {
+    throw new Error("Controlled UI-test environment does not match the consumed marker identity");
+  }
+  return identity;
 }
 
 export function resolveFixtureExportNow(fixture: boolean, fixedStamp: string | undefined): (() => Date) | undefined {

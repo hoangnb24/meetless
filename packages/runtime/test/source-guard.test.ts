@@ -101,4 +101,15 @@ describe("launcher source ordering guard", () => {
       }),
     ).toThrow(/complete interactive startup performs await import.*activate and focus each BrowserWindow/s);
   });
+
+  test("rejects accessibility enablement without a consumed controlled marker", () => {
+    expect(() =>
+      assertLauncherOrdering({
+        daemonLauncher:
+          "await prepareRuntime(config);\nObject.assign(process.env, config.environment);\nawait import(entry);",
+        desktopLauncher: 'await prepareRuntime(config);\nawait import("./readiness.js");',
+        electronBootstrap: `${interactiveElectronBootstrap}\napp.setAccessibilitySupportEnabled(true);`,
+      }),
+    ).toThrow(/enables accessibility without a consumed one-shot UI-test envelope/);
+  });
 });

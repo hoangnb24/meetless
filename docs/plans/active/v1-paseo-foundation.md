@@ -850,12 +850,46 @@ stopped, and the original production meeting state was restored byte-for-byte
 - **Harness experiment:** the active record is
   [`post-m3-electron-harness-improvement.md`](post-m3-electron-harness-improvement.md).
   It preserves the false-positive preflights, wrong identity, pointer overlap,
-  Computer Use attachment failure, and owner interventions. It remains active
-  until a materially equivalent fresh agent discovers and exercises the new
-  repository capability.
+  Computer Use attachment failure, and owner interventions. Its current status
+  is **Awaiting fresh rerun**: a materially equivalent fresh agent must discover
+  and exercise the new repository capability before the gate is closed.
 - **Dependency:** M4 remains closed until the implementation is accepted and
   the handback states separately whether deterministic automation and the
   original fresh real recording/TCC gate have each been satisfied.
+
+`POST-M3-E2E-IMPL` candidate record (2026-08-20):
+
+- **Implemented boundary:** the candidate adds Playwright Electron renderer
+  smoke support through the experimental `_electron.launch()` API and an
+  integrated LaunchServices proof that attaches to the exact host-owned,
+  run-scoped renderer CDP endpoint. It uses logical identity
+  `com.meetless.desktop`, exact `com.meetless.app` bundle path/CDHash, host ->
+  desktop -> Electron ancestry, runtime instance ID, and fresh run ID. It does
+  not create or install a second application or TCC owner.
+- **Controlled runtime:** a one-shot expiring envelope under the accepted
+  runtime root is consumed into a marker before CDP, fixture/provider controls,
+  or optional forced accessibility are applied. Missing, malformed, expired,
+  or mismatched envelopes fail closed to production behavior. The production
+  bootstrap has no accessibility enablement; the integrated proof uses the
+  least-required labels-only controlled mode and does not claim an AX event.
+- **Correlated proof:** the deterministic fake-provider run passed title entry,
+  visible Start/Stop, socket recording/saved/idle status, MeetingStore saved
+  identity, helper and microphone/system chunk identities, MP3 SHA-256, and a
+  ready generated transcript. It is explicitly fixture/generated evidence, not
+  physical-click, TCC, or live Zoom/Meet evidence. The native-provider attempt
+  reported the current signed-host capability as invalid and skipped without
+  substituting fake evidence.
+- **Mechanical negatives:** source/envelope tests cover generic identity,
+  production accessibility leakage, invalid/missing envelope, each important
+  correlation stage, and the accepted 29 px title-bar geometry. The active
+  Harness record and this gate remain **Awaiting fresh rerun**. M4 remains
+  closed.
+- **Candidate validation:** `npm run test:post-m3` passed 29 tests;
+  `npm run validate:isolation` passed 46; `npm run test:composition` passed 1;
+  `npm run test:focused` passed 194; `npm run typecheck` passed;
+  `proof:post-m3:smoke` passed as experimental renderer-only evidence; and
+  package-level `proof:post-m3` passed deterministic fake evidence while
+  reporting native capability `invalid` as an explicit no-substitution skip.
 
 ### Milestone 4: coding-agent analysis
 
@@ -954,8 +988,9 @@ Recovery rules:
   newly recorded meeting.
 - [x] Restore physically pointer-interactive recording input in the accepted
   LaunchServices host and repository Electron chain before M4 begins.
-- [ ] Add and freshly rerun the correlated post-M3 Electron recording Harness
-  capability without weakening production identity, TCC, or accessibility.
+- [ ] Freshly rerun the correlated post-M3 Electron recording Harness candidate
+  without weakening production identity, TCC, or accessibility (status:
+  Awaiting fresh rerun).
 - [ ] Complete Milestone 4: coding-agent analysis.
 - [ ] Complete Milestone 5: grounded Q&A and document folders.
 - [ ] Complete Milestone 6: companion web/mobile experience.
