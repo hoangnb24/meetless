@@ -464,26 +464,17 @@ const SYSTEM_PROMPT = [
 
 const AGENT_OUTPUT_SCHEMA = {
   type: "object",
-  oneOf: [
-    {
-      properties: {
-        outcome: { const: "supported" },
-        text: { type: "string", minLength: 1 },
-        citationSegmentIds: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", minLength: 1 } },
-      },
-      required: ["outcome", "text", "citationSegmentIds"],
-      additionalProperties: false,
+  properties: {
+    outcome: { type: "string", enum: ["supported", "insufficient_evidence"] },
+    text: { type: ["string", "null"] },
+    citationSegmentIds: {
+      type: "array",
+      uniqueItems: true,
+      items: { type: "string", minLength: 1 },
     },
-    {
-      properties: {
-        outcome: { const: "insufficient_evidence" },
-        text: { type: "null" },
-        citationSegmentIds: { type: "array", maxItems: 0 },
-      },
-      required: ["outcome", "text", "citationSegmentIds"],
-      additionalProperties: false,
-    },
-  ],
+  },
+  required: ["outcome", "text", "citationSegmentIds"],
+  additionalProperties: false,
 } satisfies Record<string, unknown>;
 
 export function resolveChatExecutionRoot(environment: NodeJS.ProcessEnv = process.env): string {
