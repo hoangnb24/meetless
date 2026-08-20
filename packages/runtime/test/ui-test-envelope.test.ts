@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -76,6 +76,55 @@ describe("controlled UI-test envelope", () => {
 
     await expect(activateUiTestRun(config, { ...hostIdentity(), cdHash: "b".repeat(40) })).rejects.toThrow(/host identity mismatch/);
     expect(readConsumedUiTestMarkerSync(root)?.identity.hostCdHash).toBe("a".repeat(40));
+  });
+
+  test("removes a stale consumed marker and keeps a fresh desktop production-only", async () => {
+    const root = await temporaryRoot();
+    const config = resolveRuntimeConfig({ runtimeRoot: root, repositoryRoot: process.cwd() });
+    await writeUiTestEnvelope(root, newUiTestEnvelope({ cdpPort: 45_325, transcriptionMode: "fake" }));
+    const marker = await activateUiTestRun(config, hostIdentity());
+    expect(marker).not.toBeNull();
+    await writeFile(
+      uiTestMarkerPath(root),
+      `${JSON.stringify({ ...marker, identity: { ...marker!.identity, desktopStartInstance: "stale-process-start" } })}\n`,
+      { mode: 0o600 },
+    );
+
+    const freshConfig = resolveRuntimeConfig({ runtimeRoot: root, repositoryRoot: process.cwd() });
+    expect(await activateUiTestRun(freshConfig)).toBeNull();
+    expect(freshConfig.environment.MEETLESS_CAPTURE_MODE).toBeUndefined();
+    await expect(readFile(uiTestMarkerPath(root), "utf8")).rejects.toThrow();
+  });
+
+  test("rejects an insecure runtime root and insecure marker files", async () => {
+    const root = await temporaryRoot();
+    const config = resolveRuntimeConfig({ runtimeRoot: root, repositoryRoot: process.cwd() });
+    await chmod(root, 0o755);
+    await expect(writeUiTestEnvelope(root, newUiTestEnvelope({ cdpPort: 45_326, transcriptionMode: "fake" })))
+      .rejects.toThrow(/runtime root.*0700/);
+    await chmod(root, 0o700);
+
+    await writeUiTestEnvelope(root, newUiTestEnvelope({ cdpPort: 45_327, transcriptionMode: "fake" }));
+    await chmod(uiTestEnvelopePath(root), 0o644);
+    expect(await activateUiTestRun(config, hostIdentity())).toBeNull();
+    expect(readConsumedUiTestMarkerSync(root)).toBeNull();
+
+    await rm(uiTestEnvelopePath(root), { force: true });
+    const target = path.join(root, "envelope-target.json");
+    await writeFile(target, JSON.stringify(newUiTestEnvelope({ cdpPort: 45_328, transcriptionMode: "fake" })), { mode: 0o600 });
+    await symlink(target, uiTestEnvelopePath(root));
+    expect(await activateUiTestRun(config, hostIdentity())).toBeNull();
+
+    await rm(uiTestEnvelopePath(root), { force: true });
+    await writeUiTestEnvelope(root, newUiTestEnvelope({ cdpPort: 45_329, transcriptionMode: "fake" }));
+    const marker = await activateUiTestRun(config, hostIdentity());
+    expect(marker).not.toBeNull();
+    await chmod(uiTestMarkerPath(root), 0o644);
+    expect(readConsumedUiTestMarkerSync(root)).toBeNull();
+    await rm(uiTestMarkerPath(root), { force: true });
+    await writeFile(target, JSON.stringify(marker), { mode: 0o600 });
+    await symlink(target, uiTestMarkerPath(root));
+    expect(readConsumedUiTestMarkerSync(root)).toBeNull();
   });
 
   test("cleanup removes only the owned marker, envelope, and export tree", async () => {

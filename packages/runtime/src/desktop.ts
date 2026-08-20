@@ -6,7 +6,7 @@ import type { RuntimeConfig } from "./config.js";
 import { prepareRuntime, REPOSITORY_ROOT } from "./config.js";
 import { assertDesktopLaunchedByHost, assertSupervisorOwnedByHost } from "./host.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
-import { activateUiTestRun } from "./ui-test-envelope.js";
+import { activateUiTestRun, removeUiTestRunState } from "./ui-test-envelope.js";
 
 export function buildRendererUrl(config: RuntimeConfig): string {
   const configured = process.env.MEETLESS_RENDERER_URL?.trim();
@@ -204,6 +204,7 @@ export class HostOwnedRuntimeShutdown {
         "Authority: docs/plans/active/v1-paseo-foundation.md. Inspect only the repo-owned tree before retrying.",
       );
     }
+    await removeUiTestRunState(this.config.paths.root);
     await rm(this.registryPath, { force: true });
   }
 

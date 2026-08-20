@@ -13,6 +13,7 @@ import { readInventory } from "../packages/meetless-plugin/dist/src/inventory.js
 import { resolveRuntimeConfig } from "../packages/runtime/dist/config.js";
 import { assertInstalledHostIdentity } from "../packages/runtime/dist/host.js";
 import { validatePostM3Correlation } from "../packages/runtime/dist/post-m3-correlation.js";
+import { summarizePostM3Cleanup } from "../packages/runtime/dist/post-m3-cleanup.js";
 import {
   newUiTestEnvelope,
   readConsumedUiTestMarker,
@@ -35,6 +36,8 @@ const originalRootExisted = await exists(config.paths.root);
 const results = [];
 let staged = false;
 let preserved = false;
+let fatalError = null;
+let cleanupReport;
 
 try {
   await ensureNoAmbiguousRuntime(config, hostIdentity);
@@ -53,32 +56,30 @@ try {
     await cleanupStagedRuntime(config.paths.root);
     await mkdir(config.paths.root, { recursive: true, mode: 0o700 });
   }
+} catch (error) {
+  fatalError = error;
+  results.push({ mode: "harness", status: "failed", reason: describe(error) });
 } finally {
-  if (staged || preserved) {
-    const liveHost = exactHostPids(hostIdentity.executablePath);
-    if (liveHost.length > 0) {
-      process.stderr.write(`Post-M3 cleanup left exact MeetlessHost PID(s) live: ${liveHost.join(", ")}. Preserved root remains at ${preservedRoot}.\n`);
-    } else {
-      if (staged) {
-        await cleanupStagedRuntime(config.paths.root).catch((error) => {
-          process.stderr.write(`Post-M3 staged-root cleanup failed: ${describe(error)}\n`);
-        });
-      }
-      if (preserved) {
-        await rename(preservedRoot, config.paths.root).catch((error) => {
-          process.stderr.write(`Post-M3 original-root restore failed; preserved root remains at ${preservedRoot}: ${describe(error)}\n`);
-        });
-      } else {
-        await rm(preservedRoot, { recursive: true, force: true });
-      }
-    }
-  }
+  cleanupReport = await cleanupProofWorkspace({
+    root: config.paths.root,
+    preservedRoot,
+    originalRootExisted,
+    staged,
+    preserved,
+    hostExecutable: hostIdentity.executablePath,
+  });
 }
 
 const manifest = {
   schema: "MEETLESS_POST_M3_CORRELATED_PROOF v1",
-  status: results.some((result) => result.status === "failed") ? "failed" : "passed",
-  frontierId: "POST-M3-E2E-IMPL",
+  status: cleanupReport.status === "failed"
+    ? "failed"
+    : results.some((result) => result.status === "failed")
+      ? "failed"
+      : results.some((result) => result.status === "incomplete")
+        ? "incomplete"
+        : "passed",
+  frontierId: "POST-M3-E2E-IMPL-R1",
   logicalDesktopId: "com.meetless.desktop",
   acceptedHost: {
     bundleIdentifier: hostIdentity.bundleIdentifier,
@@ -93,10 +94,12 @@ const manifest = {
     generatedFixtureSource: true,
     nativeProviderIsSignedHostCapability: true,
   },
+  cleanup: cleanupReport,
+  fatalError: fatalError ? describe(fatalError) : null,
   results,
 };
 process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
-if (manifest.status === "failed") process.exitCode = 1;
+if (manifest.status !== "passed") process.exitCode = 1;
 
 async function runProviderMode(providerMode, runtimeConfig, installedHost, proofRunId) {
   const cdpPort = await reservePort();
@@ -126,9 +129,9 @@ async function runProviderMode(providerMode, runtimeConfig, installedHost, proof
       if (nativeStatus !== "configured") {
         return {
           mode: "native",
-          status: "skipped",
+          status: "incomplete",
           label: "native-provider-signed-host-capability",
-          reason: `accepted host capability reports ${nativeStatus}; no fake substitution was made`,
+          reason: `accepted host capability reports ${nativeStatus}; native acceptance is incomplete and no fake substitution was made`,
           evidenceClass: "native-provider-unavailable",
           noFakeSubstitution: true,
         };
@@ -148,7 +151,13 @@ async function runProviderMode(providerMode, runtimeConfig, installedHost, proof
     const page = await findExactRendererPage(browser, envelope.runId, runtimeConfig.rendererOrigin);
     process.stderr.write(`[post-m3] ${providerMode}: exact page found ${page.url()}\n`);
     const electronPid = await endpointPid(envelope.cdpPort);
-    const processEvidence = exactAncestry(electronPid, marker.identity.hostPid, marker.identity.desktopPid);
+    const processEvidence = exactAncestry(
+      electronPid,
+      marker.identity.hostPid,
+      marker.identity.desktopPid,
+      installedHost,
+      expectedElectronExecutable(),
+    );
     const rendererUrl = page.url();
     const markerInPage = rendererMarker(page.url());
     if (markerInPage.runId !== envelope.runId || markerInPage.logicalDesktopId !== "com.meetless.desktop") {
@@ -157,20 +166,40 @@ async function runProviderMode(providerMode, runtimeConfig, installedHost, proof
 
     socket = await openRecordingSocket(runtimeConfig.paths.recordingSocket);
     const runtimeReady = await socket.requestReadiness("status");
+    const runtimeUiTest = runtimeReady.runtime.uiTest;
+    if (
+      !runtimeUiTest ||
+      runtimeUiTest.runId !== marker.runId ||
+      runtimeUiTest.logicalDesktopId !== marker.logicalDesktopId ||
+      runtimeUiTest.hostBundlePath !== installedHost.bundleRealPath ||
+      runtimeUiTest.hostCdHash !== installedHost.cdHash
+    ) {
+      throw new Error("recording socket runtime.uiTest is missing or differs from the consumed marker and installed host authority");
+    }
     process.stderr.write(`[post-m3] ${providerMode}: socket ${runtimeReady.runtime.socketPath} instance ${runtimeReady.runtime.instanceId} status ${runtimeReady.status.status}\n`);
     const start = page.locator('[data-testid="recording-start"]');
     const title = page.locator('[data-testid="recording-title-input"]');
     await waitForVisible(page.locator('[data-testid="connection-status"]'), 30_000);
     const bridgeDaemonStatus = await page.evaluate(async () => {
       const bridge = globalThis.paseoDesktop;
-      return typeof bridge?.invoke === "function" ? await bridge.invoke("desktop_daemon_status") : null;
+      const status = typeof bridge?.invoke === "function" ? await bridge.invoke("desktop_daemon_status") : null;
+      return {
+        platform: typeof bridge?.platform === "string" ? bridge.platform : "",
+        ...(status && typeof status === "object" ? status : {}),
+      };
     });
     process.stderr.write(`[post-m3] ${providerMode}: renderer bridge daemon ${JSON.stringify(bridgeDaemonStatus)}\n`);
     if (
       !bridgeDaemonStatus ||
+      bridgeDaemonStatus.platform !== "darwin" ||
       path.resolve(bridgeDaemonStatus.home ?? "") !== path.resolve(runtimeConfig.paths.paseoHome) ||
       bridgeDaemonStatus.listen !== runtimeConfig.listen ||
-      bridgeDaemonStatus.status !== "running"
+      bridgeDaemonStatus.status !== "running" ||
+      bridgeDaemonStatus.desktopManaged !== true ||
+      !Number.isInteger(bridgeDaemonStatus.pid) ||
+      bridgeDaemonStatus.pid <= 1 ||
+      typeof bridgeDaemonStatus.serverId !== "string" ||
+      bridgeDaemonStatus.serverId.trim().length === 0
     ) {
       throw new Error(`renderer bridge daemon is not the exact staged runtime (${JSON.stringify(bridgeDaemonStatus)})`);
     }
@@ -235,18 +264,18 @@ async function runProviderMode(providerMode, runtimeConfig, installedHost, proof
     const mp3Identity = await fileIdentity(output.destination);
     const observation = {
       identity: {
-        logicalDesktopId: marker.identity.logicalDesktopId,
-        runId: marker.identity.runId,
-        hostBundleIdentifier: marker.identity.hostBundleIdentifier,
-        hostBundlePath: marker.identity.hostBundlePath,
-        hostCdHash: marker.identity.hostCdHash,
-        hostPid: marker.identity.hostPid,
-        desktopPid: marker.identity.desktopPid,
+        logicalDesktopId: runtimeUiTest.logicalDesktopId,
+        runId: runtimeUiTest.runId,
+        hostBundleIdentifier: runtimeUiTest.hostBundleIdentifier,
+        hostBundlePath: runtimeUiTest.hostBundlePath,
+        hostCdHash: runtimeUiTest.hostCdHash,
+        hostPid: runtimeUiTest.hostPid,
+        desktopPid: runtimeUiTest.desktopPid,
         electronPid,
         electronExecutable: processEvidence.electronExecutable,
         ancestry: processEvidence.ancestry,
-        cdpAddress: marker.identity.cdpAddress,
-        cdpPort: marker.identity.cdpPort,
+        cdpAddress: runtimeUiTest.cdpAddress,
+        cdpPort: runtimeUiTest.cdpPort,
       },
       renderer: {
         runId: markerInPage.runId,
@@ -259,14 +288,16 @@ async function runProviderMode(providerMode, runtimeConfig, installedHost, proof
         finalState,
         screenshotPath,
         tracePath,
+        bridge: bridgeDaemonStatus,
       },
       socket: {
-        runId: marker.identity.runId,
+        runId: runtimeUiTest.runId,
         runtimeInstanceId: runtimeReady.runtime.instanceId,
         pluginPid: recordingReadiness.runtime.pluginPid,
         recordingId: recordingStatus.status.recordingId,
         meetingId: recordingStatus.status.meetingId,
         captureMode: recordingReadiness.runtime.capture.mode,
+        uiTest: runtimeUiTest,
         postStopStatus: postStopStatus.status.status,
         statuses: socket.statuses,
       },
@@ -304,12 +335,19 @@ async function runProviderMode(providerMode, runtimeConfig, installedHost, proof
       },
     };
     process.stderr.write(`[post-m3] ${providerMode}: renderer evidence ${JSON.stringify({ titleEntered, startControlVisible, stopControlVisible, finalState })}\n`);
-    validatePostM3Correlation(observation);
+    validatePostM3Correlation(observation, {
+      hostBundleIdentifier: installedHost.bundleIdentifier,
+      hostBundlePath: installedHost.bundleRealPath,
+      hostCdHash: installedHost.cdHash,
+      runtimeRoot: runtimeConfig.paths.root,
+      listen: runtimeConfig.listen,
+      electronExecutable: expectedElectronExecutable(),
+    });
     return {
       mode: providerMode,
       status: "passed",
       label: providerMode === "fake" ? "deterministic-fixture-generated-source" : "native-provider-signed-host-capability",
-      evidenceClass: "generated-fixture-source",
+      evidenceClass: providerMode === "fake" ? "generated-fixture-source" : "native-provider-signed-host-capability",
       physicalClick: false,
       liveSource: false,
       tcc: false,
@@ -326,7 +364,7 @@ async function runProviderMode(providerMode, runtimeConfig, installedHost, proof
       mode: providerMode,
       status: "failed",
       label: providerMode === "fake" ? "deterministic-fixture-generated-source" : "native-provider-signed-host-capability",
-      evidenceClass: "generated-fixture-source",
+      evidenceClass: providerMode === "fake" ? "generated-fixture-source" : "native-provider-failure",
       reason: describe(error),
       noFakeSubstitution: providerMode === "native",
       screenshot: screenshotPath,
@@ -336,7 +374,7 @@ async function runProviderMode(providerMode, runtimeConfig, installedHost, proof
     if (tracing && browser) await browser.contexts()[0]?.tracing.stop({ path: tracePath }).catch(() => undefined);
     if (socket) await socket.close();
     if (browser) await browser.close().catch(() => undefined);
-    await removeUiTestRunState(runtimeConfig.paths.root).catch(() => undefined);
+    await removeUiTestRunState(runtimeConfig.paths.root);
   }
 }
 
@@ -368,8 +406,64 @@ async function ensureNoAmbiguousRuntime(runtimeConfig, installedHost) {
 }
 
 async function cleanupStagedRuntime(root) {
-  await removeUiTestRunState(root).catch(() => undefined);
+  await removeUiTestRunState(root);
   await rm(root, { recursive: true, force: true });
+}
+
+async function cleanupProofWorkspace(input) {
+  const errors = [];
+  let stagedRootRemoved = !input.staged;
+  let originalRootRestored = !input.staged || !input.originalRootExisted;
+  let runStateRemoved = !input.staged && !input.preserved;
+  let liveHostPids = [];
+  let hostInspectionFailed = false;
+  try {
+    liveHostPids = exactHostPids(input.hostExecutable);
+  } catch (error) {
+    hostInspectionFailed = true;
+    errors.push(`cannot inspect exact host during cleanup: ${describe(error)}`);
+  }
+  if (hostInspectionFailed) {
+    errors.push("refusing root cleanup because exact MeetlessHost liveness could not be verified");
+  } else if (liveHostPids.length > 0) {
+    errors.push(`refusing root cleanup while exact MeetlessHost remains live: ${liveHostPids.join(", ")}`);
+  } else {
+    if (input.staged) {
+      try {
+        await cleanupStagedRuntime(input.root);
+        stagedRootRemoved = true;
+        runStateRemoved = true;
+      } catch (error) {
+        errors.push(`staged runtime cleanup failed: ${describe(error)}`);
+      }
+    }
+    if (input.preserved) {
+      try {
+        await rename(input.preservedRoot, input.root);
+        originalRootRestored = true;
+      } catch (error) {
+        errors.push(`original runtime restore failed: ${describe(error)}`);
+      }
+    } else if (!input.originalRootExisted) {
+      try {
+        await rm(input.preservedRoot, { recursive: true, force: true });
+        originalRootRestored = true;
+      } catch (error) {
+        errors.push(`unowned preserved-path cleanup failed: ${describe(error)}`);
+      }
+    }
+  }
+  return summarizePostM3Cleanup({
+    root: input.root,
+    preservedPath: input.preserved ? input.preservedRoot : null,
+    originalRootExisted: input.originalRootExisted,
+    staged: input.staged,
+    stagedRootRemoved,
+    originalRootRestored,
+    runStateRemoved,
+    liveHostPids,
+    errors,
+  });
 }
 
 async function waitForMarker(root, expectedRunId) {
@@ -630,7 +724,7 @@ async function endpointPid(port) {
   }, "run-scoped CDP listener", 10_000);
 }
 
-function exactAncestry(electronPid, hostPid, desktopPid) {
+function exactAncestry(electronPid, hostPid, desktopPid, installedHost, expectedElectron) {
   const rows = new Map(processRows().map((row) => [row.pid, row]));
   const ancestry = [];
   const seen = new Set();
@@ -644,9 +738,25 @@ function exactAncestry(electronPid, hostPid, desktopPid) {
   if (ancestry[0] !== hostPid || ancestry[1] !== desktopPid || ancestry[ancestry.length - 1] !== electronPid) {
     throw new Error(`CDP endpoint PID ${electronPid} is not exact host ${hostPid} → desktop ${desktopPid} ancestry (${ancestry.join(" → ")})`);
   }
+  const host = rows.get(hostPid);
+  const desktop = rows.get(desktopPid);
+  if (!host || host.ppid !== 1 || host.command !== installedHost.executablePath) {
+    throw new Error(`CDP ancestry host PID ${hostPid} is not the exact installed MeetlessHost executable ${installedHost.executablePath}`);
+  }
+  const expectedDesktopCommand = `${installedHost.configuration.nodePath} ${installedHost.configuration.runtimeCliPath} desktop`;
+  if (!desktop || desktop.ppid !== hostPid || desktop.command !== expectedDesktopCommand) {
+    throw new Error(`CDP ancestry desktop PID ${desktopPid} is not the exact host-owned runtime desktop child ${expectedDesktopCommand}`);
+  }
   const row = rows.get(electronPid);
-  if (!row || !row.command.includes("Electron")) throw new Error(`CDP endpoint PID ${electronPid} is not an Electron executable`);
-  return { ancestry, electronExecutable: electronExecutable(electronPid) };
+  const observedElectron = electronExecutable(electronPid);
+  if (!row || !row.command.includes("Electron") || path.resolve(observedElectron) !== path.resolve(expectedElectron)) {
+    throw new Error(`CDP endpoint PID ${electronPid} is not the exact repository Electron executable ${expectedElectron}`);
+  }
+  return { ancestry, electronExecutable: observedElectron };
+}
+
+function expectedElectronExecutable() {
+  return path.join(repositoryRoot, "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron");
 }
 
 function electronExecutable(pid) {

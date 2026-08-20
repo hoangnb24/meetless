@@ -6,6 +6,8 @@ Date: 2026-08-16
 
 Active
 
+Post-M3 Electron Harness gate: Awaiting fresh rerun. M4 remains closed.
+
 ## Outcome
 
 Deliver a personal, local-first Meetless V1 that keeps Paseo's cross-platform
@@ -857,7 +859,9 @@ stopped, and the original production meeting state was restored byte-for-byte
   the handback states separately whether deterministic automation and the
   original fresh real recording/TCC gate have each been satisfied.
 
-`POST-M3-E2E-IMPL` candidate record (2026-08-20):
+`POST-M3-E2E-IMPL` base candidate record (2026-08-20, superseded by
+`POST-M3-E2E-IMPL-R1`; base commit
+`83b981bd6a02e6155269dc4849f7e69a89e2984b`):
 
 - **Implemented boundary:** the candidate adds Playwright Electron renderer
   smoke support through the experimental `_electron.launch()` API and an
@@ -890,6 +894,22 @@ stopped, and the original production meeting state was restored byte-for-byte
   `proof:post-m3:smoke` passed as experimental renderer-only evidence; and
   package-level `proof:post-m3` passed deterministic fake evidence while
   reporting native capability `invalid` as an explicit no-substitution skip.
+
+`POST-M3-E2E-IMPL-R1` remains Awaiting fresh rerun. It corrects only the
+accepted POC blockers: active marker host/desktop PID-start binding and owned
+shutdown removal, same-UID `0700`/`0600` runtime-file enforcement, independent
+installed-host/socket `runtime.uiTest`/trusted-bridge correlation with exact
+Electron ancestry, nonzero native-incomplete proof semantics, and cleanup
+failure reporting with preserved-state diagnostics. M4 remains closed.
+
+R1 local evidence is focused and does not change that gate: `npm run
+test:post-m3` passed 37 tests; `npm run validate:isolation` passed 54 tests;
+composition and typecheck passed; the experimental renderer-only smoke passed;
+the deterministic fake proof passed with generated-fixture labels; native-only
+exited 1 with explicit `incomplete`/`native-provider-unavailable` and no fake
+substitution; and combined `proof:post-m3` exited 1 with fake `passed` plus
+native `incomplete`. Both proof manifests reported cleanup `passed`, including
+staged-root removal, original-root restoration, and owned run-state removal.
 
 ### Milestone 4: coding-agent analysis
 

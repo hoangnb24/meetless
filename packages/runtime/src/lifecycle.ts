@@ -31,6 +31,13 @@ export interface LiveProcessIdentity {
   listener: LiveListenerIdentity | null;
 }
 
+export function readProcessStartInstance(pid: number): string {
+  if (!Number.isInteger(pid) || pid <= 1) throw new Error(`Cannot inspect invalid process PID ${pid}`);
+  const startedAt = inspectRequired("ps", ["-p", String(pid), "-o", "lstart="], `start time for ${pid}`).trim();
+  if (!startedAt) throw new Error(`Cannot inspect process start instance for PID ${pid}`);
+  return startedAt;
+}
+
 export async function readPidLock(filePath: string): Promise<PidLockIdentity | null> {
   try {
     const parsed = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;

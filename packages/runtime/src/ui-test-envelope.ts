@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { lstatSync, readFileSync } from "node:fs";
+import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstatSync, readFileSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { HostIdentity } from "./host.js";
 import type { RuntimeConfig } from "./config.js";
+import { readProcessStartInstance } from "./lifecycle.js";
 import {
   MEETLESS_DESKTOP_LOGICAL_ID,
   UiTestIdentitySchema,
@@ -70,9 +71,11 @@ export function newUiTestEnvelope(input: {
 
 export async function writeUiTestEnvelope(runtimeRoot: string, envelope: UiTestEnvelope): Promise<string> {
   const root = path.resolve(runtimeRoot);
+  await ensureSecureRuntimeRoot(root);
   await mkdir(root, { recursive: true, mode: 0o700 });
+  await ensureSecureRuntimeRoot(root);
   const target = uiTestEnvelopePath(root);
-  await writeAtomic(target, UiTestEnvelopeSchema.parse(envelope));
+  await writeAtomic(target, UiTestEnvelopeSchema.parse(envelope), root);
   return target;
 }
 
@@ -87,9 +90,14 @@ export async function activateUiTestRun(
   const markerPath = uiTestMarkerPath(config.paths.root);
   const existing = await readUiTestMarker(markerPath);
   if (existing) {
-    if (hostIdentity) assertMarkerHost(existing, hostIdentity);
-    applyUiTestEnvironment(config, existing);
-    return existing;
+    if (!markerBindsToCurrentDesktop(existing, hostIdentity)) {
+      await rm(markerPath, { force: true });
+      clearUiTestEnvironment(config);
+    } else {
+      if (hostIdentity) assertMarkerHost(existing, hostIdentity);
+      applyUiTestEnvironment(config, existing);
+      return existing;
+    }
   }
 
   const envelopePath = uiTestEnvelopePath(config.paths.root);
@@ -114,18 +122,23 @@ export async function activateUiTestRun(
   // atomic replacement is intentionally allowed to leave an invalid marker;
   // invalid markers fail closed on the next process.
   await rename(envelopePath, markerPath);
-  await writeAtomic(markerPath, marker);
+  await ensureSecureUiTestFile(markerPath, path.resolve(config.paths.root));
+  await writeAtomic(markerPath, marker, path.resolve(config.paths.root));
   applyUiTestEnvironment(config, marker);
   return marker;
 }
 
 export function readConsumedUiTestMarkerSync(runtimeRoot: string): UiTestMarker | null {
-  const markerPath = uiTestMarkerPath(runtimeRoot);
+  const root = path.resolve(runtimeRoot);
+  const markerPath = uiTestMarkerPath(root);
   try {
-    const info = lstatSync(markerPath);
-    if (!info.isFile() || info.isSymbolicLink()) return null;
+    if (!isSecureRuntimeRootSync(root) || !isSecureUiTestFileSync(markerPath, root)) return null;
     const marker = UiTestMarkerSchema.safeParse(JSON.parse(readFileSync(markerPath, "utf8")));
     if (!marker.success || Date.parse(marker.data.expiresAt) <= Date.now()) return null;
+    if (!markerBindsToLiveProcesses(marker.data)) {
+      unlinkSync(markerPath);
+      return null;
+    }
     return marker.data;
   } catch {
     return null;
@@ -184,7 +197,9 @@ function buildIdentity(
     hostBundlePath: hostIdentity.bundleRealPath,
     hostCdHash: hostIdentity.cdHash,
     hostPid,
+    hostStartInstance: readProcessStartInstance(hostPid),
     desktopPid,
+    desktopStartInstance: readProcessStartInstance(desktopPid),
     runId: envelope.runId,
     cdpAddress: envelope.cdpAddress,
     cdpPort: envelope.cdpPort,
@@ -192,6 +207,24 @@ function buildIdentity(
     transcriptionMode: envelope.transcriptionMode,
     accessibility: envelope.forceAccessibility ? "forced-controlled-runtime" : "labels-only-controlled-runtime",
   });
+}
+
+function markerBindsToCurrentDesktop(marker: UiTestMarker, hostIdentity: HostIdentity | undefined): boolean {
+  if (!markerBindsToLiveProcesses(marker)) return false;
+  if (!hostIdentity) return true;
+  return marker.identity.hostPid === process.ppid &&
+    marker.identity.desktopPid === process.pid &&
+    readStartInstanceOrNull(process.ppid) === marker.identity.hostStartInstance &&
+    readStartInstanceOrNull(process.pid) === marker.identity.desktopStartInstance;
+}
+
+function markerBindsToLiveProcesses(marker: UiTestMarker): boolean {
+  return readStartInstanceOrNull(marker.identity.hostPid) === marker.identity.hostStartInstance &&
+    readStartInstanceOrNull(marker.identity.desktopPid) === marker.identity.desktopStartInstance;
+}
+
+function readStartInstanceOrNull(pid: number): string | null {
+  try { return readProcessStartInstance(pid); } catch { return null; }
 }
 
 function assertMarkerHost(marker: UiTestMarker, hostIdentity: HostIdentity): void {
@@ -208,30 +241,79 @@ function assertMarkerHost(marker: UiTestMarker, hostIdentity: HostIdentity): voi
 }
 
 async function readUiTestEnvelope(filePath: string): Promise<UiTestEnvelope | null> {
-  return readRegularJson(filePath, UiTestEnvelopeSchema);
+  return readRegularJson(filePath, UiTestEnvelopeSchema, path.dirname(filePath));
 }
 
 async function readUiTestMarker(filePath: string): Promise<UiTestMarker | null> {
-  const marker = await readRegularJson(filePath, UiTestMarkerSchema);
-  return marker && Date.parse(marker.expiresAt) > Date.now() ? marker : null;
+  const root = path.dirname(filePath);
+  const marker = await readRegularJson(filePath, UiTestMarkerSchema, root);
+  if (!marker || Date.parse(marker.expiresAt) <= Date.now()) return null;
+  if (!markerBindsToLiveProcesses(marker)) {
+    await rm(filePath, { force: true });
+    return null;
+  }
+  return marker;
 }
 
-async function readRegularJson<T>(filePath: string, schema: z.ZodType<T>): Promise<T | null> {
+async function readRegularJson<T>(filePath: string, schema: z.ZodType<T>, root: string): Promise<T | null> {
   try {
-    const info = await lstat(filePath);
-    if (!info.isFile() || info.isSymbolicLink()) return null;
+    await ensureSecureRuntimeRoot(root);
+    await ensureSecureUiTestFile(filePath, root);
     return schema.parse(JSON.parse(await readFile(filePath, "utf8")));
   } catch {
     return null;
   }
 }
 
-async function writeAtomic(filePath: string, value: unknown): Promise<void> {
+async function writeAtomic(filePath: string, value: unknown, root: string): Promise<void> {
   const temporary = `${filePath}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   try {
     await rename(temporary, filePath);
+    await ensureSecureUiTestFile(filePath, root);
   } finally {
     await rm(temporary, { force: true }).catch(() => undefined);
   }
+}
+
+async function ensureSecureRuntimeRoot(root: string): Promise<void> {
+  try {
+    const info = await lstat(root);
+    if (!isSecureDirectory(info)) throw new Error(`UI-test runtime root must be same-UID mode 0700: ${root}`);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+    throw error;
+  }
+}
+
+async function ensureSecureUiTestFile(filePath: string, root: string): Promise<void> {
+  await ensureSecureRuntimeRoot(root);
+  const info = await lstat(filePath);
+  if (!isSecureRegularFile(info)) {
+    throw new Error(`UI-test envelope/marker must be same-UID regular mode 0600: ${filePath}`);
+  }
+}
+
+function isSecureRuntimeRootSync(root: string): boolean {
+  try { return isSecureDirectory(lstatSync(root)); } catch { return false; }
+}
+
+function isSecureUiTestFileSync(filePath: string, root: string): boolean {
+  try {
+    if (!isSecureRuntimeRootSync(root)) return false;
+    return isSecureRegularFile(lstatSync(filePath));
+  } catch { return false; }
+}
+
+function isSecureDirectory(info: { isDirectory(): boolean; isSymbolicLink(): boolean; mode: number; uid: number }): boolean {
+  return info.isDirectory() && !info.isSymbolicLink() && (info.mode & 0o777) === 0o700 && info.uid === currentUid();
+}
+
+function isSecureRegularFile(info: { isFile(): boolean; isSymbolicLink(): boolean; mode: number; uid: number }): boolean {
+  return info.isFile() && !info.isSymbolicLink() && (info.mode & 0o777) === 0o600 && info.uid === currentUid();
+}
+
+function currentUid(): number {
+  if (typeof process.getuid !== "function") throw new Error("UI-test file ownership cannot be verified on this platform");
+  return process.getuid();
 }

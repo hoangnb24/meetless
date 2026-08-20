@@ -83,9 +83,10 @@ intervention must be removed or revised if it creates another production/TCC
 permission owner, enables accessibility outside controlled UI-test mode, or
 requires maintaining a second recording/transcription policy path.
 
-## Implementation Candidate
+## Implementation Candidate (superseded)
 
-`POST-M3-E2E-IMPL` (2026-08-20) adds the repository-native capability in the
+`POST-M3-E2E-IMPL` (2026-08-20, base candidate
+`83b981bd6a02e6155269dc4849f7e69a89e2984b`) adds the repository-native capability in the
 accepted owner scope. The candidate keeps `com.meetless.app/MeetlessHost` as
 the only production host and uses the logical tested identity
 `com.meetless.desktop` plus the exact accepted host path/CDHash, PID ancestry,
@@ -103,7 +104,7 @@ transcript. The separate `_electron.launch()` smoke is explicitly
 experimental and renderer-only. No result claims a physical click, TCC grant,
 or live Zoom/Meet source. M4 remains closed.
 
-## Native Validation
+## Base Candidate Validation (historical, superseded)
 
 The candidate's local evidence includes allowed and recoverable forbidden cases
 for generic Electron identity, invalid/missing envelope, production
@@ -111,7 +112,9 @@ accessibility leakage, every correlation stage, and the accepted title-bar
 geometry. `npm run proof:post-m3:smoke` passes as experimental renderer-only
 support. The deterministic integrated proof passes with generated fixture
 labels. The native attempt reports the current accepted host capability as
-invalid and skips without fake substitution. Local command enforcement is
+invalid with `status: incomplete` and exits nonzero without fake substitution;
+the combined proof is also non-passing when native acceptance is incomplete.
+Local command enforcement is
 present; no hook, CI workflow/provider, external permission, or branch-
 protection change is authorized.
 
@@ -122,6 +125,33 @@ The package-level `npm run proof:post-m3` passed its deterministic fake result
 and reported native `invalid` as `native-provider-unavailable` with
 `noFakeSubstitution: true`.
 
+## Revision 1 Candidate
+
+`POST-M3-E2E-IMPL-R1` keeps the base boundary and corrects only the accepted POC
+review blockers: a consumed marker is bound to the current host/desktop PID
+start instances and removed on owned shutdown; the runtime root and envelope/
+marker enforce same-UID `0700`/`0600` regular-file controls; identity validation
+uses the actual installed-host authority, exact host-to-desktop-to-Electron
+ancestry, trusted bridge status, and socket `runtime.uiTest`; native-incomplete
+results are non-passing; and cleanup failures are manifest-visible with a
+preserved-state diagnostic. M4 remains closed.
+
+Observed R1 validation:
+
+- `npm run test:post-m3`: 5 files, 37 tests passed.
+- `npm run validate:isolation`: 8 files, 54 tests passed.
+- `npm run test:composition`: 1 test passed; `npm run typecheck` passed.
+- `npm run proof:post-m3:smoke`: passed as experimental renderer-only evidence.
+- `npm run proof:post-m3:fake`: passed with generated-fixture labels and cleanup
+  status `passed` (`stagedRootRemoved`, `originalRootRestored`, and
+  `runStateRemoved` true).
+- `npm run proof:post-m3:native`: exited 1 with native status `incomplete`,
+  label `native-provider-signed-host-capability`, evidence class
+  `native-provider-unavailable`, and `noFakeSubstitution: true`.
+- `npm run proof:post-m3`: exited 1 with fake `passed` plus native `incomplete`;
+  its aggregate cleanup status was `passed` and the original runtime root was
+  restored.
+
 ## Fresh Rerun
 
 Awaiting fresh rerun. A materially equivalent fresh agent must discover the
@@ -131,8 +161,11 @@ The baseline above remains preserved until that rerun and Lead acceptance.
 
 ## Decision
 
-Candidate implementation is ready for Lead review; decision remains pending the
-required fresh rerun.
+Candidate implementation was ready for Lead review, but the base candidate is
+superseded by `POST-M3-E2E-IMPL-R1` for the focused POC corrections: active
+marker PID/start binding, same-UID mode checks, independent host/socket/bridge
+identity, nonzero native-incomplete semantics, and manifest-level cleanup
+failure reporting. Decision remains pending the required fresh rerun.
 
 ## Result
 

@@ -1,5 +1,16 @@
+import type { UiTestIdentity } from "@meetless/plugin/readiness-protocol";
+
 export const POST_M3_CORRELATION_VERSION = 1 as const;
 export const POST_M3_LOGICAL_DESKTOP_ID = "com.meetless.desktop" as const;
+
+export interface PostM3CorrelationAuthority {
+  hostBundleIdentifier: string;
+  hostBundlePath: string;
+  hostCdHash: string;
+  runtimeRoot: string;
+  listen: string;
+  electronExecutable: string;
+}
 
 export interface PostM3CorrelationObservation {
   identity: {
@@ -27,6 +38,15 @@ export interface PostM3CorrelationObservation {
     finalState: string;
     screenshotPath: string;
     tracePath: string;
+    bridge: {
+      platform: string;
+      status: string;
+      home: string;
+      listen: string;
+      desktopManaged: boolean;
+      pid: number;
+      serverId: string;
+    };
   };
   socket: {
     runId: string;
@@ -35,6 +55,7 @@ export interface PostM3CorrelationObservation {
     recordingId: string;
     meetingId: string;
     captureMode: "fixture";
+    uiTest: UiTestIdentity;
     postStopStatus: string;
     statuses: Array<{ status: string; recordingId: string | null; meetingId: string | null }>;
   };
@@ -95,10 +116,13 @@ export class PostM3CorrelationError extends Error {
   }
 }
 
-export function validatePostM3Correlation(observation: PostM3CorrelationObservation): void {
-  validateIdentity(observation);
-  validateRenderer(observation);
-  validateRendererToSocket(observation);
+export function validatePostM3Correlation(
+  observation: PostM3CorrelationObservation,
+  authority: PostM3CorrelationAuthority,
+): void {
+  validateIdentity(observation, authority);
+  validateRenderer(observation, authority);
+  validateRendererToSocket(observation, authority);
   validateSocketToStore(observation);
   validateStoreToHelper(observation);
   validateHelperToChunks(observation);
@@ -106,18 +130,19 @@ export function validatePostM3Correlation(observation: PostM3CorrelationObservat
   validateMp3ToTranscription(observation);
 }
 
-function validateIdentity(input: PostM3CorrelationObservation): void {
+function validateIdentity(input: PostM3CorrelationObservation, authority: PostM3CorrelationAuthority): void {
   const identity = input.identity;
   if ((identity.logicalDesktopId as string) === "com.github.Electron" || identity.logicalDesktopId !== POST_M3_LOGICAL_DESKTOP_ID) {
     fail("identity", "identity→renderer", `logical desktop identity is ${identity.logicalDesktopId || "missing"}; expected ${POST_M3_LOGICAL_DESKTOP_ID}`, "target the consumed logical desktop marker");
   }
   if (
-    identity.hostBundleIdentifier !== "com.meetless.app" ||
+    identity.hostBundleIdentifier !== authority.hostBundleIdentifier ||
     !identity.runId ||
-    !identity.hostBundlePath.endsWith("/Applications/Meetless.app") ||
-    !/^[a-f0-9]{40}$/u.test(identity.hostCdHash)
+    identity.hostBundlePath !== authority.hostBundlePath ||
+    identity.hostCdHash !== authority.hostCdHash ||
+    !/^[a-f0-9]{40}$/u.test(authority.hostCdHash)
   ) {
-    fail("identity", "identity→renderer", "run ID, accepted host bundle ID/path, and recorded host CDHash are incomplete", "read the consumed marker and installed host identity");
+    fail("identity", "identity→renderer", "observed host identity differs from the installed assertInstalledHostIdentity authority", "pass the actual installed host identity and compare path and CDHash before accepting the renderer");
   }
   if (
     !positive(identity.hostPid) || !positive(identity.desktopPid) || !positive(identity.electronPid) ||
@@ -131,15 +156,30 @@ function validateIdentity(input: PostM3CorrelationObservation): void {
   if (identity.cdpAddress !== "127.0.0.1" || identity.cdpPort < 1024 || identity.cdpPort > 65535) {
     fail("identity", "identity→renderer", "CDP is not bound to a valid run-scoped loopback endpoint", "use the consumed envelope address and port");
   }
+  if (identity.electronExecutable !== authority.electronExecutable) {
+    fail("identity", "host→desktop→Electron executable", "the CDP endpoint executable is not the expected repository Electron boundary", "attest the exact Electron executable path from the endpoint process");
+  }
 }
 
-function validateRenderer(input: PostM3CorrelationObservation): void {
+function validateRenderer(input: PostM3CorrelationObservation, authority: PostM3CorrelationAuthority): void {
   const renderer = input.renderer;
   if (renderer.runId !== input.identity.runId || renderer.logicalDesktopId !== input.identity.logicalDesktopId) {
     fail("renderer", "identity→renderer", "renderer marker does not match the fresh desktop run", "attach the exact host-owned page by its run marker");
   }
   if (!renderer.url.startsWith("http://127.0.0.1:")) {
     fail("renderer", "identity→renderer", `renderer URL ${renderer.url || "missing"} is not the isolated loopback page`, "attach the renderer origin fixed by the runtime configuration");
+  }
+  const bridge = renderer.bridge;
+  if (
+    bridge.platform !== "darwin" ||
+    bridge.status !== "running" ||
+    bridge.desktopManaged !== true ||
+    bridge.home !== `${authority.runtimeRoot}/paseo-home` ||
+    bridge.listen !== authority.listen ||
+    !positive(bridge.pid) ||
+    !bridge.serverId.trim()
+  ) {
+    fail("renderer", "trusted Meetless bridge/runtime identity", "renderer query markers are not backed by the trusted Meetless bridge and exact managed runtime", "invoke desktop_daemon_status through the pinned bridge and compare home, listen, PID, server ID, and desktopManaged");
   }
   if (!renderer.titleEntered || !renderer.startControlVisible || !renderer.stopControlVisible) {
     fail("renderer", "renderer controls", "title entry and visible Start/Stop controls were not all observed", "use the accessible title, Start, and Stop controls and retain the bounded trace");
@@ -149,13 +189,26 @@ function validateRenderer(input: PostM3CorrelationObservation): void {
   }
 }
 
-function validateRendererToSocket(input: PostM3CorrelationObservation): void {
+function validateRendererToSocket(input: PostM3CorrelationObservation, authority: PostM3CorrelationAuthority): void {
   const socket = input.socket;
   if (socket.runId !== input.identity.runId) {
     fail("socket", "renderer→socket", "recording socket status has a different run ID", "correlate the socket observation with the consumed UI-test run");
   }
   if (!socket.runtimeInstanceId || !positive(socket.pluginPid) || !socket.recordingId || !socket.meetingId) {
     fail("socket", "renderer→socket", "authoritative runtime instance, plugin PID, recording ID, or meeting ID is missing", "request runtime readiness from the exact recording socket");
+  }
+  if (
+    socket.uiTest.logicalDesktopId !== input.identity.logicalDesktopId ||
+    socket.uiTest.runId !== input.identity.runId ||
+    socket.uiTest.hostBundleIdentifier !== authority.hostBundleIdentifier ||
+    socket.uiTest.hostBundlePath !== authority.hostBundlePath ||
+    socket.uiTest.hostCdHash !== authority.hostCdHash ||
+    socket.uiTest.cdpAddress !== input.identity.cdpAddress ||
+    socket.uiTest.cdpPort !== input.identity.cdpPort ||
+    socket.uiTest.hostPid !== input.identity.hostPid ||
+    socket.uiTest.desktopPid !== input.identity.desktopPid
+  ) {
+    fail("socket", "renderer→socket", "socket runtime.uiTest identity does not independently match the expected host and renderer run", "read runtime.uiTest from the authoritative recording socket instead of copying the envelope marker");
   }
   if (!socket.statuses.some((status) => status.status === "recording" && status.recordingId === socket.recordingId)) {
     fail("socket", "renderer→socket", "no recording status was correlated to the UI start action", "retain the socket status stream around Start");
