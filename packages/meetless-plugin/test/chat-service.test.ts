@@ -19,7 +19,10 @@ import {
   type AgentAnswer,
   type ChatExecutionInput,
   type MeetingChatAgentPort,
+  startTranscriptMcp,
 } from "../src/chat-service.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -86,6 +89,26 @@ describe("meeting chat service", () => {
 });
 
 describe("Paseo execution adapter", () => {
+  test("serves bounded tools through the official stateless MCP client", async () => {
+    const recordRetrieved = vi.fn(async () => undefined);
+    const resource = await startTranscriptMcp({
+      provider: "codex", model: "gpt-5", messages: [], transcript: transcript(), recordRetrieved,
+    });
+    const client = new Client({ name: "meetless-test", version: "1.0.0" });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(resource.url)));
+      await expect(client.listTools()).resolves.toMatchObject({ tools: [
+        { name: "search_meeting_transcript" }, { name: "get_meeting_segments" },
+      ] });
+      const result = await client.callTool({ name: "search_meeting_transcript", arguments: { query: "local-first" } });
+      expect(result.structuredContent).toMatchObject({ segments: [{ segmentId: "segment-1" }] });
+      expect(recordRetrieved).toHaveBeenCalledWith(["segment-1"]);
+    } finally {
+      await client.close().catch(() => undefined);
+      await resource.close();
+    }
+  });
+
   test("uses a neutral disposable agent, bounded MCP config, low-side-effect Codex options, and archives", async () => {
     const executionRoot = await mkdtemp(path.join(tmpdir(), "meetless-neutral-chat-"));
     roots.push(executionRoot);

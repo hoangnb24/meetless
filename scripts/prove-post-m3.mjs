@@ -30,11 +30,13 @@ import {
   validateM4Observation,
   validateM4PublishedManifest,
 } from "./m4-proof-validation.mjs";
+import { validateM5Observation, validateM5PublishedManifest } from "./m5-proof-validation.mjs";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const providerArgument = process.argv[process.argv.indexOf("--provider") + 1] ?? "all";
-const m4Journey = process.argv.includes("--m4");
+const m5Journey = process.argv.includes("--m5");
+const m4Journey = process.argv.includes("--m4") || m5Journey;
 if (!["fake", "native", "all"].includes(providerArgument)) {
   throw new Error("Usage: node scripts/prove-post-m3.mjs --provider fake|native|all");
 }
@@ -42,7 +44,7 @@ if (m4Journey && providerArgument !== "fake") {
   throw new Error("M4 generated composition proof requires --provider fake and never substitutes native evidence");
 }
 
-const runId = `${m4Journey ? "m4-proof" : "post-m3-proof"}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+const runId = `${m5Journey ? "m5-proof" : m4Journey ? "m4-proof" : "post-m3-proof"}-${Date.now()}-${randomUUID().slice(0, 8)}`;
 const config = resolveRuntimeConfig({ runtimeRoot: process.env.MEETLESS_RUNTIME_ROOT, listen: process.env.MEETLESS_LISTEN });
 const hostIdentity = await assertInstalledHostIdentity(config);
 const preservedRoot = `${config.paths.root}.post-m3-preserved-${runId}`;
@@ -69,7 +71,7 @@ try {
 
   for (const providerMode of providerArgument === "all" ? ["fake", "native"] : [providerArgument]) {
     const result = m4Journey
-      ? await runM4Mode(config, hostIdentity, runId)
+      ? await runM4Mode(config, hostIdentity, runId, m5Journey)
       : await runProviderMode(providerMode, config, hostIdentity, runId);
     results.push(result);
     await stopExactHost(hostIdentity.executablePath);
@@ -101,6 +103,7 @@ const manifest = m4Journey ? await publishM4Result({
   originalRuntimeDigest,
   restoredRuntimeDigest,
   hostIdentity,
+  m5Journey,
 }).then((published) => {
   evidencePath = published.evidencePath;
   return published.manifest;
@@ -109,7 +112,7 @@ const manifest = m4Journey ? await publishM4Result({
     await removeExactM4StagingRoot(results[0].evidenceStagingRoot, runId).catch(() => undefined);
   }
   return {
-    schema: "MEETLESS_M4_COMPOSITION_PROOF v1",
+    schema: m5Journey ? "MEETLESS_M5_COMPOSITION_PROOF v1" : "MEETLESS_M4_COMPOSITION_PROOF v1",
     status: "failed",
     reason: describe(error),
     cleanup: privacySafeCleanup(cleanupReport, results[0]?.artifactCleanup),
@@ -144,10 +147,10 @@ const manifest = m4Journey ? await publishM4Result({
   results,
 };
 process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
-if (evidencePath) process.stderr.write(`[m4] durable evidence ${evidencePath}\n`);
+if (evidencePath) process.stderr.write(`[${m5Journey ? "m5" : "m4"}] durable evidence ${evidencePath}\n`);
 if (manifest.status !== "passed") process.exitCode = 1;
 
-async function runM4Mode(runtimeConfig, installedHost, proofRunId) {
+async function runM4Mode(runtimeConfig, installedHost, proofRunId, runM5) {
   const cdpPort = await reservePort();
   const envelope = newUiTestEnvelope({
     runId: `${proofRunId}-generated`,
@@ -161,11 +164,11 @@ async function runM4Mode(runtimeConfig, installedHost, proofRunId) {
   let browser = null;
   let recordingSocket = null;
   let connectedClient = null;
-  const artifactRoot = path.join("/private/tmp", `meetless-m4-${envelope.runId}`);
+  const artifactRoot = path.join("/private/tmp", `meetless-${runM5 ? "m5" : "m4"}-${envelope.runId}`);
   await mkdir(artifactRoot, { recursive: true, mode: 0o700 });
   const screenshotPath = path.join(artifactRoot, "screenshot.png");
   const clipPath = path.join(artifactRoot, "clicked-citation.mp3");
-  const evidenceStagingRoot = path.join(repositoryRoot, "test", "evidence", "m4", `.staging-${proofRunId}`);
+  const evidenceStagingRoot = path.join(repositoryRoot, "test", "evidence", runM5 ? "m5" : "m4", `.staging-${proofRunId}`);
   let result = null;
   try {
     process.stderr.write("[m4] launching exact installed host\n");
@@ -270,8 +273,29 @@ async function runM4Mode(runtimeConfig, installedHost, proofRunId) {
     const stagedScreenshot = await stat(path.join(evidenceStagingRoot, "screenshot.png"));
     if (!stagedScreenshot.isFile() || stagedScreenshot.size <= 0) throw new Error("M4 screenshot was not durably staged before artifact cleanup");
 
+    let chatObservation = null;
+    if (runM5) {
+      await recordingSocket.close();
+      recordingSocket = null;
+      const journey = await runM5ChatJourney({
+        browser,
+        client: connectedClient,
+        installedHost,
+        page,
+        proofRunId,
+        runtimeConfig,
+        screenshotPath,
+        targetSegment: third,
+        transcriptRangeCount: authoritativeSegments.length,
+      });
+      browser = journey.browser;
+      connectedClient = journey.client;
+      chatObservation = journey.observation;
+      await copyFile(screenshotPath, path.join(evidenceStagingRoot, "screenshot.png"));
+    }
+
     const observation = {
-      schema: "MEETLESS_M4_COMPOSITION_OBSERVATION v1",
+      schema: runM5 ? "MEETLESS_M5_COMPOSITION_OBSERVATION v1" : "MEETLESS_M4_COMPOSITION_OBSERVATION v1",
       evidencePolicy: { generatedFixture: true, liveSource: false, nativeProvider: false, fakeNativeSubstitution: false },
       identity: { exactInstalledHost: true, exactRunMarker: true, trustedRendererBridge: true },
       sidebar: {
@@ -296,10 +320,12 @@ async function runM4Mode(runtimeConfig, installedHost, proofRunId) {
         markerHz: clipAnalysis.markerHz,
         markerPowerRatio: clipAnalysis.markerPowerRatio,
       },
+      ...(chatObservation ? { chat: chatObservation } : {}),
     };
-    validateM4Observation(observation);
+    if (runM5) validateM5Observation(observation);
+    else validateM4Observation(observation);
     result = {
-      mode: "m4-generated",
+      mode: runM5 ? "m5-generated-real-codex" : "m4-generated",
       status: "passed",
       observation,
       evidenceStagingRoot,
@@ -323,6 +349,135 @@ async function runM4Mode(runtimeConfig, installedHost, proofRunId) {
     }
   }
   return result;
+}
+
+async function runM5ChatJourney(input) {
+  const providers = await input.client.client.listChatProviders();
+  const codex = providers.providers.find((provider) => provider.id === "codex");
+  if (!codex) throw new Error(`M5 real composition did not discover Codex (${providers.providers.map((provider) => provider.id).join(", ")})`);
+  const model = codex.models.find((candidate) => candidate.isDefault) ?? codex.models[0];
+  if (!model) throw new Error("M5 Codex discovery returned no selectable model");
+  await waitFor(() => input.page.locator('[data-testid="meeting-chat"]').isVisible(), "M5 chat panel");
+  await input.page.getByTestId(`chat-model-${codex.id}-${model.id}`).click();
+  await input.page.getByTestId("chat-question-input").fill("Which interval contains eight hundred eighty hertz?");
+  await input.page.getByTestId("chat-ask").click();
+  const supportedThread = await waitForChatTerminal(input.client, M4_TARGET_MEETING_ID, 180_000);
+  const supported = supportedThread.messages.at(-1);
+  if (!supported || supported.role !== "assistant" || supported.outcome !== "supported") {
+    throw new Error(`M5 fixture question did not return a supported answer (${JSON.stringify(supportedThread.failure)})`);
+  }
+  if (!supported.citations.some((citation) => citation.segmentId === input.targetSegment.segmentId)) {
+    throw new Error(`M5 supported answer did not cite the expected third segment (${supported.citations.map((citation) => citation.segmentId).join(", ")})`);
+  }
+  await waitFor(() => input.page.getByTestId(`chat-citation-${input.targetSegment.segmentId}`).isVisible(), "M5 rendered supported citation", 30_000);
+  await input.page.evaluate(() => { globalThis.__meetlessM4AudioObservation = null; });
+  await input.page.getByTestId(`chat-citation-${input.targetSegment.segmentId}`).click();
+  const playback = await waitFor(() => input.page.evaluate(() => {
+    const value = globalThis.__meetlessM4AudioObservation;
+    if (!value?.boundedStopObserved) throw new Error("M5 chat citation playback has not stopped at its bound");
+    return value;
+  }), "M5 chat citation bounded playback", 15_000);
+  const source = playback.source;
+  if (typeof source !== "string" || !source.startsWith("data:audio/mpeg;base64,")) {
+    throw new Error("M5 chat citation did not use bounded MP3 playback");
+  }
+  const chatClipPath = path.join(path.dirname(input.screenshotPath), "chat-citation.mp3");
+  await writeFile(chatClipPath, Buffer.from(source.slice(source.indexOf(",") + 1), "base64"), { flag: "wx", mode: 0o600 });
+  const clipAnalysis = await analyzeClip(input.runtimeConfig, chatClipPath);
+
+  await input.client.close();
+  await input.browser.close();
+  await stopExactHost(input.installedHost.executablePath);
+  await removeUiTestRunState(input.runtimeConfig.paths.root).catch(() => undefined);
+
+  const restartEnvelope = newUiTestEnvelope({
+    runId: `${input.proofRunId}-restart`,
+    cdpPort: await reservePort(),
+    transcriptionMode: "fake",
+    forceAccessibility: false,
+  });
+  await writeUiTestEnvelope(input.runtimeConfig.paths.root, restartEnvelope);
+  let browser = null;
+  let client = null;
+  try {
+    await launchExactHost();
+    const marker = await waitForMarker(input.runtimeConfig.paths.root, restartEnvelope.runId);
+    browser = await connectOverCdp(`http://${restartEnvelope.cdpAddress}:${restartEnvelope.cdpPort}`, restartEnvelope.runId, input.runtimeConfig.rendererOrigin);
+    const page = await findExactRendererPage(browser, restartEnvelope.runId, input.runtimeConfig.rendererOrigin);
+    const electronPid = await endpointPid(restartEnvelope.cdpPort);
+    exactAncestry(electronPid, marker.identity.hostPid, marker.identity.desktopPid, input.installedHost, expectedElectronExecutable());
+    client = await connectMeetlessClient({
+      url: `ws://${input.runtimeConfig.listen}/ws`,
+      clientId: `m5-restart-proof-${Date.now()}`,
+      clientType: "browser",
+    });
+    await waitForVisible(page.locator('[data-testid="connection-status"]'), 30_000);
+    const targetRow = page.locator(`[data-testid="meeting-${M4_TARGET_MEETING_ID}"]`);
+    await waitFor(() => targetRow.isVisible(), "M5 target after restart");
+    await targetRow.click();
+    await waitFor(() => page.locator('[data-testid="transcript-ready"]').isVisible(), "M5 transcript after restart");
+    await waitFor(() => page.locator('[data-testid="meeting-chat"]').isVisible(), "M5 chat after restart");
+    const restoredText = await page.getByTestId("chat-messages").innerText();
+    const historyRestored = restoredText.includes(supported.text);
+    if (!historyRestored) throw new Error("M5 supported history was not restored after full host restart");
+
+    await page.getByTestId("chat-question-input").fill("What insurance premium did the team approve for a Mars launch?");
+    await page.getByTestId("chat-ask").click();
+    const unsupportedThread = await waitForChatTerminal(client, M4_TARGET_MEETING_ID, 180_000);
+    const unsupported = unsupportedThread.messages.at(-1);
+    if (!unsupported || unsupported.role !== "assistant" || unsupported.outcome !== "insufficient_evidence") {
+      throw new Error(`M5 unsupported question did not return insufficient evidence (${JSON.stringify(unsupportedThread.failure)})`);
+    }
+    const canonicalRendered = await waitFor(async () =>
+      (await page.getByTestId("chat-messages").innerText()).includes("The meeting does not contain enough evidence."),
+    "M5 canonical insufficient-evidence text", 30_000);
+    const persisted = await readFile(path.join(input.runtimeConfig.paths.meetingStore, "meetings.json"), "utf8");
+    const noPaseoIdentityPersisted = !/(?:agentId|workspaceId|sessionId|timeline|paseo-agent)/u.test(persisted);
+    await page.screenshot({ path: input.screenshotPath, fullPage: true });
+    return {
+      browser,
+      client,
+      observation: {
+        realCodex: true,
+        provider: codex.id,
+        model: model.id,
+        transcriptRangeCount: input.transcriptRangeCount,
+        supported: {
+          outcome: supported.outcome,
+          text: supported.text,
+          citationSegmentIds: supported.citations.map((citation) => citation.segmentId),
+        },
+        citationPlayback: {
+          boundedStopObserved: playback.boundedStopObserved === true,
+          markerHz: clipAnalysis.markerHz,
+          markerPowerRatio: clipAnalysis.markerPowerRatio,
+        },
+        restart: { exactInstalledHost: true, historyRestored },
+        unsupported: {
+          outcome: unsupported.outcome,
+          text: unsupported.text,
+          citationSegmentIds: unsupported.citations.map((citation) => citation.segmentId),
+          canonicalRendered: canonicalRendered === true,
+        },
+        noPaseoIdentityPersisted,
+      },
+    };
+  } catch (error) {
+    if (client) await client.close().catch(() => undefined);
+    if (browser) await browser.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function waitForChatTerminal(client, meetingId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const thread = await client.client.getMeetingChat(meetingId);
+    if (thread?.status === "ready") return thread;
+    if (thread?.status === "failed") throw new Error(`M5 chat failed: ${thread.failure?.message ?? "unknown failure"}`);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`Timed out waiting for M5 chat after ${timeoutMs}ms`);
 }
 
 async function runProviderMode(providerMode, runtimeConfig, installedHost, proofRunId) {
@@ -786,9 +941,9 @@ async function publishM4Result(input) {
   const restoration = restorationSummary(input);
   const safeCleanup = privacySafeCleanup(input.cleanupReport, input.result.artifactCleanup);
   const manifest = {
-    schema: "MEETLESS_M4_COMPOSITION_PROOF v1",
+    schema: input.m5Journey ? "MEETLESS_M5_COMPOSITION_PROOF v1" : "MEETLESS_M4_COMPOSITION_PROOF v1",
     status: "passed",
-    frontierId: "M4-PROOF",
+    frontierId: input.m5Journey ? "M5-PROOF" : "M4-PROOF",
     runId: input.runId,
     acceptedHost: { bundleIdentifier: input.hostIdentity.bundleIdentifier, cdHash: input.hostIdentity.cdHash, launchRoute: "LaunchServices" },
     observation: input.result.observation,
@@ -797,8 +952,9 @@ async function publishM4Result(input) {
     evidence: { screenshot: "screenshot.png" },
     evidenceLimit: "Machine-observed browser Audio playback only; this does not prove that a human heard speaker output.",
   };
-  validateM4PublishedManifest(manifest);
-  const evidenceRoot = path.join(repositoryRoot, "test", "evidence", "m4", input.runId);
+  if (input.m5Journey) validateM5PublishedManifest(manifest);
+  else validateM4PublishedManifest(manifest);
+  const evidenceRoot = path.join(repositoryRoot, "test", "evidence", input.m5Journey ? "m5" : "m4", input.runId);
   await assertExactM4StagingRoot(input.result.evidenceStagingRoot, input.runId);
   try {
     if (await exists(evidenceRoot)) throw new Error("Refusing to replace an existing M4 evidence root");
@@ -835,9 +991,9 @@ function privacySafeCleanup(report, artifactCleanup) {
 }
 
 async function removeExactM4ArtifactRoot(artifactRoot, envelopeRunId) {
-  const expectedRunId = /^m4-proof-\d{13}-[0-9a-f]{8}-generated$/u;
-  const expectedRoot = path.join("/private/tmp", `meetless-m4-${envelopeRunId}`);
-  if (!expectedRunId.test(envelopeRunId) || artifactRoot !== expectedRoot) {
+  const match = /^(m4|m5)-proof-\d{13}-[0-9a-f]{8}-generated$/u.exec(envelopeRunId);
+  const expectedRoot = path.join("/private/tmp", `meetless-${match?.[1] ?? "invalid"}-${envelopeRunId}`);
+  if (!match || artifactRoot !== expectedRoot) {
     return { status: "failed", absent: false, error: "artifact identity does not match the exact generated M4 run" };
   }
   try {
@@ -857,9 +1013,9 @@ async function removeExactM4ArtifactRoot(artifactRoot, envelopeRunId) {
 }
 
 async function assertExactM4StagingRoot(stagingRoot, proofRunId) {
-  const expectedRunId = /^m4-proof-\d{13}-[0-9a-f]{8}$/u;
-  const expectedRoot = path.join(repositoryRoot, "test", "evidence", "m4", `.staging-${proofRunId}`);
-  if (!expectedRunId.test(proofRunId) || stagingRoot !== expectedRoot) {
+  const match = /^(m4|m5)-proof-\d{13}-[0-9a-f]{8}$/u.exec(proofRunId);
+  const expectedRoot = path.join(repositoryRoot, "test", "evidence", match?.[1] ?? "invalid", `.staging-${proofRunId}`);
+  if (!match || stagingRoot !== expectedRoot) {
     throw new Error("Refusing publication from a non-exact M4 staging root");
   }
   const info = await lstat(stagingRoot);
@@ -875,9 +1031,9 @@ async function assertExactM4StagingRoot(stagingRoot, proofRunId) {
 }
 
 async function removeExactM4StagingRoot(stagingRoot, proofRunId) {
-  const expectedRunId = /^m4-proof-\d{13}-[0-9a-f]{8}$/u;
-  const expectedRoot = path.join(repositoryRoot, "test", "evidence", "m4", `.staging-${proofRunId}`);
-  if (!expectedRunId.test(proofRunId) || stagingRoot !== expectedRoot) {
+  const match = /^(m4|m5)-proof-\d{13}-[0-9a-f]{8}$/u.exec(proofRunId);
+  const expectedRoot = path.join(repositoryRoot, "test", "evidence", match?.[1] ?? "invalid", `.staging-${proofRunId}`);
+  if (!match || stagingRoot !== expectedRoot) {
     throw new Error("Refusing cleanup for a non-exact M4 staging root");
   }
   if (!(await exists(stagingRoot))) return;

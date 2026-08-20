@@ -280,7 +280,7 @@ interface RunResource {
   close(): Promise<void>;
 }
 
-async function startTranscriptMcp(input: ChatExecutionInput): Promise<RunResource> {
+export async function startTranscriptMcp(input: ChatExecutionInput): Promise<RunResource> {
   const capability = randomUUID();
   const route = `/capability/${capability}`;
   const httpServer = createServer((request, response) => {

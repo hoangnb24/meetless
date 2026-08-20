@@ -51,11 +51,14 @@
     "proof:post-m3:fake": "npm run build:meetless && node scripts/prove-post-m3.mjs --provider fake",
     "proof:post-m3:native": "npm run build:meetless && node scripts/prove-post-m3.mjs --provider native",
     "proof:m4": "npm run build:meetless && node scripts/prove-post-m3.mjs --provider fake --m4",
-    "test:m4-proof": "vitest run --config vitest.config.ts test/m4-proof-validation.test.ts"
+    "test:m4-proof": "vitest run --config vitest.config.ts test/m4-proof-validation.test.ts",
+    "proof:m5": "npm run build:meetless && node scripts/prove-post-m3.mjs --provider fake --m5",
+    "test:m5-proof": "vitest run --config vitest.config.ts test/m5-proof-validation.test.ts"
   },
   "devDependencies": {
     "@clack/core": "1.1.0",
     "@clack/prompts": "1.1.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/node": "^22.18.0",
     "@types/react": "~19.2.0",
     "@types/react-test-renderer": "^19.1.0",
