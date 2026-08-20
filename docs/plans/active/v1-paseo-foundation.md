@@ -1107,9 +1107,11 @@ segment timestamp to hear the expected audio interval.
   timeline identity enters domain or store state. The accepted neutral shared
   execution cwd and one auto-archived agent per question remain later adapter
   concerns and are not persisted here.
-- **Status:** `FOUNDATION_REQUIRED`. Lead acceptance is pending.
-- **Candidate evidence:** the commit containing this record is the M5 foundation
-  candidate. `npm run test:focused` passed 36 files and 236 tests;
+- **Status:** `FOUNDATION_ACCEPTED`. Lead accepted candidate `7042c0b` after
+  inspecting the durable contracts, persistence boundary, migration behavior,
+  and failure/retry lifecycle.
+- **Candidate evidence:** `7042c0b` is the accepted M5 foundation candidate.
+  `npm run test:focused` passed 36 files and 236 tests;
   `npm run typecheck` passed; the focused domain/store rerun passed 6 files and
   48 tests; and `git diff --check` passed. The M5 progress item remains open.
 
