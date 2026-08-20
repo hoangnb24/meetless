@@ -1140,6 +1140,17 @@ a real citation click audibly played its authoritative interval. This proof is
 not a long-meeting or release-readiness claim. The corrected
 `POST-M3-ZERO-FIX` automated candidate now delays a failed start response until
 conclusively empty inventory is durably failed while preserving valid
-orphan/committed media as recoverable; Lead acceptance and any separately owned
-live handoff remain the correction gate before M4 depends on newly recorded
-input.
+orphan/committed media as recoverable. The integrated correction candidate
+through `db58b52` is mechanically accepted: focused lifecycle, inventory,
+startup-order, composition, and pointer-geometry proofs pass, including
+independent old-overlap and corrected hit-region assertions. The autonomous
+live handoff is currently blocked at the
+Computer Use/WindowServer boundary: after one clean restart of the accepted
+`com.meetless.app` host and its repo-owned `com.github.Electron` child,
+Computer Use could list the running Electron app but timed out establishing
+fresh state by both display name and exact bundle path. It therefore rejected
+all actions as lacking an active target. No Start click was issued. The
+authoritative recording socket remained `failed` for recording
+`c5bdb56e-3bbd-4ed6-b209-46f69a7ae489` with zero chunks, and no capture helper
+was running. A fresh real recording and M3 transcription handoff are still
+required; M4 remains closed.
