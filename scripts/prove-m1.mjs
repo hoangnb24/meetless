@@ -117,10 +117,7 @@ async function main() {
     await electronPage.getByText("Create meeting", { exact: true }).click();
     const electronMeetingTitle = electronPage.getByText("M1 Surface Proof", { exact: true });
     await electronMeetingTitle.waitFor({ timeout: 30_000 });
-    const meetingTestId = await electronMeetingTitle.locator("..").getAttribute("data-testid");
-    if (!meetingTestId?.startsWith("meeting-")) {
-      throw new Error(`Electron meeting card did not expose a machine-checkable ID (${meetingTestId})`);
-    }
+    const meetingTestId = await resolveMeetingRowTestId(electronMeetingTitle, "Electron");
     const meetingId = meetingTestId.slice("meeting-".length);
     const electronScreenshot = path.join(workingEvidence, "electron.png");
     ensureParent(electronScreenshot);
@@ -139,7 +136,7 @@ async function main() {
     assertEqual(webBridgePresent, false, "ordinary Chrome desktop bridge");
     const webMeetingTitle = webPage.getByText("M1 Surface Proof", { exact: true });
     await webMeetingTitle.waitFor({ timeout: 30_000 });
-    const webMeetingTestId = await webMeetingTitle.locator("..").getAttribute("data-testid");
+    const webMeetingTestId = await resolveMeetingRowTestId(webMeetingTitle, "Web");
     assertEqual(webMeetingTestId, meetingTestId, "web companion meeting ID");
     if (!(await webPage.getByTestId("companion-read-only").isVisible())) {
       throw new Error("Web companion did not render its read-only surface");
@@ -645,6 +642,36 @@ function assertEqual(actual, expected, label) {
   if (actual !== expected) {
     throw new Error(`${label} mismatch: expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`);
   }
+}
+
+async function resolveMeetingRowTestId(titleLocator, surface) {
+  const titleCount = await titleLocator.count();
+  if (titleCount === 0) {
+    throw new Error(`${surface} meeting title is absent`);
+  }
+  if (titleCount !== 1) {
+    throw new Error(`${surface} meeting title is ambiguous (${titleCount})`);
+  }
+
+  const rowLocator = titleLocator.first().locator("xpath=ancestor::*[@data-testid and @role='button']");
+  const rowCount = await rowLocator.count();
+  if (rowCount === 0) {
+    throw new Error(`${surface} meeting-row ancestor is absent`);
+  }
+  if (rowCount !== 1) {
+    throw new Error(`${surface} meeting-row ancestor is ambiguous (${rowCount})`);
+  }
+
+  const testId = await rowLocator.first().getAttribute("data-testid");
+  if (!testId?.startsWith("meeting-")) {
+    throw new Error(`${surface} meeting-row ancestor is absent or invalid (${testId})`);
+  }
+
+  const meetingId = testId.slice("meeting-".length);
+  if (!meetingId) {
+    throw new Error(`${surface} meeting-row ancestor is absent or invalid (${testId})`);
+  }
+  return testId;
 }
 
 function delay(ms) {

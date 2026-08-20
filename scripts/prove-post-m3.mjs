@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { createConnection, createServer } from "node:net";
-import { access, lstat, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, readFile, readdir, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { chromium } from "playwright";
 import WebSocket from "ws";
+import { connectMeetlessClient } from "@meetless/client";
 import { MeetingStore } from "@meetless/meeting-store";
 import { RecordingControlResponseSchema, RecordingStatusEventSchema } from "@meetless/meeting-contracts";
 import { RecordingRuntimeReadinessResponseSchema } from "@meetless/plugin/readiness-protocol";
@@ -20,15 +21,28 @@ import {
   removeUiTestRunState,
   writeUiTestEnvelope,
 } from "../packages/runtime/dist/ui-test-envelope.js";
+import {
+  M4_DISTRACTOR_MEETING_ID,
+  M4_DISTRACTOR_SENTINEL,
+  M4_EXPECTED_RANGES,
+  M4_TARGET_MEETING_ID,
+  M4_TARGET_RECORDING_ID,
+  validateM4Observation,
+  validateM4PublishedManifest,
+} from "./m4-proof-validation.mjs";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const providerArgument = process.argv[process.argv.indexOf("--provider") + 1] ?? "all";
+const m4Journey = process.argv.includes("--m4");
 if (!["fake", "native", "all"].includes(providerArgument)) {
   throw new Error("Usage: node scripts/prove-post-m3.mjs --provider fake|native|all");
 }
+if (m4Journey && providerArgument !== "fake") {
+  throw new Error("M4 generated composition proof requires --provider fake and never substitutes native evidence");
+}
 
-const runId = `post-m3-proof-${Date.now()}-${randomUUID().slice(0, 8)}`;
+const runId = `${m4Journey ? "m4-proof" : "post-m3-proof"}-${Date.now()}-${randomUUID().slice(0, 8)}`;
 const config = resolveRuntimeConfig({ runtimeRoot: process.env.MEETLESS_RUNTIME_ROOT, listen: process.env.MEETLESS_LISTEN });
 const hostIdentity = await assertInstalledHostIdentity(config);
 const preservedRoot = `${config.paths.root}.post-m3-preserved-${runId}`;
@@ -38,9 +52,13 @@ let staged = false;
 let preserved = false;
 let fatalError = null;
 let cleanupReport;
+let originalRuntimeDigest = null;
+let restoredRuntimeDigest = null;
+let evidencePath = null;
 
 try {
   await ensureNoAmbiguousRuntime(config, hostIdentity);
+  originalRuntimeDigest = originalRootExisted ? await runtimeTreeDigest(config.paths.root) : null;
   if (originalRootExisted) {
     await assertDirectoryNotSymlink(config.paths.root);
     await rename(config.paths.root, preservedRoot);
@@ -50,7 +68,9 @@ try {
   await mkdir(config.paths.root, { recursive: true, mode: 0o700 });
 
   for (const providerMode of providerArgument === "all" ? ["fake", "native"] : [providerArgument]) {
-    const result = await runProviderMode(providerMode, config, hostIdentity, runId);
+    const result = m4Journey
+      ? await runM4Mode(config, hostIdentity, runId)
+      : await runProviderMode(providerMode, config, hostIdentity, runId);
     results.push(result);
     await stopExactHost(hostIdentity.executablePath);
     await cleanupStagedRuntime(config.paths.root);
@@ -68,9 +88,34 @@ try {
     preserved,
     hostExecutable: hostIdentity.executablePath,
   });
+  restoredRuntimeDigest = originalRootExisted
+    ? await runtimeTreeDigest(config.paths.root).catch(() => null)
+    : (await exists(config.paths.root) ? "unexpected-runtime-root" : null);
 }
 
-const manifest = {
+const manifest = m4Journey ? await publishM4Result({
+  runId,
+  result: results[0],
+  cleanupReport,
+  originalRootExisted,
+  originalRuntimeDigest,
+  restoredRuntimeDigest,
+  hostIdentity,
+}).then((published) => {
+  evidencePath = published.evidencePath;
+  return published.manifest;
+}).catch(async (error) => {
+  if (results[0]?.evidenceStagingRoot) {
+    await removeExactM4StagingRoot(results[0].evidenceStagingRoot, runId).catch(() => undefined);
+  }
+  return {
+    schema: "MEETLESS_M4_COMPOSITION_PROOF v1",
+    status: "failed",
+    reason: describe(error),
+    cleanup: privacySafeCleanup(cleanupReport, results[0]?.artifactCleanup),
+    restoration: restorationSummary({ originalRootExisted, originalRuntimeDigest, restoredRuntimeDigest }),
+  };
+}) : {
   schema: "MEETLESS_POST_M3_CORRELATED_PROOF v1",
   status: cleanupReport.status === "failed"
     ? "failed"
@@ -99,7 +144,186 @@ const manifest = {
   results,
 };
 process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
+if (evidencePath) process.stderr.write(`[m4] durable evidence ${evidencePath}\n`);
 if (manifest.status !== "passed") process.exitCode = 1;
+
+async function runM4Mode(runtimeConfig, installedHost, proofRunId) {
+  const cdpPort = await reservePort();
+  const envelope = newUiTestEnvelope({
+    runId: `${proofRunId}-generated`,
+    cdpPort,
+    transcriptionMode: "fake",
+    forceAccessibility: false,
+  });
+  const seeded = await seedM4Fixture(runtimeConfig);
+  await writeUiTestEnvelope(runtimeConfig.paths.root, envelope);
+
+  let browser = null;
+  let recordingSocket = null;
+  let connectedClient = null;
+  const artifactRoot = path.join("/private/tmp", `meetless-m4-${envelope.runId}`);
+  await mkdir(artifactRoot, { recursive: true, mode: 0o700 });
+  const screenshotPath = path.join(artifactRoot, "screenshot.png");
+  const clipPath = path.join(artifactRoot, "clicked-citation.mp3");
+  const evidenceStagingRoot = path.join(repositoryRoot, "test", "evidence", "m4", `.staging-${proofRunId}`);
+  let result = null;
+  try {
+    process.stderr.write("[m4] launching exact installed host\n");
+    await launchExactHost();
+    const marker = await waitForMarker(runtimeConfig.paths.root, envelope.runId);
+    browser = await connectOverCdp(`http://${envelope.cdpAddress}:${envelope.cdpPort}`, envelope.runId, runtimeConfig.rendererOrigin);
+    const page = await findExactRendererPage(browser, envelope.runId, runtimeConfig.rendererOrigin);
+    const electronPid = await endpointPid(envelope.cdpPort);
+    exactAncestry(electronPid, marker.identity.hostPid, marker.identity.desktopPid, installedHost, expectedElectronExecutable());
+
+    recordingSocket = await openRecordingSocket(runtimeConfig.paths.recordingSocket);
+    const runtimeReady = await recordingSocket.requestReadiness("status");
+    const runtimeUiTest = runtimeReady.runtime.uiTest;
+    if (!runtimeUiTest || runtimeUiTest.runId !== envelope.runId || runtimeUiTest.hostCdHash !== installedHost.cdHash) {
+      throw new Error("M4 recording socket does not independently attest the consumed host/run identity");
+    }
+    await waitForVisible(page.locator('[data-testid="connection-status"]'), 30_000);
+    const bridge = await page.evaluate(async () => {
+      const desktop = globalThis.paseoDesktop;
+      const status = typeof desktop?.invoke === "function" ? await desktop.invoke("desktop_daemon_status") : null;
+      return { platform: desktop?.platform ?? "", ...(status && typeof status === "object" ? status : {}) };
+    });
+    if (bridge.platform !== "darwin" || bridge.status !== "running" || bridge.desktopManaged !== true || bridge.listen !== runtimeConfig.listen || bridge.home !== runtimeConfig.paths.paseoHome) {
+      throw new Error(`M4 renderer bridge does not identify the exact managed daemon (${JSON.stringify(bridge)})`);
+    }
+
+    connectedClient = await connectMeetlessClient({
+      url: `ws://${runtimeConfig.listen}/ws`,
+      clientId: `m4-proof-client-${Date.now()}`,
+      clientType: "browser",
+    });
+    const rpcMeetings = await connectedClient.client.listMeetings();
+    if (JSON.stringify(rpcMeetings.map((meeting) => meeting.id)) !== JSON.stringify([M4_DISTRACTOR_MEETING_ID, M4_TARGET_MEETING_ID])) {
+      throw new Error(`M4 RPC meeting list differs from the seeded pair (${rpcMeetings.map((meeting) => meeting.id).join(", ")})`);
+    }
+
+    const distractorRow = page.locator(`[data-testid="meeting-${M4_DISTRACTOR_MEETING_ID}"]`);
+    const targetRow = page.locator(`[data-testid="meeting-${M4_TARGET_MEETING_ID}"]`);
+    await waitFor(() => Promise.all([distractorRow.isVisible(), targetRow.isVisible()]).then((values) => values.every(Boolean)), "both M4 sidebar meetings");
+    await targetRow.click();
+    await waitFor(() => page.locator('[data-testid="transcript-ready"]').isVisible(), "M4 target ready transcript");
+    const selectionAttributes = await targetRow.evaluate((element) => ({
+      ariaCurrent: element.getAttribute("aria-current"),
+      ariaPressed: element.getAttribute("aria-pressed"),
+      ariaSelected: element.getAttribute("aria-selected"),
+      dataSelected: element.getAttribute("data-selected"),
+      role: element.getAttribute("role"),
+    }));
+    process.stderr.write(`[m4] target accessibility ${JSON.stringify(selectionAttributes)}\n`);
+    const selectedAccessibility = selectionAttributes.ariaSelected === "true";
+    const detail = page.locator('[data-testid="meeting-detail"]');
+    const detailText = await detail.innerText();
+    if (!detailText.includes(seeded.targetTitle)) throw new Error("M4 detail does not expose the selected target title");
+
+    const store = new MeetingStore({ root: runtimeConfig.paths.meetingStore });
+    const authoritative = await store.getTranscriptForMeeting(M4_TARGET_MEETING_ID);
+    if (!authoritative || authoritative.status !== "ready") throw new Error("M4 authoritative transcript is not ready");
+    const rpcResult = await connectedClient.client.getMeetingTranscript(M4_TARGET_MEETING_ID);
+    if (!rpcResult.transcript) throw new Error("M4 transcript RPC returned no target transcript");
+    const authoritativeSegments = authoritative.checkpoints.map((checkpoint) => ({
+      ordinal: checkpoint.range.ordinal,
+      startMs: checkpoint.range.startMs,
+      endMs: checkpoint.range.endMs,
+      segmentId: checkpoint.range.segmentId,
+      text: checkpoint.text,
+    }));
+    const rpcSegments = rpcResult.transcript.segments.map((segment) => ({
+      ordinal: segment.range.ordinal,
+      startMs: segment.range.startMs,
+      endMs: segment.range.endMs,
+      segmentId: segment.range.segmentId,
+      text: segment.text,
+    }));
+    const renderedSegments = await readRenderedSegments(page);
+    const third = authoritativeSegments[2];
+    if (!third) throw new Error("M4 authoritative transcript has no third segment");
+    const citation = await connectedClient.client.resolveCitation({ meetingId: M4_TARGET_MEETING_ID, segmentId: third.segmentId });
+
+    await installAudioObserver(page);
+    await page.locator(`[data-testid="citation-${third.segmentId}"]`).click();
+    const playback = await waitFor(() => page.evaluate(() => {
+      const value = globalThis.__meetlessM4AudioObservation;
+      if (!value?.playResolved || value.maximumCurrentTime < 0.2) throw new Error("browser Audio has not advanced");
+      return value;
+    }), "browser Audio time advancement", 10_000);
+    const stoppedPlayback = await waitFor(() => page.evaluate(() => {
+      const value = globalThis.__meetlessM4AudioObservation;
+      if (!value?.boundedStopObserved) throw new Error("bounded browser Audio stop not observed");
+      return value;
+    }), "bounded browser Audio stop", 10_000);
+    const source = stoppedPlayback.source;
+    if (typeof source !== "string" || !source.startsWith("data:audio/mpeg;base64,")) throw new Error("M4 browser Audio source is not a bounded MP3 data URL");
+    const clipBytes = Buffer.from(source.slice(source.indexOf(",") + 1), "base64");
+    const rpcClipBytes = Buffer.from(citation.audio.base64, "base64");
+    if (sha256(clipBytes) !== sha256(rpcClipBytes)) throw new Error("M4 browser Audio payload differs from the authoritative citation RPC payload");
+    await writeFile(clipPath, clipBytes, { flag: "wx", mode: 0o600 });
+    const clipAnalysis = await analyzeClip(runtimeConfig, clipPath);
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await mkdir(path.dirname(evidenceStagingRoot), { recursive: true, mode: 0o755 });
+    await mkdir(evidenceStagingRoot, { recursive: false, mode: 0o755 });
+    await copyFile(screenshotPath, path.join(evidenceStagingRoot, "screenshot.png"));
+    const stagedScreenshot = await stat(path.join(evidenceStagingRoot, "screenshot.png"));
+    if (!stagedScreenshot.isFile() || stagedScreenshot.size <= 0) throw new Error("M4 screenshot was not durably staged before artifact cleanup");
+
+    const observation = {
+      schema: "MEETLESS_M4_COMPOSITION_OBSERVATION v1",
+      evidencePolicy: { generatedFixture: true, liveSource: false, nativeProvider: false, fakeNativeSubstitution: false },
+      identity: { exactInstalledHost: true, exactRunMarker: true, trustedRendererBridge: true },
+      sidebar: {
+        meetingIds: rpcMeetings.map((meeting) => meeting.id),
+        selectedMeetingId: M4_TARGET_MEETING_ID,
+        selectedAccessibility,
+        detailMeetingId: detailText.includes(seeded.targetTitle) ? M4_TARGET_MEETING_ID : "mismatch",
+      },
+      authoritativeTranscript: { meetingId: authoritative.meetingId, recordingId: authoritative.recordingId, segments: authoritativeSegments },
+      rpcTranscript: { meetingId: rpcResult.transcript.meetingId, recordingId: rpcResult.transcript.recordingId, segments: rpcSegments },
+      renderedTranscript: { segments: renderedSegments, distractorSentinelPresent: detailText.includes(M4_DISTRACTOR_SENTINEL) },
+      citation: {
+        meetingId: citation.meetingId, recordingId: citation.recordingId, segmentId: citation.segmentId,
+        text: citation.text, startMs: citation.startMs, endMs: citation.endMs,
+      },
+      playback: {
+        audioAccepted: stoppedPlayback.audioAccepted === true,
+        playResolved: stoppedPlayback.playResolved === true,
+        maximumCurrentTime: stoppedPlayback.maximumCurrentTime,
+        boundedStopObserved: stoppedPlayback.boundedStopObserved === true,
+        clipDurationSeconds: clipAnalysis.durationSeconds,
+        markerHz: clipAnalysis.markerHz,
+        markerPowerRatio: clipAnalysis.markerPowerRatio,
+      },
+    };
+    validateM4Observation(observation);
+    result = {
+      mode: "m4-generated",
+      status: "passed",
+      observation,
+      evidenceStagingRoot,
+    };
+  } catch (error) {
+    result = { mode: "m4-generated", status: "failed", reason: describe(error) };
+  } finally {
+    if (connectedClient) await connectedClient.close().catch(() => undefined);
+    if (recordingSocket) await recordingSocket.close().catch(() => undefined);
+    if (browser) await browser.close().catch(() => undefined);
+    await removeUiTestRunState(runtimeConfig.paths.root).catch(() => undefined);
+    const artifactCleanup = await removeExactM4ArtifactRoot(artifactRoot, envelope.runId);
+    result ??= { mode: "m4-generated", status: "failed", reason: "M4 proof produced no result" };
+    result.artifactCleanup = artifactCleanup;
+    if (artifactCleanup.status !== "passed") {
+      result.status = "failed";
+      result.reason = `M4 proof artifact cleanup failed: ${artifactCleanup.error}`;
+    }
+    if (result.status !== "passed" && await exists(evidenceStagingRoot)) {
+      await removeExactM4StagingRoot(evidenceStagingRoot, proofRunId).catch(() => undefined);
+    }
+  }
+  return result;
+}
 
 async function runProviderMode(providerMode, runtimeConfig, installedHost, proofRunId) {
   const cdpPort = await reservePort();
@@ -237,9 +461,9 @@ async function runProviderMode(providerMode, runtimeConfig, installedHost, proof
     );
     const chunks = publishedChunks.count >= observedChunks.count ? publishedChunks : observedChunks;
     await page.locator('[data-testid="meeting-refresh-button"]').click();
-    const transcriptButton = page.locator(`[data-testid="meeting-transcript-${storeSnapshot.meeting.id}"]`);
-    await waitFor(() => transcriptButton.isVisible(), "meeting transcript control");
-    await transcriptButton.click();
+    const meetingRow = page.locator(`[data-testid="meeting-${storeSnapshot.meeting.id}"]`);
+    await waitFor(() => meetingRow.isVisible(), "meeting row");
+    await meetingRow.click();
     const consent = page.locator('[data-testid="transcription-consent"]');
     await waitFor(() => consent.isVisible(), "transcription consent control");
     await consent.click();
@@ -247,12 +471,12 @@ async function runProviderMode(providerMode, runtimeConfig, installedHost, proof
       const ready = await store.getTranscriptForMeeting(storeSnapshot.meeting.id);
       return ready?.status === "ready" ? ready : null;
     }, "accepted MeetingStore transcript state", 60_000);
-    // The existing transcript surface loads on open/refresh rather than
-    // subscribing to provider completion; refresh the same UI control after
-    // the authoritative store publication so the transcript panel is visible.
+    // The transcript surface loads on open/refresh rather than subscribing to
+    // provider completion; refresh and select the same meeting row after the
+    // authoritative store publication so the ready state is visible.
     await page.locator('[data-testid="meeting-refresh-button"]').click();
-    await transcriptButton.click();
-    await waitFor(() => page.locator('[data-testid="transcript-panel"]').isVisible(), "transcript panel after accepted store state");
+    await meetingRow.click();
+    await waitFor(() => page.locator('[data-testid="transcript-ready"]').isVisible(), "ready transcript state after accepted store state");
     const finalState = await page.locator('[data-testid="global-recording-strip"]').innerText();
     const transcriptStatus = await store.getTranscriptForMeeting(storeSnapshot.meeting.id);
     if (!transcriptStatus) throw new Error("MeetingStore transcript disappeared after accepted UI state");
@@ -377,6 +601,323 @@ async function runProviderMode(providerMode, runtimeConfig, installedHost, proof
     await removeUiTestRunState(runtimeConfig.paths.root);
   }
 }
+
+async function seedM4Fixture(runtimeConfig) {
+  const store = new MeetingStore({ root: runtimeConfig.paths.meetingStore });
+  const fixtureDirectory = path.join(runtimeConfig.paths.meetingStore, "m4-generated-fixture");
+  const sessionDirectory = path.join(runtimeConfig.paths.meetingStore, "sessions", M4_TARGET_RECORDING_ID);
+  await Promise.all([
+    mkdir(fixtureDirectory, { recursive: true, mode: 0o700 }),
+    mkdir(sessionDirectory, { recursive: true, mode: 0o700 }),
+  ]);
+  const targetAudio = path.join(fixtureDirectory, "target-65s.mp3");
+  await execFileAsync(runtimeConfig.environment.MEETLESS_FFMPEG, [
+    "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "sine=frequency=440:duration=30:sample_rate=16000",
+    "-f", "lavfi", "-i", "sine=frequency=660:duration=30:sample_rate=16000",
+    "-f", "lavfi", "-i", "sine=frequency=880:duration=5:sample_rate=16000",
+    "-filter_complex", "[0:a][1:a][2:a]concat=n=3:v=0:a=1[out]",
+    "-map", "[out]", "-ar", "16000", "-ac", "1", "-codec:a", "libmp3lame", "-b:a", "32k", "-f", "mp3", targetAudio,
+  ], { maxBuffer: 2 * 1024 * 1024 });
+  await chmod(targetAudio, 0o600);
+  const outputIdentity = await fileIdentity(targetAudio);
+
+  await store.create({ id: M4_DISTRACTOR_MEETING_ID, title: M4_DISTRACTOR_SENTINEL });
+  const targetTitle = "M4 ordered transcript target";
+  await store.create({ id: M4_TARGET_MEETING_ID, title: targetTitle });
+  await store.startRecording({ id: M4_TARGET_RECORDING_ID, meetingId: M4_TARGET_MEETING_ID });
+
+  const chunkPath = path.join(sessionDirectory, "fixture-source.wav");
+  const chunkBytes = oneFrameWav();
+  await writeFile(chunkPath, chunkBytes, { flag: "wx", mode: 0o600 });
+  const chunkStats = await stat(chunkPath);
+  const chunk = {
+    id: "m4-proof-source",
+    source: "microphone",
+    storageKey: path.relative(runtimeConfig.paths.meetingStore, chunkPath),
+    byteLength: chunkBytes.byteLength,
+    sha256: sha256(chunkBytes),
+    committedAt: chunkStats.mtime.toISOString(),
+    logicalStartMs: 0,
+    durationMs: 1,
+    sampleRate: 16_000,
+    channels: 1,
+    format: "wav",
+  };
+  await store.commitChunk(M4_TARGET_RECORDING_ID, chunk);
+  await store.prepareInventoryRecovery(M4_TARGET_RECORDING_ID, "M4 generated fixture capture is complete");
+  await store.markInventoryScanning(M4_TARGET_RECORDING_ID);
+  const inventoryBytes = Buffer.from(`${JSON.stringify(chunk)}\n`);
+  const inventoryPath = path.join(sessionDirectory, "inventory.ndjson");
+  await writeFile(inventoryPath, inventoryBytes, { flag: "wx", mode: 0o600 });
+  const pointer = {
+    storageKey: path.relative(runtimeConfig.paths.meetingStore, inventoryPath),
+    digest: sha256(inventoryBytes),
+    chunkCount: 1,
+    microphoneCount: 1,
+    systemCount: 0,
+    publishedAt: new Date().toISOString(),
+  };
+  await store.publishInventory(M4_TARGET_RECORDING_ID, pointer);
+  await store.beginFinalization(M4_TARGET_RECORDING_ID, {
+    openChunksDurablyClosed: true,
+    chunkSetDigest: pointer.digest,
+    destination: targetAudio,
+    expectedIdentity: outputIdentity,
+  });
+  await store.markRecordingSaved(M4_TARGET_RECORDING_ID, { destination: targetAudio, identity: outputIdentity, readable: true });
+  await store.grantTranscriptionConsent();
+  let transcript = await store.ensureTranscript({
+    meetingId: M4_TARGET_MEETING_ID,
+    recordingId: M4_TARGET_RECORDING_ID,
+    audio: { destination: targetAudio, ...outputIdentity, durationMs: 65_000 },
+  });
+  if (JSON.stringify(transcript.ranges.map(({ ordinal, startMs, endMs }) => ({ ordinal, startMs, endMs }))) !== JSON.stringify(M4_EXPECTED_RANGES.map(({ ordinal, startMs, endMs }) => ({ ordinal, startMs, endMs })))) {
+    throw new Error("MeetingStore did not plan the exact three default M3 ranges for the 65-second fixture");
+  }
+  for (const expected of M4_EXPECTED_RANGES) {
+    const request = await store.beginTranscriptRequest(transcript.id);
+    if (!request || request.range.ordinal !== expected.ordinal) throw new Error(`MeetingStore did not expose transcript range ${expected.ordinal} in order`);
+    transcript = await store.checkpointTranscriptRange(transcript.id, {
+      range: request.range,
+      text: expected.text,
+      attempts: request.attempt,
+      usage: { durationSeconds: (request.range.endMs - request.range.startMs) / 1_000 },
+      detectedLanguages: ["en"],
+    });
+  }
+  transcript = await store.publishTranscript(transcript.id);
+  if (transcript.status !== "ready" || transcript.checkpoints.length !== 3) throw new Error("MeetingStore did not publish the complete three-segment M4 transcript");
+  return { targetTitle };
+}
+
+async function readRenderedSegments(page) {
+  const locators = page.locator('[data-testid^="transcript-segment-"]');
+  const count = await locators.count();
+  const result = [];
+  for (let index = 0; index < count; index += 1) {
+    const segment = locators.nth(index);
+    const testId = await segment.getAttribute("data-testid");
+    const segmentId = testId?.slice("transcript-segment-".length) ?? "";
+    const timestamp = (await segment.locator(`[data-testid="citation-${segmentId}"]`).innerText()).trim();
+    const parsed = parseRenderedRange(timestamp);
+    const fullText = (await segment.innerText()).trim();
+    const text = fullText.startsWith(timestamp) ? fullText.slice(timestamp.length).trim() : fullText;
+    result.push({ ordinal: index, startMs: parsed.startMs, endMs: parsed.endMs, segmentId, text });
+  }
+  return result;
+}
+
+function parseRenderedRange(value) {
+  const match = /^(\d{2}):(\d{2})–(\d{2}):(\d{2})$/u.exec(value);
+  if (!match) throw new Error(`M4 rendered timestamp is not MM:SS–MM:SS (${value})`);
+  return {
+    startMs: (Number(match[1]) * 60 + Number(match[2])) * 1_000,
+    endMs: (Number(match[3]) * 60 + Number(match[4])) * 1_000,
+  };
+}
+
+async function installAudioObserver(page) {
+  await page.evaluate(() => {
+    const NativeAudio = globalThis.Audio;
+    globalThis.__meetlessM4AudioObservation = null;
+    globalThis.Audio = function observedMeetlessAudio(source) {
+      const audio = new NativeAudio(source);
+      const observation = {
+        source: typeof source === "string" ? source : "",
+        audioAccepted: true,
+        playResolved: false,
+        maximumCurrentTime: 0,
+        boundedStopObserved: false,
+      };
+      globalThis.__meetlessM4AudioObservation = observation;
+      const originalPlay = audio.play.bind(audio);
+      const originalPause = audio.pause.bind(audio);
+      audio.play = async () => {
+        await originalPlay();
+        observation.playResolved = true;
+      };
+      audio.pause = () => {
+        observation.maximumCurrentTime = Math.max(observation.maximumCurrentTime, Number(audio.currentTime) || 0);
+        if (observation.maximumCurrentTime >= 4.7) observation.boundedStopObserved = true;
+        originalPause();
+      };
+      audio.addEventListener("timeupdate", () => {
+        observation.maximumCurrentTime = Math.max(observation.maximumCurrentTime, Number(audio.currentTime) || 0);
+      });
+      return audio;
+    };
+  });
+}
+
+async function analyzeClip(runtimeConfig, clipPath) {
+  const probe = await execFileAsync(runtimeConfig.environment.MEETLESS_FFPROBE, [
+    "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", clipPath,
+  ], { encoding: "utf8", maxBuffer: 1024 * 1024 });
+  const durationSeconds = Number(probe.stdout.trim());
+  const decoded = await execFileAsync(runtimeConfig.environment.MEETLESS_FFMPEG, [
+    "-hide_banner", "-nostdin", "-loglevel", "error", "-i", clipPath,
+    "-f", "s16le", "-ac", "1", "-ar", "16000", "pipe:1",
+  ], { encoding: "buffer", maxBuffer: 2 * 1024 * 1024 });
+  const samples = new Int16Array(decoded.stdout.buffer, decoded.stdout.byteOffset, Math.floor(decoded.stdout.byteLength / 2));
+  const powers = [440, 660, 880].map((frequency) => ({ frequency, power: tonePower(samples, 16_000, frequency) }));
+  powers.sort((left, right) => right.power - left.power);
+  return {
+    durationSeconds: Number(durationSeconds.toFixed(3)),
+    markerHz: powers[0]?.frequency ?? 0,
+    markerPowerRatio: Number((powers[0].power / Math.max(1, powers[1].power)).toFixed(2)),
+  };
+}
+
+function tonePower(samples, sampleRate, frequency) {
+  let sine = 0;
+  let cosine = 0;
+  const stride = Math.max(1, Math.floor(samples.length / 160_000));
+  for (let index = 0; index < samples.length; index += stride) {
+    const angle = 2 * Math.PI * frequency * index / sampleRate;
+    sine += samples[index] * Math.sin(angle);
+    cosine += samples[index] * Math.cos(angle);
+  }
+  return sine * sine + cosine * cosine;
+}
+
+async function publishM4Result(input) {
+  if (input.result?.status !== "passed") throw new Error(input.result?.reason ?? "M4 real-composition observation failed");
+  const restoration = restorationSummary(input);
+  const safeCleanup = privacySafeCleanup(input.cleanupReport, input.result.artifactCleanup);
+  const manifest = {
+    schema: "MEETLESS_M4_COMPOSITION_PROOF v1",
+    status: "passed",
+    frontierId: "M4-PROOF",
+    runId: input.runId,
+    acceptedHost: { bundleIdentifier: input.hostIdentity.bundleIdentifier, cdHash: input.hostIdentity.cdHash, launchRoute: "LaunchServices" },
+    observation: input.result.observation,
+    cleanup: safeCleanup,
+    restoration,
+    evidence: { screenshot: "screenshot.png" },
+    evidenceLimit: "Machine-observed browser Audio playback only; this does not prove that a human heard speaker output.",
+  };
+  validateM4PublishedManifest(manifest);
+  const evidenceRoot = path.join(repositoryRoot, "test", "evidence", "m4", input.runId);
+  await assertExactM4StagingRoot(input.result.evidenceStagingRoot, input.runId);
+  try {
+    if (await exists(evidenceRoot)) throw new Error("Refusing to replace an existing M4 evidence root");
+    await writeFile(path.join(input.result.evidenceStagingRoot, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx", mode: 0o644 });
+    await rename(input.result.evidenceStagingRoot, evidenceRoot);
+    return { manifest, evidencePath: path.relative(repositoryRoot, evidenceRoot) };
+  } catch (error) {
+    await removeExactM4StagingRoot(input.result.evidenceStagingRoot, input.runId).catch(() => undefined);
+    throw error;
+  }
+}
+
+function restorationSummary(input) {
+  return {
+    originalRootExisted: input.originalRootExisted,
+    matched: input.originalRootExisted
+      ? input.originalRuntimeDigest !== null && input.originalRuntimeDigest === input.restoredRuntimeDigest
+      : input.restoredRuntimeDigest === null,
+    beforeDigest: input.originalRuntimeDigest,
+    afterDigest: input.restoredRuntimeDigest,
+  };
+}
+
+function privacySafeCleanup(report, artifactCleanup) {
+  return {
+    status: report?.status ?? "failed",
+    stagedRootRemoved: report?.stagedRootRemoved === true,
+    originalRootRestored: report?.originalRootRestored === true,
+    runStateRemoved: report?.runStateRemoved === true,
+    proofArtifactRootRemoved: artifactCleanup?.status === "passed" && artifactCleanup?.absent === true,
+    liveHostPids: Array.isArray(report?.liveHostPids) ? report.liveHostPids : [],
+    errors: Array.isArray(report?.errors) ? report.errors.map((error) => String(error).replaceAll(repositoryRoot, "<repository>")) : [],
+  };
+}
+
+async function removeExactM4ArtifactRoot(artifactRoot, envelopeRunId) {
+  const expectedRunId = /^m4-proof-\d{13}-[0-9a-f]{8}-generated$/u;
+  const expectedRoot = path.join("/private/tmp", `meetless-m4-${envelopeRunId}`);
+  if (!expectedRunId.test(envelopeRunId) || artifactRoot !== expectedRoot) {
+    return { status: "failed", absent: false, error: "artifact identity does not match the exact generated M4 run" };
+  }
+  try {
+    const info = await lstat(artifactRoot);
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      return { status: "failed", absent: false, error: "artifact root is not an owned non-symlink directory" };
+    }
+    await rm(artifactRoot, { recursive: true, force: false });
+    const absent = !(await exists(artifactRoot));
+    return absent
+      ? { status: "passed", absent: true, error: null }
+      : { status: "failed", absent: false, error: "artifact root remained after exact removal" };
+  } catch (error) {
+    if (!(await exists(artifactRoot))) return { status: "passed", absent: true, error: null };
+    return { status: "failed", absent: false, error: describe(error) };
+  }
+}
+
+async function assertExactM4StagingRoot(stagingRoot, proofRunId) {
+  const expectedRunId = /^m4-proof-\d{13}-[0-9a-f]{8}$/u;
+  const expectedRoot = path.join(repositoryRoot, "test", "evidence", "m4", `.staging-${proofRunId}`);
+  if (!expectedRunId.test(proofRunId) || stagingRoot !== expectedRoot) {
+    throw new Error("Refusing publication from a non-exact M4 staging root");
+  }
+  const info = await lstat(stagingRoot);
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("M4 staging root is not an owned non-symlink directory");
+  const children = (await readdir(stagingRoot)).sort();
+  if (JSON.stringify(children) !== JSON.stringify(["screenshot.png"])) {
+    throw new Error(`M4 staging root contains unexpected files: ${children.join(", ")}`);
+  }
+  const screenshot = await lstat(path.join(stagingRoot, "screenshot.png"));
+  if (!screenshot.isFile() || screenshot.isSymbolicLink() || screenshot.size <= 0) {
+    throw new Error("M4 staged screenshot is not a non-empty regular file");
+  }
+}
+
+async function removeExactM4StagingRoot(stagingRoot, proofRunId) {
+  const expectedRunId = /^m4-proof-\d{13}-[0-9a-f]{8}$/u;
+  const expectedRoot = path.join(repositoryRoot, "test", "evidence", "m4", `.staging-${proofRunId}`);
+  if (!expectedRunId.test(proofRunId) || stagingRoot !== expectedRoot) {
+    throw new Error("Refusing cleanup for a non-exact M4 staging root");
+  }
+  if (!(await exists(stagingRoot))) return;
+  const info = await lstat(stagingRoot);
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Refusing cleanup for a non-directory M4 staging root");
+  await rm(stagingRoot, { recursive: true, force: false });
+}
+
+async function runtimeTreeDigest(root) {
+  const entries = [];
+  async function visit(current, relative) {
+    const info = await lstat(current);
+    const mode = info.mode & 0o777;
+    if (info.isDirectory()) {
+      entries.push({ path: relative || ".", type: "directory", mode });
+      const children = await readdir(current);
+      children.sort();
+      for (const child of children) await visit(path.join(current, child), path.join(relative, child));
+    } else if (info.isFile()) {
+      entries.push({ path: relative, type: "file", mode, byteLength: info.size, sha256: sha256(await readFile(current)) });
+    } else if (info.isSymbolicLink()) {
+      entries.push({ path: relative, type: "symlink", mode, target: await readlink(current) });
+    } else {
+      entries.push({ path: relative, type: "other", mode });
+    }
+  }
+  await visit(root, "");
+  return sha256(Buffer.from(JSON.stringify(entries)));
+}
+
+function oneFrameWav() {
+  const data = Buffer.alloc(46);
+  data.write("RIFF", 0); data.writeUInt32LE(38, 4); data.write("WAVEfmt ", 8);
+  data.writeUInt32LE(16, 16); data.writeUInt16LE(1, 20); data.writeUInt16LE(1, 22);
+  data.writeUInt32LE(16_000, 24); data.writeUInt32LE(32_000, 28); data.writeUInt16LE(2, 32);
+  data.writeUInt16LE(16, 34); data.write("data", 36); data.writeUInt32LE(2, 40); data.writeInt16LE(0, 44);
+  return data;
+}
+
+function sha256(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
 
 async function launchExactHost() {
   await execFileAsync(process.execPath, [path.join(repositoryRoot, "scripts/launch-macos-host.mjs")], {

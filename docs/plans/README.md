@@ -31,7 +31,7 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 ## Active Plans
 
 - [Meetless V1 on top of Paseo](active/v1-paseo-foundation.md) — personal,
-  local-first Zoom/Meet recording, coding-agent analysis, grounded Q&A, and
+  local-first Zoom/Meet recording, transcript reading, meeting-scoped chat, and
   cross-platform companion clients.
 
 ## Completed Harness Improvements

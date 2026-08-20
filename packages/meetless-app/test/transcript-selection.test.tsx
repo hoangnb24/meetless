@@ -59,9 +59,11 @@ describe("transcript meeting selection ordering", () => {
     });
     expect(surface().props.selectedMeetingId).toBe("m-2");
     expect(surface().props.transcript).toBeNull();
+    expect(surface().props.transcriptLoading).toBe(true);
 
     await act(async () => { second.resolve(transcriptResponse("m-2", "segment-m-2", "current citation")); await secondRequest; });
     expect(surface().props.transcript).toMatchObject({ meetingId: "m-2" });
+    expect(surface().props.transcriptLoading).toBe(false);
     expect(surface().props.transcript.segments[0]).toMatchObject({
       range: { segmentId: "segment-m-2" }, text: "current citation",
     });
@@ -77,6 +79,35 @@ describe("transcript meeting selection ordering", () => {
     await act(async () => { staleError.reject(new Error("old meeting failed")); });
     expect(surface().props.selectedMeetingId).toBe("m-2");
     expect(surface().props.transcriptError).toBeNull();
+  });
+
+  test("Back invalidates an in-flight selection and clears its detail state", async () => {
+    const pending = deferred<ReturnType<typeof transcriptResponse>>();
+    const getMeetingTranscript = vi.fn(() => pending.promise);
+    connectMeetlessClient.mockResolvedValue({
+      client: {
+        listMeetings: async () => [meeting("m-1")],
+        getMeetingTranscript,
+      },
+      close: async () => undefined,
+      serverInfo: null,
+    });
+    await act(async () => { renderer = create(<AppContent mode="companion" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+
+    let request!: Promise<void>;
+    await act(async () => { request = surface().props.onOpenTranscript("m-1"); });
+    expect(surface().props.selectedMeetingId).toBe("m-1");
+    expect(surface().props.transcriptLoading).toBe(true);
+    await act(async () => { surface().props.onBack(); });
+    expect(surface().props.selectedMeetingId).toBeNull();
+    expect(surface().props.transcript).toBeNull();
+    expect(surface().props.transcriptLoading).toBe(false);
+
+    await act(async () => { pending.resolve(transcriptResponse("m-1", "stale", "stale")); await request; });
+    expect(surface().props.selectedMeetingId).toBeNull();
+    expect(surface().props.transcript).toBeNull();
   });
 
   test("late same-meeting citation success stops its stale handle and cannot replace the latest playback", async () => {

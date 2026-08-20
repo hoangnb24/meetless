@@ -26,6 +26,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [error, setError] = useState<string | null>(null);
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptWire | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [consentStatus, setConsentStatus] = useState<"unknown" | "granted">("unknown");
   const [providerStatus, setProviderStatus] = useState<TranscriptionProviderStatusWire["status"] | undefined>();
@@ -33,7 +34,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const selectionVersion = useRef(0);
   const citationSequence = useRef(0);
   const selectedMeetingIdRef = useRef<string | null>(null);
-  const compact = Platform.OS !== "web" || dimensions.width < 700;
+  const compact = Platform.OS !== "web" || dimensions.width < 720;
 
   const refresh = useCallback(async () => {
     const active = connection.current;
@@ -61,6 +62,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     playback.current = null;
     selectedMeetingIdRef.current = meetingId;
     setSelectedMeetingId(meetingId);
+    setTranscriptLoading(true);
     setTranscript(null);
     setTranscriptError(null);
     setConsentStatus("unknown");
@@ -68,25 +70,47 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     try {
       const result = await active.client.getMeetingTranscript(meetingId);
       if (selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+      setMeetings((current) => current.map((meeting) => meeting.id === meetingId ? result.meeting : meeting));
       setTranscript(result.transcript);
+      setTranscriptLoading(false);
       setConsentStatus(result.consent.status);
       setProviderStatus(result.provider.status);
     } catch (reason) {
       if (selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+      setTranscriptLoading(false);
       setTranscriptError(reason instanceof Error ? reason.message : String(reason));
     }
+  }, []);
+
+  const closeTranscript = useCallback(() => {
+    selectionVersion.current += 1;
+    citationSequence.current += 1;
+    playback.current?.stop();
+    playback.current = null;
+    selectedMeetingIdRef.current = null;
+    setSelectedMeetingId(null);
+    setTranscriptLoading(false);
+    setTranscript(null);
+    setTranscriptError(null);
+    setConsentStatus("unknown");
+    setProviderStatus(undefined);
   }, []);
 
   const grantConsent = useCallback(async () => {
     const active = connection.current;
     if (!active) throw new Error("Meetless host is not connected yet");
+    const meetingId = selectedMeetingIdRef.current;
+    const version = selectionVersion.current;
+    if (!meetingId) return;
     setTranscriptError(null);
     try {
       const result = await active.client.grantTranscriptionConsent();
+      if (selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
       setConsentStatus(result.consent.status);
       setProviderStatus(result.provider.status);
-      if (selectedMeetingIdRef.current) await openTranscript(selectedMeetingIdRef.current);
+      await openTranscript(meetingId);
     } catch (reason) {
+      if (selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
       setTranscriptError(reason instanceof Error ? reason.message : String(reason));
     }
   }, [openTranscript]);
@@ -214,8 +238,10 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         onRefresh={refresh}
         pending={pending}
         onOpenTranscript={openTranscript}
+        onBack={closeTranscript}
         selectedMeetingId={selectedMeetingId}
         transcript={transcript}
+        transcriptLoading={transcriptLoading}
         transcriptError={transcriptError}
         consentStatus={consentStatus}
         providerStatus={providerStatus}

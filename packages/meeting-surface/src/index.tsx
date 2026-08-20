@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { MeetingWire } from "@meetless/meeting-contracts";
 import type { RecordingStatusWire } from "@meetless/meeting-contracts";
@@ -96,12 +96,14 @@ export interface MeetingListSurfaceProps {
   onRefresh(): Promise<void>;
   selectedMeetingId?: string | null;
   transcript?: TranscriptWire | null;
+  transcriptLoading?: boolean;
   transcriptError?: string | null;
   consentStatus?: "unknown" | "granted";
   providerStatus?: TranscriptionProviderStatusWire["status"];
   onOpenTranscript?(meetingId: string): Promise<void>;
+  onBack?(): void;
   onGrantTranscriptionConsent?(): Promise<void>;
-  onCitation?(citation: Pick<CitationWire, "meetingId" | "segmentId">): Promise<void>;
+  onCitation?(citation: Pick<CitationWire, "meetingId" | "segmentId">): void | Promise<void>;
 }
 
 export function MeetingListSurface({
@@ -116,36 +118,122 @@ export function MeetingListSurface({
   onRefresh,
   selectedMeetingId = null,
   transcript = null,
+  transcriptLoading = false,
   transcriptError = null,
   consentStatus = "unknown",
   providerStatus,
   onOpenTranscript,
+  onBack,
   onGrantTranscriptionConsent,
   onCitation,
 }: MeetingListSurfaceProps) {
   const [title, setTitle] = useState("");
-  const responsive = surfaceLayout(compact);
   const create = useCallback(async () => {
     const normalized = title.trim();
     if (!normalized || pending || !onCreate) return;
     await onCreate(normalized);
     setTitle("");
   }, [onCreate, pending, title]);
+  const selectedMeeting = useMemo(
+    () => meetings.find((meeting) => meeting.id === selectedMeetingId) ?? null,
+    [meetings, selectedMeetingId],
+  );
+
+  const sidebar = (
+    <MeetingSidebar
+      canCreate={canCreate}
+      compact={compact}
+      connectionLabel={connectionLabel}
+      error={error}
+      hostLabel={hostLabel}
+      meetings={meetings}
+      onCreate={onCreate ? create : undefined}
+      onOpenTranscript={onOpenTranscript}
+      onRefresh={onRefresh}
+      pending={pending}
+      selectedMeetingId={selectedMeetingId}
+      setTitle={setTitle}
+      title={title}
+    />
+  );
+
+  const detail = (
+    <MeetingDetail
+      compact={compact}
+      consentStatus={consentStatus}
+      onBack={onBack}
+      onCitation={onCitation}
+      onGrantTranscriptionConsent={onGrantTranscriptionConsent}
+      pending={pending}
+      providerStatus={providerStatus}
+      selectedMeeting={selectedMeeting}
+      selectedMeetingId={selectedMeetingId}
+      transcript={transcript}
+      transcriptError={transcriptError}
+      transcriptLoading={transcriptLoading}
+    />
+  );
 
   return (
     <View style={styles.app} testID="meetless-product-root">
-      <ScrollView contentContainerStyle={[styles.content, responsive.content]} testID="meeting-surface">
+      {compact ? (
+        selectedMeetingId ? detail : <View style={styles.compactList} testID="meeting-layout-compact-list">{sidebar}</View>
+      ) : (
+        <View style={styles.desktopLayout} testID="meeting-layout-desktop">
+          <View style={styles.sidebarPane} testID="meeting-sidebar-pane">{sidebar}</View>
+          <View style={styles.detailPane} testID="meeting-detail-pane">{detail}</View>
+        </View>
+      )}
+    </View>
+  );
+}
+
+interface MeetingSidebarProps {
+  canCreate: boolean;
+  compact: boolean;
+  connectionLabel: string;
+  error: string | null;
+  hostLabel: string;
+  meetings: MeetingWire[];
+  onCreate?: () => Promise<void>;
+  onOpenTranscript?: (meetingId: string) => Promise<void>;
+  onRefresh(): Promise<void>;
+  pending: boolean;
+  selectedMeetingId: string | null;
+  setTitle(title: string): void;
+  title: string;
+}
+
+function MeetingSidebar({
+  canCreate,
+  compact,
+  connectionLabel,
+  error,
+  hostLabel,
+  meetings,
+  onCreate,
+  onOpenTranscript,
+  onRefresh,
+  pending,
+  selectedMeetingId,
+  setTitle,
+  title,
+}: MeetingSidebarProps) {
+  return (
+    <View style={styles.sidebar} testID="meeting-sidebar">
+      <ScrollView
+        style={styles.sidebarScroll}
+        contentContainerStyle={[styles.sidebarContent, compact && styles.compactSidebarContent]}
+        testID="meeting-surface"
+      >
         <View style={styles.heading}>
           <Text style={styles.brand} testID="meetless-brand">MEETLESS</Text>
-          <Text style={[styles.title, { fontSize: responsive.titleSize }]}>Your meetings</Text>
+          <Text style={styles.title}>Your meetings</Text>
           <Text style={styles.subtitle}>Stored on {hostLabel}</Text>
           <Text style={styles.connection} testID="connection-status">{connectionLabel}</Text>
         </View>
         {canCreate ? (
-          <View
-            style={[styles.createRow, { flexDirection: responsive.row.direction, gap: responsive.row.gap }]}
-            testID="desktop-create-controls"
-          >
+          <View style={styles.createColumn} testID="desktop-create-controls">
             <TextInput
               accessibilityLabel="Meeting title"
               onChangeText={setTitle}
@@ -159,7 +247,7 @@ export function MeetingListSurface({
               accessibilityLabel="Create meeting"
               accessibilityRole="button"
               disabled={pending || !title.trim()}
-              onPress={() => void create()}
+              onPress={() => void onCreate?.()}
               style={styles.button}
               testID="meeting-create-button"
             >
@@ -186,90 +274,229 @@ export function MeetingListSurface({
         {error ? <Text style={styles.error} testID="meeting-error">{error}</Text> : null}
         <View style={styles.list} testID="meeting-list">
           {meetings.length === 0 ? (
-            <Text style={styles.empty}>No meetings yet.</Text>
+            <View style={styles.emptyState} testID="meeting-empty">
+              <Text style={styles.empty}>No meetings yet</Text>
+            </View>
           ) : (
-            meetings.map((meeting) => (
-              <View key={meeting.id} style={styles.card} testID={`meeting-${meeting.id}`}>
-                <Text style={styles.cardTitle}>{meeting.title}</Text>
-                <Text style={styles.status}>{meeting.status}</Text>
-                <Text style={styles.timestamp}>{new Date(meeting.createdAt).toLocaleString()}</Text>
-                {onOpenTranscript ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => void onOpenTranscript(meeting.id)}
-                    style={styles.transcriptButton}
-                    testID={`meeting-transcript-${meeting.id}`}
-                  >
-                    <Text style={styles.refreshText}>{selectedMeetingId === meeting.id ? "Refresh transcript" : "Open transcript"}</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            ))
+            meetings.map((meeting) => {
+              const selected = selectedMeetingId === meeting.id;
+              return (
+                <Pressable
+                  key={meeting.id}
+                  accessibilityLabel={`Open meeting ${meeting.title}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  aria-selected={selected}
+                  disabled={!onOpenTranscript}
+                  onPress={onOpenTranscript ? () => void onOpenTranscript(meeting.id) : undefined}
+                  style={[styles.meetingRow, selected && styles.meetingRowSelected]}
+                  testID={`meeting-${meeting.id}`}
+                >
+                  <View style={styles.meetingRowMain}>
+                    <Text style={styles.cardTitle} numberOfLines={1}>{meeting.title}</Text>
+                    <Text style={styles.status}>{meeting.status}</Text>
+                    <Text style={styles.timestamp}>{new Date(meeting.createdAt).toLocaleString()}</Text>
+                  </View>
+                  <Text style={styles.chevron} accessibilityElementsHidden>›</Text>
+                </Pressable>
+              );
+            })
           )}
         </View>
-        {selectedMeetingId ? (
-          <View style={styles.transcriptPanel} testID="transcript-panel">
-            <Text style={styles.sectionTitle}>Transcript</Text>
-            {consentStatus !== "granted" && onGrantTranscriptionConsent ? (
-              <View style={styles.disclosure} testID="transcription-disclosure">
-                <Text style={styles.subtitle}>Meetless sends saved MP3 audio to OpenAI for transcription. English/Vietnamese code-switching is kept as spoken.</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={pending}
-                  onPress={() => void onGrantTranscriptionConsent()}
-                  style={styles.button}
-                  testID="transcription-consent"
-                >
-                  <Text style={styles.buttonText}>Allow cloud transcription</Text>
-                </Pressable>
-              </View>
-            ) : null}
-            {providerStatus ? <Text style={styles.provider} testID="transcription-provider">Provider: {providerStatus}</Text> : null}
-            {transcriptError ? <Text style={styles.error} testID="transcript-error">{transcriptError}</Text> : null}
-            {transcript ? (
-              <>
-                <Text style={styles.status} testID="transcript-status">{transcript.status} · {transcript.requestCount} requests</Text>
-                <View style={styles.segmentList} testID="transcript-segments">
-                  {transcript.segments.map((segment) => (
-                    <View key={segment.range.segmentId} style={styles.segment} testID={`transcript-segment-${segment.range.segmentId}`}>
-                      <Text style={styles.segmentRange}>{formatRange(segment.range.startMs, segment.range.endMs)}</Text>
-                      <Text style={styles.segmentText}>{segment.text || "(No spoken text returned for this range.)"}</Text>
-                      {onCitation && transcript.status === "ready" ? (
-                        <Pressable
-                          accessibilityRole="button"
-                          onPress={() => void onCitation({
-                            meetingId: transcript.meetingId,
-                            segmentId: segment.range.segmentId,
-                          })}
-                          style={styles.transcriptButton}
-                          testID={`citation-${segment.range.segmentId}`}
-                        >
-                          <Text style={styles.refreshText}>Play cited audio</Text>
-                        </Pressable>
-                      ) : null}
-                    </View>
-                  ))}
-                </View>
-              </>
-            ) : consentStatus === "granted" && !transcriptError ? (
-              <Text style={styles.empty}>Saved recordings will appear here while transcription runs.</Text>
-            ) : null}
+      </ScrollView>
+    </View>
+  );
+}
+
+interface MeetingDetailProps {
+  compact: boolean;
+  consentStatus: "unknown" | "granted";
+  onBack?: () => void;
+  onCitation?: (citation: Pick<CitationWire, "meetingId" | "segmentId">) => void | Promise<void>;
+  onGrantTranscriptionConsent?: () => Promise<void>;
+  pending: boolean;
+  providerStatus?: TranscriptionProviderStatusWire["status"];
+  selectedMeeting: MeetingWire | null;
+  selectedMeetingId: string | null;
+  transcript: TranscriptWire | null;
+  transcriptError: string | null;
+  transcriptLoading: boolean;
+}
+
+function MeetingDetail({
+  compact,
+  consentStatus,
+  onBack,
+  onCitation,
+  onGrantTranscriptionConsent,
+  pending,
+  providerStatus,
+  selectedMeeting,
+  selectedMeetingId,
+  transcript,
+  transcriptError,
+  transcriptLoading,
+}: MeetingDetailProps) {
+  if (!selectedMeetingId && !transcript) {
+    return (
+      <View style={styles.detailPlaceholder} testID="meeting-detail-empty">
+        <Text style={styles.detailPlaceholderTitle}>Select a meeting</Text>
+        <Text style={styles.detailPlaceholderText}>Choose a meeting from the sidebar to read its transcript</Text>
+      </View>
+    );
+  }
+
+  const title = selectedMeeting?.title ?? "Meeting";
+  return (
+    <View style={styles.detail} testID="meeting-detail">
+      <View style={styles.detailHeader} testID="meeting-detail-header">
+        {compact ? (
+          <Pressable
+            accessibilityLabel="Back to meetings"
+            accessibilityRole="button"
+            onPress={() => onBack?.()}
+            style={styles.backButton}
+            testID="meeting-detail-back"
+          >
+            <Text style={styles.backButtonText}>‹ Back</Text>
+          </Pressable>
+        ) : null}
+        <View style={styles.detailHeading}>
+          <Text style={styles.detailTitle} numberOfLines={1}>{title}</Text>
+          {selectedMeeting ? <Text style={styles.detailSubtitle}>{selectedMeeting.status}</Text> : null}
+        </View>
+      </View>
+      <ScrollView style={styles.detailScroll} contentContainerStyle={styles.detailContent} testID="transcript-detail-scroll">
+        {!transcriptLoading && consentStatus !== "granted" && onGrantTranscriptionConsent ? (
+          <View style={styles.disclosure} testID="transcription-disclosure">
+            <Text style={styles.subtitle}>Meetless sends saved MP3 audio to OpenAI for transcription. English/Vietnamese code-switching is kept as spoken.</Text>
+            <Pressable
+              accessibilityRole="button"
+              disabled={pending}
+              onPress={() => void onGrantTranscriptionConsent()}
+              style={styles.button}
+              testID="transcription-consent"
+            >
+              <Text style={styles.buttonText}>Allow cloud transcription</Text>
+            </Pressable>
           </View>
         ) : null}
+        {providerStatus ? <Text style={styles.provider} testID="transcription-provider">Provider: {providerStatus}</Text> : null}
+        <TranscriptState
+          onCitation={onCitation}
+          selectedMeeting={selectedMeeting}
+          transcript={transcript}
+          transcriptError={transcriptError}
+          transcriptLoading={transcriptLoading}
+          providerStatus={providerStatus}
+        />
       </ScrollView>
+    </View>
+  );
+}
+
+function TranscriptState({
+  onCitation,
+  selectedMeeting,
+  transcript,
+  transcriptError,
+  transcriptLoading,
+  providerStatus,
+}: {
+  onCitation?: (citation: Pick<CitationWire, "meetingId" | "segmentId">) => void | Promise<void>;
+  selectedMeeting: MeetingWire | null;
+  transcript: TranscriptWire | null;
+  transcriptError: string | null;
+  transcriptLoading: boolean;
+  providerStatus?: TranscriptionProviderStatusWire["status"];
+}) {
+  if (transcriptLoading) {
+    return <TranscriptStateMessage testID="transcript-loading" title="Loading transcript..." />;
+  }
+
+  if (transcript?.status === "failed") {
+    return <TranscriptStateMessage detail={transcript.failureReason ?? "Transcription failed"} testID="transcript-failed" title="Transcription failed" />;
+  }
+
+  if (!transcript && transcriptError) {
+    return <TranscriptStateMessage detail={transcriptError} testID="transcript-failed" title="Transcription failed" />;
+  }
+
+  if (!transcript && providerStatus === "invalid") {
+    return <TranscriptStateMessage detail="The transcription provider is unavailable" testID="transcript-failed" title="Transcription failed" />;
+  }
+
+  if (!transcript) {
+    if (selectedMeeting?.status === "processing") {
+      return <TranscriptStateMessage testID="transcript-processing" title="Transcription in progress..." />;
+    }
+    return <TranscriptStateMessage testID="transcript-empty" title="No transcript available yet" />;
+  }
+
+  if (transcript.status === "pending" || transcript.status === "transcribing") {
+    return (
+      <TranscriptStateMessage
+        detail={`${transcript.status} · ${transcript.requestCount} requests`}
+        testID="transcript-processing"
+        title="Transcription in progress..."
+      />
+    );
+  }
+
+  return (
+    <View style={styles.readyState} testID="transcript-ready">
+      <Text style={styles.status} testID="transcript-status">Transcript ready · {transcript.segments.length} segments</Text>
+      {transcriptError ? <Text style={styles.error} testID="transcript-error">{transcriptError}</Text> : null}
+      <View style={styles.segmentList} testID="transcript-segments">
+        {transcript.segments.length === 0 ? (
+          <Text style={styles.empty} testID="transcript-ready-empty">Transcript is ready but has no segments</Text>
+        ) : (
+          transcript.segments.map((segment) => (
+            <View key={segment.range.segmentId} style={styles.segment} testID={`transcript-segment-${segment.range.segmentId}`}>
+              <Pressable
+                accessibilityLabel={`Play transcript segment ${formatRange(segment.range.startMs, segment.range.endMs)}`}
+                accessibilityRole="button"
+                disabled={!onCitation}
+                onPress={onCitation ? () => void onCitation({ meetingId: transcript.meetingId, segmentId: segment.range.segmentId }) : undefined}
+                style={styles.segmentTimestamp}
+                testID={`citation-${segment.range.segmentId}`}
+              >
+                <Text style={styles.segmentRange}>{formatRange(segment.range.startMs, segment.range.endMs)}</Text>
+              </Pressable>
+              <Text style={styles.segmentText}>{segment.text.trim() || "No spoken text returned for this segment"}</Text>
+            </View>
+          ))
+        )}
+      </View>
+    </View>
+  );
+}
+
+function TranscriptStateMessage({ detail, testID, title }: { detail?: string; testID: string; title: string }) {
+  return (
+    <View style={styles.transcriptState} testID={testID}>
+      <Text style={styles.transcriptStateTitle}>{title}</Text>
+      {detail ? <Text style={styles.transcriptStateDetail}>{detail}</Text> : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   app: { flex: 1, backgroundColor: "#111316" },
-  content: { width: "100%", minHeight: "100%", paddingBottom: 48 },
+  compactList: { flex: 1 },
+  desktopLayout: { flex: 1, flexDirection: "row" },
+  sidebarPane: { flexShrink: 0, width: 320 },
+  detailPane: { flex: 1, minWidth: 400 },
+  sidebar: { backgroundColor: "#191b1f", flex: 1 },
+  sidebarScroll: { flex: 1 },
+  sidebarContent: { gap: 20, paddingBottom: 48, paddingHorizontal: 16, paddingTop: 24 },
+  compactSidebarContent: { paddingTop: 16 },
   heading: { gap: 5 },
   brand: { color: "#e66b3d", fontSize: 12, fontWeight: "800", letterSpacing: 2.4 },
-  title: { color: "#f4f1e8", fontWeight: "700" },
+  title: { color: "#f4f1e8", fontSize: 22, fontWeight: "700" },
   subtitle: { color: "#a9aaad", fontSize: 14 },
   connection: { color: "#78b995", fontSize: 12, marginTop: 3 },
-  createRow: { width: "100%" },
+  createColumn: { gap: 10, width: "100%" },
   input: { backgroundColor: "#202226", borderColor: "#3a3d43", borderRadius: 10, borderWidth: 1, color: "#f4f1e8", flex: 1, minHeight: 46, paddingHorizontal: 14 },
   button: { alignItems: "center", backgroundColor: "#e66b3d", borderRadius: 10, justifyContent: "center", minHeight: 46, paddingHorizontal: 18 },
   buttonText: { color: "#17120f", fontWeight: "700" },
@@ -280,11 +507,15 @@ const styles = StyleSheet.create({
   refreshText: { color: "#d5d2cb", fontWeight: "600" },
   error: { color: "#ff8d82" },
   list: { gap: 10 },
+  emptyState: { alignItems: "center", paddingVertical: 24 },
   empty: { color: "#a9aaad", paddingVertical: 20 },
-  card: { backgroundColor: "#202226", borderColor: "#32353a", borderRadius: 12, borderWidth: 1, gap: 6, padding: 16 },
+  meetingRow: { alignItems: "center", backgroundColor: "transparent", borderColor: "transparent", borderRadius: 10, borderWidth: 1, flexDirection: "row", gap: 10, minHeight: 76, paddingHorizontal: 12, paddingVertical: 10 },
+  meetingRowSelected: { backgroundColor: "#2a2d33", borderColor: "#454a53" },
+  meetingRowMain: { flex: 1, gap: 5, minWidth: 0 },
   cardTitle: { color: "#f4f1e8", fontSize: 17, fontWeight: "600" },
   status: { color: "#e99a74", fontSize: 12, textTransform: "uppercase" },
   timestamp: { color: "#85898f", fontSize: 12 },
+  chevron: { color: "#85898f", fontSize: 24, lineHeight: 24 },
   recordingStrip: { alignItems: "center", backgroundColor: "#191b1f", borderBottomColor: "#34373d", borderBottomWidth: 1, flexDirection: "row", gap: 10, minHeight: recordingStripGeometry.stripMinHeight, paddingBottom: RECORDING_STRIP_VERTICAL_PADDING, paddingHorizontal: 16, paddingTop: recordingStripGeometry.controlTopY },
   recordingInput: { backgroundColor: "#202226", borderColor: "#3a3d43", borderRadius: 8, borderWidth: 1, color: "#f4f1e8", flex: 1, minHeight: 40, paddingHorizontal: 12 },
   recordingIdentity: { flex: 1, gap: 2 },
@@ -293,13 +524,28 @@ const styles = StyleSheet.create({
   recordingAction: { backgroundColor: "#e66b3d", borderRadius: 8, minHeight: 40, justifyContent: "center", paddingHorizontal: 14 },
   recordingSecondary: { borderColor: "#565b64", borderRadius: 8, borderWidth: 1, minHeight: 40, justifyContent: "center", paddingHorizontal: 14 },
   recordingButtonText: { color: "#f4f1e8", fontWeight: "700" },
-  transcriptButton: { alignSelf: "flex-start", borderColor: "#565b64", borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 7 },
-  transcriptPanel: { backgroundColor: "#181a1e", borderColor: "#32353a", borderRadius: 12, borderWidth: 1, gap: 10, padding: 16 },
+  detail: { backgroundColor: "#111316", flex: 1 },
+  detailHeader: { alignItems: "center", borderBottomColor: "#34373d", borderBottomWidth: 1, flexDirection: "row", gap: 12, minHeight: 64, paddingHorizontal: 24 },
+  detailHeading: { flex: 1, gap: 3, minWidth: 0 },
+  detailTitle: { color: "#f4f1e8", fontSize: 20, fontWeight: "600" },
+  detailSubtitle: { color: "#a9aaad", fontSize: 12, textTransform: "uppercase" },
+  backButton: { borderColor: "#565b64", borderRadius: 8, borderWidth: 1, minHeight: 40, justifyContent: "center", paddingHorizontal: 12 },
+  backButtonText: { color: "#f4f1e8", fontWeight: "600" },
+  detailScroll: { flex: 1 },
+  detailContent: { gap: 16, maxWidth: 900, paddingBottom: 48, paddingHorizontal: 24, paddingTop: 24, width: "100%", alignSelf: "center" },
+  detailPlaceholder: { alignItems: "center", backgroundColor: "#111316", flex: 1, justifyContent: "center", padding: 32 },
+  detailPlaceholderTitle: { color: "#f4f1e8", fontSize: 20, fontWeight: "600" },
+  detailPlaceholderText: { color: "#a9aaad", marginTop: 8, textAlign: "center" },
   disclosure: { backgroundColor: "#24272c", borderRadius: 8, gap: 10, padding: 12 },
   provider: { color: "#78b995", fontSize: 12, textTransform: "uppercase" },
+  transcriptState: { backgroundColor: "#181a1e", borderColor: "#32353a", borderRadius: 10, borderWidth: 1, gap: 8, padding: 20 },
+  transcriptStateTitle: { color: "#f4f1e8", fontSize: 17, fontWeight: "600" },
+  transcriptStateDetail: { color: "#a9aaad", lineHeight: 20 },
+  readyState: { gap: 12 },
   segmentList: { gap: 8 },
   segment: { backgroundColor: "#202226", borderColor: "#32353a", borderRadius: 8, borderWidth: 1, gap: 6, padding: 12 },
-  segmentRange: { color: "#e99a74", fontSize: 12, fontVariant: ["tabular-nums"] },
+  segmentTimestamp: { alignSelf: "flex-start", borderRadius: 6, paddingHorizontal: 4, paddingVertical: 2 },
+  segmentRange: { color: "#e99a74", fontSize: 12, fontVariant: ["tabular-nums"], textDecorationLine: "underline" },
   segmentText: { color: "#f4f1e8", lineHeight: 21 },
 });
 

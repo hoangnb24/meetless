@@ -4,7 +4,7 @@ These documents own accepted V1 consumer behavior:
 
 - [Overview](overview.md): audience, complete workflow, scope, and product boundary.
 - [Recording](recording.md): capture, recovery, export, and transcription behavior.
-- [Knowledge And Citations](knowledge-and-citations.md): analysis, retrieval, and evidence behavior.
+- [Knowledge And Citations](knowledge-and-citations.md): transcript reading, meeting chat, retrieval, and evidence behavior.
 - [Platforms](platforms.md): recording-host and companion-client matrix.
 
 The active execution plan tracks delivery. When behavior changes, update the
