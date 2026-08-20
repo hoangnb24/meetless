@@ -6,8 +6,12 @@ Date: 2026-08-16
 
 Active
 
-Post-M3 Electron Harness POC: accepted after fresh rerun. The native/live-source
-gate is incomplete, so M4 remains closed.
+Post-M3 Electron Harness POC: accepted after fresh rerun. On 2026-08-20 the
+project owner then used the supported host launch, completed a fresh recording,
+opened its transcript, and audibly played cited audio. That owner-observed live
+flow satisfies the dependency for beginning M4. The Harness native-provider
+`invalid` result remains a diagnostic caveat; it is not an M4 blocker and does
+not reverse the accepted M3 evidence.
 
 ## Outcome
 
@@ -856,9 +860,12 @@ stopped, and the original production meeting state was restored byte-for-byte
   Computer Use attachment failure, and owner interventions. A materially
   equivalent fresh agent discovered and exercised the capability without owner
   UI intervention; the bounded POC Harness decision is **Keep**.
-- **Dependency:** M4 remains closed until the implementation is accepted and
-  the handback states separately whether deterministic automation and the
-  original fresh real recording/TCC gate have each been satisfied.
+- **Dependency disposition:** **OPEN FOR M4.** The implementation and fresh-agent
+  Harness rerun are accepted, and the project owner subsequently observed the
+  supported app complete a fresh recording -> transcript -> audible cited-audio
+  flow. This manual observation is not an automated native-provider manifest or
+  a release-readiness claim; the Harness `invalid` diagnostic remains tracked
+  separately without blocking M4.
 
 `POST-M3-E2E-IMPL` base candidate record (2026-08-20, superseded by
 `POST-M3-E2E-IMPL-R1`; base commit
@@ -902,7 +909,8 @@ accepted POC blockers: active marker host/desktop PID-start binding and owned
 shutdown removal, same-UID `0700`/`0600` runtime-file enforcement, independent
 installed-host/socket `runtime.uiTest`/trusted-bridge correlation with exact
 Electron ancestry, nonzero native-incomplete proof semantics, and cleanup
-failure reporting with preserved-state diagnostics. M4 remains closed.
+failure reporting with preserved-state diagnostics. At this candidate
+checkpoint, M4 remained closed pending the separate real-flow disposition.
 
 R1 local evidence is focused and does not change that gate: `npm run
 test:post-m3` passed 37 tests; `npm run validate:isolation` passed 54 tests;
@@ -919,9 +927,12 @@ deterministic fixture correlation with the same 5,589-byte MP3 identity, and
 passed 37 focused tests without retries or owner UI action. Native proof exited
 1 as `incomplete` because the signed-host capability remains invalid, with no
 fake substitution. Cleanup restored the original runtime digest and left no
-owned processes or run-state files. This closes the Harness-improvement rerun,
-not the original native/physical/TCC/live-source recording gate; M4 stays
-closed.
+owned processes or run-state files. This closed the Harness-improvement rerun
+while the original real-flow gate remained open. The project owner's subsequent
+supported-launch recording -> transcript -> audible cited-audio observation
+satisfied that dependency for starting M4. The lossy native-provider `invalid`
+diagnostic remains a caveat rather than a replacement for the accepted M3 and
+owner-observed evidence.
 
 ### Milestone 4: coding-agent analysis
 
@@ -1022,6 +1033,9 @@ Recovery rules:
   LaunchServices host and repository Electron chain before M4 begins.
 - [x] Freshly rerun and accept the correlated post-M3 Electron recording Harness
   POC without weakening production identity, TCC, or accessibility.
+- [x] Confirm the supported app completes a project-owner-observed fresh
+  recording -> transcript -> audible cited-audio flow and open the M4
+  dependency without promoting it to release-readiness evidence.
 - [ ] Complete Milestone 4: coding-agent analysis.
 - [ ] Complete Milestone 5: grounded Q&A and document folders.
 - [ ] Complete Milestone 6: companion web/mobile experience.
@@ -1104,6 +1118,12 @@ Recovery rules:
 - 2026-08-18: Cloud-processing disclosure is one-time and precedes automatic
   transcription. No Meetless duration cap is added; retries and acceptance
   traffic are bounded, and request/usage metadata is recorded when available.
+- 2026-08-20: The project owner launched the supported Meetless host, completed
+  a fresh recording, opened its transcript, and audibly played cited audio.
+  This observation satisfies the post-M3 dependency for beginning M4. It does
+  not claim an automated native-provider manifest or release readiness; the
+  Harness `invalid` result is retained as a diagnostic caveat and does not
+  supersede the accepted M3 evidence.
 
 Open decisions before affected implementation:
 
@@ -1246,5 +1266,8 @@ the experimental renderer smoke and the identity-bound deterministic chain from
 UI through socket/store, fixture helper and chunks, MP3, and ready fixture
 transcription without owner intervention. Native proof remained truthfully
 `incomplete` because the signed-host capability is invalid, and it performed no
-fake substitution. Therefore a fresh real recording and native M3 transcription
-handoff are still required; M4 remains closed.
+fake substitution. The project owner subsequently launched the supported app,
+completed a fresh recording, opened its transcript, and audibly played cited
+audio. That owner-observed flow removes the stale post-M3 dependency blocker;
+M4 may begin. The native Harness result remains an unresolved diagnostic caveat,
+not a reversal of accepted M3 behavior or a release-readiness claim.
