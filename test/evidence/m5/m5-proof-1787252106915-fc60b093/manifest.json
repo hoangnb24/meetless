@@ -2,7 +2,7 @@
   "schema": "MEETLESS_M5_COMPOSITION_PROOF v1",
   "status": "passed",
   "frontierId": "M5-PROOF",
-  "runId": "m5-proof-1787249791862-002f5f6c",
+  "runId": "m5-proof-1787252106915-fc60b093",
   "acceptedHost": {
     "bundleIdentifier": "com.meetless.app",
     "cdHash": "44bf59b973dfcd64f49f86af4f3bcbe996381679",
@@ -134,10 +134,11 @@
       "transcriptRangeCount": 3,
       "supported": {
         "outcome": "supported",
-        "text": "The third interval contains 880 hertz.",
+        "text": "The third interval.",
         "citationSegmentIds": [
           "segment-3a17529bbc01e9af092c607d00a46adf"
-        ]
+        ],
+        "operationalRetryCount": 0
       },
       "citationPlayback": {
         "boundedStopObserved": true,
@@ -146,13 +147,15 @@
       },
       "restart": {
         "exactInstalledHost": true,
-        "historyRestored": true
+        "historyRestored": true,
+        "workspaceAbsentAfterRestart": true
       },
       "unsupported": {
         "outcome": "insufficient_evidence",
         "text": null,
         "citationSegmentIds": [],
-        "canonicalRendered": true
+        "canonicalRendered": true,
+        "operationalRetryCount": 0
       },
       "noPaseoIdentityPersisted": true
     }
