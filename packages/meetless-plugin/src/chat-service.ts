@@ -21,6 +21,8 @@ const AgentAnswerSchema = z.discriminatedUnion("outcome", [
   }).strict(),
 ]);
 
+const CHAT_OPERATIONAL_FAILURE_MESSAGE = "Meeting chat could not complete. Retry is available.";
+
 export type AgentAnswer = z.infer<typeof AgentAnswerSchema>;
 
 export interface ChatProviderOption {
@@ -144,7 +146,7 @@ export class MeetingChatService {
         await this.store.failChatTurn(
           meetingId,
           attemptId,
-          error instanceof Error ? error.message : String(error),
+          CHAT_OPERATIONAL_FAILURE_MESSAGE,
         );
       }
     }
@@ -240,6 +242,9 @@ export class PaseoMeetingChatAgentPort implements MeetingChatAgentPort {
     this.agents.clear();
     await Promise.allSettled([...this.resources].map((resource) => resource.close()));
     this.resources.clear();
+    const workspace = this.workspace;
+    this.workspace = null;
+    if (workspace) await workspace.archive();
   }
 }
 

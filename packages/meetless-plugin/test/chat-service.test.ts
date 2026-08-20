@@ -71,6 +71,20 @@ describe("meeting chat service", () => {
     expect((await service.get("meeting-1"))?.failure).toMatchObject({ retryable: true });
   });
 
+  test("does not persist or return raw provider failure details", async () => {
+    const store = fakeStore();
+    const service = new MeetingChatService(store.port, fakeAgent(async () => {
+      throw new Error("agentId=paseo-agent-secret workspaceId=paseo-workspace-secret sessionId=paseo-session-secret");
+    }));
+    await service.ask({ meetingId: "meeting-1", question: "Question", provider: "codex", model: "gpt-5" });
+    await vi.waitFor(async () => expect((await service.get("meeting-1"))?.status).toBe("failed"));
+    expect(JSON.stringify(await service.get("meeting-1"))).not.toMatch(/paseo-agent-secret|paseo-workspace-secret|paseo-session-secret/u);
+    expect(JSON.stringify(store.thread)).not.toMatch(/paseo-agent-secret|paseo-workspace-secret|paseo-session-secret/u);
+    expect((await service.get("meeting-1"))?.failure).toEqual({
+      message: "Meeting chat could not complete. Retry is available.", retryable: true,
+    });
+  });
+
   test("initialization reconciles restart once and retry does not duplicate the user message", async () => {
     const store = fakeStore();
     store.thread = startChatQuestion(store.thread!, {
@@ -117,6 +131,10 @@ describe("Paseo execution adapter", () => {
     const executionRoot = await mkdtemp(path.join(tmpdir(), "meetless-neutral-chat-"));
     roots.push(executionRoot);
     const archive = vi.fn(async () => ({ archivedAt: new Date().toISOString() }));
+    const archiveWorkspace = vi.fn(async () => ({
+      requestId: "archive-workspace", workspaceId: "paseo-workspace-secret",
+      archivedAt: new Date().toISOString(), error: null,
+    }));
     const create = vi.fn(async () => ({
       id: "paseo-agent-secret", workspaceId: "paseo-workspace-secret", cwd: executionRoot,
       waitForFinish: async () => ({
@@ -132,7 +150,7 @@ describe("Paseo execution adapter", () => {
           models: [{ provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true }],
         }] }),
       },
-      workspaces: { open: vi.fn(async () => ({ agents: { create } })) },
+      workspaces: { open: vi.fn(async () => ({ archive: archiveWorkspace, agents: { create } })) },
     };
     const port = new PaseoMeetingChatAgentPort(paseo as never, executionRoot);
     await expect(port.listProviders()).resolves.toMatchObject([{ id: "codex", models: [{ id: "gpt-5" }] }]);
@@ -151,6 +169,9 @@ describe("Paseo execution adapter", () => {
     expect(options.config.mcpServers.meeting.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/capability\/[0-9a-f-]+$/u);
     expect(archive).toHaveBeenCalledOnce();
     await port.close();
+    expect(archiveWorkspace).toHaveBeenCalledOnce();
+    await port.close();
+    expect(archiveWorkspace).toHaveBeenCalledOnce();
   });
 });
 

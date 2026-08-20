@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { chromium } from "playwright";
 import WebSocket from "ws";
+import { createPaseoClient } from "@getpaseo/client";
 import { connectMeetlessClient } from "@meetless/client";
 import { MeetingStore } from "@meetless/meeting-store";
 import { RecordingControlResponseSchema, RecordingStatusEventSchema } from "@meetless/meeting-contracts";
@@ -411,6 +412,13 @@ async function runM5ChatJourney(input) {
       clientId: `m5-restart-proof-${Date.now()}`,
       clientType: "browser",
     });
+    const workspaceAbsentAfterRestart = await noActiveChatExecutionWorkspace(
+      `ws://${input.runtimeConfig.listen}/ws`,
+      path.join(input.runtimeConfig.paths.root, "chat-execution"),
+    );
+    if (!workspaceAbsentAfterRestart) {
+      throw new Error("M5 chat execution workspace remained active after exact-host restart");
+    }
     await waitForVisible(page.locator('[data-testid="connection-status"]'), 30_000);
     const targetRow = page.locator(`[data-testid="meeting-${M4_TARGET_MEETING_ID}"]`);
     await waitFor(() => targetRow.isVisible(), "M5 target after restart");
@@ -452,7 +460,7 @@ async function runM5ChatJourney(input) {
           markerHz: clipAnalysis.markerHz,
           markerPowerRatio: clipAnalysis.markerPowerRatio,
         },
-        restart: { exactInstalledHost: true, historyRestored },
+        restart: { exactInstalledHost: true, historyRestored, workspaceAbsentAfterRestart },
         unsupported: {
           outcome: unsupported.outcome,
           text: unsupported.text,
@@ -466,6 +474,23 @@ async function runM5ChatJourney(input) {
     if (client) await client.close().catch(() => undefined);
     if (browser) await browser.close().catch(() => undefined);
     throw error;
+  }
+}
+
+async function noActiveChatExecutionWorkspace(url, executionRoot) {
+  const client = createPaseoClient({
+    url,
+    clientId: `m5-workspace-proof-${Date.now()}`,
+    reconnect: { enabled: false },
+    connectTimeoutMs: 10_000,
+  });
+  try {
+    await client.connect();
+    const page = await client.workspaces.list({ page: { limit: 200 } });
+    return !page.entries.some((workspace) =>
+      workspace.projectRootPath === executionRoot || workspace.workspaceDirectory === executionRoot);
+  } finally {
+    await client.close().catch(() => undefined);
   }
 }
 

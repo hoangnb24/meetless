@@ -24,18 +24,31 @@ describe("Meetless chat plugin/client composition", () => {
     await readyMeeting(store);
 
     const archive = vi.fn(async () => ({ archivedAt: new Date().toISOString() }));
+    const archiveWorkspace = vi.fn(async () => ({
+      requestId: "archive-workspace", workspaceId: "paseo-workspace-secret",
+      archivedAt: new Date().toISOString(), error: null,
+    }));
+    let agentCount = 0;
     const paseo = {
       providers: { waitForReady: async () => ({ entries: [{
         provider: "codex", enabled: true, status: "ready", label: "Codex",
         models: [{ provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true }],
       }] }) },
-      workspaces: { open: async () => ({ agents: { create: async () => ({
-        waitForFinish: async () => ({
-          status: "idle", final: null, error: null,
-          lastMessage: JSON.stringify({ outcome: "insufficient_evidence", text: null, citationSegmentIds: [] }),
-        }),
-        archive,
-      }) } }) },
+      workspaces: { open: async () => ({ archive: archiveWorkspace, agents: { create: async () => {
+        agentCount += 1;
+        return {
+          waitForFinish: async () => {
+            if (agentCount === 2) {
+              throw new Error("agentId=paseo-agent-secret workspaceId=paseo-workspace-secret sessionId=paseo-session-secret");
+            }
+            return {
+              status: "idle", final: null, error: null,
+              lastMessage: JSON.stringify({ outcome: "insufficient_evidence", text: null, citationSegmentIds: [] }),
+            };
+          },
+          archive,
+        };
+      } } }) },
     };
     const handlers = new Map<string, (input: any, context: any) => unknown>();
     const cleanup = contribute({
@@ -64,10 +77,18 @@ describe("Meetless chat plugin/client composition", () => {
     await vi.waitFor(async () => expect((await client.getMeetingChat("meeting-1"))?.status).toBe("ready"));
     const restored = await client.getMeetingChat("meeting-1");
     expect(restored?.messages.at(-1)).toMatchObject({ outcome: "insufficient_evidence", text: null, citations: [] });
+    await client.askMeetingQuestion({
+      meetingId: "meeting-1", question: "Cause a provider failure", provider: "codex", model: "gpt-5",
+    });
+    await vi.waitFor(async () => expect((await client.getMeetingChat("meeting-1"))?.status).toBe("failed"));
+    const failed = await client.getMeetingChat("meeting-1");
+    expect(failed?.failure).toEqual({ message: "Meeting chat could not complete. Retry is available.", retryable: true });
+    expect(JSON.stringify(failed)).not.toMatch(/paseo-agent-secret|paseo-workspace-secret|paseo-session-secret/u);
     const persisted = await readFile(path.join(root, "meeting-store", "meetings.json"), "utf8");
-    expect(persisted).not.toMatch(/agentId|workspaceId|sessionId|timeline|paseo-agent/u);
-    expect(archive).toHaveBeenCalledOnce();
+    expect(persisted).not.toMatch(/agentId|workspaceId|sessionId|timeline|paseo-agent|paseo-workspace|paseo-session/u);
+    expect(archive).toHaveBeenCalledTimes(2);
     await cleanup();
+    expect(archiveWorkspace).toHaveBeenCalledOnce();
   });
 });
 
