@@ -38,14 +38,18 @@ describe("launcher source ordering guard", () => {
   });
 
   test("rejects Electron import ordering that can select production user-data", () => {
+    const importBeforeUserData = `await import(desktopMain);\n${interactiveElectronBootstrap.replace(
+      /\nawait import\(desktopMain\);$/u,
+      "",
+    )}`;
     expect(() =>
       assertLauncherOrdering({
         daemonLauncher:
           "await prepareRuntime(config);\nObject.assign(process.env, config.environment);\nawait import(entry);",
         desktopLauncher: 'await prepareRuntime(config);\nawait import("./readiness.js");',
-        electronBootstrap: 'await import(desktopMain);\napp.setPath("userData", userData);',
+        electronBootstrap: importBeforeUserData,
       }),
-    ).toThrow(/Electron bootstrap performs.*before isolation is fixed/);
+    ).toThrow(/complete interactive startup performs await import.*before isolation is fixed/);
   });
 
   test("rejects recording readiness import before isolated runtime preparation", () => {
@@ -67,7 +71,7 @@ describe("launcher source ordering guard", () => {
         desktopLauncher: 'await prepareRuntime(config);\nawait import("./readiness.js");',
         electronBootstrap: interactiveElectronBootstrap.replace("app.focus({ steal: true });\n", ""),
       }),
-    ).toThrow(/interactive-window activation is missing.*app\.focus.*activate and focus each BrowserWindow/s);
+    ).toThrow(/complete interactive startup is missing.*app\.focus.*activate and focus each BrowserWindow/s);
   });
 
   test("rejects activation that leaves the renderer window unfocused", () => {
@@ -78,6 +82,23 @@ describe("launcher source ordering guard", () => {
         desktopLauncher: 'await prepareRuntime(config);\nawait import("./readiness.js");',
         electronBootstrap: interactiveElectronBootstrap.replace("window.focus();\n", ""),
       }),
-    ).toThrow(/interactive-window activation is missing.*window\.focus.*activate and focus each BrowserWindow/s);
+    ).toThrow(/complete interactive startup is missing.*window\.focus.*activate and focus each BrowserWindow/s);
+  });
+
+  test("rejects importing Paseo before the interactive-window listener is registered", () => {
+    const importBeforeListener = interactiveElectronBootstrap
+      .replace(
+        'app.on("browser-window-created"',
+        'await import(desktopMain);\napp.on("browser-window-created"',
+      )
+      .replace(/\nawait import\(desktopMain\);$/u, "");
+    expect(() =>
+      assertLauncherOrdering({
+        daemonLauncher:
+          "await prepareRuntime(config);\nObject.assign(process.env, config.environment);\nawait import(entry);",
+        desktopLauncher: 'await prepareRuntime(config);\nawait import("./readiness.js");',
+        electronBootstrap: importBeforeListener,
+      }),
+    ).toThrow(/complete interactive startup performs await import.*activate and focus each BrowserWindow/s);
   });
 });

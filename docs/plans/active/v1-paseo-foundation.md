@@ -778,11 +778,14 @@ stopped, and the original production meeting state was restored byte-for-byte
   changed.
 - **Candidate:** the Meetless Electron bootstrap now activates
   `com.github.Electron` with `app.focus({ steal: true })`, then shows and focuses
-  each BrowserWindow when it is ready. The existing launcher source guard
-  mechanically requires that ordering. Positive checked-in proof and negative
-  missing-app-activation/missing-window-focus fixtures name the active-plan
-  authority and required correction. Host ownership, recording lifecycle,
-  renderer UI, native applications, signing, and permissions are unchanged.
+  each BrowserWindow when it is ready. Review correction
+  `POST-M3-LIVE-INPUT-R1` replaces two incomplete partial-order checks with one
+  complete mechanical order: isolated user-data path, listener registration,
+  ready-to-show, app activation, window show/focus, then Paseo import. Positive
+  checked-in proof and negative missing-app-activation, missing-window-focus,
+  and import-before-listener fixtures name the active-plan authority and
+  required correction. Host ownership, recording lifecycle, renderer UI,
+  native applications, signing, and permissions are unchanged.
 - **Live proof:** the repository-owned accepted chain was stopped and restarted
   through `npm run runtime:host:stop` and `npm run runtime:host`; LaunchServices
   relaunched `com.meetless.app` at the accepted path and the desktop-managed
@@ -791,7 +794,8 @@ stopped, and the original production meeting state was restored byte-for-byte
   `POST-M3 live input proof`; Tab moved focus directly to Start, mechanically
   proving it enabled. Start was not invoked, no recording was created, and the
   proof title was cleared afterward. No OS permission was altered.
-- **Validation:** launcher guard and its positive/negative tests pass 6/6;
+- **Validation:** corrected launcher guard and its positive/negative tests pass
+  7/7;
   relevant composition passes 1/1; `npm run typecheck` passes. `npm run
   test:focused` completes with 174 passing tests and the same unchanged runtime
   host direct-launch timeout (empty stderr after five seconds). `git diff

@@ -24,19 +24,16 @@ export function assertLauncherOrdering(input: {
   }
   requireOrder(
     input.electronBootstrap,
-    ['app.setPath("userData", userData)', "await import("],
-    "Electron bootstrap",
-  );
-  requireOrder(
-    input.electronBootstrap,
     [
+      'app.setPath("userData", userData)',
       'app.on("browser-window-created"',
       'window.once("ready-to-show"',
       "app.focus({ steal: true })",
       "window.show()",
       "window.focus()",
+      "await import(",
     ],
-    "Electron interactive-window activation",
+    "Electron complete interactive startup",
   );
   const forbiddenStaticImport = /^import\s+.*(?:@getpaseo|vendor\/paseo)/mu;
   for (const [label, source] of [
