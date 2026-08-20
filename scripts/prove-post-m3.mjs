@@ -361,7 +361,7 @@ async function runM5ChatJourney(input) {
   await input.page.getByTestId(`chat-model-${codex.id}-${model.id}`).click();
   await input.page.getByTestId("chat-question-input").fill("Which interval contains eight hundred eighty hertz?");
   await input.page.getByTestId("chat-ask").click();
-  const supportedThread = await waitForChatTerminal(input.client, M4_TARGET_MEETING_ID, 180_000);
+  const supportedThread = await waitForChatTerminal(input.client, M4_TARGET_MEETING_ID, 210_000);
   const supported = supportedThread.messages.at(-1);
   if (!supported || supported.role !== "assistant" || supported.outcome !== "supported") {
     throw new Error(`M5 fixture question did not return a supported answer (${JSON.stringify(supportedThread.failure)})`);
@@ -423,7 +423,7 @@ async function runM5ChatJourney(input) {
 
     await page.getByTestId("chat-question-input").fill("What insurance premium did the team approve for a Mars launch?");
     await page.getByTestId("chat-ask").click();
-    const unsupportedThread = await waitForChatTerminal(client, M4_TARGET_MEETING_ID, 180_000);
+    const unsupportedThread = await waitForChatTerminal(client, M4_TARGET_MEETING_ID, 210_000);
     const unsupported = unsupportedThread.messages.at(-1);
     if (!unsupported || unsupported.role !== "assistant" || unsupported.outcome !== "insufficient_evidence") {
       throw new Error(`M5 unsupported question did not return insufficient evidence (${JSON.stringify(unsupportedThread.failure)})`);

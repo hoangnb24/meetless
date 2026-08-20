@@ -218,7 +218,7 @@ export class PaseoMeetingChatAgentPort implements MeetingChatAgentPort {
         prompt: buildPrompt(input.messages),
       });
       this.agents.add(agent);
-      const result = await agent.waitForFinish(120_000);
+      const result = await agent.waitForFinish(180_000);
       if (result.status !== "idle" || !result.lastMessage) {
         throw new Error(result.error ?? `Meeting chat provider ended with ${result.status}`);
       }
