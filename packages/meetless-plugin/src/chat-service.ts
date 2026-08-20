@@ -469,7 +469,6 @@ const AGENT_OUTPUT_SCHEMA = {
     text: { type: ["string", "null"] },
     citationSegmentIds: {
       type: "array",
-      uniqueItems: true,
       items: { type: "string", minLength: 1 },
     },
   },
