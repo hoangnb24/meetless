@@ -13,6 +13,25 @@
     "web": {
       "bundler": "metro",
       "output": "single"
-    }
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "buildReactNativeFromSource": true
+          }
+        }
+      ],
+      "./plugins/withFmtXcode26Fix",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-asset"
+    ]
   }
 }

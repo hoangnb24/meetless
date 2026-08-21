@@ -395,3 +395,5 @@ export async function connectMeetlessClient(input: {
     throw error;
   }
 }
+
+export * from "./companion.js";

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@getpaseo/client": "0.4.0",
+    "@getpaseo/protocol": "0.4.0",
     "@meetless/meeting-contracts": "0.1.0",
     "@paseo/plugin": "0.3.0"
   }

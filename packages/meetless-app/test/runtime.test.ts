@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 import { Platform } from "react-native";
 import { resolveAppMode, resolveDaemonUrl, supportsDesktopRecording } from "../src/runtime.js";
 
@@ -33,6 +34,18 @@ describe("Meetless app runtime", () => {
       paseoDesktop: { platform: "darwin", invoke: vi.fn() },
     });
     expect(resolveAppMode()).toBe("companion");
+    expect(supportsDesktopRecording()).toBe(false);
+  });
+
+  test("the mobile companion has no recording control or recorder API path", async () => {
+    const [pairingSource, playbackSource, appConfig] = await Promise.all([
+      readFile(new URL("../src/CompanionPairing.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../src/playback.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app.json", import.meta.url), "utf8"),
+    ]);
+    const mobileSources = `${pairingSource}\n${playbackSource}`;
+    expect(mobileSources).not.toMatch(/RecordingStrip|useAudioRecorder|AudioRecorder|system.?audio/iu);
+    expect(appConfig).not.toMatch(/NSMicrophoneUsageDescription|RECORD_AUDIO/u);
   });
 
   test("uses the connected daemon query on web and environment on native", () => {

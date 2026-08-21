@@ -191,7 +191,10 @@ export function getCitationPlaybackService(): CitationPlaybackService {
 }
 
 export async function transcriptionProviderStatus(): Promise<"configured" | "missing" | "invalid"> {
-  return getTranscriptionService().providerStatus();
+  // Reading an existing host-owned transcript does not require the recording runtime.
+  // The provider is unavailable until that runtime is active, so report that state
+  // without hiding or replacing the durable transcript.
+  return transcriptionService ? transcriptionService.providerStatus() : "missing";
 }
 
 export async function grantTranscriptionConsent(): Promise<{ status: "granted"; grantedAt: string }> {

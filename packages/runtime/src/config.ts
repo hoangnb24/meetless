@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
-export const PINNED_PASEO_COMMIT = "ee3420e80d93f7f0c875fcd45e816a5a9d06188f";
+export const PINNED_PASEO_COMMIT = "c81cb84735043c281a5a2d23d456d3708ce5d94e";
 export const DEFAULT_MEETLESS_LISTEN = "127.0.0.1:6777";
 const DARWIN_UNIX_SOCKET_PATH_BYTES = 103;
 
@@ -42,14 +42,18 @@ export interface RuntimeConfig {
     bundle: string;
     identity: string;
   };
+  companion: {
+    relayEnabled: true;
+    directPasswordConfigured: boolean;
+  };
   environment: NodeJS.ProcessEnv;
 }
 
 export class IsolationViolationError extends Error {
   constructor(message: string) {
     super(
-      `${message} (authority: docs/plans/active/v1-paseo-foundation.md, decision 2026-08-16). ` +
-        "Choose an isolated Meetless runtime root and a non-6767 loopback endpoint.",
+      `${message}. Authority: docs/plans/active/v1-paseo-foundation.md, M6 foundation gate and Lead ruling. ` +
+        "Next action: keep the Meetless runtime isolated, use a non-6767 endpoint, and configure Paseo direct authentication for LAN exposure.",
     );
     this.name = "IsolationViolationError";
   }
@@ -68,6 +72,20 @@ export function resolveRuntimeConfig(input: {
   const repositoryRoot = path.resolve(input.repositoryRoot ?? REPOSITORY_ROOT);
   const root = path.resolve(input.runtimeRoot ?? path.join(repositoryRoot, ".meetless-runtime"));
   const listen = (input.listen ?? DEFAULT_MEETLESS_LISTEN).trim();
+  const listenAddress = parseMeetlessListen(listen);
+  const configuredDirectPassword = sourceEnvironment.MEETLESS_DIRECT_PASSWORD ?? sourceEnvironment.PASEO_PASSWORD;
+  const directPassword = configuredDirectPassword?.trim();
+  if (configuredDirectPassword !== undefined && !directPassword) {
+    throw new IsolationViolationError(
+      "Meetless direct password is blank. Set MEETLESS_DIRECT_PASSWORD to a non-blank daemon secret",
+    );
+  }
+  if (!listenAddress.loopback && !directPassword) {
+    throw new IsolationViolationError(
+      `Meetless LAN listener ${listen} has no direct password. ` +
+      "Set MEETLESS_DIRECT_PASSWORD before exposing the isolated daemon",
+    );
+  }
   const rendererOrigin = resolveRendererOrigin(
     input.rendererOrigin ?? sourceEnvironment.MEETLESS_RENDERER_ORIGIN ?? "http://127.0.0.1:8082",
   );
@@ -96,7 +114,7 @@ export function resolveRuntimeConfig(input: {
   };
   assertIsolated(paths, listen, userHome);
   const inheritedEnvironment = copyEnvironmentWithoutUiTestControls(
-    copyEnvironmentWithoutOpenAiSecrets(sourceEnvironment),
+    copyEnvironmentWithoutDirectPasswordSecrets(copyEnvironmentWithoutOpenAiSecrets(sourceEnvironment)),
   );
   return {
     listen,
@@ -107,13 +125,18 @@ export function resolveRuntimeConfig(input: {
       bundle: path.join(userHome, "Applications", "Meetless.app"),
       identity: path.join(userHome, "Library", "Application Support", "Meetless", "host-identity.json"),
     },
+    companion: {
+      relayEnabled: true,
+      directPasswordConfigured: Boolean(directPassword),
+    },
     environment: {
       ...inheritedEnvironment,
       PASEO_HOME: paths.paseoHome,
       PASEO_LISTEN: listen,
       PASEO_ELECTRON_USER_DATA_DIR: paths.electronUserData,
       PASEO_LOG_FILE_PATH: paths.daemonLog,
-      PASEO_RELAY_ENABLED: "false",
+      PASEO_RELAY_ENABLED: "true",
+      ...(directPassword ? { PASEO_PASSWORD: directPassword } : {}),
       PASEO_MCP_ENABLED: "false",
       PASEO_DESKTOP_MANAGED: "1",
       MEETLESS_RUNTIME_ROOT: paths.root,
@@ -151,6 +174,13 @@ export function copyEnvironmentWithoutUiTestControls(environment: NodeJS.Process
   return Object.fromEntries(Object.entries(environment).filter(([key]) => !controls.has(key)));
 }
 
+export function copyEnvironmentWithoutDirectPasswordSecrets(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(environment).filter(([key]) =>
+      key !== "MEETLESS_DIRECT_PASSWORD" && key !== "PASEO_PASSWORD"),
+  );
+}
+
 export function isOpenAiSecretEnvironmentEntry(key: string, value: string | undefined): boolean {
   const normalizedKey = key.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const openAiSecretName = normalizedKey.includes("OPENAI") &&
@@ -182,7 +212,7 @@ function resolveRendererOrigin(value: string): string {
 }
 
 export function assertIsolated(paths: RuntimePaths, listen: string, userHome = homedir()): void {
-  const parsed = parseLoopbackListen(listen);
+  const parsed = parseMeetlessListen(listen);
   if (parsed.port === 6767) {
     throw new IsolationViolationError(`Refusing production Paseo port 6767 (${listen})`);
   }
@@ -217,14 +247,24 @@ function resolveRecordingSocket(paseoHome: string): string {
   return `/private/tmp/meetless-recording-${identity}.sock`;
 }
 
-function parseLoopbackListen(listen: string): { host: string; port: number } {
-  const match = /^(127\.0\.0\.1|localhost|\[::1\]):(\d+)$/.exec(listen);
+function parseMeetlessListen(listen: string): { host: string; port: number; loopback: boolean } {
+  const match = /^(127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0):(\d+)$/.exec(listen);
   if (!match) {
     throw new IsolationViolationError(
-      `Meetless Milestone 1 requires an explicit loopback host:port, received "${listen}"`,
+      `Meetless host listener must use loopback or the password-protected 0.0.0.0 wildcard, received "${listen}"`,
     );
   }
-  return { host: match[1] ?? "", port: Number(match[2]) };
+  const host = match[1] ?? "";
+  for (const octet of host.split(".")) {
+    if (/^\d+$/u.test(octet) && Number(octet) > 255) {
+      throw new IsolationViolationError(`Meetless companion listener has an invalid IPv4 address: "${listen}"`);
+    }
+  }
+  return {
+    host,
+    port: Number(match[2]),
+    loopback: host === "127.0.0.1" || host === "localhost" || host === "[::1]",
+  };
 }
 
 function productionElectronPaths(userHome: string): string[] {
@@ -264,7 +304,7 @@ export async function prepareRuntime(config: RuntimeConfig): Promise<void> {
     daemon: {
       listen: config.listen,
       cors: { allowedOrigins: [config.rendererOrigin] },
-      relay: { enabled: false },
+      relay: { enabled: true },
       mcp: { enabled: false, injectIntoAgents: false },
       browserTools: { enabled: false },
     },

@@ -1,6 +1,7 @@
 import React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import type { MeetlessClient } from "@meetless/client";
 
 const { connectMeetlessClient, playCitationAudio } = vi.hoisted(() => ({
   connectMeetlessClient: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock("../src/recording-provider.js", () => ({
   useRecording: () => ({ enabled: false }),
 }));
 
-import { AppContent } from "../src/App.js";
+import { AppContent, loadCompanionRestoration } from "../src/App.js";
 
 describe("transcript meeting selection ordering", () => {
   let renderer: ReactTestRenderer | null = null;
@@ -47,7 +48,7 @@ describe("transcript meeting selection ordering", () => {
       close: async () => undefined,
       serverInfo: null,
     });
-    await act(async () => { renderer = create(<AppContent mode="companion" />); });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
     await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
     const surface = () => renderer!.root.findByType("MeetingListSurface");
 
@@ -92,7 +93,7 @@ describe("transcript meeting selection ordering", () => {
       close: async () => undefined,
       serverInfo: null,
     });
-    await act(async () => { renderer = create(<AppContent mode="companion" />); });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
     await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
     const surface = () => renderer!.root.findByType("MeetingListSurface");
 
@@ -175,6 +176,43 @@ describe("transcript meeting selection ordering", () => {
   }
 });
 
+describe("companion transactional restoration", () => {
+  test("returns list, selected transcript, providers, and durable chat only after the whole transaction succeeds", async () => {
+    const chat = deferred<ReturnType<typeof chatResponse>>();
+    const client = {
+      listMeetings: vi.fn(async () => [meeting("m-1")]),
+      getMeetingTranscript: vi.fn(async () => transcriptResponse("m-1", "segment-m-1", "current citation")),
+      listChatProviders: vi.fn(async () => ({
+        providers: [{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }],
+      })),
+      getMeetingChat: vi.fn(() => chat.promise),
+    } as unknown as MeetlessClient;
+    let settled = false;
+    const restoration = loadCompanionRestoration(client, "m-1").finally(() => { settled = true; });
+    await vi.waitFor(() => expect(client.getMeetingChat).toHaveBeenCalledWith("m-1"));
+    expect(settled).toBe(false);
+    chat.resolve(chatResponse());
+
+    await expect(restoration).resolves.toMatchObject({
+      meetings: [{ id: "m-1" }],
+      detail: { transcript: { meetingId: "m-1" } },
+      chatThread: { meetingId: "m-1", status: "ready" },
+      chatProvider: "codex",
+      chatModel: "gpt-5",
+    });
+  });
+
+  test("rejects the complete restoration when durable chat fails", async () => {
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getMeetingTranscript: async () => transcriptResponse("m-1", "segment-m-1", "current citation"),
+      listChatProviders: async () => ({ providers: [] }),
+      getMeetingChat: async () => { throw new Error("durable chat unavailable"); },
+    } as unknown as MeetlessClient;
+    await expect(loadCompanionRestoration(client, "m-1")).rejects.toThrow("durable chat unavailable");
+  });
+});
+
 function meeting(id: string) {
   return { id, title: id, status: "ready" as const, createdAt: "2026-08-18T10:00:00.000Z", updatedAt: "2026-08-18T10:00:00.000Z" };
 }
@@ -199,6 +237,16 @@ function citationResponse(meetingId: string, segmentId: string) {
     meetingId, recordingId: `recording-${meetingId}`, segmentId,
     startMs: 0, endMs: 1_000, text: segmentId,
     audio: { mimeType: "audio/mpeg" as const, base64: "AQID" },
+  };
+}
+
+function chatResponse() {
+  return {
+    meetingId: "m-1",
+    status: "ready" as const,
+    messages: [],
+    selection: { provider: "codex", model: "gpt-5" },
+    failure: null,
   };
 }
 

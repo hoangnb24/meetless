@@ -96,6 +96,7 @@ export interface MeetingListSurfaceProps {
   pending?: boolean;
   error?: string | null;
   connectionLabel: string;
+  hostConnectionStatus?: "online" | "connecting" | "reconnecting" | "offline" | "revalidating";
   onCreate?(title: string): Promise<void>;
   onRefresh(): Promise<void>;
   selectedMeetingId?: string | null;
@@ -117,6 +118,7 @@ export interface MeetingListSurfaceProps {
   onChatSelection?(provider: string, model: string): void;
   onAskQuestion?(question: string): Promise<void>;
   onRetryQuestion?(): Promise<void>;
+  onChangeHost?(): void | Promise<void>;
 }
 
 export function MeetingListSurface({
@@ -127,6 +129,7 @@ export function MeetingListSurface({
   pending = false,
   error = null,
   connectionLabel,
+  hostConnectionStatus = "online",
   onCreate,
   onRefresh,
   selectedMeetingId = null,
@@ -148,6 +151,7 @@ export function MeetingListSurface({
   onChatSelection,
   onAskQuestion,
   onRetryQuestion,
+  onChangeHost,
 }: MeetingListSurfaceProps) {
   const [title, setTitle] = useState("");
   const create = useCallback(async () => {
@@ -166,6 +170,7 @@ export function MeetingListSurface({
       canCreate={canCreate}
       compact={compact}
       connectionLabel={connectionLabel}
+      hostConnectionStatus={hostConnectionStatus}
       error={error}
       hostLabel={hostLabel}
       meetings={meetings}
@@ -176,6 +181,7 @@ export function MeetingListSurface({
       selectedMeetingId={selectedMeetingId}
       setTitle={setTitle}
       title={title}
+      onChangeHost={onChangeHost}
     />
   );
 
@@ -202,6 +208,10 @@ export function MeetingListSurface({
       onChatSelection={onChatSelection}
       onAskQuestion={onAskQuestion}
       onRetryQuestion={onRetryQuestion}
+      connectionLabel={connectionLabel}
+      hostConnectionStatus={hostConnectionStatus}
+      interactive={hostConnectionStatus === "online"}
+      onChangeHost={onChangeHost}
     />
   );
 
@@ -223,6 +233,7 @@ interface MeetingSidebarProps {
   canCreate: boolean;
   compact: boolean;
   connectionLabel: string;
+  hostConnectionStatus: "online" | "connecting" | "reconnecting" | "offline" | "revalidating";
   error: string | null;
   hostLabel: string;
   meetings: MeetingWire[];
@@ -233,12 +244,14 @@ interface MeetingSidebarProps {
   selectedMeetingId: string | null;
   setTitle(title: string): void;
   title: string;
+  onChangeHost?: () => void | Promise<void>;
 }
 
 function MeetingSidebar({
   canCreate,
   compact,
   connectionLabel,
+  hostConnectionStatus,
   error,
   hostLabel,
   meetings,
@@ -249,6 +262,7 @@ function MeetingSidebar({
   selectedMeetingId,
   setTitle,
   title,
+  onChangeHost,
 }: MeetingSidebarProps) {
   return (
     <View style={styles.sidebar} testID="meeting-sidebar">
@@ -263,6 +277,20 @@ function MeetingSidebar({
           <Text style={styles.subtitle}>Stored on {hostLabel}</Text>
           <Text style={styles.connection} testID="connection-status">{connectionLabel}</Text>
         </View>
+        {hostConnectionStatus !== "online" ? (
+          <View style={styles.connectionNotice} testID={`host-${hostConnectionStatus}`}>
+            <Text style={styles.connectionNoticeTitle}>
+              {hostConnectionStatus === "offline" ? "Host offline" :
+                hostConnectionStatus === "revalidating" ? "Restoring host state" :
+                  hostConnectionStatus === "reconnecting" ? "Reconnecting to host" : "Connecting to host"}
+            </Text>
+            <Text style={styles.connectionNoticeText}>
+              {hostConnectionStatus === "offline"
+                ? "Meetings remain on the host. This is not an empty meeting list."
+                : "Meetless will reload host capabilities and the selected meeting before interaction."}
+            </Text>
+          </View>
+        ) : null}
         {canCreate ? (
           <View style={styles.createColumn} testID="desktop-create-controls">
             <TextInput
@@ -286,9 +314,16 @@ function MeetingSidebar({
             </Pressable>
           </View>
         ) : (
-          <Text style={styles.readOnly} testID="companion-read-only">
-            Companion view · meetings are created on desktop
-          </Text>
+          <View style={styles.companionActions}>
+            <Text style={styles.readOnly} testID="companion-read-only">
+              Companion view · meetings are created on desktop
+            </Text>
+            {onChangeHost ? (
+              <Pressable onPress={() => void onChangeHost()} style={styles.refreshButton} testID="change-companion-host">
+                <Text style={styles.refreshText}>Change host / transport</Text>
+              </Pressable>
+            ) : null}
+          </View>
         )}
         <View style={styles.toolbar}>
           <Text style={styles.sectionTitle}>Recent</Text>
@@ -304,9 +339,13 @@ function MeetingSidebar({
         </View>
         {error ? <Text style={styles.error} testID="meeting-error">{error}</Text> : null}
         <View style={styles.list} testID="meeting-list">
-          {meetings.length === 0 ? (
+          {meetings.length === 0 && hostConnectionStatus === "online" ? (
             <View style={styles.emptyState} testID="meeting-empty">
               <Text style={styles.empty}>No meetings yet</Text>
+            </View>
+          ) : meetings.length === 0 ? (
+            <View style={styles.emptyState} testID="meeting-state-unknown">
+              <Text style={styles.empty}>Meeting list unavailable until the host reconnects</Text>
             </View>
           ) : (
             meetings.map((meeting) => {
@@ -361,6 +400,10 @@ interface MeetingDetailProps {
   onChatSelection?: (provider: string, model: string) => void;
   onAskQuestion?: (question: string) => Promise<void>;
   onRetryQuestion?: () => Promise<void>;
+  connectionLabel: string;
+  hostConnectionStatus: "online" | "connecting" | "reconnecting" | "offline" | "revalidating";
+  interactive: boolean;
+  onChangeHost?: () => void | Promise<void>;
 }
 
 function MeetingDetail({
@@ -385,6 +428,10 @@ function MeetingDetail({
   onChatSelection,
   onAskQuestion,
   onRetryQuestion,
+  connectionLabel,
+  hostConnectionStatus,
+  interactive,
+  onChangeHost,
 }: MeetingDetailProps) {
   if (!selectedMeetingId && !transcript) {
     return (
@@ -414,14 +461,27 @@ function MeetingDetail({
           <Text style={styles.detailTitle} numberOfLines={1}>{title}</Text>
           {selectedMeeting ? <Text style={styles.detailSubtitle}>{selectedMeeting.status}</Text> : null}
         </View>
+        {onChangeHost ? (
+          <Pressable onPress={() => void onChangeHost()} style={styles.refreshButton} testID="detail-change-companion-host">
+            <Text style={styles.refreshText}>Change host / transport</Text>
+          </Pressable>
+        ) : null}
       </View>
       <ScrollView style={styles.detailScroll} contentContainerStyle={styles.detailContent} testID="transcript-detail-scroll">
+        {!interactive ? (
+          <View style={styles.connectionNotice} testID={`detail-host-${hostConnectionStatus}`}>
+            <Text style={styles.connectionNoticeTitle}>
+              {hostConnectionStatus === "offline" ? "Host offline" : "Reconnecting to host"}
+            </Text>
+            <Text style={styles.connectionNoticeText}>{connectionLabel}. Interaction resumes after host state is restored.</Text>
+          </View>
+        ) : null}
         {!transcriptLoading && consentStatus !== "granted" && onGrantTranscriptionConsent ? (
           <View style={styles.disclosure} testID="transcription-disclosure">
             <Text style={styles.subtitle}>Meetless sends saved MP3 audio to OpenAI for transcription. English/Vietnamese code-switching is kept as spoken.</Text>
             <Pressable
               accessibilityRole="button"
-              disabled={pending}
+              disabled={pending || !interactive}
               onPress={() => void onGrantTranscriptionConsent()}
               style={styles.button}
               testID="transcription-consent"
@@ -432,7 +492,7 @@ function MeetingDetail({
         ) : null}
         {providerStatus ? <Text style={styles.provider} testID="transcription-provider">Provider: {providerStatus}</Text> : null}
         <TranscriptState
-          onCitation={onCitation}
+          onCitation={interactive ? onCitation : undefined}
           selectedMeeting={selectedMeeting}
           transcript={transcript}
           transcriptError={transcriptError}
@@ -442,6 +502,7 @@ function MeetingDetail({
         {transcript?.status === "ready" ? (
           <MeetingChatPanel
             error={chatError}
+            interactive={interactive}
             loading={chatLoading}
             model={chatModel}
             onAsk={onAskQuestion}
@@ -469,6 +530,7 @@ function MeetingChatPanel({
   provider,
   providers,
   thread,
+  interactive,
 }: {
   error: string | null;
   loading: boolean;
@@ -480,6 +542,7 @@ function MeetingChatPanel({
   provider: string | null;
   providers: ChatProviderWire[];
   thread: MeetingChatThreadWire | null;
+  interactive: boolean;
 }) {
   const [question, setQuestion] = useState("");
   const running = thread?.status === "running" || loading;
@@ -499,6 +562,7 @@ function MeetingChatPanel({
                     key={candidate.id}
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
+                    disabled={!interactive || !onSelection}
                     onPress={() => onSelection?.(option.id, candidate.id)}
                     style={[styles.chatModel, selected && styles.chatModelSelected]}
                     testID={`chat-model-${option.id}-${candidate.id}`}
@@ -526,6 +590,7 @@ function MeetingChatPanel({
                   <Pressable
                     key={citation.segmentId}
                     accessibilityRole="button"
+                    disabled={!interactive || !onCitation}
                     onPress={() => void onCitation?.(citation)}
                     style={styles.chatCitation}
                     testID={`chat-citation-${citation.segmentId}`}
@@ -541,7 +606,7 @@ function MeetingChatPanel({
       {thread?.failure ? (
         <View style={styles.chatFailure} testID="chat-failure">
           <Text style={styles.error}>{thread.failure.message}</Text>
-          <Pressable disabled={running || !provider || !model} onPress={() => void onRetry?.()} style={styles.refreshButton} testID="chat-retry">
+          <Pressable disabled={!interactive || running || !provider || !model || !onRetry} onPress={() => void onRetry?.()} style={styles.refreshButton} testID="chat-retry">
             <Text style={styles.refreshText}>Retry question</Text>
           </Pressable>
         </View>
@@ -551,7 +616,7 @@ function MeetingChatPanel({
       <View style={styles.chatComposer}>
         <TextInput
           accessibilityLabel="Ask this meeting"
-          editable={!running}
+          editable={interactive && !running && Boolean(onAsk)}
           onChangeText={setQuestion}
           placeholder="Ask a question about this meeting"
           placeholderTextColor="#777b82"
@@ -560,7 +625,7 @@ function MeetingChatPanel({
           value={question}
         />
         <Pressable
-          disabled={running || !question.trim() || !provider || !model || !onAsk}
+          disabled={!interactive || running || !question.trim() || !provider || !model || !onAsk}
           onPress={() => void onAsk?.(question.trim()).then(() => setQuestion(""))}
           style={styles.button}
           testID="chat-ask"
@@ -673,11 +738,15 @@ const styles = StyleSheet.create({
   title: { color: "#f4f1e8", fontSize: 22, fontWeight: "700" },
   subtitle: { color: "#a9aaad", fontSize: 14 },
   connection: { color: "#78b995", fontSize: 12, marginTop: 3 },
+  connectionNotice: { backgroundColor: "#2a241d", borderColor: "#6b5135", borderRadius: 10, borderWidth: 1, gap: 5, padding: 12 },
+  connectionNoticeTitle: { color: "#f4c58d", fontSize: 15, fontWeight: "700" },
+  connectionNoticeText: { color: "#d5c6b5", fontSize: 13, lineHeight: 18 },
   createColumn: { gap: 10, width: "100%" },
   input: { backgroundColor: "#202226", borderColor: "#3a3d43", borderRadius: 10, borderWidth: 1, color: "#f4f1e8", flex: 1, minHeight: 46, paddingHorizontal: 14 },
   button: { alignItems: "center", backgroundColor: "#e66b3d", borderRadius: 10, justifyContent: "center", minHeight: 46, paddingHorizontal: 18 },
   buttonText: { color: "#17120f", fontWeight: "700" },
   readOnly: { backgroundColor: "#1b1e22", borderColor: "#30343a", borderRadius: 10, borderWidth: 1, color: "#b8bbc0", padding: 14 },
+  companionActions: { gap: 10 },
   toolbar: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   sectionTitle: { color: "#f4f1e8", fontSize: 18, fontWeight: "600" },
   refreshButton: { borderColor: "#3a3d43", borderRadius: 8, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8 },

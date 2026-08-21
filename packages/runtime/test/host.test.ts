@@ -92,7 +92,12 @@ describe("Meetless-owned production host invariant", () => {
   test("production CLI fails closed when launched directly outside MeetlessHost", async () => {
     await expect(execFileAsync(process.execPath, [path.resolve("packages/runtime/dist/cli.js"), "desktop"], {
       cwd: process.cwd(),
-      timeout: 5_000,
+      env: {
+        ...process.env,
+        MEETLESS_RUNTIME_ROOT: `/tmp/meetless-direct-cli-test-${process.pid}`,
+        MEETLESS_LISTEN: "127.0.0.1:16777",
+      },
+      timeout: 20_000,
     })).rejects.toMatchObject({
       stderr: expect.stringMatching(/Production Meetless host attestation failed closed.*host:install/s),
     });

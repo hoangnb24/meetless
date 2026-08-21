@@ -185,14 +185,22 @@ function inspectListener(expectedListen: string, supervisorPid: number): LiveLis
     throw new Error(`Cannot safely inspect the isolated listener (lsof status ${inspected.status})`);
   }
   const listeners = parseLsofListeners(inspected.stdout);
-  const matching = listeners.filter((listener) => listener.address === expectedListen);
+  const matching = listeners.filter((listener) => listenerAddressMatchesExpected(listener.address, expectedListen));
   if (matching.length !== 1) return null;
   const listener = matching[0];
   if (!listener) return null;
   return {
     ...listener,
+    address: expectedListen,
     belongsToSupervisor: isProcessDescendant(listener.pid, supervisorPid),
   };
+}
+
+export function listenerAddressMatchesExpected(actual: string, expected: string): boolean {
+  if (actual === expected) return true;
+  const separator = expected.lastIndexOf(":");
+  if (separator < 0 || expected.slice(0, separator) !== "0.0.0.0") return false;
+  return actual === `*:${expected.slice(separator + 1)}`;
 }
 
 function parseLsofListeners(output: string): Array<{ pid: number; address: string }> {

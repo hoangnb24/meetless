@@ -92,6 +92,99 @@ describe("global recording strip", () => {
 });
 
 describe("companion meeting surface", () => {
+  test("shows host offline as unknown host state, not an empty meeting list", async () => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          canCreate={false}
+          compact
+          connectionLabel="Host offline"
+          hostConnectionStatus="offline"
+          hostLabel="paired host"
+          meetings={[]}
+          onRefresh={async () => undefined}
+        />,
+      );
+    });
+    expect(renderer!.root.findByProps({ testID: "host-offline" })).toBeTruthy();
+    expect(renderer!.root.findByProps({ testID: "meeting-state-unknown" })).toBeTruthy();
+    expect(renderer!.root.findAllByProps({ testID: "meeting-empty" })).toHaveLength(0);
+    renderer!.unmount();
+  });
+
+  test("retains the last host-owned list while reconnecting", async () => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          canCreate={false}
+          compact
+          connectionLabel="Reconnecting"
+          hostConnectionStatus="reconnecting"
+          hostLabel="paired host"
+          meetings={[meeting("m-1")]}
+          onRefresh={async () => undefined}
+        />,
+      );
+    });
+    expect(renderer!.root.findByProps({ testID: "host-reconnecting" })).toBeTruthy();
+    expect(renderer!.root.findByProps({ testID: "meeting-m-1" })).toBeTruthy();
+    expect(renderer!.root.findAllByProps({ testID: "meeting-empty" })).toHaveLength(0);
+    renderer!.unmount();
+  });
+
+  test("shows compact selected-detail reconnect state and disables every interaction until online", async () => {
+    const onChangeHost = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          canCreate={false}
+          compact
+          connectionLabel="Reconnecting to paired host…"
+          hostConnectionStatus="reconnecting"
+          hostLabel="paired host"
+          meetings={[meeting("m-1")]}
+          onRefresh={async () => undefined}
+          onChangeHost={onChangeHost}
+          onCitation={async () => undefined}
+          onChatSelection={() => undefined}
+          onAskQuestion={async () => undefined}
+          onRetryQuestion={async () => undefined}
+          selectedMeetingId="m-1"
+          transcript={transcript("ready")}
+          consentStatus="granted"
+          chatProviders={[{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }]}
+          chatProvider="codex"
+          chatModel="gpt-5"
+          chatThread={{
+            meetingId: "m-1",
+            status: "failed",
+            messages: [{
+              role: "assistant", outcome: "supported", text: "Decision",
+              citations: [{ meetingId: "m-1", segmentId: "segment-1" }],
+              createdAt: "2026-08-21T00:00:00.000Z",
+            }],
+            selection: { provider: "codex", model: "gpt-5" },
+            failure: { message: "retry later", retryable: true },
+          }}
+        />,
+      );
+    });
+
+    expect(renderer!.root.findByProps({ testID: "detail-host-reconnecting" })).toBeTruthy();
+    expect(renderer!.root.findByProps({ testID: "citation-segment-1" }).props.disabled).toBe(true);
+    expect(renderer!.root.findByProps({ testID: "chat-model-codex-gpt-5" }).props.disabled).toBe(true);
+    expect(renderer!.root.findByProps({ testID: "chat-citation-segment-1" }).props.disabled).toBe(true);
+    expect(renderer!.root.findByProps({ testID: "chat-retry" }).props.disabled).toBe(true);
+    expect(renderer!.root.findByProps({ testID: "chat-question-input" }).props.editable).toBe(false);
+    expect(renderer!.root.findByProps({ testID: "chat-ask" }).props.disabled).toBe(true);
+    await act(async () => { renderer!.root.findByProps({ testID: "detail-change-companion-host" }).props.onPress(); });
+    expect(onChangeHost).toHaveBeenCalledOnce();
+    renderer!.unmount();
+  });
+
   test("has no create controls and cannot invoke meeting creation", async () => {
     const onCreate = vi.fn(async () => undefined);
     let renderer: TestRenderer.ReactTestRenderer;

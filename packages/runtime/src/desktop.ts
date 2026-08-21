@@ -3,7 +3,7 @@ import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RuntimeConfig } from "./config.js";
-import { prepareRuntime, REPOSITORY_ROOT } from "./config.js";
+import { copyEnvironmentWithoutDirectPasswordSecrets, prepareRuntime, REPOSITORY_ROOT } from "./config.js";
 import { assertDesktopLaunchedByHost, assertSupervisorOwnedByHost } from "./host.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
 import { activateUiTestRun, removeUiTestRunState } from "./ui-test-envelope.js";
@@ -16,12 +16,19 @@ export function buildRendererUrl(config: RuntimeConfig): string {
       `Meetless renderer URL origin ${url.origin} does not match isolated allowed origin ${config.rendererOrigin}`,
     );
   }
-  url.searchParams.set("daemon", `ws://${config.listen}/ws`);
+  url.searchParams.set("daemon", localDaemonWebSocketUrl(config.listen));
   if (config.environment.MEETLESS_UI_TEST_MODE === "1" && config.environment.MEETLESS_UI_TEST_RUN_ID) {
     url.searchParams.set("uiTestRunId", config.environment.MEETLESS_UI_TEST_RUN_ID);
     url.searchParams.set("uiTestDesktopId", "com.meetless.desktop");
   }
   return url.toString();
+}
+
+export function localDaemonWebSocketUrl(listen: string): string {
+  const destination = listen.startsWith("0.0.0.0:")
+    ? `127.0.0.1:${listen.slice("0.0.0.0:".length)}`
+    : listen;
+  return `ws://${destination}/ws`;
 }
 
 export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number> {
@@ -31,8 +38,10 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
   let renderer: ChildProcess | null = null;
   let electron: ChildProcess | null = null;
   let daemonOwned = false;
+  let hostAttested = false;
   try {
     const hostIdentity = await assertDesktopLaunchedByHost(config);
+    hostAttested = true;
     const uiTest = await activateUiTestRun(config, hostIdentity);
     shutdown.signal.throwIfAborted();
     await prepareRuntime(config);
@@ -63,6 +72,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
     );
 
     const rendererUrl = buildRendererUrl(config);
+    const nonSecretChildEnvironment = copyEnvironmentWithoutDirectPasswordSecrets(config.environment);
     if (!process.env.MEETLESS_RENDERER_URL) {
       const appPort = new URL(config.rendererOrigin).port;
       renderer = spawn(
@@ -71,9 +81,9 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
         {
           cwd: path.join(REPOSITORY_ROOT, "packages", "meetless-app"),
           env: {
-            ...config.environment,
+            ...nonSecretChildEnvironment,
             CI: "1",
-            EXPO_PUBLIC_MEETLESS_DAEMON_URL: `ws://${config.listen}/ws`,
+            EXPO_PUBLIC_MEETLESS_DAEMON_URL: localDaemonWebSocketUrl(config.listen),
           },
           stdio: "inherit",
           detached: true,
@@ -88,7 +98,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
     electron = spawn(process.execPath, [electronCli, bootstrap], {
       cwd: REPOSITORY_ROOT,
       env: {
-        ...config.environment,
+        ...nonSecretChildEnvironment,
         EXPO_DEV_URL: rendererUrl,
         PASEO_TEST_APP_NAME: "Meetless",
       },
@@ -100,7 +110,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
     return result.code ?? (result.signal ? 1 : 0);
   } finally {
     shutdown.dispose();
-    await owned.shutdown({ daemonChild, daemonOwned });
+    if (hostAttested) await owned.shutdown({ daemonChild, daemonOwned });
   }
 }
 

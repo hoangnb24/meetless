@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   assertStopAuthorization,
+  listenerAddressMatchesExpected,
   type LiveProcessIdentity,
   type PidLockIdentity,
 } from "../src/lifecycle.js";
@@ -46,6 +47,12 @@ function authorize(overrides: {
 }
 
 describe("isolated daemon stop authorization", () => {
+  test("canonicalizes only lsof's wildcard display for the configured port", () => {
+    expect(listenerAddressMatchesExpected("*:6777", "0.0.0.0:6777")).toBe(true);
+    expect(listenerAddressMatchesExpected("*:6888", "0.0.0.0:6777")).toBe(false);
+    expect(listenerAddressMatchesExpected("*:6777", "127.0.0.1:6777")).toBe(false);
+  });
+
   test("accepts the exact isolated supervisor environment and owned listener tree", () => {
     expect(() => authorize()).not.toThrow();
   });
