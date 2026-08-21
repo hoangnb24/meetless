@@ -36,7 +36,7 @@ cited audio while the host daemon is reachable.
 
 ## Product Authority
 
-This plan records the product-owner decisions accepted on 2026-08-16:
+This plan records the accepted product-owner decisions:
 
 - V1 is for one person, not a shared company workspace.
 - The primary meeting source is Zoom/Google Meet.
@@ -51,6 +51,8 @@ This plan records the product-owner decisions accepted on 2026-08-16:
 - A meeting citation can seek playback to the supporting audio interval.
 - Cross-meeting Q&A and user-selected document folders are post-MVP work.
 - Mobile is for reading and question answering, not V1 system-audio recording.
+- V1 companion clients reach the desktop host through direct LAN pairing or
+  Paseo's encrypted relay.
 - Milestone 3 transcribes English, Vietnamese, and mixed English/Vietnamese
   code-switching without translation through the official OpenAI audio
   transcription endpoint using `gpt-transcribe` and the explicit language set
@@ -77,7 +79,7 @@ product implementation. Paseo is available at `../paseo` and already provides:
 - an Electron desktop wrapper;
 - a local Node.js daemon and managed desktop subprocess lifecycle;
 - WebSocket client/protocol infrastructure, reconnect behavior, host pairing,
-  and optional encrypted relay transport;
+  and encrypted relay transport;
 - coding-agent provider discovery and lifecycle for Codex, Claude, and other
   providers;
 - microphone capture, audio processing, speech-to-text provider boundaries,
@@ -182,7 +184,7 @@ Out of scope:
 - **Desktop shell:** Electron packaging, managed-daemon lifecycle, permission
   surfaces, and safe main/preload/renderer boundaries.
 - **Daemon infrastructure:** startup/config/logging, WebSocket sessions,
-  reconnect/snapshot patterns, host pairing, and optional relay transport.
+  reconnect/snapshot patterns, host pairing, and encrypted relay transport.
 - **Coding agents:** provider discovery, provider/model selection, process
   lifecycle, streaming results, and existing Codex/Claude integrations.
 - **Speech mechanics:** useful microphone/audio primitives, resampling, VAD,
@@ -1157,13 +1159,704 @@ insufficient-evidence response.
 ### Milestone 6: companion web/mobile experience
 
 - Present meeting list/detail, transcript, chat, and cited audio on web/mobile.
-- Reuse host pairing/reconnect/relay behavior as accepted by the adoption
-  decision.
+- Support direct LAN pairing and Paseo's encrypted relay with the existing
+  reconnect behavior.
 - Make daemon-offline state explicit.
 
-Acceptance boundary: a paired mobile client asks a question, receives a
-grounded answer, and plays cited audio from the desktop host; disconnecting the
-host produces the designed offline state.
+Acceptance boundary: a physical paired mobile client completes the same
+grounded question, citation, and audio-playback path through direct LAN and
+through Paseo's encrypted relay; disconnecting the host produces the designed
+offline state. For V1, that offline state means an explicit host-offline status
+and no misleading empty replacement for a previously known meeting list. It
+does not require opening or retaining meeting detail while disconnected.
+
+#### Milestone 6 foundation gate
+
+`FOUNDATION_CHECK v1 — M6` (2026-08-21, discovery):
+
+- **State owner:** the daemon-side `MeetingStore` remains the only durable
+  meeting, transcript, chat, and citation owner. Companion storage may retain
+  only Paseo host/pairing configuration and transient presentation state; it is
+  not a meeting-data replica or an offline knowledge source.
+- **Lifecycle:** companion connectivity must distinguish unpaired, connecting,
+  online, interrupted/reconnecting, and host-offline states. An offline host
+  never becomes an authoritative empty meeting list. Reconnection must
+  revalidate the selected meeting, complete transcript, durable meeting chat,
+  and citation path before new interaction.
+- **Cross-boundary invariants:** direct LAN and relay select transport outside
+  Meetless meeting policy and carry the same capability-gated plugin RPCs. The
+  relay trust anchor, E2EE handshake, and reconnect mechanics remain owned by
+  the pinned Paseo client/relay/server seams. Mobile has no recording
+  capability. A visible citation still crosses the UI boundary only as stable
+  `{ meetingId, segmentId }` and resolves audio from the connected host.
+- **Accepted invariant authority:** the project-owner directive and
+  `docs/product/overview.md` require both direct LAN and Paseo encrypted relay,
+  explicit host-offline behavior, no cloud source of truth, and no V1 mobile
+  system-audio recording. Allowed behavior is a paired companion using either
+  accepted transport and reconnecting to the same host-owned state. Forbidden
+  behavior is a loopback-only companion, unencrypted relay application data,
+  reconnect-disabled transport, offline-as-empty presentation, companion
+  meeting storage, or mobile recording. There is no accepted exception.
+- **Current evidence:** Meetless currently resolves one raw daemon URL, creates
+  a reconnect-disabled `DaemonClient`, renders connection failure through the
+  ordinary list surface, and uses a browser-only `Audio` implementation. Its
+  isolated host configuration rejects non-loopback listeners and disables
+  relay. The pinned Paseo fork contains stored direct/relay host profiles,
+  direct and E2EE relay transport construction, connection-state observation,
+  reconnect, pairing offers, and relay-side encrypted sockets.
+- **Required mechanisms:** stored pairing without meeting-data persistence; one
+  observable connection owner built on the pinned Paseo direct/E2EE relay
+  `DaemonClient`; authenticated direct LAN; relay trust anchored only by the
+  daemon public key in the Paseo offer; capability revalidation and selected
+  meeting/transcript/chat refresh after reconnect; explicit offline
+  presentation; native bounded MP3 playback; a host configuration that enables
+  the accepted transports without weakening isolated runtime ownership;
+  positive and negative transport/invariant proof; and privacy-limited
+  physical-device evidence for both paths.
+- **Dependency direction:** `companion pairing/presentation -> Meetless client
+  adapter -> pinned Paseo direct or E2EE relay transport -> daemon plugin ->
+  MeetingStore`; citation audio returns through the same selected connection.
+  Transport, Expo, WebSocket, and relay crypto types do not enter meeting
+  domain/store policy.
+- **Status:** `FOUNDATION_REQUIRED`. Independent client-lifecycle judgment
+  returned `REOPEN_REQUEST`: Meetless disables reconnect, bypasses stored
+  pairing, collapses offline into ordinary list behavior, rejects LAN binding,
+  disables relay, and has no native audio adapter. Independent relay/security
+  judgment returned `DEPENDENCY_REQUEST`: the pinned direct, E2EE relay,
+  reconnect, pairing-offer, and connection-observation seams are sufficient,
+  but Meetless has not composed them. One serial foundation/integration writer
+  owns the complete moving scope; dependent surface or proof writers do not
+  start before Lead accepts that candidate.
+
+`LEAD_RULING v1 — M6-FOUNDATION-DISCOVERY` (2026-08-21):
+
+- **Decision:** accept both dispositions, reopen the companion foundation, and
+  create one serial implementation frontier. The pinned Paseo transport
+  premise remains valid; the current raw-URL, reconnect-disabled Meetless
+  composition is rejected for M6.
+- **Security:** direct LAN must use Paseo's password-authenticated direct TCP
+  behavior. Relay must use Paseo's E2EE transport and daemon-public-key trust
+  anchor. Pairing links, direct passwords, transcript/audio payloads, and raw
+  transport logs are private and cannot enter durable evidence. V1 adds no
+  cloud meeting storage or alternate source of truth.
+- **Lifecycle:** the companion profile/session owns only pairing and connection
+  state. `MeetingStore` remains the durable product owner. Connection loss
+  cancels old in-flight work, preserves the selected meeting identity only as
+  presentation state, renders explicit offline/reconnecting state, and does not
+  convert retained or unknown host state into an empty list. Reconnect
+  revalidates capabilities and reloads the selected meeting, complete
+  transcript, and durable chat before enabling new interaction.
+- **Boundary:** `pairing/profile -> Meetless connection session -> existing
+  MeetlessClient RPC -> pinned plugin transport -> MeetingStore`. Reuse the
+  narrow pinned transport, offer, endpoint, and connection-state seams; do not
+  import Paseo coding-domain replicas or map meetings to Paseo host/session
+  records. Native audio is a presentation adapter for the existing validated,
+  bounded citation payload.
+- **Predicted change:** connection method, interruption, and mobile playback
+  can change independently of meeting/chat policy. Keep this boundary only
+  while at least direct and relay transports or web and native audio runtimes
+  remain supported; remove it if one permanent runtime makes the port isolate
+  no real variation.
+- **Automated acceptance:** positive and negative proof covers direct auth,
+  relay offer/E2EE construction and invalid trust data, stored pairing without
+  meeting data, reconnect/offline transitions, lost-RPC non-replay, capability
+  revalidation, selected-detail refresh, offline-not-empty rendering, no mobile
+  recording controls, and bounded web/native citation playback. The real
+  composition must exercise both transports before physical acceptance.
+- **Physical acceptance:** on one physical mobile device, use the same
+  authoritative fixture and supported question through authenticated LAN and
+  then a fresh Paseo relay offer. For each path: list/open the meeting, render
+  the complete transcript and restored chat, ask, validate the citation, and
+  audibly play its bounded interval. Disconnect the host and observe offline;
+  restart and observe reconnect. Publish only redacted device/build/transport,
+  stable IDs/range, state transitions, and boolean human-heard playback facts.
+- **Plan changed:** yes. M6 implementation is serialized behind this foundation
+  and M6 remains open until the physical acceptance boundary passes.
+
+`PLAN_RECONCILIATION v1 — M6-FOUNDATION-REOPEN` (2026-08-21):
+
+- **Accepted since last reconciliation:** M5 durable chat, integrated grounded
+  question/citation/audio behavior, and its accepted privacy/cleanup
+  corrections remain dependencies and need no duplicate M6 implementation.
+- **Code-changed assumptions:** the existing raw daemon URL and companion
+  polling were M1/M4 scaffolding, not the accepted Paseo pairing/reconnect
+  composition assumed by the old M6 outline. Loopback-only host configuration,
+  disabled relay, and browser-only audio also invalidate direct physical
+  acceptance.
+- **Absorbed or obsolete work:** a UI-only offline banner, raw-URL LAN launch,
+  polling-based reconnect, and separate later native-audio patch are removed as
+  invalid frontiers. They are one lifecycle-sensitive vertical foundation.
+- **Dependency changes:** first accept one integrated pairing/connection/native
+  audio candidate; then run adversarial review and correction if needed; then
+  run automated direct/relay composition; then request only the physical mobile
+  actions that cannot be automated.
+- **Foundation changes:** M6 moves from discovery to
+  `FOUNDATION_REQUIRED`. The pinned Paseo transport remains stable; the
+  Meetless adapter/composition is the missing foundation.
+- **Parallel frontier:** none. Pairing, host exposure/authentication, reconnect,
+  offline presentation, selected-state refresh, and native citation playback
+  share lifecycle and acceptance contracts and have one writer.
+- **Next frontier:** `M6-FOUNDATION-INTEGRATION`, deterministic workspace
+  snapshot, followed by one `DEEP` exploratory lifecycle/security review of the
+  frozen candidate.
+- **Plan updated:** yes.
+
+`LEAD_RULING v1 — M6-DEEP-REVIEW-R1` (2026-08-21):
+
+- **Reviewed candidate:** digest
+  `04b9acff4fe44031f4921826d21881ec2cf99d3941775b3d6f9b007157245eb1`,
+  base `8aca992df1cf90f0acd6f7a5c8cee5059c50f891`, 25 reviewed files,
+  with pinned Paseo commit
+  `ee3420e80d93f7f0c875fcd45e816a5a9d06188f`. The reviewer reproduced
+  the digest before and after review.
+- **Verdict:** reject the candidate for acceptance and require one bounded
+  correction batch. Freeze and accept all nine exploratory findings:
+  `M6-R1-P1-AUTH-001`, `M6-R1-P1-ENDPOINT-001`,
+  `M6-R1-P1-ENV-001`, `M6-R1-P1-LIFECYCLE-001`,
+  `M6-R1-P1-LIFECYCLE-002`, `M6-R1-P1-UI-001`,
+  `M6-R1-P1-PAIRING-001`, `M6-R1-P2-AUDIO-001`, and
+  `M6-R1-P2-PROOF-001`.
+- **Security ruling:** trim and reject blank direct passwords, enforce the
+  accepted loopback/private-LAN endpoint policy in the companion adapter, and
+  keep both direct-password keys out of renderer and Electron environments.
+  Daemon authentication gets a daemon-only secret environment. Direct
+  passwords in ordinary pairing-profile storage remain a documented authority
+  uncertainty; secure-storage policy is not invented in this correction.
+- **Lifecycle ruling:** one session epoch or abortable equivalent must guard
+  rehydration and every UI RPC commit. Capability, meeting list, selected
+  transcript, and durable selected-meeting chat restoration form one
+  revalidation transaction. Failure cannot publish `online`; it must retry or
+  close the connection so a new lifecycle event can recover.
+- **Surface and pairing ruling:** compact selected detail must show explicit
+  offline/reconnecting state and disable all detail/chat/citation controls
+  until revalidation completes. A visible change-host/transport action replaces
+  only the stored connection profile so one installed client can prove both
+  required transports and repair bad pairing data.
+- **Cleanup and proof ruling:** native clip/player cleanup must cover file,
+  player, play, cancel, timeout, and failure paths. Composition sessions close
+  in `finally`; child processes must terminate, escalate when needed, and have
+  termination asserted.
+- **Preserved evidence:** focused review tests passed 52 tests in 7 files; the
+  direct and local E2EE relay composition test passed; relay trust stayed
+  public-key anchored with no plaintext fallback; pairing storage rejected
+  meeting data; mobile recording and microphone permission remained absent;
+  offline list state stayed distinct from an empty list; four no-emit package
+  type checks passed. These strengths do not waive the accepted defects.
+- **Evidence limit:** review used loopback and a local Wrangler relay. It did
+  not prove a physical device, private LAN, hosted relay, native launch, or
+  human-heard audio. M6 remains open.
+
+`DURABLE_HANDOFF v1 — M6-CORRECTION-R1` (2026-08-21):
+
+- **Current state:** `CORRECTION_REQUIRED`. The M6 foundation contract and
+  pinned Paseo premise remain accepted. Candidate digest `04b9acff...` is the
+  correction base, not an accepted release boundary.
+- **Frozen work:** correct only the nine accepted finding IDs above and their
+  direct regressions. Preserve host-only meeting/chat truth, strict relay E2EE,
+  direct authentication, no mobile recording, existing M1-M5 behavior, and the
+  owner's dirty authority edits. Do not add cloud storage, QR scope, secure
+  storage policy, cross-meeting behavior, or unrelated dependency cleanup.
+- **Ownership:** reuse the foundation writer as the only product-code and proof
+  writer for one correction batch. The DEEP reviewer remains independent and
+  owns a later `FAST` `CLOSEOUT` against the frozen findings and correction
+  delta. Lead owns this plan and final technical acceptance.
+- **Required writer proof:** targeted positive and negative tests for every
+  finding; direct and local E2EE relay composition; focused tests, typecheck,
+  isolation validation, app build, candidate snapshot, and diff check. Report
+  dependency/build side effects without broad remediation.
+- **Next frontier:** `M6-CORRECTION-R1`, then one close-out review. Only after
+  automated acceptance can Lead request the physical-device LAN, hosted Paseo
+  relay, host-disconnect/reconnect, and human-heard cited-audio actions.
+- **Completion guard:** do not mark M6 complete before the physical acceptance
+  boundary recorded above passes through the real application composition.
+
+`LEAD_RULING v1 — M6-REVIEW-CLOSEOUT-R1` (2026-08-21):
+
+- **Reviewed candidate:** digest
+  `6ae4985ecc3724959ae5c7bb429811bc96bb5407e46ef3ffedb060f1cbab4a1a`,
+  correction base `04b9acff...`, repository base `8aca992...`, and the
+  unchanged pinned Paseo commit. The reviewer reproduced the digest before and
+  after close-out and inspected all 14 correction-delta files.
+- **Verdict:** accept the `REOPEN_REQUEST`. Close
+  `M6-R1-P1-AUTH-001`, `M6-R1-P1-ENV-001`,
+  `M6-R1-P1-LIFECYCLE-001`, `M6-R1-P1-LIFECYCLE-002`,
+  `M6-R1-P1-UI-001`, `M6-R1-P1-PAIRING-001`,
+  `M6-R1-P2-AUDIO-001`, and `M6-R1-P2-PROOF-001`.
+  Keep only `M6-R1-P1-ENDPOINT-001` open.
+- **Open evidence:** direct profile validation converts IPv4 octets with
+  `Number` before it proves that every source octet is non-empty decimal text.
+  It accepts `10.0.0.:6777` and `10..0.1:6777`, which can normalize to a
+  different host.
+- **Evidence limit:** close-out remains automated loopback/local-relay proof.
+  It does not satisfy the physical-device acceptance boundary. M6 remains
+  open.
+
+`CONVERGENCE_RECONCILIATION v1 — M6-ENDPOINT-R2` (2026-08-21):
+
+- **Finding family:** this is the second correction for the direct-endpoint
+  validation family. The failure is a bounded lexical-validation omission,
+  not a failed transport, lifecycle, or source-of-truth premise.
+- **Binding correction:** before numeric conversion, require exactly four
+  non-empty decimal IPv4 octets. Preserve the accepted loopback/private-IPv4
+  policy and current port validation. Reject both reproduced malformed forms
+  and equivalent empty-octet input.
+- **Frozen closures:** the eight closed finding IDs above cannot be reopened or
+  changed by the writer. Their code changes remain in the candidate.
+- **Ownership and scope:** the original M6 writer owns one narrow delta in
+  `packages/meetless-client/src/companion.ts` and its direct companion tests.
+  No other product writer runs. Docs and vendor remain excluded.
+- **Required proof:** negative tests for `10.0.0.:6777` and
+  `10..0.1:6777`, positive loopback/private-LAN checks, focused companion
+  tests, client typecheck, candidate snapshot stability, and diff check.
+- **Review:** reuse the same independent reviewer for one `FAST` `CLOSEOUT`
+  restricted to `M6-R1-P1-ENDPOINT-001`, the new delta, and direct
+  regressions.
+- **Next frontier:** `M6-ENDPOINT-CORRECTION-R2`. Automated foundation
+  acceptance and physical acceptance remain pending.
+
+`LEAD_RULING v1 — M6-REVIEW-CLOSEOUT-R2` (2026-08-21):
+
+- **Reviewed candidate:** digest
+  `faed235bcf1e4560a8f9b5a25cf118bfd7f944c2119f300d6903fbe705c30a82`,
+  candidate base `6ae4985e...`, repository base `8aca992...`, and the
+  unchanged pinned Paseo commit. The reviewer reproduced the digest and
+  inspected both correction files.
+- **Verdict:** close `M6-R1-P1-ENDPOINT-001`. Source IPv4 text now requires
+  exactly four non-empty decimal octets before numeric conversion. Nine
+  forbidden boundary inputs were rejected, six allowed loopback/private-LAN
+  inputs were accepted, stored-profile revalidation passed, 26 companion tests
+  passed, client no-emit typecheck passed, and no direct regression was found.
+- **Automated disposition:** accept `faed235b...` as the M6 automated
+  foundation candidate. All nine frozen DEEP-review findings are closed. The
+  writer's broader evidence also passed focused tests, direct/local-E2EE relay
+  composition, full typecheck, isolation validation, Expo web build, native
+  Swift boundary build, and the full test rerun. One unchanged readiness timing
+  test failed once and passed alone and in the full rerun.
+- **Acceptance limit:** automated proof used loopback and a local Wrangler
+  relay. It does not prove a physical private-LAN device, hosted Paseo relay,
+  real native launch, host disconnect/reconnect presentation, or human-heard
+  cited audio. This ruling does not complete M6.
+
+`PLAN_RECONCILIATION v1 — M6-AUTOMATED-ACCEPTANCE` (2026-08-21):
+
+- **Status:** `PHYSICAL_ACCEPTANCE_REQUIRED`. No implementation or review
+  frontier remains open. The M6 foundation contract, correction batch, and
+  close-out are accepted at candidate `faed235b...`.
+- **Physical sequence:** prepare one authoritative meeting fixture and build
+  the real companion app; pair one physical mobile device through authenticated
+  private LAN; prove list, detail, complete transcript, restored scoped chat,
+  grounded answer, stable citation, and bounded cited-audio playback; disconnect
+  and restart the host to prove offline and reconnect; then replace only the
+  pairing profile with a fresh hosted Paseo encrypted-relay offer and repeat the
+  same meeting-scoped path.
+- **Evidence policy:** retain only redacted device/build/transport facts,
+  stable meeting/segment IDs and cited range, connection-state transitions,
+  validation results, and boolean human-heard playback. Do not retain direct
+  passwords, pairing links, relay secrets, transcript text, answer text, or
+  audio payloads.
+- **Residual risks:** direct passwords remain in ordinary AsyncStorage because
+  secure-storage authority is unresolved; physical platform behavior and
+  hosted relay availability are unproven; the Xcode 26 `fmt` workaround is
+  temporary; dependency audit findings remain outside this M6 correction.
+- **Completion guard:** M6 stays open until both physical transport paths and
+  the designed host-offline state pass through the real application
+  composition.
+
+`PHYSICAL_PREFLIGHT v1 — M6-IOS-AUTH-HOST` (2026-08-21):
+
+- **Device proof:** physical iPhone 15 Pro Max “The Mrb”, iOS 18.7.2, was
+  paired over a wired connection, booted, trusted, and in Developer Mode. The
+  signed Release candidate built from `faed235b...` with zero Xcode warnings,
+  installed on the device, and launched by bundle identifier. No simulator was
+  substituted.
+- **Host proof:** a temporary non-published direct password and wildcard LAN
+  listener produced a real signed host daemon with `authRequired: true`; the
+  hosted Paseo relay control connected. The password was not printed or
+  retained in evidence.
+- **Failure:** the host-internal readiness `DaemonClient` connected without the
+  configured password and was repeatedly rejected. The desktop renderer uses
+  the raw `connectMeetlessClient` path, which also has no authenticated local
+  credential seam. The real host composition could not reach stable readiness
+  for physical pairing and shut down.
+- **Cleanup:** the temporary launch environment password was removed. The
+  installed signed desktop host was restored to its previous loopback
+  configuration. No acceptance interaction, transcript, question, citation,
+  or audio observation was claimed.
+
+`LEAD_RULING v1 — M6-PHYSICAL-PREFLIGHT-REOPEN` (2026-08-21):
+
+- **Verdict:** reopen the M6 host-authentication foundation. Automated
+  candidate `faed235b...` remains useful evidence for the companion, relay,
+  lifecycle, surface, and audio adapters, but it is not an acceptable real-host
+  composition while authenticated LAN prevents host-owned local clients from
+  starting.
+- **Premise invalidated:** one password-authenticated wildcard listener cannot
+  be introduced only at runtime configuration. Host-internal readiness and the
+  desktop UI also cross that authenticated server boundary. Passing no
+  credential fails; passing the direct pairing password into renderer or
+  Electron environments would reopen the accepted secret-isolation defect.
+- **Required design boundary:** preserve an authenticated private-LAN edge and
+  a working local host/readiness/desktop path without exposing the direct
+  pairing password to renderer content, Electron environment, logs, URLs, or
+  durable evidence. Preserve the pinned Paseo relay E2EE path and host-only
+  meeting state. Do not bypass authentication for remote clients or weaken the
+  accepted endpoint policy.
+- **Status:** `FOUNDATION_REOPENED`. Obtain independent lifecycle/composition
+  and security-boundary judgments before selecting a correction. No physical
+  acceptance action resumes until the signed host remains ready under LAN
+  authentication and both local and companion paths are proven.
+- **Next frontier:** `M6-HOST-AUTH-DISCOVERY`; then one serial correction,
+  adversarial review, real-host preflight, and the unchanged physical-device
+  acceptance sequence.
+
+`LEAD_RULING v1 — M6-HOST-AUTH-DISCOVERY` (2026-08-21):
+
+- **Dispositions:** accept both independent `DEPENDENCY_REQUEST` results. The
+  lifecycle review found four local/proof crossings and proposed a host-owned
+  authenticated local port. The security review proved that pinned Paseo has
+  one listener, no loopback exception, and no safe existing general desktop
+  broker; it proposed peer-address-scoped loopback authorization.
+- **Binding boundary:** update the pinned Paseo server so a direct WebSocket
+  upgrade from the actual TCP socket loopback peer can omit the bearer. Keep
+  Paseo password validation unchanged for every non-loopback direct peer. Use
+  only the normalized socket peer address; `Origin`, `Host`, forwarded headers,
+  requested URL, renderer claims, and client identity cannot grant local
+  authorization.
+- **Why this boundary:** Meetless already trusts the local OS user when the
+  daemon is loopback-only. The rule preserves that trust while adding remote
+  LAN authentication. A local proxy would grant the same local trust but add a
+  second listener, forwarding protocol, process lifecycle, and failure mode.
+  Two daemons risk duplicate plugin/store ownership. Renderer password
+  delivery, origin-only auth, and new general capability tokens are rejected.
+- **Local clients:** signed-host readiness, desktop UI, and existing proof
+  clients continue through the same typed Paseo/plugin RPC path without the
+  direct pairing password. The companion remains separate: private-LAN direct
+  sends the password; hosted relay uses daemon-key-trusted E2EE. No meeting
+  state or transport policy moves into the renderer.
+- **Dependency change:** this requires a new reproducible Paseo submodule
+  commit and parent gitlink update. The old pin `ee3420e...` remains the change
+  base, not the accepted post-correction pin. Do not leave an uncommitted or
+  dirty submodule as candidate evidence and do not push the dependency commit.
+- **Security invariants:** test IPv4 loopback, IPv6 loopback, and IPv4-mapped
+  loopback; reject private-LAN no-password and wrong-password clients; reject
+  public/non-loopback peers; prove foreign-origin and no-origin remote requests
+  do not gain local authority; preserve password success, relay E2EE, and
+  daemon-key trust. Keep password bytes out of renderer/Electron environment,
+  URL, argv, logs, and evidence.
+- **Lifecycle proof:** authenticated wildcard signed host must reach stable
+  recording/plugin readiness; desktop list/detail/chat/citation paths remain
+  available; stop/restart stays owner-safe; companion reconnect revalidates and
+  does not replay lost RPCs. Existing M1-M5 proof clients must remain valid.
+- **Known limits:** peer loopback authorization trusts local same-user
+  processes, not code-signing identity. Direct `ws://` password transport does
+  not protect the password from a LAN observer; M6 authority requires direct
+  LAN plus separately encrypted relay but does not authorize a new TLS/VPN
+  requirement. Report this residual risk. Direct profile secure storage remains
+  unresolved authority.
+- **Status:** `FOUNDATION_CORRECTION_REQUIRED`. One serial writer owns the
+  Paseo auth seam, direct tests, parent pin, and Meetless signed-host regression
+  proof. Physical acceptance remains paused.
+
+`DURABLE_HANDOFF v1 — M6-HOST-AUTH-CORRECTION` (2026-08-21):
+
+- **Correction base:** Meetless candidate `faed235b...`; Paseo commit
+  `ee3420e...`; physical Release install/launch passed, but authenticated signed
+  host readiness failed as recorded above.
+- **Writable owner:** one writer owns `vendor/paseo/packages/server/**`, the
+  Paseo submodule commit, parent gitlink, and direct Meetless runtime/proof tests
+  needed to disprove the failure. Docs remain Lead-owned. Companion, store,
+  meeting policy, and unrelated dependencies are frozen unless a direct compile
+  correction is required.
+- **Required candidate:** clean committed Paseo submodule identity, deterministic
+  parent snapshot, focused server auth/WebSocket tests, Meetless readiness and
+  isolation tests, direct/local-relay composition, full typecheck and focused
+  suite, signed wildcard-host preflight with password required remotely and
+  stable local readiness, diff check, and explicit evidence limits.
+- **Review:** one `DEEP` exploratory review of the new dependency/auth boundary,
+  followed by correction and `FAST` close-out if findings are accepted.
+- **Completion guard:** do not resume owner interaction on the physical iPhone
+  until Lead accepts the new host-auth candidate and real signed-host preflight.
+
+`LEAD_RULING v1 — M6-HOST-AUTH-REVIEW-R1` (2026-08-21):
+
+- **Reviewed candidate:** parent digest `31f0a90e...`, repository base
+  `8aca992...`, Paseo base `ee3420e...`, and clean local Paseo candidate
+  `c81cb847...`. The fresh DEEP reviewer accounted for all 32 parent-manifest
+  files and all three Paseo commit files.
+- **Verdict:** reject the candidate for acceptance and freeze all three review
+  findings: `M6-HOST-AUTH-REVIEW-R1-PRIVATE-BIND-001`,
+  `M6-HOST-AUTH-REVIEW-R1-PREFLIGHT-CLEANUP-002`, and
+  `M6-HOST-AUTH-REVIEW-R1-SUBMODULE-REPRO-003`.
+- **Private-bind ruling:** M6 host configuration supports loopback or the
+  password-protected wildcard IPv4 listener for LAN. Reject an exact private
+  IPv4 host bind because a local connection to that address has a non-loopback
+  socket peer and cannot use the passwordless local authorization rule. The
+  companion still pairs to the machine's private LAN address. Do not add a
+  renderer credential path or broaden loopback authorization.
+- **Cleanup ruling:** host-auth preflight cannot suppress stop or launch
+  environment cleanup failures. Aggregate cleanup errors, verify no owned host
+  process, listener, socket, or temporary password remains, and emit `passed`
+  only after those checks succeed. Forced stop/unset failures must fail the
+  proof.
+- **Reproducibility ruling:** do not push the Paseo commit. Add a bounded,
+  content-addressed git bundle in the parent repository containing the exact
+  `c81cb847...` object and a mechanical fresh-checkout/fetch/checkout check.
+  The candidate snapshot must bind the bundle and expected Paseo commit. A clean
+  local submodule alone is not portable proof.
+- **Preserved strengths:** direct auth uses the actual socket peer; Origin,
+  Host, forwarding headers, URL, and client identity grant no authority;
+  loopback/mapped/wrong/correct/private/public/malformed/absent peer cases were
+  checked; relay attachment stays separate; local direct and E2EE composition,
+  secret stripping, lifecycle, ownership, companion, and M1-M5 focused
+  regressions passed.
+- **Evidence limit:** no physical device, hosted relay, signed native launch,
+  full build, or live state-changing preflight was run by the reviewer. M6
+  remains open.
+
+`DURABLE_HANDOFF v1 — M6-HOST-AUTH-CORRECTION-R1` (2026-08-21):
+
+- **Correction base:** parent `31f0a90e...`, Paseo `c81cb847...`. Correct only
+  the three frozen finding IDs and direct regressions. Preserve the accepted
+  peer-address auth rule and all prior M6 closures.
+- **Ownership:** reuse the host-auth writer as the only writer. Writable scope
+  is host-listen policy/tests, fail-closed preflight/tests, bounded Paseo bundle
+  and reproduction tooling, candidate snapshot binding, and direct compile
+  corrections. Docs and unrelated product code are frozen.
+- **Required proof:** exact private-bind rejection plus loopback/wildcard
+  positives; forced stop and launch-environment cleanup failures; clean-state
+  verification before pass; fresh temporary checkout reproducing the exact
+  Paseo commit only from parent contents; focused auth/runtime tests; signed
+  wildcard preflight; composition; typecheck; focused/full suites; stable
+  snapshot; clean submodule; diff check; safe final restoration.
+- **Close-out:** reuse reviewer `4eed00a1...` for one `FAST` `CLOSEOUT` against
+  the frozen findings, correction delta, and direct regressions.
+- **Status:** `CORRECTION_REQUIRED`. Physical-device acceptance remains
+  paused.
+
+`LEAD_RULING v1 — M6-HOST-AUTH-REVIEW-CLOSEOUT-R1` (2026-08-21):
+
+- **Reviewed candidate:** parent digest `24db5abf...`, base `31f0a90e...`,
+  Paseo commit `c81cb847...`, and content-addressed bundle
+  `0cd59fbf...` at 78,982,401 bytes. Candidate and submodule identities stayed
+  stable and the Paseo worktree was clean.
+- **Verdict:** close `M6-HOST-AUTH-REVIEW-R1-PRIVATE-BIND-001`,
+  `M6-HOST-AUTH-REVIEW-R1-PREFLIGHT-CLEANUP-002`, and
+  `M6-HOST-AUTH-REVIEW-R1-SUBMODULE-REPRO-003`. Accept `24db5abf...` as the
+  automated M6 host-auth candidate.
+- **Accepted behavior:** host listen policy now supports loopback or
+  password-protected `0.0.0.0`; exact private/public binds fail. Cleanup
+  aggregates all failures and proves no process, listener, socket, temporary
+  root, or launch password before pass. Parent contents reproduce the exact
+  unpushed Paseo commit through a verified bundle.
+- **Validation:** reviewer reruns passed 33 cleanup/runtime tests, 18 Paseo auth
+  tests, four composition tests, 58 isolation tests, 297 focused tests, bundle
+  fresh checkout/verify, syntax checks, and diff checks. Writer evidence also
+  passed the full 353 tests, typecheck, app build, signed wildcard host
+  preflight, and safe final restoration.
+- **Residual cost and risk:** the portable bundle adds about 75.3 MiB; direct
+  LAN remains unencrypted `ws://`; loopback authorization trusts local
+  processes rather than signed identity; direct-password secure storage remains
+  unresolved. These do not satisfy or waive physical acceptance.
+
+`PLAN_RECONCILIATION v1 — M6-PHYSICAL-RESUME` (2026-08-21):
+
+- **Status:** `PHYSICAL_ACCEPTANCE_REQUIRED`. No implementation or review
+  frontier remains open. The real signed wildcard host is now an accepted
+  preflight boundary.
+- **Next sequence:** rebuild/install the current Release app on the trusted
+  physical iPhone; pair through authenticated private LAN; prove the complete
+  meeting/chat/question/citation/audio path and offline/reconnect; replace the
+  profile with a fresh hosted E2EE relay offer; repeat the same path; record
+  only the approved redacted evidence.
+- **Completion guard:** M6 remains open until every physical observation above
+  is complete.
+
+`PHYSICAL_ACCEPTANCE_PROGRESS v1 — M6-DIRECT-LAN` (2026-08-21):
+
+- **Observed on the physical iPhone:** authenticated Direct LAN pairing
+  succeeded, the meeting list rendered, and one meeting-scoped question
+  returned a normal response. The answer displayed `Play citation`, but tapping
+  it produced no audible audio.
+- **Bounded diagnosis:** the native playback adapter created and started an
+  Expo player without first configuring the iOS audio session. This leaves the
+  app on the ambient session, which is muted by iPhone Silent Mode. The accepted
+  correction configures foreground playback in Silent Mode while explicitly
+  disabling recording and background recording; it does not redesign audio.
+- **Correction proof:** the focused playback suite passed 8 tests, the app
+  type-check passed, and the corrected Release app built with zero warnings or
+  errors, installed on the paired physical iPhone, and launched.
+- **Observed correction result:** on that corrected physical Release app,
+  tapping `Play citation` produced audible audio and playback stopped by
+  itself. The physical Direct LAN cited-audio boundary is passed.
+- **Evidence limit:** this observation does not prove host offline/reconnect or
+  Paseo encrypted-relay behavior. Those remain unobserved.
+- **Observed offline result:** after the owned host stopped, the physical iPhone
+  showed `Host offline` and retained the known meeting list instead of an empty
+  state. However, the previously open selected detail was no longer visible,
+  and offline list items did not open. The explicit-offline and
+  offline-not-empty requirements passed; selected-detail retention did not
+  match the accepted lifecycle contract and is not passed.
+- **Reconnect state:** the same signed host was restored with the same Direct
+  LAN authority. The physical iPhone then displayed
+  `Connected · host state restored`; the same meeting detail opened; and the
+  previous question and answer remained present. The Direct LAN reconnect and
+  durable meeting-chat restoration boundary is passed.
+- **Remaining offline limitation:** the selected detail itself was not retained
+  while offline. That part remains failed even though reconnect restored the
+  selected meeting and durable chat.
+- **Transport limit:** no Direct LAN observation proves Paseo encrypted-relay
+  behavior. Relay physical acceptance remains pending.
+- **Observed encrypted-relay result:** on the physical iPhone, the Paseo relay
+  pairing link connected successfully, cited-audio playback worked, and a new
+  meeting-chat question returned a working response. These observations do not
+  by themselves prove any relay surface or citation-validation detail that the
+  owner did not report.
+- **Observed relay restoration result:** the owner then observed the meeting
+  list, reopened the same meeting, saw its complete ready transcript, and saw
+  both the earlier Direct LAN chat and the new relay chat. The physical
+  encrypted-relay gate is passed and will not be repeated for the offline
+  correction.
+- **M6 status:** `PHYSICAL_ACCEPTANCE_REQUIRED`. The accepted offline lifecycle
+  contract still fails selected-detail retention. M6 is not complete.
+
+`FOUNDATION_CHECK v1 — M6-OFFLINE-DETAIL` (2026-08-21):
+
+- **State owner:** `AppContent` owns transient selected-meeting identity;
+  `MeetingStore` remains the only durable meeting/chat owner.
+- **Lifecycle:** connection loss must retain the selected identity and render
+  the existing compact detail with explicit offline state and disabled actions.
+- **Invariants:** the correction adds no offline RPC, companion meeting cache,
+  transport behavior, relay change, or mobile recording capability.
+- **Dependency direction:** companion connection state updates app presentation
+  state, which selects the existing meeting surface.
+- **Status:** `STABLE`. The observed defect is one bounded lifecycle correction
+  followed by focused review and a physical offline/reconnect rerun. Completed
+  Direct LAN, cited-audio, reconnect, and encrypted-relay proof stays closed.
+
+`M6-OFFLINE-DETAIL-CORRECTION v1` (2026-08-21):
+
+- **Accepted finding:** `M6-PHYSICAL-OFFLINE-DETAIL-001`. Compact Back remained
+  active during interruption and could clear the app-owned selected meeting.
+  The earlier surface-only test held a fixed selected ID and did not exercise
+  the app callback that cleared it.
+- **Candidate:** digest
+  `7311bcad8b35b924869521cfabd7e290ac99dfc31c00f5277c722dd1b39aeeb9`,
+  correction base `db48566aad88b0ca47f249fda48ce4aa1dffe55ad247977820aa0a7e6c255478`.
+  The candidate disables compact Back while interaction is unavailable and
+  adds an app-composition regression across reconnecting, offline,
+  revalidating, and online states.
+- **Writer proof:** 52 focused app/surface tests passed; app and surface package
+  typechecks passed; the candidate digest was stable; diff check passed.
+- **Review:** `FAST` `CLOSEOUT` is pending against only the accepted finding,
+  four-file correction delta, and direct regressions. No physical acceptance
+  claim is made before review and the real-iPhone offline/reconnect rerun.
+
+`LEAD_RULING v1 — M6-OFFLINE-DETAIL-CLOSEOUT` (2026-08-21):
+
+- **Decision:** `REVISE_PLAN`. Accept the review's `CLOSEOUT_FINDINGS`; keep
+  `M6-PHYSICAL-OFFLINE-DETAIL-001` open.
+- **Reason:** the physical observation did not include a Back action. On the
+  correction base, the new lifecycle test already retains selected detail
+  through reconnecting/offline and restores it after revalidation. The
+  candidate first fails only because Back is not disabled. It therefore closes
+  a separate interaction path but does not reproduce or explain the observed
+  spontaneous detail loss.
+- **Candidate disposition:** digest `7311bcad...` is not accepted as the cause
+  correction. Its focused tests and no-regression evidence remain useful, but
+  they do not satisfy physical acceptance.
+- **Next frontier:** one controlled physical diagnostic records the iPhone app
+  process identity before and after host loss while the owner makes no UI
+  action. A process/remount change and an in-process state clear require
+  different corrections. No product code changes before that distinction.
+
+`CONVERGENCE_RECONCILIATION v1 — M6-OFFLINE-DETAIL` (2026-08-21):
+
+- **Finding family:** `M6-PHYSICAL-OFFLINE-DETAIL-001`; one correction and one
+  close-out are frozen at base `db48566a...` and candidate `7311bcad...`.
+- **Failed premise:** an available offline Back control caused the reported
+  detail loss. The owner reported no Back action, and the base already retains
+  detail under the mocked status sequence.
+- **Decision:** continue bounded cause investigation. Do not redesign audio,
+  transport, relay, meeting persistence, or navigation. Do not repeat completed
+  relay proof.
+- **Discriminator:** monitor the real Release app process across a controlled
+  host disconnect with the same detail open and no owner interaction. Correct
+  only the observed remount/lifecycle mechanism, then run one focused review
+  and physical offline/reconnect rerun.
+
+`M6-OFFLINE-DETAIL-CONTROLLED-RERUN v1` (2026-08-21):
+
+- **Physical setup:** the owner opened the same meeting detail on the physical
+  iPhone and made no screen interaction. Meetless app PID `22146` was recorded
+  before host loss.
+- **Observed result:** after the owned host stopped and port `6777` had no
+  listener, the same meeting detail remained visible with `Host offline`. The
+  iPhone app retained PID `22146`; no native app restart occurred.
+- **Reconciliation:** the earlier list observation is not reproducible as an
+  untouched host-loss transition and is superseded for acceptance by this
+  controlled no-touch observation. It remains recorded as an ambiguous prior
+  observation, not reinterpreted as a pass.
+- **Rejected candidate:** `7311bcad...` is not causal proof and its four-file
+  speculative Back-control delta was removed. The deterministic workspace
+  returned exactly to `db48566a...`. App/surface tests passed 51 tests, both
+  package typechecks passed, and diff check passed after removal.
+- **Restoration:** the same signed host was restored; its owned process and
+  wildcard listener on port `6777` are live. Direct LAN reconnect had already
+  been physically observed with `Connected · host state restored`, reopened
+  detail, and durable prior chat.
+
+`OWNER_AUTHORITY v1 — M6-OFFLINE-SCOPE` (2026-08-21):
+
+- **Required:** show explicit host-offline state and do not replace known
+  meetings with a misleading empty state.
+- **Not required:** opening, accessing, or retaining meeting detail while the
+  host is disconnected.
+- **Reconciliation:** this ruling supersedes prior M6 plan language that made
+  selected-detail retention an offline acceptance gate. It closes
+  `M6-PHYSICAL-OFFLINE-DETAIL-001` by authority, not by accepting candidate
+  `7311bcad...`. That rejected speculative delta remains removed.
+
+`LEAD_ACCEPTANCE v1 — M6` (2026-08-21):
+
+- **Decision:** complete Milestone 6 on deterministic candidate
+  `db48566aad88b0ca47f249fda48ce4aa1dffe55ad247977820aa0a7e6c255478`
+  with Paseo dependency commit
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`.
+- **Direct LAN physical evidence:** the reviewed Release app paired on the real
+  iPhone, rendered meetings, answered a meeting-scoped question, displayed a
+  citation control, audibly played its bounded cited interval, and stopped
+  playback by itself.
+- **Reconnect physical evidence:** after controlled host loss and restoration,
+  the app displayed `Connected · host state restored`, reopened the same
+  meeting, and retained the previous durable question and answer.
+- **Encrypted-relay physical evidence:** a fresh Paseo offer connected; the
+  meeting list appeared; the same meeting reopened with complete ready
+  transcript; earlier Direct LAN chat and new relay chat remained; a new
+  meeting question returned a working response; and cited audio played.
+- **Offline physical evidence:** with no host process or port `6777` listener,
+  the app displayed `Host offline` and retained the known meeting list rather
+  than a false empty state. A later controlled no-touch run also retained the
+  same app PID and showed `Host offline`; offline detail retention is not an
+  acceptance requirement.
+- **Automated and build evidence:** the reviewed foundation passed the full 353
+  tests, 297 focused tests, 58 isolation tests, four composition tests,
+  typecheck, app build, signed wildcard-host preflight, and portable Paseo
+  bundle verification. The bounded native-audio correction passed eight
+  focused tests and a zero-warning physical Release build/install. After
+  removing the rejected offline-detail delta, 51 app/surface tests, both package
+  typechecks, stable candidate snapshot, and diff check passed.
+- **Evidence limits and residual risks:** proof covers one physical iPhone and
+  the accepted host, not a broader mobile matrix. Direct LAN uses authenticated
+  `ws://` and is not encrypted against a LAN observer. The portable Paseo bundle
+  adds about 75.3 MiB; loopback authorization trusts local processes; direct
+  password secure-storage policy, CI enforcement, and branch protection remain
+  unresolved. These are reported limits, not hidden M6 completion claims.
+- **Final cleanup:** the temporary wildcard host was stopped, both temporary
+  launch password keys were removed, and the signed host was reinstalled with
+  `127.0.0.1:6777`. No host process or port `6777` listener remained; the Paseo
+  submodule stayed clean; candidate digest remained `db48566a...`; and final
+  diff check passed.
+- **Status:** `COMPLETE`. Milestone 7 release readiness remains open.
 
 ### Milestone 7: V1 acceptance and release readiness
 
@@ -1245,7 +1938,7 @@ Recovery rules:
   dependency without promoting it to release-readiness evidence.
 - [x] Complete Milestone 4: meeting sidebar and transcript reader.
 - [x] Complete Milestone 5: chat with one meeting.
-- [ ] Complete Milestone 6: companion web/mobile experience.
+- [x] Complete Milestone 6: companion web/mobile experience.
 - [ ] Complete Milestone 7: V1 acceptance and release readiness.
 - [ ] Post-MVP: complete cross-meeting Q&A and document folders.
 
@@ -1345,6 +2038,8 @@ Recovery rules:
 - 2026-08-21: Cross-meeting Q&A and document-folder indexing are removed from
   V1 and deferred to post-MVP. Companion clients become M6 and V1 acceptance
   and release readiness become M7.
+- 2026-08-21: V1 companion access supports both direct LAN pairing and Paseo's
+  encrypted relay. M6 must prove the companion path through both transports.
 
 Open decisions before affected implementation:
 
@@ -1352,8 +2047,6 @@ Open decisions before affected implementation:
 - Minimum release-quality threshold and remediation for the static-like
   distortion observed on both intelligible M2 production source clips. This is
   an M7 release decision; M2 makes no normal-quality claim.
-- Whether remote companion access uses direct LAN pairing only or also Paseo's
-  encrypted relay in V1.
 
 Open post-MVP decisions:
 

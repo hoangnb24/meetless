@@ -16,9 +16,15 @@ record a Zoom/Meet call
 ```
 
 Desktop owns recording and local processing. Web and mobile are companion
-clients while the desktop daemon is reachable. They browse meetings, read
-transcripts, ask questions, and play cited audio; they do not record system audio
-in V1.
+clients while the desktop daemon is reachable through direct LAN pairing or
+Paseo's encrypted relay. They browse meetings, read transcripts, ask questions,
+and play cited audio; they do not record system audio in V1.
+
+When the desktop host is offline, companions show an explicit host-offline
+state and do not replace a previously known meeting list with a misleading
+empty state. V1 does not require opening or retaining meeting detail while the
+host is disconnected, and the companion does not become an offline source of
+meeting truth.
 
 Meetless owns meetings, recordings, transcript segments, durable meeting chat
 threads, and citations. Paseo coding projects, workspaces, agents, timelines,
