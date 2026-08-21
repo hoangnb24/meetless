@@ -22,11 +22,11 @@ authority. Model-written timestamps are display text, not citation identity.
 Automatic summaries, decision extraction, action-item extraction, and artifact
 accept/dismiss workflows are deferred from this V1 sequence.
 
-V1 later expands retrieval across selected meetings and explicitly allowlisted
-document folders. Meeting citations resolve to transcript segments and audio
-ranges. Document citations resolve to indexed chunks and source locations. A
-deleted or no-longer-allowlisted document must disappear from future retrieval.
+Cross-meeting retrieval and explicitly allowlisted document folders are
+post-MVP work. That later work will add bounded meeting/document search and
+fetch tools, document citations, and source-location navigation. A deleted or
+no-longer-allowlisted document must disappear from future retrieval.
 
-Agents receive bounded meeting/document search and fetch tools. The sidebar and
-chat surfaces may reuse Paseo layout and UI primitives, but meetings and durable
-meeting chat threads are not mapped to Paseo workspace or agent records.
+The sidebar and chat surfaces may reuse Paseo layout and UI primitives, but
+meetings and durable meeting chat threads are not mapped to Paseo workspace or
+agent records.

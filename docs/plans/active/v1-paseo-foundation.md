@@ -26,7 +26,6 @@ Record Zoom/Meet on desktop
   -> transcribe into timestamped segments
   -> select a meeting and read its complete transcript
   -> chat with that meeting through an existing coding agent such as Codex
-  -> ask questions over meetings and selected document folders
   -> cite every grounded answer
   -> click a meeting citation to play the supporting audio interval
 ```
@@ -48,9 +47,9 @@ This plan records the product-owner decisions accepted on 2026-08-16:
   recording.
 - Existing Paseo coding-agent providers, including Codex, answer questions in a
   chat scoped to the open meeting.
-- Answers grounded in meetings or documents include resolvable citations.
+- Answers grounded in the open meeting include resolvable citations.
 - A meeting citation can seek playback to the supporting audio interval.
-- User-selected document folders are additional local knowledge sources.
+- Cross-meeting Q&A and user-selected document folders are post-MVP work.
 - Mobile is for reading and question answering, not V1 system-audio recording.
 - Milestone 3 transcribes English, Vietnamese, and mixed English/Vietnamese
   code-switching without translation through the official OpenAI audio
@@ -127,20 +126,12 @@ Relevant upstream authority to inspect before changing copied or shared areas:
 10. **Play evidence.** Clicking a citation opens the meeting player and seeks to
    a small interval around the cited segment.
 
-### P1: personal knowledge across sources and devices
+### P1: companion devices
 
-1. **Search meetings.** The user can ask across all or selected meetings with a
-   time filter and receive citations to each supporting meeting segment.
-2. **Add document folders.** The user can allowlist local folders. The daemon
-   indexes supported files and updates or removes indexed content when source
-   files change or disappear.
-3. **Ask across meetings and documents.** Retrieval can combine transcript
-   segments and document chunks. Meeting citations open audio; document
-   citations identify and open the source file and location when available.
-4. **Use companion clients.** Web/mobile clients can list meetings, read
+1. **Use companion clients.** Web/mobile clients can list meetings, read
    transcripts, ask grounded questions, and stream cited audio
    through the connected daemon.
-5. **Explain host availability.** When the personal daemon is offline, companion
+2. **Explain host availability.** When the personal daemon is offline, companion
    clients show that local knowledge is unavailable instead of displaying a
    misleading empty state.
 
@@ -153,16 +144,15 @@ In scope:
 - A desktop recording path for Zoom/Meet microphone plus system audio.
 - Platform-specific capture adapters behind one recording contract.
 - Recoverable chunk recording and post-stop MP3 finalization.
-- Meeting, recording, transcript, durable meeting-chat, knowledge-source, and
-  citation models with explicit lifecycle states.
+- Meeting, recording, transcript, durable meeting-chat, and citation models
+  with explicit lifecycle states.
 - Automatic transcription after recording.
 - Existing Paseo coding-agent provider discovery and agent execution.
 - Meeting-specific tools that give agents bounded retrieval rather than placing
   the entire knowledge base into one prompt.
 - Meeting sidebar/detail navigation, complete transcript reading,
   single-meeting chat, and citation playback.
-- Multi-meeting/document retrieval and web/mobile companion access after the P0
-  loop is proven.
+- Web/mobile companion access after the P0 loop is proven.
 
 Out of scope:
 
@@ -177,6 +167,7 @@ Out of scope:
 - Offline mobile replicas of the full personal knowledge base.
 - Automatic meeting summaries, decision extraction, action-item extraction, and
   proposed/accepted/dismissed artifact workflows.
+- Cross-meeting Q&A and document-folder indexing.
 - Making every desktop operating system pass the first recording checkpoint at
   once; platform rollout order requires an explicit decision after the capture
   spike.
@@ -208,11 +199,6 @@ Meeting
   -> TranscriptSegment[]
   -> MeetingChatThread[]
   -> Citation[]
-
-KnowledgeSource
-  -> MeetingTranscript | DocumentFolder
-  -> indexed chunks
-  -> retrieval results with stable source locations
 ```
 
 Minimum lifecycle model:
@@ -246,7 +232,6 @@ Expected independent changes and their boundaries:
 | System capture differs across macOS, Windows, Linux, and browser | `RecordingSource` adapter | Each supported adapter produces the same recoverable recording contract | Meetless permanently supports one capture runtime |
 | Local and remote transcription may change independently | `TranscriptionProvider` | One audio fixture yields ordered, timed segments through each supported provider | Only one implementation remains and the port isolates no policy |
 | Coding-agent providers vary while meeting chat stays stable | Existing agent provider infrastructure plus a Meetless chat adapter | Codex and a deterministic fake answer from the same bounded meeting context | Meeting chat stops using coding agents |
-| Meeting/document retrieval backends may evolve | `KnowledgeIndex` | Indexed fixtures return stable source IDs and locations | Retrieval stays a trivial in-memory lookup |
 
 ### Coding-agent integration
 
@@ -255,10 +240,7 @@ user starts an agent run for a question scoped to the open meeting. Meetless
 supplies explicit tools such as:
 
 ```text
-search_meetings(query, meeting_ids?, time_range?)
 get_transcript_segments(segment_ids)
-search_documents(query, source_ids?)
-get_document_chunks(chunk_ids)
 ```
 
 The application resolves citations from returned stable IDs. A model-generated
@@ -445,8 +427,8 @@ frontier):
   authoritative `failed`, not `idle`. This host frontier does not alter or
   delete daemon state. Lead must disposition the failed record through the
   accepted recording lifecycle before the owner-facing capture attempt.
-- **Milestone 8 deferral:** Developer ID signing, hardened runtime, notarization,
-  production packaging, clean-install attribution, and distribution remain M8
+- **Milestone 7 deferral:** Developer ID signing, hardened runtime, notarization,
+  production packaging, clean-install attribution, and distribution remain M7
   gates. They are not added to this bounded local M2 host.
 
 `LIVE_PARTIAL_RECOVERY_HANDOFF v1` (2026-08-18):
@@ -598,7 +580,7 @@ frontier):
   M2 boundary of distinguishable speakers plus playable durable recording; the
   boundary did not specify clean/studio-quality audio, so Lead does not add
   that criterion retroactively. The distortion is nevertheless a real
-  release-quality risk: its cause and remediation must be decided before M8
+  release-quality risk: its cause and remediation must be decided before M7
   release acceptance, and this evidence must not be presented as normal audio
   quality.
 
@@ -634,7 +616,7 @@ same committed chunks and never records the meeting again.
 Milestone 2 host proof may use an explicitly resolved and attested local
 `ffmpeg` with MP3 support. Bundling its dynamic libraries, license notices,
 signing, hardened-runtime configuration, notarization, and clean-install
-permission attribution remain Milestone 8 distribution gates; they do not
+permission attribution remain Milestone 7 distribution gates; they do not
 weaken Milestone 2's source build, executable hash, real-host permission, or
 both-side call evidence.
 
@@ -725,8 +707,8 @@ stopped, and the original production meeting state was restored byte-for-byte
   and permission attribution across replacement/update, packaging/notarization,
   long-recording transcription coverage, physical-device/LAN-or-relay companion
   proof, and single-window/visual-quality acceptance remain open. Audio,
-  signing, packaging, and permission persistence are M8 gates; companion
-  connectivity is M7/M8 work. Single-window behavior and visual quality need
+  signing, packaging, and permission persistence are M7 gates; companion
+  connectivity is M6/M7 work. Single-window behavior and visual quality need
   explicit acceptance authority before implementation rather than being
   inferred from M1's functional create/list proof.
 - **Next dependency order:** reconcile and close the zero-chunk recording
@@ -1172,19 +1154,7 @@ insufficient-evidence response.
   transcription, human-heard speaker output, CI or branch enforcement, or
   release readiness.
 
-### Milestone 6: cross-meeting Q&A and document folders
-
-- Implement meeting and document indexing behind `KnowledgeIndex`.
-- Watch only explicitly allowlisted folders; reindex changes and remove deleted
-  sources.
-- Expose bounded search/get tools to coding agents.
-- Render meeting and document citations with source-specific navigation.
-
-Acceptance boundary: one question combines a meeting segment and a document
-chunk, both citations resolve, and deleting the document removes it from future
-retrieval.
-
-### Milestone 7: companion web/mobile experience
+### Milestone 6: companion web/mobile experience
 
 - Present meeting list/detail, transcript, chat, and cited audio on web/mobile.
 - Reuse host pairing/reconnect/relay behavior as accepted by the adoption
@@ -1195,13 +1165,24 @@ Acceptance boundary: a paired mobile client asks a question, receives a
 grounded answer, and plays cited audio from the desktop host; disconnecting the
 host produces the designed offline state.
 
-### Milestone 8: V1 acceptance and release readiness
+### Milestone 7: V1 acceptance and release readiness
 
 - Exercise the complete P0 path on the accepted desktop platform matrix.
 - Exercise web/mobile companion behavior on real supported targets.
-- Verify storage recovery, provider failure, index deletion, and citation
-  integrity.
+- Verify storage recovery, provider failure, and citation integrity.
 - Record remaining platform and model-quality limitations.
+
+### Post-MVP: cross-meeting Q&A and document folders
+
+- Implement meeting and document indexing behind `KnowledgeIndex`.
+- Watch only explicitly allowlisted folders; reindex changes and remove deleted
+  sources.
+- Expose bounded search/get tools to coding agents.
+- Render meeting and document citations with source-specific navigation.
+
+Acceptance boundary: one question combines a meeting segment and a document
+chunk, both citations resolve, and deleting the document removes it from future
+retrieval.
 
 ## Risks And Recovery
 
@@ -1219,10 +1200,11 @@ host produces the designed offline state.
 - **MP3 finalization can fail after a successful meeting.** Preserve source
   chunks and expose retry; delete chunks only after the finalized file is
   readable and durably recorded in meeting state.
-- **Coding agents can hallucinate citations.** Accept only known segment/chunk
-  IDs and resolve display locations in application code.
-- **Broad agent filesystem access can exceed user intent.** Retrieval tools and
-  document indexing are constrained to explicitly selected meetings/folders;
+- **Coding agents can hallucinate citations.** Accept only known segment IDs in
+  V1 and known chunk IDs in post-MVP document retrieval. Resolve display
+  locations in application code.
+- **Post-MVP broad filesystem access can exceed user intent.** Retrieval tools
+  and document indexing are constrained to explicitly selected meetings/folders;
   document contents are read-only.
 - **Companion clients depend on the host.** Make host-offline behavior explicit;
   do not introduce cloud sync silently to hide the limitation.
@@ -1263,9 +1245,9 @@ Recovery rules:
   dependency without promoting it to release-readiness evidence.
 - [x] Complete Milestone 4: meeting sidebar and transcript reader.
 - [x] Complete Milestone 5: chat with one meeting.
-- [ ] Complete Milestone 6: cross-meeting Q&A and document folders.
-- [ ] Complete Milestone 7: companion web/mobile experience.
-- [ ] Complete Milestone 8: V1 acceptance and release readiness.
+- [ ] Complete Milestone 6: companion web/mobile experience.
+- [ ] Complete Milestone 7: V1 acceptance and release readiness.
+- [ ] Post-MVP: complete cross-meeting Q&A and document folders.
 
 ## Decisions
 
@@ -1323,7 +1305,7 @@ Recovery rules:
   `~/Applications/Meetless.app` bundle (`com.meetless.app`) launched through
   LaunchServices. It exclusively owns the desktop runtime ancestry used for TCC
   attribution; Paseo.app has no permission or responsible-application role.
-  Full release signing, hardening, notarization, and packaging remain M8 work.
+  Full release signing, hardening, notarization, and packaging remain M7 work.
 - 2026-08-17: An MP3 is published only through an atomic no-replace operation
   after readable staging and durable publish intent. Source chunks may be
   cleaned only after the exact output is readable and the `saved` transition is
@@ -1355,20 +1337,27 @@ Recovery rules:
   transcript reader; M5 adds provider-selectable chat scoped to the open
   meeting. Automatic derived artifacts and their accept/dismiss lifecycle are
   deferred. Cross-meeting/document retrieval, companion clients, and release
-  readiness move to M6, M7, and M8 respectively.
+  readiness were moved after M5. The 2026-08-21 decision below supersedes that
+  sequence.
 - 2026-08-20: Meeting chat history is durable per meeting. Leaving the meeting
   or restarting the app must not discard its messages; reopening the meeting
   restores the thread for continuation.
+- 2026-08-21: Cross-meeting Q&A and document-folder indexing are removed from
+  V1 and deferred to post-MVP. Companion clients become M6 and V1 acceptance
+  and release readiness become M7.
 
 Open decisions before affected implementation:
 
 - Exact macOS hardware/version release matrix beyond the first proven host.
 - Minimum release-quality threshold and remediation for the static-like
   distortion observed on both intelligible M2 production source clips. This is
-  an M8 release decision; M2 makes no normal-quality claim.
-- Supported document formats and exact source-location behavior for each.
+  an M7 release decision; M2 makes no normal-quality claim.
 - Whether remote companion access uses direct LAN pairing only or also Paseo's
   encrypted relay in V1.
+
+Open post-MVP decisions:
+
+- Supported document formats and exact source-location behavior for each.
 
 ## Validation
 
@@ -1376,7 +1365,7 @@ Open decisions before affected implementation:
   and agreement between product authority, scope, progress, and decisions.
 - **Focused policy proof:** unit tests for meeting lifecycle transitions,
   collision-safe filenames, meeting-chat scoping and persistence, citation
-  resolution, and allowlisted document paths.
+  resolution, and companion access boundaries.
 - **Adapter proof:** controlled fixtures for recording, MP3 finalization,
   transcription timing, retrieval updates, provider failure, and reconnect.
 - 2026-08-19: M3 implementation and non-secret validation completed in commits
@@ -1481,7 +1470,7 @@ production Google Meet run captured separately audible system and microphone
 phrases, published a readable collision-safe MP3, durably recorded saved state
 before raw cleanup, and shut down the Meetless-owned runtime cleanly. Both
 source-separated listening clips were intelligible but distorted/static-like;
-that quality limitation is explicit evidence and remains an M8 release risk,
+that quality limitation is explicit evidence and remains an M7 release risk,
 not a clean-audio claim.
 
 Milestone 3 is complete against its documented bounded acceptance boundary.

@@ -12,7 +12,6 @@ record a Zoom/Meet call
   -> transcribe into timed segments
   -> select a meeting and read its complete transcript
   -> chat with that meeting through an existing coding agent
-  -> ask cited questions over meetings and selected document folders
   -> play the audio interval behind a meeting citation
 ```
 
@@ -22,12 +21,12 @@ transcripts, ask questions, and play cited audio; they do not record system audi
 in V1.
 
 Meetless owns meetings, recordings, transcript segments, durable meeting chat
-threads, citations, and knowledge sources. Paseo coding projects, workspaces,
-agents, timelines, and terminals are infrastructure or integration concerns,
-never
+threads, and citations. Paseo coding projects, workspaces, agents, timelines,
+and terminals are infrastructure or integration concerns, never
 substitutes for those meeting-domain records. An agent answers questions about
 a meeting; a meeting is not an agent or coding workspace.
 
 V1 excludes team workspaces, cloud source-of-truth storage, calendar ingestion,
 call-joining bots, task-system synchronization, speaker diarization as a release
-gate, and mobile system-audio recording.
+gate, mobile system-audio recording, cross-meeting Q&A, and document-folder
+indexing. Cross-meeting Q&A and document folders are post-MVP work.
