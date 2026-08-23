@@ -1,0 +1,190 @@
+{
+  "schema": "MEETLESS_M1_EVIDENCE v1",
+  "status": "passed",
+  "runId": "20260823T171318516Z-bc358715",
+  "preEvidenceSourceDigest": "f28741d4b1bc57dd7be68d25ab73163f5809b7ca79e8b26cc1e3055b76651477",
+  "startedAt": "2026-08-23T17:13:18.516Z",
+  "endedAt": "2026-08-23T17:17:25.409Z",
+  "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987",
+  "endpoint": "127.0.0.1:6777",
+  "rendererOrigin": "http://127.0.0.1:52925",
+  "surfaces": {
+    "electron": {
+      "identity": "Meetless Electron desktop",
+      "title": "Meetless",
+      "mode": "desktop",
+      "trustedDesktopBridge": true,
+      "recordSetupVisible": true,
+      "createEnabled": false,
+      "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987",
+      "viewport": null
+    },
+    "web": {
+      "identity": "Meetless Expo web companion",
+      "title": "Meetless",
+      "mode": "companion",
+      "attemptedUrlMode": "desktop",
+      "trustedDesktopBridge": false,
+      "createEnabled": false,
+      "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      }
+    },
+    "tablet": {
+      "identity": "Meetless Expo web tablet layout",
+      "mode": "companion",
+      "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987",
+      "viewport": {
+        "width": 834,
+        "height": 1112
+      }
+    },
+    "phone": {
+      "identity": "Meetless Expo web phone layout",
+      "mode": "companion",
+      "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      }
+    },
+    "desktopLayout": {
+      "identity": "Meetless Expo web desktop layout",
+      "mode": "companion",
+      "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      }
+    },
+    "ios": {
+      "identity": "Meetless Expo iOS companion",
+      "bundleId": "com.meetless.app",
+      "deviceName": "Meetless Proof 20260823T171318516Z-bc358715",
+      "deviceUdid": "0FF1129E-78D0-4D03-8E93-EB6061D830D7",
+      "deviceType": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+      "mode": "companion",
+      "createEnabled": false,
+      "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987"
+    }
+  },
+  "production": {
+    "before": {
+      "files": [
+        {
+          "path": "/Users/tubakhuym/.paseo/paseo.pid",
+          "absent": true
+        },
+        {
+          "path": "/Users/tubakhuym/.paseo/server-id",
+          "sha256": "fcaa56cf7bdd348d2402a2683b8f7f5c23f74287fcfd665777685aadf7feae65",
+          "size": 17,
+          "mtimeMs": 1785506030597.0764
+        },
+        {
+          "path": "/Users/tubakhuym/.paseo/config.json",
+          "sha256": "f41e1c91fccb171816c690199ff36cad55265ae265bc0cbf27c6594655203914",
+          "size": 5087,
+          "mtimeMs": 1787494378064.7957
+        }
+      ],
+      "listener": "",
+      "processIdentity": ""
+    },
+    "after": {
+      "files": [
+        {
+          "path": "/Users/tubakhuym/.paseo/paseo.pid",
+          "absent": true
+        },
+        {
+          "path": "/Users/tubakhuym/.paseo/server-id",
+          "sha256": "fcaa56cf7bdd348d2402a2683b8f7f5c23f74287fcfd665777685aadf7feae65",
+          "size": 17,
+          "mtimeMs": 1785506030597.0764
+        },
+        {
+          "path": "/Users/tubakhuym/.paseo/config.json",
+          "sha256": "f41e1c91fccb171816c690199ff36cad55265ae265bc0cbf27c6594655203914",
+          "size": 5087,
+          "mtimeMs": 1787494378064.7957
+        }
+      ],
+      "listener": "",
+      "processIdentity": ""
+    }
+  },
+  "cleanup": {
+    "authorizedIsolatedStopChecked": true,
+    "browserClientsClosed": true,
+    "ownedProcessGroupsGone": true,
+    "isolatedListenersGone": true,
+    "runtimeRootAbsent": false,
+    "runtimeRootRestored": true,
+    "disposableSimulatorAbsent": true,
+    "simulatorTerminateChecked": true,
+    "simulatorUninstallChecked": true,
+    "simulatorShutdownChecked": true,
+    "simulatorDeleteChecked": true,
+    "productionPreserved": true
+  },
+  "files": [
+    {
+      "name": "electron.png",
+      "kind": "screenshot",
+      "sha256": "cdcb5905a01d220ebe9a4e05dd1b4cc7018f8eae153bf13bc82d045df05283cd",
+      "size": 31528
+    },
+    {
+      "name": "host-stop.log",
+      "kind": "log",
+      "sha256": "bd203e786f686fd65171bb2d8606e364a155751132666dacbdd60f0f76377d1a",
+      "size": 32
+    },
+    {
+      "name": "ios-ocr.log",
+      "kind": "log",
+      "sha256": "1bd24ad18a014d6fd686c7346fe516164109bd8be146ebfb51a45ac83c429869",
+      "size": 204
+    },
+    {
+      "name": "ios-surface.log",
+      "kind": "log",
+      "sha256": "dd24962dcedc289e7f58825a8a1484912998afb8e750df44be3d1aacca43cc04",
+      "size": 242
+    },
+    {
+      "name": "ios.png",
+      "kind": "screenshot",
+      "sha256": "c8848799177826b194f5f6697339480a5d4d078d2cec7695b5f58ec6792487c1",
+      "size": 138514
+    },
+    {
+      "name": "result.json",
+      "kind": "result",
+      "sha256": "9cec49eefc11f91aa872c7e60c2cb501e001c1d24a03a0046d1bdc12ff647f86",
+      "size": 4126
+    },
+    {
+      "name": "web-desktop.png",
+      "kind": "screenshot",
+      "sha256": "a62fb191c0896ce3586d1b7d5531b371dd1a6859a27b8ec09e6d4c7db0787d81",
+      "size": 34525
+    },
+    {
+      "name": "web-phone.png",
+      "kind": "screenshot",
+      "sha256": "f720bcecd37e89cc6240fb15cd22e09e53728dcc882aab1a9ad54ce028df2559",
+      "size": 21049
+    },
+    {
+      "name": "web-tablet.png",
+      "kind": "screenshot",
+      "sha256": "494e52aba855f7e2d70b09a1a04a456c75a4f5bb8e6a483f03b0a95d763ff59c",
+      "size": 33053
+    }
+  ]
+}

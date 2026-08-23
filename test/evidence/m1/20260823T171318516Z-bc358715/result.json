@@ -1,0 +1,137 @@
+{
+  "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987",
+  "endpoint": "127.0.0.1:6777",
+  "rendererOrigin": "http://127.0.0.1:52925",
+  "surfaces": {
+    "electron": {
+      "identity": "Meetless Electron desktop",
+      "title": "Meetless",
+      "mode": "desktop",
+      "trustedDesktopBridge": true,
+      "recordSetupVisible": true,
+      "createEnabled": false,
+      "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987",
+      "viewport": null
+    },
+    "web": {
+      "identity": "Meetless Expo web companion",
+      "title": "Meetless",
+      "mode": "companion",
+      "attemptedUrlMode": "desktop",
+      "trustedDesktopBridge": false,
+      "createEnabled": false,
+      "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      }
+    },
+    "tablet": {
+      "identity": "Meetless Expo web tablet layout",
+      "mode": "companion",
+      "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987",
+      "viewport": {
+        "width": 834,
+        "height": 1112
+      }
+    },
+    "phone": {
+      "identity": "Meetless Expo web phone layout",
+      "mode": "companion",
+      "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      }
+    },
+    "desktopLayout": {
+      "identity": "Meetless Expo web desktop layout",
+      "mode": "companion",
+      "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      }
+    },
+    "ios": {
+      "identity": "Meetless Expo iOS companion",
+      "bundleId": "com.meetless.app",
+      "deviceName": "Meetless Proof 20260823T171318516Z-bc358715",
+      "deviceUdid": "0FF1129E-78D0-4D03-8E93-EB6061D830D7",
+      "deviceType": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+      "mode": "companion",
+      "createEnabled": false,
+      "meetingId": "1dbfc379-a502-4ceb-9ae9-25137e282987"
+    }
+  },
+  "production": {
+    "before": {
+      "files": [
+        {
+          "path": "/Users/tubakhuym/.paseo/paseo.pid",
+          "absent": true
+        },
+        {
+          "path": "/Users/tubakhuym/.paseo/server-id",
+          "sha256": "fcaa56cf7bdd348d2402a2683b8f7f5c23f74287fcfd665777685aadf7feae65",
+          "size": 17,
+          "mtimeMs": 1785506030597.0764
+        },
+        {
+          "path": "/Users/tubakhuym/.paseo/config.json",
+          "sha256": "f41e1c91fccb171816c690199ff36cad55265ae265bc0cbf27c6594655203914",
+          "size": 5087,
+          "mtimeMs": 1787494378064.7957
+        }
+      ],
+      "listener": "",
+      "processIdentity": ""
+    },
+    "after": {
+      "files": [
+        {
+          "path": "/Users/tubakhuym/.paseo/paseo.pid",
+          "absent": true
+        },
+        {
+          "path": "/Users/tubakhuym/.paseo/server-id",
+          "sha256": "fcaa56cf7bdd348d2402a2683b8f7f5c23f74287fcfd665777685aadf7feae65",
+          "size": 17,
+          "mtimeMs": 1785506030597.0764
+        },
+        {
+          "path": "/Users/tubakhuym/.paseo/config.json",
+          "sha256": "f41e1c91fccb171816c690199ff36cad55265ae265bc0cbf27c6594655203914",
+          "size": 5087,
+          "mtimeMs": 1787494378064.7957
+        }
+      ],
+      "listener": "",
+      "processIdentity": ""
+    }
+  },
+  "host": {
+    "platform": "darwin",
+    "architecture": "arm64"
+  },
+  "status": "passed",
+  "runId": "20260823T171318516Z-bc358715",
+  "preEvidenceSourceDigest": "f28741d4b1bc57dd7be68d25ab73163f5809b7ca79e8b26cc1e3055b76651477",
+  "startedAt": "2026-08-23T17:13:18.516Z",
+  "endedAt": "2026-08-23T17:17:25.409Z",
+  "finalChecks": {
+    "authorizedIsolatedStopChecked": true,
+    "browserClientsClosed": true,
+    "ownedProcessGroupsGone": true,
+    "isolatedListenersGone": true,
+    "runtimeRootAbsent": false,
+    "runtimeRootRestored": true,
+    "disposableSimulatorAbsent": true,
+    "simulatorTerminateChecked": true,
+    "simulatorUninstallChecked": true,
+    "simulatorShutdownChecked": true,
+    "simulatorDeleteChecked": true,
+    "productionPreserved": true
+  }
+}
