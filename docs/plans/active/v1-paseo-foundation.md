@@ -2044,6 +2044,33 @@ accepted findings receive one correction batch and one `FAST` close-out.
   bounded `proof:m1` run, then perform the planned `FAST` close-out.
 - **status:** implementation candidate frozen; technical acceptance blocked.
 
+`PLAN_RECONCILIATION v1 — ND-VALIDATION-RESUME` (2026-08-23):
+
+- **new_evidence:** Xcode resolves the workspace and Release build settings in
+  1.4 seconds. The shared `build.db` passes SQLite `quick_check` and has no live
+  owner. The native project, package manifests, and lockfile are unchanged from
+  the accepted baseline; the new-design delta is JavaScript presentation and
+  proof code.
+- **ruling:** supersede the stopped-retry instruction above with one isolated
+  native-build route. Build the current source through `xcodebuild` using a
+  proof-owned `-derivedDataPath` and result bundle, install the resulting
+  simulator app with `simctl`, and retain the existing iOS runtime/OCR checks.
+  This keeps actual native behavior proof and removes only the Expo wrapper and
+  shared DerivedData as validation dependencies.
+- **proof_safety:** use one disposable simulator and one bounded build; preserve
+  a diagnostic log tail on failure; delete only proof-owned DerivedData,
+  processes, runtime state, and simulator. Do not clear global Xcode state or
+  reuse a cached app binary.
+- **ownership:** reuse the existing validation seat as the sole writer for
+  `scripts/prove-m1.mjs`, direct proof tests, this plan delta, and generated M1
+  evidence. No other writer or diagnostic seat is active.
+- **acceptance:** successful atomic M1 publication with all final checks true,
+  current Electron and responsive screenshots, current iOS screenshot/OCR,
+  unchanged design digest and vendor pin, followed by the planned `FAST`
+  close-out.
+- **status:** resumed; correction candidate remains frozen until the proof-route
+  commit is created.
+
 ### Milestone 7: V1 acceptance and release readiness
 
 - Exercise the complete P0 path on the accepted desktop platform matrix.

@@ -240,24 +240,56 @@ async function main() {
 
     simulator = createDisposableSimulator(runId);
     const iosBuildLog = path.join(workingRoot, "ios-build.log");
-    run(
-      "npx",
+    const iosDerivedDataPath = path.join(workingRoot, "ios-derived-data");
+    const iosResultBundlePath = path.join(workingRoot, "ios-build.xcresult");
+    await runOwnedBuild(
+      "xcodebuild",
       [
-        "expo",
-        "run:ios",
-        "--device",
-        simulator.udid,
-        "--configuration",
+        "-workspace",
+        "Meetless.xcworkspace",
+        "-configuration",
         "Release",
-        "--no-bundler",
+        "-scheme",
+        "Meetless",
+        "-destination",
+        `id=${simulator.udid}`,
+        "-derivedDataPath",
+        iosDerivedDataPath,
+        "-resultBundlePath",
+        iosResultBundlePath,
+        "build",
       ],
       {
-        cwd: path.join(repositoryRoot, "packages/meetless-app"),
-        env: environment,
+        cwd: path.join(repositoryRoot, "packages/meetless-app/ios"),
+        env: {
+          ...environment,
+          NODE_ENV: "production",
+          RCT_NO_LAUNCH_PACKAGER: "true",
+        },
         logPath: iosBuildLog,
-        timeout: 15 * 60_000,
+        timeout: 25 * 60_000,
       },
+      owned,
     );
+    const iosAppPath = path.join(
+      iosDerivedDataPath,
+      "Build",
+      "Products",
+      "Release-iphonesimulator",
+      "Meetless.app",
+    );
+    if (!existsSync(iosAppPath) || !statSync(iosAppPath).isDirectory()) {
+      throw new Error(`Direct iOS build did not produce the proof-owned app at ${iosAppPath}`);
+    }
+    const iosBundleIdentifier = run(
+      "plutil",
+      ["-extract", "CFBundleIdentifier", "raw", path.join(iosAppPath, "Info.plist")],
+      { capture: true },
+    ).trim();
+    assertEqual(iosBundleIdentifier, appBundleId, "iOS Release simulator app bundle identifier");
+    run("xcrun", ["simctl", "install", simulator.udid, iosAppPath], {
+      logPath: path.join(workingRoot, "simulator-install.log"),
+    });
     simulatorInstalled = true;
     run("xcrun", ["simctl", "bootstatus", simulator.udid, "-b"], {
       logPath: path.join(workingRoot, "simulator-boot.log"),
@@ -533,6 +565,73 @@ function run(command, args, options = {}) {
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
+}
+
+async function runOwnedBuild(command, args, options, owned) {
+  const descriptor = options.logPath ? openSync(options.logPath, "w") : undefined;
+  let child;
+  try {
+    child = spawn(command, args, {
+      cwd: options.cwd ?? repositoryRoot,
+      env: options.env ?? process.env,
+      detached: true,
+      stdio: ["ignore", descriptor ?? "inherit", descriptor ?? "inherit"],
+    });
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+  if (!child.pid) throw new Error(`Could not start owned ${command} build process`);
+  owned.push(child);
+
+  const exit = new Promise((resolve) => {
+    child.once("error", (error) => resolve({ type: "error", error }));
+    child.once("close", (status, signal) => resolve({ type: "close", status, signal }));
+  });
+  let outcome = await waitForChildOutcome(exit, options.timeout);
+  if (outcome.type === "timeout") {
+    signalProcessGroup(child.pid, "SIGTERM");
+    outcome = await waitForChildOutcome(exit, 10_000);
+    if (outcome.type === "timeout") {
+      signalProcessGroup(child.pid, "SIGKILL");
+      outcome = await waitForChildOutcome(exit, 5_000);
+    }
+    throw new Error(buildFailureMessage(command, args, options, `timed out after ${options.timeout} ms`));
+  }
+  if (outcome.type === "error") {
+    throw new Error(buildFailureMessage(command, args, options, String(outcome.error)));
+  }
+  if (outcome.status !== 0) {
+    throw new Error(
+      buildFailureMessage(
+        command,
+        args,
+        options,
+        `failed with status ${outcome.status ?? "null"}${outcome.signal ? ` (signal ${outcome.signal})` : ""}`,
+      ),
+    );
+  }
+}
+
+function waitForChildOutcome(exit, timeoutMs) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ type: "timeout" }), timeoutMs);
+  });
+  return Promise.race([exit, timeout]).finally(() => clearTimeout(timer));
+}
+
+function buildFailureMessage(command, args, options, reason) {
+  const tail = options.logPath ? readLogTail(options.logPath) : "(no build log was configured)";
+  return (
+    `${command} ${args.join(" ")} ${reason}; see ${options.logPath ?? "console"}\n` +
+    `--- final build log tail (up to 200 lines) ---\n${tail}`
+  );
+}
+
+function readLogTail(logPath) {
+  if (!existsSync(logPath)) return `(build log is absent: ${logPath})`;
+  const lines = readFileSync(logPath, "utf8").split(/\r?\n/u);
+  return lines.slice(Math.max(0, lines.length - 200)).join("\n").trim() || "(build log is empty)";
 }
 
 function start(command, args, options) {
