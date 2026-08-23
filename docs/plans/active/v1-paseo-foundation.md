@@ -2168,6 +2168,34 @@ accepted findings receive one correction batch and one `FAST` close-out.
   acceptance ruling.
 - **status:** handback dependency resolved; validation ready.
 
+`LEAD_ACCEPTANCE v1 — NEW-DESIGN` (2026-08-24):
+
+- **verdict:** `ACCEPT`. The new-design implementation workstream is complete
+  at candidate `33ff981ad4bf3b5da485c2152bfabe75714eeaeb`.
+- **product_authority:** `design/PRODUCT.md` remains the outcome and behavior
+  authority. All 44 design artifacts are preserved with SHA-256
+  `28657cc28c33151f0a7ab5a9479abe5627c48954b4225e22026ebb4a4d923a4b`.
+- **accepted_behavior:** one Record meeting entry, proposed non-blocking source
+  setup, recording-owned meeting creation, safe recording recovery,
+  user-facing meeting states, stable Transcript and Ask tasks, inline citation
+  evidence with bounded playback, relay-first companion pairing, confirmed
+  host change, and truthful disabled offline context.
+- **responsive_surface:** Lead inspected the published Electron, web phone,
+  tablet, desktop, and native iOS evidence. The phone, tablet, and desktop
+  layouts retain their required independent composition.
+- **verification:** focused correction checks passed 12 files / 81 tests;
+  focused close-out checks passed 7 files / 64 tests; composition, typechecks,
+  Meetless and Expo web builds, syntax, diff, design digest, and vendor pin
+  checks passed. Atomic M1 run `20260823T171318516Z-bc358715` passed with source
+  digest `f28741d4b1bc57dd7be68d25ab73163f5809b7ca79e8b26cc1e3055b76651477`.
+  All required cleanup checks passed, the preserved runtime was restored, and
+  production state was unchanged.
+- **independent_closeout:** `ND-R1-CLOSEOUT` returned `CLEAR` for the complete
+  accepted finding set `ND-R1-001` through `ND-R1-009`; no direct regression or
+  material residual risk remains.
+- **plan_effect:** close the new-design workstream. Keep this file active and
+  proceed only through the separate Milestone 7 release-readiness frontier.
+
 ### Milestone 7: V1 acceptance and release readiness
 
 - Exercise the complete P0 path on the accepted desktop platform matrix.
