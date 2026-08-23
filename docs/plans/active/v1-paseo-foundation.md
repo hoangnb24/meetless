@@ -2122,6 +2122,52 @@ accepted findings receive one correction batch and one `FAST` close-out.
   evidence outside this known ordering defect.
 - **status:** resumed; all product behavior proof has passed before cleanup.
 
+`PLAN_RECONCILIATION v1 — ND-PROOF-CONVERGENCE-001` (2026-08-24):
+
+- **reaction:** `PARTIAL`. The repeated proof corrections are confirmed. The
+  common mechanism is the M1 harness migration from an owned
+  `runtime:desktop` process to the installed-host lifecycle plus a direct native
+  build, while stale ordering, OCR, and failure-cleanup assumptions remained.
+  Evidence does not yet establish that the current host-stop correction is the
+  final defect.
+- **frozen_history:** implementation correction `4b8e59b2`; isolated native
+  route `fd1d4747`; boot-before-install `6e1734d0`; product-brand OCR
+  `81adc1f9`; normalized OCR `ed3b5bb7`; browser/renderer-before-host-stop
+  candidate `0742483d18c5cea377d0d4b57d09fdebefd2a79c`.
+- **current_candidate:** freeze `0742483d...`. Its single atomic proof turn lost
+  active ownership before a terminal disposition. Do not infer pass, failure,
+  cleanup, or publication from an idle seat.
+- **decision_gate:** first recover the existing proof result and exact cleanup
+  facts from the current validation seat. If evidence published, inspect that
+  candidate and proceed to `FAST` close-out. If it failed, accept another
+  correction only from retained direct evidence that identifies one shared
+  lifecycle/publication defect; do not patch another missing symptom. If the
+  process died without decision-ready evidence, restore cleanup and redesign
+  the harness failure-observation boundary before any retry.
+- **invariants:** no product/UI correction, no cached native binary, no web-only
+  substitute, no reduced final check, and no new Peer while the current
+  disposition is pending.
+- **status:** candidate and correction family frozen; handback recovery active.
+
+`VALIDATION_EXECUTION_RULING v1 — ND-PROOF-HANDBACK` (2026-08-24):
+
+- **recovered_result:** the single proof from `0742483d...` was interrupted; it
+  emitted no terminal result or manifest. Direct native build succeeded, but
+  install/OCR/publication were not observed. Treat this as neither pass nor
+  failure.
+- **cleanup:** the dead attempt's renderer group and disposable simulator were
+  removed, port `6777` is free, the exact preserved runtime was restored,
+  production state is preserved, and the source/evidence tree is clean.
+- **execution_boundary:** authorize one fresh attempt from a clean commit with
+  unchanged `0742483d...` proof code. Reuse the same full-access validation seat.
+  It must report the unified exec session ID immediately after launch and retain
+  it until terminal output. If the seat turn dies, Lead may wait on and read
+  only that existing session; Lead must not start a validation command.
+- **attempt_rule:** exactly one `proof:m1`; no source edit, separate build,
+  process polling, or retry. A terminal result must precede any correction or
+  acceptance ruling.
+- **status:** handback dependency resolved; validation ready.
+
 ### Milestone 7: V1 acceptance and release readiness
 
 - Exercise the complete P0 path on the accepted desktop platform matrix.
