@@ -315,9 +315,11 @@ async function main() {
     });
     const iosOcrLog = path.join(workingEvidence, "ios-ocr.log");
     writeFileSync(iosOcrLog, ocr);
-    for (const requiredText of ["MEETLESS", "Meetings", "Companion library", "M1 Surface Proof"]) {
+    for (const requiredText of ["Meetless", "Meetings", "Companion library", "M1 Surface Proof"]) {
       if (!ocr.includes(requiredText)) {
-        throw new Error(`iOS screenshot OCR did not contain ${JSON.stringify(requiredText)}`);
+        throw new Error(
+          `iOS screenshot OCR did not contain ${JSON.stringify(requiredText)}. Complete OCR output:\n${ocr}`,
+        );
       }
     }
     if (ocr.includes("Create meeting")) {

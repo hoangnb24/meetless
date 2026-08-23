@@ -2071,6 +2071,25 @@ accepted findings receive one correction batch and one `FAST` close-out.
 - **status:** resumed; correction candidate remains frozen until the proof-route
   commit is created.
 
+`CONVERGENCE_RECONCILIATION v1 — ND-IOS-PROOF` (2026-08-23):
+
+- **observed_sequence:** isolated `xcodebuild` now succeeds. The first proof
+  correction moved simulator boot before install; the next run built, installed,
+  seeded, launched, logged, and captured the current app before a stale OCR
+  assertion failed.
+- **root_cause:** proof migration retained assumptions from the old surface:
+  install-before-boot ordering and uppercase `MEETLESS`. Current production code
+  renders the product-authorized `Meetless` identity.
+- **frozen_correction_set:** audit the remaining iOS sequence and all required
+  OCR strings once against current production text; change only the stale brand
+  expectation to `Meetless`; include the complete OCR text in any assertion
+  failure before atomic-failure cleanup removes temporary files.
+- **retry_rule:** after focused syntax/direct-proof checks and a committed source
+  snapshot, authorize one new `proof:m1` attempt. Do not add another speculative
+  lifecycle correction or weaken the native evidence contract.
+- **plan_updated:** yes. Product scope, implementation candidate, and close-out
+  lane are unchanged.
+
 ### Milestone 7: V1 acceptance and release readiness
 
 - Exercise the complete P0 path on the accepted desktop platform matrix.
