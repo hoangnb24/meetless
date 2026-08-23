@@ -378,6 +378,13 @@ describe("responsive meeting sidebar and transcript detail", () => {
     expect(m1Proof).not.toContain('getByText("Create meeting", { exact: true })');
     expect(m1Proof).not.toContain('electronMeetingTitle.locator("..")');
     expect(m1Proof).not.toContain('webMeetingTitle.locator("..")');
+    const browserCleanup = m1Proof.indexOf("for (const browser of [webBrowser, electronBrowser])");
+    const processCleanup = m1Proof.indexOf("for (const child of [...owned].reverse())");
+    const hostCleanup = m1Proof.indexOf('path.join(repositoryRoot, "scripts/stop-macos-host.mjs")');
+    expect(browserCleanup).toBeGreaterThan(-1);
+    expect(processCleanup).toBeGreaterThan(browserCleanup);
+    expect(hostCleanup).toBeGreaterThan(processCleanup);
+    expect(m1Proof).toContain('errorWithLogTail(error, "host-stop", hostStopLog)');
 
     const postM3Proof = readFileSync(new URL("../../../scripts/prove-post-m3.mjs", import.meta.url), "utf8");
     expect(postM3Proof).toContain('const meetingRow = page.locator(`[data-testid="meeting-${storeSnapshot.meeting.id}"]`);');

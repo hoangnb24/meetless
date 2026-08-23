@@ -58,6 +58,7 @@ async function main() {
   let runtimeRootRestored = false;
   let hostEnvironment = null;
   let operationError = null;
+  let hostStopFailure = null;
   let proofFacts = null;
   let ports = null;
 
@@ -404,19 +405,6 @@ async function main() {
 
   if (fixtureClient) await fixtureClient.close().catch((error) => { operationError ??= error; });
 
-  if (hostLaunchAttempted) {
-    try {
-      run(process.execPath, [path.join(repositoryRoot, "scripts/stop-macos-host.mjs")], {
-        env: hostEnvironment ?? process.env,
-        logPath: hostStopLog,
-      });
-      hostStopped = true;
-      authorizedStopChecked = true;
-    } catch (error) {
-      operationError ??= error;
-    }
-  }
-
   let browserClientsClosed = true;
   for (const browser of [webBrowser, electronBrowser]) {
     if (!browser) continue;
@@ -428,6 +416,7 @@ async function main() {
       operationError ??= error;
     }
   }
+
   const processGroupChecks = [];
   for (const child of [...owned].reverse()) {
     try {
@@ -437,6 +426,21 @@ async function main() {
       operationError ??= error;
     }
   }
+
+  if (hostLaunchAttempted) {
+    try {
+      run(process.execPath, [path.join(repositoryRoot, "scripts/stop-macos-host.mjs")], {
+        env: hostEnvironment ?? process.env,
+        logPath: hostStopLog,
+      });
+      hostStopped = true;
+      authorizedStopChecked = true;
+    } catch (error) {
+      hostStopFailure = errorWithLogTail(error, "host-stop", hostStopLog);
+      operationError ??= hostStopFailure;
+    }
+  }
+
   let simulatorCleanup = { terminate: false, uninstall: false, shutdown: false, delete: false };
   try {
     simulatorCleanup = cleanupDisposableSimulator(simulator, {
@@ -489,7 +493,10 @@ async function main() {
 
   if (operationError || !proofFacts) {
     rmSync(workingRoot, { recursive: true, force: true });
-    const reason = operationError instanceof Error ? operationError.stack : String(operationError);
+    const reasons = [];
+    if (operationError) reasons.push(errorStack(operationError));
+    if (hostStopFailure && hostStopFailure !== operationError) reasons.push(errorStack(hostStopFailure));
+    const reason = reasons.join("\n") || "Proof facts were not produced";
     throw new Error(
       `M1 surface proof failed before publication. finalChecks=${JSON.stringify(finalChecks)}\n${reason}`,
     );
@@ -626,17 +633,27 @@ function waitForChildOutcome(exit, timeoutMs) {
 }
 
 function buildFailureMessage(command, args, options, reason) {
-  const tail = options.logPath ? readLogTail(options.logPath) : "(no build log was configured)";
+  const tail = options.logPath ? readLogTail(options.logPath, "build") : "(no build log was configured)";
   return (
     `${command} ${args.join(" ")} ${reason}; see ${options.logPath ?? "console"}\n` +
     `--- final build log tail (up to 200 lines) ---\n${tail}`
   );
 }
 
-function readLogTail(logPath) {
-  if (!existsSync(logPath)) return `(build log is absent: ${logPath})`;
+function errorWithLogTail(error, label, logPath) {
+  return new Error(
+    `${errorStack(error)}\n--- final ${label} log tail (up to 200 lines) ---\n${readLogTail(logPath, label)}`,
+  );
+}
+
+function errorStack(error) {
+  return error instanceof Error ? error.stack : String(error);
+}
+
+function readLogTail(logPath, label) {
+  if (!existsSync(logPath)) return `(${label} log is absent: ${logPath})`;
   const lines = readFileSync(logPath, "utf8").split(/\r?\n/u);
-  return lines.slice(Math.max(0, lines.length - 200)).join("\n").trim() || "(build log is empty)";
+  return lines.slice(Math.max(0, lines.length - 200)).join("\n").trim() || `(${label} log is empty)`;
 }
 
 function start(command, args, options) {

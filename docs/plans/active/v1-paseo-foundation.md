@@ -2105,6 +2105,23 @@ accepted findings receive one correction batch and one `FAST` close-out.
   assertion or lifecycle change is authorized in this correction.
 - **status:** resumed; close-out remains pending successful publication.
 
+`CONVERGENCE_RECONCILIATION v3 — ND-HOST-STOP` (2026-08-23):
+
+- **evidence:** current source built, installed, launched, rendered, and passed
+  normalized native OCR. Atomic publication then failed only because
+  `stop-macos-host.mjs` checks that both daemon and configured renderer listeners
+  are gone while `prove-m1.mjs` still owns the live renderer at that point.
+  Subsequent generic cleanup removed that renderer and every other owned
+  resource.
+- **final_correction:** close Playwright browser clients and stop proof-owned
+  renderer/build process groups before invoking the authorized installed-host
+  stop. Keep the host-stop log tail in any failure. Do not change host authority,
+  native build, UI assertions, or publication checks.
+- **retry_rule:** commit this cleanup-order correction and run one atomic
+  `proof:m1` attempt. No further lifecycle change is authorized without new
+  evidence outside this known ordering defect.
+- **status:** resumed; all product behavior proof has passed before cleanup.
+
 ### Milestone 7: V1 acceptance and release readiness
 
 - Exercise the complete P0 path on the accepted desktop platform matrix.
