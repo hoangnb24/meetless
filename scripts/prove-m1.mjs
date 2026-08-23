@@ -287,13 +287,13 @@ async function main() {
       { capture: true },
     ).trim();
     assertEqual(iosBundleIdentifier, appBundleId, "iOS Release simulator app bundle identifier");
+    run("xcrun", ["simctl", "bootstatus", simulator.udid, "-b"], {
+      logPath: path.join(workingRoot, "simulator-boot.log"),
+    });
     run("xcrun", ["simctl", "install", simulator.udid, iosAppPath], {
       logPath: path.join(workingRoot, "simulator-install.log"),
     });
     simulatorInstalled = true;
-    run("xcrun", ["simctl", "bootstatus", simulator.udid, "-b"], {
-      logPath: path.join(workingRoot, "simulator-boot.log"),
-    });
     checkedCommand("xcrun", ["simctl", "terminate", simulator.udid, appBundleId]);
     seedIosCompanionProfile(simulator.udid, companionProfile);
     run("xcrun", ["simctl", "launch", "--terminate-running-process", simulator.udid, appBundleId], {
