@@ -315,15 +315,18 @@ async function main() {
     });
     const iosOcrLog = path.join(workingEvidence, "ios-ocr.log");
     writeFileSync(iosOcrLog, ocr);
+    const normalizedOcr = normalizeOcrText(ocr);
     for (const requiredText of ["Meetless", "Meetings", "Companion library", "M1 Surface Proof"]) {
-      if (!ocr.includes(requiredText)) {
+      if (!normalizedOcr.includes(normalizeOcrText(requiredText))) {
         throw new Error(
           `iOS screenshot OCR did not contain ${JSON.stringify(requiredText)}. Complete OCR output:\n${ocr}`,
         );
       }
     }
-    if (ocr.includes("Create meeting")) {
-      throw new Error("iOS companion screenshot unexpectedly exposed meeting creation");
+    if (normalizedOcr.includes(normalizeOcrText("Create meeting"))) {
+      throw new Error(
+        `iOS companion screenshot unexpectedly exposed meeting creation. Complete OCR output:\n${ocr}`,
+      );
     }
     if (forbiddenProductLabels.test(ocr)) {
       throw new Error(`iOS screenshot exposed a forbidden coding-product label:\n${ocr}`);
@@ -937,6 +940,10 @@ function candidateSnapshot() {
     throw new Error("Could not compute the pre-evidence candidate source digest");
   }
   return JSON.parse(completed.stdout);
+}
+
+function normalizeOcrText(value) {
+  return value.normalize("NFKC").toLocaleLowerCase("en-US");
 }
 
 function assertEqual(actual, expected, label) {

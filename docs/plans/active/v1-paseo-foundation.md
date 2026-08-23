@@ -2090,6 +2090,21 @@ accepted findings receive one correction batch and one `FAST` close-out.
 - **plan_updated:** yes. Product scope, implementation candidate, and close-out
   lane are unchanged.
 
+`CONVERGENCE_RECONCILIATION v2 — ND-IOS-OCR-MATCHING` (2026-08-23):
+
+- **evidence:** current native OCR contains `Meetless`, `MEETINGS`,
+  `Companion library`, and `M1 Surface Proof`. Vision reports casing from the
+  rendered glyphs, while production React text stores `Meetings` and applies
+  uppercase presentation styling.
+- **final_correction:** normalize OCR and required/forbidden labels with Unicode
+  compatibility normalization and case-insensitive comparison. Preserve the
+  exact OCR body in failures. This changes proof matching only; it does not
+  change product copy or reduce required content.
+- **retry_rule:** one committed matcher correction and one atomic `proof:m1`
+  attempt. The observed OCR already contains every required label, so no other
+  assertion or lifecycle change is authorized in this correction.
+- **status:** resumed; close-out remains pending successful publication.
+
 ### Milestone 7: V1 acceptance and release readiness
 
 - Exercise the complete P0 path on the accepted desktop platform matrix.
