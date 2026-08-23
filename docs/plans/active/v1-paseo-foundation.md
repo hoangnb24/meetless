@@ -1996,6 +1996,29 @@ Review classification for the frozen candidate is `DEEP`,
 Use one independent reviewer after Lead verifies the writer's proof. Any
 accepted findings receive one correction batch and one `FAST` close-out.
 
+`PLAN_RECONCILIATION v1 — ND-REVIEW-R1` (2026-08-23):
+
+- **candidate:** `3a7a7a14c0d7af4813d4dd884f6d6130e9a26e2e`.
+- **verdict:** `REOPEN`. Accept the complete exploratory finding set
+  `ND-R1-001` through `ND-R1-009`.
+- **correction_order:** restore the accepted native M1 proof and executable
+  publication checks; add correctly paired responsive proof pages; make the
+  composition proof drive the recording-owned meeting path; then correct
+  transcription retry, playback settlement, phone list-position restoration,
+  source-specific start recovery, and the Change-host warning.
+- **contract_ruling:** transcription retry reuses the existing idempotent
+  consent operation, whose transcription service schedules retryable failed
+  transcripts. No new RPC or backend policy is authorized. Proposed source
+  checks remain non-factual and nonblocking.
+- **ownership:** one integrated correction writer owns the full accepted set.
+  No parallel writer or discovery frontier is active.
+- **acceptance:** a fresh correction commit, focused and composition checks,
+  typechecks/builds, publishable M1 evidence with retained iOS proof plus
+  desktop/tablet/phone screenshots, unchanged design digest, clean vendor state,
+  and one `FAST` close-out against only the accepted finding set.
+- **plan_updated:** yes. The dependency order and Milestone 7 boundary are
+  unchanged.
+
 ### Milestone 7: V1 acceptance and release readiness
 
 - Exercise the complete P0 path on the accepted desktop platform matrix.

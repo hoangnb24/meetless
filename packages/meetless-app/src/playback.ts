@@ -18,12 +18,17 @@ export interface CitationPlaybackHandle {
 
 export interface CitationPlaybackOptions {
   onComplete?(): void;
+  onError?(error: Error): void;
 }
 
 export interface NativeCitationPlayer {
   play(): void;
   pause(): void;
   remove(): void;
+  addListener?(
+    event: "playbackStatusUpdate",
+    listener: (status: unknown) => void,
+  ): { remove(): void };
 }
 
 export interface NativeCitationPlaybackDependencies {
@@ -42,36 +47,38 @@ export async function playCitationAudio(
   options: CitationPlaybackOptions = {},
 ): Promise<CitationPlaybackHandle> {
   validateCitation(citation);
-  if (Platform.OS !== "web") return playNativeCitation(citation, nativeDependencies, options.onComplete);
+  if (Platform.OS !== "web") return playNativeCitation(citation, nativeDependencies, options);
   const audio = factory(citationDataUrl(citation));
   await waitForMetadata(audio);
   audio.currentTime = 0;
   await audio.play();
-  let stopped = false;
+  let settled = false;
+  let timer: ReturnType<typeof setInterval> | null = null;
   const durationSeconds = (citation.endMs - citation.startMs) / 1_000;
-  const timer = setInterval(() => {
-    if (stopped || audio.currentTime >= durationSeconds) {
-      stopped = true;
-      clearInterval(timer);
-      audio.pause();
-      options.onComplete?.();
-    }
+  const settle = (callback?: () => void) => {
+    if (settled) return;
+    settled = true;
+    if (timer !== null) clearInterval(timer);
+    audio.onerror = null;
+    audio.pause();
+    callback?.();
+  };
+  audio.onerror = () => settle(() => options.onError?.(new Error("Cited audio playback stopped unexpectedly")));
+  timer = setInterval(() => {
+    if (audio.currentTime >= durationSeconds) settle(options.onComplete);
   }, 40);
   return {
-    stop: () => {
-      stopped = true;
-      clearInterval(timer);
-      audio.pause();
-    },
+    stop: () => settle(),
   };
 }
 
 async function playNativeCitation(
   citation: CitationWire,
   dependencies: NativeCitationPlaybackDependencies,
-  onComplete?: () => void,
+  options: CitationPlaybackOptions,
 ): Promise<CitationPlaybackHandle> {
   const cleanup = new NativeCleanupGuard();
+  let settled = false;
   try {
     await dependencies.configureAudioSession();
     let registeredClip: { uri: string; delete(): void } | null = null;
@@ -86,14 +93,33 @@ async function playNativeCitation(
     const player = dependencies.createPlayer(clip.uri);
     cleanup.register(() => player.remove());
     cleanup.register(() => player.pause());
+    const subscription = player.addListener?.("playbackStatusUpdate", (status) => {
+      if (!status || typeof status !== "object") return;
+      const error = (status as { error?: unknown }).error;
+      if (typeof error === "string" && error) {
+        settleNativePlayback(new Error("Cited audio playback stopped unexpectedly"));
+      }
+    });
+    if (subscription) cleanup.register(() => subscription.remove());
     player.play();
     const timer = setTimeout(() => {
-      onComplete?.();
-      cleanup.run();
+      settleNativePlayback();
     }, citation.endMs - citation.startMs);
     cleanup.register(() => clearTimeout(timer));
-    return { stop: () => cleanup.run() };
+    return { stop: () => settleNativePlayback() };
+
+    function settleNativePlayback(error?: Error): void {
+      if (settled) return;
+      settled = true;
+      try {
+        if (error) options.onError?.(error);
+        else options.onComplete?.();
+      } finally {
+        cleanup.run();
+      }
+    }
   } catch (error) {
+    settled = true;
     cleanup.run();
     throw error;
   }

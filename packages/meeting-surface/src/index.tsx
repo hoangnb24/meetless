@@ -163,7 +163,7 @@ export function RecordingStrip(props: {
           <Text style={styles.buttonText}>Retry save</Text>
         </FocusPressable>
       ) : null}
-      {props.error || props.status.error ? <Text style={styles.recordingError} testID="recording-error">{recordingErrorCopy(props.status)}</Text> : null}
+      {props.error || props.status.error ? <Text style={styles.recordingError} testID="recording-error">{recordingErrorCopy(props.status, props.error)}</Text> : null}
     </View>
   );
 }
@@ -223,6 +223,7 @@ export interface MeetingListSurfaceProps {
   onOpenTranscript?(meetingId: string): Promise<void>;
   onBack?(): void;
   onGrantTranscriptionConsent?(): Promise<void>;
+  onRetryTranscription?(): Promise<void>;
   onCitation?(citation: Pick<CitationWire, "meetingId" | "segmentId">): void | Promise<void>;
   citationEvidence?: CitationEvidenceState | null;
   chatProviders?: ChatProviderWire[];
@@ -259,6 +260,7 @@ export function MeetingListSurface({
   onOpenTranscript,
   onBack,
   onGrantTranscriptionConsent,
+  onRetryTranscription,
   onCitation,
   citationEvidence = null,
   chatProviders = [],
@@ -275,6 +277,7 @@ export function MeetingListSurface({
   const tier = requestedTier ?? (compact ? "phone" : "desktop");
   const [task, setTask] = useState<MeetingTask>("transcript");
   const [recordingSetupOpen, setRecordingSetupOpen] = useState(false);
+  const [changeHostOpen, setChangeHostOpen] = useState(false);
 
   useEffect(() => {
     setTask("transcript");
@@ -295,6 +298,15 @@ export function MeetingListSurface({
     if (recordingSetup?.available) setRecordingSetupOpen(true);
   }, [recordingSetup?.available]);
 
+  const requestChangeHost = useCallback(() => {
+    if (onChangeHost) setChangeHostOpen(true);
+  }, [onChangeHost]);
+
+  const confirmChangeHost = useCallback(async () => {
+    setChangeHostOpen(false);
+    await onChangeHost?.();
+  }, [onChangeHost]);
+
   const sidebar = (
     <MeetingSidebar
       canRecord={desktopMode}
@@ -308,7 +320,7 @@ export function MeetingListSurface({
       onRetryConnection={onRetryConnection}
       pending={pending}
       selectedMeetingId={selectedMeetingId}
-      onChangeHost={onChangeHost}
+      onChangeHost={onChangeHost ? requestChangeHost : undefined}
     />
   );
 
@@ -320,6 +332,7 @@ export function MeetingListSurface({
       onCitation={interactive ? onCitation : undefined}
       citationEvidence={citationEvidence}
       onGrantTranscriptionConsent={onGrantTranscriptionConsent}
+      onRetryTranscription={onRetryTranscription}
       pending={pending}
       providerStatus={providerStatus}
       selectedMeeting={selectedMeeting}
@@ -339,7 +352,7 @@ export function MeetingListSurface({
       hostConnectionStatus={hostConnectionStatus}
       interactive={interactive}
       onRetryConnection={onRetryConnection}
-      onChangeHost={onChangeHost}
+      onChangeHost={onChangeHost ? requestChangeHost : undefined}
       task={task}
       onTaskChange={setTask}
     />
@@ -350,7 +363,22 @@ export function MeetingListSurface({
       <AppTopbar connectionStatus={hostConnectionStatus} />
       <View style={styles.main} testID={`meeting-layout-${tier}`}>
         {tier === "phone" ? (
-          selectedMeetingId ? detail : <View style={styles.phoneList}>{sidebar}</View>
+          <>
+            <View
+              style={[styles.phoneList, selectedMeetingId && styles.hidden]}
+              testID="phone-list-surface"
+              aria-hidden={Boolean(selectedMeetingId)}
+            >
+              {sidebar}
+            </View>
+            <View
+              style={[styles.phoneDetail, !selectedMeetingId && styles.hidden]}
+              testID="phone-detail-surface"
+              aria-hidden={!selectedMeetingId}
+            >
+              {detail}
+            </View>
+          </>
         ) : (
           <>
             <View style={[styles.sidebarPane, tier === "tablet" && styles.tabletSidebarPane]} testID="meeting-sidebar-pane">{sidebar}</View>
@@ -361,6 +389,12 @@ export function MeetingListSurface({
           <RecordingSetup
             controller={recordingSetup}
             onCancel={() => setRecordingSetupOpen(false)}
+          />
+        ) : null}
+        {changeHostOpen && onChangeHost ? (
+          <ChangeHostConfirmation
+            onCancel={() => setChangeHostOpen(false)}
+            onConfirm={confirmChangeHost}
           />
         ) : null}
       </View>
@@ -560,7 +594,7 @@ function RecordingSetup({ controller, onCancel }: { controller: RecordingSetupCo
           <SourceRow name="System audio" description="Selected for meeting audio." />
         </View>
         <Text style={styles.proposedNotice}>Readiness is Proposed until the runtime can confirm each source. It does not block Start.</Text>
-        {controller.error ? <Text style={styles.error} testID="recording-setup-error">Recording could not start. Try again.</Text> : null}
+        {controller.error ? <Text style={styles.error} testID="recording-setup-error">{recordingStartErrorCopy(controller.error)}</Text> : null}
         <View style={styles.setupActions}>
           <FocusPressable accessibilityLabel="Cancel recording setup" accessibilityRole="button" disabled={controller.pending} onPress={onCancel} style={styles.ghostButton} testID="recording-setup-cancel">
             <Text style={styles.ghostButtonText}>Cancel</Text>
@@ -594,6 +628,7 @@ interface MeetingDetailProps {
   onCitation?: (citation: Pick<CitationWire, "meetingId" | "segmentId">) => void | Promise<void>;
   citationEvidence: CitationEvidenceState | null;
   onGrantTranscriptionConsent?: () => Promise<void>;
+  onRetryTranscription?: () => Promise<void>;
   pending: boolean;
   providerStatus?: TranscriptionProviderStatusWire["status"];
   selectedMeeting: MeetingWire | null;
@@ -626,6 +661,7 @@ function MeetingDetail(props: MeetingDetailProps) {
     onCitation,
     citationEvidence,
     onGrantTranscriptionConsent,
+    onRetryTranscription,
     pending,
     providerStatus,
     selectedMeeting,
@@ -703,6 +739,7 @@ function MeetingDetail(props: MeetingDetailProps) {
             interactive={interactive}
             consentStatus={consentStatus}
             onGrantTranscriptionConsent={onGrantTranscriptionConsent}
+            onRetryTranscription={onRetryTranscription}
             pending={pending}
             providerStatus={providerStatus}
             selectedMeeting={selectedMeeting}
@@ -733,6 +770,39 @@ function MeetingDetail(props: MeetingDetailProps) {
             testID="ask-pane"
           />
         ) : null}
+      </View>
+    </View>
+  );
+}
+
+function ChangeHostConfirmation({ onCancel, onConfirm }: { onCancel(): void; onConfirm(): Promise<void> }) {
+  return (
+    <View style={styles.setupBackdrop} testID="change-host-confirmation" accessibilityViewIsModal>
+      <View style={styles.setupPanel}>
+        <Text accessibilityRole="header" style={styles.setupTitle}>Change host?</Text>
+        <Text style={styles.setupDescription}>
+          This replaces the saved pairing information on this device. Your meetings remain on the desktop host.
+        </Text>
+        <View style={styles.setupActions}>
+          <FocusPressable
+            accessibilityLabel="Keep pairing"
+            accessibilityRole="button"
+            onPress={onCancel}
+            style={styles.ghostButton}
+            testID="change-host-cancel"
+          >
+            <Text style={styles.ghostButtonText}>Keep pairing</Text>
+          </FocusPressable>
+          <FocusPressable
+            accessibilityLabel="Change host"
+            accessibilityRole="button"
+            onPress={() => void onConfirm()}
+            style={styles.primaryButton}
+            testID="change-host-confirm"
+          >
+            <Text style={styles.buttonText}>Change host</Text>
+          </FocusPressable>
+        </View>
       </View>
     </View>
   );
@@ -797,6 +867,7 @@ function TranscriptPane({
   interactive,
   consentStatus,
   onGrantTranscriptionConsent,
+  onRetryTranscription,
   pending,
   providerStatus,
   selectedMeeting,
@@ -811,6 +882,7 @@ function TranscriptPane({
   interactive: boolean;
   consentStatus: "unknown" | "granted";
   onGrantTranscriptionConsent?: () => Promise<void>;
+  onRetryTranscription?: () => Promise<void>;
   pending: boolean;
   providerStatus?: TranscriptionProviderStatusWire["status"];
   selectedMeeting: MeetingWire | null;
@@ -840,6 +912,7 @@ function TranscriptPane({
           transcriptError={transcriptError}
           transcriptLoading={transcriptLoading}
           providerStatus={providerStatus}
+          onRetryTranscription={onRetryTranscription}
           highlightedSegmentId={citationEvidence?.segmentId ?? null}
         />
       </ScrollView>
@@ -1110,6 +1183,7 @@ function ChatMessage({
 function TranscriptState({
   interactive,
   onCitation,
+  onRetryTranscription,
   selectedMeeting,
   transcript,
   transcriptError,
@@ -1119,6 +1193,7 @@ function TranscriptState({
 }: {
   interactive: boolean;
   onCitation?: (citation: Pick<CitationWire, "meetingId" | "segmentId">) => void | Promise<void>;
+  onRetryTranscription?: () => Promise<void>;
   selectedMeeting: MeetingWire | null;
   transcript: TranscriptWire | null;
   transcriptError: string | null;
@@ -1127,8 +1202,8 @@ function TranscriptState({
   highlightedSegmentId: string | null;
 }) {
   if (transcriptLoading) return <TranscriptStateMessage testID="transcript-loading" title="Preparing transcript…" detail="Your saved recording is safe." />;
-  if (transcript?.status === "failed") return <TranscriptStateMessage detail="Your saved audio is safe. Retry transcription when you are ready." testID="transcript-failed" title="Transcription needs attention" />;
-  if (!transcript && transcriptError) return <TranscriptStateMessage detail="Your saved audio is safe. Retry transcription when you are ready." testID="transcript-failed" title="Transcription needs attention" />;
+  if (transcript?.status === "failed") return <TranscriptStateMessage detail="Your saved audio is safe. Retry transcription when you are ready." onRetry={interactive ? onRetryTranscription : undefined} testID="transcript-failed" title="Transcription needs attention" />;
+  if (!transcript && transcriptError) return <TranscriptStateMessage detail="Your saved audio is safe. Retry transcription when you are ready." onRetry={interactive ? onRetryTranscription : undefined} testID="transcript-failed" title="Transcription needs attention" />;
   if (!transcript && providerStatus === "invalid") return <TranscriptStateMessage detail="Transcription is not available until its setup is repaired." testID="transcript-failed" title="Transcription needs attention" />;
   if (!transcript && providerStatus === "missing") return <TranscriptStateMessage detail="Transcription is not configured yet. Your saved audio remains local." testID="transcript-empty" title="Transcript waiting" />;
   if (!transcript) {
@@ -1169,11 +1244,22 @@ function TranscriptState({
   );
 }
 
-function TranscriptStateMessage({ detail, testID, title }: { detail?: string; testID: string; title: string }) {
+function TranscriptStateMessage({ detail, onRetry, testID, title }: { detail?: string; onRetry?: () => Promise<void>; testID: string; title: string }) {
   return (
     <View style={styles.transcriptState} testID={testID}>
       <Text style={styles.transcriptStateTitle}>{title}</Text>
       {detail ? <Text style={styles.transcriptStateDetail}>{detail}</Text> : null}
+      {onRetry ? (
+        <FocusPressable
+          accessibilityLabel="Retry transcription"
+          accessibilityRole="button"
+          onPress={() => void onRetry()}
+          style={styles.secondaryButtonSmall}
+          testID="transcription-retry"
+        >
+          <Text style={styles.secondaryButtonText}>Retry transcription</Text>
+        </FocusPressable>
+      ) : null}
     </View>
   );
 }
@@ -1248,15 +1334,33 @@ function recordingStateCopy(status: RecordingStatusWire): { title: string; detai
     case "recoverable": return { title: "Needs attention", detail: "Your completed audio is safe. Retry saving the MP3 without recording again.", tone: "warning" };
     case "finalizing": return { title: "Saving local audio", detail: "Your recording is safe while the MP3 is finalized.", tone: "accent" };
     case "saved": return { title: "Audio saved locally", detail: "The transcript will continue as a separate step.", tone: "accent" };
-    case "failed": return { title: "Recording needs attention", detail: "No usable recording was preserved.", tone: "warning" };
+    case "failed": return { title: "Recording needs attention", detail: recordingFailureDetail(status.error), tone: "warning" };
     case "recording": return { title: "Recording", detail: "", tone: "accent" };
     case "idle": return { title: "", detail: "", tone: "neutral" };
   }
 }
 
-function recordingErrorCopy(status: RecordingStatusWire): string {
+function recordingErrorCopy(status: RecordingStatusWire, error?: string | null): string {
   if (status.status === "recoverable") return "Completed audio is safe. Retry save is available.";
-  if (status.status === "failed") return "No usable recording was preserved.";
+  if (status.status === "failed") return recordingFailureDetail(status.error ?? error);
+  return "Recording needs attention. Try again.";
+}
+
+function recordingFailureDetail(error: string | null | undefined): string {
+  const normalized = error?.toLowerCase() ?? "";
+  if (/no valid|no usable|inventory|capture start failed/u.test(normalized)) return "No usable recording was preserved.";
+  return recordingStartErrorCopy(error);
+}
+
+function recordingStartErrorCopy(error: string | null | undefined): string {
+  const normalized = error?.toLowerCase() ?? "";
+  const captureFailure = /capture|permission|access|denied|unavailable|failed/u.test(normalized);
+  if (captureFailure && /microphone|mic/u.test(normalized)) {
+    return "Microphone access needs attention. Check microphone access, then try again.";
+  }
+  if (captureFailure && /system audio|system capture|screen capture|display capture/u.test(normalized)) {
+    return "System audio access needs attention. Check system audio access, then try again.";
+  }
   return "Recording needs attention. Try again.";
 }
 
@@ -1329,6 +1433,7 @@ const styles = StyleSheet.create({
   sidebarPane: { width: 272, flexShrink: 0, minHeight: 0 },
   tabletSidebarPane: { width: 248 },
   phoneList: { flex: 1, minWidth: 0 },
+  phoneDetail: { flex: 1, minWidth: 0, minHeight: 0 },
   sidebar: { flex: 1, minHeight: 0, backgroundColor: "rgba(255,255,255,0.015)", borderRightColor: colors.borderSoft, borderRightWidth: 1 },
   sidebarScroll: { flex: 1 },
   sidebarContent: { paddingHorizontal: 12, paddingTop: 14, paddingBottom: 24, gap: 8 },

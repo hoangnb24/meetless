@@ -18,6 +18,7 @@ export interface ProofFinalChecks {
   ownedProcessGroupsGone: boolean;
   isolatedListenersGone: boolean;
   runtimeRootAbsent: boolean;
+  runtimeRootRestored: boolean;
   disposableSimulatorAbsent: boolean;
   simulatorTerminateChecked: boolean;
   simulatorUninstallChecked: boolean;
@@ -51,8 +52,12 @@ export interface PublishedProofEvidence {
 
 export function assertProofFinalChecks(checks: ProofFinalChecks): void {
   const failed = Object.entries(checks)
+    .filter(([name]) => name !== "runtimeRootAbsent" && name !== "runtimeRootRestored")
     .filter(([, passed]) => passed !== true)
     .map(([name]) => name);
+  if (checks.runtimeRootAbsent !== true && checks.runtimeRootRestored !== true) {
+    failed.push("runtimeRootAbsent/runtimeRootRestored");
+  }
   if (failed.length > 0) {
     throw new Error(
       `Refusing passed proof publication: final checks failed: ${failed.join(", ")}. ` +

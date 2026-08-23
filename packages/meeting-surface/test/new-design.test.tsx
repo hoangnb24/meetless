@@ -116,12 +116,66 @@ describe("new-design composition", () => {
     expect(phoneList.root.findByProps({ testID: "meeting-layout-phone" })).toBeTruthy();
     expect(phoneList.root.findByProps({ testID: "meeting-sidebar" })).toBeTruthy();
     expect(phoneList.root.findAllByProps({ testID: "meeting-detail" })).toHaveLength(0);
+    expect(phoneList.root.findByProps({ testID: "phone-list-surface" }).props["aria-hidden"]).toBe(false);
     phoneList.unmount();
 
     const phoneDetail = renderSurface({ layoutTier: "phone", selectedMeetingId: "m-1", transcript: baseTranscript, consentStatus: "granted" });
     expect(phoneDetail.root.findByProps({ testID: "meeting-detail-back" })).toBeTruthy();
     expect(phoneDetail.root.findByProps({ testID: "transcript-detail-scroll" })).toBeTruthy();
+    expect(phoneDetail.root.findByProps({ testID: "phone-list-surface" }).props.style[1]).toBeTruthy();
+    expect(phoneDetail.root.findByProps({ testID: "phone-detail-surface" }).props["aria-hidden"]).toBe(false);
     phoneDetail.unmount();
+  });
+
+  test("keeps the phone list instance mounted across detail navigation", async () => {
+    const renderer = renderSurface({ layoutTier: "phone" });
+    const listBefore = renderer.root.findByProps({ testID: "meeting-surface" });
+    await act(async () => {
+      renderer.update(
+        <MeetingListSurface
+          connectionLabel="Host online"
+          hostConnectionStatus="online"
+          hostLabel="this host"
+          meetings={[baseMeeting]}
+          onRefresh={async () => undefined}
+          layoutTier="phone"
+          selectedMeetingId="m-1"
+          transcript={baseTranscript}
+          consentStatus="granted"
+        />,
+      );
+    });
+    expect(renderer.root.findByProps({ testID: "meeting-surface" })).toBe(listBefore);
+    renderer.unmount();
+  });
+
+  test("offers Retry transcription on a failed transcript and keeps saved-audio language", async () => {
+    const onRetry = vi.fn(async () => undefined);
+    const renderer = renderSurface({
+      layoutTier: "phone",
+      selectedMeetingId: "m-1",
+      transcript: { ...baseTranscript, status: "failed", failureReason: "provider failed" },
+      consentStatus: "granted",
+      onRetryTranscription: onRetry,
+    });
+    expect(renderer.root.findAllByType("Text").some((node) => node.props.children === "Your saved audio is safe. Retry transcription when you are ready.")).toBe(true);
+    await act(async () => { renderer.root.findByProps({ testID: "transcription-retry" }).props.onPress(); });
+    expect(onRetry).toHaveBeenCalledOnce();
+    renderer.unmount();
+  });
+
+  test("explains host replacement before clearing the saved pairing", async () => {
+    const onChangeHost = vi.fn(async () => undefined);
+    const renderer = renderSurface({ layoutTier: "desktop", onChangeHost });
+    await act(async () => { renderer.root.findByProps({ testID: "change-companion-host" }).props.onPress(); });
+    expect(onChangeHost).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ testID: "change-host-confirmation" })).toBeTruthy();
+    const copy = renderer.root.findAllByType("Text").map((node) => node.props.children).join(" ");
+    expect(copy).toContain("replaces the saved pairing information on this device");
+    expect(copy).toContain("meetings remain on the desktop host");
+    await act(async () => { renderer.root.findByProps({ testID: "change-host-confirm" }).props.onPress(); });
+    expect(onChangeHost).toHaveBeenCalledOnce();
+    renderer.unmount();
   });
 
   test("keeps provider and model selection compact until expanded and exposes selected state", async () => {

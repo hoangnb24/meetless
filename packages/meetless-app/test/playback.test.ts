@@ -32,6 +32,35 @@ describe("citation playback", () => {
     expect(citationDataUrl(citation)).not.toContain("file://");
   });
 
+  test("settles browser playback as failed when media errors after start", async () => {
+    const audio = {
+      readyState: 1, currentTime: 0, onloadedmetadata: null, onerror: null,
+      play: vi.fn(async () => undefined), pause: vi.fn(),
+    };
+    const onComplete = vi.fn();
+    const onError = vi.fn();
+    const handle = await playCitationAudio(citation, () => audio, undefined, { onComplete, onError });
+    audio.onerror?.();
+    audio.onerror?.();
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(audio.pause).toHaveBeenCalledOnce();
+    handle.stop();
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
+  test("ignores a browser media error after the old selection is stopped", async () => {
+    const audio = {
+      readyState: 1, currentTime: 0, onloadedmetadata: null, onerror: null,
+      play: vi.fn(async () => undefined), pause: vi.fn(),
+    };
+    const onError = vi.fn();
+    const handle = await playCitationAudio(citation, () => audio, undefined, { onError });
+    handle.stop();
+    audio.onerror?.();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   test("rejects an unbounded citation interval", async () => {
     await expect(playCitationAudio({ ...citation, endMs: citation.startMs }, () => {
       throw new Error("must not create audio");
@@ -79,6 +108,39 @@ describe("citation playback", () => {
       createPlayer: () => { throw new Error("native player failed"); },
     })).rejects.toThrow("native player failed");
     expect(deleteClip).toHaveBeenCalledOnce();
+  });
+
+  test("settles native playback as failed on a post-start player error", async () => {
+    Platform.OS = "ios";
+    const emitStatus: { current?: (status: unknown) => void } = {};
+    const onComplete = vi.fn();
+    const onError = vi.fn();
+    const pause = vi.fn();
+    const remove = vi.fn();
+    const handle = await playCitationAudio(citation, undefined, {
+      configureAudioSession,
+      createTemporaryClip: async (_bytes, register) => {
+        const clip = { uri: "file:///cache/cited.mp3", delete: vi.fn() };
+        register(clip);
+        return clip;
+      },
+      createPlayer: () => ({
+        play: vi.fn(),
+        pause,
+        remove,
+        addListener: (_event: "playbackStatusUpdate", listener: (status: unknown) => void) => {
+          emitStatus.current = listener;
+          return { remove: vi.fn() };
+        },
+      }),
+    }, { onComplete, onError });
+    emitStatus.current?.({ error: "native media failed" });
+    emitStatus.current?.({ error: "native media failed again" });
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onComplete).not.toHaveBeenCalled();
+    handle.stop();
+    expect(pause).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledOnce();
   });
 
   test("uses one cleanup guard for file creation and player play failures", async () => {

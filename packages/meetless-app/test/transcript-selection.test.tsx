@@ -111,6 +111,39 @@ describe("transcript meeting selection ordering", () => {
     expect(surface().props.transcript).toBeNull();
   });
 
+  test("Retry transcription reuses the idempotent consent operation and refreshes the selected transcript", async () => {
+    let transcriptCalls = 0;
+    const grantTranscriptionConsent = vi.fn(async () => ({
+      consent: { status: "granted" as const, grantedAt: "2026-08-18T10:00:00.000Z" },
+      provider: { status: "configured" as const },
+    }));
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getMeetingTranscript: vi.fn(async () => {
+        transcriptCalls += 1;
+        const result = transcriptResponse("m-1", "segment-m-1", "retried transcript");
+        return transcriptCalls === 1
+          ? { ...result, transcript: { ...result.transcript, status: "failed" as const, failureReason: "provider failed" } }
+          : result;
+      }),
+      grantTranscriptionConsent,
+      listChatProviders: async () => ({ providers: [] }),
+      getMeetingChat: async () => null,
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    expect(surface().props.transcript).toMatchObject({ status: "failed" });
+    expect(surface().props.onRetryTranscription).toEqual(expect.any(Function));
+
+    await act(async () => { await surface().props.onRetryTranscription(); });
+    expect(grantTranscriptionConsent).toHaveBeenCalledOnce();
+    expect(client.getMeetingTranscript).toHaveBeenCalledTimes(2);
+    expect(surface().props.transcript).toMatchObject({ status: "ready", meetingId: "m-1" });
+  });
+
   test("late same-meeting citation success stops its stale handle and cannot replace the latest playback", async () => {
     const firstPlayback = deferred<{ stop(): void }>();
     const secondPlayback = deferred<{ stop(): void }>();

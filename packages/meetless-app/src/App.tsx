@@ -75,7 +75,15 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
 
   const invalidateConnection = useCallback(() => {
     connectionEpoch.current += 1;
+    citationSequence.current += 1;
+    playback.current?.stop();
+    playback.current = null;
     connection.current = null;
+    setCitationEvidence((current) => current ? {
+      ...current,
+      status: "failed",
+      error: "Host connection lost. Try again.",
+    } : current);
   }, []);
 
   const isCurrentConnection = useCallback((active: ActiveConnection): boolean =>
@@ -87,8 +95,15 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     const nextMeetings = await active.client.listMeetings();
     if (!isCurrentConnection(active)) return;
     setMeetings(nextMeetings);
+    if (typeof console !== "undefined") {
+      console.info(`[meetless-surface] ${JSON.stringify({
+        meetingIds: nextMeetings.map((meeting) => meeting.id),
+        mode,
+        platform: Platform.OS,
+      })}`);
+    }
     setError(null);
-  }, [isCurrentConnection]);
+  }, [isCurrentConnection, mode]);
 
   const openTranscript = useCallback(async (meetingId: string) => {
     const active = connection.current;
@@ -309,7 +324,23 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
             selectionVersion.current === selection &&
             selectedMeetingIdRef.current === citation.meetingId
           ) {
+            playback.current = null;
             setCitationEvidence((current) => current ? { ...current, status: "completed" } : current);
+          }
+        },
+        onError: () => {
+          if (
+            isCurrentConnection(active) &&
+            citationSequence.current === sequence &&
+            selectionVersion.current === selection &&
+            selectedMeetingIdRef.current === citation.meetingId
+          ) {
+            playback.current = null;
+            setCitationEvidence((current) => current ? {
+              ...current,
+              status: "failed",
+              error: "Playback stopped unexpectedly. Try the citation again.",
+            } : current);
           }
         },
       });
@@ -403,6 +434,13 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
       }
       installConnection(client);
       setMeetings(restored.meetings);
+      if (typeof console !== "undefined") {
+        console.info(`[meetless-surface] ${JSON.stringify({
+          meetingIds: restored.meetings.map((meeting) => meeting.id),
+          mode,
+          platform: Platform.OS,
+        })}`);
+      }
       setError(null);
       if (restored.detail) {
         setTranscript(restored.detail.transcript);
@@ -548,6 +586,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         consentStatus={consentStatus}
         providerStatus={providerStatus}
         onGrantTranscriptionConsent={interactive ? grantConsent : undefined}
+        onRetryTranscription={interactive && consentStatus === "granted" ? grantConsent : undefined}
         onCitation={interactive ? playCitation : undefined}
         citationEvidence={citationEvidence}
         chatProviders={chatProviders}

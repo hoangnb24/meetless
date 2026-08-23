@@ -89,6 +89,63 @@ describe("global recording strip", () => {
     expect(renderer!.root.findAllByProps({ testID: "recording-retry" })).toHaveLength(0);
     renderer!.unmount();
   });
+
+  test.each([
+    ["microphone capture failed: permission denied", "Microphone access needs attention. Check microphone access, then try again."],
+    ["system capture failed: permission denied", "System audio access needs attention. Check system audio access, then try again."],
+  ])("maps known %s failures to source-specific recovery copy", async (error, expected) => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<RecordingStrip
+        elapsedMs={0}
+        error={error}
+        onPause={async () => undefined}
+        onResume={async () => undefined}
+        onRetry={async () => undefined}
+        onStart={async () => undefined}
+        onStop={async () => undefined}
+        pending={false}
+        status={{ status: "failed", recordingId: "r-1", meetingId: "m-1", title: "Failed",
+          elapsedMs: 0, paused: false, chunks: [], inventoryState: "pending", chunkCount: 0,
+          microphoneCount: 0, systemCount: 0, inventoryDigest: null, retryEligible: false,
+          outputPath: null, error }}
+      />);
+    });
+    expect(renderer!.root.findByProps({ testID: "recording-error" }).props.children).toBe(expected);
+    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === error)).toBe(false);
+    renderer!.unmount();
+  });
+
+  test("keeps Start available after a known capture failure and shows source recovery copy", async () => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          canRecord
+          layoutTier="desktop"
+          connectionLabel="Host online"
+          hostConnectionStatus="online"
+          hostLabel="this host"
+          meetings={[]}
+          onRefresh={async () => undefined}
+          recordingSetup={{
+            available: true,
+            pending: false,
+            error: "capture start failed: microphone capture failed: permission denied",
+            onStart: async () => undefined,
+          }}
+        />,
+      );
+    });
+    await act(async () => { renderer!.root.findByProps({ testID: "record-meeting-entry" }).props.onPress(); });
+    expect(renderer!.root.findByProps({ testID: "recording-setup-error" }).props.children)
+      .toBe("Microphone access needs attention. Check microphone access, then try again.");
+    const start = renderer!.root.findByProps({ testID: "recording-start" });
+    expect(start.props.disabled).toBe(true);
+    await act(async () => { renderer!.root.findByProps({ testID: "recording-setup-title" }).props.onChangeText("Retry source"); });
+    expect(renderer!.root.findByProps({ testID: "recording-start" }).props.disabled).toBe(false);
+    renderer!.unmount();
+  });
 });
 
 describe("companion meeting surface", () => {
@@ -184,6 +241,9 @@ describe("companion meeting surface", () => {
     expect(renderer!.root.findByProps({ testID: "chat-question-input" }).props.editable).toBe(false);
     expect(renderer!.root.findByProps({ testID: "chat-ask" }).props.disabled).toBe(true);
     await act(async () => { renderer!.root.findByProps({ testID: "detail-change-companion-host" }).props.onPress(); });
+    expect(onChangeHost).not.toHaveBeenCalled();
+    expect(renderer!.root.findByProps({ testID: "change-host-confirmation" })).toBeTruthy();
+    await act(async () => { renderer!.root.findByProps({ testID: "change-host-confirm" }).props.onPress(); });
     expect(onChangeHost).toHaveBeenCalledOnce();
     renderer!.unmount();
   });

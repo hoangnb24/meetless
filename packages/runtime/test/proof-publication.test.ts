@@ -15,6 +15,7 @@ const passedChecks: ProofFinalChecks = {
   ownedProcessGroupsGone: true,
   isolatedListenersGone: true,
   runtimeRootAbsent: true,
+  runtimeRootRestored: false,
   disposableSimulatorAbsent: true,
   simulatorTerminateChecked: true,
   simulatorUninstallChecked: true,
