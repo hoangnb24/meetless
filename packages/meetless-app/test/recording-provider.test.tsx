@@ -82,7 +82,7 @@ describe("production recording UI status delivery", () => {
 
     expect(renderer!.root.findByProps({ testID: "recording-stop" })).toBeTruthy();
     expect(renderer!.root.findByProps({ testID: "recording-pause-resume" })).toBeTruthy();
-    expect(renderer!.root.findAllByType("Text").map((node) => node.children.join(""))).toContain("00:01 · recording");
+    expect(renderer!.root.findAllByType("Text").map((node) => node.children.join(""))).toContain("Recording · 00:01");
   });
 
   test.each([
@@ -91,7 +91,7 @@ describe("production recording UI status delivery", () => {
       command: "start",
       initial: idle,
       response: { ...recording, status: "failed" as const, error: "capture start failed" },
-      expectedError: "start rejected",
+      expectedError: "No usable recording was preserved.",
       retryVisible: false,
     },
     {
@@ -99,7 +99,7 @@ describe("production recording UI status delivery", () => {
       command: "start",
       initial: idle,
       response: { ...recording, status: "recoverable" as const, error: "capture start interrupted" },
-      expectedError: "start rejected with retained chunks",
+      expectedError: "Completed audio is safe. Retry save is available.",
       retryVisible: false,
     },
     {
@@ -109,7 +109,7 @@ describe("production recording UI status delivery", () => {
       response: { ...recording, status: "recoverable" as const, inventoryState: "complete" as const,
         chunkCount: 2, microphoneCount: 1, systemCount: 1, inventoryDigest: "digest", retryEligible: true,
         error: "finalization interrupted" },
-      expectedError: "stop rejected",
+      expectedError: "Completed audio is safe. Retry save is available.",
       retryVisible: true,
     },
     {
@@ -121,7 +121,7 @@ describe("production recording UI status delivery", () => {
       response: { ...recording, status: "recoverable" as const, inventoryState: "complete" as const,
         chunkCount: 2, microphoneCount: 1, systemCount: 1, inventoryDigest: "digest", retryEligible: true,
         error: "MP3 retry failed" },
-      expectedError: "retryFinalization rejected",
+      expectedError: "Completed audio is safe. Retry save is available.",
       retryVisible: true,
     },
   ])("uses the correlated $caseName status when no separate status event arrives", async ({ command, initial, response, expectedError, retryVisible }) => {
@@ -172,6 +172,6 @@ describe("production recording UI status delivery", () => {
 
     expect(renderer!.root.findByType(RecordingStrip).props.status).toEqual(response);
     expect(renderer!.root.findByProps({ testID: "recording-error" }).children.join("")).toBe(expectedError);
-    expect(renderer!.root.findAllByProps({ testID: "recording-retry" }).length).toBe(retryVisible ? 1 : 0);
+    expect(renderer!.root.findAllByProps({ testID: "recording-retry" }).length > 0).toBe(retryVisible);
   });
 });

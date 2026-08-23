@@ -47,7 +47,7 @@ describe("global recording strip", () => {
       paddingTop: 38,
     });
     expect(renderer!.root.findByProps({ testID: "recording-error" }).props.children)
-      .toBe("No valid committed media survived inventory reconciliation");
+      .toBe("No usable recording was preserved.");
     renderer!.unmount();
   });
 
@@ -98,6 +98,7 @@ describe("companion meeting surface", () => {
       renderer = TestRenderer.create(
         <MeetingListSurface
           canCreate={false}
+          layoutTier="desktop"
           compact
           connectionLabel="Host offline"
           hostConnectionStatus="offline"
@@ -119,6 +120,7 @@ describe("companion meeting surface", () => {
       renderer = TestRenderer.create(
         <MeetingListSurface
           canCreate={false}
+          layoutTier="desktop"
           compact
           connectionLabel="Reconnecting"
           hostConnectionStatus="reconnecting"
@@ -141,6 +143,7 @@ describe("companion meeting surface", () => {
       renderer = TestRenderer.create(
         <MeetingListSurface
           canCreate={false}
+          layoutTier="desktop"
           compact
           connectionLabel="Reconnecting to paired host…"
           hostConnectionStatus="reconnecting"
@@ -175,7 +178,7 @@ describe("companion meeting surface", () => {
 
     expect(renderer!.root.findByProps({ testID: "detail-host-reconnecting" })).toBeTruthy();
     expect(renderer!.root.findByProps({ testID: "citation-segment-1" }).props.disabled).toBe(true);
-    expect(renderer!.root.findByProps({ testID: "chat-model-codex-gpt-5" }).props.disabled).toBe(true);
+    expect(renderer!.root.findByProps({ testID: "chat-provider-trigger" }).props.disabled).toBe(true);
     expect(renderer!.root.findByProps({ testID: "chat-citation-segment-1" }).props.disabled).toBe(true);
     expect(renderer!.root.findByProps({ testID: "chat-retry" }).props.disabled).toBe(true);
     expect(renderer!.root.findByProps({ testID: "chat-question-input" }).props.editable).toBe(false);
@@ -204,7 +207,9 @@ describe("companion meeting surface", () => {
 
     expect(renderer!.root.findAllByProps({ testID: "desktop-create-controls" })).toHaveLength(0);
     expect(renderer!.root.findAllByProps({ testID: "meeting-create-button" })).toHaveLength(0);
-    expect(renderer!.root.findByProps({ testID: "companion-read-only" })).toBeTruthy();
+    expect(renderer!.root.findAllByProps({ testID: "record-meeting-entry" })).toHaveLength(0);
+    expect(renderer!.root.findAllByType("Text").some((node) =>
+      node.props.children === "Companion library · recording happens on desktop")).toBe(true);
     expect(onCreate).not.toHaveBeenCalled();
     renderer!.unmount();
   });
@@ -246,7 +251,7 @@ describe("companion meeting surface", () => {
     await act(async () => {
       renderer = TestRenderer.create(
         <MeetingListSurface
-          canCreate={false} compact connectionLabel="Connected" hostLabel="isolated host"
+          canCreate={false} layoutTier="desktop" connectionLabel="Connected" hostLabel="isolated host"
           meetings={[meeting("m-1")]} onRefresh={async () => undefined}
           selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
           chatProviders={[{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }]}
@@ -279,7 +284,7 @@ describe("companion meeting surface", () => {
     await act(async () => {
       renderer = TestRenderer.create(
         <MeetingListSurface
-          canCreate={false} compact connectionLabel="Connected" hostLabel="isolated host"
+          canCreate={false} layoutTier="desktop" connectionLabel="Connected" hostLabel="isolated host"
           meetings={[meeting("m-1")]} onRefresh={async () => undefined}
           selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
           chatProviders={[{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }]}
@@ -307,12 +312,17 @@ describe("responsive meeting sidebar and transcript detail", () => {
     expect(m1Proof).toContain('locator("xpath=ancestor::*[@data-testid and @role=\'button\']")');
     expect(m1Proof).toContain("meeting-row ancestor is absent");
     expect(m1Proof).toContain("meeting-row ancestor is ambiguous");
+    expect(m1Proof).toContain('getByTestId("record-meeting-entry")');
+    expect(m1Proof).toContain('getByTestId("recording-setup-title")');
+    expect(m1Proof).toContain('getByTestId("recording-start")');
+    expect(m1Proof).not.toContain('getByText("Create meeting", { exact: true })');
     expect(m1Proof).not.toContain('electronMeetingTitle.locator("..")');
     expect(m1Proof).not.toContain('webMeetingTitle.locator("..")');
 
     const postM3Proof = readFileSync(new URL("../../../scripts/prove-post-m3.mjs", import.meta.url), "utf8");
     expect(postM3Proof).toContain('const meetingRow = page.locator(`[data-testid="meeting-${storeSnapshot.meeting.id}"]`);');
     expect(postM3Proof).toContain('[data-testid="transcript-ready"]');
+    expect(postM3Proof).toContain('getByTestId("chat-provider-trigger").click()');
     expect(postM3Proof).not.toContain("meeting-transcript-${storeSnapshot.meeting.id}");
     expect(postM3Proof).not.toContain('[data-testid="transcript-panel"]');
   });
@@ -335,7 +345,7 @@ describe("responsive meeting sidebar and transcript detail", () => {
     });
 
     const row = renderer!.root.findByProps({ testID: "meeting-m-1" });
-    expect(row.props.accessibilityState).toEqual({ selected: false });
+    expect(row.props.accessibilityState).toEqual({ disabled: false, selected: false });
     expect(row.props["aria-selected"]).toBe(false);
     await act(async () => { row.props.onPress(); });
     expect(onOpenTranscript).toHaveBeenCalledWith("m-1");
@@ -359,12 +369,12 @@ describe("responsive meeting sidebar and transcript detail", () => {
     });
     const selectedRow = renderer!.root.findByProps({ testID: "meeting-m-1" });
     const unselectedRow = renderer!.root.findByProps({ testID: "meeting-m-2" });
-    expect(selectedRow.props.accessibilityState).toEqual({ selected: true });
+    expect(selectedRow.props.accessibilityState).toEqual({ disabled: false, selected: true });
     expect(selectedRow.props["aria-selected"]).toBe(true);
-    expect(unselectedRow.props.accessibilityState).toEqual({ selected: false });
+    expect(unselectedRow.props.accessibilityState).toEqual({ disabled: false, selected: false });
     expect(unselectedRow.props["aria-selected"]).toBe(false);
-    expect(renderer!.root.findByProps({ testID: "meeting-sidebar-pane" }).props.style).toMatchObject({ width: 320 });
-    expect(renderer!.root.findByProps({ testID: "meeting-detail-pane" }).props.style).toMatchObject({ flex: 1, minWidth: 400 });
+    expect(renderer!.root.findByProps({ testID: "meeting-sidebar-pane" }).props.style[0]).toMatchObject({ width: 272 });
+    expect(renderer!.root.findByProps({ testID: "meeting-detail-pane" }).props.style).toMatchObject({ flex: 1, minWidth: 0 });
     renderer!.unmount();
   });
 

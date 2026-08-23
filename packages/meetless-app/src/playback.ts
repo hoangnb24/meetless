@@ -16,6 +16,10 @@ export interface CitationPlaybackHandle {
   stop(): void;
 }
 
+export interface CitationPlaybackOptions {
+  onComplete?(): void;
+}
+
 export interface NativeCitationPlayer {
   play(): void;
   pause(): void;
@@ -35,9 +39,10 @@ export async function playCitationAudio(
   citation: CitationWire,
   factory: CitationAudioFactory = browserAudioFactory,
   nativeDependencies: NativeCitationPlaybackDependencies = defaultNativeDependencies,
+  options: CitationPlaybackOptions = {},
 ): Promise<CitationPlaybackHandle> {
   validateCitation(citation);
-  if (Platform.OS !== "web") return playNativeCitation(citation, nativeDependencies);
+  if (Platform.OS !== "web") return playNativeCitation(citation, nativeDependencies, options.onComplete);
   const audio = factory(citationDataUrl(citation));
   await waitForMetadata(audio);
   audio.currentTime = 0;
@@ -49,6 +54,7 @@ export async function playCitationAudio(
       stopped = true;
       clearInterval(timer);
       audio.pause();
+      options.onComplete?.();
     }
   }, 40);
   return {
@@ -63,6 +69,7 @@ export async function playCitationAudio(
 async function playNativeCitation(
   citation: CitationWire,
   dependencies: NativeCitationPlaybackDependencies,
+  onComplete?: () => void,
 ): Promise<CitationPlaybackHandle> {
   const cleanup = new NativeCleanupGuard();
   try {
@@ -80,7 +87,10 @@ async function playNativeCitation(
     cleanup.register(() => player.remove());
     cleanup.register(() => player.pause());
     player.play();
-    const timer = setTimeout(() => cleanup.run(), citation.endMs - citation.startMs);
+    const timer = setTimeout(() => {
+      onComplete?.();
+      cleanup.run();
+    }, citation.endMs - citation.startMs);
     cleanup.register(() => clearTimeout(timer));
     return { stop: () => cleanup.run() };
   } catch (error) {

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Preview · Spacing · Radius · Elevation</title>
+<link rel="stylesheet" href="../tokens.css"/>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html,body{margin:0;background:var(--bg);color:var(--fg)}
+  body{padding:34px;font-family:var(--font-body);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:820px;margin:0 auto}
+  h1{font-family:var(--font-display);font-size:24px;font-weight:590;letter-spacing:-.015em;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 28px}
+  .sec{margin:0 0 30px}
+  .sec h2{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:16px}
+  .srow{display:flex;align-items:flex-end;flex-wrap:wrap}
+  .s{width:18px;display:inline-block}
+  .sbox{display:flex;flex-direction:column;align-items:center}
+  .bar{width:var(--space-1);height:var(--space-1);background:var(--accent)}
+  .srow>div{display:flex;flex-direction:column;align-items:center;margin-right:60px}
+  .sk{width:var(--space-1);height:var(--space-1);background:color-mix(in oklch,var(--accent) 80%,transparent)}
+  .unit{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:8px}
+  .r{width:140px;height:84px;background:color-mix(in oklch,var(--fg) 3%,transparent);border:1px solid var(--border)}
+  .r .lab{font-family:var(--font-mono);font-size:11px;color:var(--fg-2)}
+  .radrow{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
+  .srow2{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+  .elev{width:200px;height:110px;background:var(--surface);border-radius:12px;display:flex;align-items:center;justify-content:center}
+  .elev .l{font-family:var(--font-mono);font-size:11px;color:var(--fg-2)}
+  .state{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+  .st{border:1px solid var(--border-soft);border-radius:10px;padding:14px}
+  .st b{font-size:13px;font-weight:510}
+  .st .cr{margin-top:8px;display:flex;gap:8px}
+  .cr{height:30px;padding:0 12px;border-radius:6px;background:var(--accent);color:#fff;font-size:12.5px;display:inline-flex;align-items:center}
+</style>
+</head>
+<body class="ds">
+<div class="wrap">
+  <h1>Spacing · Radius · Elevation</h1>
+  <p class="sub">4px base unit, compact density, Linear-family radii and single-layer elevation</p>
+
+  <div class="sec"><h2>Spacing scale (px)</h2>
+    <div class="srow">
+      <div><div class="sk" style="width:4px;height:4px"></div><div class="unit">4</div></div>
+      <div><div class="sk" style="width:8px;height:8px"></div><div class="unit">8</div></div>
+      <div><div class="sk" style="width:12px;height:12px"></div><div class="unit">12</div></div>
+      <div><div class="sk" style="width:16px;height:16px"></div><div class="unit">16</div></div>
+      <div><div class="sk" style="width:20px;height:20px"></div><div class="unit">20</div></div>
+      <div><div class="sk" style="width:24px;height:24px"></div><div class="unit">24</div></div>
+      <div><div class="sk" style="width:32px;height:32px"></div><div class="unit">32</div></div>
+      <div><div class="sk" style="width:48px;height:48px"></div><div class="unit">48</div></div>
+    </div>
+    <p class="sub" style="margin-top:10px">Density: rows 9–12px · panes 24px · shells 52/56px vertical chrome.</p>
+  </div>
+
+  <div class="sec"><h2>Radius</h2><div class="radrow">
+    <div class="r"><div class="lab">radius-sm · 6px</div></div>
+    <div class="r" style="border-radius:8px"><div class="lab">md · 8px</div></div>
+    <div class="r" style="border-radius:12px"><div class="lab">lg · 12px</div></div>
+    <div class="r" style="border-radius:999px;width:160px"><div class="lab">pill · 9999px</div></div>
+  </div></div>
+
+  <div class="sec"><h2>Elevation</h2><div class="radrow">
+    <div class="elev"><div class="l">Flat</div></div>
+    <div class="elev" style="box-shadow:var(--elev-ring)"><div class="l">Ring</div></div>
+    <div class="elev" style="box-shadow:var(--elev-raised)"><div class="l">Raised</div></div>
+    <div class="elev" style="box-shadow:var(--focus-ring)"><div class="l">Focus ring</div></div>
+  </div></div>
+
+</div>
+</body>
+</html>

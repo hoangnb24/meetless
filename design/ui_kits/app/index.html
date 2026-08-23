@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Meetless · Applied UI kit</title>
+<link rel="stylesheet" href="../../tokens.css"/>
+<link rel="stylesheet" href="../../colors_and_type.css"/>
+<style>
+  html,body{margin:0;background:var(--bg);color:var(--fg);height:100%}
+  body{font-family:var(--font-body);font-feature-settings:"cv01","ss03";-webkit-font-smoothing:antialiased;overflow:hidden}
+  .topbar{height:52px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border-soft);background:color-mix(in oklch,var(--bg) 96%,transparent)}
+  .brand{display:flex;align-items:center;gap:8px;font-weight:590;font-size:15px;letter-spacing:-.01em}
+  .mark{width:18px;height:18px;border-radius:5px;background:var(--accent);position:relative}
+  .mark::after{content:"";position:absolute;inset:5px;border-radius:2px;background:var(--bg)}
+  .mono-xs{font-family:var(--font-mono);font-size:11.5px;color:var(--muted)}
+  .side{width:250px;border-right:1px solid var(--border-soft);background:color-mix(in oklch,var(--bg) 60%,transparent);padding:14px 12px;overflow-y:auto}
+  .side a{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border-radius:6px;font-size:13px;color:var(--fg-2);text-decoration:none;text-align:left}
+  .side a:hover{color:var(--fg);background:color-mix(in oklch,var(--fg) 5%,transparent)}
+  .side a.on{color:var(--fg);background:color-mix(in oklch,var(--accent) 12%,transparent)}
+  .gh{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:8px 10px}
+  .area{flex:1;min-width:0;display:flex;overflow:hidden;background:var(--bg)}
+  .area iframe{flex:1;height:100%;border:0;background:var(--bg)}
+</style>
+</head>
+<body>
+<div style="display:flex;flex-direction:column;height:100vh">
+  <div class="topbar"><span class="brand"><span class="mark"></span>Meetless · Applied UI kit</span>
+    <div style="flex:1"></div><span class="mono-xs">ui_kits/app</span></div>
+  <div style="display:flex;flex:1;min-height:0">
+    <aside class="side">
+      <div class="gh">Screens</div>
+      <a href="library.html" data-src="library.html">Meeting library</a>
+      <a href="detail.html" data-src="detail.html">Meeting detail · Transcript | Ask</a>
+      <a href="recording.html" data-src="recording.html">Recording strip + setup</a>
+      <a href="sources.html" data-src="sources.html">Recording sources · Proposed / repair</a>
+      <a href="pairing.html" data-src="pairing.html">Companion pairing</a>
+      <div class="gh">References</div>
+      <a href="../../examples/meetless-prototype.html" data-src="../../examples/meetless-prototype.html">Prototype (source)</a>
+      <a href="../../preview/components-buttons.html" data-src="../../preview/components-buttons.html">Components</a>
+      <a href="../../DESIGN.md" data-src="../../DESIGN.md">DESIGN.md</a>
+    </aside>
+    <section class="area"><iframe id="frame" src="library.html" title="kit surface"></iframe></section>
+  </div>
+</div>
+<script>
+const links=document.querySelectorAll('.side a');
+links.forEach(a=>{a.addEventListener('click',()=>{const s=a.getAttribute('data-src');if(s)document.getElementById('frame').src=s;});});
+</script>
+</body>
+</html>

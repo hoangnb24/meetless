@@ -1,0 +1,84 @@
+/* ─────────────────────────────────────────────────────────────
+   Web Prototype Design System — colors & type
+   Project: Meetless (source: Web Prototype / Linear-app system)
+
+   Self-contained: defines the full token contract locally, so this
+   file can be used alone. When a project also pastes tokens.css
+   verbatim, the :root here is identical — no conflict.
+   ───────────────────────────────────────────────────────────── */
+
+:root {
+  --bg:#08090a; --surface:#191a1b; --surface-warm:var(--surface);
+  --fg:#f7f8f8; --fg-2:#d0d6e0; --muted:#8a8f98; --meta:#62666d;
+  --border:rgba(255,255,255,.08); --border-soft:rgba(255,255,255,.05);
+  --accent:#5e6ad2; --accent-on:#ffffff; --accent-hover:#828fff; --accent-active:#4752c4;
+  --success:#27a644; --warn:#eab308; --danger:#dc2626;
+  --font-display:"Inter Variable", "Inter", "SF Pro Display", -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-body:"Inter Variable", "Inter", "SF Pro Display", -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono:"Berkeley Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --text-xs:12px; --text-sm:14px; --text-base:16px; --text-lg:18px;
+  --text-xl:24px; --text-2xl:32px; --text-3xl:48px; --text-4xl:72px;
+  --leading-body:1.5; --leading-tight:1.00; --tracking-display:-.022em;
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+  --space-5:20px; --space-6:24px; --space-8:32px; --space-12:48px;
+  --section-y-desktop:80px; --section-y-tablet:48px; --section-y-phone:32px;
+  --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-pill:9999px;
+  --elev-flat:none;
+  --elev-ring:0 0 0 1px var(--border);
+  --elev-raised:rgba(0,0,0,.4) 0 2px 4px, 0 0 0 1px rgba(255,255,255,.05);
+  --focus-ring:0 0 0 2px color-mix(in oklab,var(--accent),transparent 30%), 0 4px 12px rgba(0,0,0,.1);
+  --motion-fast:150ms; --motion-base:200ms; --ease-standard:cubic-bezier(.2,0,0,1);
+  --container-max:1200px;
+  --container-gutter-desktop:24px; --container-gutter-tablet:16px; --container-gutter-phone:12px;
+}
+
+/* ── base reset (scoped to design-system surfaces) ─────────── */
+.ds { font-family: var(--font-body); color: var(--fg); }
+.ds *, .ds { box-sizing: border-box; }
+
+/* ── typography ──────────────────────────────────────────────
+   Inter Variable for display + body (data-dense tool family).
+   Weight capped at 590 — Linear convention, never 700.
+   Berkeley Mono reserved for time codes, ids, metadata, code. */
+
+.ds .display-3xl { font-family: var(--font-display); font-size: var(--text-4xl); font-weight: 590; line-height: 1.05; letter-spacing: -0.022em; }
+.ds .display-2xl { font-family: var(--font-display); font-size: var(--text-3xl); font-weight: 590; line-height: 1.06; letter-spacing: -0.02em; }
+.ds .display-xl  { font-family: var(--font-display); font-size: var(--text-2xl); font-weight: 590; line-height: 1.1;  letter-spacing: -0.015em; }
+.ds .display-lg  { font-family: var(--font-display); font-size: var(--text-xl);  font-weight: 590; line-height: 1.2;  letter-spacing: -0.012em; }
+
+.ds .body-lg   { font-size: var(--text-base); font-weight: 480; line-height: var(--leading-body); }
+.ds .body      { font-size: var(--text-sm)  ; font-weight: 440; line-height: 1.5; }
+.ds .body-sm   { font-size: var(--text-xs)  ; font-weight: 440; line-height: 1.5; }
+.ds .label     { font-size: 13px; font-weight: 510; line-height: 1.4; letter-spacing: -0.005em; }
+
+.ds .caption   { font-size: 12px; font-weight: 440; color: var(--muted); line-height: 1.4; }
+.ds .overline  { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+.ds .mono      { font-family: var(--font-mono); color: var(--fg-2); }
+.ds .mono-xs   { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ds .mono-tab  { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.ds .code {
+  font-family: var(--font-mono); font-size: var(--text-xs); padding: 2px 6px;
+  background: color-mix(in oklch, var(--fg) 6%, transparent);
+  border: 1px solid var(--border-soft); border-radius: var(--radius-sm); color: var(--fg-2);
+}
+
+/* ── semantic text pairings (always resolved on canvas) ───── */
+.ds .text-muted  { color: var(--muted); }
+.ds .text-meta   { color: var(--meta); }
+.ds .text-fg2    { color: var(--fg-2); }
+.ds .text-accent { color: var(--accent-hover); }
+.ds .text-success{ color: var(--success); }
+.ds .text-warn   { color: var(--warn); }
+.ds .text-danger { color: color-mix(in oklch, var(--danger) 74%, var(--fg)); }
+
+/* ── surfaces & wells ──────────────────────────────────────── */
+.ds .well     { background: color-mix(in oklch, var(--fg) 2.5%, transparent); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.ds .surface  { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--elev-raised); }
+.ds .hairline { border: 1px solid var(--border-soft); }
+.ds .divider  { height: 1px; background: var(--border-soft); }
+.ds .ring     { box-shadow: var(--elev-ring); }
+
+/* ── focus & selection (never lower contrast) ─────────── */
+.ds :focus-visible { outline: 2px solid color-mix(in oklch, var(--accent) 55%, transparent); outline-offset: 2px; }
+.ds [data-selected="true"] { box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 38%, transparent), var(--focus-ring); }

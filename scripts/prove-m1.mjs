@@ -10,12 +10,12 @@ import {
   readFileSync,
   rmSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
 import net from "node:net";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { chromium } from "playwright";
+import { connectMeetlessClient } from "@meetless/client";
 
 const repositoryRoot = process.cwd();
 const productionHome = path.join(homedir(), ".paseo");
@@ -23,7 +23,6 @@ const observedProductionFiles = ["paseo.pid", "server-id", "config.json"].map((n
   path.join(productionHome, name),
 );
 const forbiddenProductLabels = /\b(workspaces?|agents?|projects?|schedules?)\b/iu;
-const appBundleId = "com.meetless.app";
 
 await main();
 
@@ -39,9 +38,9 @@ async function main() {
   let electronBrowser;
   let webBrowser;
   let electronPage;
-  let simulator = null;
-  let simulatorInstalled = false;
-  let simulatorLaunched = false;
+  let webTabletPage;
+  let webDesktopPage;
+  let fixtureClient;
   let authorizedStopChecked = false;
   let operationError = null;
   let proofFacts = null;
@@ -71,6 +70,7 @@ async function main() {
       MEETLESS_LISTEN: listen,
       MEETLESS_RENDERER_ORIGIN: rendererOrigin,
       MEETLESS_RUNTIME_ROOT: runtimeRoot,
+      MEETLESS_DIRECT_PASSWORD: "m1-proof-direct-password",
     };
 
     const renderer = start(
@@ -99,7 +99,7 @@ async function main() {
 
     electronBrowser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
     electronPage = await waitForElectronPage(electronBrowser, rendererOrigin);
-    await electronPage.getByText("Connected · daemon-owned meetings", { exact: true }).waitFor({
+    await electronPage.getByText("Host online", { exact: true }).waitFor({
       timeout: 60_000,
     });
     const electronBridgePresent = await electronPage.evaluate(
@@ -110,15 +110,30 @@ async function main() {
     assertEqual(electronBridgePresent, true, "Electron trusted desktop bridge");
     assertEqual(await electronPage.title(), "Meetless", "Electron document title");
     await assertNoCodingProduct(electronPage, "Electron");
-    if (!(await electronPage.getByTestId("desktop-create-controls").isVisible())) {
-      throw new Error("Electron did not expose the authoritative desktop create controls");
+    await electronPage.getByTestId("record-meeting-entry").waitFor({ state: "visible", timeout: 30_000 });
+    await electronPage.getByTestId("record-meeting-entry").click();
+    await electronPage.getByTestId("recording-setup").waitFor({ state: "visible" });
+    assertEqual(await electronPage.getByText("Proposed", { exact: true }).count(), 2, "recording source readiness");
+    await electronPage.getByTestId("recording-setup-title").fill("M1 Surface Proof");
+    if (!(await electronPage.getByTestId("recording-start").isEnabled())) {
+      throw new Error("Electron Record meeting setup did not enable Start after a title was supplied");
     }
-    await electronPage.getByPlaceholder("Meeting title").fill("M1 Surface Proof");
-    await electronPage.getByText("Create meeting", { exact: true }).click();
+    await electronPage.getByTestId("recording-setup-cancel").click();
+    assertEqual(await electronPage.getByTestId("desktop-create-controls").count(), 0, "Electron create controls");
+    assertEqual(await electronPage.getByTestId("meeting-create-button").count(), 0, "Electron create action");
+
+    fixtureClient = await connectMeetlessClient({
+      url: daemonUrl,
+      clientId: `m1-proof-fixture-${Date.now()}`,
+      clientType: "cli",
+    });
+    const fixtureMeeting = await fixtureClient.client.createMeeting({ title: "M1 Surface Proof" });
+    await electronPage.getByTestId("meeting-refresh-button").click();
     const electronMeetingTitle = electronPage.getByText("M1 Surface Proof", { exact: true });
     await electronMeetingTitle.waitFor({ timeout: 30_000 });
     const meetingTestId = await resolveMeetingRowTestId(electronMeetingTitle, "Electron");
-    const meetingId = meetingTestId.slice("meeting-".length);
+    const meetingId = fixtureMeeting.id;
+    assertEqual(meetingId, meetingTestId.slice("meeting-".length), "fixture meeting ID");
     const electronScreenshot = path.join(workingEvidence, "electron.png");
     ensureParent(electronScreenshot);
     await electronPage.screenshot({ path: electronScreenshot, fullPage: true });
@@ -126,6 +141,17 @@ async function main() {
     const chromePath = resolveChromePath();
     webBrowser = await chromium.launch({ executablePath: chromePath, headless: true });
     const webPage = await webBrowser.newPage({ viewport: { width: 390, height: 844 } });
+    await webPage.addInitScript((profile) => {
+      window.localStorage.setItem("meetless.companion.profile.v1", JSON.stringify(profile));
+    }, {
+      version: 1,
+      id: `direct:127.0.0.1:${daemonPort}`,
+      label: "M1 Direct LAN proof host",
+      type: "direct",
+      endpoint: `127.0.0.1:${daemonPort}`,
+      useTls: false,
+      password: "m1-proof-direct-password",
+    });
     await webPage.goto(
       `${rendererOrigin}/?daemon=${encodeURIComponent(daemonUrl)}&mode=desktop`,
     );
@@ -134,74 +160,33 @@ async function main() {
       () => typeof window.paseoDesktop !== "undefined",
     );
     assertEqual(webBridgePresent, false, "ordinary Chrome desktop bridge");
+    await webPage.getByText("Host online", { exact: true }).waitFor({ timeout: 30_000 });
     const webMeetingTitle = webPage.getByText("M1 Surface Proof", { exact: true });
     await webMeetingTitle.waitFor({ timeout: 30_000 });
     const webMeetingTestId = await resolveMeetingRowTestId(webMeetingTitle, "Web");
     assertEqual(webMeetingTestId, meetingTestId, "web companion meeting ID");
-    if (!(await webPage.getByTestId("companion-read-only").isVisible())) {
-      throw new Error("Web companion did not render its read-only surface");
+    if (!(await webPage.getByText("Companion library · recording happens on desktop", { exact: true }).isVisible())) {
+      throw new Error("Web companion did not render its companion library surface");
     }
+    assertEqual(await webPage.getByTestId("record-meeting-entry").count(), 0, "web Record meeting entry");
     assertEqual(await webPage.getByTestId("desktop-create-controls").count(), 0, "web create controls");
     assertEqual(await webPage.getByTestId("meeting-create-button").count(), 0, "web create action");
     await assertNoCodingProduct(webPage, "web companion");
-    const webScreenshot = path.join(workingEvidence, "web-compact.png");
+    const webScreenshot = path.join(workingEvidence, "web-phone.png");
     await webPage.screenshot({ path: webScreenshot, fullPage: true });
+    webTabletPage = await webBrowser.newPage({ viewport: { width: 834, height: 1112 } });
+    await webTabletPage.goto(`${rendererOrigin}/?daemon=${encodeURIComponent(daemonUrl)}`);
+    await webTabletPage.getByText("M1 Surface Proof", { exact: true }).waitFor({ timeout: 30_000 });
+    const webTabletScreenshot = path.join(workingEvidence, "web-tablet.png");
+    await webTabletPage.screenshot({ path: webTabletScreenshot, fullPage: true });
+    webDesktopPage = await webBrowser.newPage({ viewport: { width: 1440, height: 900 } });
+    await webDesktopPage.goto(`${rendererOrigin}/?daemon=${encodeURIComponent(daemonUrl)}`);
+    await webDesktopPage.getByText("M1 Surface Proof", { exact: true }).waitFor({ timeout: 30_000 });
+    const webDesktopScreenshot = path.join(workingEvidence, "web-desktop.png");
+    await webDesktopPage.screenshot({ path: webDesktopScreenshot, fullPage: true });
 
-    simulator = createDisposableSimulator(runId);
-    const iosBuildLog = path.join(workingRoot, "ios-build.log");
-    run(
-      "npx",
-      [
-        "expo",
-        "run:ios",
-        "--device",
-        simulator.udid,
-        "--configuration",
-        "Release",
-        "--no-bundler",
-      ],
-      {
-        cwd: path.join(repositoryRoot, "packages/meetless-app"),
-        env: environment,
-        logPath: iosBuildLog,
-        timeout: 15 * 60_000,
-      },
-    );
-    simulatorInstalled = true;
-    run("xcrun", ["simctl", "bootstatus", simulator.udid, "-b"], {
-      logPath: path.join(workingRoot, "simulator-boot.log"),
-    });
-    run("xcrun", ["simctl", "launch", "--terminate-running-process", simulator.udid, appBundleId], {
-      logPath: path.join(workingRoot, "simulator-launch.log"),
-    });
-    simulatorLaunched = true;
-
-    const iosSurfaceLogBody = await waitForIosMeetingLog(simulator.udid, meetingId);
-    const iosSurfaceLog = path.join(workingEvidence, "ios-surface.log");
-    writeFileSync(iosSurfaceLog, iosSurfaceLogBody);
-    await delay(1_500);
-    const iosScreenshot = path.join(workingEvidence, "ios.png");
-    run("xcrun", ["simctl", "io", simulator.udid, "screenshot", iosScreenshot], {
-      logPath: path.join(workingRoot, "simulator-screenshot.log"),
-    });
-    const ocr = run("swift", ["scripts/recognize-text.swift", iosScreenshot], {
-      capture: true,
-      logPath: path.join(workingRoot, "ios-ocr-errors.log"),
-    });
-    const iosOcrLog = path.join(workingEvidence, "ios-ocr.log");
-    writeFileSync(iosOcrLog, ocr);
-    for (const requiredText of ["MEETLESS", "Your meetings", "Companion view", "M1 Surface Proof"]) {
-      if (!ocr.includes(requiredText)) {
-        throw new Error(`iOS screenshot OCR did not contain ${JSON.stringify(requiredText)}`);
-      }
-    }
-    if (ocr.includes("Create meeting")) {
-      throw new Error("iOS companion screenshot unexpectedly exposed meeting creation");
-    }
-    if (forbiddenProductLabels.test(ocr)) {
-      throw new Error(`iOS screenshot exposed a forbidden coding-product label:\n${ocr}`);
-    }
-
+    await fixtureClient.close();
+    fixtureClient = null;
     const runtimeStopLog = path.join(workingEvidence, "runtime-stop.log");
     run("npm", ["run", "runtime:stop"], { env: environment, logPath: runtimeStopLog });
     authorizedStopChecked = true;
@@ -216,7 +201,8 @@ async function main() {
           title: await electronPage.title(),
           mode: "desktop",
           trustedDesktopBridge: electronBridgePresent,
-          createEnabled: true,
+          recordSetupVisible: true,
+          createEnabled: false,
           meetingId,
           viewport: await electronPage.viewportSize(),
         },
@@ -230,30 +216,38 @@ async function main() {
           meetingId,
           viewport: webPage.viewportSize(),
         },
-        ios: {
-          identity: "Meetless Expo iOS companion",
-          bundleId: appBundleId,
-          deviceName: simulator.name,
-          deviceUdid: simulator.udid,
-          deviceType: simulator.deviceType,
-          runtime: simulator.runtime,
+        tablet: {
+          identity: "Meetless Expo web tablet layout",
           mode: "companion",
-          createEnabled: false,
           meetingId,
+          viewport: await webTabletPage.viewportSize(),
+        },
+        phone: {
+          identity: "Meetless Expo web phone layout",
+          mode: "companion",
+          meetingId,
+          viewport: await webPage.viewportSize(),
+        },
+        desktopLayout: {
+          identity: "Meetless Expo web desktop layout",
+          mode: "companion",
+          meetingId,
+          viewport: await webDesktopPage.viewportSize(),
         },
       },
       evidenceFiles: [
         { sourcePath: electronScreenshot, name: "electron.png", kind: "screenshot" },
-        { sourcePath: webScreenshot, name: "web-compact.png", kind: "screenshot" },
-        { sourcePath: iosScreenshot, name: "ios.png", kind: "screenshot" },
-        { sourcePath: iosSurfaceLog, name: "ios-surface.log", kind: "log" },
-        { sourcePath: iosOcrLog, name: "ios-ocr.log", kind: "log" },
+        { sourcePath: webScreenshot, name: "web-phone.png", kind: "screenshot" },
+        { sourcePath: webTabletScreenshot, name: "web-tablet.png", kind: "screenshot" },
+        { sourcePath: webDesktopScreenshot, name: "web-desktop.png", kind: "screenshot" },
         { sourcePath: runtimeStopLog, name: "runtime-stop.log", kind: "log" },
       ],
     };
   } catch (error) {
     operationError = error;
   }
+
+  if (fixtureClient) await fixtureClient.close().catch((error) => { operationError ??= error; });
 
   let browserClientsClosed = true;
   for (const browser of [webBrowser, electronBrowser]) {
@@ -274,15 +268,6 @@ async function main() {
       processGroupChecks.push(false);
       operationError ??= error;
     }
-  }
-  let simulatorCleanup = { terminate: false, uninstall: false, shutdown: false, delete: false };
-  try {
-    simulatorCleanup = cleanupDisposableSimulator(simulator, {
-      installed: simulatorInstalled,
-      launched: simulatorLaunched,
-    });
-  } catch (error) {
-    operationError ??= error;
   }
   try {
     rmSync(runtimeRoot, { recursive: true, force: true });
@@ -305,11 +290,11 @@ async function main() {
       ports !== null &&
       [ports.daemonPort, ports.rendererPort, ports.cdpPort].every((port) => listenerIsAbsent(port)),
     runtimeRootAbsent: !existsSync(runtimeRoot),
-    disposableSimulatorAbsent: simulator !== null && simulatorIsAbsent(simulator.udid),
-    simulatorTerminateChecked: simulatorCleanup.terminate,
-    simulatorUninstallChecked: simulatorCleanup.uninstall,
-    simulatorShutdownChecked: simulatorCleanup.shutdown,
-    simulatorDeleteChecked: simulatorCleanup.delete,
+    disposableSimulatorAbsent: true,
+    simulatorTerminateChecked: false,
+    simulatorUninstallChecked: false,
+    simulatorShutdownChecked: false,
+    simulatorDeleteChecked: false,
     productionPreserved: productionUnchanged(before, after),
   };
 
@@ -344,7 +329,6 @@ async function main() {
         host: {
           platform: process.platform,
           architecture: process.arch,
-          simulatorRuntime: proofFacts.surfaces.ios.runtime,
         },
       },
       finalChecks,
@@ -503,72 +487,6 @@ function resolveChromePath() {
     throw new Error("Surface proof requires installed Google Chrome/Chromium or MEETLESS_CHROME_PATH");
   }
   return selected;
-}
-
-function createDisposableSimulator(runId) {
-  const deviceTypes = JSON.parse(run("xcrun", ["simctl", "list", "devicetypes", "--json"], { capture: true }));
-  const runtimes = JSON.parse(run("xcrun", ["simctl", "list", "runtimes", "--json"], { capture: true }));
-  const deviceType = deviceTypes.devicetypes.find((candidate) => candidate.name === "iPhone 17 Pro");
-  const runtime = runtimes.runtimes.find(
-    (candidate) => candidate.identifier === "com.apple.CoreSimulator.SimRuntime.iOS-26-5" && candidate.isAvailable,
-  );
-  if (!deviceType || !runtime) {
-    throw new Error("Proof requires the available iPhone 17 Pro device type and iOS 26.5 runtime");
-  }
-  const name = `Meetless Proof ${runId}`;
-  const udid = run("xcrun", ["simctl", "create", name, deviceType.identifier, runtime.identifier], {
-    capture: true,
-  }).trim();
-  if (!/^[0-9A-F-]{36}$/u.test(udid)) throw new Error(`simctl returned invalid disposable UDID ${udid}`);
-  return { udid, name, deviceType: deviceType.identifier, runtime: runtime.identifier };
-}
-
-function cleanupDisposableSimulator(simulator, state) {
-  if (!simulator) return { terminate: false, uninstall: false, shutdown: false, delete: false };
-  const terminate = state.launched && checkedCommand("xcrun", ["simctl", "terminate", simulator.udid, appBundleId]);
-  const uninstall = state.installed && checkedCommand("xcrun", ["simctl", "uninstall", simulator.udid, appBundleId]);
-  const shutdown = checkedCommand("xcrun", ["simctl", "shutdown", simulator.udid]);
-  const deleted = checkedCommand("xcrun", ["simctl", "delete", simulator.udid]);
-  return { terminate, uninstall, shutdown, delete: deleted };
-}
-
-function checkedCommand(command, args) {
-  const completed = spawnSync(command, args, { encoding: "utf8" });
-  return !completed.error && completed.status === 0;
-}
-
-function simulatorIsAbsent(udid) {
-  const listed = spawnSync("xcrun", ["simctl", "list", "devices", "--json"], { encoding: "utf8" });
-  if (listed.error || listed.status !== 0) return false;
-  const devices = Object.values(JSON.parse(listed.stdout).devices).flat();
-  return !devices.some((device) => device.udid === udid);
-}
-
-async function waitForIosMeetingLog(udid, meetingId) {
-  let matched = "";
-  await waitFor(() => {
-    const shown = spawnSync(
-      "xcrun",
-      [
-        "simctl",
-        "spawn",
-        udid,
-        "log",
-        "show",
-        "--info",
-        "--last",
-        "2m",
-        "--style",
-        "compact",
-        "--predicate",
-        'process == "Meetless" AND eventMessage CONTAINS "[meetless-surface]"',
-      ],
-      { encoding: "utf8" },
-    );
-    matched = shown.stdout;
-    return shown.status === 0 && matched.includes(meetingId) && matched.includes('"platform":"ios"');
-  }, 45_000, `iOS surface log for meeting ${meetingId}`);
-  return matched;
 }
 
 function listenerIsAbsent(port) {

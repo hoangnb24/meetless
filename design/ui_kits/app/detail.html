@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Kit · Meeting detail</title>
+<link rel="stylesheet" href="../../tokens.css"/>
+<link rel="stylesheet" href="app.css"/>
+</head>
+<body class="base">
+<div class="topbar">
+  <div class="brand"><span class="mark"></span>Meetless</div>
+  <span class="host-chip online"><span class="dot"></span><span class="t">Host online</span></span>
+  <div style="flex:1"></div><button class="btn btn-ghost">← Meetings</button>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)">
+  <div class="meet-head"><div class="t">Design crit — weekly sync</div>
+    <div class="meta"><span>Today</span><span>09:30</span><span>42 min</span><span class="st ready"><i></i>Ready</span></div></div>
+  <div class="detail-split">
+    <div class="pane pane-transcript">
+      <div class="pane-head"><span class="pane-title">Transcript</span></div>
+      <div class="transcript-body">
+        <button class="seg played"><span class="ts">00:00–02:51</span><span class="tx">Welcome, team. Quick agenda: billing decisions, design critique cadence, and the September roadmap.</span></button>
+        <button class="seg playing"><span class="ts">04:41–07:40</span><span class="tx">Cadence: weekly design critiques stay on the calendar through the October review. No change to the Thursday slot.</span></button>
+        <button class="seg"><span class="ts">07:41–11:03</span><span class="tx">Roadmap discussion: onboarding improvements are the only September commitment. Anything beyond that needs a written proposal.</span></button>
+        <button class="seg"><span class="ts">11:04–14:56</span><span class="tx">We reviewed the trial-usage drop. The most likely cause is activation.</span></button>
+      </div>
+    </div>
+    <div class="pane" style="display:flex;flex-direction:column;min-width:0">
+      <div class="pane-head"><span class="pane-title">Ask</span>
+        <div style="display:flex;gap:8px;align-items:center"><span class="ask-scope">This meeting only</span><button class="provider-chip">gpt-4o-mini</button></div></div>
+      <div style="padding:14px 24px;display:flex;flex-direction:column;gap:8px">
+        <div class="turn user">What did we decide about the budget for Q3?</div>
+        <div class="turn assistant"><div class="body">Stay on current tier pricing through Q3. The billing rework defers to Q4 so engineering stays focused on onboarding; September is limited to onboarding improvements.</div>
+          <div class="cite-row"><button class="cite">00:00–04:14</button><button class="cite">07:41–08:03</button></div>
+          <div class="evidence"><div class="eh">Evidence · validated segment &nbsp;00:00–04:14</div><div class="e-text">Stay on current tier pricing through Q3; the billing rework is deferred to Q4.</div><button class="btn btn-primary btn-sm" style="align-self:flex-start">Play from here</button></div>
+        </div>
+      </div>
+      <div class="ask-composer"><textarea rows="1" placeholder="Ask about this meeting…"></textarea><button class="btn btn-primary">Ask</button></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

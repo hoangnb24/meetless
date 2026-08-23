@@ -359,6 +359,7 @@ async function runM5ChatJourney(input) {
   const model = codex.models.find((candidate) => candidate.isDefault) ?? codex.models[0];
   if (!model) throw new Error("M5 Codex discovery returned no selectable model");
   await waitFor(() => input.page.locator('[data-testid="meeting-chat"]').isVisible(), "M5 chat panel");
+  await input.page.getByTestId("chat-provider-trigger").click();
   await input.page.getByTestId(`chat-model-${codex.id}-${model.id}`).click();
   await input.page.getByTestId("chat-question-input").fill("Which interval contains eight hundred eighty hertz?");
   await input.page.getByTestId("chat-ask").click();

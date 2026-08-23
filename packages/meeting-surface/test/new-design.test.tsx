@@ -1,0 +1,249 @@
+import React from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { describe, expect, test, vi } from "vitest";
+import type { RecordingStatusWire, TranscriptWire } from "@meetless/meeting-contracts";
+import { MeetingListSurface, RecordingStrip, surfaceLayout } from "../src/index.js";
+
+const baseMeeting = {
+  id: "m-1",
+  title: "Weekly sync",
+  status: "ready" as const,
+  createdAt: "2026-08-18T10:00:00.000Z",
+  updatedAt: "2026-08-18T10:00:00.000Z",
+};
+
+const baseTranscript: TranscriptWire = {
+  id: "t-1",
+  meetingId: "m-1",
+  recordingId: "r-1",
+  status: "ready",
+  plannerVersion: "m3-range-v1",
+  audioDurationMs: 2_000,
+  ranges: [
+    { ordinal: 0, startMs: 0, endMs: 1_000, segmentId: "segment-1" },
+    { ordinal: 1, startMs: 1_000, endMs: 2_000, segmentId: "segment-2" },
+  ],
+  segments: [
+    {
+      range: { ordinal: 0, startMs: 0, endMs: 1_000, segmentId: "segment-1" },
+      text: "The first decision is recorded here.",
+      completedAt: "2026-08-18T10:00:00.000Z",
+      detectedLanguages: ["en"],
+    },
+    {
+      range: { ordinal: 1, startMs: 1_000, endMs: 2_000, segmentId: "segment-2" },
+      text: "The second decision is recorded here.",
+      completedAt: "2026-08-18T10:00:01.000Z",
+      detectedLanguages: ["en"],
+    },
+  ],
+  requestCount: 1,
+  usage: null,
+  detectedLanguages: ["en"],
+  failureReason: null,
+};
+
+function renderSurface(props: Record<string, unknown>): ReactTestRenderer {
+  let renderer!: ReactTestRenderer;
+  act(() => {
+    renderer = create(
+      <MeetingListSurface
+        connectionLabel="Host online"
+        hostConnectionStatus="online"
+        hostLabel="this host"
+        meetings={[baseMeeting]}
+        onRefresh={async () => undefined}
+        {...props}
+      />,
+    );
+  });
+  return renderer;
+}
+
+describe("new-design composition", () => {
+  test("maps the three width tiers to their intended composition model", () => {
+    expect(surfaceLayout("phone")).toMatchObject({ row: { direction: "column" }, content: { padding: 12 } });
+    expect(surfaceLayout("tablet")).toMatchObject({ row: { direction: "column" }, content: { padding: 16 } });
+    expect(surfaceLayout("desktop")).toMatchObject({ row: { direction: "row" }, content: { padding: 24, maxWidth: 1200 } });
+  });
+
+  test("opens one Record meeting setup with Proposed sources and no Create meeting task", async () => {
+    const onStart = vi.fn(async () => undefined);
+    const renderer = renderSurface({
+      layoutTier: "desktop",
+      meetings: [],
+      canRecord: true,
+      recordingSetup: { available: true, pending: false, error: null, onStart },
+    });
+
+    expect(renderer.root.findAllByProps({ testID: "record-meeting-entry" }).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByType("Text").some((node) => node.props.children === "Create meeting")).toBe(false);
+    await act(async () => { renderer.root.findByProps({ testID: "record-meeting-entry" }).props.onPress(); });
+
+    expect(renderer.root.findByProps({ testID: "recording-setup" })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ testID: "recording-source-microphone" })).toHaveLength(1);
+    expect(renderer.root.findAllByProps({ testID: "recording-source-system-audio" })).toHaveLength(1);
+    expect(renderer.root.findAllByType("Text").filter((node) => node.props.children === "Proposed")).toHaveLength(2);
+
+    const start = renderer.root.findByProps({ testID: "recording-start" });
+    expect(start.props.disabled).toBe(true);
+    await act(async () => { renderer.root.findByProps({ testID: "recording-setup-title" }).props.onChangeText("  Weekly design sync  "); });
+    expect(renderer.root.findByProps({ testID: "recording-start" }).props.disabled).toBe(false);
+    await act(async () => { renderer.root.findByProps({ testID: "recording-start" }).props.onPress(); });
+
+    expect(onStart).toHaveBeenCalledWith("Weekly design sync");
+    expect(renderer.root.findAllByProps({ testID: "recording-setup" })).toHaveLength(0);
+    renderer.unmount();
+  });
+
+  test("keeps desktop transcript and Ask scroll contexts independent and narrows to one task", async () => {
+    const desktop = renderSurface({ layoutTier: "desktop", selectedMeetingId: "m-1", transcript: baseTranscript, consentStatus: "granted" });
+    expect(desktop.root.findByProps({ testID: "transcript-pane-scroll" })).toBeTruthy();
+    expect(desktop.root.findByProps({ testID: "ask-pane-scroll" })).toBeTruthy();
+    expect(desktop.root.findAllByProps({ testID: "task-switcher" })).toHaveLength(0);
+    desktop.unmount();
+
+    const tablet = renderSurface({ layoutTier: "tablet", selectedMeetingId: "m-1", transcript: baseTranscript, consentStatus: "granted" });
+    expect(tablet.root.findByProps({ testID: "task-switcher" })).toBeTruthy();
+    expect(tablet.root.findByProps({ testID: "transcript-detail-scroll" })).toBeTruthy();
+    expect(tablet.root.findAllByProps({ testID: "ask-pane" })).toHaveLength(0);
+    await act(async () => { tablet.root.findByProps({ testID: "task-tab-ask" }).props.onPress(); });
+    expect(tablet.root.findByProps({ testID: "ask-pane-scroll" })).toBeTruthy();
+    expect(tablet.root.findAllByProps({ testID: "transcript-detail-scroll" })).toHaveLength(0);
+    tablet.unmount();
+
+    const phoneList = renderSurface({ layoutTier: "phone" });
+    expect(phoneList.root.findByProps({ testID: "meeting-layout-phone" })).toBeTruthy();
+    expect(phoneList.root.findByProps({ testID: "meeting-sidebar" })).toBeTruthy();
+    expect(phoneList.root.findAllByProps({ testID: "meeting-detail" })).toHaveLength(0);
+    phoneList.unmount();
+
+    const phoneDetail = renderSurface({ layoutTier: "phone", selectedMeetingId: "m-1", transcript: baseTranscript, consentStatus: "granted" });
+    expect(phoneDetail.root.findByProps({ testID: "meeting-detail-back" })).toBeTruthy();
+    expect(phoneDetail.root.findByProps({ testID: "transcript-detail-scroll" })).toBeTruthy();
+    phoneDetail.unmount();
+  });
+
+  test("keeps provider and model selection compact until expanded and exposes selected state", async () => {
+    const onSelection = vi.fn();
+    const renderer = renderSurface({
+      layoutTier: "desktop",
+      selectedMeetingId: "m-1",
+      transcript: baseTranscript,
+      consentStatus: "granted",
+      chatProviders: [{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }, { id: "gpt-4o", label: "GPT-4o", isDefault: false }] }],
+      chatProvider: "codex",
+      chatModel: "gpt-5",
+      onChatSelection: onSelection,
+    });
+    const trigger = renderer.root.findByProps({ testID: "chat-provider-trigger" });
+    expect(trigger.props.accessibilityState).toMatchObject({ disabled: false, expanded: false });
+    expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(true);
+    await act(async () => { trigger.props.onPress(); });
+    expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(false);
+    const selected = renderer.root.findByProps({ testID: "chat-model-codex-gpt-5" });
+    expect(selected.props.accessibilityState).toMatchObject({ disabled: false, selected: true });
+    await act(async () => { renderer.root.findByProps({ testID: "chat-model-codex-gpt-4o" }).props.onPress(); });
+    expect(onSelection).toHaveBeenCalledWith("codex", "gpt-4o");
+    renderer.unmount();
+  });
+
+  test.each([
+    ["resolving", "Resolving evidence…", true],
+    ["playing", "Playing evidence · 00:01–00:02", false],
+    ["completed", "Evidence played · 00:01–00:02", false],
+    ["failed", "Playback failed", false],
+  ] as const)("renders %s citation evidence with stable identity and transcript highlight", async (status, label, disabled) => {
+    const onCitation = vi.fn();
+    const renderer = renderSurface({
+      layoutTier: "desktop",
+      selectedMeetingId: "m-1",
+      transcript: baseTranscript,
+      consentStatus: "granted",
+      onCitation,
+      citationEvidence: {
+        meetingId: "m-1", segmentId: "segment-2", startMs: 1_000, endMs: 2_000,
+        text: "The validated answer evidence.", status, error: status === "failed" ? "Playback could not start. Try again." : null,
+      },
+    });
+    const highlighted = renderer.root.findByProps({ testID: "transcript-segment-segment-2" });
+    expect(highlighted.props.style[1]).toBeTruthy();
+    expect(renderer.root.findByProps({ testID: "citation-evidence-status" }).props.children).toBe("Evidence · validated transcript segment");
+    expect(renderer.root.findAllByType("Text").some((node) => node.props.children === label)).toBe(true);
+    expect(renderer.root.findByProps({ testID: "citation-play-from-here" }).props.disabled).toBe(disabled);
+    expect(renderer.root.findAllByProps({ testID: "playback-pause" })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: "playback-stop" })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: "playback-seek" })).toHaveLength(0);
+    if (!disabled) {
+      await act(async () => { renderer.root.findByProps({ testID: "citation-play-from-here" }).props.onPress(); });
+      expect(onCitation).toHaveBeenCalledWith({ meetingId: "m-1", segmentId: "segment-2" });
+    }
+    renderer.unmount();
+  });
+
+  test("keeps known meetings as disabled stale context while offline and offers Try again", async () => {
+    const onRetry = vi.fn(async () => undefined);
+    const renderer = renderSurface({
+      layoutTier: "tablet",
+      hostConnectionStatus: "offline",
+      connectionLabel: "Host offline",
+      selectedMeetingId: "m-1",
+      onOpenTranscript: async () => undefined,
+      onRetryConnection: onRetry,
+    });
+    const row = renderer.root.findByProps({ testID: "meeting-m-1" });
+    expect(row.props.disabled).toBe(true);
+    expect(row.props.accessibilityState).toMatchObject({ disabled: true, selected: true });
+    expect(row.props["aria-disabled"]).toBe(true);
+    expect(renderer.root.findAllByProps({ testID: "meeting-empty" })).toHaveLength(0);
+    await act(async () => { renderer.root.findByProps({ testID: "host-offline-try-again" }).props.onPress(); });
+    expect(onRetry).toHaveBeenCalledOnce();
+    renderer.unmount();
+  });
+
+  test.each([
+    ["interrupted", "Recording interrupted"],
+    ["finalizing", "Saving local audio"],
+    ["saved", "Audio saved locally"],
+    ["failed", "Recording needs attention"],
+  ] as const)("maps %s recording state to user language", async (status, title) => {
+    const recording: RecordingStatusWire = {
+      status,
+      recordingId: "r-1",
+      meetingId: "m-1",
+      title: "Weekly sync",
+      elapsedMs: 2_000,
+      paused: false,
+      chunks: [],
+      inventoryState: status === "saved" ? "complete" : "pending",
+      chunkCount: 1,
+      microphoneCount: 1,
+      systemCount: 0,
+      inventoryDigest: null,
+      retryEligible: false,
+      outputPath: null,
+      error: "provider internals must stay out of the UI",
+    };
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <RecordingStrip
+          elapsedMs={2_000}
+          error="provider internals must stay out of the UI"
+          onPause={async () => undefined}
+          onResume={async () => undefined}
+          onRetry={async () => undefined}
+          onStart={async () => undefined}
+          onStop={async () => undefined}
+          pending={false}
+          status={recording}
+        />,
+      );
+    });
+    expect(renderer.root.findAllByType("Text").some((node) => node.props.children === title)).toBe(true);
+    expect(renderer.root.findAllByType("Text").some((node) => node.props.children === "provider internals must stay out of the UI")).toBe(false);
+    expect(renderer.root.findAllByProps({ testID: "recording-pause-resume" })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: "recording-stop" })).toHaveLength(0);
+    renderer.unmount();
+  });
+});

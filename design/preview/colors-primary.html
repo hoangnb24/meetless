@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Preview · Color tokens</title>
+<link rel="stylesheet" href="../tokens.css"/>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html,body{margin:0;background:var(--bg);color:var(--fg)}
+  body{padding:28px;font-family:var(--font-body);font-feature-settings:"cv01","ss03";-webkit-font-smoothing:antialiased}
+  .wrap{max-width:880px;margin:0 auto}
+  h1{font-family:var(--font-display);font-size:24px;font-weight:590;letter-spacing:-.015em;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 28px}
+  .sec{margin:22px 0}
+  .sec h2{font-size:13px;font-weight:590;color:var(--fg-2);margin:0 0 14px;letter-spacing:-.005em}
+  .row{display:flex;flex-wrap:wrap;gap:12px}
+  .chip{width:118px;border-radius:8px;overflow:hidden;border:1px solid var(--border)}
+  .chip .c{height:64px}
+  .chip .n{font-size:12px;color:var(--fg-2);padding:8px 10px 2px}
+  .chip .v{font-family:var(--font-mono);font-size:10.5px;color:var(--meta);padding:0 10px 14px}
+  .roles{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;font-size:12px}
+  .role{border:1px solid var(--border-soft);border-radius:8px;padding:10px;background:color-mix(in oklch,var(--fg) 2%,transparent)}
+  .role b{display:block;font-family:var(--font-mono);font-size:11px;color:var(--meta)}
+  .role .v{margin-top:6px;font-family:var(--font-mono);color:var(--fg-2)}
+</style>
+</head>
+<body class="ds">
+<div class="wrap">
+  <h1>Color tokens</h1>
+  <p class="sub">Dark-neutral canvas, one indigo accent · all values verbatim from <span class="mono-xs">tokens.css</span></p>
+
+  <div class="sec"><h2>Canvas &amp; surfaces</h2><div class="row" id="surfaces"></div></div>
+  <div class="sec"><h2>Text ramp</h2><div class="row" id="text"></div></div>
+  <div class="sec"><h2>Accent</h2><div class="row" id="accent"></div></div>
+  <div class="sec"><h2>Semantic</h2><div class="row" id="semantic"></div></div>
+  <div class="sec"><h2>Roles</h2><div class="roles" id="roles"></div></div>
+</div>
+<script>
+const chip=(name,resolved,hex)=>`<div class="chip"><div class="c" style="background:${resolved}"></div><div class="n">${name}</div><div class="v">${hex}</div></div>`;
+const group=(arr)=>arr.map(x=>chip(x[0],x[1],x[2])).join("");
+document.getElementById("surfaces").innerHTML=group([
+  ["bg","#08090a","#08090a"],["surface","#191a1b","#191a1b"]
+]);
+document.getElementById("text").innerHTML=group([
+  ["fg","#f7f8f8","#f7f8f8"],["fg-2","#d0d6e0","#d0d6e0"],["muted","#8a8f98","#8a8f98"],["meta","#62666d","#62666d"]
+]);
+document.getElementById("accent").innerHTML=group([
+  ["accent","#5e6ad2","#5e6ad2"],["hover","#828fff","#828fff"],["active","#4752c4","#4752c4"],["on","#ffffff","#ffffff"]
+]);
+document.getElementById("semantic").innerHTML=group([
+  ["success","#27a644","#27a644"],["warn","#eab308","#eab308"],["danger","#dc2626","#dc2626"]
+]);
+document.getElementById("roles").innerHTML=[
+  ["--bg","App canvas, near-black","#08090a"],
+  ["--surface","Sheets, wells, modals","#191a1b"],
+  ["--fg","Primary text (4.5:1+)","#f7f8f8"],
+  ["--fg-2","Secondary text","#d0d6e0"],
+  ["--muted","Tertiary text, hints","#8a8f98"],
+  ["--meta","Metadata, timeline","#62666d"],
+  ["--accent","Primary action, selection","#5e6ad2"],
+  ["--accent-hover","Hover, links","#828fff"],
+  ["--success","Ready · host online","#27a644"],
+  ["--warn","Needs attention","#eab308"],
+  ["--danger","Destructive","#dc2626"],
+].map(([t,d,v])=>`<div class="role"><b>${t}</b><div>${d}</div><div class="v">${v}</div></div>`).join("");
+</script>
+</body>
+</html>

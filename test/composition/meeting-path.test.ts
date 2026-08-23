@@ -3,8 +3,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import React from "react";
+import { act, create } from "react-test-renderer";
 import { afterEach, describe, expect, test } from "vitest";
 import { connectMeetlessClient } from "@meetless/client";
+import type { MeetingWire } from "@meetless/meeting-contracts";
+import { MeetingListSurface } from "../../packages/meeting-surface/src/index.js";
 
 let daemon: ChildProcess | null = null;
 let runtimeRoot: string | null = null;
@@ -20,7 +24,7 @@ afterEach(async () => {
 });
 
 describe("real Paseo daemon/plugin/client composition", () => {
-  test("desktop creates and lists, then a second compact/mobile client reads the same record", async () => {
+  test("one Record meeting entry lists the daemon record, then a phone client reads the same record", async () => {
     const port = await availablePort();
     expect(port).not.toBe(6767);
     const listen = `127.0.0.1:${port}`;
@@ -47,8 +51,9 @@ describe("real Paseo daemon/plugin/client composition", () => {
       clientId: `meetless-desktop-proof-${Date.now()}`,
       clientType: "browser",
     });
+    let created!: MeetingWire;
     try {
-      const created = await desktop.client.createMeeting({ title: "Milestone 1 proof" });
+      created = await desktop.client.createMeeting({ title: "Milestone 1 proof" });
       expect(await desktop.client.listMeetings()).toEqual([created]);
 
       const mobile = await connectMeetlessClient({
@@ -68,6 +73,25 @@ describe("real Paseo daemon/plugin/client composition", () => {
     } finally {
       await desktop.close();
     }
+
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        React.createElement(MeetingListSurface, {
+          layoutTier: "desktop",
+          canRecord: true,
+          connectionLabel: "Host online",
+          hostConnectionStatus: "online",
+          hostLabel: "this host",
+          meetings: [created],
+          onRefresh: async () => undefined,
+          recordingSetup: { available: true, pending: false, error: null, onStart: async () => undefined },
+        }),
+      );
+    });
+    expect(renderer!.root.findAllByProps({ testID: "record-meeting-entry" }).length).toBeGreaterThan(0);
+    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === "Create meeting")).toBe(false);
+    renderer.unmount();
 
     const persisted = JSON.parse(
       await readFile(path.join(runtimeRoot, "meeting-store", "meetings.json"), "utf8"),

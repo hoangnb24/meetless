@@ -10,7 +10,7 @@ import {
 } from "@meetless/client";
 import type { ChatProviderWire, MeetingChatThreadWire, MeetingWire } from "@meetless/meeting-contracts";
 import type { CitationWire, TranscriptWire, TranscriptionProviderStatusWire } from "@meetless/meeting-contracts";
-import { MeetingListSurface, RecordingStrip } from "@meetless/meeting-surface";
+import { MeetingListSurface, RecordingStrip, type CitationEvidenceState, type LayoutTier } from "@meetless/meeting-surface";
 import { resolveAppMode, resolveDaemonUrl, supportsDesktopRecording } from "./runtime";
 import { RecordingProvider, useRecording } from "./recording-provider";
 import { playCitationAudio, type CitationPlaybackHandle } from "./playback";
@@ -40,8 +40,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     mode === "desktop" ? undefined : undefined,
   );
   const [meetings, setMeetings] = useState<MeetingWire[]>([]);
-  const [pending, setPending] = useState(false);
-  const [status, setStatus] = useState("Connecting to Meetless host…");
+  const [status, setStatus] = useState("Connecting to host…");
   const [hostConnectionStatus, setHostConnectionStatus] = useState<
     "online" | "connecting" | "reconnecting" | "offline" | "revalidating"
   >("connecting");
@@ -58,11 +57,14 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatProvider, setChatProvider] = useState<string | null>(null);
   const [chatModel, setChatModel] = useState<string | null>(null);
+  const [citationEvidence, setCitationEvidence] = useState<CitationEvidenceState | null>(null);
   const playback = useRef<CitationPlaybackHandle | null>(null);
   const selectionVersion = useRef(0);
   const citationSequence = useRef(0);
   const selectedMeetingIdRef = useRef<string | null>(null);
-  const compact = Platform.OS !== "web" || dimensions.width < 720;
+  const layoutTier: LayoutTier = dimensions.width <= 639 ? "phone" : dimensions.width < 1120 ? "tablet" : "desktop";
+  const recordingStatus = recording.status?.status;
+  const recordingMeetingId = recording.status?.meetingId;
 
   const installConnection = useCallback((client: MeetlessClient, close?: () => Promise<void>): ActiveConnection => {
     const active = { client, epoch: connectionEpoch.current + 1, ...(close ? { close } : {}) };
@@ -96,6 +98,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     citationSequence.current += 1;
     playback.current?.stop();
     playback.current = null;
+    setCitationEvidence(null);
     selectedMeetingIdRef.current = meetingId;
     setSelectedMeetingId(meetingId);
     setTranscriptLoading(true);
@@ -158,6 +161,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     citationSequence.current += 1;
     playback.current?.stop();
     playback.current = null;
+    setCitationEvidence(null);
     selectedMeetingIdRef.current = null;
     setSelectedMeetingId(null);
     setTranscriptLoading(false);
@@ -268,6 +272,15 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     if (selectedMeetingIdRef.current !== visibleCitation.meetingId) return;
     playback.current?.stop();
     playback.current = null;
+    setCitationEvidence({
+      meetingId: visibleCitation.meetingId,
+      segmentId: visibleCitation.segmentId,
+      startMs: null,
+      endMs: null,
+      text: null,
+      status: "resolving",
+      error: null,
+    });
     try {
       const citation = await active.client.resolveCitation({
         meetingId: visibleCitation.meetingId,
@@ -279,7 +292,27 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         selectionVersion.current !== selection ||
         selectedMeetingIdRef.current !== citation.meetingId
       ) return;
-      const handle = await playCitationAudio(citation);
+      setCitationEvidence({
+        meetingId: citation.meetingId,
+        segmentId: citation.segmentId,
+        startMs: citation.startMs,
+        endMs: citation.endMs,
+        text: citation.text,
+        status: "resolving",
+        error: null,
+      });
+      const handle = await playCitationAudio(citation, undefined, undefined, {
+        onComplete: () => {
+          if (
+            isCurrentConnection(active) &&
+            citationSequence.current === sequence &&
+            selectionVersion.current === selection &&
+            selectedMeetingIdRef.current === citation.meetingId
+          ) {
+            setCitationEvidence((current) => current ? { ...current, status: "completed" } : current);
+          }
+        },
+      });
       if (
         !isCurrentConnection(active) ||
         citationSequence.current !== sequence ||
@@ -290,7 +323,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         return;
       }
       playback.current = handle;
-      setTranscriptError(null);
+      setCitationEvidence((current) => current ? { ...current, status: "playing" } : current);
     } catch (reason) {
       if (
         !isCurrentConnection(active) ||
@@ -298,7 +331,11 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         selectionVersion.current !== selection ||
         selectedMeetingIdRef.current !== visibleCitation.meetingId
       ) return;
-      setTranscriptError(reason instanceof Error ? reason.message : String(reason));
+      setCitationEvidence((current) => current ? {
+        ...current,
+        status: "failed",
+        error: "Playback could not start. Try again.",
+      } : current);
     }
   }, [isCurrentConnection]);
 
@@ -324,12 +361,12 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         const active = installConnection(connected.client, connected.close);
         await refresh();
         if (cancelled || !isCurrentConnection(active)) return;
-        setStatus("Connected · daemon-owned meetings");
+        setStatus("Host online");
         setHostConnectionStatus("online");
       })
       .catch((reason: unknown) => {
         if (!cancelled) {
-          setStatus("Host unavailable");
+          setStatus("Host offline");
           setHostConnectionStatus("offline");
           setError(reason instanceof Error ? reason.message : String(reason));
         }
@@ -426,6 +463,13 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setProfile(next);
   }, []);
 
+  const retryCompanionConnection = useCallback(() => {
+    if (!profile) return;
+    // Recreating the session keeps the validated profile and retained meeting
+    // context while giving the existing session lifecycle a fresh connection.
+    setProfile({ ...profile });
+  }, [profile]);
+
   const changeCompanionHost = useCallback(async () => {
     await clearCompanionProfile();
     await companionSession.current?.close().catch(() => undefined);
@@ -437,24 +481,16 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setProfile(null);
   }, [closeTranscript, invalidateConnection]);
 
-  const create = useCallback(
-    async (title: string) => {
-      const active = connection.current;
-      if (!active) throw new Error("Meetless host is not connected yet");
-      setPending(true);
-      setError(null);
-      try {
-        await active.client.createMeeting({ title });
-        if (!isCurrentConnection(active)) return;
-        await refresh();
-      } catch (reason) {
-        if (isCurrentConnection(active)) setError(reason instanceof Error ? reason.message : String(reason));
-      } finally {
-        if (isCurrentConnection(active)) setPending(false);
-      }
-    },
-    [isCurrentConnection, refresh],
-  );
+  const startRecording = useCallback(async (title: string) => {
+    await recording.start(title);
+    await refresh();
+  }, [recording.start, refresh]);
+
+  useEffect(() => {
+    if (mode !== "desktop" || !recordingMeetingId || hostConnectionStatus !== "online") return;
+    if (!["recording", "finalizing", "saved", "recoverable", "failed"].includes(recordingStatus ?? "")) return;
+    void refresh().catch(() => undefined);
+  }, [hostConnectionStatus, mode, recordingMeetingId, recordingStatus, refresh]);
 
   if (mode === "companion" && profile === undefined) {
     return <SafeAreaView style={styles.safeArea}><StatusBar style="light" /></SafeAreaView>;
@@ -470,10 +506,12 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   }
 
   const interactive = mode === "desktop" || hostConnectionStatus === "online";
+  const recordingEntryAvailable = mode === "desktop" && hostConnectionStatus === "online" &&
+    ["idle", "saved", "failed"].includes(recordingStatus ?? "");
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="light" />
-      {recording.enabled ? <RecordingStrip
+      {recording.enabled && recordingStatus !== "idle" ? <RecordingStrip
         elapsedMs={recording.displayElapsedMs}
         error={recording.error}
         onPause={recording.pause}
@@ -485,17 +523,23 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         status={recording.status}
       /> : null}
       <MeetingListSurface
-        canCreate={mode === "desktop"}
-        compact={compact}
+        layoutTier={layoutTier}
+        canRecord={mode === "desktop"}
         connectionLabel={status}
         hostConnectionStatus={hostConnectionStatus}
         error={error}
-        hostLabel="your isolated Meetless daemon"
+        hostLabel="this host"
         meetings={meetings}
-        onCreate={mode === "desktop" ? create : undefined}
+        recordingSetup={mode === "desktop" ? {
+          available: recordingEntryAvailable,
+          pending: recording.pending,
+          error: recording.error,
+          onStart: startRecording,
+        } : undefined}
         onRefresh={interactive ? refresh : async () => undefined}
-        pending={pending}
+        pending={recording.pending}
         onOpenTranscript={interactive ? openTranscript : undefined}
+        onRetryConnection={mode === "companion" ? retryCompanionConnection : undefined}
         onBack={closeTranscript}
         selectedMeetingId={selectedMeetingId}
         transcript={transcript}
@@ -505,6 +549,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         providerStatus={providerStatus}
         onGrantTranscriptionConsent={interactive ? grantConsent : undefined}
         onCitation={interactive ? playCitation : undefined}
+        citationEvidence={citationEvidence}
         chatProviders={chatProviders}
         chatThread={chatThread}
         chatLoading={chatLoading}
@@ -570,10 +615,10 @@ function companionStateDisplay(status: Exclude<CompanionConnectionState["status"
   surfaceStatus: "online" | "connecting" | "reconnecting" | "offline" | "revalidating";
 } {
   switch (status) {
-    case "online": return { label: "Connected · host state restored", surfaceStatus: "online" };
-    case "connecting": return { label: "Connecting to paired host…", surfaceStatus: "connecting" };
-    case "reconnecting": return { label: "Reconnecting to paired host…", surfaceStatus: "reconnecting" };
-    case "revalidating": return { label: "Restoring selected host state…", surfaceStatus: "revalidating" };
+    case "online": return { label: "Host online", surfaceStatus: "online" };
+    case "connecting": return { label: "Connecting…", surfaceStatus: "connecting" };
+    case "reconnecting": return { label: "Reconnecting…", surfaceStatus: "reconnecting" };
+    case "revalidating": return { label: "Checking host…", surfaceStatus: "revalidating" };
     case "offline": return { label: "Host offline", surfaceStatus: "offline" };
   }
 }

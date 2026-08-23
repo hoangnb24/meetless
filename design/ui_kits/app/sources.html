@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Kit · Recording sources</title>
+<link rel="stylesheet" href="../../tokens.css"/>
+<link rel="stylesheet" href="app.css"/>
+<style>
+  .source-checks{display:flex;flex-direction:column;gap:8px;margin:6px 0 4px}
+  .repair{display:inline-flex;gap:8px;align-items:center;flex:none}
+</style>
+</head>
+<body class="base">
+<div class="topbar">
+  <div class="brand"><span class="mark"></span>Meetless</div>
+  <span class="host-chip online"><span class="dot"></span><span class="t">Host online</span></span>
+  <div style="flex:1"></div><button class="btn btn-ghost">← Record meeting</button>
+</div>
+<div style="flex:1;display:flex;min-height:0;background:var(--bg)">
+  <section style="flex:1;display:flex;align-items:center;justify-content:center;overflow:auto;padding:32px">
+    <div class="panel" style="max-width:520px">
+      <h1>Recording sources</h1>
+      <div style="color:var(--muted);font-size:13.5px;line-height:1.6;max-width:44ch;margin:0 0 6px">Microphone and system audio are captured to a local MP3. Readiness is marked Proposed until macOS confirms it at runtime.</div>
+      <label style="display:block;font-size:12.5px;color:var(--muted);margin-bottom:8px">Audio source readiness <span class="proposed-tag" style="margin-left:6px">Proposed until runtime confirming</span></label>
+      <div class="source-checks">
+        <div class="source-row ready">
+          <span class="proposed-tag">Proposed</span><span style="flex:1"><div class="n">Microphone · Built-in Input</div><div class="d">Used for incoming voice, e.g. your laptop or a 3.5mm mic.</div></span>
+          <span class="state"><span class="dot"></span>Ready</span>
+        </div>
+        <div class="source-row blocked">
+          <span class="proposed-tag">Proposed</span><span style="flex:1"><div class="n">System Audio · Loopback</div><div class="d">Used to capture meeting audio — blocked by macOS permission.</div></span>
+          <span class="repair"><button class="btn btn-secondary btn-sm" data-od-id="btn-open-settings">Open System Settings</button><button class="btn btn-ghost btn-sm" data-action="recheck">Recheck</button></span>
+        </div>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:8px"><button class="btn btn-primary">Start recording</button><button class="btn btn-ghost">Discard setup</button></div>
+      <p style="color:var(--muted);font-size:12.5px;margin-top:16px">Nothing is uploaded at capture time. Audio stays on this computer; transcription happens privately after one-time consent.</p>
+    </div>
+  </section>
+</div>
+</body>
+</html>

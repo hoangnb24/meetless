@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Preview · Typography</title>
+<link rel="stylesheet" href="../tokens.css"/>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html,body{margin:0;background:var(--bg);color:var(--fg)}
+  body{padding:34px;font-family:var(--font-body);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:820px;margin:0 auto}
+  h1{font-family:var(--font-display);font-size:24px;font-weight:590;letter-spacing:-.015em;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 30px}
+  .n{font-family:var(--font-mono);font-size:10.5px;color:var(--meta);letter-spacing:.02em}
+  .ln{margin:22px 0;border-top:1px solid var(--border-soft)}
+  .ln .lbl{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-bottom:14px}
+  .d2{font-family:var(--font-display);font-size:48px;font-weight:590;letter-spacing:-.03em;line-height:1.05}
+  .d1{font-family:var(--font-display);font-size:30px;font-weight:590;letter-spacing:-.02em;line-height:1.08}
+  .d0{font-family:var(--font-display);font-size:20px;font-weight:590;letter-spacing:-.012em;line-height:1.15}
+  .b1{font-size:16px;font-weight:480;line-height:1.5}
+  .b2{font-size:14px;font-weight:440;line-height:1.5}
+  .b3{font-size:12.5px;font-weight:440;line-height:1.4;color:var(--fg-2)}
+  .m1{font-family:var(--font-mono);font-size:14px;font-variant-numeric:tabular-nums;color:var(--fg-2)}
+  .m2{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);letter-spacing:.02em}
+  .ov{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .cap{font-size:12px;color:var(--muted)}
+  .stack-note{margin-top:6px;font-size:11.5px;color:var(--meta)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Typography</h1>
+  <p class="sub">Inter Variable for display + body · Berkeley Mono for timecodes, ids, metadata</p>
+
+  <div class="ln"><div class="lbl"><span>Display</span><span>Inter Variable · weight 590 · cap at 590</span></div>
+    <div class="d2">Saving local audio</div><div class="stack-note">Display 48 · –.03em tracking</div></div>
+
+  <div class="ln"><div class="lbl"><span>Display</span><span>30px</span></div>
+    <div class="d1">Your meetings live here</div></div>
+
+  <div class="ln"><div class="lbl"><span>Display</span><span>20px</span></div>
+    <div class="d0">Record meeting</div></div>
+
+  <div class="ln"><div class="lbl"><span>Body</span><span>16 · 480</span></div>
+    <div class="b1">One action starts capture. Microphone and system audio are pre-selected.</div></div>
+
+  <div class="ln"><div class="lbl"><span>Body</span><span>14 · 440 · line-height 1.5</span></div>
+    <div class="b2">Answers are grounded in the transcript of this meeting only — nothing else.</div></div>
+
+  <div class="ln"><div class="lbl"><span>Mono</span><span>Berkeley Mono · tabular-nums</span></div>
+    <div class="m1">14:55–16:30 &nbsp;·&nbsp; 00:04:23 &nbsp;·&nbsp; gpt-4o-mini</div></div>
+
+  <div class="ln"><div class="lbl"><span>Mono / overline</span><span>uppercase · letter-spacing .08em</span></div>
+    <div class="ov">Transcript &nbsp; &nbsp; Ask &nbsp; &nbsp; Evidence · validated segment</div></div>
+
+  <div class="ln"><div class="lbl"><span>Caption</span><span>12px · muted</span></div>
+    <div class="cap">Find the pairing link in Meetless on your desktop host.</div></div>
+</div>
+</body>
+</html>

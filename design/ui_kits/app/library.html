@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Kit · Meeting library</title>
+<link rel="stylesheet" href="../../tokens.css"/>
+<link rel="stylesheet" href="app.css"/>
+</head>
+<body class="base">
+<div class="topbar">
+  <div class="brand"><span class="mark"></span>Meetless</div>
+  <span class="host-chip online"><span class="dot"></span><span class="t">Host online · meetless.local</span></span>
+  <div style="flex:1"></div>
+</div>
+<div class="main">
+  <aside class="sidebar">
+    <div class="sidebar-head"><span class="lh">Meetings</span><button class="btn btn-primary">Record meeting</button></div>
+    <div style="flex:1;overflow:hidden">
+      <div class="list-group">Today</div>
+      <button class="meet-row selected"><span class="t">Design crit — weekly sync</span><span class="m"><span>09:30</span><span class="dur">42 min</span><span class="st ready" style="margin-left:auto"><i></i>Ready</span></span></button>
+      <button class="meet-row"><span class="t">Product roadmap review</span><span class="m"><span>11:15</span><span class="dur">31 min</span><span class="st work" style="margin-left:auto"><i></i>Transcribing</span></span></button>
+      <div class="list-group">Yesterday</div>
+      <button class="meet-row"><span class="t">1:1 with Mina — career path</span><span class="m"><span>16:40</span><span class="dur">28 min</span><span class="st ready" style="margin-left:auto"><i></i>Ready</span></span></button>
+    </div>
+    <div style="border-top:1px solid var(--border-soft);padding:10px 16px;display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-ghost btn-sm" style="align-self:flex-start">Pair companion</button>
+    </div>
+  </aside>
+  <section style="flex:1;display:flex;align-items:center;justify-content:center;background:var(--bg)">
+    <div style="max-width:420px;color:var(--muted);font-size:13.5px;line-height:1.55;text-align:center">
+      <div style="font-size:17px;font-weight:510;color:var(--fg);margin-bottom:6px">Your meetings live here</div>
+      Record a call with Meetless and the audio is saved locally, transcribed privately, and ready to read or ask about. Everything stays on this computer.
+      <div style="margin-top:16px"><button class="btn btn-secondary">Start a recording</button></div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

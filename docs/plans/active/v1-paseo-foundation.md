@@ -1858,6 +1858,144 @@ does not require opening or retaining meeting detail while disconnected.
   diff check passed.
 - **Status:** `COMPLETE`. Milestone 7 release readiness remains open.
 
+### New-design implementation workstream
+
+The project-owner directive dated 2026-08-23 makes `design/PRODUCT.md` the
+authority for the new user experience outcome and user behavior. The remaining
+`design/` artifacts are the supporting visual and interaction handoff. Where a
+handoff artifact conflicts with `PRODUCT.md`, `PRODUCT.md` wins. The complete
+44-file handoff is currently untracked and must be preserved byte-for-byte and
+included in the implementation candidate. The pre-implementation handoff
+digest is `28657cc28c33151f0a7ab5a9479abe5627c48954b4225e22026ebb4a4d923a4b`.
+
+Observable outcome:
+
+```text
+one Record meeting entry
+  -> focused, non-blocking proposed source setup
+  -> route-independent recording and safe save/recovery state
+  -> meaningful meeting library
+  -> stable Transcript and Ask tasks
+  -> inline validated evidence and bounded playback
+  -> relay-first companion pairing and truthful offline recovery
+```
+
+Wide desktop keeps Library, Transcript, and Ask as independent contexts.
+Tablet keeps the library plus one selected task. Phone uses list-to-detail and
+one task at a time. Existing local-first storage, recording, transcription,
+chat, citation, privilege, transport, and recovery authority must not move into
+the renderer or presentation layer.
+
+`PLAN_RECONCILIATION v1 — NEW-DESIGN-START` (2026-08-23):
+
+- **plan_ref:** this plan remains the one active repository plan. Do not create
+  another plan for the design implementation.
+- **accepted_since_last:** Milestone 6 is accepted. Milestone 7 remains open.
+- **code_changed_assumptions:** the accepted V1 implementation proves the
+  product loop, but its current UI is no longer the accepted presentation. The
+  new `design/PRODUCT.md` supersedes prior presentation requirements when they
+  conflict; domain, security, storage, transport, and lifecycle authority stay
+  unchanged.
+- **absorbed_or_obsolete_frontiers:** the old separate Create meeting and Start
+  recording UI, raw lifecycle/provider/request presentation, model button
+  inventory, single-scroll Transcript/Ask detail, and Direct-LAN-first pairing
+  are obsolete.
+- **dependency_changes:** implement and accept the new design before Milestone
+  7 release-readiness judgment. No post-MVP work moves into this frontier.
+- **foundation_changes:** none below the app/presentation boundary unless the
+  writer returns a decision-ready `DEPENDENCY_REQUEST` with evidence.
+- **parallel_frontier:** none. One integrated writer owns the shared responsive
+  shell, recording presentation, evidence state, companion presentation, and
+  affected proof selectors.
+- **next_frontier:** `ND-IMPLEMENTATION-R1`.
+- **plan_updated:** yes.
+
+`FOUNDATION_CHECK v1 — NEW-DESIGN` (2026-08-23):
+
+- **state_owner:** the daemon-side meeting store and recording, transcription,
+  chat, and companion contracts remain authoritative. The app owns only
+  ephemeral route/task/selection state, user-facing state mapping, and visible
+  citation playback state. Cached companion content is last-validated context,
+  never current host truth.
+- **lifecycle:** map existing recording and meeting lifecycle values to setup,
+  active, paused, saving, saved, transcribing, ready, recoverable, and failed
+  user states. Do not add a second lifecycle or persist renderer-owned copies.
+- **cross_boundary_invariants:** one recording remains active; normal Stop is a
+  safe save transition; source readiness remains explicitly proposed and
+  non-blocking; stale transcript/chat/citation results cannot replace a newer
+  meeting selection; a new citation stops prior bounded playback; offline
+  interaction stays disabled until host revalidation; raw provider, request,
+  daemon, and lifecycle internals are not primary content.
+- **required_mechanisms:** pure presentation-state mapping; one width-driven
+  phone/tablet/desktop layout model; the existing recording controls and client
+  contracts; an app-owned citation evidence controller over stable meeting and
+  segment IDs; the existing companion session and profile builders; responsive
+  component and composition proof.
+- **dependency_direction:** Expo/Electron composition -> Meetless presentation
+  use cases -> existing client and recording ports. Presentation must not make
+  meeting policy depend on React Native, Electron, WebSocket, or provider SDK
+  types.
+- **status:** `STABLE`. No contract, domain, store, native, plugin, client, or
+  vendor change is authorized in `ND-IMPLEMENTATION-R1`.
+- **evidence:** current recording start already creates the meeting atomically;
+  current citation resolution already uses stable IDs and bounded audio; current
+  companion sessions already revalidate before interaction. Baseline focused
+  tests passed 41 files / 298 tests and typecheck passed before dispatch.
+
+`LEAD_RULING v1 — ND-DISCOVERY-UX-PROOF` (2026-08-23):
+
+- **decision:** revise the implementation contract and proceed.
+- **playback:** `PRODUCT.md` wins over the handoff playbar. Do not add visible
+  Pause, Stop, seek, or progress controls. Show only non-interactive resolving,
+  playing, completed, or failed state and the authoritative range.
+- **citation evidence:** use the reversible inline evidence card beside the
+  answer and highlight the matching transcript segment when visible. Do not add
+  a new side-panel navigation contract.
+- **offline:** retain already validated meeting rows and selected detail as
+  disabled context, clearly marked stale/offline. Never present it as current
+  host truth.
+- **title:** preserve the existing non-empty title requirement with no new
+  default or rename policy.
+- **source readiness:** render microphone and system audio as proposed and
+  non-blocking. Do not claim a pre-start runtime readiness signal.
+- **host identity:** use neutral connection language before validation. Preserve
+  existing connection timing and trust authority.
+- **assets:** preserve the supplied assets. Use documented system font fallbacks
+  and do not fabricate the missing `design/build/icons.svg` or an unverified
+  Berkeley Mono bundle.
+
+`FRONTIER_BRIEF v1 — ND-IMPLEMENTATION-R1`:
+
+- **outcome:** one integrated production candidate implements the observable
+  new-design journey across Electron, web, and native-responsive surfaces while
+  preserving all accepted runtime behavior.
+- **depends_on:** accepted Milestones 1–6, the foundation check above, and the
+  complete `design/` handoff.
+- **write_scope:** `design/` (track unchanged),
+  `packages/meeting-surface/`, `packages/meetless-app/`, affected UI composition
+  proof under `scripts/` and `test/`, and root package configuration only when a
+  proof command requires it. Exclude `vendor/`, `native/`, meeting contracts,
+  domain, store, client, and plugin code.
+- **stable_contract_refs:** `design/PRODUCT.md`, supporting design handoff,
+  current product/architecture authority, and this ruling.
+- **invariants:** the foundation invariants above; no fabricated readiness;
+  no unapproved playback controls; no false offline truth; no new product scope.
+- **acceptance:** behavior tests for every mapped state and action; accessibility
+  semantics and keyboard-visible focus; width-tier and no-horizontal-overflow
+  proof at the handoff matrix; fresh app build; focused tests and typecheck;
+  existing recording/transcript/chat/citation composition proof updated for the
+  one-entry flow; deterministic screenshots for desktop, tablet, and phone; no
+  handoff artifact mutation; clean pinned vendor state.
+- **reopen_when:** a required behavior cannot be implemented without changing a
+  stable backend contract, product-open choice, privilege boundary, or accepted
+  lifecycle.
+- **candidate_required:** commit.
+
+Review classification for the frozen candidate is `DEEP`,
+`review_mode: EXPLORATORY`, lane `responsive-lifecycle-evidence-composition`.
+Use one independent reviewer after Lead verifies the writer's proof. Any
+accepted findings receive one correction batch and one `FAST` close-out.
+
 ### Milestone 7: V1 acceptance and release readiness
 
 - Exercise the complete P0 path on the accepted desktop platform matrix.
@@ -1939,6 +2077,8 @@ Recovery rules:
 - [x] Complete Milestone 4: meeting sidebar and transcript reader.
 - [x] Complete Milestone 5: chat with one meeting.
 - [x] Complete Milestone 6: companion web/mobile experience.
+- [ ] Implement and technically accept the `design/PRODUCT.md` new-design
+  workstream.
 - [ ] Complete Milestone 7: V1 acceptance and release readiness.
 - [ ] Post-MVP: complete cross-meeting Q&A and document folders.
 

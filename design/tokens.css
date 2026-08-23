@@ -1,0 +1,68 @@
+/* ─────────────────────────────────────────────────────────────
+   Meetless / Linear-derived tokens — verbatim :root contract
+   Paste into the FIRST <style> block of any generated surface.
+   Do not invent hex values outside this palette. Derive any
+   contextual color with oklch()/color-mix off these tokens.
+   ───────────────────────────────────────────────────────────── */
+
+:root {
+  /* canvas + surfaces (dark neutral, Linear-family) */
+  --bg:           #08090a;
+  --surface:      #191a1b;
+  --surface-warm: var(--surface);
+
+  /* text ramp — light-on-dark, kept ≥ 4.5:1 on --bg */
+  --fg:   #f7f8f8;
+  --fg-2: #d0d6e0;
+  --muted: #8a8f98;
+  --meta:  #62666d;
+
+  /* hairline borders */
+  --border:      rgba(255, 255, 255, 0.08);
+  --border-soft: rgba(255, 255, 255, 0.05);
+
+  /* one action accent */
+  --accent:        #5e6ad2;   /* Linear indigo */
+  --accent-on:     #ffffff;
+  --accent-hover:  #828fff;
+  --accent-active: #4752c4;
+
+  /* semantic states */
+  --success: #27a644;
+  --warn:    #eab308;
+  --danger:  #dc2626;
+
+  /* typography */
+  --font-display: "Inter Variable", "Inter", "SF Pro Display", -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-body:    "Inter Variable", "Inter", "SF Pro Display", -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono:    "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  /* type scale */
+  --text-xs: 12px; --text-sm: 14px; --text-base: 16px; --text-lg: 18px;
+  --text-xl: 24px; --text-2xl: 32px; --text-3xl: 48px; --text-4xl: 72px;
+  --leading-body: 1.5; --leading-tight: 1.00; --tracking-display: -0.022em;
+
+  /* spacing */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-12: 48px;
+  --section-y-desktop: 80px; --section-y-tablet: 48px; --section-y-phone: 32px;
+
+  /* radius */
+  --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-pill: 9999px;
+
+  /* elevation */
+  --elev-flat: none;
+  --elev-ring: 0 0 0 1px var(--border);
+  --elev-raised: rgba(0, 0, 0, 0.4) 0px 2px 4px, 0 0 0 1px rgba(255,255,255,0.05);
+  --focus-ring: 0 0 0 2px color-mix(in oklab, var(--accent), transparent 30%), 0 4px 12px rgba(0,0,0,0.1);
+
+  /* motion */
+  --motion-fast: 150ms; --motion-base: 200ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* layout */
+  --container-max: 1200px;
+  --container-gutter-desktop: 24px;
+  --container-gutter-tablet: 16px;
+  --container-gutter-phone: 12px;
+}
