@@ -2019,6 +2019,31 @@ accepted findings receive one correction batch and one `FAST` close-out.
 - **plan_updated:** yes. The dependency order and Milestone 7 boundary are
   unchanged.
 
+`DEPENDENCY_HANDOFF v1 — ND-XCODE-BLOCKER` (2026-08-23):
+
+- **correction_candidate:**
+  `4b8e59b2bacb2843cdc383315d3aa79ab80119b5`; worktree and pinned vendor are
+  clean, `design/` remains 44 files with SHA-256
+  `28657cc28c33151f0a7ab5a9479abe5627c48954b4225e22026ebb4a4d923a4b`.
+- **implemented_findings:** `ND-R1-001` through `ND-R1-009`. Focused proof
+  passed 12 files / 81 tests; Meetless build, Expo web build, app typecheck,
+  proof syntax, and diff check passed.
+- **blocked_acceptance:** no current-candidate M1 publication exists. Two
+  bounded `proof:m1` attempts and one isolated Expo Release diagnostic stopped
+  after bundling at Xcode `Planning build` without a source or configuration
+  error. Do not substitute web evidence for the required native proof.
+- **diagnostic_evidence:** disposable iPhone 17 Pro / iOS 26.5 simulator
+  `47D1CF38-C848-4765-AA93-3C127ADD3C5D`; retained log
+  `/tmp/meetless-nd-xcode-diag-r1-47D1CF38-C848-4765-AA93-3C127ADD3C5D.log`
+  and final tail with the `.log.final-200` suffix. The diagnostic-owned process
+  groups were terminated; the simulator was uninstalled, shut down, and
+  deleted; external Xcode processes were untouched.
+- **ruling:** `XCODE_BLOCKER`. The same blocker has repeated three times. Stop
+  retries until Xcode build planning health changes or an external Xcode
+  diagnostic identifies the failing planner dependency. Resume with one
+  bounded `proof:m1` run, then perform the planned `FAST` close-out.
+- **status:** implementation candidate frozen; technical acceptance blocked.
+
 ### Milestone 7: V1 acceptance and release readiness
 
 - Exercise the complete P0 path on the accepted desktop platform matrix.
