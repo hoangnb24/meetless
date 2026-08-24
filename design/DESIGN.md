@@ -10,8 +10,10 @@ app whose job is capturing, transcribing, and grounding Q&A on one user's own me
 One high-contrast indigo action is the only strong color; the rest of the canvas stays
 neutral so long transcripts and trusted evidence stay readable and calm.
 
-This document is authoritative for generated surfaces. Bind its tokens; do not invent
-hex values or typefaces outside the system.
+This document is the visual contract for generated surfaces. Bind its tokens;
+do not invent hex values or typefaces outside the system. It does not define
+product behavior. See [`docs/product/`](../docs/product/README.md) for accepted
+consumer behavior and UX.
 
 ---
 
@@ -20,8 +22,8 @@ hex values or typefaces outside the system.
 - **Source project:** Web Prototype · `ae91ec19-7755-45b8-bda5-5d0fe64227dd` · kind `prototype` ·
   fidelity `wireframe` · design-system project `e9b017e6-…`
 - **Bound system:** `linear-app` (Linear dark-neutral; accent indigo `#5e6ad2`).
-- **Evidence:** `examples/meetless-prototype.html` (full interaction prototype) and
-  `context/product-source.md` (product spec) describe Meetless — a local-first meeting
+- **Evidence:** `examples/meetless-prototype.html` preserves the full interaction
+  prototype. [`docs/product/experience.md`](../docs/product/experience.md) describes Meetless — a local-first meeting
   recorder: desktop captures mic + system audio to a local MP3, transcribes privately
   after one-time consent, and grounds Ask answers only on the open meeting transcript
   with validated citation playback.
@@ -144,11 +146,13 @@ The app is a **three-tier responsive shell**.
   saving, pairing and model picker.
 - **Source row (recording setup):** name + description + proposed tag + state dot, or a
   repair action (Open System Settings / Recheck).
-- **Transcript segment:** mono timestamp + body cell; hover/selected/played/highlight
-  states; click plays the bounded audio range.
+- **Transcript segment:** mono timestamp + body cell; hover, selected, played,
+  and highlight states. Citation evidence shows the validated range and a
+  **Play from here** action.
 - **Ask thread:** distinct user turn (indigo bubble) vs assistant turn (plain);
   citations chips beside claims; evidence card with validated segment + "Play from here".
-- **Playbar:** compact thin track + interval + position; auto-stops at range end.
+- **Playback state:** show the selected or played segment and bounded range as
+  text. Do not show playback Pause, Stop, seek, or progress controls.
 - **Field/input:** 44px field, `--border`, focus accent ring; invalid → danger border.
 
 ## 7. Motion & interaction
@@ -163,7 +167,7 @@ The app is a **three-tier responsive shell**.
 - **Reduced motion:** media query kills all loops and transforms.
 - **Recovery concurrency:** the Transcript and Ask states animate in place (answer
   location), not a detached global spinner.
-- Playback auto-stops at the interval bound and marks the segment played.
+- Bounded playback can mark the segment played after the interval ends.
 
 ## 8. Voice & brand
 
@@ -220,8 +224,9 @@ Do **not**:
 - Source project: **Web Prototype** `ae91ec19-7755-45b8-bda5-5d0fe64227dd`
 - Bound system: `linear-app` (Linear dark-neutral; accent indigo `#5e6ad2`).
 - Source artifact: `examples/meetless-prototype.html` (full interaction prototype).
-- Product detail: `PRODUCT.md` (full UX spec) sourced from the original project.
+- Product detail: [`docs/product/experience.md`](../docs/product/experience.md)
+  preserves the full accepted UX spec sourced from the original project.
 - Derived token set: `tokens.css` (verbatim), `colors_and_type.css` (production), bound
   into `ui_kits/app/*` and `preview/*`.
-- Assets: `assets/*`-vector mark; `build/*`-icon-sprite; `fonts/README.md` describes the
+- Assets: `assets/*` contains vector and raster marks; `fonts/README.md` describes the
   Inter / Berkeley Mono pairing.

@@ -1,20 +1,26 @@
 # e9b017e6-dbd2-468a-ada9-9e5e1c02d621 implementation handoff
 
-This archive is the source of truth for turning the design into production code. Start from `preview/index.html`, then preserve the visual system, responsive behavior, and interactions found in the exported files.
+This archive is the visual implementation contract and evidence package. Start
+from `preview/index.html`, then preserve the visual system, responsive behavior,
+and interactions found in the exported files. Accepted product behavior and UX
+live in [`docs/product/`](../docs/product/README.md); this archive does not
+override them.
 
 ## Implementation target
 - Build production UI from the exported design, not a loose reinterpretation.
 - Preserve typography scale, spacing rhythm, color tokens, border radii, shadows, motion timing, and component states.
 - Replace static placeholders only when the target app has real data or functional equivalents.
 - Keep generated product UI free of Open Design chrome, preview labels, or design-process annotations.
-- Treat this handoff as a visual contract: if implementation choices conflict, match the exported pixels and behavior first, then refactor internals.
+- Treat this handoff as a visual contract only. If exported visual behavior
+  conflicts with `docs/product/`, `docs/product/` wins. Match exported pixels
+  and interactions only inside the accepted product behavior.
 
 ## Source map
 - Primary entry: `preview/index.html`
-- HTML screens detected: 15
+- HTML screens detected: 14
 - Stylesheets detected: 3
 - Script/component files detected: 0
-- Supporting assets detected: 24
+- Supporting assets detected: 22
 
 ## Responsive contract
 Validate the implementation across this 2025–2026 viewport matrix:
@@ -44,11 +50,14 @@ For responsive web exports, treat these as a modern breakpoint system for one ad
 - Screen-file-first: when multiple user-facing surfaces exist, implement each HTML screen as its own route/file. Treat `index.html` as a launcher/overview when the manifest marks it that way, not as a combined final UI.
 - If `landing.html`, app screens, platform screens, or OS widget files exist, preserve those boundaries in the target app instead of merging them into one page.
 - A single self-contained `preview/index.html` is acceptable only when the export truly contains one user-facing screen and its CSS/JS are structured enough to extract tokens, components, states, and behavior.
-- If separate `css/` or `js/` files exist, treat them as source of truth for token/component/interactions before porting to React, Vue, SwiftUI, Compose, or another target stack.
+- If separate `css/` or `js/` files exist, use them as the visual reference for
+  tokens, components, and interactions before porting to React, Vue, SwiftUI,
+  Compose, or another target stack.
 - In-app modules/components are product UI blocks inside the app. OS widgets are home-screen/lock-screen/quick-access surfaces outside the app. Do not merge those concepts.
 
 ## Color and brand contract
-- Use the exported design tokens and product/domain context as the color source of truth.
+- Use the exported design tokens as the color contract. Use product context only
+  to understand the visual examples.
 - Do not introduce warm beige / cream / peach / pink / orange-brown background washes unless they are already explicit brand/reference colors in the export.
 - A stylesheet or design/token file was detected; inspect it for canonical color variables before choosing framework theme tokens.
 
@@ -64,7 +73,6 @@ For responsive web exports, treat these as a modern breakpoint system for one ad
 
 ## Entry points
 - `examples/meetless-prototype.html`
-- `meetless-prototype.html`
 - `preview/app-surface.html`
 - `preview/brand-assets.html`
 - `preview/colors-primary.html`
@@ -102,13 +110,11 @@ For responsive web exports, treat these as a modern breakpoint system for one ad
 - `assets/meetless-mark-64.png`
 - `assets/meetless-mark-light.svg`
 - `assets/meetless-mark.svg`
-- `context/product-source.md`
 - `context/provenance.md`
 - `context/source-context.md`
 - `DESIGN.md`
 - `fonts/README.md`
 - `preview/manifest.md`
-- `PRODUCT.md`
 - `README.md`
 - `SKILL.md`
 - `ui_kits/app/README.md`
@@ -123,4 +129,5 @@ For responsive web exports, treat these as a modern breakpoint system for one ad
 7. Keep landing page, product screens, and OS widget/quick-access surfaces separate when present.
 8. Confirm the production result visually matches the exported design before refactoring internals.
 9. Reject implementation shortcuts that flatten the design into generic cards, generic gradients, placeholder stats, or framework-default typography.
-10. If a detail is ambiguous, keep the exported HTML/CSS/JS behavior rather than inventing a new pattern.
+10. If a detail is ambiguous, check `docs/product/` first. Keep exported
+    HTML/CSS/JS behavior only when it does not conflict with product authority.

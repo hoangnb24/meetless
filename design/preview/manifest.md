@@ -13,7 +13,7 @@ Start reviewers at **Applied UI surface** (live prototype), then **Color** and
 | Typography | `typography-specimens.html` | `tokens.css` + `colors_and_type.css` |
 | Spacing · Radius · Elevation | `spacing-tokens.html` | `tokens.css` |
 | Components | `components-buttons.html` | `tokens.css` (app shapes) |
-| Brand | `brand-assets.html` | `assets/meetless-mark*.svg`, raster marks, apple-touch-icon, `build/favicon.ico` |
+| Brand | `brand-assets.html` | `assets/meetless-mark*.svg`, raster marks, apple-touch-icon |
 
 ## Gallery
 
@@ -23,10 +23,11 @@ Start reviewers at **Applied UI surface** (live prototype), then **Color** and
 
 - `../examples/meetless-prototype.html` — full preserved interaction prototype, embedded
   by the applied-surface card.
-- `../context/product-source.md` — copied product spec.
+- `../../docs/product/experience.md` — accepted product and UX authority outside
+  this visual package.
 
 ## Synchronization
 
 Update this manifest whenever cards are added/renamed or package docs change. Current
 package structure: DESIGN.md, README.md, SKILL.md, tokens.css, colors_and_type.css,
-assets/, build/, fonts/, context/, examples/, preview/, ui_kits/app/.
+assets/, fonts/, context/, examples/, preview/, ui_kits/app/.

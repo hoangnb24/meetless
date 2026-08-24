@@ -19,13 +19,11 @@
       "assets/meetless-mark-light.svg",
       "assets/meetless-mark.svg",
       "colors_and_type.css",
-      "context/product-source.md",
       "context/provenance.md",
       "context/source-context.md",
       "DESIGN.md",
       "examples/meetless-prototype.html",
       "fonts/README.md",
-      "meetless-prototype.html",
       "preview/app-surface.html",
       "preview/brand-assets.html",
       "preview/colors-primary.html",
@@ -34,7 +32,6 @@
       "preview/manifest.md",
       "preview/spacing-tokens.html",
       "preview/typography-specimens.html",
-      "PRODUCT.md",
       "README.md",
       "SKILL.md",
       "tokens.css",
@@ -49,7 +46,6 @@
     ],
     "html": [
       "examples/meetless-prototype.html",
-      "meetless-prototype.html",
       "preview/app-surface.html",
       "preview/brand-assets.html",
       "preview/colors-primary.html",
@@ -85,13 +81,11 @@
       "assets/meetless-mark-64.png",
       "assets/meetless-mark-light.svg",
       "assets/meetless-mark.svg",
-      "context/product-source.md",
       "context/provenance.md",
       "context/source-context.md",
       "DESIGN.md",
       "fonts/README.md",
       "preview/manifest.md",
-      "PRODUCT.md",
       "README.md",
       "SKILL.md",
       "ui_kits/app/README.md"
@@ -100,11 +94,6 @@
   "screens": [
     {
       "file": "examples/meetless-prototype.html",
-      "role": "screen",
-      "implementationNote": "Preserve visual hierarchy, responsive behavior, and interactive states from this screen."
-    },
-    {
-      "file": "meetless-prototype.html",
       "role": "screen",
       "implementationNote": "Preserve visual hierarchy, responsive behavior, and interactive states from this screen."
     },

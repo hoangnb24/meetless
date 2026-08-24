@@ -30,12 +30,17 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 
 ## Active Plans
 
-- [Meetless V1 on top of Paseo](active/v1-paseo-foundation.md) — personal,
-  local-first Zoom/Meet recording, transcript reading, meeting-scoped chat, and
-  cross-platform companion clients.
+- [Meetless V1 release readiness](active/v1-paseo-foundation.md) — Milestone 7
+  acceptance, distribution, supported-target, and residual-risk proof.
 
 ## Completed Harness Improvements
 
 - [Correlated Electron recording proof](completed/post-m3-electron-harness-improvement.md)
   — kept after a materially equivalent fresh-agent rerun exercised the bounded
   POC capability without owner intervention.
+
+## Completed Product History
+
+- [Meetless V1 foundation, M0–M6, and new design](completed/v1-paseo-foundation-m0-m6.md)
+  — accepted decisions, candidates, validation, recovery evidence, and the
+  authority-path reorganization record before M7.

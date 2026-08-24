@@ -17,12 +17,12 @@ package as described here.
 - **`tokens.css`** — verbatim token contract (paste first).
 - **`colors_and_type.css`** — self-contained colors + typography (Inter Variable /
   Berkeley Mono).
-- **`DESIGN.md`** — authority: theme, color, type, spacing, layout, components, motion,
+- **`DESIGN.md`** — visual contract: theme, color, type, spacing, layout, components, motion,
   voice, anti-patterns.
 - **`ui_kits/app/`** — applied interface kit (library, detail, recording, sources, pairing).
 - **`preview/`** — review cards (color, typography, spacing, components, brand, applied
   surface).
-- **`assets/`, `build/`, `fonts/`** — preserved vector mark, icon sprite, font pairing.
+- **`assets/`, `fonts/`** — preserved marks and font pairing.
 - **`examples/`** — the full preserved source prototype.
 
 ## Source context
@@ -34,10 +34,11 @@ system **`linear-app`**. The copied evidence (prototype + product spec) describe
 meeting-scoped Ask, and cited playback. See `context/source-context.md` and
 `context/provenance.md`.
 
-### Reusable product block (drop into any consumer project)
+### Product context for visual application
 
-Copy the following constraints verbatim when binding this system elsewhere; they are
-domain-evidence, not re-derived assumptions:
+The items below explain the prototype. They are not product authority and must
+not be copied as policy. Use [`docs/product/`](../docs/product/README.md) for
+accepted Meetless behavior.
 
 - **Local-first.** The host owns the MP3 on this computer; capture uploads nothing until the
   one-time cloud-consent path is taken. Never imply server-side files.

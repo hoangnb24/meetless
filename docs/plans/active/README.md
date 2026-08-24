@@ -6,4 +6,4 @@ the plan to `../completed/` only after the result is verified.
 
 ## Current Plan
 
-- [Meetless V1 on top of Paseo](v1-paseo-foundation.md)
+- [Meetless V1 release readiness](v1-paseo-foundation.md) — Milestone 7 only.

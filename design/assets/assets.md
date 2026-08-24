@@ -1,8 +1,8 @@
 # assets/
 
-Vector brand assets for the Meetless design system. The source project is
-wireframe-fidelity (CSS-only mark, no raster output), so all assets here are faithful
-vector re-renders of the source's declared shapes.
+Brand assets for the Meetless design system. The wireframe source has a CSS-only
+mark and no raster files. This package contains a reconstructed vector mark and
+derived raster exports of that mark.
 
 ## Files
 
@@ -28,5 +28,4 @@ Keep the cutout ratio at roughly 44% insets as in the source. Do not recolor the
 
 - No photographic or raster brand imagery exists in the source artifact; the vector mark
   is the captured brand evidence. Provenance: `context/provenance.md`.
-- App-chrome icons (play, pause, record, pairing, etc.) live in `../build/icons.svg`, not
-  here.
+- App-chrome icons are not included in this package.

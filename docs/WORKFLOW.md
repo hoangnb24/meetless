@@ -5,9 +5,10 @@ runtime signals are the system of record.
 
 ## Repository Map
 
-- `AGENTS.md`: entry map and authority boundary.
-- `README.md`, `docs/product/`, architecture, and decisions: current intent and
-  constraints.
+- `AGENTS.md`: repository instruction and authority boundary.
+- `docs/product/`: accepted consumer behavior and UX.
+- `docs/decisions/`: lasting technical and adoption constraints.
+- `design/`: visual implementation contract and evidence package only.
 - `docs/plans/`: durable work; `docs/templates/`: optional structures.
 - Code, tests, CI, and runtime signals: executable and observable truth.
 

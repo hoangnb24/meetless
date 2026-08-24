@@ -4,9 +4,13 @@ A reusable Open Design design-system package derived from the **Web Prototype** 
 and its bound **Linear-app** system, applied to **Meetless** — a local-first meeting
 recorder and grounded-Q&A tool.
 
-## Product overview
+This package defines visual implementation and preserves visual evidence only.
+It does not define product behavior. The accepted consumer behavior and UX live
+in [`docs/product/`](../docs/product/README.md).
 
-**Meetless** is a personal, local-first meeting recorder and knowledge tool. Designed
+## Visual context
+
+The prototype depicts a personal, local-first meeting recorder and knowledge tool. Designed
 for a focused local-work control surface, the desktop host records Zoom/Google Meet,
 keeps a local MP3, transcribes it privately (after one-time cloud-consent), and grounds
 answers only on the open meeting's timed transcript.
@@ -19,20 +23,19 @@ companion pairing / host-offline recovery.
 
 Calm dark-neutral canvas with one restrained indigo action (a Linear-derived language).
 Dense but readable rows; a distinct mono face for time codes and metadata; clear
-recovery-focused voice. See **DESIGN.md** for the full authority.
+recovery-focused voice. See **DESIGN.md** for the complete visual contract.
 
 ## Package Contents
 
 ```
 .
-├── DESIGN.md            Authority — theme, color, type, spacing, layout, components, motion, voice, anti-patterns
+├── DESIGN.md            Visual contract — theme, color, type, spacing, layout, components, motion, voice
 ├── tokens.css           Verbatim :root token contract (paste first)
 ├── colors_and_type.css  Self-contained colors + typography
 ├── README.md            This file
 ├── SKILL.md             Generation guidance (YAML frontmatter)
-├── context/             Source-context + provenance + copied product spec
+├── context/             Source context and provenance
 ├── assets/meetless-mark.svg   Vector brand mark (dark + light)
-├── build/icons.svg      Runtime icon sprite + notes
 ├── fonts/README.md      Font pairing + licensing note
 ├── examples/            Preserved source prototype (full interaction evidence)
 ├── preview/             Review cards + gallery + manifest

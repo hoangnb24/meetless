@@ -16,7 +16,7 @@ came from, so reviewers can trust the system's fidelity to the source.
 | File | Role | Preserved as |
 |---|---|---|
 | `meetless-prototype.html` | Full interaction prototype (1321 lines) | `examples/meetless-prototype.html` |
-| `PRODUCT.md` | Product UX spec (record → process → read → ask → evidence) | `context/product-source.md` |
+| `PRODUCT.md` | Product UX spec (record → process → read → ask → evidence) | Moved to `../../docs/product/experience.md`; the exact duplicate in this package was removed. |
 
 Both were copied verbatim from the source workspace and remain source evidence, not
 generated output.
@@ -45,11 +45,11 @@ palette values.
   (18px rounded indigo square with inset cutout, brand word). The source defines the mark
   only in CSS, so the SVG is a faithful vector re-render of that same shape, not a new logo.
 - `assets/meetless-mark-light.svg` — same mark on a light field for preview palettes.
-- `build/icons.svg` — a semantic icon sprite for app chrome (recording, mic, system,
-  play, pause, stop, link, cite, back). The source uses text/glyph markers, so this icon set
-  is a designed rebuild of the *roles* the prototype conveys, not an extracted asset.
-- No raster imagery exists in the source (wireframe fidelity); therefore `assets/` holds
-  vectors only. This is a documented limitation, not a loss.
+- No separate icon sprite is present in the retained package. The source uses
+  text and glyph markers for app-chrome roles.
+- No raster imagery exists in the source project. The retained package includes
+  derived PNG exports of the reconstructed vector mark for app-icon and favicon
+  sizes. These files are generated derivatives, not source imagery.
 
 ## Fonts
 
@@ -58,7 +58,8 @@ palette values.
 
 ## Assumptions recorded
 
-- The source has no product logo file, animation files, or photographic assets; the
-  package preserves the captured vector-equivalent marks and icon sprite in their place.
+- The source has no product logo file, animation files, icon sprite, or
+  photographic assets. The package preserves a reconstructed vector-equivalent
+  mark and its derived raster exports.
 - Colors were read directly from `tokens.css`-equivalent values in the prototype; nothing
   was invented.
