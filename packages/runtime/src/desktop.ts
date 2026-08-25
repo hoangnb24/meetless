@@ -1,5 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RuntimeConfig } from "./config.js";
@@ -7,6 +8,8 @@ import { copyEnvironmentWithoutDirectPasswordSecrets, prepareRuntime, REPOSITORY
 import { assertDesktopLaunchedByHost, assertSupervisorOwnedByHost } from "./host.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
 import { activateUiTestRun, removeUiTestRunState } from "./ui-test-envelope.js";
+
+const rendererAbortListeners = new WeakMap<Server, { signal: AbortSignal; listener: () => void }>();
 
 export function buildRendererUrl(config: RuntimeConfig): string {
   const configured = process.env.MEETLESS_RENDERER_URL?.trim();
@@ -36,6 +39,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
   const shutdown = owned.signals;
   let daemonChild: ChildProcess | null = null;
   let renderer: ChildProcess | null = null;
+  let rendererServer: Server | null = null;
   let electron: ChildProcess | null = null;
   let daemonOwned = false;
   let hostAttested = false;
@@ -73,7 +77,10 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
 
     const rendererUrl = buildRendererUrl(config);
     const nonSecretChildEnvironment = copyEnvironmentWithoutDirectPasswordSecrets(config.environment);
-    if (!process.env.MEETLESS_RENDERER_URL) {
+    if (config.packaged) {
+      rendererServer = await startPackagedRenderer(config, shutdown.signal);
+      await waitForHttp(config.rendererOrigin, null, shutdown.signal);
+    } else if (!process.env.MEETLESS_RENDERER_URL) {
       const appPort = new URL(config.rendererOrigin).port;
       renderer = spawn(
         process.execPath,
@@ -93,9 +100,12 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
       await waitForHttp(config.rendererOrigin, renderer, shutdown.signal);
     }
 
-    const electronCli = fileURLToPath(import.meta.resolve("electron/cli.js"));
     const bootstrap = path.join(REPOSITORY_ROOT, "scripts/electron-bootstrap.mjs");
-    electron = spawn(process.execPath, [electronCli, bootstrap], {
+    const electronCommand = config.packageResources?.electronBinary ?? process.execPath;
+    const electronArguments = config.packaged
+      ? [bootstrap]
+      : [fileURLToPath(import.meta.resolve("electron/cli.js")), bootstrap];
+    electron = spawn(electronCommand, electronArguments, {
       cwd: REPOSITORY_ROOT,
       env: {
         ...nonSecretChildEnvironment,
@@ -110,6 +120,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
     return result.code ?? (result.signal ? 1 : 0);
   } finally {
     shutdown.dispose();
+    await closeRendererServer(rendererServer);
     if (hostAttested) await owned.shutdown({ daemonChild, daemonOwned });
   }
 }
@@ -303,11 +314,154 @@ async function waitForDaemon(config: RuntimeConfig, child: ChildProcess, signal:
   throw new Error(`Timed out starting isolated Meetless daemon at ${config.listen}`);
 }
 
-async function waitForHttp(origin: string, child: ChildProcess, signal: AbortSignal): Promise<void> {
+async function startPackagedRenderer(config: RuntimeConfig, signal: AbortSignal): Promise<Server> {
+  const rendererRoot = config.packageResources?.rendererRoot;
+  if (!rendererRoot) {
+    throw new Error(
+      "Packaged Meetless renderer resource is unavailable. Authority: docs/plans/active/v1-paseo-foundation.md. " +
+        "Next action: rebuild the complete macOS package; packaged mode does not start an Expo or repository renderer.",
+    );
+  }
+  const indexPath = path.join(rendererRoot, "index.html");
+  if (!(await stat(indexPath).catch(() => null))?.isFile()) {
+    throw new Error(
+      `Packaged Meetless renderer entry is missing: ${indexPath}. Authority: docs/plans/active/v1-paseo-foundation.md. ` +
+        "Next action: rebuild the emitted renderer before launching the package.",
+    );
+  }
+  const origin = new URL(config.rendererOrigin);
+  const port = Number(origin.port);
+  const host = origin.hostname === "localhost" ? "127.0.0.1" : origin.hostname.replace(/^\[|\]$/gu, "");
+  const server = createServer((request, response) => {
+    void servePackagedRendererRequest(rendererRoot, request.url ?? "/", request.method ?? "GET", response);
+  });
+  let aborted = signal.aborted;
+  const closeOnAbort = () => {
+    aborted = true;
+    if (server.listening) server.close();
+  };
+  signal.addEventListener("abort", closeOnAbort);
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      if (aborted) {
+        server.close();
+        reject(new Error("Packaged Meetless renderer start was aborted after listener registration"));
+        return;
+      }
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, host);
+  }).catch((error) => {
+    signal.removeEventListener("abort", closeOnAbort);
+    if (server.listening) server.close();
+    throw new Error(
+      `Packaged Meetless renderer could not bind ${origin}: ${describe(error)}. ` +
+        "Authority: docs/plans/active/v1-paseo-foundation.md. Next action: use the package's isolated renderer endpoint.",
+    );
+  });
+  rendererAbortListeners.set(server, { signal, listener: closeOnAbort });
+  if (signal.aborted) {
+    await closeRendererServer(server);
+    signal.throwIfAborted();
+  }
+  return server;
+}
+
+export async function startPackagedRendererForTest(
+  rendererRoot: string,
+  rendererOrigin: string,
+  signal: AbortSignal,
+): Promise<Server> {
+  return startPackagedRenderer({
+    packageResources: { rendererRoot } as RuntimeConfig["packageResources"],
+    rendererOrigin,
+  } as RuntimeConfig, signal);
+}
+
+export async function closePackagedRendererForTest(server: Server): Promise<void> {
+  await closeRendererServer(server);
+}
+
+async function servePackagedRendererRequest(
+  rendererRoot: string,
+  requestUrl: string,
+  method: string,
+  response: import("node:http").ServerResponse,
+): Promise<void> {
+  if (method !== "GET" && method !== "HEAD") {
+    response.writeHead(405, { Allow: "GET, HEAD" });
+    response.end();
+    return;
+  }
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(new URL(requestUrl, "http://127.0.0.1").pathname);
+  } catch {
+    response.writeHead(400);
+    response.end("Bad request");
+    return;
+  }
+  const candidate = path.resolve(rendererRoot, `.${pathname}`);
+  const relative = path.relative(rendererRoot, candidate);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    response.writeHead(404);
+    response.end("Not found");
+    return;
+  }
+  const inspected = await stat(candidate).catch(() => null);
+  const filePath = inspected?.isFile()
+    ? candidate
+    : inspected?.isDirectory()
+    ? path.join(candidate, "index.html")
+    : path.join(rendererRoot, "index.html");
+  const file = await readFile(filePath).catch(() => null);
+  if (!file) {
+    response.writeHead(404);
+    response.end("Not found");
+    return;
+  }
+  response.writeHead(200, { "Content-Type": contentType(filePath), "Content-Length": file.byteLength });
+  if (method === "HEAD") response.end();
+  else response.end(file);
+}
+
+function contentType(filePath: string): string {
+  return ({
+    ".css": "text/css; charset=utf-8",
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+  } as Record<string, string>)[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
+}
+
+async function closeRendererServer(server: Server | null): Promise<void> {
+  if (!server) return;
+  const abortRegistration = rendererAbortListeners.get(server);
+  if (abortRegistration) {
+    rendererAbortListeners.delete(server);
+    abortRegistration.signal.removeEventListener("abort", abortRegistration.listener);
+  }
+  if (!server.listening) return;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+async function waitForHttp(origin: string, child: ChildProcess | null, signal: AbortSignal): Promise<void> {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     signal.throwIfAborted();
-    if (child.exitCode !== null) throw new Error(`Meetless renderer exited during startup (${child.exitCode})`);
+    if (child && child.exitCode !== null) throw new Error(`Meetless renderer exited during startup (${child.exitCode})`);
     try {
       const response = await fetch(origin, { signal });
       if (response.ok) return;

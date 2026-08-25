@@ -19,6 +19,12 @@ import {
   verifyCollisionEvidence,
   waitForRecordingRuntime,
 } from "../src/readiness.js";
+import {
+  activateUiTestRun,
+  createUiTestExportLease,
+  newUiTestEnvelope,
+  writeUiTestEnvelope,
+} from "../src/ui-test-envelope.js";
 
 const roots = new Set<string>();
 
@@ -272,6 +278,54 @@ describe("production recording readiness invariant", () => {
     })).rejects.toThrow(/daemon export root differs from launcher configuration/u);
   });
 
+  test("controlled readiness requires the consumed lease root and generation parity", async () => {
+    const root = await temporaryRoot();
+    const lease = await createUiTestExportLease({
+      proofSessionId: `readiness-${randomUUID().slice(0, 12)}`,
+      restartGeneration: 1,
+      runtimeRoot: root,
+      repositoryRoot: process.cwd(),
+    });
+    roots.add(lease.exportRoot);
+    const envelope = newUiTestEnvelope({ cdpPort: 45_401, transcriptionMode: "fake", exportLease: lease });
+    await writeUiTestEnvelope(root, envelope);
+    const config = resolveRuntimeConfig({ runtimeRoot: root, repositoryRoot: process.cwd() });
+    const marker = await activateUiTestRun(config, controlledHostIdentity());
+    expect(marker?.restartGeneration).toBe(1);
+    expect(config.paths.recordingExports).toBe(lease.exportRoot);
+
+    const response = await runtimeResponse(config, {
+      captureMode: "fixture",
+      exportRoot: lease.exportRoot,
+      uiTest: marker!.identity,
+    });
+    await expect(waitForRecordingRuntime(config, {
+      timeoutMs: 250,
+      retryMs: 1,
+      dependencies: {
+        bootstrapPlugin: async () => daemonAttestation(config, response),
+        requestReadiness: async () => response,
+        verifyOwnership: async () => undefined,
+      },
+    })).resolves.toMatchObject({ runtime: { export: { root: lease.exportRoot } } });
+
+    const wrongRoot = path.join(lease.exportRoot, "wrong");
+    const wrongResponse = await runtimeResponse(config, {
+      captureMode: "fixture",
+      exportRoot: wrongRoot,
+      uiTest: marker.identity,
+    });
+    await expect(waitForRecordingRuntime(config, {
+      timeoutMs: 50,
+      retryMs: 1,
+      dependencies: {
+        bootstrapPlugin: async () => daemonAttestation(config, wrongResponse),
+        requestReadiness: async () => wrongResponse,
+        verifyOwnership: async () => undefined,
+      },
+    })).rejects.toThrow(/daemon export root differs from launcher configuration/u);
+  });
+
   test("binds to the daemon-routed plugin PID when multiple plugin descendants exist", async () => {
     const config = resolveRuntimeConfig({ runtimeRoot: await temporaryRoot() });
     const response = await runtimeResponse(config, { pluginPid: 21, helperPid: 31 });
@@ -488,6 +542,8 @@ async function runtimeResponse(config: RuntimeConfig, overrides: {
   helperPid?: number | null;
   arguments?: string[];
   exportRoot?: string;
+  captureMode?: "production" | "fixture";
+  uiTest?: RecordingRuntimeReadinessResponse["runtime"]["uiTest"];
   socketIdentity?: { device: number; inode: number };
   status?: RecordingRuntimeReadinessResponse["status"];
   collision?: RecordingRuntimeReadinessResponse["collision"];
@@ -509,7 +565,7 @@ async function runtimeResponse(config: RuntimeConfig, overrides: {
       socketPath: config.paths.recordingSocket,
       socketIdentity: overrides.socketIdentity ?? { device: 1, inode: 2 },
       capture: {
-        mode: "production",
+        mode: overrides.captureMode ?? "production",
         executable: {
           configuredPath: config.paths.captureHelper,
           realPath: helperRealPath,
@@ -522,6 +578,7 @@ async function runtimeResponse(config: RuntimeConfig, overrides: {
         helperPid: overrides.helperPid ?? null,
       },
       export: { root: overrides.exportRoot ?? config.paths.recordingExports, fixtureStampApplied: false },
+      uiTest: overrides.uiTest,
     },
     status: overrides.status ?? idleStatus(),
     collision: overrides.collision ?? null,
@@ -583,6 +640,33 @@ function daemonAttestation(
     status: "running",
     runtimeInstanceId: response.runtime.instanceId,
     pluginPid: response.runtime.pluginPid,
+  };
+}
+
+function controlledHostIdentity() {
+  return {
+    version: 1 as const,
+    bundleIdentifier: "com.meetless.app",
+    bundlePath: "/Users/example/Applications/Meetless.app",
+    bundleRealPath: "/Users/example/Applications/Meetless.app",
+    executablePath: "/Users/example/Applications/Meetless.app/Contents/MacOS/MeetlessHost",
+    designatedRequirement: "identifier \"com.meetless.app\"",
+    cdHash: "a".repeat(40),
+    binarySha256: "b".repeat(64),
+    binaryDevice: 1,
+    binaryInode: 2,
+    binarySize: 3,
+    configuration: {
+      repositoryRoot: process.cwd(),
+      runtimeRoot: "/tmp/meetless",
+      listen: "127.0.0.1:6777",
+      rendererOrigin: "http://127.0.0.1:8082",
+      transcriptionSocket: "/tmp/transcription.sock",
+      transcriptionStaging: "/tmp/transcription-ranges",
+      nodePath: process.execPath,
+      runtimeCliPath: "/tmp/packages/runtime/dist/cli.js",
+      identityPath: "/tmp/host-identity.json",
+    },
   };
 }
 

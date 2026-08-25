@@ -583,7 +583,8 @@ function controlledUiTestMarker(config: RuntimeConfig) {
     config.environment.MEETLESS_UI_TEST_MODE !== "1" ||
     config.environment.MEETLESS_UI_TEST_RUN_ID !== marker.runId ||
     path.resolve(config.environment.MEETLESS_UI_TEST_MARKER ?? "") !== path.resolve(markerPath(config)) ||
-    path.resolve(config.paths.recordingExports) !== path.join(path.resolve(config.paths.root), "ui-test-exports")
+    path.resolve(config.paths.recordingExports) !== path.resolve(marker.exportRoot) ||
+    path.resolve(config.environment.MEETLESS_EXPORT_ROOT ?? "") !== path.resolve(marker.exportRoot)
   ) return null;
   return marker;
 }

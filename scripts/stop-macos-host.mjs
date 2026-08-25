@@ -12,7 +12,7 @@ const inspected = spawnSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "
 if (inspected.error || inspected.status !== 0) throw new Error("Cannot inspect the MeetlessHost process");
 const matches = inspected.stdout.split("\n").flatMap((line) => {
   const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/u.exec(line);
-  if (!match || match[3] !== identity.executablePath || Number(match[2]) !== 1) return [];
+  if (!match || match[3] !== identity.executablePath) return [];
   return [Number(match[1])];
 });
 if (matches.length === 0) {

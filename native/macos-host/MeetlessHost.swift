@@ -6,6 +6,7 @@ private struct HostConfiguration: Decodable {
   let repositoryRoot: String
   let runtimeRoot: String
   let listen: String
+  let rendererOrigin: String
   let transcriptionSocket: String
   let transcriptionStaging: String
   let nodePath: String
@@ -180,6 +181,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     }
     environment["MEETLESS_RUNTIME_ROOT"] = configuration.runtimeRoot
     environment["MEETLESS_LISTEN"] = configuration.listen
+    environment["MEETLESS_RENDERER_ORIGIN"] = configuration.rendererOrigin
     environment["MEETLESS_HOST_PID"] = String(getpid())
     environment["MEETLESS_HOST_BUNDLE_PATH"] = Bundle.main.bundlePath
     environment["MEETLESS_HOST_IDENTITY_PATH"] = configuration.identityPath

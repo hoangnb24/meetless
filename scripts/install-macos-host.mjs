@@ -1,12 +1,19 @@
 import { execFile, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { inspectHostBundle } from "../packages/runtime/dist/host.js";
 import { resolveRuntimeConfig } from "../packages/runtime/dist/config.js";
+import {
+  finalizePackageTransaction,
+  newPackageTransactionId,
+  packageTransactionPaths,
+  recoverPackageTransaction,
+  replacePackageBundle,
+} from "./lib/macos-package-transaction.mjs";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -85,6 +92,7 @@ try {
     repositoryRoot,
     runtimeRoot: config.paths.root,
     listen: config.listen,
+    rendererOrigin: config.rendererOrigin,
     transcriptionSocket: config.paths.transcriptionSocket,
     transcriptionStaging: config.paths.transcriptionStaging,
     nodePath: process.execPath,
@@ -113,37 +121,48 @@ try {
     "--timestamp=none",
     bundle,
   ]);
-  await mkdir(path.dirname(target), { recursive: true, mode: 0o755 });
-  const staging = path.join(path.dirname(target), `.Meetless.app.${process.pid}.${randomUUID()}.installing`);
-  await cp(bundle, staging, { recursive: true, force: false, errorOnExist: true });
-  let backup = null;
-  let placedTarget = false;
+  assertNoExactHost(target);
+  const ownerToken = `MEETLESS_M7_PACKAGE_INSTALL_v1:${process.pid}:${randomUUID()}`;
+  const runId = newPackageTransactionId();
+  const journalPath = packageTransactionPaths(target, runId).journal;
+  let transaction = null;
   try {
-    if (await exists(target)) {
-      backup = path.join(path.dirname(target), `.Meetless.app.${process.pid}.${randomUUID()}.backup`);
-      await rename(target, backup);
+    try {
+      transaction = await replacePackageBundle({
+        source: bundle,
+        target,
+        identityPath,
+        ownerToken,
+        runId,
+        inspect: inspectHostBundle,
+      });
+    } catch (error) {
+      if (await exists(journalPath)) transaction = JSON.parse(await readFile(journalPath, "utf8"));
+      throw error;
     }
-    await rename(staging, target);
-    placedTarget = true;
+    await finalizePackageTransaction(transaction, {
+      ownerToken,
+      target,
+      identityPath,
+      assertNoLiveHost: async () => assertNoExactHost(target),
+    });
     const installed = await inspectHostBundle(target);
-    await writeIdentity(identityPath, installed);
-    if (backup) await rm(backup, { recursive: true, force: true });
     process.stdout.write(`${JSON.stringify({ status: replace ? "replaced" : "installed", sourceHash, ...installed }, null, 2)}\n`);
   } catch (error) {
-    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
-    if (placedTarget) await rm(target, { recursive: true, force: true }).catch(() => undefined);
-    if (backup) await rename(backup, target).catch(() => undefined);
+    if (transaction && await exists(journalPath)) {
+      await recoverPackageTransaction(journalPath, {
+        ownerToken,
+        target,
+        identityPath,
+        assertNoLiveHost: async () => assertNoExactHost(target),
+      }).catch((recoveryError) => {
+        throw new Error(`${describe(error)}; package transaction recovery failed closed: ${describe(recoveryError)}`);
+      });
+    }
     throw error;
   }
 } finally {
   await rm(buildRoot, { recursive: true, force: true });
-}
-
-async function writeIdentity(filePath, identity) {
-  await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
-  const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(identity, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-  await rename(temporary, filePath);
 }
 
 async function hostSourceHash() {
@@ -163,4 +182,19 @@ async function exists(candidate) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return false;
     throw error;
   }
+}
+
+function assertNoExactHost(bundlePath) {
+  const executablePath = path.join(bundlePath, "Contents", "MacOS", "MeetlessHost");
+  const inspected = spawnSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
+  if (inspected.error || inspected.status !== 0) throw new Error("Cannot inspect the exact MeetlessHost process before replacement");
+  const matches = inspected.stdout.split("\n").flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/u.exec(line);
+    return match?.[3] === executablePath ? [Number(match[1])] : [];
+  });
+  if (matches.length > 0) throw new Error(`Refusing to replace a live exact MeetlessHost: ${matches.join(", ")}`);
+}
+
+function describe(error) {
+  return error instanceof Error ? error.message : String(error);
 }

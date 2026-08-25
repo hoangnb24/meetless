@@ -1,0 +1,367 @@
+{
+  "schema": "MEETLESS_M7_F3_PACKAGED_CONTROLLED_LIFECYCLE v1",
+  "frontierId": "M7-F3-RUNTIME-MEDIA-CLOSURE",
+  "status": "passed",
+  "runId": "m7-f3-1787586720021-18092ffb",
+  "candidate": {
+    "sourceSnapshotMode": "package-source",
+    "sourceSnapshotExcludedPaths": [
+      "test/evidence/m7/m7-f3-packaged-controlled-lifecycle.json"
+    ],
+    "sourceSnapshotDigest": "d2752eff76d3306ac006d34670ebf84c6df95bb8be641906917376df2524a077",
+    "sourceSnapshotHead": "bb678fa59674aa0292f56ada3beb57290faaf540",
+    "packageInputDigest": "ab8088c6bf184533738d6e306744dd155766ebee6b93f5af17fc55881171b8b3",
+    "artifactInputDigest": "81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1",
+    "artifactDigest": "c73f44c8fc9e0ceb07ce230a248d92c8c2c1137f4d8be525625d0a7866d9d40e",
+    "entryCount": 13774,
+    "machoCount": 46,
+    "paseoCommit": "c81cb84735043c281a5a2d23d456d3708ce5d94e"
+  },
+  "acceptedHost": {
+    "bundleIdentifier": "com.meetless.app",
+    "cdHash": "cd3e2b88fd3d19a440235279accd9ff49640cd27",
+    "launchRoute": "LaunchServices open -g -a exact com.meetless.app bundle",
+    "canonicalBundleRestored": true,
+    "identityRestoredByteForByte": true
+  },
+  "packageConfiguration": {
+    "listen": "127.0.0.1:16777",
+    "rendererOrigin": "http://127.0.0.1:18082",
+    "runtimeRoot": "<owned-proof-runtime>",
+    "packageRoot": "<installed-package-root>",
+    "exportRoot": "<leased-external-root>",
+    "sourceFallbackAfterLaunch": false,
+    "homebrewFallback": false
+  },
+  "lease": {
+    "parent": "/private/tmp/meetless-package-proof-exports",
+    "proofSessionId": "m7-f3-1787586720021-18092ffb",
+    "root": "/private/tmp/meetless-package-proof-exports/m7-f3-1787586720021-18092ffb",
+    "generation1": {
+      "restartGeneration": 1,
+      "leaseId": "6fd0bdff-40cb-4e86-9b6e-5a9c10d9cb6b",
+      "leaseSha256": "7303c48a3b22e5694e600995158647183fe59562addc05fdfcc3276f67373e9f",
+      "leasePath": "meetless-export-lease.json",
+      "expiresAt": "2026-08-24T16:07:46.819Z"
+    },
+    "generation2": {
+      "restartGeneration": 2,
+      "leaseId": "9e33c0f5-2004-4979-9ca2-cd7142a6dba4",
+      "leaseSha256": "642f7998b01f17373f6d1a8eb4565ac0082e56f9f89620cdd8f796ccce16f7d7",
+      "leasePath": "meetless-export-lease.json",
+      "expiresAt": "2026-08-24T16:08:20.986Z"
+    },
+    "cleanupGeneration": {
+      "restartGeneration": 3,
+      "leaseId": "32b142f5-52c9-43d6-8fbd-4b5a1b290344",
+      "leaseSha256": "3f75dffe9187eaaafba0e628af8768e8ff5d4d286a1e2b6a776d02c8fc8e1343",
+      "leasePath": "meetless-export-lease.json",
+      "expiresAt": "2026-08-24T15:53:38.022Z"
+    },
+    "rootRemovedAfterExpiredOwnershipCheck": true
+  },
+  "generations": {
+    "generation1": {
+      "generation": 1,
+      "runId": "m7-f3-1787586720021-18092ffb-g1",
+      "runtimeInstanceId": "867d5969-c03f-4693-8e59-ab47e50c9e20",
+      "pluginPid": 10658,
+      "exportRoot": "/private/tmp/meetless-package-proof-exports/m7-f3-1787586720021-18092ffb",
+      "captureMode": "fixture",
+      "renderer": {
+        "origin": "http://127.0.0.1:18082",
+        "byteLength": 1175,
+        "sha256": "abbb5dca1a703261130d5d23902a447d63168882491f7725ef46ee3510a2fcc0",
+        "entry": "Contents/Resources/meetless/packages/meetless-app/dist/index.html"
+      },
+      "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
+      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1"
+    },
+    "generation2": {
+      "generation": 2,
+      "runId": "m7-f3-1787586720021-18092ffb-g2",
+      "runtimeInstanceId": "ccc867a5-71df-41d4-84bc-0f370b7b5fe7",
+      "pluginPid": 13258,
+      "exportRoot": "/private/tmp/meetless-package-proof-exports/m7-f3-1787586720021-18092ffb",
+      "captureMode": "fixture",
+      "renderer": {
+        "origin": "http://127.0.0.1:18082",
+        "byteLength": 1175,
+        "sha256": "abbb5dca1a703261130d5d23902a447d63168882491f7725ef46ee3510a2fcc0",
+        "entry": "Contents/Resources/meetless/packages/meetless-app/dist/index.html"
+      },
+      "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
+      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1"
+    },
+    "freshProcessIdentity": true
+  },
+  "topology": [
+    {
+      "generation": 1,
+      "hostPid": 9919,
+      "desktopPid": 9939,
+      "electronPid": 11470,
+      "ancestry": [
+        9919,
+        9939,
+        11470
+      ],
+      "nodePath": "/Users/tubakhuym/Applications/Meetless.app/Contents/Resources/meetless/runtime/node",
+      "electronExecutable": "/Users/tubakhuym/Applications/Meetless.app/Contents/Resources/meetless/runtime/electron/Electron.app/Contents/MacOS/Electron"
+    },
+    {
+      "generation": 2,
+      "hostPid": 12515,
+      "desktopPid": 12534,
+      "electronPid": 14079,
+      "ancestry": [
+        12515,
+        12534,
+        14079
+      ],
+      "nodePath": "/Users/tubakhuym/Applications/Meetless.app/Contents/Resources/meetless/runtime/node",
+      "electronExecutable": "/Users/tubakhuym/Applications/Meetless.app/Contents/Resources/meetless/runtime/electron/Electron.app/Contents/MacOS/Electron"
+    }
+  ],
+  "lifecycle": {
+    "generation1": {
+      "fixtureRecording": true,
+      "stopCommand": "Electron recording control: stop",
+      "stopStatus": "saved",
+      "sourceLabels": [
+        "microphone",
+        "system"
+      ],
+      "fakeTranscription": true,
+      "chatState": "empty-controlled-run"
+    },
+    "generation2": {
+      "reopenedMeeting": true,
+      "sameMeetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
+      "sameRecordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+      "sameMp3": true,
+      "transcriptPreserved": true,
+      "chatStatePreserved": true,
+      "citationPreserved": true,
+      "playbackReboundToSameMp3": true
+    }
+  },
+  "correlations": {
+    "sourceLabelEvidence": {
+      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+      "count": 2,
+      "microphoneCount": 1,
+      "systemCount": 1,
+      "identities": [
+        {
+          "storageKey": "sessions/d83fd01b-39e7-498f-a560-625385fa3ef1/chunk--microphone--000000--000000000000--000000016000--16000--1.wav",
+          "source": "microphone",
+          "byteLength": 32044,
+          "sha256": "9e2c610d9b40fbfe83c6de65590d815834bfd2669e493c58ec526874222ec545"
+        },
+        {
+          "storageKey": "sessions/d83fd01b-39e7-498f-a560-625385fa3ef1/chunk--system--000000--000000000000--000000016000--16000--1.wav",
+          "source": "system",
+          "byteLength": 32044,
+          "sha256": "b23dfcffe646eba0b3a0909a2d3ab1710855429694b8bcc0cf66299eb99514ec"
+        }
+      ]
+    },
+    "mp3": {
+      "path": "22-24-08-26-2.mp3",
+      "byteLength": 6057,
+      "sha256": "739bdeea34e5cec0fcbe66901ba3115abe537e8ccb30d21f8620ae54190ee210"
+    },
+    "collision": {
+      "path": "22-24-08-26.mp3",
+      "plannedPublishedPath": "22-24-08-26-2.mp3",
+      "byteLength": 201,
+      "sha256": "6fc272c3290b6b1c018f5ad1cb3de273057fbfbb46af064b8be2c8c5ed9ece08",
+      "distinctOutputName": true
+    },
+    "transcript": {
+      "status": "ready",
+      "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
+      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+      "segmentCount": 1,
+      "segments": [
+        {
+          "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
+          "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+          "ordinal": 0,
+          "startMs": 0,
+          "endMs": 1100,
+          "segmentId": "segment-9e03c03a5b731cebf3b11ad9e20ecc8d",
+          "segmentDigest": "8ecc5b3da864cf538d49ccc6661948e37f1de1ddc193ad2688873000b2c386f6",
+          "segmentCharCount": 41,
+          "ordered": true
+        }
+      ],
+      "fullTranscriptSha256": "8ecc5b3da864cf538d49ccc6661948e37f1de1ddc193ad2688873000b2c386f6",
+      "audio": {
+        "byteLength": 6057,
+        "sha256": "739bdeea34e5cec0fcbe66901ba3115abe537e8ccb30d21f8620ae54190ee210"
+      }
+    },
+    "citation": {
+      "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
+      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+      "segmentId": "segment-9e03c03a5b731cebf3b11ad9e20ecc8d",
+      "startMs": 0,
+      "endMs": 1100,
+      "audio": {
+        "byteLength": 4977,
+        "sha256": "2ba9139b18dcc52996ceeb34f238d39ac02b47ce354a4d5292b2e5ae65378d26"
+      }
+    },
+    "playbackGeneration1": {
+      "audioAccepted": true,
+      "playResolved": true,
+      "pauseObserved": true,
+      "maximumCurrentTime": 1.1,
+      "citationIdentity": {
+        "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
+        "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+        "segmentId": "segment-9e03c03a5b731cebf3b11ad9e20ecc8d",
+        "startMs": 0,
+        "endMs": 1100
+      },
+      "positiveBoundedProgress": true,
+      "sourceBytes": 4977,
+      "sourceSha256": "2ba9139b18dcc52996ceeb34f238d39ac02b47ce354a4d5292b2e5ae65378d26",
+      "controlledEvidence": true
+    },
+    "playbackGeneration2": {
+      "audioAccepted": true,
+      "playResolved": true,
+      "pauseObserved": true,
+      "maximumCurrentTime": 1.1,
+      "citationIdentity": {
+        "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
+        "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+        "segmentId": "segment-9e03c03a5b731cebf3b11ad9e20ecc8d",
+        "startMs": 0,
+        "endMs": 1100
+      },
+      "positiveBoundedProgress": true,
+      "sourceBytes": 4977,
+      "sourceSha256": "2ba9139b18dcc52996ceeb34f238d39ac02b47ce354a4d5292b2e5ae65378d26",
+      "controlledEvidence": true
+    },
+    "transcriptGeneration2": {
+      "status": "ready",
+      "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
+      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+      "segmentCount": 1,
+      "segments": [
+        {
+          "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
+          "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+          "ordinal": 0,
+          "startMs": 0,
+          "endMs": 1100,
+          "segmentId": "segment-9e03c03a5b731cebf3b11ad9e20ecc8d",
+          "segmentDigest": "8ecc5b3da864cf538d49ccc6661948e37f1de1ddc193ad2688873000b2c386f6",
+          "segmentCharCount": 41,
+          "ordered": true
+        }
+      ],
+      "fullTranscriptSha256": "8ecc5b3da864cf538d49ccc6661948e37f1de1ddc193ad2688873000b2c386f6",
+      "audio": {
+        "byteLength": 6057,
+        "sha256": "739bdeea34e5cec0fcbe66901ba3115abe537e8ccb30d21f8620ae54190ee210"
+      }
+    },
+    "citationGeneration2": {
+      "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
+      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+      "segmentId": "segment-9e03c03a5b731cebf3b11ad9e20ecc8d",
+      "startMs": 0,
+      "endMs": 1100,
+      "audio": {
+        "byteLength": 4977,
+        "sha256": "2ba9139b18dcc52996ceeb34f238d39ac02b47ce354a4d5292b2e5ae65378d26"
+      }
+    },
+    "chatGeneration1": null,
+    "chatGeneration2": null,
+    "mediaClosureGeneration1": {
+      "schema": "MEETLESS_PACKAGED_MEDIA_CLOSURE v1",
+      "sourceFingerprint": "9507d949fcc25e4a758cb2e277a09e6f5f4c4bfc5bd7d9318fad2dd64db63943",
+      "snapshotFingerprint": "9507d949fcc25e4a758cb2e277a09e6f5f4c4bfc5bd7d9318fad2dd64db63943",
+      "entryCount": 21,
+      "targetRoot": "media-tools",
+      "sourceRoot": "<installed-package-root>/runtime/media",
+      "tools": {
+        "ffmpeg": "media-tools/bin/ffmpeg",
+        "ffprobe": "media-tools/bin/ffprobe"
+      },
+      "atomicDirectoryUnit": true
+    },
+    "mediaClosureGeneration2": {
+      "schema": "MEETLESS_PACKAGED_MEDIA_CLOSURE v1",
+      "sourceFingerprint": "9507d949fcc25e4a758cb2e277a09e6f5f4c4bfc5bd7d9318fad2dd64db63943",
+      "snapshotFingerprint": "9507d949fcc25e4a758cb2e277a09e6f5f4c4bfc5bd7d9318fad2dd64db63943",
+      "entryCount": 21,
+      "targetRoot": "media-tools",
+      "sourceRoot": "<installed-package-root>/runtime/media",
+      "tools": {
+        "ffmpeg": "media-tools/bin/ffmpeg",
+        "ffprobe": "media-tools/bin/ffprobe"
+      },
+      "atomicDirectoryUnit": true
+    }
+  },
+  "fingerprints": {
+    "defaultBefore": {
+      "/Users/tubakhuym/projects/supervisors/meetless/.meetless-runtime/meeting-store": "b98e46fc4f7e2050397af72ec646afd69db13f058cc11fe50e94cb703a0f997a",
+      "/Users/tubakhuym/Documents/meetings": "a98163f3fcc8573df1402f07c35e7c5a7f8e0ac47e9f4192b745c36548a226d5"
+    },
+    "defaultAfter": {
+      "/Users/tubakhuym/projects/supervisors/meetless/.meetless-runtime/meeting-store": "b98e46fc4f7e2050397af72ec646afd69db13f058cc11fe50e94cb703a0f997a",
+      "/Users/tubakhuym/Documents/meetings": "a98163f3fcc8573df1402f07c35e7c5a7f8e0ac47e9f4192b745c36548a226d5"
+    },
+    "defaultUnchanged": true,
+    "generation1Store": {
+      "path": "meeting-store/meetings.json",
+      "byteLength": 4246,
+      "sha256": "5956e81c1763ac16d40ce8ec14702a06886fbec6a79685fb9ac702a2b5440c9a"
+    },
+    "generation2Store": {
+      "path": "meeting-store/meetings.json",
+      "byteLength": 4246,
+      "sha256": "5956e81c1763ac16d40ce8ec14702a06886fbec6a79685fb9ac702a2b5440c9a"
+    },
+    "externalMp3AfterGeneration1Stop": {
+      "path": "22-24-08-26-2.mp3",
+      "byteLength": 6057,
+      "sha256": "739bdeea34e5cec0fcbe66901ba3115abe537e8ccb30d21f8620ae54190ee210"
+    },
+    "externalMp3AfterGeneration2Stop": {
+      "path": "22-24-08-26-2.mp3",
+      "byteLength": 6057,
+      "sha256": "739bdeea34e5cec0fcbe66901ba3115abe537e8ccb30d21f8620ae54190ee210"
+    }
+  },
+  "cleanup": {
+    "exactHostStopped": true,
+    "packagedProcessesStopped": true,
+    "packagePortsReleased": true,
+    "internalEnvelopeRemovedOnEachShutdown": true,
+    "runtimeRemovedBeforeExternalRoot": true,
+    "externalRootOwnershipChecked": true,
+    "externalLeaseExpiredBeforeRemoval": true,
+    "externalRootRemoved": true,
+    "defaultStoreUnchanged": true,
+    "defaultExportsUnchanged": true,
+    "canonicalBundleRestored": true,
+    "canonicalIdentityRestored": true
+  },
+  "evidenceLimits": [
+    "Controlled fixture capture only; source-labelled chunks do not prove a real call or native capture provider.",
+    "Fake transcription only; ordered segments and citations do not prove a native provider or external service.",
+    "Browser Audio progression is machine-observed bounded playback; it does not prove audible output or human hearing.",
+    "This run does not prove clean-install TCC, signing, notarization, release acceptance, or legal clearance.",
+    "No credentials, network provider, real target, or raw private content is included."
+  ]
+}
