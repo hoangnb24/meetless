@@ -37,6 +37,9 @@ Record Zoom/Meet on desktop
   and evidence package. It does not set product behavior.
 - [`0001-maintained-paseo-fork.md`](../../decisions/0001-maintained-paseo-fork.md)
   owns the Paseo adoption and update contract.
+- [`0002-direct-notarized-macos-dmg.md`](../../decisions/0002-direct-notarized-macos-dmg.md)
+  owns the macOS distribution path. V1 uses a directly downloaded `.dmg`, not
+  the Mac App Store.
 - M0–M6 and the accepted new-design candidate
   `33ff981ad4bf3b5da485c2152bfabe75714eeaeb` are complete. M7 inherits their
   behavior, storage, transport, security, recovery, and evidence boundaries.
@@ -50,9 +53,10 @@ Record Zoom/Meet on desktop
    direct LAN and the encrypted relay.
 3. Verify recoverable recording storage, failed MP3 finalization, transcription
    failure, provider failure, host-offline recovery, and citation integrity.
-4. Verify release signing, hardened runtime, notarization, production packaging,
-   clean-install permission attribution, and permission persistence across an
-   update or replacement.
+4. Verify the exact downloadable DMG through Developer ID signing, hardened
+   runtime, required entitlements, secure timestamp, notarization, stapling,
+   production packaging, and clean-machine Gatekeeper and first-run UX. Verify
+   permission attribution and persistence across an update or replacement.
 5. Complete the third-party, native, model, bundled `ffmpeg`, and dynamic-library
    license and notice review for the intended distribution.
 6. Decide the release-quality threshold for the static-like distortion observed
@@ -75,8 +79,10 @@ safely prove the boundary.
 - Hosted relay availability and physical-target coverage need M7 evidence.
 - Long-recording transcription coverage is not release-proven.
 - Source-separated M2 audio was intelligible but distorted/static-like.
-- Stable signing, permission attribution, packaging, notarization, license
-  notices, and clean-install behavior remain open release gates.
+- Developer ID signing, hardened runtime, required entitlements, secure
+  timestamp, DMG packaging, notarization, stapling, license notices, and
+  clean-machine Gatekeeper, first-run, and permission behavior remain open
+  release gates.
 
 ## Recovery Rules
 
@@ -1034,6 +1040,2666 @@ notarization, release acceptance, and Human/legal clearance remain open.
   accepted F1-F4 identities and evidence remain unchanged, M7 remains open,
   and no package, artifact, evidence, runtime, or app state may be changed.
 
+### PEER CANDIDATE — M7-F5-ENTITLEMENT-MAP-CONTRACT
+
+- Status: Peer candidate; pending independent DEEP review. The writer does
+  not self-accept this candidate and does not claim release readiness.
+- Authority: the owner-approved entitlement proposal v1, items 1..5. This
+  candidate replaces only the invalid single outer-app entitlement premise.
+  M7-F1, M7-F2, M7-F3, and the remaining M7-F4 signing guard stay unchanged.
+  TCC ownership, Info.plist behavior, real signing, notarization, and release
+  acceptance remain separate fail-closed gates.
+- Candidate identity: observed workspace HEAD
+  `af5f1817191ba5fd634c750e9345de7d575ba704`; accepted Paseo commit
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`. Package-source snapshot
+  `e67a62c992d4c104359f68d5f0fd177c6d987261836b510642d9eab286eaa01a`;
+  package-input `4451411155a72adb54721700ad29ffe972d89f58f78e069a9c49cbfa66680b0a`;
+  artifact-input
+  `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`;
+  local artifact
+  `016a9ae7e8bd977b9c9ae720d82b89e5481974b54fd2dde5a6760d94bee8ff2e`;
+  signature-state
+  `53c9ad3da0c83b243fa202c3351a6a48023abe9810ab0870b1049958e85201a1`.
+  The artifact has 13,774 entries and 46 nested Mach-O files. The local
+  manifest is `local-ad-hoc`, `localOnly: true`, and has no entitlement
+  policy or signed entitlement bytes. `Meetless.app` is signed last.
+- Changed validation owner: `scripts/lib/macos-package-signing.mjs` owns
+  the checked-in policy path, exact map, plist canonicalization, source and
+  observed digests, per-image entitlement keys, explicit signing modes,
+  certificate evidence, hardened-runtime flags, and acyclic post-signature
+  metadata. `scripts/package-macos.mjs` applies a plist only to its exact
+  approved nested executable and omits `--entitlements` for every other
+  object and for the outer app. `scripts/validate-macos-package.mjs` reads
+  every final signature and validates all 46 nested Mach-O files plus the
+  outer app.
+- Source-policy owner and exact inputs:
+  `scripts/macos-entitlements/entitlement-map.json` is the deterministic
+  `MEETLESS_MACOS_ENTITLEMENT_MAP v1` authority. Its raw SHA-256 is
+  `6a98936fb517ddfdd3fbf445633b686b38e2ae36d6656ba47a5ee979aa355462` and
+  its canonical JSON SHA-256 is
+  `5d62d8668c6808489018178e919d4d6c80d897035efa3d6da6ec65ae0ad48b52`.
+  `scripts/macos-entitlements/entitlements/jit.plist` contains exactly:
+
+  ```xml
+  <?xml version="1.0" encoding="UTF-8"?>
+  <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+  <plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+  </dict>
+  </plist>
+  ```
+
+  Its raw SHA-256 is
+  `958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a` and
+  its canonical SHA-256 is
+  `6f0a9b4f19e49ab2c95c62b5012d87edc50fb74a76df2b364fdcb0a9dc929e30`.
+  `scripts/macos-entitlements/entitlements/audio-input.plist` contains
+  exactly the same plist form with the one key
+  `com.apple.security.device.audio-input` set to `true`. Its raw SHA-256 is
+  `289696af9834a7ee41aca4c1cd3aa95fc38f9ae2e83655b1d4b86c1ccab771ee` and
+  its canonical SHA-256 is
+  `82052f68fb90e288554c67b08bdcb3403699ac396387a93d37f3b397c3e9f064`.
+- Exact mapping:
+  - `jit` / `jit.plist`: `Contents/Resources/meetless/runtime/node`.
+  - `jit` / `jit.plist`:
+    `Contents/Resources/meetless/runtime/electron/Electron.app/Contents/MacOS/Electron`.
+  - `jit` / `jit.plist`:
+    `Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Helper (Renderer).app/Contents/MacOS/Electron Helper (Renderer)`.
+  - `jit` / `jit.plist`:
+    `Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Helper (GPU).app/Contents/MacOS/Electron Helper (GPU)`.
+  - `audio-input` / `audio-input.plist`:
+    `Contents/Resources/meetless/native/macos-capture/meetless-capture`.
+  Every other executable code object, including MeetlessHost, generic and
+  Plugin Helpers, Crashpad, ffmpeg/ffprobe, native tools, provider binaries,
+  frameworks, dylibs, and `.node` modules, is mapped to no entitlement and
+  receives no `--entitlements` argument. The outer app is also unentitled.
+  No union plist is accepted. The map is exact, so a new inventory path does
+  not inherit an entitlement.
+- Metadata contract: release metadata binds the map raw and canonical
+  digests, both owner plist raw and canonical digests, each approved path and
+  policy class, and observed raw/canonical signed entitlement digests and
+  keys for every final image. The signature-state digest excludes the
+  manifest artifact digest. Equivalent plist formatting and key order pass;
+  semantic drift fails. Local ad-hoc metadata binds no policy and requires
+  empty signed entitlements for every final image.
+- Candidate identities: local proof uses ad-hoc identity `-`. The structural
+  release fixture uses synthetic, credential-free evidence
+  `Developer ID Application: Meetless (ABCDE12345)`, Team ID `ABCDE12345`,
+  certificate SHA-1 `1111111111111111111111111111111111111111`, and synthetic
+  certificate SHA-256 `2222222222222222222222222222222222222222222222222222222222222222`.
+  The owner-provided real release identity remains
+  `Developer ID Application: Long Le (63M98WD275)`, SHA-1
+  `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`; it was not inspected again and
+  was not used for signing.
+- Positive proof: exact map and both plist inputs parse and canonicalize.
+  The structural Developer ID fixture passes without a credential and reads
+  each image's signed plist independently. The signing tests pass 30 tests,
+  including deepest-first and outer-last order, deterministic acyclic
+  metadata, per-image certificate evidence, equivalent plist semantics, and
+  exact allowlist negatives. Two final local ad-hoc rebuilds from the same
+  candidate matched artifact digest
+  `016a9ae7e8bd977b9c9ae720d82b89e5481974b54fd2dde5a6760d94bee8ff2e`.
+  The validator passed 46/46 individual signatures and outer deep/strict
+  verification. Typecheck passed. The focused suite passed 49 files and 407
+  tests. F1 passed with the final artifact. F3 passed with evidence SHA-256
+  `c6340d372c15e583fe481d0297117ce8a47f4af10dbbcda1c2aea99b22775a44`.
+- Negative proof: release mode rejects a missing map, a single outer-app
+  plist, and ad-hoc or non-Developer-ID signer evidence. The map and policy
+  tests reject JIT on host or other unapproved paths, audio input on any
+  other path, missing approved entitlements, union/false/extra/changed/risky
+  keys, unmapped entitlement-bearing images, stale map or plist digests, and
+  observed/supplied semantic mismatch. Existing tests still reject wrong
+  Team ID, mismatched or missing per-image certificate evidence, missing
+  runtime flags, unsigned nested Mach-O, post-signature mutation, invalid
+  `@rpath` and path resolution, and non-outer-last order. CLI values retain
+  all text after the first `=`; a signing mode containing another `=` is
+  invalid. The local package reports no entitlement keys on all 47 final
+  code objects.
+- Regression and enforcement: `npm run typecheck`, the focused suite,
+  `git diff --check`, local package validation, F1, and F3 passed.
+  `npm run check:distribution-readiness` failed closed with exit 1 for the
+  same 11 Human/legal gates. Local validation is present and passed. No
+  optional hook is installed. No checked-in CI invocation exists; `.github/`
+  is absent and no CI was added. Branch protection is unverified. No release
+  command, Keychain inspection, real Developer ID signature, timestamp or
+  network request, notarization, upload, publication, TCC reset, or release
+  claim was made.
+- Cleanup and remaining gates: F1/F3 proof processes stopped, proof lease
+  roots were removed, the canonical package identity was restored, and the
+  default store and exports were unchanged. TCC ownership and
+  clean-install attribution remain unresolved. Remaining owner/external
+  gates are authorization for one real signing-validation run using the
+  owner-controlled `63M98WD275` certificate, real hardened-runtime behavior,
+  notarization and publication decisions, production packaging/release
+  acceptance, and the same 11 Human/legal decisions. This candidate does
+  not claim any of those gates.
+- Next frontier: `M7-F5-OWNER-INPUT-HANDOFF` remains the owner gate for
+  authorization of one real signing-validation run. M7 remains open.
+
+### PEER CORRECTION CANDIDATE — M7-F5-CORRECTION-R1
+
+- Status: Peer candidate; pending independent DEEP review. The writer does
+  not self-accept this correction and does not claim release readiness.
+- Authority and scope: Lead accepted findings `M7F5-R1-001..003` authorize
+  only the local entitlement guard, authoritative Mach-O executable typing,
+  and the pinned checked-in map path. The approved JIT/audio values and five
+  executable paths above are unchanged. TCC, Info.plist, real signing,
+  notarization, and release acceptance remain separate fail-closed gates.
+- Candidate identity: observed workspace HEAD
+  `af5f1817191ba5fd634c750e9345de7d575ba704`; Paseo commit
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`. Package-source snapshot
+  `a456e41a47338dcf98e5672bfc2f60d30b89275a23591d9ddb171848d4402515`;
+  package-input `7d5d0b246c37e2b1befe52b6b93e6bd69a20654d3631778c5135ff2cd759ac5c`;
+  artifact-input
+  `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`;
+  artifact
+  `fe8a71a15e9cfbcb426f17e1a5bf9e20502e373cda3f30c250d6eed90424e587`;
+  signature-state
+  `1c07152b83fe16cb6a4e0dd3479626f5859ce2181a5465aedb57375a9c0830ba`.
+  The artifact has 13,774 entries and 46 nested Mach-O files.
+- M7F5-R1-001 closure: local validation now rejects every nested or outer
+  image with non-empty entitlement keys or non-null raw/canonical entitlement
+  digests. The final local manifest records null raw/canonical digests and
+  empty keys for all 47 final code objects. The diagnostic names the image
+  path and requires removing `--entitlements` and rebuilding local proof.
+- M7F5-R1-002 closure: `scripts/lib/macos-package-inventory.mjs` carries
+  `otool -hv` file type and architecture evidence. Before signing and again
+  during validation, each approved path must be a regular arm64 `MH_EXECUTE`.
+  Metadata carries the same evidence in each nested signature record. Dylib,
+  bundle, object, symlink, directory, missing, and non-arm64 fixtures fail
+  with the path, observed type, expected policy class, and replacement action.
+- M7F5-R1-003 closure: production release resolution always loads
+  `scripts/macos-entitlements/entitlement-map.json`; `--entitlement-map` is
+  not a supported production option, and programmatic release overrides are
+  rejected. Map and plist parents and final files must be non-symlink and
+  realpath-contained inside the repository authority. Traversal, absolute
+  escape, external realpath, parent symlink, and final-file symlink fixtures
+  fail. Direct policy-loader fixtures remain test-level only.
+- Exact unchanged policy: `jit.plist` contains only
+  `com.apple.security.cs.allow-jit=true`; `audio-input.plist` contains only
+  `com.apple.security.device.audio-input=true`. JIT applies only to
+  `runtime/node`, Electron, Electron Helper (Renderer), and Electron Helper
+  (GPU); audio input applies only to `native/macos-capture/meetless-capture`.
+  The outer app and every other code object remain entitlement-free.
+- Positive proof: signing tests passed 33/33; package tests passed 25/25;
+  focused tests passed 49 files and 410 tests; typecheck passed. Two local
+  ad-hoc builds matched artifact
+  `fe8a71a15e9cfbcb426f17e1a5bf9e20502e373cda3f30c250d6eed90424e587`.
+  The validator passed 46/46 nested signatures and outer deep/strict checks.
+  F1 passed with this artifact. F3 passed with evidence SHA-256
+  `34bd2cf28c1f55783ccb79a52290d2a8b27dfdb480f8de6008fbf7ee36d2ed98`.
+- Negative and regression proof: local risky/non-empty entitlement evidence,
+  all five wrong Mach-O types, symlink/traversal/external authority paths,
+  CLI override, and prior union/extra/false/risky/stale/missing/unapproved
+  entitlement cases fail. Existing signer, certificate, hardened-runtime,
+  dyld-closure, signing-order, mutation, and CLI-equals tests remain green.
+  F2 remains fail-closed for the same 11 Human/legal gates.
+- Enforcement: local validator passed. No optional hook is installed. No
+  checked-in CI invocation exists and `.github/` is absent. Branch protection
+  is unverified. No hook, CI, or external setting was changed.
+- Cleanup and limits: F1/F3 processes stopped; proof state and temporary
+  roots were cleaned; default store and exports remain unchanged. No real
+  Developer ID signing, Keychain inspection, credential/private-key access,
+  timestamp/network request, notarization, upload, publication, TCC reset,
+  clean-install acceptance, or release claim was made. The owner-provided
+  identity remains `Developer ID Application: Long Le (63M98WD275)` with
+  SHA-1 `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`; it was not inspected or
+  used. Remaining gates are independent review, explicit authorization for
+  one real signing-validation run, real hardened-runtime behavior, TCC and
+  clean-install validation, notarization/publication decisions, legal
+  clearance, and release acceptance. M7 remains open.
+
+### PEER_DISPOSITION v1 — M7-F5-CORRECTION-R1B
+
+- Status: Candidate only; pending independent DEEP review. The writer does
+  not self-accept and does not claim release readiness.
+- Authority and scope: Lead authorized closure of `M7F5-R1-002` only.
+  `M7F5-R1-001` local-empty validation and `M7F5-R1-003` canonical policy
+  path validation remain closed. The approved entitlement values, exact five
+  paths, TCC separation, signing mode contract, and release authority are
+  unchanged. No real signing, credential, Keychain, timestamp, notarization,
+  upload, publication, TCC, or release action is authorized here.
+- Candidate identity: workspace HEAD
+  `af5f1817191ba5fd634c750e9345de7d575ba704`; accepted Paseo commit
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`. Package-source snapshot
+  `ed3d72a005e7a646ece7435fdeeaaea95d10a451f3fef4d0cc09987a9c52a785`;
+  package-input `93eca578d4a09988b3a9d1882adc47ea195165b79ea27ad05404ffb81f369792`;
+  artifact-input
+  `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`;
+  local artifact
+  `39428c03b370603eedeca18e9a33dcd395198e9e1e3e131f2f2d08966962d6ab`;
+  signature-state
+  `99d5e668b209bdf74652e50ff164a6619097d1b57b054cfee4e6c659191cc270`;
+  F3 evidence
+  `441609bb222b141a0c9bd5759fb898ac7ba4f59d1c5756bd4699d3490da7a923`.
+  The candidate has 13,774 entries and 46 nested Mach-O objects.
+- Changed validation owner: `scripts/lib/macos-package-inventory.mjs`
+  parses every authoritative `otool -hv` Mach-O header and carries a sorted
+  `machOSlices` set. `scripts/lib/macos-package-signing.mjs` normalizes that
+  set into signature metadata and requires each approved entitlement path to
+  contain exactly one regular `arm64` `MH_EXECUTE` slice. The package
+  assembler performs this pre-sign guard before the first entitlement-bearing
+  `codesign` call. The final validator checks the same evidence after signing;
+  its existing arm64 file-output check remains defense in depth.
+- Changed files in this candidate: `scripts/lib/macos-package-inventory.mjs`,
+  `scripts/lib/macos-package-signing.mjs`, `scripts/package-macos.mjs`,
+  `scripts/validate-macos-package.mjs`, and
+  `packages/runtime/test/macos-package-signature.test.ts`. The generated
+  `release/macos/composition-manifest.json` records the candidate metadata;
+  `test/evidence/m7/m7-f3-packaged-controlled-lifecycle.json` records the
+  refreshed F3 proof. No package, runtime, native, product, CI, hook, or
+  external-state file was added outside the accepted scope.
+- All-slice evidence: the five approved paths each report exactly
+  `[arm64 MH_EXECUTE]` in the generated candidate metadata:
+  `Contents/Resources/meetless/runtime/node`, Electron,
+  `Electron Helper (Renderer)`, `Electron Helper (GPU)`, and
+  `Contents/Resources/meetless/native/macos-capture/meetless-capture`.
+  No first-header-only result is accepted. Duplicate or ambiguous slices
+  fail before signing.
+- Exact unchanged policy: `jit.plist` contains only
+  `com.apple.security.cs.allow-jit=true`; `audio-input.plist` contains only
+  `com.apple.security.device.audio-input=true`. The raw map/plist digests
+  remain `6a98936fb517ddfdd3fbf445633b686b38e2ae36d6656ba47a5ee979aa355462`,
+  `958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a`, and
+  `289696af9834a7ee41aca4c1cd3aa95fc38f9ae2e83655b1d4b86c1ccab771ee`.
+  The five-path mapping is unchanged. Local ad-hoc output remains
+  entitlement-free and `localOnly`.
+- Candidate identities: local proof uses ad-hoc identity `-`. The structural
+  release fixture uses credential-free synthetic evidence
+  `Developer ID Application: Meetless (ABCDE12345)`, Team ID `ABCDE12345`,
+  certificate SHA-1 `1111111111111111111111111111111111111111`, and synthetic
+  certificate SHA-256
+  `2222222222222222222222222222222222222222222222222222222222222222`.
+  The owner-provided release identity is
+  `Developer ID Application: Long Le (63M98WD275)`, SHA-1
+  `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`; it was not inspected or used.
+- Positive proof: signing tests passed 34/34, package tests 25/25, focused
+  tests 49 files and 411 tests, and typecheck passed. Thin arm64
+  `MH_EXECUTE` passes. The five live approved targets report exact single
+  slices. Two local ad-hoc builds matched artifact
+  `39428c03b370603eedeca18e9a33dcd395198e9e1e3e131f2f2d08966962d6ab`.
+  The validator passed 46/46 individual signatures and outer deep/strict
+  verification. F1 passed. F3 passed with the evidence hash above.
+- Negative proof: structural pre-sign tests reject universal arm64+x86_64,
+  universal arm64+arm64e, arm64e-only, x86_64-only, and multi-header dylib
+  slices. The rejection includes the path, observed slice set, expected
+  policy, and action. The test keeps its `codesign` counter at zero after
+  pre-sign rejection. R1-001 local risky/non-empty entitlement and R1-003
+  symlink, traversal, absolute, external, and CLI override tests remain
+  green. Existing entitlement, signer, certificate, hardened-runtime, dyld,
+  signing-order, mutation, and CLI-equals negatives remain green.
+- Enforcement: local validator passed. No optional hook is installed. No
+  checked-in CI invocation exists; `.github/` is absent. Branch protection is
+  unverified. No hook, CI, branch setting, or external state was changed.
+- Cleanup and residual gates: F1/F3 proof processes stopped; runtime proof
+  roots and the empty proof-export directory were removed; default store and
+  exports remain unchanged. F2 remains fail-closed for the same 11
+  Human/legal gates. Remaining gates are independent DEEP review, explicit
+  authorization for one real signing-validation run, real hardened-runtime
+  behavior, TCC and clean-install validation, notarization/publication
+  decisions, legal clearance, and release acceptance. M7 remains open.
+
+### PEER_DISPOSITION v1 — M7-F5-CORRECTION-R1C
+
+- Status: Candidate only; pending independent DEEP review. The writer does
+  not self-accept and does not claim release readiness. This correction closes
+  `M7F5-R1-002` only. `M7F5-R1-001` local-empty validation and
+  `M7F5-R1-003` canonical policy-path validation remain closed.
+- Candidate identity: workspace HEAD
+  `af5f1817191ba5fd634c750e9345de7d575ba704`; accepted Paseo commit
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`. Package-source snapshot
+  `0e185083790cbff9c8ea8f9dd6cb3c3fb6c7d6b97e53c85c8064f1e9e9d40bad`;
+  package-input `d1e79c34be7b82390556d2c9bf14bd961a42162b75abe2bcb6d2502aa36b2e74`;
+  artifact-input
+  `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`;
+  artifact `9110e6d0d65646e6c916250e855da54609ecb0e4baf58b92b1fd4e728f6cb3cc`;
+  signature-state
+  `c34876fbea33183c895dbb01c299fbdb563366d39286fc3a4d1c3cfc84a084e0`;
+  F3 evidence SHA-256
+  `d0c45d9948599d77a9d0e0139c2d894a7a363d15c1fcc54c7a6c23257cdf2c35`.
+  The candidate contains 13,774 entries and 46 nested Mach-O files.
+- Changed validation owner: `scripts/lib/macos-package-inventory.mjs` now
+  invokes `otool -arch all -hv` for every Mach-O inspection, parses every
+  returned header block, preserves CPU subtype, rejects duplicate or
+  malformed blocks, and carries a deterministic full slice list.
+  `scripts/lib/macos-package-signing.mjs` requires each approved entitlement
+  path to be one regular arm64 `MH_EXECUTE` slice with subtype `ALL` before
+  the first entitlement-bearing `codesign` call, and checks the same slice
+  evidence after signing. The direct integration tests are in
+  `packages/runtime/test/macos-package-signature.test.ts`. Package and
+  validator wiring remain in their existing owners. Generated manifest and
+  F3 evidence were refreshed. No runtime, native, product, TCC, CI, hook, or
+  external state was changed.
+- Root cause and fix: native `otool -hv /usr/bin/file` exposed only the
+  native ARM64 subtype `E`, while `otool -arch all -hv /usr/bin/file`
+  exposed x86_64, arm64, and arm64e. The old parser collapsed subtype `E` to
+  arm64. The new path normalizes ARM64/ALL to `arm64`, ARM64/E to `arm64e`,
+  and keeps other architectures distinct.
+- Actual-command integration proof: inventory of `/usr/bin/file` observed
+  the normalized slices `[x86_64/ALL/MH_EXECUTE, arm64/ALL/MH_EXECUTE,
+  arm64e/E/MH_EXECUTE]` and rejected the universal image. An actual arm64e
+  thin fixture observed `[arm64e/E/MH_EXECUTE]` and was rejected. An actual
+  thin arm64 fixture observed `[arm64/ALL/MH_EXECUTE]` and passed. The
+  universal rejection occurred before signing and recorded zero codesign
+  calls. Parser-only fixtures remain supplementary coverage.
+- Exact unchanged policy: `scripts/macos-entitlements/entitlement-map.json`
+  remains the sole authority. `jit.plist` contains only
+  `com.apple.security.cs.allow-jit=true`; `audio-input.plist` contains only
+  `com.apple.security.device.audio-input=true`. JIT applies only to runtime
+  Node, Electron, Electron Helper (Renderer), and Electron Helper (GPU).
+  Audio input applies only to `meetless-capture`. All other code objects and
+  the outer app remain entitlement-free. TCC and Info.plist requirements stay
+  outside this map.
+- Candidate identities: local proof uses ad-hoc identity `-` and remains
+  `localOnly`. Credential-free structural release proof uses synthetic
+  `Developer ID Application: Meetless (ABCDE12345)`, Team ID `ABCDE12345`,
+  certificate SHA-1 `1111111111111111111111111111111111111111`, and synthetic
+  certificate SHA-256
+  `2222222222222222222222222222222222222222222222222222222222222222`.
+  The owner-provided identity is `Developer ID Application: Long Le
+  (63M98WD275)`, SHA-1 `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`; it was not
+  inspected or used.
+- Positive and regression proof: focused signing tests passed 35/35 and
+  package tests passed 25/25. The focused suite passed 49 files and 412
+  tests on its passing rerun; an earlier run had two unrelated readiness
+  failures before the rerun passed. Typecheck passed. Two deterministic local
+  ad-hoc builds matched artifact
+  `9110e6d0d65646e6c916250e855da54609ecb0e4baf58b92b1fd4e728f6cb3cc`.
+  The validator passed all 46/46 nested signature checks and outer deep/strict
+  verification. F1 passed. F3 passed with the evidence hash above. F2
+  remains fail-closed for the same 11 Human/legal gates.
+- Negative proof: universal, arm64e-only, x86_64-only, mixed, duplicate, and
+  non-`MH_EXECUTE` Mach-O evidence fails before signing. R1-001 local
+  non-empty/risky entitlements, R1-003 symlink/traversal/absolute/external
+  authority paths, and the prior entitlement, signer, hardened-runtime,
+  dyld-closure, signing-order, mutation, and CLI-equals regressions remain
+  green. Exact plist bytes and the five-path mapping are unchanged.
+- Enforcement: local validator passed. No optional hook is installed. No
+  checked-in CI invocation exists and `.github/` is absent. Branch protection
+  is unverified. No hook, CI, branch setting, or external state was changed.
+- Cleanup and residual gates: F1/F3 processes stopped; temporary proof roots
+  were cleaned; default store and exports remain unchanged. No real Developer
+  ID signing, Keychain inspection, credential/private-key access,
+  timestamp/network request, notarization, upload, publication, TCC reset,
+  clean-install acceptance, or release claim was made. Remaining gates are
+  independent DEEP review, explicit authorization for one real
+  signing-validation run, real hardened-runtime behavior, TCC and
+  clean-install validation, notarization/publication decisions, legal
+  clearance, and release acceptance. M7 remains open.
+
+### LEAD_DECISION v1 — M7-F5-ENTITLEMENT-MAP-CONTRACT
+
+- Decision: `ACCEPT`; review closeout `CLOSEOUT_CLEAR`. Findings
+  `M7F5-R1-001..003` are closed. F1–F4 remain accepted. F5 is technically
+  accepted as a per-executable entitlement contract. The single outer-plist
+  premise is replaced by the exact repository-pinned map.
+- Accepted candidate: HEAD
+  `af5f1817191ba5fd634c750e9345de7d575ba704`; Paseo
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`. Package-source
+  `0e185083790cbff9c8ea8f9dd6cb3c3fb6c7d6b97e53c85c8064f1e9e9d40bad`;
+  package-input `d1e79c34be7b82390556d2c9bf14bd961a42162b75abe2bcb6d2502aa36b2e74`;
+  artifact-input
+  `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`;
+  artifact `9110e6d0d65646e6c916250e855da54609ecb0e4baf58b92b1fd4e728f6cb3cc`;
+  signature-state
+  `c34876fbea33183c895dbb01c299fbdb563366d39286fc3a4d1c3cfc84a084e0`;
+  F3 evidence
+  `d0c45d9948599d77a9d0e0139c2d894a7a363d15c1fcc54c7a6c23257cdf2c35`.
+  The accepted package has 13,774 entries and 46 Mach-O objects.
+- Exact policy authority and hashes:
+  `scripts/macos-entitlements/entitlements/jit.plist` is
+  `958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a`;
+  `scripts/macos-entitlements/entitlements/audio-input.plist` is
+  `289696af9834a7ee41aca4c1cd3aa95fc38f9ae2e83655b1d4b86c1ccab771ee`;
+  `scripts/macos-entitlements/entitlement-map.json` is
+  `6a98936fb517ddfdd3fbf445633b686b38e2ae36d6656ba47a5ee979aa355462`.
+  The exact map remains the sole production policy authority.
+- Exact mapping: JIT is the only entitlement in `jit.plist` and applies to
+  `Contents/Resources/meetless/runtime/node`,
+  `Contents/Resources/meetless/runtime/electron/Electron.app/Contents/MacOS/Electron`,
+  `Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Helper (Renderer).app/Contents/MacOS/Electron Helper (Renderer)`,
+  and
+  `Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Helper (GPU).app/Contents/MacOS/Electron Helper (GPU)`.
+  Audio input is the only entitlement in `audio-input.plist` and applies
+  only to
+  `Contents/Resources/meetless/native/macos-capture/meetless-capture`.
+  Every other code object has no entitlement and receives no
+  `--entitlements` argument. No union plist is allowed.
+- Identity and proof limits: local proof uses ad-hoc identity `-` and is
+  `localOnly`. Structural release proof uses synthetic
+  `Developer ID Application: Meetless (ABCDE12345)`, Team ID `ABCDE12345`,
+  certificate SHA-1 `1111111111111111111111111111111111111111`, and synthetic
+  certificate SHA-256
+  `2222222222222222222222222222222222222222222222222222222222222222`.
+  The owner-provided identity is `Developer ID Application: Long Le
+  (63M98WD275)`, SHA-1 `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`; it was not
+  inspected or used. The contract proof is credential-free. No real
+  entitlement application, Developer ID signing, private-key access,
+  timestamp, notarization, upload, publication, launch, legal clearance, or
+  release acceptance claim exists.
+- Accepted evidence: exact plist bytes and five-path mapping matched;
+  package-source and evidence hashes matched; local-ad-hoc validation passed
+  for the exact source and artifact; and `git diff --check` passed. The
+  validator passed 46/46 nested signatures and outer deep/strict checks.
+  TCC and Info.plist ownership remain separate fail-closed gates. F2 remains
+  fail-closed for the same 11 Human/legal gates.
+- Enforcement: local validator passed; no optional hook is installed; no
+  checked-in CI invocation exists; branch protection is unverified. No
+  enforcement or external state was changed. M7 remains open.
+- Next owner gate: the owner must approve the exact three policy files and
+  hashes above for production use. This is the smallest next approval
+  request. It does not authorize signing or credential use. Only after that
+  approval may Lead request separate authorization for one real,
+  no-timestamp signing-validation run. TCC, clean-install behavior,
+  hardened-runtime execution, notarization, publication, legal clearance,
+  and release acceptance remain separate gates.
+
+### OWNER_DECISION v1 — M7-F5-ENTITLEMENT-POLICY-FINAL-APPROVAL
+
+- Decision: `APPROVE`. The owner-approved entitlement-policy gate is closed.
+  The accepted F1–F5 candidate identities, code, tests, policy files,
+  package, artifact, evidence, runtime state, and external state are
+  unchanged. M7 remains open.
+- Approved policy files and hashes:
+  `scripts/macos-entitlements/entitlements/jit.plist` —
+  `958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a`;
+  `scripts/macos-entitlements/entitlements/audio-input.plist` —
+  `289696af9834a7ee41aca4c1cd3aa95fc38f9ae2e83655b1d4b86c1ccab771ee`;
+  `scripts/macos-entitlements/entitlement-map.json` —
+  `6a98936fb517ddfdd3fbf445633b686b38e2ae36d6656ba47a5ee979aa355462`.
+- Approved mapping: `com.apple.security.cs.allow-jit` applies only to
+  packaged Node, Electron main, Electron Helper (Renderer), and Electron
+  Helper (GPU). `com.apple.security.device.audio-input` applies only to
+  `Contents/Resources/meetless/native/macos-capture/meetless-capture`.
+  All other code objects have no entitlements. No union plist is approved.
+- Authority limits: this approval covers the exact entitlement policy only.
+  It does not authorize real signing, Keychain or private-key access/export,
+  timestamp or network requests, package mutation, launch, TCC action,
+  notarization, upload, publication, or release acceptance. The owner-provided
+  identity remains `Developer ID Application: Long Le (63M98WD275)`, SHA-1
+  `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`; it has not been inspected or
+  used. No private key may be exported or shared.
+- Next exact gate: separate owner authorization for one real no-timestamp
+  signing-validation run using that Developer ID Application identity. The
+  run must exclude private-key export, launch, TCC action, notarization,
+  upload, publication, and release acceptance. Hardened-runtime behavior,
+  clean-install/TCC validation, legal clearance, notarization, and release
+  acceptance remain separate gates.
+
+### PEER_DISPOSITION v1 — M7-F6-REAL-NO-TIMESTAMP-SIGNING-VALIDATION
+
+- Status: `DEPENDENCY_REQUEST`. The owner authorized one real validation run.
+  Preflight passed, but no signed candidate was produced. The first
+  certificate-backed `codesign` call remained blocked on the nested target
+  `Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler`.
+  The proof-owned signing process was stopped safely. The signing sequence was
+  not retried.
+- Authorized identity: `Developer ID Application: Long Le (63M98WD275)`;
+  certificate SHA-1
+  `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`; Team ID `63M98WD275`.
+  No private-key data was requested, printed, copied, exported, or handled.
+  No completed signed image exposed certificate SHA-256 evidence.
+- Candidate state before mutation was verified against the accepted local
+  candidate: HEAD
+  `af5f1817191ba5fd634c750e9345de7d575ba704`; Paseo
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`; package-source
+  `0e185083790cbff9c8ea8f9dd6cb3c3fb6c7d6b97e53c85c8064f1e9e9d40bad`;
+  package-input `d1e79c34be7b82390556d2c9bf14bd961a42162b75abe2bcb6d2502aa36b2e74`;
+  artifact-input
+  `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`;
+  local artifact `9110e6d0d65646e6c916250e855da54609ecb0e4baf58b92b1fd4e728f6cb3cc`;
+  local signature-state
+  `c34876fbea33183c895dbb01c299fbdb563366d39286fc3a4d1c3cfc84a084e0`.
+  The baseline contained 13,774 entries and 46 Mach-O objects and remained
+  local-ad-hoc/local-only.
+- Authorized policy hashes were verified before signing:
+  `jit.plist` `958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a`;
+  `audio-input.plist` `289696af9834a7ee41aca4c1cd3aa95fc38f9ae2e83655b1d4b86c1ccab771ee`;
+  `entitlement-map.json` `6a98936fb517ddfdd3fbf445633b686b38e2ae36d6656ba47a5ee979aa355462`.
+  The run used release mode, the certificate SHA-1 selector, the checked-in
+  map, `--options runtime`, and `--timestamp=none`. Package dependency
+  resolution was offline.
+- Real validation result: signed candidate, certificate SHA-256 evidence,
+  per-image signer/Team/runtime/entitlement counts, approved entitlement
+  readback, arm64 slice readback, individual verification, outer deep/strict
+  verification, and real manifest/signature-state consistency are all not
+  available because the first signing call did not complete. No release or
+  notarization claim is made.
+- Evidence: non-secret record
+  `test/evidence/m7/m7-f6-real-no-timestamp-signing-validation.json`, SHA-256
+  `d5f51561c1cc7199f62e5e7dbf641dc1203930565bc9ead43a901a05b900efa8`.
+  It contains no private-key data, Keychain path, password, token, cookie, or
+  environment dump.
+- Restoration: proof-owned journaled restoration passed. The release artifact
+  fingerprint returned to
+  `22ff5d810971128744069667e01c3889f9dc34587f89a9ae2426887dda3162d1`.
+  The composition manifest SHA-256 returned to
+  `c0b690983cab907514cc6da5b5feb7bc235ce3e693c5a4d09ea0ac924a9950d6`.
+  The canonical installed bundle, default runtime/store, exports, host
+  identity, and existing F3 evidence were unchanged. No owned process or
+  lock remained. Proof-owned backup, journal, logs, and temporary script were
+  removed.
+- Next dependency: owner action is required to allow certificate-backed
+  `codesign` use of the existing private key in the owner-controlled Keychain.
+  Do not export or share the key. A future run requires a separate explicit
+  owner authorization; this run is not retried automatically. TCC, launch,
+  clean-install, notarization, upload/publication, legal clearance, and
+  release acceptance remain closed. M7 remains open.
+
+### PEER_DISPOSITION v1 — M7-F6-REAL-NO-TIMESTAMP-SIGNING-VALIDATION-ATTEMPT-2
+
+- Status: `REOPEN_REQUEST`; attempt 2 of 2 is final. No package assembler,
+  `codesign`, Keychain, timestamp, or network signing action ran in attempt 2.
+- Preflight found a source-identity contract mismatch. Authorized package
+  source was
+  `0e185083790cbff9c8ea8f9dd6cb3c3fb6c7d6b97e53c85c8064f1e9e9d40bad`.
+  The live `node scripts/candidate-snapshot.mjs --mode=package-source`
+  result was
+  `50db08a850a67462eca3743063d58961403d6689d437728be6e51dcb00802cdd`.
+  The snapshot excludes only
+  `test/evidence/m7/m7-f3-packaged-controlled-lifecycle.json`; it includes
+  `test/evidence/m7/m7-f6-real-no-timestamp-signing-validation.json`.
+  Therefore the current evidence file changes the source identity after the
+  accepted candidate was recorded.
+- Baseline was not mutated. The accepted HEAD remains
+  `af5f1817191ba5fd634c750e9345de7d575ba704`; the local artifact remains
+  `9110e6d0d65646e6c916250e855da54609ecb0e4baf58b92b1fd4e728f6cb3cc` with
+  fingerprint
+  `22ff5d810971128744069667e01c3889f9dc34587f89a9ae2426887dda3162d1`;
+  the manifest remains SHA-256
+  `c0b690983cab907514cc6da5b5feb7bc235ce3e693c5a4d09ea0ac924a9950d6`.
+  No backup, journal, lock, process, artifact, manifest, policy, runtime,
+  default, or external state remains from attempt 2.
+- Evidence preserves attempt 1 and records attempt 2 in
+  `test/evidence/m7/m7-f6-real-no-timestamp-signing-validation.json`.
+  Current evidence SHA-256 is
+  `d5f51561c1cc7199f62e5e7dbf641dc1203930565bc9ead43a901a05b900efa8`.
+- Decision required: reopen the source-snapshot authority so this evidence
+  path is excluded, or accept the observed source identity as a new candidate
+  baseline. Do not sign until one decision supplies an exact source identity.
+  The owner’s Developer ID identity and Keychain authorization were not used.
+  No automatic retry remains. TCC, launch, clean-install, notarization,
+  publication, legal clearance, and release acceptance remain closed. M7
+  remains open.
+
+### PEER_DISPOSITION v1 — M7-F6-EVIDENCE-IDENTITY-CORRECTION
+
+- Status: `CANDIDATE`; independent DEEP review is required. This correction
+  changes the package-source identity boundary only. It does not authorize or
+  perform Developer ID signing.
+- The package-source mode is
+  `node scripts/candidate-snapshot.mjs --mode=package-source`. It excludes
+  exactly these two generated evidence files:
+  `test/evidence/m7/m7-f3-packaged-controlled-lifecycle.json` and
+  `test/evidence/m7/m7-f6-real-no-timestamp-signing-validation.json`.
+  The default snapshot still includes and reports both files. No broad
+  `test/evidence` exclusion is used.
+- Candidate HEAD is
+  `af5f1817191ba5fd634c750e9345de7d575ba704`; Paseo remains
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`.
+- Fresh identities:
+  - package-source: `ae92efe77158e4e161440383f477da9f022f08886b906ce5355f5cc6b7d61f13`
+  - package-input: `bfd8f421fe6499a4b29d5a0e227c3b7a05b252d3ee794421795061f88d4b3ad4`
+  - artifact-input: `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`
+  - artifact: `30b6d3f267e4605e5571d1f4c1b0b65bbb5f675b805f51564b804b4b55d3a698`
+  - signature-state: `676b3a5e6cc91afc6870d1c0e3f86f1d4f6d90fccdfa150755536d5d24fffcf7`
+  - generated manifest SHA-256:
+    `9ad443578eb610f34ecfea402e975380499cefc70b8a8a9aa3cc93dcce3596fd`
+- The regenerated package has 13,774 entries and 46 nested Mach-O files.
+  It is explicitly `local-ad-hoc`, `localOnly: true`, and
+  `releaseAcceptance: not-claimed`. All 46 nested images and the outer app
+  are ad-hoc, all 47 images have empty entitlements, and the outer app is last
+  in the signing order.
+- Positive proof:
+  - Two live package-source snapshots matched the source identity above.
+  - The identity tests prove that editing either exact excluded evidence file
+    changes the default snapshot but not package-source, package-input, or
+    derived artifact identity. The default snapshot lists both evidence paths.
+  - The package-source test keeps an unrelated evidence file in scope. It also
+    rejects broad evidence exclusion and a stale manifest with only one
+    excluded path.
+  - Two local-ad-hoc package builds matched every identity and count. The
+    package validator passed with the fresh source and artifact identities.
+- Negative and regression proof:
+  - Focused package and signing tests passed: 61 tests. They retain the prior
+    package-input mutation, policy, signing, and local-empty negative guards.
+  - `npm run typecheck` passed. `node scripts/check-macos-distribution-readiness.mjs`
+    exited 1 with the same 11 unresolved Human/legal gates.
+  - F1/F3 launch proof was not rerun. The frontier forbids launch/TCC tests;
+    accepted prior F1/F3 evidence is preserved. The F3 evidence bytes remain
+    unchanged, SHA-256
+    `d0c45d9948599d77a9d0e0139c2d894a7a363d15c1fcc54c7a6c23257cdf2c35`.
+  - F6 attempts 1 and 2 remain historical and unchanged. There is no signing
+    attempt 3. F6 evidence SHA-256 remains
+    `d5f51561c1cc7199f62e5e7dbf641dc1203930565bc9ead43a901a05b900efa8`.
+- Policy and authority remain unchanged. The approved entitlement files keep
+  their existing hashes: JIT
+  `958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a`, audio
+  `289696af9834a7ee41aca4c1cd3aa95fc38f9ae2e83655b1d4b86c1ccab771ee`, and
+  map `6a98936fb517ddfdd3fbf445633b686b38e2ae36d6656ba47a5ee979aa355462`.
+  No Keychain or security inspection occurred.
+- Changed scope for this frontier: `scripts/candidate-snapshot.mjs`, the
+  package identity tests in `packages/runtime/test/macos-package.test.ts`,
+  generated `release/macos/composition-manifest.json`, and this plan. Existing
+  dirty M7 work was preserved. No F3/F6 evidence file was rewritten.
+- Cleanup: proof-owned temporary paths and the package/validator process are
+  absent. The generated local-ad-hoc artifact and manifest remain as the fresh
+  candidate baseline. No credential, private-key data, Keychain data,
+  timestamp request, network signing request, notarization, launch, TCC,
+  upload, publication, or release action occurred.
+- Enforcement:
+  - local: package assembler and `node scripts/validate-macos-package.mjs
+    --signing-mode=local-ad-hoc release/macos/composition-manifest.json`
+    passed;
+  - optional hook: absent; no hook installed;
+  - checked-in CI: absent; `.github/` is absent and no CI was added;
+  - branch protection: unverified; no external state changed.
+- Smallest next owner request: no new signing authorization is requested for
+  this correction. After independent review, any real signing validation must
+  receive a separate explicit owner authorization. M7, TCC/clean-install,
+  notarization, publication, release acceptance, and the 11 Human/legal gates
+  remain open.
+
+### PEER_DISPOSITION v1 — M7-F6-EVIDENCE-IDENTITY-CORRECTION-R1
+
+- Status: `CANDIDATE`; reviewer for FAST CLOSEOUT:
+  `9730d766-edd0-4234-8817-e1d425093c84`. Finding `M7F6-R1-001` is encoded;
+  independent review remains required.
+- `scripts/candidate-snapshot.mjs` now parses
+  `git status --porcelain=v1 -z` as NUL-delimited records. Rename and copy
+  records consume the current path and the following historical path as one
+  record. Only the current path is sorted, lstat, read, and hashed.
+  `previousPath` is structural metadata only. Repeated current paths and
+  malformed or incomplete records fail with the authority and repair action.
+- The exact F3 and F6 package-source exclusions remain unchanged. Default mode
+  includes both evidence files. The identity graph remains acyclic.
+- Correction base: package-source `ae92efe77158e4e161440383f477da9f022f08886b906ce5355f5cc6b7d61f13`,
+  package-input `bfd8f421fe6499a4b29d5a0e227c3b7a05b252d3ee794421795061f88d4b3ad4`,
+  artifact `30b6d3f267e4605e5571d1f4c1b0b65bbb5f675b805f51564b804b4b55d3a698`.
+- New candidate identities:
+  - HEAD: `af5f1817191ba5fd634c750e9345de7d575ba704`
+  - Paseo: `c81cb84735043c281a5a2d23d456d3708ce5d94e`
+  - package-source: `d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d`
+  - package-input: `f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402`
+  - artifact-input: `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`
+  - artifact: `fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa`
+  - signature-state: `217e1edfc29521b67604230b5b2dfc173b328aad0c21c0151b6e3513f85a0184`
+  - manifest SHA-256: `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`
+  - default snapshot: `9b607646f28310ce16da6dff11283a26c6c9108194b8e36b8d448069d1bec482`
+- Positive proof:
+  - An isolated tracked Git rename produced `R  current\0historical\0`.
+    The parser returned one current-path entry and did not bind the historical
+    path as a file. A copy pair, ordinary modified record, and untracked record
+    also parsed correctly.
+  - Two local-ad-hoc builds matched all candidate identities and counts.
+    The package has 13,774 entries and 46 nested Mach-O files. It remains
+    `local-ad-hoc`, `localOnly: true`, and `releaseAcceptance: not-claimed`.
+  - The package validator passed with the new source and artifact identities.
+- Negative and regression proof:
+  - Focused package and signing tests passed: 65 tests.
+  - Missing NUL termination, missing rename/copy history, malformed status
+    separators, and repeated current paths fail with an actionable diagnostic.
+  - Broad evidence exclusion, stale one-path manifests, unrelated evidence
+    mutation, source mutation, package-input mutation, and prior signing-policy
+    negatives remain covered.
+  - `node --check scripts/candidate-snapshot.mjs`, `npm run typecheck`, and
+    `git diff --check` passed.
+  - F2 exited 1 with the same 11 unresolved Human/legal gates. F1/F3 launch
+    proof was not run because this correction does not change runtime/package
+    composition and launch/TCC proof is forbidden here. F6 attempts 1 and 2
+    remain preserved; there is no attempt 3.
+- F3 evidence SHA-256 remains
+  `d0c45d9948599d77a9d0e0139c2d894a7a363d15c1fcc54c7a6c23257cdf2c35`.
+  F6 evidence SHA-256 remains
+  `d5f51561c1cc7199f62e5e7dbf641dc1203930565bc9ead43a901a05b900efa8`.
+- Changed scope: `scripts/candidate-snapshot.mjs`,
+  `packages/runtime/test/macos-package.test.ts`, generated
+  `release/macos/composition-manifest.json`, and this plan. Existing dirty M7
+  work was preserved. No policy, runtime, artifact evidence, credential, or
+  external state was changed outside the generated local candidate.
+- Cleanup: isolated Git fixtures were removed by the test cleanup. No owned
+  package/validator process, proof lock, or temporary signing state remains.
+  No Developer ID signing, Keychain/security inspection, credential access,
+  timestamp/network request, notarization, launch, TCC, capture,
+  upload/publication, or release action occurred.
+- Enforcement:
+  - local: focused tests, package assembler, and local package validator passed;
+  - optional hook: absent; no hook installed;
+  - checked-in CI: absent; `.github/` is absent and no CI was added;
+  - branch protection: unverified; no external state changed.
+- Next owner action: FAST CLOSEOUT review of `M7F6-R1-001`. No new real-signing
+  authorization or attempt-3 record is requested.
+
+### LEAD_DECISION v1 — M7-F6-EVIDENCE-IDENTITY-CORRECTION-ACCEPTANCE
+
+- Decision: `ACCEPT`.
+- Review closeout: `CLOSEOUT_CLEAR` from reviewer
+  `9730d766-edd0-4234-8817-e1d425093c84`.
+- Finding `M7F6-R1-001` is closed. The accepted candidate is:
+  - HEAD: `af5f1817191ba5fd634c750e9345de7d575ba704`
+  - Paseo: `c81cb84735043c281a5a2d23d456d3708ce5d94e`
+  - package-source: `d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d`
+  - package-input: `f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402`
+  - artifact-input: `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`
+  - local artifact: `fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa`
+  - signature-state: `217e1edfc29521b67604230b5b2dfc173b328aad0c21c0151b6e3513f85a0184`
+  - manifest SHA-256: `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`
+  - F3 evidence: `d0c45d9948599d77a9d0e0139c2d894a7a363d15c1fcc54c7a6c23257cdf2c35`
+  - F6 evidence: `d5f51561c1cc7199f62e5e7dbf641dc1203930565bc9ead43a901a05b900efa8`
+- The package-source mode excludes exactly:
+  `test/evidence/m7/m7-f3-packaged-controlled-lifecycle.json` and
+  `test/evidence/m7/m7-f6-real-no-timestamp-signing-validation.json`.
+  Default snapshot mode includes and reports both files.
+- Closeout proof records NUL-safe rename/copy pair parsing, one current-path
+  binding, historical-path metadata only, and fail-closed malformed-record
+  handling. Package tests passed: 30. Safe signing tests passed: 33; two real
+  signing tests were skipped. All 47 local code objects were ad-hoc signed and
+  entitlement-free. No attempt 3 occurred.
+- M7 remains open. TCC, launch, notarization, publication, legal, and release
+  gates remain closed. The prior two-attempt signing authorization is exhausted.
+- Next exact gate: a new, separate owner authorization for exactly one real
+  no-timestamp signing-validation run against this accepted candidate. That
+  authorization must not include private-key export, launch, TCC, notarization,
+  upload, publication, or release acceptance.
+
+### PEER_DISPOSITION v1 — M7-F6-REAL-NO-TIMESTAMP-SIGNING-VALIDATION-CYCLE-2
+
+- Status: `DEPENDENCY_REQUEST`. Overall historical attempt 3; cycle 2 attempt
+  1 of 1. This authorization is exhausted. No second attempt occurred.
+- Read-only preflight matched the accepted candidate: HEAD
+  `af5f1817191ba5fd634c750e9345de7d575ba704`, Paseo
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`, package-source
+  `d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d`,
+  package-input
+  `f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402`,
+  artifact-input
+  `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`,
+  local artifact
+  `fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa`, and
+  signature-state
+  `217e1edfc29521b67604230b5b2dfc173b328aad0c21c0151b6e3513f85a0184`.
+  The manifest was SHA-256
+  `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`.
+  The baseline had 13,774 entries, 46 nested Mach-O files, 47 ad-hoc
+  entitlement-free code objects, and the exact two package-source evidence
+  exclusions.
+- The one offline package command ran with the SHA-1 selector
+  `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`, expected Team ID `63M98WD275`,
+  `--options runtime`, and `--timestamp=none`. It reached the first
+  certificate-backed `codesign` process for
+  `Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler`.
+  One codesign process was observed; zero signing calls completed. The run
+  timed out at the proof stop boundary and the owned process group was stopped.
+  No terminal Keychain prompt text was observable. No retry occurred.
+- No signed candidate was published. Therefore there is no real 47-image
+  signer, Team ID, certificate, hardened-runtime, entitlement, arm64-slice,
+  46/46 strict-verification, or outer deep/strict result. The authorized
+  public identity remains `Developer ID Application: Long Le (63M98WD275)`,
+  SHA-1 `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`, Team ID `63M98WD275`.
+- Evidence was updated at
+  `test/evidence/m7/m7-f6-real-no-timestamp-signing-validation.json`.
+  Evidence SHA-256 is
+  `6025d57391eff39ca71ee133427d7f9510258c38bd8b7fa1f9fcfe3de528e934`.
+  Attempts 1 and 2 remain preserved. No private-key, Keychain path,
+  password, token, cookie, or environment dump is recorded.
+- Restoration passed after the command stopped. The local artifact fingerprint
+  was restored to
+  `c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e` and the
+  manifest to SHA-256
+  `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`.
+  The canonical installed bundle, default runtime/store/exports, host identity,
+  and F3 evidence remained unchanged. The proof-owned backup, journal, lock,
+  and temporary state were removed; no owned process remains. A temporary
+  restoration-verifier bookkeeping error was corrected by a cleanup-only
+  check; this did not invoke signing again.
+- Enforcement: local release validation did not complete because codesign was
+  blocked; the accepted local-ad-hoc baseline remained intact. Optional hook:
+  absent. Checked-in CI: absent. Branch protection: unverified. F2 remains
+  fail-closed for the same 11 Human/legal gates.
+- Dependency request: owner action is required to make the authorized
+  Developer ID private-key use available to `/usr/bin/codesign` for the exact
+  first target. Do not export or share private-key material. TCC, launch,
+  clean-install, notarization, upload, publication, legal clearance, release
+  acceptance, and real runtime/audible-call gates remain closed. M7 remains
+  open.
+
+### FRONTIER_BRIEF v1 — M7-F6-KEYCHAIN-OWNER-STATE
+
+- The owner reports that `/usr/bin/codesign` is an allowed application for the
+  Developer ID Application private-key item in the owner-controlled Keychain.
+- This is owner-reported environment state. No standalone Keychain/security
+  inspection command was run by the project for this confirmation.
+- No private-key material, password, ACL dump, or Keychain path was requested
+  or recorded.
+- This confirmation does not authorize a signing retry. Attempt 3 / cycle-2
+  attempt 1 remains consumed and failed before any codesign call completed.
+- A new explicit owner authorization is required for exactly one new
+  no-timestamp signing-validation run.
+- Launch, TCC, timestamp/network, notarization, upload, publication,
+  distribution, legal clearance, and release acceptance remain closed.
+
+### PEER_DISPOSITION v1 — M7-F6-REAL-NO-TIMESTAMP-SIGNING-VALIDATION-CYCLE-3
+
+- Status: `DEPENDENCY_REQUEST`. Overall historical attempt 4; cycle 3 attempt
+  1 of 1. No second attempt occurred.
+- Owner-provided state was treated as input: `/usr/bin/codesign` is allowed on
+  the matching Developer ID Application private-key item. No Keychain or
+  security inspection was run by the project. No private-key material,
+  password, ACL dump, or Keychain path was requested or recorded.
+- Read-only preflight matched the accepted candidate: HEAD
+  `af5f1817191ba5fd634c750e9345de7d575ba704`, Paseo
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`, package-source
+  `d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d`,
+  package-input
+  `f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402`,
+  artifact-input
+  `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`,
+  local artifact
+  `fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa`, and
+  signature-state
+  `217e1edfc29521b67604230b5b2dfc173b328aad0c21c0151b6e3513f85a0184`.
+  The baseline contained 13,774 entries, 46 nested Mach-O files, and 47
+  entitlement-free ad-hoc code objects. The approved Developer ID identity was
+  `Developer ID Application: Long Le (63M98WD275)`, SHA-1
+  `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`, Team ID `63M98WD275`.
+- The one offline package command ran with the approved map, hardened runtime,
+  SHA-1 selector, Team ID, and `--timestamp=none`. It observed the first
+  certificate-backed `codesign` target:
+  `Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler`.
+  One codesign process was observed; zero signing calls completed. The bounded
+  first-target wait stopped the owned process group. No interactive prompt text
+  was observable. No command or target retry occurred.
+- No signed candidate exists. The 47-image signer, Team ID, certificate,
+  hardened-runtime, entitlement, arm64-slice, 46/46 strict, and outer
+  deep/strict validation requirements were not reached.
+- Evidence was updated at
+  `test/evidence/m7/m7-f6-real-no-timestamp-signing-validation.json`.
+  Evidence SHA-256 is
+  `dc859fa59775cea9623b4a0f017f6c105ff0a71fff62f731657f459c501d3ff9`.
+  Attempts 1–3 remain preserved.
+- Restoration passed. The local artifact fingerprint is
+  `c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e`; the
+  manifest SHA-256 is
+  `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`.
+  The canonical installed app, default runtime/store/exports, host identity,
+  and F3 evidence remained unchanged. The proof-owned backup, journal,
+  temporary root, process, and lock were removed.
+- Enforcement: the local release validation did not complete because the first
+  codesign target remained blocked; the local-ad-hoc baseline is intact.
+  Optional hook: absent. Checked-in CI: absent. Branch protection: unverified.
+  F2 remains fail-closed for the same 11 Human/legal gates.
+- Residual gate: a new owner decision is required before any further signing
+  run. Launch, TCC, timestamp/network, notarization, upload, publication,
+  distribution, legal clearance, and release acceptance remain closed. M7
+  remains open.
+
+### FRONTIER_BRIEF v1 — M7-F6-INTERACTIVE-KEYCHAIN-PROBE-EVIDENCE
+
+- The owner reports one disposable interactive diagnostic run in an owner-open
+  native Terminal. It used a copy of `/usr/bin/true` under a unique `mktemp`
+  directory, selected the public identity SHA-1
+  `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`, and passed `--options runtime`,
+  `--timestamp=none`, and `--dryrun` to `/usr/bin/codesign`.
+- macOS displayed an interactive Keychain prompt. The owner selected `Allow`
+  once, not `Always Allow`. The owner reports exit code 0 and output showing
+  replacement of the existing signature and a signed universal Mach-O
+  (`x86_64 arm64e`) with identifier `com.apple.true`. The disposable
+  directory was cleaned up in the owner-run block.
+- No repository package, artifact, or installed app was targeted. No project
+  package, signing, security, or Keychain command was run for this evidence.
+  No private-key material, password, ACL dump, or Keychain path was requested
+  or recorded.
+- This proves only that `/usr/bin/codesign` can use the private key in the
+  owner’s interactive Terminal after one user approval. It does not prove
+  headless package signing, 47-image signing, entitlement mapping, final
+  validation, TCC, notarization, or release.
+- Inference: repeated headless first-target stalls are consistent with an
+  unavailable interactive user-presence prompt. This is diagnostic evidence,
+  not proof of a completed release signing run.
+- No new package signing authorization exists. The next owner decision is:
+  - Recommended: owner-run one-shot interactive package signing with bounded
+    backup, validation, restoration, and manual `Allow`.
+  - Separate broader authorization: persistent `Always Allow` or ACL change
+    for `/usr/bin/codesign`.
+  Do not infer approval of either path. Launch, TCC, timestamp/network,
+  notarization, upload, publication, distribution, legal clearance, and
+  release acceptance remain closed.
+
+### PEER_DISPOSITION v1 — M7-F7-OWNER-INTERACTIVE-SIGNING-RUNNER-R1
+
+- Status: `CANDIDATE` for independent review only. This is preparation code.
+  It is not a signed release and does not change release acceptance.
+- Foundation route:
+  `repository candidate + later owner authorization -> exact lock and marker
+  -> one private mkdtemp child -> one package/signing child group -> validation
+  -> bounded evidence outside the root -> root absence -> F6 evidence CAS ->
+  final lock release`.
+  The canonical `release/macos` artifact/manifest, installed app, default
+  runtime/store/exports, and F3 evidence are read-only preservation checks.
+  No backup, replacement, journal replay, stale recovery, or caller output
+  root exists.
+- Changed files for this correction:
+  - `scripts/run-macos-owner-signing.mjs`
+  - `scripts/lib/macos-owner-signing.mjs`
+  - `scripts/lib/macos-package-assembly.mjs`
+  - `scripts/package-macos.mjs`
+  - `packages/runtime/test/macos-package.test.ts`
+  - `packages/runtime/test/macos-package-signature.test.ts`
+  - this plan
+  Prior M7 changes in the snapshot, inventory, signing, validator, F3
+  evidence, F6 evidence, policy files, runtime, native, product, and app
+  state were preserved. No commit was made.
+- Accepted baseline preserved exactly:
+  - HEAD: `af5f1817191ba5fd634c750e9345de7d575ba704`
+  - Paseo: `c81cb84735043c281a5a2d23d456d3708ce5d94e`
+  - package-source: `d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d`
+  - package-input: `f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402`
+  - artifact-input: `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`
+  - local artifact: `fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa`
+  - signature-state: `217e1edfc29521b67604230b5b2dfc173b328aad0c21c0151b6e3513f85a0184`
+  - manifest SHA-256: `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`
+  - artifact fingerprint: `c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e`
+- Current review identities:
+  - package-source: `32e90c86b9ee94b56c53777add45fbd8694bbc2d034057a9ea4baa2e588e9c84`
+  - runner digest: `070a320d88bec158783f37b2d909054504a088f00f0320eebb7008e2d3d6cbd8`
+  - no new package-input, artifact, or signature-state was generated.
+- Public signing and policy inputs remain exact:
+  - `Developer ID Application: Long Le (63M98WD275)`
+  - certificate SHA-1 `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`
+  - Team ID `63M98WD275`
+  - `jit.plist`: `958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a`
+  - `audio-input.plist`: `289696af9834a7ee41aca4c1cd3aa95fc38f9ae2e83655b1d4b86c1ccab771ee`
+  - `entitlement-map.json`: `6a98936fb517ddfdd3fbf445633b686b38e2ae36d6656ba47a5ee979aa355462`
+- Exact commands:
+  - plan, run twice: `/Users/tubakhuym/.hermes/node/bin/node scripts/run-macos-owner-signing.mjs --plan`
+  - future execute, not run:
+    `/Users/tubakhuym/.hermes/node/bin/node scripts/run-macos-owner-signing.mjs --execute --expected-package-source=32e90c86b9ee94b56c53777add45fbd8694bbc2d034057a9ea4baa2e588e9c84 --signing-identity=D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561 --team-id=63M98WD275 --authorization-id=<owner-issued-run-id> --owner-ack=M7-F7-OWNER-INTERACTIVE-SIGNING-RUNNER`
+  - no recovery command exists.
+- Execute boundary:
+  - `--execute`, exact current source, exact certificate SHA-1, Team ID,
+    fresh single-use authorization ID, and owner acknowledgement are required.
+  - The runner requires a native local Terminal boundary on macOS arm64.
+    Child stdio is inherited. The child environment uses fixed absolute tools,
+    no `PATH`, no Node/preload/loader injection, and offline npm settings.
+    If macOS shows the matching Keychain prompt, the owner selects `Allow`
+    once only. No UI automation or `Always Allow` action is part of this flow.
+  - One package command and one owned process group are allowed. The package
+    uses the checked-in map, hardened runtime, and `--timestamp=none`.
+    Local-ad-hoc and ordinary release callers cannot enable this behavior.
+- Reduced mutation boundary:
+  - The runner creates one internal mode-0700 `mkdtemp` child under the
+    approved system temporary parent. It writes one exact marker and one exact
+    lock. The package output is only
+    `<proof-root>/release/macos`.
+  - The runner validates the temporary signed copy, captures bounded public
+    facts outside the root, waits for observed child-group absence, and removes
+    only the exact marker-bound root. It publishes CANDIDATE only after root
+    absence and evidence compare-and-swap. If cleanup or CAS is uncertain, it
+    keeps the lock/root, prints the exact retained root, and publishes only
+    failure/dependency evidence.
+  - The lock is held through evidence publication. Unknown or stale lock,
+    changed marker, owner/mode/type, realpath, symlink, parent/equal/escape,
+    or process absence checks fail closed. No broad deletion or automatic
+    recovery is implemented.
+- Finding closure:
+  - R1-001: later owner authorization binds exact source, runner digest,
+    identity, signer, Team ID, policy hashes, expected old F6 hash, and one run
+    ID. Extra fields are rejected and only public fields are copied to result
+    evidence. The current source digest is not hardcoded into source.
+  - R1-002: fixed absolute toolchain and sanitized child environment.
+  - R1-003/R1-005: exact private root, marker/token, mode/owner/realpath and
+    path-boundary checks before the one deletion.
+  - R1-004: one detached child group; SIGINT, SIGTERM, and SIGHUP stop it;
+    cleanup waits for observed absence and reports observed polls.
+  - R1-006: native Terminal, tty, ancestry, SSH, and multiplexer checks with
+    explicit non-cryptographic threat limits.
+  - R1-007: only validated, baseline-preserved, cleaned results can be
+    candidate evidence.
+  - R1-008: one exact lock and one evidence publication claim through CAS.
+  - R1-009: interactive mode requires owner lock/capability and explicit
+    release; local-ad-hoc and ordinary release paths reject it.
+- Credential-free proof:
+  - plan mode ran twice with identical output;
+  - focused package/signing/transaction tests pass: 76/76;
+  - tests cover interruption with child-group wait, retained non-candidate
+    evidence, exact-root cleanup, unknown lock ownership, root boundary and
+    symlink protection, second-child rejection, evidence publication order,
+    no output-root API, no generalized recovery exports, policy/signing
+    regressions, and existing package checks;
+  - syntax checks pass for the changed owner runner, helper, assembly helper,
+    and package script. No local-ad-hoc rebuild was needed; the accepted
+    canonical local baseline remains unchanged.
+- Negative proof includes wrong source/identity/Team/acknowledgement, non-TTY
+  and remote/multiplexed Terminal facts, injection variables, duplicate or
+  unknown flags, caller output roots, local-ad-hoc interactive mode, lock
+  collision or mutation, symlink/path escape, incomplete child absence,
+  second child invocation, and candidate publication before cleanup.
+- Cleanup: preparation created no persistent runner root, lock, process, or
+  evidence. Test-only roots were removed by the focused test cleanup. No
+  canonical artifact, manifest, installed app, default state, F3 evidence, or
+  F6 evidence was changed by this correction.
+- Verification personally run:
+  - `node --check` passed for the changed owner, runner, assembly, and
+    package scripts;
+  - plan mode passed twice;
+  - final owner-runner/package test passed 37/37; the broader focused
+    package/signing/transaction set passed 76/76 before this final evidence
+    guard was added;
+  - `npm run typecheck` passed;
+  - `git diff --check` passed.
+  The existing signature-fixture test used temporary ad-hoc signing of a
+  disposable Mach-O; it did not use the Developer ID identity or Keychain.
+  No owner `--execute` or release package-signing command was run.
+- Enforcement:
+  - local: plan mode, focused tests, syntax checks, and source-bound
+    validation passed; no execute path was run;
+  - optional hook: absent; none installed;
+  - checked-in CI: absent; none added;
+  - branch protection: unverified; no external state changed.
+- Proof limits and residual gates: no real signing, private-key access,
+  Keychain/security inspection, timestamp/network request, launch, TCC,
+  notarization, upload, publication, distribution, legal clearance, or
+  release acceptance was performed. A fresh owner authorization must bind the
+  current source/runner/policy and authorize exactly one execute run. F2
+  remains fail-closed for the same 11 Human/legal gates. Independent Lead
+  review and closeout are required; the writer does not self-accept.
+
+### PEER_DISPOSITION v1 — M7-F7-OWNER-INTERACTIVE-SIGNING-RUNNER-R2
+
+- Status: `CANDIDATE` for the same reviewer FAST closeout only. This is a
+  credential-free preparation candidate. It does not authorize or claim a
+  real signing run, release, notarization, or acceptance.
+- Authority: `M7-F7-OWNER-INTERACTIVE-SIGNING-RUNNER-R2`, accepted findings
+  `M7F7-R2-001..003`, correction base package-source
+  `32e90c86b9ee94b56c53777add45fbd8694bbc2d034057a9ea4baa2e588e9c84`, and
+  reviewer `2189f542-d8bd-4790-be37-6af579d23630`. The R2 design keeps the
+  owner-requested one-shot isolated flow. It adds no generalized tool
+  attestation, backup/restore, journal replay, stale recovery, transaction
+  manager, or output manager.
+- Final candidate identities:
+  - HEAD `af5f1817191ba5fd634c750e9345de7d575ba704`
+  - Paseo `c81cb84735043c281a5a2d23d456d3708ce5d94e`
+  - package-source `3be2bb4a3e3b929d4c8337d811134dcfe9ac3ad3a22f30e8134bb7fbd1d9b365`
+  - runner digest `0b36454bae284b047a08e58f27fb3c4da2e2e72f3a4907c617759e9e69fd560b`
+  - accepted package-input `f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402`
+  - accepted artifact `fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa`
+  - accepted signature-state `217e1edfc29521b67604230b5b2dfc173b328aad0c21c0151b6e3513f85a0184`
+  No new package, artifact, signature-state, F3, or F6 evidence was
+  generated. The accepted local-ad-hoc baseline remains unchanged.
+- R2-001 closure: execute preflight reads
+  `release/macos/composition-manifest.json` before the package snapshot,
+  lock, or proof root. It accepts only the manifest-declared
+  `Contents/Resources/meetless/runtime/node`, verifies regular executable
+  file type, non-symlink realpath containment, size `112258144`, and
+  SHA-256 `5b757bd79195542961f8db2401ec45b23426cffaa3c40fba180ba4f07ee82b7c`.
+  Plan mode uses the current Node. The future execute command and its child
+  package use the exact packaged Node; execute refuses any other
+  `process.execPath`. Fixed absolute Apple tools and a fixed npm CLI are used.
+  `PATH`, `NODE_OPTIONS`, `NODE_PATH`, `DYLD_*`, preload, SSH, multiplexer,
+  and unapproved npm variables are rejected or absent. The threat limit is
+  honest: the manifest binds the packaged Node; fixed paths bind tool names;
+  no generalized tool hash registry is claimed.
+- R2-002 closure: `outputRoot` is absent from lock, marker, authorization,
+  and caller input. The only package output is derived as
+  `<proofRoot>/release/macos` in code. The capability binds the canonical
+  proof-root path, derived output path, run ID, owner token, current source,
+  runner digest, authorization digest, packaged-Node evidence, and fixed npm
+  path. The child recomputes the path. Strict mode/owner/non-symlink/realpath
+  checks run before package writes and cleanup. A lock/marker redirection
+  fixture fails before child invocation. The canonical release path is not
+  reachable through this owner capability.
+- R2-003 closure: new owner-run evidence accepts only neutral statuses:
+  `validated-observation`, `dependency-request`, `reopen-request`,
+  `interrupted`, or `failure`. It has no candidate/acceptance/release status
+  or field. Signal checks cover pre-CAS, pre-rename, post-rename, and the
+  final return boundary. A raced observation is atomically replaced with
+  `interrupted` under the held lock and current-file hash, or the lock is
+  retained on uncertainty. A successful neutral observation still requires
+  exact validation, child absence, root absence, lock ownership, and evidence
+  CAS. Lead review owns any later candidate or acceptance decision.
+- Owner-review commands:
+  - Plan, run twice, non-mutating:
+    `/Users/tubakhuym/.hermes/node/bin/node scripts/run-macos-owner-signing.mjs --plan`
+  - Future execute command, not run:
+    `/Users/tubakhuym/projects/supervisors/meetless/release/macos/Meetless.app/Contents/Resources/meetless/runtime/node scripts/run-macos-owner-signing.mjs --execute --expected-package-source=3be2bb4a3e3b929d4c8337d811134dcfe9ac3ad3a22f30e8134bb7fbd1d9b365 --signing-identity=D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561 --team-id=63M98WD275 --authorization-id=<owner-issued-run-id> --owner-ack=M7-F7-OWNER-INTERACTIVE-SIGNING-RUNNER`
+  The future command requires a new exact one-use owner authorization. It
+  must run in an owner-open native Terminal. The owner may select `Allow`
+  once if macOS displays the prompt. No UI automation or `Always Allow`
+  action is included.
+- R2 changed surface: four owner-runner/package/test files plus this plan
+  were touched for the correction; current line counts are helper 860,
+  runner 279, package 851, and focused package test 1023. The removed broad
+  machinery is the old owner toolchain registry and all lock/marker output
+  routing. No generalized recovery API was added. Existing dirty M7 source,
+  policy, F3/F6 evidence, runtime, app, and artifact work was preserved.
+- Positive proof:
+  - plan output was identical twice and reported the exact packaged Node and
+    future execute command;
+  - focused package/runner tests passed `43/43`;
+  - selected credential-free signing-boundary regressions passed `21/21`,
+    and the actual `otool -arch all` inventory fixture passed `1/1`;
+  - tests cover neutral evidence, all three CAS signal boundaries, exact
+    derived output, lock/marker redirection, packaged-Node replacement,
+    sanitized environment, fixed tools, no second child, and root cleanup;
+  - syntax checks, `npm run typecheck`, and `git diff --check` passed.
+- Negative proof includes changed/replaced packaged Node, wrong fixed tool,
+  PATH/Node/loader injection, output-root override, lock/marker redirection,
+  candidate-like evidence status/fields, pre-CAS/rename/post-rename signal,
+  local-ad-hoc interactive mode, non-native Terminal facts, stale/changed
+  lock, symlink/path escape, and second child invocation. The two focused
+  tests that perform disposable ad-hoc `codesign` were not run in this
+  correction. No `--execute`, Developer ID `codesign`, `security`, Keychain,
+  package-signing, launch, TCC, timestamp/network, notarization, upload, or
+  publication command was run.
+- Cleanup: plan/tests created no persistent proof root, lock, process, or
+  evidence. No canonical release artifact, manifest, installed app, default
+  runtime/store/exports, policy, F3 evidence, or F6 evidence was changed.
+- Enforcement:
+  - local: deterministic plan and focused credential-free validation passed;
+  - optional hook: absent; none installed;
+  - checked-in CI: absent; none added;
+  - branch protection: unverified; no external state changed.
+- Residual gates: a fresh owner authorization for this exact source and
+  runner, one real no-timestamp signing-validation run, public per-image
+  signer/Team/certificate/runtime/entitlement/slice/strict proof, and Lead
+  review remain open. Launch, TCC/Info.plist ownership, timestamp/network,
+  notarization, upload, publication, distribution, legal clearance, F2's
+  same 11 Human/legal gates, release acceptance, and self-acceptance remain
+  closed.
+
+### PEER_DISPOSITION v1 — M7-F7-RETIREMENT-ACCEPTANCE
+
+- Lead decision: `ACCEPT` retirement and cancellation of the M7-F7
+  owner-interactive signing runner. All unaccepted M7-F7 code and tests are
+  removed. This is not a signing, release, or release-acceptance result.
+- No F7 execute or signing run occurred. Reviewer findings `M7F7-R3-001..004`
+  remain recorded evidence for cancellation and are closed as a route
+  decision, not open corrections. No third same-family correction is
+  authorized.
+- Lead cancellation follows final closeout findings `M7F7-R3-001..004`:
+  child authority was unsafe, no-follow leaf writes were unsafe, final
+  evidence lifecycle was unsafe, and authorization was not acyclic. The
+  earlier exploratory findings `M7F7-R1-001..009` and closeout findings
+  `M7F7-R2-001..003` remain in this plan as history. No F7 `--execute` run,
+  real signing, or signing attempt occurred.
+- Retirement changed only the unaccepted F7 route:
+  - deleted `scripts/run-macos-owner-signing.mjs`;
+  - deleted `scripts/lib/macos-owner-signing.mjs`;
+  - deleted `scripts/lib/macos-package-assembly.mjs`;
+  - removed the F7 interactive/output-root/owner-runner hunks from
+    `scripts/package-macos.mjs` and the two focused package/signing tests;
+  - removed the F7 trusted-tool dependency from the existing snapshot,
+    inventory, signing, and validator files. Their accepted F5/F6 behavior
+    remains. `package.json` had no F7 delta and was unchanged.
+  Accepted F5 entitlement files, signing/inventory/validator rules, F6
+  snapshot parsing, F3 evidence, F6 evidence, package, artifact, runtime,
+  installed app, defaults, and external state were not replaced.
+- Restored identities:
+  - HEAD: `af5f1817191ba5fd634c750e9345de7d575ba704`;
+  - Paseo: `c81cb84735043c281a5a2d23d456d3708ce5d94e`;
+  - package-source: `d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d`;
+  - package-input: `f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402`;
+  - artifact-input: `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`;
+  - local artifact: `fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa`;
+  - signature-state: `217e1edfc29521b67604230b5b2dfc173b328aad0c21c0151b6e3513f85a0184`;
+  - manifest SHA-256: `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`;
+  - artifact fingerprint: `c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e`;
+  - F3 evidence: `d0c45d9948599d77a9d0e0139c2d894a7a363d15c1fcc54c7a6c23257cdf2c35`;
+  - F6 evidence: `dc859fa59775cea9623b4a0f017f6c105ff0a71fff62f731657f459c501d3ff9`.
+- Observed restoration proof:
+  - `node scripts/candidate-snapshot.mjs --mode=package-source` returned
+    `d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d` and
+    the exact F3/F6 exclusions;
+  - manifest, artifact, F3 evidence, and F6 evidence hashes returned the
+    identities listed above;
+  - all three F7 files are absent; scoped temporary-root, lock, and process
+    checks returned no F7 state; no new F7 evidence file exists;
+  - `packages/runtime/test/macos-package.test.ts`: 30/30 passed;
+  - pre-F7 signing tests: 33 passed, 2 disposable real-`codesign` tests
+    skipped;
+  - syntax checks for the five affected scripts, `npm run typecheck`, and
+    `git diff --check` passed.
+  No package build, `codesign`, `security`, Keychain, launch/TCC,
+  timestamp/network, notarization, upload, or publication command was run.
+- Enforcement: local restoration and focused validation passed. Optional hook:
+  absent. Checked-in CI: absent. Branch protection: unverified. No hook, CI,
+  or external setting was changed.
+- Next route proposal only; not authorized and not implemented:
+  - owner creates a fresh explicit temporary full-workspace copy;
+  - all package signing runs at that copy's fixed `release/macos` path with
+    the accepted package command;
+  - an owner-open native Terminal exposes the Keychain `Allow once` prompt;
+  - the canonical workspace artifact is never moved or replaced;
+  - exactly one attempt runs, with no retry;
+  - the signed temporary artifact and manifest remain for independent Lead and
+    reviewer inspection;
+  - only the explicit temporary copy is deleted after review and owner
+    decision. No new runner or generic subsystem is proposed.
+- This next route is read-only planning context. It does not authorize package
+  mutation, signing, Keychain action, or any external release action.
+- M7 remains open. TCC/Info.plist ownership, launch, notarization, publication,
+  distribution, legal clearance, release acceptance, and the F2 11
+  Human/legal gates remain closed. Any future signing run needs a separate
+  owner authorization.
+
+### M7-F11 — Artifact-only re-sign foundation candidate
+
+Frontier: M7-F11-ARTIFACT-RESIGN-FOUNDATION
+
+Status: CANDIDATE. The writer does not self-accept this change. Independent
+DEEP review and Lead acceptance are required.
+
+Authority:
+
+- The frontier brief fixes the accepted F5 entitlement policy, F6 identity
+  boundary, source/artifact identities, and allowed signing-bound mutations.
+- Lead accepted **/_CodeSignature/CodeResources as signing-bound metadata.
+- The transform cites this plan as its technical authority.
+
+Accepted baseline identities:
+
+- Paseo: c81cb84735043c281a5a2d23d456d3708ce5d94e
+- package-source: d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d
+- package-input: f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402
+- artifact-input: 81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1
+- local artifact: fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa
+- signature-state: 217e1edfc29521b67604230b5b2dfc173b328aad0c21c0151b6e3513f85a0184
+- composition manifest SHA-256:
+  03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b
+- accepted shape: 13,774 entries, 46 nested Mach-O files, 10 CodeResources
+  files, and 47 total signed code objects including the outer app.
+
+Implementation candidate snapshot:
+
+- HEAD: af5f1817191ba5fd634c750e9345de7d575ba704
+- current implementation source snapshot observed by
+  node scripts/candidate-snapshot.mjs --mode=package-source:
+  5717929a2bf865d2fc0b592fc051519701ceec8b89a8dea5caf3bf4608661a7b
+- The accepted transform input remains bound to package-source
+  d3db4c8f...; the current workspace snapshot includes this foundation and
+  pre-existing dirty M7 work.
+
+Changed scope:
+
+- package.json: added resign:macos:artifact.
+- scripts/lib/macos-artifact-resign.mjs: added the fail-closed boundary,
+  classifier, signing order, rebinds, metadata evidence, and diagnostics.
+- scripts/resign-macos-artifact.mjs: added the explicit-stage transform.
+- scripts/validate-macos-package.mjs: added artifact-only input validation
+  and signing-bound CodeResources checks.
+- packages/runtime/test/macos-artifact-resign.test.ts: added disposable
+  synthetic and credential-free positive/negative proof.
+- This plan records the authority, candidate identity, proof, and limits.
+  Existing dirty files outside this list were preserved.
+
+Transform sequence:
+
+1. Require one realpath staging root outside the repository and release root.
+   The root may contain only Meetless.app, composition-manifest.json, and
+   .meetless-artifact-stage.json.
+2. Verify the marker, accepted source/package/artifact/signature identities,
+   exact app entry closure, 46 Mach-O paths, 10 CodeResources paths, F5 map,
+   arm64 executable shape, and non-signing bytes before the first codesign.
+3. Sign the 46 nested Mach-O files with the existing deepest-first order,
+   exact five-path entitlement map, hardened runtime, and timestamp=none.
+4. Rebind package-input and license-inventory metadata. The outer
+   CodeResources file contains the packaged license inventory, so the
+   inventory must be written before the final outer sign. This avoids a
+   digest cycle while keeping the outer app as the final signing operation.
+5. Sign Meetless.app last. Observe each final image and its certificate,
+   regenerate the external composition manifest, and validate the retained
+   staged candidate with the artifact-only validator.
+
+The owner creates the marker and copies the accepted app and manifest. The
+transform does not copy, delete, lock, retry, recover, publish, or update
+owner status. A marker records the accepted baseline fields above and the
+exact map/plist evidence returned by createStagePolicyEvidence.
+
+Proof personally run:
+
+- npx vitest run --config vitest.config.ts packages/runtime/test/macos-artifact-resign.test.ts --maxWorkers=1:
+  8/8 passed.
+- npx vitest run --config vitest.config.ts packages/runtime/test/macos-package-signature.test.ts packages/runtime/test/macos-package.test.ts --maxWorkers=1:
+  65/65 passed.
+- npm run typecheck: passed.
+- node --check for the foundation module, command, and validator: passed.
+- git diff --check: passed.
+- Read-only baseline inspection: 13,774 entries, 46 Mach-O files, 10
+  CodeResources files, and all accepted identities matched.
+- Artifact-only validator against the retained local baseline: passed.
+- Canonical manifest stayed at SHA-256
+  03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b;
+  its artifact, package-input, artifact-input, and signature-state identities
+  stayed at the accepted values.
+- Local enforcement discovery found no executable project hook, checked-in
+  CI workflow, or .husky policy for this command. No enforcement state was
+  changed.
+
+Fixture negatives cover changed ordinary payload, notice/license text,
+symlink target, package member and component mapping, missing/extra
+CodeResources, wrong F5 path/key, stale baseline, canonical target, post-sign
+mutation, and invalid signing order. No Developer ID identity, security,
+Keychain, timestamp/network, launch, TCC, notarization, upload, or publication
+command was run. The existing signing regression used only disposable ad-hoc
+fixture codesign with timestamp=none. The normal canonical validator is
+expected to report the current dirty workspace snapshot mismatch; the
+artifact-only validator is the proof for this route.
+
+Remaining risk: no real signed staged candidate exists yet. Owner
+authorization, one real signing attempt, retained-candidate inspection,
+independent DEEP review, and Lead acceptance remain open.
+
+### M7-F11-CORRECTION-R1 — Frozen review closure candidate
+
+Frontier: M7-F11-ARTIFACT-RESIGN-FOUNDATION
+
+Status: CANDIDATE. This writer does not self-accept. The frozen F11-R1-001..008
+closures require the same reviewer's independent FAST closeout and Lead
+acceptance.
+
+The correction keeps the artifact-only route and changes no product policy.
+The accepted authority remains this plan, the F5 map, the F6 identity boundary,
+and the Lead ruling that every `**/_CodeSignature/CodeResources` file is
+signing-bound metadata.
+
+Implemented closures:
+
+- Mach-O binding parses thin and fat Mach-O headers, requires one bounded
+  `LC_CODE_SIGNATURE` range per slice, and hashes all other bytes. The marker
+  binds the accepted canonical payloads. Pre-sign, nested-sign, outer-sign,
+  and retained validation gates compare the precise payload digest, not only
+  path or file type.
+- The staged root, bundle, marker, manifest, and every staged descendant are
+  checked for current-uid ownership and private write permissions. Every
+  writable regular file must be a realpath regular file with one link. The
+  full validator rejects a symlink `Meetless.app` root.
+- One fixed adjacent capability file uses exclusive no-follow creation. The
+  command rechecks marker bytes, baseline manifest bytes and identities,
+  inventory bytes, app entries, Mach-O payloads, policy evidence, realpaths,
+  ownership, modes, and hardlinks immediately before the first codesign.
+  A failed gate does not call codesign.
+- Inventory and manifest JSON use same-directory private no-follow temporary
+  files, file and directory fsync, and atomic rename. The target inode and
+  digest are checked again before rename. Interruption and replacement races
+  preserve the prior file when the transform owns the failure.
+- The explicit `retainedArtifactOnly` validator mode uses embedded signing,
+  rebound F5 evidence, the stage marker, and codesign observation. It does not
+  resolve a Keychain identity or read repository verified-upstream or owner
+  resolution evidence. The normal source/package validator path remains
+  separate.
+- Package-input artifact digest, inventory artifact-entry digest, manifest
+  binding, and the final entry set are recomputed and must agree.
+- Final F11 mode requires the artifactResign schema and authority, all accepted
+  baseline identities and shape counts, precise signing-bound descriptor,
+  marker digest/evidence, and package/inventory/signature rebind identities.
+- Package entry enumeration now rejects FIFO, socket, device, and other
+  unsupported `lstat` types with authority and next action. Files, symlinks,
+  and directories retain their existing behavior.
+
+Correction candidate identity:
+
+- HEAD: `af5f1817191ba5fd634c750e9345de7d575ba704`
+- package-source snapshot: `10173eff919c482f222dd3722a0b505d9a0ac71bf4c36daed2d1c45d3fc75921`
+- accepted source: `d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d`
+- accepted package-input: `f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402`
+- accepted artifact-input: `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`
+- accepted local artifact: `fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa`
+- accepted manifest SHA-256: `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`
+- accepted shape: 13,774 entries, 46 Mach-O files, 10 CodeResources files,
+  and 47 signed code objects including the outer app.
+
+Changed files in the one writer scope:
+
+- `package.json`
+- `scripts/lib/macos-artifact-resign.mjs`
+- `scripts/resign-macos-artifact.mjs`
+- `scripts/validate-macos-package.mjs`
+- `scripts/lib/macos-package-inventory.mjs`
+- `packages/runtime/test/macos-artifact-resign.test.ts`
+- this plan file
+
+Personally observed proof:
+
+- `npx vitest run --config vitest.config.ts packages/runtime/test/macos-artifact-resign.test.ts --maxWorkers=1`: 17/17 passed.
+- `npx vitest run --config vitest.config.ts packages/runtime/test/macos-artifact-resign.test.ts packages/runtime/test/macos-package-signature.test.ts packages/runtime/test/macos-package.test.ts --maxWorkers=1`: 82/82 passed.
+- `npm run typecheck`: passed.
+- `node --check scripts/lib/macos-artifact-resign.mjs scripts/resign-macos-artifact.mjs scripts/validate-macos-package.mjs`: passed as separate checks.
+- `git diff --check`: passed.
+- Read-only Mach-O binding of the canonical artifact: 46/46 parsed; a disposable
+  ad-hoc `codesign --timestamp=none` fixture changed only the signature data
+  while its normalized payload digest stayed equal.
+- Read-only canonical validator: passed with 13,774 entries and 46 Mach-O
+  files. Canonical manifest SHA and accepted artifact identities remained
+  unchanged.
+- No Developer ID identity, `security`, Keychain, network/timestamped sign,
+  package build/install, launch/TCC, notarization, upload, or publication was
+  run. The only signing observation used a disposable ad-hoc fixture.
+
+Enforcement discovery: the local command and tests are available and passed;
+no optional hook, checked-in CI invocation, or verified branch-protection rule
+was found. No hook, CI, or external enforcement state changed.
+
+Remaining limits: no real signed staged candidate exists. Owner copy/retention
+status, one authorized signing attempt, independent FAST closeout, and Lead
+acceptance remain open. Existing unrelated dirty F5/F6 files and evidence were
+preserved and are not part of this correction scope.
+
+### M7-F11 — Lead acceptance and closeout
+
+Frontier: `M7-F11-ARTIFACT-RESIGN-FOUNDATION`
+
+Disposition: `ACCEPT`. Review closeout: `CLOSEOUT_CLEAR`.
+
+Lead accepted candidate `10173eff919c482f222dd3722a0b505d9a0ac71bf4c36daed2d1c45d3fc75921`.
+The independent reviewer was `626d5cc5-6290-4e90-b630-4a69d2d400f6`; the
+reviewer model was not supplied in the ruling. The accepted shape is 13,774
+entries, 46 Mach-O files, 10 CodeResources files, and 47 signed code objects.
+The canonical manifest SHA-256 remains
+`03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`.
+
+F11-R1-001..008 are closed:
+
+- `001`: Mach-O payload binding excludes each bounded `LC_CODE_SIGNATURE`
+  range and is checked before, during, and after signing.
+- `002`: staged ownership, modes, realpaths, regular-file types, hardlinks,
+  and symlink bundle-root rejection are enforced.
+- `003`: the narrow exclusive stage capability and immediate pre-sign
+  baseline/policy/realpath/hash gate prevent a mutation from reaching
+  `codesign`.
+- `004`: inventory and manifest writes use private same-directory no-follow
+  temporary files, fsync, atomic rename, and directory fsync.
+- `005`: retained artifact-only validation uses embedded/rebound evidence and
+  codesign observation without Keychain or source-evidence resolution.
+- `006`: package-input, inventory, manifest, and final-entry binding digests
+  are recomputed and must be equal.
+- `007`: final F11 validation requires the artifactResign schema, accepted
+  baseline, signing-bound descriptor, stage evidence, and rebind lifecycle.
+- `008`: unsupported `lstat` types fail with an actionable authority and next
+  action; regular files, symlinks, and directories retain their behavior.
+
+Proof: 82/82 focused package/signature/artifact tests passed; typecheck,
+syntax checks, and `git diff --check` passed. Positive and negative fixture
+proof covered the accepted ordinary-payload, notice/license, symlink,
+package-member, component-mapping, CodeResources, entitlement, baseline,
+canonical-target, post-sign, and signing-order violations. The read-only
+canonical validator observed 13,774 entries and 46 Mach-O files.
+
+Encode-invariant enforcement levels:
+
+- local: command, validator, and focused tests are present and passed;
+- optional hook: no hook was found;
+- CI: no checked-in CI invocation was found;
+- branch protection: not verified.
+
+Canonical preservation and limits: the canonical app and manifest remained
+byte-for-byte unchanged; no generated artifact or evidence was changed. No
+real candidate signing, Developer ID signing, Keychain/security access, owner
+staging/copy, launch/TCC, network or timestamped signing, notarization,
+upload, or publication occurred. Tests used disposable fixtures only,
+including an ad-hoc timestamp-disabled signing observation. No external
+enforcement state changed. A real owner-staged signed candidate, one
+authorized signing attempt, and copy/retention lifecycle remain outside F11
+and move to the next frontier: `M7-F12-OWNER-STAGED-RESIGN-PROPOSAL`.
+
+This is a plan-only acceptance record; this turn changed only this plan file.
+
+### M7-F13 — Owner re-sign lifecycle implementation candidate
+
+Architecture authority: Lead `ACCEPT` for
+`M7-F13-OWNER-RESIGN-LIFECYCLE-FOUNDATION`. The read-only architecture review
+was by `16ca088a-5cef-4baa-af82-a4c4845369eb`; the reviewer model was not
+supplied. The accepted decision keeps the existing artifact re-sign command as
+the one state and process owner. A prompt-only wrapper and a separate prepare
+command were not added.
+
+Implementation frontier: `M7-F13-OWNER-RESIGN-LIFECYCLE-IMPLEMENTATION`.
+Status: `CANDIDATE`; this writer does not self-accept. Independent DEEP review
+and Lead acceptance remain required.
+
+Candidate identities:
+
+- accepted F11 package-source input:
+  `10173eff919c482f222dd3722a0b505d9a0ac71bf4c36daed2d1c45d3fc75921`;
+- deterministic current package-source snapshot:
+  `25a405d8fc1a43d1bc992f407863655f52384c822eb9ad8b7a47f598292a4cf4`;
+- HEAD: `af5f1817191ba5fd634c750e9345de7d575ba704`;
+- accepted source: `d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d`;
+- accepted package-input: `f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402`;
+- accepted artifact-input: `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`;
+- accepted local artifact: `fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa`.
+
+The owner identity SHA-1 `D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561` and Team
+ID `63M98WD275` remain evidence inputs only. They were not used for real
+codesign or Keychain access.
+
+Encoded lifecycle:
+
+- No `--stage-root` selects the owner mode in the existing
+  `resign:macos:artifact` command. Supplying `--stage-root` retains the direct
+  F11 transform. No wrapper or second prepare command exists.
+- Owner preparation validates the canonical release root, app, manifest,
+  source types, realpaths, hardlinks, internal relative symlinks, accepted
+  manifest identities, full entry closure, Mach-O payloads, inventory, and F5
+  policy before copying. It creates one private realpath owner root outside
+  the repository, copies regular bytes and symlink targets verbatim, prints
+  the root immediately, and retains it on every outcome.
+- The marker, `.meetless-artifact-resign-status.json`, and optional
+  `.meetless-artifact-resign-evidence.json` are the only owner metadata. Status
+  transitions are `prepared` -> `preflight` -> `consumed` -> one retained
+  terminal state. `consumed` is written atomically before release identity
+  resolution or the first codesign child. Consumed and terminal stages cannot
+  be reused.
+- Production signing spawns `/usr/bin/codesign` directly with inherited
+  stdin/stdout/stderr. Owner mode requires all three native TTY streams and
+  rejects remote or multiplexed Terminal facts. One child is owned at a time;
+  INT, TERM, and HUP terminate and wait, with bounded SIGKILL escalation.
+- Status and terminal evidence use private no-follow temporary files, file and
+  directory fsync, atomic rename, and bounded non-secret diagnostics. The
+  accepted F11 nested-first/outer-last signing, digest, inventory, validator,
+  entitlement, and retained-artifact behavior remains the transform owner.
+
+F12-R1-001..007 are absorbed by executable lifecycle proof:
+
+- `001`: one existing command owns preparation, state, signing, validation, and
+  retention; no prompt-only or prepare-only route was introduced.
+- `002`: fresh private roots, canonical boundary checks, exact copy rules, and
+  staged-closure revalidation are enforced.
+- `003`: the status file and atomic consume transition enforce one attempt and
+  reject consumed or terminal reuse.
+- `004`: direct inherited-stdio child ownership, signal termination, wait, and
+  bounded escalation are encoded.
+- `005`: all success, failure, interruption, and pre-consume failures retain
+  the exact root and bounded terminal evidence without automatic cleanup.
+- `006`: status and evidence writes use the existing atomic metadata writer
+  with no-follow creation and compare-and-swap identity checks.
+- `007`: owner mode has no caller-controlled tool path, stage root, wrapper,
+  or second preparation command; the checked-in F5/F11 owners remain fixed.
+
+Proof personally run:
+
+- Owner and F11 artifact tests: 30/30 passed.
+- Combined artifact, package, and signature regressions: 95/95 passed.
+- `npm run typecheck`: passed.
+- `node --check scripts/lib/macos-artifact-resign.mjs scripts/resign-macos-artifact.mjs`:
+  passed.
+- `node scripts/candidate-snapshot.mjs --mode=package-source`: passed and
+  produced the candidate identity above.
+- `git diff --check`: passed.
+- Disposable synthetic stages were created by tests and removed. No owner
+  stage was retained after testing.
+
+Canonical preservation: the canonical app and external manifest remained
+byte-for-byte unchanged. The manifest SHA-256 remains
+`03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`; its
+shape remains 13,774 entries, 46 Mach-O files, and 10 CodeResources files. No
+canonical artifact, generated evidence, package identity, or policy file was
+changed by this frontier. Unrelated dirty F5/F6 work was preserved.
+
+Encode-invariant enforcement:
+
+- local: focused owner/lifecycle tests, direct regressions, syntax, typecheck,
+  and snapshot validation passed;
+- optional hook: none found or installed;
+- checked-in CI: no invocation was found;
+- branch protection: unverified.
+
+Limits: no real Developer ID signing, Keychain/security access, network or
+timestamped signing, owner staging outside disposable tests, launch, TCC,
+notarization, upload, publication, or external enforcement change occurred.
+No live native-Terminal one-attempt run or retained signed candidate exists.
+The candidate requires independent DEEP review and Lead acceptance before any
+owner-authorized signing attempt.
+
+### M7-F13-CORRECTION-R1 — Owner lifecycle hardening candidate
+
+Lead ruling: `CONTINUE` for
+`M7-F13-OWNER-RESIGN-LIFECYCLE-IMPLEMENTATION`. The DEEP exploratory review was
+by `c0d8cf98-6879-4286-8e32-8e256da6f755`; the reviewer model was not supplied.
+F11 remains the accepted artifact transform. This correction absorbs and
+closes `M7F13-R1-001..005` by executable proof. Status: `CANDIDATE`; this
+writer does not self-accept. The same reviewer FAST closeout and Lead
+acceptance remain required.
+
+Candidate identities:
+
+- accepted F11 package-source input:
+  `10173eff919c482f222dd3722a0b505d9a0ac71bf4c36daed2d1c45d3fc75921`;
+- deterministic correction package-source snapshot:
+  `015ff68677e13443f9b836b726a0651cb64afe7b250e2fc4c99edcacf9bf7185`;
+- HEAD:
+  `af5f1817191ba5fd634c750e9345de7d575ba704`;
+- accepted source:
+  `d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d`;
+- accepted package-input:
+  `f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402`;
+- accepted artifact-input:
+  `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`;
+- accepted local artifact:
+  `fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa`.
+
+Correction closure:
+
+- `R1-001`: owner signing, inventory, and artifact-only validation use fixed
+  absolute `/usr/bin` tool paths and a reduced environment. The owner tests
+  place `file` and `otool` shims on `PATH`; no shim call is observed. Direct
+  non-owner modes keep their existing command path behavior.
+- `R1-002`: owner preparation reads each source regular file through an
+  `O_NOFOLLOW` handle bound to the validated inode, size, link count, and mode.
+  It compares the expected source snapshot before writing, writes the staged
+  file through a no-follow exclusive handle, and verifies destination bytes and
+  mode before retention. Internal relative symlinks are validated and copied
+  verbatim. Changed source bytes fail before they become accepted input.
+- `R1-003`: the temporary parent is realpath-resolved and checked outside the
+  repository and release root before `mkdtemp`. A parent inside the workspace
+  creates zero entries, and stage output is emitted only after successful root
+  creation and realpath resolution.
+- `R1-004`: one
+  `.meetless-artifact-resign-status.json` record now owns state and bounded
+  terminal evidence. `consumed` is durable, explicitly `inDoubt`, and
+  permanently non-reusable until one terminal record is atomically committed.
+  The owner signal controller remains installed across identity resolution,
+  all signing children, metadata regeneration, retained validation, and the
+  terminal commit. INT/TERM/HUP terminate and wait for the child before a
+  terminal interruption record is written.
+- `R1-005`: the owner root/status parent is bound to its realpath, device,
+  inode, uid, and private 0700 mode. The binding is rechecked before the
+  temporary write, after file fsync, immediately before rename, and after
+  rename plus directory fsync. Parent replacement fails without candidate
+  output. No native `openat` helper, generic transaction/recovery framework,
+  cleanup command, or malicious same-uid race protection is claimed. The
+  calibrated threat model is one owner-controlled 0700 sole writer; a
+  same-uid process can still race between separate Node syscalls.
+
+Changed implementation and proof scope is limited to the accepted correction
+owners: `scripts/lib/macos-artifact-resign.mjs`,
+`scripts/resign-macos-artifact.mjs`,
+`scripts/lib/macos-package-inventory.mjs`,
+`scripts/lib/macos-package-signing.mjs`, `scripts/validate-macos-package.mjs`,
+and `packages/runtime/test/macos-artifact-resign.test.ts`. Unrelated dirty F5
+and F6 work was preserved. The owner command remains the one short command:
+`npm run resign:macos:artifact -- --signing-identity=<...> --team-id=<...>`.
+There is no shell wrapper or second preparation command. The existing F11
+deepest-first/outer-last signing, exact 47 code objects, five entitlement
+paths, rebound metadata, and ordinary validator remain the owners of those
+rules.
+
+Proof personally run:
+
+- focused correction suite: 34/34 passed;
+- combined artifact, package, and signature regressions: 99/99 passed;
+- `npm run typecheck`: passed;
+- `node --check` for the changed JavaScript modules: passed;
+- `node scripts/candidate-snapshot.mjs --mode=package-source`: passed with
+  correction identity `015ff68677e13443f9b836b726a0651cb64afe7b250e2fc4c99edcacf9bf7185`;
+- `git diff --check`: passed, including no-index checks for new files.
+
+Positive and negative fixture proof covers fixed-tool authority and zero PATH
+shim calls, private no-follow copy, changed-source rejection, temporary-parent
+boundary and no false stage output, in-doubt consume-once state, inherited
+TTY child ownership, signal kill/wait across lifecycle boundaries, atomic
+status interruption/race preservation, parent replacement, canonical bundle
+symlink rejection, unsupported package lstat types, ordinary payload and
+notice/license preservation, symlink targets, package members, component
+mapping, CodeResources shape, F5 policy, stale baseline, canonical target,
+post-sign mutation, and invalid signing order.
+
+Encode-invariant enforcement levels:
+
+- local: focused owner correction tests, F11/F5 package-signature regressions,
+  typecheck, syntax, snapshot, and diff checks passed;
+- optional hook: no hook was found or installed;
+- checked-in CI: no invocation was found; `.github/` is absent;
+- branch protection: not verified.
+
+Canonical preservation and limits: the canonical external manifest SHA-256 is
+still `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`,
+with 13,774 entries, 46 Mach-O files, and 10 CodeResources files. The
+canonical app and manifest remained byte-for-byte unchanged. Tests used only
+disposable temporary fixtures; no owner root remained after tests. No real
+Developer ID signing, Keychain/security access, external staging, timestamped
+signing, network, package build/install, launch, TCC, notarization, upload,
+publication, or external enforcement change occurred. No native helper was
+added. A live owner TTY run and retained signed candidate remain unattempted
+pending independent FAST closeout and Lead acceptance.
+
+### M7-F13-CONVERGENCE-CORRECTION — Snapshot-bound owner copy closeout candidate
+
+Convergence authority: `CONVERGENCE_RECONCILIATION v1` for review family
+`M7-F13-owner-resign-lifecycle`. The reviewed candidate was
+`015ff68677e13443f9b836b726a0651cb64afe7b250e2fc4c99edcacf9bf7185`.
+Closeout result was `CLOSEOUT_FINDINGS`; the decision was a bounded correction
+with no new design. This correction is limited to
+`scripts/lib/macos-artifact-resign.mjs`,
+`packages/runtime/test/macos-artifact-resign.test.ts`, and this plan record.
+Status: `CANDIDATE`; this writer does not self-accept. Final FAST closeout by
+the independent reviewer and Lead disposition remain required.
+
+Encoded closure:
+
+- The accepted source snapshot now enumerates the bundle root, every directory,
+  every regular file, and every symlink. `copyOwnerTree` requires that exact
+  snapshot before it can create a destination entry.
+- Each source entry must have the exact expected relative path and type before
+  destination inspection or creation. Added regular files, symlinks,
+  directories, and unsupported lstat types fail with an actionable discard and
+  restore diagnostic.
+- Symlinks must match the expected target and SHA-256 target digest before
+  creation, then pass the existing internal-relative-target check. Regular
+  files retain the existing no-follow handle, inode, size, link-count, mode,
+  and byte binding before copy and destination verification.
+- Traversal requires every expected entry to be observed. Missing expected
+  entries fail, and the retained preparation-failure root contains no
+  unaccepted added entry. The lifecycle, state, tool authority, parent
+  binding, and R1-001/003/004/005 boundaries are unchanged.
+
+Proof personally run:
+
+- focused owner artifact-resign suite: 40/40 passed, including positive
+  internal symlink copy, retargeted symlink rejection, added regular/symlink/
+  directory/unsupported-entry rejection, and missing-entry rejection with
+  retained-root absence checks;
+- direct artifact, package, and signature regressions: 105/105 passed;
+- `npm run typecheck`: passed;
+- `node --check scripts/lib/macos-artifact-resign.mjs
+  scripts/resign-macos-artifact.mjs`: passed;
+- `node scripts/candidate-snapshot.mjs --mode=package-source`: passed with
+  deterministic correction candidate
+  `71e624d81f724fcbdcbd7c191520fb6612a5ad3461e201c2fbff06fca617e5b4` at HEAD
+  `af5f1817191ba5fd634c750e9345de7d575ba704`;
+- `git diff --check` and scoped no-index checks for new files: passed.
+
+Encode-invariant enforcement levels:
+
+- local: focused and direct tests, typecheck, syntax, deterministic snapshot,
+  and diff checks passed;
+- optional hook: no hook was found or installed;
+- checked-in CI: no invocation was found; `.github/` is absent;
+- branch protection: not verified.
+
+Canonical preservation and limits: the canonical app and external manifest
+remain byte-for-byte unchanged. The canonical manifest SHA-256 remains
+`03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`, with
+13,774 entries, 46 Mach-O files, and 10 CodeResources files. Tests used only
+disposable temporary fixtures; no real Developer ID signing, Keychain/security
+access, staging outside fixtures, package build/install, launch/TCC, network,
+timestamped signing, notarization, upload, publication, or external
+enforcement change occurred. A live owner TTY signing attempt and retained
+signed candidate remain unattempted pending FAST closeout and Lead acceptance.
+
+### M7-F13-OWNER-RESIGN-LIFECYCLE-ACCEPTANCE — Lead acceptance record
+
+Lead ruling: `ACCEPT` for candidate
+`71e624d81f724fcbdcbd7c191520fb6612a5ad3461e201c2fbff06fca617e5b4`.
+Independent FAST closeout: `CLOSEOUT_CLEAR` by
+`c0d8cf98-6879-4286-8e32-8e256da6f755`; review model:
+`codex-review/gpt-5.6-luna`.
+
+Acceptance closes `M7F13-R1-001..005`, including the final bounded
+`M7F13-R1-002` snapshot-bound source-copy correction. The accepted evidence
+remains the 40/40 focused tests, 105/105 direct artifact/package/signature
+regressions, typecheck, syntax checks, deterministic candidate snapshot, and
+diff checks recorded above. The accepted threat-model limit remains one
+owner-controlled private 0700 sole writer; protection against a malicious
+same-UID process racing between separate Node syscalls is not claimed. No
+native helper, generalized transaction/recovery framework, or cleanup command
+was added.
+
+The canonical app and external manifest remain byte-for-byte unchanged. The
+canonical manifest SHA-256 remains
+`03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`, with
+13,774 entries, 46 Mach-O files, and 10 CodeResources files. No real
+Developer ID signing, Keychain/security access, owner stage outside disposable
+fixtures, timestamped signing, network, package build/install, launch, TCC,
+notarization, upload, publication, or release acceptance occurred.
+
+This accepts the lifecycle foundation only. It does not authorize a real
+owner stage or signing attempt. The next exact gate is one owner-reviewable
+plan/output for the accepted command
+`npm run resign:macos:artifact -- --signing-identity=<...> --team-id=<...>`.
+After that gate, a separate owner authorization is required for exactly one
+native-Terminal, no-timestamp Developer ID signing validation. Launch, TCC,
+notarization, upload, publication, and release acceptance remain out of scope.
+
+This is a plan-only acceptance record. No implementation, test, artifact,
+evidence, app, or external state was changed by this record.
+
+### PLAN_RECONCILIATION — F11/F13 accepted route and current frontier
+
+This compact reconciliation records the accepted route after F7, F8, and F12
+cancellation and lifecycle reopen.
+
+Absorbed and accepted:
+
+- F11 artifact-only re-sign foundation;
+- F13 owner-owned stage, one-attempt, child-ownership, validation, and
+  evidence lifecycle candidate
+  `71e624d81f724fcbdcbd7c191520fb6612a5ad3461e201c2fbff06fca617e5b4`.
+
+Cancelled or retired routes remain in this plan as history, but are not active:
+
+- F7 generic runner;
+- F8 full-workspace copy;
+- F12 shell-wrapper procedure.
+
+The active route has no dependency on copying `.meetless-runtime` or the full
+workspace. It uses the accepted app and external manifest only, with the
+owner lifecycle metadata permitted by its explicit schema.
+
+Current ordered frontier:
+
+1. Read-only owner-reviewable F13 command/output proposal.
+2. Explicit owner authorization for exactly one native-Terminal,
+   no-timestamp Developer ID run.
+3. Retained staged candidate review and Lead disposition.
+4. Later separate launch/TCC, notarization, legal, publication, and
+   release-acceptance gates.
+
+No real stage or signing authorization exists. F2's 11 Human/legal gates and
+all F3/F5 limits remain binding and unchanged. No other dependency reorder is
+needed.
+
+This is a plan-only reconciliation record. No implementation, test, artifact,
+evidence, app, or external state was changed.
+
+### M7-F15 — Mach-O signing-derived metadata correction candidate
+
+Authority: the owner-provided M7 signing attempt ended in retained failure with
+`attempt=1` and `inDoubt=false`. The retained stage at
+`/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-0tcL30`
+was not read, copied, validated, modified, or otherwise accessed. The accepted
+F11/F13 artifact-only contract and this plan remain the policy owners.
+Status: `CANDIDATE`; this writer does not self-accept.
+
+Observed failure evidence: `Contents/MacOS/MeetlessHost` changed outside its
+`LC_CODE_SIGNATURE` data. The file grew from 311840 to 312064 bytes;
+`dataoff` stayed 292992; `datasize` grew from 18848 to 19072; and
+`__LINKEDIT.filesize` grew from 148000 to 148224. No other load-command
+difference was observed. The pre-signature byte differences were the signing-
+derived size fields.
+
+Encoded invariant:
+
+- The normalizer now parses bounded thin and fat slices and fails closed for
+  unsupported CPU types, truncated commands, invalid slice or segment ranges,
+  overlaps, and missing, extra, or duplicate signature commands.
+- Exactly one `LC_CODE_SIGNATURE` and one `__LINKEDIT` segment are required per
+  slice. The signature must end at the slice end; `__LINKEDIT.filesize` must be
+  the exact slice-end minus `fileoff`; and `__LINKEDIT.vmsize` must be the exact
+  page-rounded `filesize` (`0x4000` for arm64, `0x1000` for x86/x86_64).
+- Only `LC_CODE_SIGNATURE.datasize`, derived `__LINKEDIT.filesize`, derived
+  `__LINKEDIT.vmsize`, and fat-architecture slice `size` are canonicalized.
+  `dataoff`, slice offsets and architecture fields, segment identity/layout,
+  executable bytes, all other headers/load commands, and path/symlink closure
+  remain bound by the normalized digest and metadata comparison.
+- The lifecycle, canonical artifact, F5 policy, one-attempt state, and owner
+  command are unchanged.
+
+Proof personally run:
+
+- focused artifact-resign suite: 55/55 passed;
+- direct package regressions: 30/30 passed;
+- direct non-signing package-signature regressions: 35/35 passed. The two
+  existing tests that invoke real ad-hoc `codesign` were not run under this
+  frontier's prohibition;
+- read-only canonical parser proof: 13,774 package entries, 46 Mach-O files,
+  and 46 bounded Mach-O slices accepted;
+- `npm run typecheck`: passed;
+- JavaScript syntax checks: passed;
+- deterministic package-source snapshot passed twice with candidate identity
+  `611645e3d821e9581cc11f0276da6fb11c78e1ed42eaeb60925212aac5545fec` at HEAD
+  `af5f1817191ba5fd634c750e9345de7d575ba704`;
+- canonical read-only hashes remain manifest
+  `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b` and
+  artifact fingerprint
+  `c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e`.
+
+Positive proof covers signature bytes plus legitimate signature growth with
+derived `datasize` and `__LINKEDIT.filesize` changes. Negative proof covers
+payload bytes, moved `dataoff`, inconsistent `datasize`, `filesize`, or
+`vmsize`, changed `__LINKEDIT` identity/layout/protections, non-`__LINKEDIT`
+fields, slice/header/load-command mutation, duplicate or missing signatures,
+and truncated, overlapping, or out-of-slice ranges. Thin and fat fixtures are
+disposable and deterministic.
+
+Residual uncertainty: no live retry or second owner signing attempt occurred,
+and no observed live case crossed an arm64 `__LINKEDIT.vmsize` page boundary.
+The accepted rule is proven by the canonical arm64 layout and synthetic thin/
+fat bounds; live signing behavior remains unattempted and requires the existing
+owner authorization gate.
+
+No real or ad-hoc codesign, Keychain/security access, signing retry, retained
+stage access, launch/TCC, network/timestamp, notarization, upload,
+publication, cleanup, commit, or external state change occurred.
+
+### M7-F15-CORRECTION-R1 — Mach-O parser validation candidate
+
+Authority: Lead accepted F15-R1-001 and F15-R1-002 as one parser-validation
+batch. Correction base package-source digest:
+`611645e3d821e9581cc11f0276da6fb11c78e1ed42eaeb60925212aac5545fec`.
+Status: `CANDIDATE`; writer does not self-accept.
+
+Encoded correction:
+
+- Every Mach-O load-command `cmdsize` must remain within the existing bounds and
+  be divisible by four. The failure names the command, value, authority, and
+  compliant next action.
+- FAT CPU type and subtype are cross-bound to the inner Mach header as exact
+  unsigned 32-bit bit patterns. The documented key is
+  `0x########:0x########`; no signed conversion or capability-bit masking is
+  applied. FAT table order and bounded slice order remain deterministic.
+- Duplicate FAT architecture keys fail closed before normalization. Distinct
+  supported arm64 subtype keys remain accepted.
+- Existing signature-derived field rules, thin behavior, payload closure,
+  lifecycle, F5 policy, and one-attempt semantics remain unchanged.
+
+Proof personally run:
+
+- focused artifact-resign suite: 56/56 passed;
+- direct package regressions: 30/30 passed;
+- direct non-signing package-signature regressions: 35/35 passed. The two
+  existing tests that invoke real ad-hoc `codesign` were not run under this
+  frontier's prohibition;
+- read-only canonical parser proof: 13,774 package entries, 46 Mach-O files,
+  and 46 bounded Mach-O slices accepted;
+- `npm run typecheck`, JavaScript syntax checks, and `git diff --check` passed;
+- deterministic package-source snapshot passed twice with candidate identity
+  `b80828220fa58d19aad09b1b3e48a68fcfa3af079830033547d49e0bb3d35dec` at HEAD
+  `af5f1817191ba5fd634c750e9345de7d575ba704`;
+- canonical read-only hashes remain manifest
+  `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b` and
+  artifact fingerprint
+  `c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e`.
+
+Positive fixtures cover aligned thin Mach-O, signature growth, valid distinct
+FAT architecture keys, and prior page/closure behavior. Negative fixtures cover
+`cmdsize=73`, FAT CPU-type mismatch, subtype mismatch, duplicate key, payload,
+header, load-command, range, truncation, overlap, and signature metadata
+violations.
+
+No retained-stage access, codesign, Keychain/security access, signing retry,
+network/timestamp, launch/TCC, notarization, upload, publication, cleanup,
+commit, or external state change occurred. Local validation is the enforced
+level; only sample Git hooks are present, no checked-in `.github` workflow was
+found, and branch-protection enforcement is unverified.
+
+### M7-F15 — Lead acceptance and closeout
+
+Lead decision: `ACCEPT` candidate
+`b80828220fa58d19aad09b1b3e48a68fcfa3af079830033547d49e0bb3d35dec`.
+Independent review: `CLOSEOUT_CLEAR` by
+`626d5cc5-6290-4e90-b630-4a69d2d400f6`; review model actual:
+`codex-review/gpt-5.6-luna`.
+
+F15-R1-001 and F15-R1-002 are closed. The accepted comparator contract
+normalizes only exact codesign-derived `LC_CODE_SIGNATURE`, `__LINKEDIT`, and
+FAT slice-size fields. All unrelated payload, header, load-command,
+architecture, segment-layout, path, and symlink state remains bound. Aligned
+load commands and exact FAT CPU type/subtype cross-binding are required.
+
+Recorded proof remains: focused artifact-resign `56/56`; direct package
+regressions `30/30`; direct non-signing package-signature regressions `35/35`;
+typecheck, syntax, and `git diff --check` passed. The canonical manifest and
+artifact fingerprint remain unchanged at
+`03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b` and
+`c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e`.
+
+This acceptance authorizes only a read-only audit of the already-retained
+stage. It does not authorize a retry, stage or lifecycle modification, cleanup,
+Keychain/security access, launch/TCC, network, notarization, upload,
+publication, or release acceptance.
+
+### M7-F16 — Retained-stage audit disposition
+
+Lead technical disposition: `ACCEPT` the read-only audit as `VERIFIED`
+evidence only. This is not artifact acceptance. Comparator candidate:
+`b80828220fa58d19aad09b1b3e48a68fcfa3af079830033547d49e0bb3d35dec`.
+Auditor: `c0d8cf98-6879-4286-8e32-8e256da6f755`. Review model actual:
+`codex-review/gpt-5.6-luna`.
+
+Exact audited retained stage:
+`/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-0tcL30`.
+The retained state is `retained-failure`, `attempt=1`, `inDoubt=false`.
+It is not promotable or reusable. No cleanup is authorized.
+
+Recorded audit identities and shape:
+
+- source snapshot: `d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d`;
+- package input: `f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402`;
+- artifact input: `81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`;
+- accepted local artifact: `fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa`;
+- accepted signature state: `217e1edfc29521b67604230b5b2dfc173b328aad0c21c0151b6e3513f85a0184`;
+- composition manifest SHA-256: `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`;
+- canonical artifact fingerprint: `c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e`;
+- package shape: 13,774 entries, 46 nested Mach-O files, 10 CodeResources
+  files, and 47 code objects.
+
+Signature audit result: 46/46 nested strict checks and outer deep/strict checks
+passed. The 47 objects reported the Developer ID identity
+`Developer ID Application: Long Le (63M98WD275)`, certificate SHA-1
+`D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`, Team ID `63M98WD275`, and hardened
+runtime. The exact entitlement map was observed: four JIT paths (`runtime/node`,
+Electron, Electron Helper (Renderer), and Electron Helper (GPU)) and one
+audio-input path (`native/macos-capture/meetless-capture`); all other code
+objects are entitlement-free. No signed-byte defect was found.
+
+The failure is stale pre-rebind lifecycle and metadata only. The canonical app,
+external manifest, and recorded canonical identities remain unchanged. The
+next owner gate is explicit authorization for exactly one fresh owner
+stage/run using the accepted comparator, followed by independent review.
+There is no current authorization for a retry or new run, Keychain/security
+access, cleanup, launch/TCC, timestamp/network activity, notarization, upload,
+publication, legal review, or release acceptance.
+
+### M7-F17 — Fresh owner re-sign authorization directive
+
+Owner directive, recorded exactly:
+
+- The owner personally executes one fresh native-Terminal invocation:
+  `npm run resign:macos:artifact -- --signing-identity=D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561 --team-id=63M98WD275`.
+- Exactly one fresh stage and one signing attempt are allowed.
+- The accepted command enforces `--timestamp=none`.
+- The owner may select Keychain `Allow` once; `Always Allow` is forbidden.
+- No retry is allowed.
+- Retain both the old and new stages.
+- No cleanup, launch/TCC, notarization, upload, publication, release
+  acceptance, or unrelated Keychain changes are allowed.
+- Lead and agents must not run the command on the owner's behalf.
+- Wait for owner-provided terminal evidence.
+
+This is an owner directive record only. No command was run and no stage, app,
+evidence, Keychain, code, test, or external state was changed by this record.
+
+### M7-F18 — Signed-entitlement extraction correction candidate
+
+Authority: accepted finding `F18-R1-001` states that signed-entitlement
+inspection requested codesign's abstract output instead of plist output. The
+accepted F15 candidate is the correction base:
+`b80828220fa58d19aad09b1b3e48a68fcfa3af079830033547d49e0bb3d35dec`.
+Candidate package-source identity:
+`a354341cffc47752ec696c27191555aefa78045a4b1a3de72b8594c92e077822` at
+HEAD `af5f1817191ba5fd634c750e9345de7d575ba704`. Status: `CANDIDATE`; this
+writer does not self-accept. Independent review and Lead disposition remain
+required.
+
+Owner evidence supplied a retained-failure stage at
+`/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-5LCWCP`;
+it was not read, validated, copied, modified, deleted, or cleaned up. The
+approved JIT input plist remains identified by SHA-256
+`958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a`; the
+defect was extraction format, not that input.
+
+Encoded correction, limited to
+`scripts/lib/macos-package-signing.mjs` and its deterministic signature tests:
+
+- Owner-mode signed-entitlement inspection uses the existing absolute
+  `/usr/bin/codesign` authority with the exact argv
+  `-d --entitlements - --xml <binary>`. The deprecated `:-` form is not used.
+- Only XML plist output is canonicalized. Empty stdout keeps the existing
+  no-entitlement result (`null` raw and canonical digests, with no keys).
+  Abstract or other non-plist output fails as a signed-entitlement
+  extraction-format defect and does not direct the owner to replace the
+  approved input plist. No abstract-output fallback parser was added.
+- Per-image observation, exact raw-output and canonical plist digests,
+  entitlement key extraction, signer/Team/certificate evidence, hardened
+  runtime, and the exact F5 entitlement map remain unchanged.
+
+Proof personally run:
+
+- focused signed-entitlement proof: 3/3 passed;
+- credential-free package-signature regressions: 37/37 passed; the two
+  existing real ad-hoc `codesign` tests were excluded by the prohibition;
+- artifact-resign regression: 56/56 passed;
+- package regression: 30/30 passed;
+- deterministic mocks prove the exact XML invocation, independent JIT/audio
+  plist observation, empty stdout semantics, equivalent-XML digest equality,
+  abstract-output and malformed-XML rejection, and absence of `:-`;
+- existing F5 tests continue to reject extra, risky, wrong, missing, and
+  unmapped entitlement keys;
+- `node --check scripts/lib/macos-package-signing.mjs`, `npm run typecheck`,
+  and `git diff --check` passed;
+- two package-source snapshots produced the same candidate identity above;
+- canonical read-only identities remain manifest
+  `03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b` and
+  artifact fingerprint
+  `c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e`.
+
+Enforcement level: local production signing evidence now mechanically requests
+XML and rejects non-plist extraction; deterministic focused tests enforce the
+positive and negative boundary. No Git hook, CI workflow, branch protection,
+or external enforcement was changed; only sample hooks are present, no
+checked-in `.github` workflow was found, and branch-protection enforcement is
+unverified.
+
+No retained stage was accessed. No real or ad-hoc codesign, Keychain/security
+access, signing retry, network/timestamp, launch/TCC, notarization, upload,
+publication, cleanup, commit, or external state change occurred. The candidate
+does not authorize a signing attempt or change the owner lifecycle.
+
+### M7-F18 — Lead acceptance and closeout
+
+Lead decision: `ACCEPT` candidate
+`a354341cffc47752ec696c27191555aefa78045a4b1a3de72b8594c92e077822`.
+Independent review: `CLOSEOUT_CLEAR` by
+`949e965f-db17-45d3-adab-00d2f3598dba`; review model actual:
+`codex-review/gpt-5.6-luna`.
+
+`F18-R1-001` is closed. The accepted extraction contract uses owner
+`/usr/bin/codesign` with exact arguments
+`-d --entitlements - --xml <binary>`. The deprecated `:-` form is not used.
+Only XML plist output is canonicalized. Empty output means no entitlements.
+Abstract or malformed output fails closed with an extraction-specific
+diagnostic. The per-image evidence, raw and canonical digests, F5 entitlement
+map, signer, Team, certificate, and hardened-runtime checks remain binding.
+
+Recorded proof remains: focused entitlement tests `3/3`; credential-free
+package-signature regressions `37/37`; artifact-resign regressions `56/56`;
+package regressions `30/30`; typecheck, syntax, and `git diff --check` passed;
+and two package-source snapshots matched. The two existing real ad-hoc
+`codesign` tests were excluded by the prohibition. Canonical identities remain
+manifest SHA-256
+`03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b` and
+artifact fingerprint
+`c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e`.
+
+This acceptance authorizes only a read-only audit of the new retained stage.
+It does not authorize a retry, stage or lifecycle modification, cleanup,
+Keychain/security access, launch/TCC, network, notarization, upload,
+publication, or release acceptance.
+
+### M7-F19 — Fresh-stage read-only audit disposition
+
+Frontier: `M7-F19-FRESH-STAGE-READ-ONLY-AUDIT`. Audit status:
+`TECHNICAL_FAILURE`. Candidate:
+`a354341cffc47752ec696c27191555aefa78045a4b1a3de72b8594c92e077822`. HEAD:
+`af5f1817191ba5fd634c750e9345de7d575ba704`. Auditor:
+`c0d8cf98-6879-4286-8e32-8e256da6f755`; review model:
+`codex-review/gpt-5.6-luna`.
+
+The supplied verified disposition identifies the new retained stage as
+`/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-5LCWCP`,
+mode `0700`, owner `501:20`, device/inode `16777234/38204659`. Its status SHA
+is `3286130b0507205ef7437f5b93514bb86989dd2d4b907f9f1df1ec112f76af3a`, marker
+SHA is `6df54133578d1e0b2aea88850b66ee6f2a293854012d920d0c87b4cf0f122566`,
+staged manifest SHA is
+`03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`, staged
+inventory SHA is
+`94dd1d49ba3425cacc6b06665a52ae4017b9e0073d3827cf7c16ce818c1a3516`, and
+staged app fingerprint is
+`020458017ea48ff3b63a6f24fd0802250672a0bba5c1b01729352aca73bfcde9`.
+Lifecycle state is `retained-failure`, attempt `1`, outcome `failure`, and
+`inDoubt=false`.
+
+The exact closure was 13,774 entries, 46 Mach-O files, 10 CodeResources
+files, and 47 code objects, with no missing, extra, type, symlink, or
+unsupported-entry violations. Signature evidence was 46/46 nested strict and
+outer deep/strict; all 47 objects reported Developer ID Application Long Le,
+Team `63M98WD275`, hardened runtime `47/47`, and certificate SHA-1
+`D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561`. Entitlement extraction with
+`--xml` parsed 47/47 objects and matched the exact F5 map: one audio-input
+object, four JIT objects, and 42 entitlement-free objects. Audio raw/canonical
+SHA-256 values are
+`15f20773327637e1e3896c2bd530db7e483d00e71014e73ec19d6c06f32032f2` /
+`82052f68fb90e288554c67b08bdcb3403699ac396387a93d37f3b397c3e9f064`;
+JIT raw/canonical values are
+`84ea240cae1d3d70098e6bfe66ed4cf2e991a14ef6e66978af7b5813d2d17176` /
+`6f0a9b4f19e49ab2c95c62b5012d87edc50fb74a76df2b364fdcb0a9dc929e30`.
+
+F15 payload closure passed 46/46; immutable payload differences were `0`,
+ordinary payload differences were none, and the F5 source policy was exact.
+Nested and outer signing completed and rebound inventory was written, but
+final signature extraction failed before final manifest generation. The
+manifest has no `artifactResign`; package input remains
+`f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402`, artifact
+input remains
+`81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1`, and the
+manifest inventory digest remains
+`3d0a0af0ecbe8162df9c7382070052c2b8934721ef50e21bffed25004270ba3c`. The
+staged inventory digest is
+`94dd1d49ba3425cacc6b06665a52ae4017b9e0073d3827cf7c16ce818c1a3516`; its
+binding is `3742d334d3937b9ce758d88dab296d5dadefcfbe850da7dd7f0aa0fb9badf238`,
+while recomputed final binding is
+`05dc47ef510e07a4faa1a009a82ed55e8484c69aa7d913c16be13198b5b24766`.
+
+There is no signed-byte defect. The signed bytes are valid, but final metadata
+is incomplete/stale and does not bind the outer-signed artifact. The stage is
+not promotable, reusable, or repairable. Both retained stages remain
+preserved and unchanged. Canonical manifest SHA
+`03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b` and
+canonical artifact fingerprint
+`c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e` remain
+unchanged. No lifecycle change occurred.
+
+Reconciled next frontier:
+
+1. Complete credential-free end-to-end proof of the post-extraction rebind and
+   final-validation path.
+2. Only if that proof is clear, request separate owner authorization for one
+   new fresh run.
+3. Independently review the retained candidate.
+4. Apply external gates later.
+
+No current run or retry authorization exists. No cleanup is authorized. This
+record does not authorize Keychain/security access, launch/TCC,
+timestamp/network activity, notarization, upload, publication, legal review,
+or release acceptance. Neither retained stage was accessed by this plan-only
+record.
+
+### M7-F20 — Command-level rebind proof (superseded history)
+
+Frontier: `M7-F20-COMMAND-LEVEL-REBIND-PROOF`. Peer disposition: `CANDIDATE`; the
+writer does not self-accept. Candidate package-source snapshot before this
+plan record:
+`2edb5c8dadda72a6812a56ed3d4789750c35e7ce721a0c23da4fcbf5f2ad20d9`.
+
+The existing exported `run()` command now has one explicit test-only command
+seam. It accepts deterministic stage preparation, package snapshot, signing
+target/evidence, certificate, validator, lifecycle-event, and interruption
+collaborators only with `testOnly: true`. Production calls use the existing
+canonical stage preparation, `/usr/bin/codesign` authority, package inventory,
+retained validator, atomic metadata writes, and owner lifecycle. No wrapper,
+second lifecycle, or fallback was added. `scripts/lib/macos-artifact-resign.mjs`
+was not changed.
+
+Changed scope is exactly:
+
+- `scripts/resign-macos-artifact.mjs` — command seam and lifecycle event points;
+- `packages/runtime/test/macos-artifact-resign.test.ts` — disposable command
+  integration fixtures and proof;
+- this plan record.
+
+The success fixture invokes exported `run()` with a private disposable stage
+copied from the accepted app and manifest. It records this order:
+
+`nested signing complete -> inventory rebound -> inventory atomic write ->
+outer sign complete -> 47 signature observations -> signing metadata rebound ->
+inventory reread -> manifest build/validate/write -> retained artifact-only
+validation -> retained-success`.
+
+The fixture proves 47 signing calls, 46 nested objects deepest-first, outer
+`Meetless.app` last, `--timestamp=none`, 47 certificate observations, exact
+`/usr/bin/codesign` evidence authority, and exact XML entitlement extraction
+arguments `-d --entitlements - --xml <binary>`. Final metadata is internally
+consistent: 13,774 entries, 46 Mach-O files, 10 CodeResources files, 47 code
+objects, the exact five-path F5 map, Developer ID signer/Team/certificate and
+hardened-runtime evidence, package-input/artifact-input/inventory binding,
+`artifactResign`, `signatureStateDigest`, and `artifactDigest`. The terminal
+status is `retained-success`, attempt `1`, `inDoubt=false`; a transition from
+the terminal state is rejected.
+
+The interruption fixture injects an error after the rebound inventory atomic
+write and before manifest write. It proves the old manifest remains without
+success metadata, rebound inventory may remain, no retained validator or
+success terminal event runs, and the stage ends `retained-interrupted`, attempt
+`1`, `inDoubt=false`. The stage cannot be reused. A retained-validator failure
+fixture similarly ends `retained-failure` and cannot publish success. Existing
+F11/F13 tests continue to cover malformed/stale binding, F5, atomic-write,
+signal, child ownership, and lifecycle negative cases.
+
+Proof passed:
+
+- command-level focused tests: `4/4`;
+- complete artifact re-sign test file: `60/60`;
+- package/signature/transaction regressions: `69/69`;
+- `npm run typecheck`;
+- JavaScript syntax checks for the changed command and accepted transform;
+- `git diff --check`;
+- package-source snapshot: two identical digests as recorded above.
+
+Encode-invariant enforcement is local only: the command, focused tests, direct
+regressions, and actionable production diagnostics are present. No hook, CI
+check, branch protection, or external enforcement was changed or inferred.
+
+Only disposable test fixtures were created and cleaned. No real Developer ID
+signing, Keychain/security access, owner stage, signing retry, timestamp,
+network, launch/TCC, notarization, upload, publication, legal, or release
+acceptance action occurred. The canonical manifest SHA remains
+`03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`; the
+canonical artifact fingerprint remains
+`c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e`.
+
+Residual limit: the command proof uses deterministic test collaborators for
+the expensive package snapshot, signing child, codesign evidence, certificate
+observation, and retained validator. It proves orchestration and binding, not
+a new live owner run or Keychain result. Production defaults remain the
+accepted owners. Independent review and Lead disposition are still required;
+this candidate does not authorize a new owner run or retry.
+
+The record above is retained as history only. Its ordinary `testOnly` collaborator
+seam and fake full-command success claim are superseded by the correction below;
+neither is an active dependency or acceptance claim.
+
+### M7-F20-CORRECTION-R1-ACYCLIC-REBIND — Phase-split metadata graph correction
+
+Frontier: `M7-F20-CORRECTION-R1-ACYCLIC-REBIND`. Status:
+`IMPLEMENTED_PENDING_INDEPENDENT_REVIEW`; the writer does not self-accept.
+Candidate package-source snapshot:
+`57673b210000c2e20d2e1c64c718c59d61dadcec5bf94569edca60d80e2080d3`.
+Correction base:
+`2edb5c8dadda72a6812a56ed3d4789750c35e7ce721a0c23da4fcbf5f2ad20d9`.
+
+This correction closes `M7F20-R1-001` (final descriptor mismatch) and
+`M7F20-R1-002` (forgeable command test seam). Changed scope is exactly
+`scripts/lib/macos-artifact-resign.mjs`, `scripts/resign-macos-artifact.mjs`,
+`scripts/validate-macos-package.mjs`,
+`packages/runtime/test/macos-artifact-resign.test.ts`, and this plan. Unrelated
+dirty F5/F6 work remains outside this correction.
+
+The accepted phase-split architecture is encoded with
+`MEETLESS_MACOS_ARTIFACT_RESIGN v2` and
+`MEETLESS_MACOS_SIGNING_BOUND_PATHS v2`:
+
+- The `pre-outer` descriptor owns all 46 normalized nested Mach-O payloads,
+  the nine nested CodeResources paths, the ordinary pre-outer artifact-input
+  closure, and the unchanged inventory legal/component/notice projection.
+- `packageInputs.signingBound` and the in-app inventory binding are one exact
+  pre-outer descriptor. They do not bind outer CodeResources bytes, outer
+  signature state, or `signatureStateDigest`.
+- The `final` descriptor owns the final 46 normalized payloads and all ten
+  CodeResources paths. It is separate from the pre-outer inventory owner.
+- `artifactResign.preOuter` and `artifactResign.final` keep the two scopes
+  distinct. The external manifest records the final entry set, 47 signature
+  observations, `signatureStateDigest`, and the acyclic final `artifactDigest`.
+- Final validation compares each field with its owner and rejects old
+  single-phase evidence. It does not require inventory descriptors to equal
+  the post-outer descriptor. No app write follows the outer sign.
+
+The exported production `run()` now accepts no caller replacement for stage
+preparation, TTY facts, signing, snapshots, codesign evidence, certificate
+evidence, validation, lifecycle, or status authority. The only accepted caller
+input beyond command arguments is an observation-only `onLifecycleEvent` hook;
+it cannot supply outcomes, skip work, or change production authority. The
+production command uses its fixed existing owners. Deterministic graph proof
+is in pure helpers called by production code. Lower-level credential-free
+tests remain narrow and do not stand in for a real signing run.
+
+Proof completed:
+
+- pure phase-graph and lifecycle-order tests prove pre-outer versus final
+  scope separation, schema versioning, equal package/inventory binding,
+  separate final CodeResources/signature/artifact identities, old-schema
+  rejection, post-outer mutation rejection, and phase identity cross-binding;
+- the focused artifact re-sign suite passed `65/65`;
+- package and transaction regressions passed `32/32`;
+- safe package-signature/F5/F15/F18 regressions passed `37/37`; the two tests
+  that invoke real codesign were not run;
+- `npm run typecheck` passed;
+- `node --check` passed for the artifact transform, command, and validator;
+- `git diff --check` passed;
+- two package-source snapshots matched exactly at the candidate identity above.
+
+Encode-invariant enforcement is repository-local at the command, pure graph,
+validator, focused-test, direct-regression, and actionable-diagnostic levels.
+No CI, hook, branch-protection, or external enforcement was changed.
+
+Only disposable test fixtures were used. No retained owner stage was accessed.
+No real Developer ID signing, Keychain/security access, signing retry, new
+owner stage, network or timestamp activity, launch/TCC, notarization, upload,
+publication, cleanup, or release acceptance occurred. The canonical manifest
+remains SHA-256
+`03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`; the
+canonical artifact fingerprint remains
+`c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e`.
+
+Residual real-run gate: this correction proves metadata graph wiring and
+production authority boundaries only. It does not prove Developer ID,
+Keychain, CMS, native TTY, or a new retained-stage outcome. Existing F17/F19
+retained evidence remains historical evidence through its prior failure points;
+it is not repaired or reused. A later Lead/owner decision must separately
+authorize exactly one fresh native-Terminal no-timestamp run, followed by
+independent review. This candidate authorizes no run, retry, stage/lifecycle
+mutation, cleanup, Keychain/security access, launch/TCC, network activity,
+notarization, upload, publication, legal review, or release acceptance.
+
+### M7-F20-ACYCLIC-REBIND-ACCEPTANCE — Lead closeout
+
+Lead disposition: `ACCEPT` for candidate
+`57673b210000c2e20d2e1c64c718c59d61dadcec5bf94569edca60d80e2080d3`.
+Independent review: `CLOSEOUT_CLEAR` by
+`c0d8cf98-6879-4286-8e32-8e256da6f755`; review model:
+`codex-review/gpt-5.6-luna`.
+
+`M7F20-R1-001` and `M7F20-R1-002` are closed. The accepted M7-F21 architecture
+is the v2 pre-outer inventory/package-input scope, with the outer sign as the
+last app write. The external manifest owns the final 47 signature records, ten
+CodeResources paths, final entry set, `signatureStateDigest`, and acyclic
+`artifactDigest`. Old single-phase evidence is rejected. Production `run()`
+uses fixed authorities; only observation-only lifecycle hooks are allowed.
+
+Closeout proof is the recorded `66/66` artifact re-sign tests, `32/32`
+package/transaction regressions, `37/37` safe package-signature/F5/F15/F18
+regressions, typecheck, syntax checks, `git diff --check`, and two matching
+deterministic package-source snapshots. The two tests that invoke real
+`codesign` were not run. The canonical manifest remains
+`03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b`; the
+canonical artifact fingerprint remains
+`c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e`.
+
+This accepts the metadata and command foundation only. No current owner run
+authorization exists. Both old retained stages remain preserved and are
+non-reusable. No cleanup, Keychain change, launch/TCC, notarization, upload,
+publication, legal review, or release acceptance is authorized.
+
+Next gate: separate owner authorization for exactly one fresh native-Terminal
+no-timestamp run, followed by independent retained-candidate review. No retry
+or other external action is included in this acceptance.
+
+### M7-F22-ARTIFACT-VALIDITY-EVIDENCE-COMPLETENESS-RULING — Lead ruling
+
+Frontier: `M7-F22-ARTIFACT-VALIDITY-EVIDENCE-COMPLETENESS-RULING`.
+Candidate: `57673b210000c2e20d2e1c64c718c59d61dadcec5bf94569edca60d80e2080d3`.
+Audit: `c0d8cf98-6879-4286-8e32-8e256da6f755`.
+
+Lead ruling: `ACCEPT` for the retained-success artifact technical result.
+The F22 evidence enhancement is `NO_ACTION` for the current M7 signing
+acceptance. The final-byte, signature, entitlement, digest, payload,
+preservation, and validator evidence verifies the artifact technical result.
+
+Evidence completeness remains `PARTIAL`. Preserve `M7F22-R1-001` as a bounded,
+non-blocking gap: `preOuter.entrySetDigest` cannot be independently recomputed
+from the retained evidence. No new signing run is needed for this finding.
+This classification does not change the accepted F20/F21 authority or require
+implementation work.
+
+All three retained stages remain unchanged, preserved, and non-reusable. This
+ruling does not claim full M7 acceptance, notarization, TCC, legal,
+distribution, or release acceptance. No stage access, stage mutation or
+deletion, cleanup, signing run, retry, Keychain/security access, launch,
+notarization, upload, or publication occurred or is authorized.
+
+Smallest next owner decision: separately choose whether to authorize the next
+external gate. This ruling itself authorizes no owner run or other external
+action.
+
+### Current direct-DMG release route
+
+The accepted distribution decision is now direct download of a macOS `.dmg`.
+Historical no-timestamp signing records remain evidence for their bounded
+technical claims only. They are not release candidates and do not close the
+secure-timestamp gate.
+
+Remaining release gates, in dependency order:
+
+1. authorize and produce one fresh release candidate from the accepted source;
+2. complete Developer ID signing with hardened runtime, required entitlements,
+   and secure timestamp, then verify the exact signed bytes;
+3. create and verify the final DMG;
+4. notarize the exact distributed artifact, staple its ticket, and verify both;
+5. complete license, notice, Corresponding Source, build/install material, and
+   owner/legal clearance for direct binary distribution;
+6. verify Gatekeeper, install, first launch, permissions, relaunch, update or
+   replacement, and core UX from the exact DMG on a clean supported Mac; and
+7. record final release acceptance, then obtain separate owner authorization
+   for upload and publication.
+
+The smallest next owner decision is whether to authorize one fresh
+release-candidate preparation and Developer ID signing run with secure
+timestamp. No such run is authorized by this plan update.
+
+### PEER_DISPOSITION v1 — M7-F23-DIRECT-DMG-INSTALL-CONTRACT-RECOVERY
+
+- Status: superseded by accepted correction `M7-F23-CORRECTION-R1`. This
+  record does not claim full M7, Developer ID signing, notarization,
+  publication, or release acceptance.
+- Candidate identity: workspace HEAD
+  `af5f1817191ba5fd634c750e9345de7d575ba704`; package-source snapshot
+  `b24c9f4d4e9a28872bbcacb8591536743d55ecbc61903154a8d2c1d9203780e7`; 30
+  snapshot files; accepted Paseo commit
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`.
+- Authority: accepted
+  `docs/decisions/0002-direct-notarized-macos-dmg.md`, product recording and
+  experience contracts, and the plain-data owner
+  `scripts/lib/macos-package-contract.json`.
+- Correction delta: Swift preflight diagnostics now include the actual bundle,
+  resource label, and resource path. DMG construction and validation accept an
+  explicit absolute `--output-dir`; DMG and sidecar writes are rejected when
+  they would enter the source bundle. The focused test covers the exact
+  app-plus-`Applications -> /Applications` layout, alternate launch guidance
+  ordering, bundle containment, support-root state, recordings path, and
+  output-path rejection. Existing dirty M7 work remains preserved.
+- Verification: `npm run build:native` passed; `npm run typecheck` passed;
+  `node --check` passed for the changed DMG, package, validator, and snapshot
+  scripts; focused package/host/signature tests passed `83/83`; runtime path
+  suites passed `40/40`; direct-DMG proof passed `11/11`; and `git diff --check`
+  passed.
+- Isolated DMG proof: a disposable copy of the preserved app was created under
+  `/private/tmp/meetless-f23-dmg-layout.XXXXXX`; `hdiutil create` and
+  `node scripts/validate-macos-dmg.mjs --output-dir=<disposable-root>` passed.
+  DMG SHA-256 was
+  `52ba5e3d61f09eb2f92ab3fb852cda0477df5d4827d14af1daa7f7b775a9c4cd`;
+  layout SHA-256 was
+  `1a7925f3d383c4171df97a4f07a156c8c98958d13e814568ec834df5b7fe3f1c`;
+  source fingerprint was unchanged at
+  `3c91a5aaff00850d1acfcd9584f8fd4eaa7fca38271c3ceef30a30f5afbd7f4e`.
+  Disposable roots were removed.
+- Limit: the preserved `release/macos/Meetless.app` has no
+  `release/macos/composition-manifest.json`. The repository DMG wrapper was
+  run with an isolated output directory and stopped before writing with this
+  missing-manifest error. The retained app was not rebuilt or changed. The
+  direct DMG proof validates layout and hdiutil integrity only; it does not
+  replace package-manifest validation or any release gate.
+- Enforcement: local validation is available and passed as listed; no optional
+  hook was found; no checked-in CI invocation was found; branch protection is
+  unverified. No external state was changed.
+- Lead disposition: `CONTINUE` through the frozen correction set
+  `M7F23-R1-001..004`. The next release gates remain separately owned.
+
+### PLAN_RECONCILIATION v1 — M7-F23-CORRECTION-R1
+
+plan_ref: `docs/plans/active/v1-paseo-foundation.md`
+frontier: `M7-F23-CORRECTION-R1`
+lead_ruling: `M7-F23-DIRECT-DMG-INSTALL-CONTRACT-REVIEW` — `REVISE_PLAN`
+accepted_findings: `M7F23-R1-001`, `M7F23-R1-002`, `M7F23-R1-003`,
+`M7F23-R1-004` (frozen)
+correction_base: `b24c9f4d4e9a28872bbcacb8591536743d55ecbc61903154a8d2c1d9203780e7`
+next_frontier: `M7-F23-CORRECTION-R1` then FAST closeout of the frozen findings
+status: `ACCEPTED`; this is the technical direct-DMG foundation only. It is not
+full M7 or release acceptance.
+
+The correction keeps the existing dirty worktree and uses one explicit,
+external disposable proof root. It does not change the retained
+`release/macos` stage. The package-source candidate is now HEAD
+`af5f1817191ba5fd634c750e9345de7d575ba704` with snapshot
+`52a7ea41a74fb9e8a63eca83b81801dc0fede698e0f4f55ee4b68515b19a76da` and
+Paseo commit `c81cb84735043c281a5a2d23d456d3708ce5d94e`.
+
+Correction evidence:
+
+- R1-001: `attestMacOSDmgLayout` attaches the actual image read-only and
+  non-browsing at an isolated mount point, enumerates real top-level entries,
+  applies the exact layout validator, and detaches/removes the mount root in
+  a finally path. The adversarial DMG fixture declares the expected layout but
+  contains `Applications -> /Users/not-the-Applications-folder`; actual
+  mounted attestation rejects it. The final actual image contained only
+  `Applications -> /Applications` and `Meetless.app`.
+- R1-002: output-root validation rejects a root symlink and any resolved
+  existing root or ancestor that enters the source `Meetless.app`. The direct
+  suite includes the symlinked-output fixture.
+- R1-003: `--proof-root` is threaded through package assembly, manifest, app,
+  DMG, sidecar, and validator. Local/ad-hoc package and DMG proof commands
+  fail closed without it; the DMG wrapper uses `--build-package` and does not
+  invoke the fixed release pre-script. The retained `release/macos` fingerprint
+  was `8f88051fa4e10f01f0bfd253ada823207e32ca93787ab5ea28f4446c1e70876c`
+  before and after proof. The disposable proof root was removed.
+- R1-004: production launch now uses the native `MeetlessLaunchCoordinator`.
+  Native fixtures cover mounted, alternate, symlinked, and canonical paths.
+  Rejected paths produce exactly location plus guidance events and zero later
+  identity, lock, capability, or runtime effects.
+
+Changed correction files: `package.json`, `native/macos-host/MeetlessHost.swift`,
+`native/macos-host/TranscriptionCapabilityTests.swift`,
+`packages/runtime/test/direct-dmg-contract.test.ts`,
+`scripts/lib/macos-dmg-contract.mjs`, `scripts/package-macos.mjs`,
+`scripts/package-macos-dmg.mjs`, `scripts/validate-macos-dmg.mjs`, and
+`scripts/validate-macos-package.mjs`.
+Other existing M7 changes remain preserved.
+
+Final isolated proof used root
+`/private/tmp/meetless-f23-r1-final.WzDZyG`:
+
+- `node scripts/package-macos.mjs --signing-mode=local-ad-hoc
+  --proof-root=/private/tmp/meetless-f23-r1-final.WzDZyG` — passed; 13,775
+  entries, 46 Mach-O entries; artifact digest
+  `05c3f22e0557f305dc79f92b5cdc3d52527d862b8397de4e7573b9fe2f2c2348`.
+- `node scripts/package-macos-dmg.mjs
+  --proof-root=/private/tmp/meetless-f23-r1-final.WzDZyG` — passed; app
+  fingerprint `f1162ecbba4ec96f297f5099376165c5f28d6157e25b9e1623e9c01e19ac0164`,
+  DMG SHA-256
+  `b564b8b862cfdb64a9d8dd646a1a62d6a1dcb621f4473e5ac509a18a8e989cea`,
+  layout SHA-256
+  `1a7925f3d383c4171df97a4f07a156c8c98958d13e814568ec834df5b7fe3f1c`.
+- `node scripts/validate-macos-dmg.mjs
+  --proof-root=/private/tmp/meetless-f23-r1-final.WzDZyG` — passed actual
+  mounted-layout attestation and `hdiutil verify`; local-only true and
+  release acceptance not claimed. Manifest SHA-256 is
+  `a11a395c5868be621b262af05a057cb47afac64be50a129b2ceacfbad4f31ad7`;
+  sidecar SHA-256 is
+  `5b05b09c58d7fc3594c9ea149d25a0fe0ec321b6639135dc32528a9473e56238`.
+- `npm run build:native`, `npm run typecheck`, focused Vitest (`6 files / 114
+  tests`), Node syntax/JSON checks, and `git diff --check` passed. Two
+  candidate-snapshot runs matched exactly at the snapshot above.
+- Expected fail-closed checks passed: local-ad-hoc package without
+  `--proof-root`, DMG package without `--proof-root`, and DMG validation
+  without `--proof-root` all refused to touch or validate `release/macos`.
+
+During correction, one native compile required explicit `self` captures and
+one DMG build exposed a staging-layout scope error; both were fixed before the
+final proof. A standalone direct-file TypeScript check was not a valid project
+check and exposed existing project-context typing noise; repository-native
+`npm run typecheck` passed. No app launch, signing, secure timestamp,
+notarization, Keychain/security operation, TCC reset, upload, publication,
+promotion, retained-stage mutation, full-M7 claim, or release acceptance was
+made.
+
+### LEAD_RULING v1 — M7-F23-CORRECTION-R1
+
+- Decision: `ACCEPT` for package-source snapshot
+  `52a7ea41a74fb9e8a63eca83b81801dc0fede698e0f4f55ee4b68515b19a76da`,
+  HEAD `af5f1817191ba5fd634c750e9345de7d575ba704`, and Paseo commit
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`.
+- Independent closeout: `CLOSEOUT_CLEAR` from reviewer
+  `01b341c4-8d81-4736-a29f-fc643d3556f5` in `FAST`/`CLOSEOUT` mode for frozen
+  findings `M7F23-R1-001..004`, correction base
+  `b24c9f4d4e9a28872bbcacb8591536743d55ecbc61903154a8d2c1d9203780e7`.
+- Lead verification: candidate identity matched; retained `release/macos`
+  fingerprint remained
+  `8f88051fa4e10f01f0bfd253ada823207e32ca93787ab5ea28f4446c1e70876c`;
+  `npm run build:native` passed; the direct-DMG suite passed `16/16`; Node
+  syntax checks and `git diff --check` passed.
+- Accepted boundary: exact `/Applications/Meetless.app` runtime location;
+  mounted, symlinked, and alternate paths show guidance and stop before
+  identity, lock, capability, or runtime effects; immutable resources remain
+  bundle-relative; writable state remains under
+  `~/Library/Application Support/Meetless`; recordings remain under
+  `~/Documents/meetings`; actual mounted DMG layout and disposable-root
+  isolation are mechanically checked.
+- Enforcement: repository-local validation passed. No optional hook or
+  checked-in CI invocation was found. Branch protection remains unverified.
+- Limits: no app launch, Developer ID signing, secure timestamp, notarization,
+  Gatekeeper/TCC validation, upload, publication, promotion, retained-stage
+  mutation, full-M7 acceptance, or release acceptance occurred.
+
 ## Decisions
 
 - 2026-08-24: The owner authorized the documentation reorganization.
@@ -1043,9 +3709,562 @@ notarization, release acceptance, and Human/legal clearance remain open.
   history was separated from this active M7 plan without removing evidence.
 - 2026-08-24: Post-MVP cross-meeting Q&A and document-folder indexing remain
   outside M7.
+- 2026-08-26: The owner selected direct macOS distribution as a downloadable
+  `.dmg`. The intended release path is Developer ID signing with hardened
+  runtime, required entitlements, and secure timestamp; notarization; stapling;
+  and clean-machine Gatekeeper and first-run UX verification of the exact DMG.
+  Mac App Store sandboxing, App Store Connect submission, and App Review are
+  out of scope. No build, signing, timestamp, notarization, upload,
+  publication, retained-stage mutation, or release acceptance occurred in
+  recording this decision.
 
 ## Validation
 
 Record exact candidate identities, commands, manifests, target versions,
 observed failures, cleanup, and owner decisions here as M7 proceeds. Completion
 requires executable or observable evidence; this plan is not proof by itself.
+
+### PLAN_RECONCILIATION v1 — M7-F23 direct-DMG install contract
+
+plan_ref: `docs/plans/active/v1-paseo-foundation.md`
+frontier: `M7-F23-DIRECT-DMG-INSTALL-CONTRACT`
+authority: owner directive, ADR 0002, and the accepted M7 package/signing
+foundations
+parallel_frontier: `SERIAL`
+dependency_changes: none; this foundation consumes the accepted package and
+signing boundaries and does not change the bundle ID, TCC owner, or entitlement
+map
+
+The historical `~/Applications` premise is stale for this route. The exact
+supported production location is `/Applications/Meetless.app`. A mounted
+`/Volumes/...` app and every alternate path stops before lock, socket, runtime,
+child, or identity state and gives drag-to-Applications guidance.
+
+The old builder-home, source-checkout, and `/private/tmp` packaged-runtime
+premise is stale. Immutable resources are bundle-relative. Writable runtime,
+store, logs, sockets, staging, Electron user data, and host identity are under
+`~/Library/Application Support/Meetless`; final recording exports remain
+`~/Documents/meetings`.
+
+Native host ownership is explicit: after exact-path and packaged-resource
+attestation, the host publishes first-run identity under Application Support
+before child startup. An update may refresh identity only when exact path,
+`com.meetless.app`, and the stable designated requirement remain unchanged;
+other drift fails closed. The owner-deferred unclassified runtime-error item
+remains open and is not classified or closed by M7-F23.
+
+The outer DMG contract is exactly `Meetless.app` plus an `Applications` symlink
+to `/Applications`. DMG construction uses disposable staging and must not
+mutate or re-sign the app. Local ad-hoc output is non-release evidence.
+
+#### M7-F23 observed proof
+
+The first `npm run package:macos:dmg` attempt stopped at the package-input
+validator because the validator reconstructed the content-addressed Paseo
+bundle as the whole bundle directory. The in-scope input-boundary fix reuses
+the exact source path recorded in the manifest. The rerun completed the local
+ad-hoc package and DMG commands. A final direct package regeneration bound the
+manifest to the deterministic snapshot after the build outputs settled, then
+`node scripts/package-macos-dmg.mjs` rebuilt the final outer artifact.
+
+Final generated paths:
+
+- `release/macos/Meetless.app`
+- `release/macos/composition-manifest.json`
+- `release/macos/Meetless.dmg`
+- `release/macos/Meetless.dmg.json`
+
+Final identities:
+
+- candidate snapshot: `b24c9f4d4e9a28872bbcacb8591536743d55ecbc61903154a8d2c1d9203780e7`
+- candidate HEAD: `af5f1817191ba5fd634c750e9345de7d575ba704`
+- composition artifact digest: `1cd290f0c85391941639a014eea8394dcb8530c751b68e48ee35ce9168ca1de4`
+- app fingerprint: `3b178cf12e7337275202d8b0f9c984812ac34c11f5ad758b583c27b48ff1d0c6`
+- DMG SHA-256: `b86fcd1ff54e1f5835a13a65912fed25033d4637364162e66a2e1a9af4455625`
+- DMG sidecar SHA-256: `1b29be9906cca5b8ead0580c74efa96828fcc339eed197b66498f8f7200bbeb6`
+- composition manifest SHA-256: `3902cbfb4757692c08dabeb2dc8409c2d0e4d870aff94bdc0c762f307fad3910`
+- layout SHA-256: `1a7925f3d383c4171df97a4f07a156c8c98958d13e814568ec834df5b7fe3f1c`
+
+The sidecar records equal source app fingerprints before and after DMG
+construction. It records `localOnly: true` and `releaseAcceptance:
+not-claimed`. The DMG validator ran `hdiutil verify`; no DMG attach or app
+launch was used.
+
+Commands and results:
+
+- `npm run package:macos:dmg` — local ad-hoc build and structural DMG command
+  completed after the input-boundary fix; the package build also passed native,
+  Paseo, Meetless, and app build stages.
+- `node scripts/package-macos.mjs --signing-mode=local-ad-hoc` — final app
+  composition passed with 13,775 entries, 46 Mach-O entries, and the artifact
+  digest above.
+- `node scripts/package-macos-dmg.mjs` — final DMG passed exact layout and
+  source mutation checks.
+- `node scripts/validate-macos-package.mjs --signing-mode=local-ad-hoc` —
+  passed against the exact generated app.
+- `npm run validate:macos:dmg` — passed against the exact generated DMG and
+  sidecar.
+- `npx vitest run --config vitest.config.ts packages/runtime/test/direct-dmg-contract.test.ts packages/runtime/test/isolation.test.ts packages/runtime/test/host.test.ts packages/runtime/test/media-closure.test.ts --maxWorkers=1` — 4 files, 36 tests passed.
+- `npx vitest run --config vitest.config.ts packages/runtime/test/macos-package.test.ts packages/runtime/test/macos-package-signature.test.ts packages/runtime/test/macos-artifact-resign.test.ts --maxWorkers=1` — 3 files, 133 tests passed.
+- `npm run typecheck` — passed.
+- `node --check` for all changed M7-F23 `.mjs` files and `git diff --check` —
+  passed.
+- Two `node scripts/candidate-snapshot.mjs --mode=package-source` runs matched
+  exactly at the candidate snapshot above.
+
+Enforcement is repository-local at contract helpers, native preflight,
+positive/negative tests, package validation, DMG validation, and actionable
+diagnostics. No F23 hook or checked-in CI invocation was found. Local branch
+configuration points `main` to `origin`; remote branch-protection state was not
+queried or changed.
+
+No retained signed stage was inspected or changed. No Developer ID signing,
+secure timestamp, notarization, upload, publication, promotion, app launch,
+TCC reset, or TCC automation occurred. This local candidate is not release
+acceptance. `plan_updated: yes`.
+
+### PLAN_RECONCILIATION v1 — M7-F24 secure-timestamp foundation
+
+plan_ref: `docs/plans/active/v1-paseo-foundation.md`
+frontier: `M7-F24-SECURE-TIMESTAMP-FOUNDATION`
+status: `FOUNDATION_READY`
+authority: owner directive, ADR 0002, accepted F20/F21 lifecycle, and accepted
+M7-F23 package-source snapshot `52a7ea41a74fb9e8a63eca83b81801dc0fede698e0f4f55ee4b68515b19a76da`
+
+The final deterministic package-source snapshot is
+`e52984271a575fefa4e372f49559a6f65d8f67ed78eb2fcb2ef452bcc869e2c5` at HEAD
+`af5f1817191ba5fd634c750e9345de7d575ba704`. It records Paseo commit
+`c81cb84735043c281a5a2d23d456d3708ce5d94e`. The fresh local baseline records
+the accepted F23 snapshot as `sourceAncestorSnapshotDigest`, rather than
+reusing the old F23 artifact or manifest digests.
+
+#### M7-F24 prepared proof
+
+The fresh credential-free package root is
+`/private/tmp/meetless-f24-final-package-proof.U7Duji`.
+
+The local package command passed with 13,775 entries and 46 Mach-O entries.
+The local signature state recorded `timestamp: none` for all 47 code objects,
+zero secure timestamps, and no release identity. The prepared baseline is:
+
+- package input digest: `55f24bf6f9369e944a1f331fdd12203188f51bee00fb6d8b23e8dc69186b2a76`
+- artifact input digest: `e28b3579bd1f931c8200499eec35a69707184dfabe1940df05e5e2a97c600956`
+- local artifact digest: `5baede98fc145c22825b15f49e822f52079dcc51be6cb8b302e81fa90a6c6d18`
+- local signature-state digest: `5559e4e3190797a818d2d253212928d204c33f2bf5d6003e54e8f389a30e1e5c`
+- manifest SHA-256: `f972bc56800104fca8e918a9df19ffec544544be774a4aa1cc3c6375a31e0af3`
+- closure: 46 nested Mach-O, 10 CodeResources, 47 code objects
+
+The one fresh retained owner stage is:
+
+`/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-BAtOoJ`
+
+Its marker is `.meetless-artifact-stage.json`. Its only lifecycle owner is
+`.meetless-artifact-resign-status.json`, with state `prepared`, attempt `0`,
+and no terminal outcome. Source and staged app fingerprints are both
+`6ffb2d0ba6907f4be70d9175230b360fab12bbde3745a8b87391c66cb2f0d2f2`.
+Preparation did not consume attempt 1.
+
+The exact future native-Terminal owner command is:
+
+`npm run resign:macos:artifact -- --stage-root=/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-BAtOoJ --signing-identity=D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561 --team-id=63M98WD275`
+
+This command was not run. Release mode now requires the owner Team,
+certificate SHA-1, hardened runtime, exact per-executable entitlement map,
+`--timestamp`, and secure non-empty timestamp evidence on every final code
+object. Local mode requires `--timestamp=none` and does not resolve an
+identity or inspect the Keychain.
+
+#### DMG proof and boundaries
+
+The local DMG package and validator both passed from the final external
+package root. The DMG SHA-256 is
+`f4b765f6bb82d98fe54da9b892bfd80cc1c7c5cd4671f4aa68e18cbf39234f47`; the
+layout digest is
+`1a7925f3d383c4171df97a4f07a156c8c98958d13e814568ec834df5b7fe3f1c`. The
+mounted layout is exactly `Meetless.app` plus `Applications -> /Applications`.
+The sidecar binds the app, manifest, artifact, signature state, DMG, and
+layout identities. Retained-release DMG mode requires the future
+`retained-success` stage and an explicit external sibling output; it was not
+run because the owner attempt is prohibited in this foundation pass.
+
+#### M7-F24 verification
+
+- focused F24 tests: 3 files, 122 tests passed
+- `npm run typecheck`: passed
+- `node --check` for all eight changed M7-F24 `.mjs` files: passed
+- `git diff --check`: passed
+- two final `node scripts/candidate-snapshot.mjs --mode=package-source` runs:
+  exact digest and HEAD match
+- release root before/after fingerprint:
+  `8f88051fa4e10f01f0bfd253ada823207e32ca93787ab5ea28f4446c1e70876c`
+- release app before/after fingerprint:
+  `3b178cf12e7337275202d8b0f9c984812ac34c11f5ad758b583c27b48ff1d0c6`
+- runtime data before/after fingerprint:
+  `972b906c260641320d8eab42c4974eb98f4dffd3c0ce6a38035f6e06c61b712b`
+
+Earlier failed external proof roots were preserved. No repository release bytes,
+prior retained stage, Keychain, Developer ID signing, secure timestamp,
+notarization, install, launch, TCC, upload, publication, promotion, or
+retained-stage/evidence cleanup was performed. Normal disposable mount and
+build-staging cleanup occurred. The deferred unclassified runtime error remains
+open and separate.
+
+`plan_updated: yes`.
+
+### M7-F25 R1-001 exported generic-writer closure
+
+frontier: `M7-F25-R1-001-EXPORTED-GENERIC-WRITER-CLOSURE`
+authority: owner-approved bounded correction
+correction base: package-source
+`8cf15fedc5cdeb615f15efd0dccae0eff6cae7d22fe4fea84481cc10968ebd2f`
+status: `PEER_CANDIDATE`
+
+The generic atomic JSON primitive is now private to the owner lifecycle module.
+It is absent from the lifecycle export surface. The module exposes only two
+narrow write operations: artifact metadata writes reject the fixed owner status
+target, and owner failure-status writes validate and accept only retained
+preparation-failure, failure, or interruption documents. Shared evidence,
+status, and transition helpers continue to reject success.
+
+`commitRetainedMacOSPackageSuccess` uses a validator-module-private atomic
+status writer. That writer requires the exact owner parent binding and current
+consumed identity, rechecks retained artifact evidence before commit, applies
+the signal decision immediately before synchronous rename, and is not exported.
+The end-to-end operation remains the only retained-success commit path and still
+re-reads and verifies the exact committed result before return.
+
+Export accounting:
+
+- lifecycle generic writer export: absent;
+- lifecycle write exports: `writeArtifactMetadataAtomically` and
+  `writeOwnerFailureStatusAtomically` only;
+- direct lifecycle exports that invoke the private atomic primitive:
+  `createOwnerStage`, `transitionOwnerStatus`,
+  `writeArtifactMetadataAtomically`, and
+  `writeOwnerFailureStatusAtomically`; each fixes or validates non-success data;
+- validator success-commit export: `commitRetainedMacOSPackageSuccess` only;
+- private success builder, status builder, transition, and atomic writer:
+  absent from the validator export surface.
+
+Focused proof:
+
+- `npx vitest run --config vitest.config.ts packages/runtime/test/macos-artifact-resign.test.ts --maxWorkers=1`
+  passed: 1 file, 72 tests.
+- Structural proof checks the complete relevant export surfaces, the four direct
+  private-writer callers, and the private end-to-end success composition.
+- Negative proof shows that schema-valid retained-success data is rejected by
+  the metadata writer, failure writer, evidence builder, status builder, and
+  transition helper without changing consumed status bytes.
+- Existing positive proof covers non-status atomic replacement and interruption
+  behavior, marker and manifest writes, failure/interruption lifecycle behavior,
+  external retained-success restriction, result and identity binding, fixed
+  owner tools, canonical F5 authority, and success commit ordering.
+- Syntax checks passed for `scripts/resign-macos-artifact.mjs`,
+  `scripts/validate-macos-package.mjs`, and
+  `scripts/lib/macos-artifact-resign.mjs`.
+- `npm run typecheck` passed.
+- `git diff --check` passed.
+- Two deterministic package-source snapshots matched: digest
+  `735a9adbddfb50269b19dc1046a916b1097364d366feb58fa336875bc4fa0592`,
+  HEAD `af5f1817191ba5fd634c750e9345de7d575ba704`, Paseo
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`.
+
+No broad validation ran. No retained stage was accessed or changed. No
+operational stage was created. No signing, Keychain, timestamp network,
+installation, launch, TCC, notarization, upload, publication, promotion,
+cleanup, retry, or deferred runtime-error action occurred. Focused tests used
+only isolated synthetic fixtures. This record does not claim signing, release,
+or owner acceptance.
+
+`plan_updated: yes`.
+
+### M7-F25 R1-001 exported success-helper closure
+
+frontier: `M7-F25-R1-001-EXPORTED-SUCCESS-HELPER-CLOSURE`
+authority: owner-approved additional bounded correction
+correction base: package-source
+`6227c4a43e4832c0a584ac39dc7161fe867d694713b4cdd6821de14520c22399`
+status: `PEER_CANDIDATE`
+
+The shared lifecycle API now rejects success creation and commit. The exported
+terminal-evidence builder rejects outcome `success`. The exported status builder
+rejects retained-success state, success outcome, and terminal success evidence.
+The exported transition helper rejects retained-success state, success outcome,
+and terminal success evidence before it reads or writes the status file.
+
+`commitRetainedMacOSPackageSuccess` remains the sole success operation. Its
+success evidence builder, success status builder, and consumed-to-success
+transition are private to the package validator module. That operation still
+owns full retained artifact, signature, timestamp, F5, and owner-tool
+validation; exact consumed identity; atomic commit; committed status re-read;
+and final exact-result verification. Shared failure and interruption creation
+and transition remain available and valid. Public retained validation continues
+to require exact retained-success.
+
+Focused proof:
+
+- `npx vitest run --config vitest.config.ts packages/runtime/test/macos-artifact-resign.test.ts --maxWorkers=1`
+  passed: 1 file, 72 tests.
+- Negative proof supplies schema-valid success evidence. The exported evidence,
+  status, and transition helpers all reject it. The consumed status bytes remain
+  unchanged after the rejected transition.
+- Structural proof verifies that the private success builders and transition are
+  absent from the module export surface. It also verifies that the end-to-end
+  operation owns full validation, private success commit, committed re-read,
+  exact result verification, and return ordering.
+- Existing focused tests pass for failure, interruption, external
+  retained-success restriction, status replacement, result drift, signal commit
+  timing, fixed owner tools, and private canonical F5 validation.
+- Syntax checks passed for `scripts/resign-macos-artifact.mjs`,
+  `scripts/validate-macos-package.mjs`, and
+  `scripts/lib/macos-artifact-resign.mjs`.
+- `npm run typecheck` passed.
+- `git diff --check` passed.
+- Two deterministic package-source snapshots matched: digest
+  `8cf15fedc5cdeb615f15efd0dccae0eff6cae7d22fe4fea84481cc10968ebd2f`,
+  HEAD `af5f1817191ba5fd634c750e9345de7d575ba704`, Paseo
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`.
+
+No broad validation ran. No retained stage was accessed or changed. No stage was
+created or prepared outside isolated test fixtures. No signing, Keychain,
+timestamp network, installation, launch, TCC, notarization, upload, publication,
+promotion, cleanup, retry, or deferred runtime-error action occurred. This
+record does not claim signing, release, or owner acceptance.
+
+`plan_updated: yes`.
+
+### M7-F25 R1-001 strict end-to-end correction
+
+frontier: `M7-F25-R1-001-STRICT-END-TO-END`
+authority: owner strict contract option 1
+correction base: package-source
+`7cec316a14f0addd4e59f835792cb88856d6e658f9b148436d5af8718b7f3c6c`
+status: `PEER_CANDIDATE`
+
+The exported pre-success artifact-evidence capability was removed. The retained
+signing-policy evidence helper is also private. One exported operation now owns
+the complete success boundary: exact consumed state and identity, full retained
+artifact/signature/timestamp validation, exact validator-result binding, atomic
+retained-success commit, committed-status re-read, and exact retained-success
+verification. It returns validation output only after the committed status has
+passed that final verification.
+
+The production re-sign command calls this operation with the canonical
+repository root, captured consumed status identity, owner signal controller, and
+candidate result. It emits retained-validation-complete and terminal success
+only after the operation returns. The remaining terminal helper accepts only
+failure or interruption. Generic retained validation still requires exact
+retained-success. Existing fixed owner tools, status race, external result, and
+canonical F5 closures remain in force.
+
+Focused proof:
+
+- `npx vitest run --config vitest.config.ts packages/runtime/test/macos-artifact-resign.test.ts --maxWorkers=1`
+  passed: 1 file, 71 tests.
+- Structural proof inspects the real module graph and export surface. It permits
+  only the end-to-end operation to call the private pre-success validation core.
+  It proves consumed identity input, full validation before transition, atomic
+  transition before committed status re-read, exact success verification before
+  return, and production success events after return.
+- Negative operation proof covers missing status, prepared status, and replaced
+  consumed status before artifact validation. Existing focused proof covers
+  result-field drift, forbidden external lifecycle states, fixed owner tools,
+  canonical F5 authority, and both sides of the signal commit boundary.
+- Syntax checks passed for `scripts/resign-macos-artifact.mjs`,
+  `scripts/validate-macos-package.mjs`, and
+  `scripts/lib/macos-artifact-resign.mjs`.
+- `npm run typecheck` passed.
+- `git diff --check` passed.
+- Two deterministic package-source snapshots matched: digest
+  `6227c4a43e4832c0a584ac39dc7161fe867d694713b4cdd6821de14520c22399`,
+  HEAD `af5f1817191ba5fd634c750e9345de7d575ba704`, Paseo
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`.
+
+No broad validation ran. No retained stage was accessed or changed. No stage was
+prepared. No signing, Keychain, timestamp network, installation, launch, TCC,
+notarization, upload, publication, promotion, retained-evidence cleanup, or
+deferred runtime-error action occurred. This record does not claim signing,
+release, or owner acceptance.
+
+`plan_updated: yes`.
+
+### M7-F25 R1 reconciliation correction
+
+frontier: `M7-F25-RETAINED-VALIDATION-CORRECTION-R1`
+reconciliation evidence: `M7F25-CLOSEOUT-9ea50222`
+correction base: package-source
+`9ea502223899cc58e20b5c046e5e6606dd3c01e9340ad0bfde5b657a4608fd72`
+status: `PEER_CANDIDATE`
+
+The bounded reconciliation closes `M7F25-R1-001` and `M7F25-R1-003`.
+Closures `M7F25-R1-002`, `M7F25-R1-004`, and `M7F25-R1-005` remain
+unchanged.
+
+- The retained-evidence-only symbol and its exported wrapper were removed.
+  The production command exports only `run`. Its private composition checks the
+  exact consumed status and identity around a lifecycle-neutral artifact
+  evidence check. Generic retained validation still requires retained-success.
+- A success request now requires the exact expected consumed status identity.
+  Missing, unreadable, or replaced status fails before terminal success.
+- Retained-success linearizes at the synchronous atomic rename of the owner
+  status file. The signal decision occurs immediately before that rename in the
+  same event-loop turn. A signal handled before the check prevents the rename.
+  A signal handled after the rename is post-commit.
+- The caller validates the returned terminal state, outcome, and exact artifact
+  result before it emits `terminal-retained-success` or returns the candidate.
+- Existing status identity, manifest/artifact result, fixed owner tool, canonical
+  F5, and structural-production-wiring checks remain enforced.
+
+Focused credential-free proof:
+
+- `npx vitest run --config vitest.config.ts packages/runtime/test/macos-artifact-resign.test.ts --maxWorkers=1`
+  passed: 1 file, 71 tests.
+- Syntax checks passed for `scripts/resign-macos-artifact.mjs`,
+  `scripts/validate-macos-package.mjs`, and
+  `scripts/lib/macos-artifact-resign.mjs`.
+- `npm run typecheck` passed.
+- `git diff --check` passed.
+- Two deterministic package-source snapshots matched: digest
+  `7cec316a14f0addd4e59f835792cb88856d6e658f9b148436d5af8718b7f3c6c`,
+  HEAD `af5f1817191ba5fd634c750e9345de7d575ba704`, Paseo
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`.
+
+No broader suite was run. No retained stage was accessed or changed. No stage
+was prepared. No signing, Keychain, timestamp network, launch, installation,
+notarization, upload, publication, promotion, or deferred runtime-error action
+occurred. This record does not claim signing, release, or owner acceptance.
+
+`plan_updated: yes`.
+
+### M7-F25 retained-validation correction R1 candidate
+
+frontier: `M7-F25-RETAINED-VALIDATION-CORRECTION-R1`
+correction_base: package-source
+`51020294a74eae93f929ccd6108c62d1b1cb4f41997e72b00d55526bac8a3407`
+status: `PEER_CANDIDATE`
+accepted_findings: `M7F25-R1-001..005`
+
+The correction uses one private production composition and the existing owner
+lifecycle. It does not add a lifecycle or compatibility path.
+
+- `M7F25-R1-001`: removed exported internal lifecycle constants, assertions,
+  and the consumed-attempt validator. The production `runPreparedStage` function
+  now owns the private exact-consumed assertion. Generic validator options and
+  public exports cannot select the consumed lifecycle.
+- `M7F25-R1-002`: every retained artifact validation forces owner mode. Tool
+  execution uses fixed `/usr/bin` owner paths and the sanitized owner environment
+  even when a caller omits or disables `ownerMode`.
+- `M7F25-R1-003`: status identity capture uses one no-follow file handle, stable
+  before/after file facts, exact path inode, and byte digest. Retained validation
+  returns that identity to terminal transition. Before success rename, the
+  manifest identity, status identity, and complete artifact entry hashes are
+  rechecked under the one stage capability. Requested success is also compared
+  with the exact validator result.
+- `M7F25-R1-004`: external retained validation first requires exact
+  `retained-success`, attempt `1`, `inDoubt=false`, outcome `success`, and terminal
+  evidence. It then compares every terminal result field with the current
+  manifest and artifact result. Stale state or any changed digest/count fails.
+- `M7F25-R1-005`: retained validation loads the checked-in F5 map and both plists
+  from the canonical repository with fixed owner `plutil`. It compares map,
+  canonical map, plist, source, key, and executable bindings exactly with the
+  embedded signing evidence.
+
+#### M7-F25 R1 proof
+
+- Focused credential-free test:
+  `npx vitest run --config vitest.config.ts packages/runtime/test/macos-artifact-resign.test.ts --maxWorkers=1`
+  passed: 1 file, 69 tests.
+- Structural composition proof parses the real production entrypoint. It proves
+  consumed transition precedes status capture, status capture precedes retained
+  validation, canonical repository root is passed, and terminalization receives
+  the validated status identity and artifact binding. It also proves no exported
+  consumed/internal lifecycle selector exists and retained mode forces owner
+  tools.
+- Positive proof covers exact retained-success result, canonical F5 authority,
+  fixed owner tool lookup with an unusable ambient `PATH`, and matching status
+  identity.
+- Negative proof covers prepared, preflight, consumed, preparation-failure,
+  failure, and interrupted external states; status inode replacement; every
+  terminal result digest/count; embedded F5 drift; wrong repository root; and
+  caller lifecycle collaborator replacement.
+- `npm run typecheck`: passed.
+- Syntax checks passed for `scripts/resign-macos-artifact.mjs`,
+  `scripts/validate-macos-package.mjs`, and
+  `scripts/lib/macos-artifact-resign.mjs`.
+- `git diff --check`: passed.
+- Two deterministic package-source snapshots matched: digest
+  `9ea502223899cc58e20b5c046e5e6606dd3c01e9340ad0bfde5b657a4608fd72`,
+  HEAD `af5f1817191ba5fd634c750e9345de7d575ba704`, Paseo
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`.
+
+A broader credential-free three-file macOS test run observed 124 passes and 13
+failures. All 13 failures originate in the pre-existing
+`macos-package.test.ts` local ad-hoc fixture because it lacks the F24-required
+`timestamp: none` evidence. That fixture is outside this correction write scope.
+The focused correction test and typecheck pass.
+
+Local enforcement is the focused Vitest file and package validator. No project
+hook or checked-in CI invocation was found for this focused guard. Branch
+protection remains unverified.
+
+No retained stage was accessed or changed. No stage was prepared. No Keychain,
+signing, timestamp network, launch, installation, notarization, upload,
+publication, promotion, or deferred runtime-error action occurred. This record
+does not claim signing, release, or owner acceptance.
+
+`plan_updated: yes`.
+
+### M7-F25 retained-validation correction candidate
+
+frontier: `M7-F25-RETAINED-VALIDATION-CORRECTION`
+status: `PEER_CANDIDATE`
+authority: owner correction directive and the accepted F24 owner lifecycle and
+retained-promotion rules in this plan
+
+The production re-sign command now passes the canonical repository root to one
+dedicated internal retained validator. That internal contract accepts only
+`consumed`, attempt `1`, `inDoubt=true`, with no outcome or terminal evidence.
+The normal retained-artifact validator remains the external contract. It accepts
+only `retained-success`, attempt `1`, `inDoubt=false`, outcome `success`, with
+terminal evidence. The internal contract is module-private to the dedicated
+production entry point. Normal validator options cannot select it.
+
+Missing or wrong repository authority fails before retained artifact inspection.
+Prepared, preflight, retained failure, retained interruption, and the wrong side
+of the consumed/success boundary fail with an authority and next-action
+diagnostic. The existing production catch path remains the only terminal owner:
+validation failure during a consumed attempt becomes `retained-failure`, an
+observed interruption becomes `retained-interrupted`, and success is written
+only after retained validation completes and lifecycle order passes.
+
+#### M7-F25 proof
+
+- Focused credential-free test:
+  `npx vitest run --config vitest.config.ts packages/runtime/test/macos-artifact-resign.test.ts --maxWorkers=1`
+  passed: 1 file, 69 tests.
+- Positive proof covered real status-file validation for internal `consumed` and
+  later external `retained-success`.
+- Negative proof covered missing and wrong repository root, prepared, preflight,
+  retained failure, retained interruption, and external use of `consumed`.
+- Production wiring proof checks the fixed re-sign entry point and executes its
+  canonical-root requirement. It would fail if `repositoryRoot` were omitted or
+  if the internal path used the external retained-success ordering.
+- `npm run typecheck`: passed.
+- `node --check scripts/validate-macos-package.mjs`: passed.
+- `node --check scripts/resign-macos-artifact.mjs`: passed.
+- `git diff --check`: passed.
+- Two consecutive deterministic package-source snapshots matched:
+  digest `51020294a74eae93f929ccd6108c62d1b1cb4f41997e72b00d55526bac8a3407`,
+  HEAD `af5f1817191ba5fd634c750e9345de7d575ba704`, Paseo
+  `c81cb84735043c281a5a2d23d456d3708ce5d94e`.
+
+Local enforcement is the focused Vitest file and package validator. No project
+hook or checked-in CI invocation was found for this focused guard. Branch
+protection was not inspected and is unverified.
+
+No retained stage was accessed or changed. No stage was prepared. No Keychain,
+signing, timestamp network, launch, installation, notarization, upload,
+publication, or promotion action occurred. The deferred runtime error was not
+touched. This candidate does not claim signing, release, or owner acceptance.
+
+`plan_updated: yes`.
