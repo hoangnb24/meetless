@@ -1,8 +1,66 @@
 import AppKit
+import CryptoKit
 import Darwin
 import Foundation
 
-private struct HostConfiguration: Decodable {
+private let meetlessInstallPath = "/Applications/Meetless.app"
+private let meetlessBundleIdentifier = "com.meetless.app"
+private let meetlessHostConfigSchema = "MEETLESS_MACOS_HOST_CONFIG v2"
+private let meetlessInstallationContractSchema = "MEETLESS_INSTALLATION_CONTRACT v1"
+private let meetlessPackageSchema = "MEETLESS_MACOS_PACKAGE v2"
+
+struct MeetlessLaunchCoordinator<Configuration> {
+  let locationCheck: () throws -> Void
+  let processCheck: () throws -> Void
+  let guidance: (String) -> Void
+  let configurationCheck: () throws -> Configuration
+  let resourceCheck: (Configuration) throws -> Void
+  let identity: (Configuration) throws -> Void
+  let configurationReady: (Configuration) -> Void
+  let lock: (Configuration) throws -> Void
+  let capability: (Configuration) throws -> Void
+  let runtime: (Configuration) throws -> Void
+
+  @discardableResult
+  func run() throws -> Configuration {
+    do {
+      try locationCheck()
+    } catch {
+      guidance(error.localizedDescription)
+      throw error
+    }
+    try processCheck()
+    let configuration = try configurationCheck()
+    try resourceCheck(configuration)
+    try identity(configuration)
+    configurationReady(configuration)
+    try lock(configuration)
+    try capability(configuration)
+    try runtime(configuration)
+    return configuration
+  }
+}
+
+enum MeetlessInstallLocation {
+  static func validate(lexicalPath: String, resolvedPath: String) throws {
+    guard lexicalPath == meetlessInstallPath else {
+      throw NSError(
+        domain: "MeetlessHost.InstallLocation",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Move Meetless.app to /Applications/Meetless.app, then open the copy there. Do not launch Meetless from a mounted disk image or another folder."]
+      )
+    }
+    guard resolvedPath == meetlessInstallPath else {
+      throw NSError(
+        domain: "MeetlessHost.InstallLocation",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "Meetless.app is reached through a symlink. Move the real app to /Applications/Meetless.app, then open that copy. Do not launch from a mounted disk image or another folder."]
+      )
+    }
+  }
+}
+
+private struct HostConfiguration: Codable {
   let repositoryRoot: String
   let runtimeRoot: String
   let listen: String
@@ -12,6 +70,79 @@ private struct HostConfiguration: Decodable {
   let nodePath: String
   let runtimeCliPath: String
   let identityPath: String
+}
+
+private struct HostConfigurationFile: Decodable {
+  let schema: String
+  let mode: String
+  let bundleIdentifier: String
+  let packageRoot: String?
+  let installationContract: String?
+  let installationContractSha256: String?
+  let runtimeRootRelativeToUserHome: String?
+  let identityRelativeToRuntimeRoot: String?
+  let repositoryRoot: String?
+  let runtimeRoot: String?
+  let listen: String?
+  let rendererOrigin: String?
+  let transcriptionSocketRelativeToRuntimeRoot: String?
+  let transcriptionStagingRelativeToRuntimeRoot: String?
+  let transcriptionSocket: String?
+  let transcriptionStaging: String?
+  let nodePath: String?
+  let runtimeCliPath: String?
+  let identityPath: String?
+}
+
+private struct InstallationPackageContract: Decodable {
+  let rootRelativeToBundle: String
+  let markerFilename: String
+  let contractFilename: String
+  let hostConfigRelativeToBundle: String
+  let resources: [String: String]
+}
+
+private struct InstallationContract: Decodable {
+  let schema: String
+  let bundleIdentifier: String
+  let installPath: String
+  let userSupportRelativePath: String
+  let recordingExportsRelativePath: String
+  let identityRelativePath: String
+  let runtime: [String: String]
+  let listen: String
+  let rendererOrigin: String
+  let package: InstallationPackageContract
+  let host: [String: String]
+  let dmg: [String: String]
+}
+
+private struct PackageMarker: Decodable {
+  let schema: String
+  let target: String
+  let bundleIdentifier: String
+  let paseoCommit: String
+  let listen: String
+  let rendererOrigin: String
+  let installationContract: String
+  let installationContractSha256: String
+  let hostBundlePath: String
+  let resources: [String: String]
+}
+
+private struct HostIdentityDocument: Codable {
+  let version: Int
+  let bundleIdentifier: String
+  let bundlePath: String
+  let bundleRealPath: String
+  let executablePath: String
+  let designatedRequirement: String
+  let cdHash: String
+  let binarySha256: String
+  let binaryDevice: Int
+  let binaryInode: Int
+  let binarySize: Int
+  let configuration: HostConfiguration
 }
 
 private struct OwnedProcessRegistry: Decodable {
@@ -27,6 +158,121 @@ private func logError(_ message: String) {
   NSLog("MeetlessHost: %@", message)
 }
 
+private func hostPreflightError(_ message: String) -> NSError {
+  NSError(
+    domain: "MeetlessHost.Preflight",
+    code: 1,
+    userInfo: [NSLocalizedDescriptionKey: "MeetlessHost preflight failed closed: \(message). Move or rebuild the app from the accepted /Applications/Meetless.app package."
+    ]
+  )
+}
+
+private func readRequiredData(_ path: String, label: String) throws -> Data {
+  do {
+    return try Data(contentsOf: URL(fileURLWithPath: path))
+  } catch {
+    throw hostPreflightError("\(label) is unavailable at \(path): \(error.localizedDescription)")
+  }
+}
+
+private func sha256(_ data: Data) -> String {
+  SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
+private func isSameOrDescendant(_ candidate: String, _ parent: String) -> Bool {
+  let candidateComponents = URL(fileURLWithPath: candidate).standardizedFileURL.pathComponents
+  let parentComponents = URL(fileURLWithPath: parent).standardizedFileURL.pathComponents
+  guard candidateComponents.count >= parentComponents.count else { return false }
+  return zip(parentComponents, candidateComponents).allSatisfy { $0 == $1 }
+}
+
+private func relativePath(_ value: String, label: String) throws -> String {
+  guard !value.isEmpty, !value.hasPrefix("/"), !value.split(separator: "/").contains(".."), !value.split(separator: "/").contains(where: { $0.isEmpty }) else {
+    throw hostPreflightError("\(label) must be a non-empty relative path without traversal")
+  }
+  return value
+}
+
+private func bundleRelativePath(_ relative: String, label: String) throws -> String {
+  let safe = try relativePath(relative, label: label)
+  let bundle = URL(fileURLWithPath: Bundle.main.bundlePath).standardizedFileURL
+  let resolved = bundle.appendingPathComponent(safe).standardizedFileURL.path
+  guard isSameOrDescendant(resolved, bundle.path), resolved != bundle.path else {
+    throw hostPreflightError("\(label) leaves the running bundle")
+  }
+  return resolved
+}
+
+private func containedPath(_ parent: String, _ relative: String, label: String) throws -> String {
+  let safe = try relativePath(relative, label: label)
+  let parentURL = URL(fileURLWithPath: parent).standardizedFileURL
+  let resolved = parentURL.appendingPathComponent(safe).standardizedFileURL.path
+  guard isSameOrDescendant(resolved, parentURL.path), resolved != parentURL.path else {
+    throw hostPreflightError("\(label) leaves its owning root")
+  }
+  return resolved
+}
+
+private func userHomeRelativePath(_ relative: String, label: String) throws -> String {
+  let safe = try relativePath(relative, label: label)
+  return URL(fileURLWithPath: FileManager.default.homeDirectoryForCurrentUser.path)
+    .appendingPathComponent(safe)
+    .standardizedFileURL
+    .path
+}
+
+private func inspectCodesign(_ arguments: [String], label: String) throws -> String {
+  let process = Process()
+  process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+  process.arguments = arguments
+  let output = Pipe()
+  let error = Pipe()
+  process.standardOutput = output
+  process.standardError = error
+  do {
+    try process.run()
+    process.waitUntilExit()
+  } catch {
+    throw hostPreflightError("cannot inspect \(label): \(error.localizedDescription)")
+  }
+  let stdout = output.fileHandleForReading.readDataToEndOfFile()
+  let stderr = error.fileHandleForReading.readDataToEndOfFile()
+  let text = String(data: stdout + stderr, encoding: .utf8) ?? ""
+  guard process.terminationStatus == 0 else {
+    throw hostPreflightError("cannot inspect \(label): \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+  }
+  return text
+}
+
+private func firstMatch(_ value: String, pattern: String) -> String? {
+  guard
+    let expression = try? NSRegularExpression(pattern: pattern),
+    let match = expression.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+    let range = Range(match.range(at: 1), in: value)
+  else { return nil }
+  return String(value[range])
+}
+
+private func writeIdentityAtomically(_ data: Data, to identityPath: String, runtimeRoot: String) throws {
+  let identityURL = URL(fileURLWithPath: identityPath).standardizedFileURL
+  let rootURL = URL(fileURLWithPath: runtimeRoot).standardizedFileURL
+  guard isSameOrDescendant(identityURL.deletingLastPathComponent().path, rootURL.path) else {
+    throw hostPreflightError("host identity path leaves the per-user runtime root")
+  }
+  let manager = FileManager.default
+  try manager.createDirectory(at: rootURL, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+  let temporaryURL = identityURL.deletingLastPathComponent()
+    .appendingPathComponent(".host-identity-\(getpid())-\(UUID().uuidString).tmp")
+  defer { try? manager.removeItem(at: temporaryURL) }
+  try data.write(to: temporaryURL, options: [.atomic])
+  try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporaryURL.path)
+  if manager.fileExists(atPath: identityURL.path) {
+    _ = try manager.replaceItemAt(identityURL, withItemAt: temporaryURL)
+  } else {
+    try manager.moveItem(at: temporaryURL, to: identityURL)
+  }
+}
+
 final class HostDelegate: NSObject, NSApplicationDelegate {
   private var runtime: Process?
   private var runtimeLog: FileHandle?
@@ -38,25 +284,36 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     do {
-      guard getppid() == 1 else {
-        throw NSError(
-          domain: "MeetlessHost",
-          code: 1,
-          userInfo: [NSLocalizedDescriptionKey: "must be launched through LaunchServices; run npm run runtime:host"]
-        )
-      }
-      let configuration = try loadConfiguration()
-      self.configuration = configuration
-      try acquireRuntimeLock(configuration.runtimeRoot)
-      installSignalHandlers()
-      let capability = MeetlessTranscriptionCapability(
-        socketPath: configuration.transcriptionSocket,
-        stagingDirectory: configuration.transcriptionStaging,
-        runtimeAuthorization: runtimeAuthorization
+      let coordinator = MeetlessLaunchCoordinator<HostConfiguration>(
+        locationCheck: { try self.assertExactInstalledPath() },
+        processCheck: {
+          guard getppid() == 1 else {
+            throw NSError(
+              domain: "MeetlessHost",
+              code: 1,
+              userInfo: [NSLocalizedDescriptionKey: "must be launched through LaunchServices; run npm run runtime:host"]
+            )
+          }
+        },
+        guidance: { message in self.showLaunchGuidance(message) },
+        configurationCheck: { try self.loadConfiguration() },
+        resourceCheck: { configuration in try self.attestPackagedResources(configuration) },
+        identity: { configuration in try self.publishIdentity(configuration) },
+        configurationReady: { configuration in self.configuration = configuration },
+        lock: { configuration in try self.acquireRuntimeLock(configuration.runtimeRoot) },
+        capability: { configuration in
+          self.installSignalHandlers()
+          let capability = MeetlessTranscriptionCapability(
+            socketPath: configuration.transcriptionSocket,
+            stagingDirectory: configuration.transcriptionStaging,
+            runtimeAuthorization: self.runtimeAuthorization
+          )
+          try capability.start()
+          self.transcriptionCapability = capability
+        },
+        runtime: { configuration in try self.launchRuntime(configuration) }
       )
-      try capability.start()
-      transcriptionCapability = capability
-      try launchRuntime(configuration)
+      _ = try coordinator.run()
     } catch {
       logError(error.localizedDescription)
       NSApp.terminate(nil)
@@ -100,7 +357,216 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       throw NSError(domain: "MeetlessHost", code: 2, userInfo: [NSLocalizedDescriptionKey: "bundle resources are unavailable"])
     }
     let data = try Data(contentsOf: resources.appendingPathComponent("host-config.json"))
-    return try JSONDecoder().decode(HostConfiguration.self, from: data)
+    let file = try JSONDecoder().decode(HostConfigurationFile.self, from: data)
+    guard file.schema == meetlessHostConfigSchema, file.bundleIdentifier == meetlessBundleIdentifier else {
+      throw hostPreflightError("host-config.json has an unknown schema or bundle identifier")
+    }
+    if file.mode == "development" {
+      guard
+        let repositoryRoot = file.repositoryRoot,
+        let runtimeRoot = file.runtimeRoot,
+        let listen = file.listen,
+        let rendererOrigin = file.rendererOrigin,
+        let transcriptionSocket = file.transcriptionSocket,
+        let transcriptionStaging = file.transcriptionStaging,
+        let nodePath = file.nodePath,
+        let runtimeCliPath = file.runtimeCliPath,
+        let identityPath = file.identityPath
+      else { throw hostPreflightError("development host configuration is incomplete") }
+      return HostConfiguration(
+        repositoryRoot: repositoryRoot,
+        runtimeRoot: runtimeRoot,
+        listen: listen,
+        rendererOrigin: rendererOrigin,
+        transcriptionSocket: transcriptionSocket,
+        transcriptionStaging: transcriptionStaging,
+        nodePath: nodePath,
+        runtimeCliPath: runtimeCliPath,
+        identityPath: identityPath
+      )
+    }
+    guard file.mode == "packaged" else {
+      throw hostPreflightError("host-config.json mode is not packaged")
+    }
+    guard
+      let packageRootRelative = file.packageRoot,
+      let contractFilename = file.installationContract,
+      let contractSha256 = file.installationContractSha256,
+      let runtimeRootRelative = file.runtimeRootRelativeToUserHome,
+      let identityRelative = file.identityRelativeToRuntimeRoot,
+      let listen = file.listen,
+      let rendererOrigin = file.rendererOrigin,
+      let transcriptionSocketRelative = file.transcriptionSocketRelativeToRuntimeRoot,
+      let transcriptionStagingRelative = file.transcriptionStagingRelativeToRuntimeRoot,
+      let nodeRelative = file.nodePath,
+      let runtimeCliRelative = file.runtimeCliPath
+    else { throw hostPreflightError("packaged host configuration is incomplete") }
+
+    let packageRoot = try bundleRelativePath(packageRootRelative, label: "package root")
+    let contractPath = try bundleRelativePath(packageRootRelative + "/" + contractFilename, label: "installation contract")
+    let contractData = try readRequiredData(contractPath, label: "installation contract")
+    guard sha256(contractData) == contractSha256 else {
+      throw hostPreflightError("packaged installation contract digest does not match host-config.json")
+    }
+    let contract = try JSONDecoder().decode(InstallationContract.self, from: contractData)
+    guard
+      contract.schema == meetlessInstallationContractSchema,
+      contract.bundleIdentifier == meetlessBundleIdentifier,
+      contract.installPath == meetlessInstallPath,
+      contract.package.rootRelativeToBundle == packageRootRelative,
+      contract.package.contractFilename == contractFilename,
+      contract.userSupportRelativePath == runtimeRootRelative,
+      contract.identityRelativePath == identityRelative,
+      contract.listen == listen,
+      contract.rendererOrigin == rendererOrigin,
+      contract.runtime["transcriptionSocketRelativePath"] == transcriptionSocketRelative,
+      contract.runtime["transcriptionStagingRelativePath"] == transcriptionStagingRelative
+    else { throw hostPreflightError("host configuration differs from the installation contract") }
+
+    let runtimeRoot = try userHomeRelativePath(runtimeRootRelative, label: "runtime root")
+    let identityPath = try containedPath(runtimeRoot, identityRelative, label: "host identity")
+    let transcriptionSocket = try containedPath(runtimeRoot, transcriptionSocketRelative, label: "transcription socket")
+    let transcriptionStaging = try containedPath(runtimeRoot, transcriptionStagingRelative, label: "transcription staging")
+    return HostConfiguration(
+      repositoryRoot: packageRoot,
+      runtimeRoot: runtimeRoot,
+      listen: listen,
+      rendererOrigin: rendererOrigin,
+      transcriptionSocket: transcriptionSocket,
+      transcriptionStaging: transcriptionStaging,
+      nodePath: try bundleRelativePath(packageRootRelative + "/" + nodeRelative, label: "packaged node"),
+      runtimeCliPath: try bundleRelativePath(packageRootRelative + "/" + runtimeCliRelative, label: "packaged runtime CLI"),
+      identityPath: identityPath
+    )
+  }
+
+  private func assertExactInstalledPath() throws {
+    let lexicalPath = URL(fileURLWithPath: Bundle.main.bundlePath).standardizedFileURL.path
+    let resolvedPath = URL(fileURLWithPath: lexicalPath).resolvingSymlinksInPath().standardizedFileURL.path
+    try MeetlessInstallLocation.validate(lexicalPath: lexicalPath, resolvedPath: resolvedPath)
+  }
+
+  private func attestPackagedResources(_ configuration: HostConfiguration) throws {
+    let bundleIdentifier = (Bundle.main.infoDictionary?["CFBundleIdentifier"] as? String) ?? ""
+    guard bundleIdentifier == meetlessBundleIdentifier else {
+      throw hostPreflightError("bundle identifier is \(bundleIdentifier), expected \(meetlessBundleIdentifier)")
+    }
+    guard configuration.repositoryRoot.hasPrefix(Bundle.main.bundlePath + "/") else {
+      return
+    }
+    let packageRoot = configuration.repositoryRoot
+    let markerPath = try containedPath(packageRoot, "meetless-package.json", label: "package marker")
+    let markerData = try readRequiredData(markerPath, label: "package marker")
+    let marker = try JSONDecoder().decode(PackageMarker.self, from: markerData)
+    let contractPath = try containedPath(packageRoot, marker.installationContract, label: "installation contract")
+    let contractData = try readRequiredData(contractPath, label: "installation contract")
+    let contract = try JSONDecoder().decode(InstallationContract.self, from: contractData)
+    guard
+      marker.schema == meetlessPackageSchema,
+      marker.target == "macos-arm64",
+      marker.bundleIdentifier == meetlessBundleIdentifier,
+      marker.hostBundlePath == meetlessInstallPath,
+      marker.installationContract == "installation-contract.json",
+      marker.installationContractSha256 == sha256(contractData),
+      marker.listen == contract.listen,
+      marker.rendererOrigin == contract.rendererOrigin,
+      marker.resources == contract.package.resources,
+      contract.schema == meetlessInstallationContractSchema,
+      contract.bundleIdentifier == meetlessBundleIdentifier,
+      contract.installPath == meetlessInstallPath,
+      contract.package.rootRelativeToBundle == "Contents/Resources/meetless",
+      contract.package.contractFilename == marker.installationContract,
+      contract.package.hostConfigRelativeToBundle == "Contents/Resources/host-config.json"
+    else {
+      throw hostPreflightError("packaged marker or installation contract does not match the exact app")
+    }
+    let resourceLabels = marker.resources.keys.sorted()
+    for label in resourceLabels {
+      guard let relativePath = marker.resources[label] else { continue }
+      let resource = try containedPath(packageRoot, relativePath, label: "packaged resource \(label)")
+      var isDirectory = ObjCBool(false)
+      guard FileManager.default.fileExists(atPath: resource, isDirectory: &isDirectory) else {
+        throw hostPreflightError("packaged resource \(label) is missing at \(resource)")
+      }
+      let resolved = URL(fileURLWithPath: resource).resolvingSymlinksInPath().standardizedFileURL.path
+      guard isSameOrDescendant(resolved, Bundle.main.bundlePath) else {
+        throw hostPreflightError("packaged resource \(label) resolves outside the running bundle: \(resolved)")
+      }
+      if label != "rendererRoot" && isDirectory.boolValue {
+        throw hostPreflightError("packaged resource \(label) must be a regular file: \(resource)")
+      }
+      if label == "rendererRoot" && !isDirectory.boolValue {
+        throw hostPreflightError("packaged rendererRoot must be a directory")
+      }
+    }
+    let hostExecutable = URL(fileURLWithPath: Bundle.main.bundlePath).appendingPathComponent("Contents/MacOS/MeetlessHost").path
+    guard FileManager.default.isExecutableFile(atPath: hostExecutable) else {
+      throw hostPreflightError("MeetlessHost executable is missing or not executable")
+    }
+  }
+
+  private func publishIdentity(_ configuration: HostConfiguration) throws {
+    let bundlePath = URL(fileURLWithPath: Bundle.main.bundlePath).standardizedFileURL.path
+    let executablePath = URL(fileURLWithPath: bundlePath).appendingPathComponent("Contents/MacOS/MeetlessHost").path
+    let binary = try readRequiredData(executablePath, label: "MeetlessHost executable")
+    let attributes = try FileManager.default.attributesOfItem(atPath: executablePath)
+    guard
+      let binaryDevice = (attributes[.deviceIdentifier] as? NSNumber)?.intValue,
+      let binaryInode = (attributes[.systemFileNumber] as? NSNumber)?.intValue,
+      let binarySize = (attributes[.size] as? NSNumber)?.intValue,
+      binarySize > 0
+    else { throw hostPreflightError("cannot inspect MeetlessHost executable metadata") }
+    let requirementOutput = try inspectCodesign(["-d", "-r-", bundlePath], label: "designated requirement")
+    guard let requirementLine = requirementOutput.split(separator: "\n").first(where: { $0.contains("designated =>") }) else {
+      throw hostPreflightError("codesign did not report a designated requirement")
+    }
+    let designatedRequirement = requirementLine.components(separatedBy: "designated =>").dropFirst().joined(separator: "designated =>").trimmingCharacters(in: .whitespaces)
+    guard !designatedRequirement.isEmpty else {
+      throw hostPreflightError("codesign reported an empty designated requirement")
+    }
+    let signatureOutput = try inspectCodesign(["-d", "--verbose=4", bundlePath], label: "CDHash")
+    guard let cdHash = firstMatch(signatureOutput, pattern: "(?m)^CDHash=([0-9A-Fa-f]{40})$")?.lowercased() else {
+      throw hostPreflightError("codesign did not report a 40-character CDHash")
+    }
+    let identity = HostIdentityDocument(
+      version: 1,
+      bundleIdentifier: meetlessBundleIdentifier,
+      bundlePath: bundlePath,
+      bundleRealPath: URL(fileURLWithPath: bundlePath).resolvingSymlinksInPath().standardizedFileURL.path,
+      executablePath: executablePath,
+      designatedRequirement: designatedRequirement,
+      cdHash: cdHash,
+      binarySha256: sha256(binary),
+      binaryDevice: binaryDevice,
+      binaryInode: binaryInode,
+      binarySize: binarySize,
+      configuration: configuration
+    )
+    if FileManager.default.fileExists(atPath: configuration.identityPath) {
+      let previousData = try readRequiredData(configuration.identityPath, label: "recorded host identity")
+      let previous = try JSONDecoder().decode(HostIdentityDocument.self, from: previousData)
+      guard
+        previous.bundleIdentifier == identity.bundleIdentifier,
+        previous.bundlePath == meetlessInstallPath,
+        previous.bundleRealPath == meetlessInstallPath,
+        previous.designatedRequirement == identity.designatedRequirement
+      else {
+        throw hostPreflightError("recorded host identity drifted in path, bundle identifier, or designated requirement; refusing to refresh it")
+      }
+    }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let data = try encoder.encode(identity) + Data([10])
+    try writeIdentityAtomically(data, to: configuration.identityPath, runtimeRoot: configuration.runtimeRoot)
+  }
+
+  private func showLaunchGuidance(_ message: String) {
+    let alert = NSAlert()
+    alert.messageText = "Move Meetless to Applications"
+    alert.informativeText = message
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "OK")
+    alert.runModal()
   }
 
   private func acquireRuntimeLock(_ runtimeRoot: String) throws {

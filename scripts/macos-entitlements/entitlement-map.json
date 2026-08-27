@@ -1,0 +1,30 @@
+{
+  "schema": "MEETLESS_MACOS_ENTITLEMENT_MAP v1",
+  "entries": [
+    {
+      "path": "Contents/Resources/meetless/runtime/node",
+      "class": "jit",
+      "plist": "entitlements/jit.plist"
+    },
+    {
+      "path": "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/MacOS/Electron",
+      "class": "jit",
+      "plist": "entitlements/jit.plist"
+    },
+    {
+      "path": "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Helper (Renderer).app/Contents/MacOS/Electron Helper (Renderer)",
+      "class": "jit",
+      "plist": "entitlements/jit.plist"
+    },
+    {
+      "path": "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Helper (GPU).app/Contents/MacOS/Electron Helper (GPU)",
+      "class": "jit",
+      "plist": "entitlements/jit.plist"
+    },
+    {
+      "path": "Contents/Resources/meetless/native/macos-capture/meetless-capture",
+      "class": "audio-input",
+      "plist": "entitlements/audio-input.plist"
+    }
+  ]
+}

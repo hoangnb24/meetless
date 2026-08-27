@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   chmod,
   lstat,
@@ -11,7 +12,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { resolveRuntimeConfig, snapshotPackagedMediaClosure } from "../src/config.js";
@@ -202,16 +203,53 @@ async function packagedResourceFixture(): Promise<{ root: string; packageRoot: s
   await writeFile(path.join(packageRoot, "runtime", "electron"), "electron\n", { mode: 0o755 });
   await writeFile(path.join(packageRoot, "runtime", "node"), "node\n", { mode: 0o755 });
   await writeFile(path.join(packageRoot, "native", "capture"), "capture\n", { mode: 0o755 });
+  await writeFile(path.join(packageRoot, "installation-contract.json"), `${JSON.stringify({
+    schema: "MEETLESS_INSTALLATION_CONTRACT v1",
+    bundleIdentifier: "com.meetless.app",
+    installPath: "/Applications/Meetless.app",
+    userSupportRelativePath: "Library/Application Support/Meetless",
+    recordingExportsRelativePath: "Documents/meetings",
+    identityRelativePath: "host-identity.json",
+    runtime: {
+      paseoHomeRelativePath: "paseo-home",
+      electronUserDataRelativePath: "electron-user-data",
+      meetingStoreRelativePath: "meeting-store",
+      logsRelativePath: "logs",
+      daemonLogRelativePath: "logs/daemon.log",
+      manifestRelativePath: "runtime.json",
+      recordingSocketRelativePath: "paseo-home/recording-control.sock",
+      transcriptionSocketRelativePath: "transcription.sock",
+      transcriptionStagingRelativePath: "meeting-store/transcription-ranges",
+    },
+    listen: "127.0.0.1:16777",
+    rendererOrigin: "http://127.0.0.1:18082",
+    package: {
+      rootRelativeToBundle: "Contents/Resources/meetless",
+      markerFilename: "meetless-package.json",
+      contractFilename: "installation-contract.json",
+      hostConfigRelativeToBundle: "Contents/Resources/host-config.json",
+      resources: {
+        rendererRoot: "renderer",
+        electronBinary: "runtime/electron",
+        nodeBinary: "runtime/node",
+        captureHelper: "native/capture",
+        ffmpeg: "runtime/media/bin/ffmpeg",
+        ffprobe: "runtime/media/bin/ffprobe",
+      },
+    },
+    host: { executableRelativeToBundle: "Contents/MacOS/MeetlessHost", configFilename: "host-config.json" },
+    dmg: { volumeName: "Meetless", appName: "Meetless.app", applicationsLinkName: "Applications", applicationsLinkTarget: "/Applications" },
+  }, null, 2)}\n`, { mode: 0o600 });
   await writeFile(path.join(packageRoot, "meetless-package.json"), `${JSON.stringify({
-    schema: "MEETLESS_MACOS_PACKAGE v1",
+    schema: "MEETLESS_MACOS_PACKAGE v2",
     target: "macos-arm64",
     bundleIdentifier: "com.meetless.app",
     paseoCommit: "c81cb84735043c281a5a2d23d456d3708ce5d94e",
+    listen: "127.0.0.1:16777",
     rendererOrigin: "http://127.0.0.1:18082",
-    runtimeRoot: "/private/tmp/meetless-package-runtime",
-    recordingExports: "/private/tmp/meetless-package-runtime/exports",
-    identityPath: "/private/tmp/meetless-package-host-identity.json",
-    hostBundlePath: path.join(homedir(), "Applications", "Meetless.app"),
+    installationContract: "installation-contract.json",
+    installationContractSha256: "__CONTRACT_DIGEST__",
+    hostBundlePath: "/Applications/Meetless.app",
     resources: {
       rendererRoot: "renderer",
       electronBinary: "runtime/electron",
@@ -221,5 +259,10 @@ async function packagedResourceFixture(): Promise<{ root: string; packageRoot: s
       ffprobe: "runtime/media/bin/ffprobe",
     },
   }, null, 2)}\n`, { mode: 0o600 });
+  const contract = await readFile(path.join(packageRoot, "installation-contract.json"));
+  const markerPath = path.join(packageRoot, "meetless-package.json");
+  const marker = JSON.parse(await readFile(markerPath, "utf8"));
+  marker.installationContractSha256 = createHash("sha256").update(contract).digest("hex");
+  await writeFile(markerPath, `${JSON.stringify(marker, null, 2)}\n`, { mode: 0o600 });
   return { root, packageRoot };
 }

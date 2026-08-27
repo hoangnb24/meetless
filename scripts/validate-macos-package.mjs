@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { lstat, readFile, readlink, realpath, stat } from "node:fs/promises";
+import { lstat, open, readFile, readlink, realpath, stat, unlink } from "node:fs/promises";
+import { constants as fsConstants, readFileSync, renameSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -34,23 +35,71 @@ import {
   verifyMacOSPackageInputs,
 } from "./lib/macos-package-inputs.mjs";
 import {
+  MACOS_HOST_CONFIG_SCHEMA,
+  MACOS_INSTALLATION_CONTRACT,
+  MACOS_PACKAGE_CONTRACT_FILENAME,
+  MACOS_PACKAGE_INSTALL_PATH,
   MACOS_PACKAGE_SCHEMA,
   MACOS_PACKAGE_RENDERER_ORIGIN,
   acceptedMacOSPackagePaths,
+  installationContractSha256,
+  packagedHostConfiguration,
 } from "./lib/macos-package-contract.mjs";
 import {
   collectMacOSSignatureEvidence,
+  loadEntitlementPolicy,
+  MACOS_APPROVED_ENTITLEMENT_MAP,
+  MACOS_ENTITLEMENT_POLICY_SCHEMA,
+  MACOS_OWNER_TOOL_PATHS,
   LOCAL_AD_HOC_SIGNING_MODE,
   parseSigningArguments,
   resolveSigningInputs,
+  validateApprovedEntitlementMachOEntries,
   validateSigningMetadata,
   validateSigningDocument,
 } from "./lib/macos-package-signing.mjs";
+import {
+  MACOS_ARTIFACT_RESIGN_AUTHORITY,
+  MACOS_ARTIFACT_RESIGN_SCHEMA,
+  MACOS_ARTIFACT_OWNER_EVIDENCE_SCHEMA,
+  MACOS_ARTIFACT_OWNER_STATUS_SCHEMA,
+  MACOS_ARTIFACT_STAGE_MARKER_NAME,
+  MACOS_OUTER_CODE_RESOURCES_PATH,
+  assertMachOPayloadClosure,
+  assertOwnerParentBinding,
+  assertExternalRetainedSuccess,
+  assertExternalRetainedSuccessState,
+  assertOwnerTerminalResult,
+  assertRegularFileIdentity,
+  assertReboundDigestEquality,
+  bindMachOPayloads,
+  captureRegularFileIdentity,
+  validateArtifactBaseline,
+  createSigningBoundDescriptor,
+  digestSigningEntrySet,
+  validateArtifactResignLifecycleEvidence,
+  validateArtifactStageRoot,
+  validateArtifactStageMarker,
+  validateMachOPayloadBindings,
+  validateOwnerStatusDocument,
+  validateOwnerTerminalEvidence,
+  validateSigningBoundDescriptor,
+} from "./lib/macos-artifact-resign.mjs";
+
+const CANONICAL_REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const execFileAsync = promisify(execFile);
 const FORBIDDEN_LOAD_PATHS = ["/opt/homebrew", "/usr/local"];
 const CANDIDATE_SNAPSHOT_COMMAND = PACKAGE_SOURCE_SNAPSHOT_COMMAND;
 const PINNED_PASEO_COMMIT = "c81cb84735043c281a5a2d23d456d3708ce5d94e";
+
+function ownerToolEnvironment(environment = process.env) {
+  const sanitized = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" };
+  for (const name of ["HOME", "USER", "LOGNAME", "TERM", "TERM_PROGRAM"]) {
+    if (typeof environment?.[name] === "string" && environment[name].length > 0) sanitized[name] = environment[name];
+  }
+  return sanitized;
+}
 
 export { MACOS_PACKAGE_SCHEMA };
 
@@ -67,11 +116,18 @@ export function validateManifestDocument(manifest) {
   if (manifest.bundlePath !== "Meetless.app") {
     fail(`bundle path is ${String(manifest.bundlePath)}`, "compose the sole Meetless.app bundle");
   }
+  if (manifest.proof !== undefined && (
+    !manifest.proof ||
+    !["local-ad-hoc-disposable", "repository-release"].includes(manifest.proof.mode) ||
+    manifest.proof.rootRelativePath !== "release/macos"
+  )) {
+    fail("manifest proof-root binding is missing or invalid", "bind the package to one explicit release/macos child of its selected proof root");
+  }
   if (manifest.host?.bundleIdentifier !== "com.meetless.app") {
     fail("host bundle identity is not com.meetless.app", "preserve the sole Meetless TCC owner");
   }
   if (manifest.host?.canonicalPath !== acceptedMacOSPackagePaths().canonicalBundlePath) {
-    fail("manifest canonical host path is not ~/Applications/Meetless.app", "bind the package to the accepted host location");
+    fail("manifest canonical host path is not /Applications/Meetless.app", "bind the package to the accepted host location");
   }
   if (
     !manifest.candidateSnapshot ||
@@ -88,6 +144,12 @@ export function validateManifestDocument(manifest) {
     validateMacOSPackageInputDocument(manifest.packageInputs, manifest.candidateSnapshot);
   } catch (error) {
     fail(`manifest package-input binding is invalid: ${error instanceof Error ? error.message : String(error)}`, "rebuild the package-input manifest from the current source and generated build inputs");
+  }
+  if (manifest.packageInputs.signingBound !== undefined) {
+    validateSigningBoundDocument(manifest.packageInputs.signingBound, "manifest package-input signing boundary");
+    if (manifest.packageInputs.signingBound.phase !== "pre-outer") {
+      failLicense("manifest package-input signing boundary is not pre-outer", "keep final outer CodeResources and signature evidence in artifactResign.final");
+    }
   }
   if (
     !manifest.renderer ||
@@ -192,6 +254,12 @@ export function validateLicenseInventoryDocument(inventory, options = {}) {
   if (JSON.stringify(artifact.entryBinding.excludedPathPrefixes ?? []) !== JSON.stringify(MACOS_LICENSE_INVENTORY_EXCLUDED_PATH_PREFIXES) || !Array.isArray(artifact.entryBinding.excludedPaths) || !artifact.entryBinding.excludedPaths.includes(MACOS_LICENSE_INVENTORY_PATH) || artifact.entryBinding.excludedPaths.some((candidate) => typeof candidate !== "string")) {
     failLicense("license inventory self-binding exclusions are not the accepted signing boundary", "exclude the inventory, signing metadata, and the observed Mach-O code-signature paths only");
   }
+  if (artifact.entryBinding.signingBound !== undefined) {
+    validateSigningBoundDocument(artifact.entryBinding.signingBound, "license inventory signing boundary");
+    if (artifact.entryBinding.signingBound.phase !== "pre-outer" || artifact.entryBinding.signatureStateDigest !== undefined) {
+      failLicense("license inventory carries final outer signing state", "keep inventory binding pre-outer and record signatureStateDigest only in the external manifest final scope");
+    }
+  }
   if (!Array.isArray(inventory.components)) {
     failLicense("license inventory components are missing", "record each required release component");
   }
@@ -236,8 +304,24 @@ export function validateLicenseInventoryCoverage(inventory, manifestEntries, man
   }
   const excludedPaths = inventory.artifact.entryBinding.excludedPaths;
   const machoSet = new Set(manifestMacho);
+  const signingBound = inventory.artifact.entryBinding.signingBound;
+  const declaredCodeResources = signingBound?.codeResources ?? [];
+  const actualCodeResources = [...actualPaths].filter(isCodeResourcesPath).sort((left, right) => left.localeCompare(right));
+  if (signingBound) {
+    const expectedCodeResources = signingBound.phase === "pre-outer"
+      ? actualCodeResources.filter((relativePath) => relativePath !== MACOS_OUTER_CODE_RESOURCES_PATH)
+      : actualCodeResources;
+    if (JSON.stringify(declaredCodeResources) !== JSON.stringify(expectedCodeResources)) {
+      failLicense("license inventory signing-bound CodeResources set differs from the artifact", "record every nested and outer **/_CodeSignature/CodeResources path");
+    }
+    const declaredMacho = inventory.artifact.entryBinding.signingBound.macho;
+    const expectedMacho = [...machoSet].sort((left, right) => left.localeCompare(right));
+    if (JSON.stringify(declaredMacho) !== JSON.stringify(expectedMacho)) {
+      failLicense("license inventory signing-bound Mach-O set differs from the manifest", "bind the exact final 47-object signing closure");
+    }
+  }
   for (const excludedPath of excludedPaths) {
-    if (excludedPath === inventory.artifact.inventoryPath || excludedPath.startsWith("Contents/_CodeSignature/")) continue;
+    if (excludedPath === inventory.artifact.inventoryPath || excludedPath.startsWith("Contents/_CodeSignature/") || declaredCodeResources.includes(excludedPath)) continue;
     if (!machoSet.has(excludedPath)) {
       failLicense(`license inventory excludes non-Mach-O path ${excludedPath} from its artifact binding`, "exclude only the final Mach-O paths recorded by the composition manifest");
     }
@@ -410,6 +494,18 @@ function validateDerivedInventorySummary(inventory, mappedPathCount) {
   }
 }
 
+function validateSigningBoundDocument(descriptor, label) {
+  try {
+    return validateSigningBoundDescriptor(descriptor);
+  } catch (error) {
+    failLicense(`${label} is missing or invalid: ${error instanceof Error ? error.message : String(error)}`, "retain the versioned pre-outer or final signing-bound descriptor with its exact phase and scope");
+  }
+}
+
+function isCodeResourcesPath(relativePath) {
+  return typeof relativePath === "string" && /(?:^|\/)_CodeSignature\/CodeResources$/u.test(relativePath);
+}
+
 function validateLicenseInventoryBinding(binding) {
   if (!binding || typeof binding !== "object" || Array.isArray(binding) || binding.schema !== MACOS_LICENSE_INVENTORY_SCHEMA || binding.path !== MACOS_LICENSE_INVENTORY_PATH || !/^[a-f0-9]{64}$/u.test(binding.sha256 ?? "") || !/^[a-f0-9]{64}$/u.test(binding.artifactEntryDigest ?? "") || !/^[a-f0-9]{64}$/u.test(binding.packageInputDigest ?? "") || !/^[a-f0-9]{64}$/u.test(binding.packageInputArtifactDigest ?? "") || !Number.isInteger(binding.componentCount) || binding.componentCount < REQUIRED_LICENSE_COMPONENTS.length || JSON.stringify(binding.excludedPathPrefixes ?? []) !== JSON.stringify(MACOS_LICENSE_INVENTORY_EXCLUDED_PATH_PREFIXES) || !Array.isArray(binding.excludedPaths)) {
     failLicense("manifest license inventory binding is missing or invalid", "regenerate the composition manifest with the packaged inventory");
@@ -580,26 +676,265 @@ export function assertNoForbiddenLoadPath(value, label = "Mach-O dependency") {
   }
 }
 
-export async function validateMacOSPackage(manifestPath, options = {}) {
-  const manifest = validateManifestDocument(JSON.parse(await readFile(manifestPath, "utf8")));
-  const requestedMode = options.signingMode ?? manifest.signing.mode;
-  let signingInputs;
+function assertRetainedValidationRepositoryRoot(repositoryRoot) {
+  if (typeof repositoryRoot !== "string" || repositoryRoot.length === 0) {
+    fail(
+      "retained artifact validation is missing the canonical repository root",
+      `pass the production repository root ${CANONICAL_REPOSITORY_ROOT}`,
+    );
+  }
+  const resolved = path.resolve(repositoryRoot);
+  if (resolved !== CANONICAL_REPOSITORY_ROOT) {
+    fail(
+      `retained artifact validation repository root ${resolved} is not the canonical repository root`,
+      `pass ${CANONICAL_REPOSITORY_ROOT} from the production command`,
+    );
+  }
+  return resolved;
+}
+
+export async function commitRetainedMacOSPackageSuccess({ manifestPath, repositoryRoot, expectedStatusIdentity, result, signalController } = {}) {
+  const canonicalRepositoryRoot = assertRetainedValidationRepositoryRoot(repositoryRoot);
+  if (!expectedStatusIdentity) {
+    fail("retained-success commit is missing the exact consumed status identity", "retain the consumed status identity from the production attempt before final validation");
+  }
+  if (!signalController || typeof signalController.assertNotInterrupted !== "function") {
+    fail("retained-success commit is missing its owner interruption authority", "use the production owner signal controller for the complete success operation");
+  }
+  const stageRoot = path.dirname(path.resolve(manifestPath));
+  const stage = await validateArtifactStageRoot({ stageRoot, repositoryRoot: canonicalRepositoryRoot, ownerMode: true });
+  assertRegularFileIdentity(stage.statusIdentity, expectedStatusIdentity, "consumed owner attempt status before retained-success validation");
+  assertConsumedRetainedStatus(stage.status);
+  const validation = await validateMacOSPackageImplementation(manifestPath, {
+    artifactOnly: true,
+    retainedArtifactOnly: true,
+    repositoryRoot: canonicalRepositoryRoot,
+  }, { requireRetainedSuccess: false });
+  const { retainedBinding: artifactBinding, ...validationResult } = validation;
+  const terminalEvidence = buildPrivateSuccessEvidence({
+    stageRoot,
+    markerBytes: stage.markerBytes,
+    status: stage.status,
+    outcome: "success",
+    result,
+  });
+  assertOwnerTerminalResult(terminalEvidence, artifactBinding.result, { stageRoot, markerBytes: stage.markerBytes });
+  const terminalStatus = createPrivateSuccessStatus({
+    stageRoot,
+    markerBytes: stage.markerBytes,
+    state: "retained-success",
+    attempt: 1,
+    outcome: "success",
+    terminal: terminalEvidence,
+  });
+  await transitionPrivateRetainedSuccess({
+    stageRoot,
+    statusPath: stage.statusPath,
+    markerBytes: stage.markerBytes,
+    from: "consumed",
+    state: "retained-success",
+    attempt: 1,
+    outcome: "success",
+    terminal: terminalEvidence,
+    expectedCurrentIdentity: expectedStatusIdentity,
+    parentBinding: stage.parentBinding,
+    beforeRename: () => artifactBinding.assertCurrent(),
+    beforeCommit: () => signalController.assertNotInterrupted(),
+  });
+  const committedIdentity = await captureRegularFileIdentity(stage.statusPath, "committed retained-success status");
+  const committed = parseRetainedStatus(committedIdentity.bytes, "committed retained-success status");
+  assertExternalRetainedSuccess(committed, result, { stageRoot, markerBytes: stage.markerBytes });
+  if (JSON.stringify(committed) !== JSON.stringify(terminalStatus)) {
+    fail("committed retained-success status differs from the exact requested terminal result", "preserve the atomic terminal status bytes and do not return a stale success result");
+  }
+  return { terminal: committed, validator: validationResult };
+}
+
+function buildPrivateSuccessEvidence({ stageRoot, markerBytes, status, result }) {
+  const document = {
+    schema: MACOS_ARTIFACT_OWNER_EVIDENCE_SCHEMA,
+    authority: MACOS_ARTIFACT_RESIGN_AUTHORITY,
+    stageRoot,
+    markerSha256: sha256(markerBytes),
+    attempt: status.attempt,
+    state: "retained-success",
+    outcome: "success",
+    result: {
+      artifactDigest: result?.artifactDigest ?? null,
+      packageInputDigest: result?.packageInputDigest ?? null,
+      artifactInputDigest: result?.artifactInputDigest ?? null,
+      signatureStateDigest: result?.signatureStateDigest ?? null,
+      entries: result?.entries ?? null,
+      macho: result?.macho ?? null,
+      codeResources: result?.codeResources ?? null,
+    },
+    error: null,
+  };
+  validateOwnerTerminalEvidence(document, { stageRoot, markerBytes });
+  return document;
+}
+
+function createPrivateSuccessStatus({ stageRoot, markerBytes, terminal }) {
+  const document = {
+    schema: MACOS_ARTIFACT_OWNER_STATUS_SCHEMA,
+    authority: MACOS_ARTIFACT_RESIGN_AUTHORITY,
+    stageRoot,
+    markerSha256: sha256(markerBytes),
+    state: "retained-success",
+    attempt: 1,
+    outcome: "success",
+    inDoubt: false,
+    terminal,
+  };
+  validateOwnerStatusDocument(document, { stageRoot, markerBytes });
+  return document;
+}
+
+async function transitionPrivateRetainedSuccess({ stageRoot, statusPath, markerBytes, terminal, expectedCurrentIdentity, parentBinding, beforeRename, beforeCommit }) {
+  const currentIdentity = await captureRegularFileIdentity(statusPath, "owner attempt status");
+  assertRegularFileIdentity(currentIdentity, expectedCurrentIdentity, "owner attempt status");
+  const current = parseRetainedStatus(currentIdentity.bytes, "owner attempt status");
+  validateOwnerStatusDocument(current, { stageRoot, markerBytes });
+  assertConsumedRetainedStatus(current);
+  const next = createPrivateSuccessStatus({ stageRoot, markerBytes, terminal });
+  await writePrivateSuccessStatusAtomically({ filePath: statusPath, value: next, expectedTarget: currentIdentity, parentBinding, beforeRename, beforeCommit });
+  return next;
+}
+
+async function writePrivateSuccessStatusAtomically({ filePath, value, expectedTarget, parentBinding, beforeRename, beforeCommit }) {
+  const parent = path.dirname(filePath);
+  if (!parentBinding || path.resolve(parent) !== parentBinding.path) {
+    fail("private retained-success commit is missing the exact owner status parent binding", "bind the current private owner stage before the success commit");
+  }
+  await assertOwnerParentBinding(parentBinding, "owner attempt status parent");
+  const serialized = Buffer.from(JSON.stringify(value, null, 2) + "\n");
+  const temporaryPath = path.join(parent, `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
+  let handle;
+  let renamed = false;
   try {
-    signingInputs = await resolveSigningInputs({
-      mode: requestedMode,
-      signingIdentity: options.signingIdentity ?? (requestedMode === LOCAL_AD_HOC_SIGNING_MODE ? "-" : null),
-      entitlementsPath: options.entitlementsPath ?? null,
-      expectedTeamId: options.expectedTeamId ?? null,
-    });
+    handle = await open(temporaryPath, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW, 0o600);
+    await handle.writeFile(serialized);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await assertOwnerParentBinding(parentBinding, "owner attempt status parent");
+    await beforeRename();
+    await assertOwnerParentBinding(parentBinding, "owner attempt status parent");
+    const currentIdentity = await captureRegularFileIdentity(filePath, "owner attempt status");
+    assertRegularFileIdentity(currentIdentity, expectedTarget, "owner attempt status");
+    beforeCommit();
+    renameSync(temporaryPath, filePath);
+    renamed = true;
+    const directory = await open(parent, fsConstants.O_RDONLY);
+    try { await directory.sync(); } finally { await directory.close(); }
+    await assertOwnerParentBinding(parentBinding, "owner attempt status parent");
   } catch (error) {
-    fail(`signing input validation failed: ${error instanceof Error ? error.message : String(error)}`, "supply the explicit identity and entitlement inputs required by the declared signing mode");
+    await handle?.close().catch(() => {});
+    if (!renamed) await unlink(temporaryPath).catch(() => {});
+    if (error instanceof Error && error.message.includes("Authority: ")) throw error;
+    fail(`cannot atomically commit retained-success: ${error instanceof Error ? error.message : String(error)}`, "preserve the consumed status and inspect the private owner stage before retrying");
+  }
+  return { filePath, sha256: sha256(serialized), bytes: serialized };
+}
+
+function assertConsumedRetainedStatus(status) {
+  if (status?.state !== "consumed" || status.attempt !== 1 || status.inDoubt !== true || status.outcome !== null || status.terminal !== null) {
+    fail("retained-success validation requires exactly consumed attempt 1 with inDoubt=true and no terminal evidence", "preserve the current consumed owner attempt until the one end-to-end success operation commits");
+  }
+  return status;
+}
+
+function parseRetainedStatus(bytes, label) {
+  try {
+    return JSON.parse(bytes.toString("utf8"));
+  } catch (error) {
+    fail(`${label} is invalid JSON: ${error instanceof Error ? error.message : String(error)}`, "preserve the exact machine-readable owner lifecycle status");
+  }
+}
+
+async function validateRetainedSigningPolicyAuthority(signing, { repositoryRoot } = {}) {
+  const canonicalRepositoryRoot = assertRetainedValidationRepositoryRoot(repositoryRoot);
+  const canonicalPolicy = await loadEntitlementPolicy({ repositoryRoot: canonicalRepositoryRoot, ownerMode: true });
+  return buildRetainedArtifactSigningInputs(signing, canonicalPolicy);
+}
+
+export async function validateMacOSPackage(manifestPath, options = {}) {
+  return validateMacOSPackageImplementation(manifestPath, options, {
+    requireRetainedSuccess: options.retainedArtifactOnly === true,
+  });
+}
+
+async function validateMacOSPackageImplementation(manifestPath, options = {}, { requireRetainedSuccess } = {}) {
+  const retainedArtifactOnly = options.retainedArtifactOnly === true;
+  const ownerMode = retainedArtifactOnly ? true : options.ownerMode === true;
+  if (retainedArtifactOnly && options.artifactOnly !== true) {
+    fail("retained artifact-only validation must also declare artifactOnly", "use the explicit final F11 retained-artifact validation mode");
+  }
+  const validationRepositoryRoot = retainedArtifactOnly
+    ? assertRetainedValidationRepositoryRoot(options.repositoryRoot)
+    : options.repositoryRoot ? path.resolve(options.repositoryRoot) : null;
+  const manifestIdentity = retainedArtifactOnly
+    ? await captureRegularFileIdentity(manifestPath, "retained composition manifest")
+    : null;
+  const manifest = validateManifestDocument(JSON.parse((manifestIdentity?.bytes ?? await readFile(manifestPath)).toString("utf8")));
+  let retainedStage = null;
+  if (retainedArtifactOnly && requireRetainedSuccess) {
+    try {
+      retainedStage = await validateArtifactStageRoot({ stageRoot: path.dirname(path.resolve(manifestPath)), repositoryRoot: validationRepositoryRoot, ownerMode: true });
+      if (requireRetainedSuccess) assertExternalRetainedSuccessState(retainedStage.status);
+    } catch (error) {
+      fail(`retained artifact lifecycle authority is invalid: ${error instanceof Error ? error.message : String(error)}`, "restore the exact owner stage and use only completed retained-success status for external validation");
+    }
+  }
+  if (options.disposableProof === true && manifest.proof?.mode !== "local-ad-hoc-disposable") {
+    fail("local/ad-hoc proof manifest is not bound to an external disposable root", "rebuild with --proof-root outside repository release/macos");
+  }
+  const requestedMode = options.signingMode ?? manifest.signing.mode;
+  if (requestedMode === "release" && options.entitlementMapPath !== undefined) {
+    fail(
+      `release entitlement map override ${options.entitlementMapPath} is not accepted`,
+      "validate the checked-in scripts/macos-entitlements/entitlement-map.json authority path",
+    );
+  }
+  let signingInputs;
+  if (retainedArtifactOnly) {
+    try {
+      signingInputs = await validateRetainedSigningPolicyAuthority(manifest.signing, { repositoryRoot: validationRepositoryRoot });
+    } catch (error) {
+      fail(`retained signing policy authority is invalid: ${error instanceof Error ? error.message : String(error)}`, "restore the canonical checked-in F5 map and plists and retain matching embedded signing evidence");
+    }
+  } else {
+    try {
+      signingInputs = await resolveSigningInputs({
+        mode: requestedMode,
+        signingIdentity: options.signingIdentity ?? (requestedMode === LOCAL_AD_HOC_SIGNING_MODE ? "-" : null),
+        entitlementsPath: options.entitlementsPath ?? null,
+        expectedTeamId: options.expectedTeamId ?? null,
+        repositoryRoot: validationRepositoryRoot ?? path.dirname(path.dirname(manifestPath)),
+        ownerMode,
+      });
+    } catch (error) {
+      fail(`signing input validation failed: ${error instanceof Error ? error.message : String(error)}`, "supply the explicit identity and entitlement inputs required by the declared signing mode");
+    }
   }
   const releaseRoot = path.dirname(manifestPath);
   const bundlePath = path.resolve(releaseRoot, manifest.bundlePath);
+  const bundleStat = await lstat(bundlePath).catch(() => null);
+  if (!bundleStat?.isDirectory() || bundleStat.isSymbolicLink()) {
+    fail("Meetless.app bundle root is a symlink or not a directory", "validate the retained bundle root as one regular non-symlink directory");
+  }
+  const bundleRealPath = await realpath(bundlePath).catch(() => null);
+  if (bundleRealPath !== bundlePath) {
+    fail("Meetless.app bundle root realpath differs from its explicit path", "remove symlink indirection from the bundle root before validation");
+  }
   const packageRoot = path.resolve(bundlePath, manifest.packageRoot);
   assertInside(bundlePath, packageRoot, "package root");
-  const repositoryRoot = options.repositoryRoot ? path.resolve(options.repositoryRoot) : null;
-  const candidateSnapshot = repositoryRoot ? await verifyCandidateSnapshot(manifest, repositoryRoot) : manifest.candidateSnapshot;
+  const repositoryRoot = validationRepositoryRoot;
+  const candidateSnapshot = options.artifactOnly
+    ? manifest.candidateSnapshot
+    : repositoryRoot
+      ? await verifyCandidateSnapshot(manifest, repositoryRoot)
+      : manifest.candidateSnapshot;
 
   const actualEntries = await enumeratePackageEntries(bundlePath);
   compareManifestEntrySets(manifest.entries, actualEntries, bundlePath);
@@ -616,13 +951,22 @@ export async function validateMacOSPackage(manifestPath, options = {}) {
   }
   const inventory = JSON.parse(inventoryBytes.toString("utf8"));
   try {
-    await verifyMacOSPackageInputs({ manifest: manifest.packageInputs, repositoryRoot: repositoryRoot ?? path.dirname(path.dirname(manifestPath)), bundlePath, candidateSnapshot });
+    if (options.artifactOnly) {
+      validateMacOSPackageInputDocument(manifest.packageInputs);
+    } else {
+      await verifyMacOSPackageInputs({ manifest: manifest.packageInputs, repositoryRoot: repositoryRoot ?? path.dirname(path.dirname(manifestPath)), bundlePath, candidateSnapshot });
+    }
   } catch (error) {
-    failLicense(`package-input validation failed: ${error instanceof Error ? error.message : String(error)}`, "rebuild the package from the exact source and shipped-input closure");
+    failLicense(
+      `package-input validation failed: ${error instanceof Error ? error.message : String(error)}`,
+      options.artifactOnly ? "retain the staged package-input identity and rebind only signing-bound metadata" : "rebuild the package from the exact source and shipped-input closure",
+    );
   }
   validateLicenseInventoryCoverage(inventory, manifest.entries, manifest.licenseInventory, manifest.macho, { repositoryRoot, bundlePath });
-  await validateNoticeEvidence(inventory, bundlePath, repositoryRoot);
-  await validateResolutionEvidencePaths(inventory, repositoryRoot);
+  if (!retainedArtifactOnly) {
+    await validateNoticeEvidence(inventory, bundlePath, repositoryRoot);
+    await validateResolutionEvidencePaths(inventory, repositoryRoot);
+  }
   if (JSON.stringify(inventory.artifact.candidateSnapshot) !== JSON.stringify({
     command: manifest.candidateSnapshot.command,
     mode: manifest.candidateSnapshot.mode,
@@ -653,7 +997,7 @@ export async function validateMacOSPackage(manifestPath, options = {}) {
     fail("renderer manifest binding does not match a packaged file", "bind the emitted renderer entry hash");
   }
 
-  const actualMachO = await inspectPackageMachOEntries(bundlePath, actualEntries);
+  const actualMachO = await inspectPackageMachOEntries(bundlePath, actualEntries, { ownerMode });
   const actualMachOPaths = actualMachO.map((entry) => entry.path);
   const expectedMachOPaths = [...new Set(manifest.macho)].sort((left, right) => left.localeCompare(right));
   if (expectedMachOPaths.length !== manifest.macho.length) {
@@ -665,29 +1009,43 @@ export async function validateMacOSPackage(manifestPath, options = {}) {
       "inventory every regular Mach-O file and remove only proven-unused native resources",
     );
   }
+  validateApprovedEntitlementMachOEntries({ entries: actualEntries, machoEntries: actualMachO, policy: signingInputs.entitlementPolicy });
 
-  await verifyCodeSignature(bundlePath);
-  await verifyIndividualMachOSignatures(actualMachO, bundlePath);
-  await verifyBundleIdentity(bundlePath);
+  if (retainedArtifactOnly) {
+    await validateRetainedArtifactResignEvidence({
+      manifest,
+      manifestPath,
+      bundlePath,
+      actualEntries,
+      actualMachOPaths,
+      inventory,
+      repositoryRoot,
+    });
+  }
+
+  await verifyCodeSignature(bundlePath, { ownerMode });
+  await verifyIndividualMachOSignatures(actualMachO, bundlePath, { ownerMode });
+  await verifyBundleIdentity(bundlePath, { ownerMode });
   let signatureEvidence;
   try {
     signatureEvidence = await collectMacOSSignatureEvidence({
       bundlePath,
       machoPaths: actualMachOPaths,
+      machoEntries: actualMachO,
       verify: false,
       requireCertificateEvidence: signingInputs.mode === "release",
+      ownerMode,
     });
     validateSigningMetadata(manifest.signing, {
       machoPaths: actualMachOPaths,
       actual: signatureEvidence,
       expectedMode: requestedMode,
-      expectedIdentity: signingInputs.requestedIdentity,
-      expectedResolvedIdentity: signingInputs.resolvedIdentity,
-      expectedCertificateFingerprint: signingInputs.certificateFingerprint,
-      expectedCertificateSha1: signingInputs.certificateSha1,
-      entitlementFileSha256: signingInputs.entitlementFileSha256,
-      entitlementOwnerCanonicalSha256: signingInputs.entitlementOwnerCanonicalSha256,
-      expectedTeamId: signingInputs.resolvedTeamId ?? signingInputs.expectedTeamId,
+      expectedIdentity: retainedArtifactOnly ? null : signingInputs.requestedIdentity,
+      expectedResolvedIdentity: retainedArtifactOnly ? null : signingInputs.resolvedIdentity,
+      expectedCertificateFingerprint: retainedArtifactOnly ? null : signingInputs.certificateFingerprint,
+      expectedCertificateSha1: retainedArtifactOnly ? null : signingInputs.certificateSha1,
+      entitlementPolicy: signingInputs.entitlementPolicy,
+      expectedTeamId: retainedArtifactOnly ? null : signingInputs.resolvedTeamId ?? signingInputs.expectedTeamId,
     });
   } catch (error) {
     fail(`final signing contract validation failed: ${error instanceof Error ? error.message : String(error)}`, "rebuild and revalidate every final nested Mach-O and the outer app in the declared mode");
@@ -696,19 +1054,180 @@ export async function validateMacOSPackage(manifestPath, options = {}) {
   for (const entry of actualMachO) {
     const absolute = path.resolve(bundlePath, entry.path);
     verifyArm64(entry.path, entry.fileOutput);
-    const inspected = await inspectMachO(absolute);
+    const inspected = await inspectMachO(absolute, { ownerMode });
     if (!inspected) fail(`${entry.path} disappeared from the Mach-O inventory`, "rebuild the exact package candidate");
     inspectedMachO.push({ relative: entry.path, binary: absolute, fileOutput: entry.fileOutput, ...inspected });
   }
   await validateMacOSLoadPathClosure(inspectedMachO, bundlePath, packageEntryPaths);
-  return {
+  const result = {
     status: "passed",
     bundlePath,
     artifactDigest: manifest.artifactDigest,
     candidateSnapshotDigest: manifest.candidateSnapshot.digest,
+    packageInputDigest: manifest.packageInputs.digest,
+    artifactInputDigest: manifest.packageInputs.artifactInput.digest,
+    signatureStateDigest: manifest.signing.signatureStateDigest,
     entries: manifest.entries.length,
     macho: actualMachO.length,
+    codeResources: retainedArtifactOnly ? manifest.artifactResign.final.signingBound.codeResources.length : actualEntries.filter((entry) => isCodeResourcesPath(entry.path)).length,
   };
+  if (!retainedArtifactOnly) return result;
+  const retainedBinding = {
+    ...(requireRetainedSuccess ? {
+      status: retainedStage.status,
+      statusIdentity: retainedStage.statusIdentity,
+    } : {}),
+    manifestIdentity,
+    result,
+    async assertCurrent() {
+      const currentManifestIdentity = await captureRegularFileIdentity(manifestPath, "retained composition manifest");
+      assertRegularFileIdentity(currentManifestIdentity, manifestIdentity, "retained composition manifest");
+      if (requireRetainedSuccess) {
+        const currentStatusIdentity = await captureRegularFileIdentity(retainedStage.statusPath, "owner attempt status");
+        assertRegularFileIdentity(currentStatusIdentity, retainedStage.statusIdentity, "owner attempt status");
+      }
+      const currentEntries = await enumeratePackageEntries(bundlePath);
+      compareManifestEntrySets(manifest.entries, currentEntries, bundlePath);
+      return result;
+    },
+  };
+  if (!requireRetainedSuccess) return { ...result, retainedBinding };
+  try {
+    assertExternalRetainedSuccess(retainedStage.status, result, { stageRoot: retainedStage.stageRoot, markerBytes: retainedStage.markerBytes });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error), "restore terminal success evidence for the exact current retained manifest and artifact result");
+  }
+  await retainedBinding.assertCurrent();
+  return result;
+}
+
+function buildRetainedArtifactSigningInputs(signing, canonicalPolicy) {
+  if (signing?.mode !== "release" || signing.localOnly !== false || signing.identity?.requested === "-" || signing.identity?.resolved === "-") {
+    throw new Error("retained artifact signing evidence is not a release preparation state");
+  }
+  const entitlements = signing.entitlements;
+  const bindings = new Map((entitlements?.bindings ?? []).map((binding) => [binding.path, binding]));
+  const entries = MACOS_APPROVED_ENTITLEMENT_MAP.map((approved) => {
+    const binding = bindings.get(approved.path);
+    if (!binding) throw new Error(`retained F5 binding is missing ${approved.path}`);
+    return {
+      path: approved.path,
+      class: approved.class,
+      plist: approved.plist,
+      key: approved.key,
+      sourcePath: binding.sourcePath,
+      ownerFileSha256: binding.fileSha256,
+      ownerCanonicalSha256: binding.ownerCanonicalSha256,
+      ownerKeys: [...binding.expectedKeys],
+    };
+  });
+  const entitlementPolicy = {
+    schema: MACOS_ENTITLEMENT_POLICY_SCHEMA,
+    mapPath: entitlements.mapPath,
+    mapSha256: entitlements.mapSha256,
+    mapCanonicalSha256: entitlements.mapCanonicalSha256,
+    sourcePlists: entitlements.sourcePlists.map((source) => ({ ...source })),
+    entries,
+  };
+  const canonicalComparable = {
+    schema: canonicalPolicy.schema,
+    mapPath: canonicalPolicy.mapPath,
+    mapSha256: canonicalPolicy.mapSha256,
+    mapCanonicalSha256: canonicalPolicy.mapCanonicalSha256,
+    sourcePlists: canonicalPolicy.sourcePlists.map((source) => ({ ...source })),
+    entries: canonicalPolicy.entries.map(({ path: relativePath, class: policyClass, plist, key, sourcePath, ownerFileSha256, ownerCanonicalSha256, ownerKeys }) => ({
+      path: relativePath,
+      class: policyClass,
+      plist,
+      key,
+      sourcePath,
+      ownerFileSha256,
+      ownerCanonicalSha256,
+      ownerKeys: [...ownerKeys],
+    })),
+  };
+  if (JSON.stringify(entitlementPolicy) !== JSON.stringify(canonicalComparable)) {
+    throw new Error("embedded retained F5 policy differs from the canonical checked-in map or plist authority");
+  }
+  return {
+    mode: "release",
+    requestedIdentity: signing.identity.requested,
+    resolvedIdentity: signing.identity.resolved,
+    certificateFingerprint: signing.identity.certificateFingerprint,
+    certificateSha1: signing.identity.certificateSha1,
+    resolvedTeamId: signing.identity.teamId,
+    expectedTeamId: signing.identity.teamId,
+    entitlementPolicy,
+  };
+}
+
+async function validateRetainedArtifactResignEvidence({ manifest, manifestPath, bundlePath, actualEntries, actualMachOPaths, inventory }) {
+  const evidence = manifest.artifactResign;
+  if (!evidence || evidence.schema !== MACOS_ARTIFACT_RESIGN_SCHEMA || evidence.authority !== MACOS_ARTIFACT_RESIGN_AUTHORITY) {
+    fail("final artifact-only validation requires versioned phase-split artifactResign evidence", "retain separate pre-outer and final scopes in the external composition manifest");
+  }
+  if (evidence.stage?.bundlePath !== "Meetless.app" || evidence.stage?.manifestPath !== "composition-manifest.json" || evidence.stage?.markerEvidence !== "owner-stage-marker-baseline-policy-payload-bound") {
+    fail("final F11 validation stage evidence is incomplete", "retain the fixed stage marker names and owner baseline/policy/payload evidence");
+  }
+  const markerPath = path.resolve(path.dirname(manifestPath), MACOS_ARTIFACT_STAGE_MARKER_NAME);
+  const markerStat = await lstat(markerPath).catch(() => null);
+  if (!markerStat?.isFile() || markerStat.isSymbolicLink()) {
+    fail("final F11 stage marker is not a regular non-symlink file", "retain the owner stage marker beside the external composition manifest");
+  }
+  const markerBytes = await readFile(markerPath);
+  const stageRoot = path.dirname(manifestPath);
+  const stageRealPath = await realpath(stageRoot).catch(() => null);
+  if (!stageRealPath || stageRealPath !== stageRoot) fail("final F11 stage root realpath changed", "retain one exact non-symlink staged root");
+  let marker;
+  try { marker = JSON.parse(markerBytes.toString("utf8")); } catch (error) { fail(`final F11 stage marker is invalid JSON: ${error.message}`, "restore the machine-readable owner stage marker"); }
+  try { validateArtifactResignLifecycleEvidence(evidence, { markerBytes, baseline: marker.baseline }); } catch (error) { fail(error instanceof Error ? error.message : String(error), "restore every required phase-split artifact re-sign lifecycle field"); }
+  try { validateArtifactStageMarker(marker, { stageRoot, stageRealPath }); } catch (error) { fail(error instanceof Error ? error.message : String(error), "restore the accepted stage marker baseline, policy, and payload evidence"); }
+  const baseline = validateArtifactBaseline(marker.baseline);
+  if (manifest.candidateSnapshot?.digest !== baseline.sourceSnapshotDigest || manifest.candidateSnapshot?.head !== baseline.sourceSnapshotHead || manifest.candidateSnapshot?.paseoCommit !== baseline.paseoCommit || manifest.macho?.length !== baseline.machoCount) {
+    fail("final F11 manifest source or shape identity differs from the prepared baseline", "retain the final manifest descended from the exact prepared local package-source snapshot");
+  }
+  if (evidence.stage.markerSha256 !== sha256(markerBytes)) fail("final F11 manifest is not bound to the retained stage marker bytes", "regenerate the manifest after the exact stage marker is fixed");
+  if (JSON.stringify(marker.policy) !== JSON.stringify({
+    schema: manifest.signing.entitlements?.schema ?? MACOS_ENTITLEMENT_POLICY_SCHEMA,
+    mapPath: manifest.signing.entitlements?.mapPath,
+    mapSha256: manifest.signing.entitlements?.mapSha256,
+    mapCanonicalSha256: manifest.signing.entitlements?.mapCanonicalSha256,
+    sourcePlists: manifest.signing.entitlements?.sourcePlists ?? [],
+  })) {
+    fail("final F11 stage marker policy evidence differs from embedded signing evidence", "retain the same exact F5 map and plist digest binding in both documents");
+  }
+  const finalMachOPayloads = await bindMachOPayloads({ bundlePath, machoPaths: actualMachOPaths });
+  assertMachOPayloadClosure({ baselinePayloads: marker.baseline.machoPayloads, finalPayloads: finalMachOPayloads });
+  const codeResourcePaths = actualEntries.filter((entry) => isCodeResourcesPath(entry.path)).map((entry) => entry.path);
+  const expectedDescriptor = createSigningBoundDescriptor({ phase: "final", machoPaths: actualMachOPaths, machoPayloads: finalMachOPayloads, codeResourcePaths });
+  try { validateSigningBoundDocument(evidence.final?.signingBound, "final signing boundary"); } catch (error) { fail(error instanceof Error ? error.message : String(error), "retain the precise final Mach-O payload and CodeResources observation"); }
+  if (JSON.stringify(evidence.final?.signingBound) !== JSON.stringify(expectedDescriptor)) {
+    fail("final signing-bound descriptor differs from the retained artifact", "regenerate final evidence from the post-outer Mach-O payloads and CodeResources set");
+  }
+  if (JSON.stringify(manifest.packageInputs?.signingBound) !== JSON.stringify(evidence.preOuter?.signingBound) || JSON.stringify(inventory.artifact?.entryBinding?.signingBound) !== JSON.stringify(evidence.preOuter?.signingBound)) {
+    fail("pre-outer signing-bound descriptor is inconsistent across package-input and inventory", "retain one identical nested post-signing descriptor in both rebound documents");
+  }
+  if (evidence.codeObjectCount !== 47 || evidence.preOuter?.signingBound?.macho.length !== 46 || evidence.preOuter?.signingBound?.codeResources.length !== 9 || evidence.final?.signingBound?.macho.length !== 46 || evidence.final?.signingBound?.codeResources.length !== 10) {
+    fail("final artifact-only code-object or phase CodeResources count is not 47/46/9+10", "retain exactly 46 Mach-O objects, nine nested CodeResources, and the final outer CodeResources");
+  }
+  if (JSON.stringify(evidence.final.signingBound.codeResources.filter((candidate) => candidate !== MACOS_OUTER_CODE_RESOURCES_PATH)) !== JSON.stringify(evidence.preOuter.signingBound.codeResources)) {
+    fail("final nested CodeResources scope differs from the pre-outer scope", "preserve the nine nested CodeResources after the outer sign");
+  }
+  if (manifest.licenseInventory?.artifactEntryScope !== "pre-outer" || manifest.licenseInventory?.signingBoundPhase !== "pre-outer") {
+    fail("manifest license inventory binding does not declare its pre-outer scope", "record that package-input and inventory binding precede the final outer signing observation");
+  }
+  if (evidence.final.signatureStateDigest !== manifest.signing?.signatureStateDigest || evidence.rebind?.packageInputDigest !== manifest.packageInputs?.digest || evidence.rebind?.artifactInputDigest !== manifest.packageInputs?.artifactInput?.digest || evidence.rebind?.licenseInventorySha256 !== manifest.licenseInventory?.sha256 || evidence.rebind?.signatureStateDigest !== manifest.signing?.signatureStateDigest) {
+    fail("final artifact-only rebind lifecycle evidence is incomplete or stale", "write package-input, inventory, signature, and manifest identities in one acyclic post-signing order");
+  }
+  try {
+    assertReboundDigestEquality({ scopedEntries: actualEntries, packageInputs: manifest.packageInputs, inventory, manifestBinding: manifest.licenseInventory });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error), "recompute the pre-outer rebound digest from the final ordinary entry scope");
+  }
+  if (evidence.final.entrySetDigest !== digestSigningEntrySet(actualEntries)) {
+    fail("final artifact-only entry-set digest is stale", "rebuild final evidence from the complete read-only post-outer entry observation");
+  }
+  return marker;
 }
 
 async function verifyCandidateSnapshot(manifest, repositoryRoot) {
@@ -811,25 +1330,40 @@ export async function validatePackageSymlinkClosure(bundlePath, entries) {
   }
 }
 
-function validatePackagedMarker(marker, packageRoot) {
+export function validatePackagedMarker(marker, packageRoot) {
   if (!marker || typeof marker !== "object" || Array.isArray(marker)) {
     fail("packaged runtime marker is not an object", "rebuild the signed marker");
   }
   const accepted = acceptedMacOSPackagePaths();
+  let contract;
+  let contractBytes;
+  try {
+    if (marker.installationContract !== MACOS_PACKAGE_CONTRACT_FILENAME) {
+      throw new Error(`marker contract filename is ${String(marker.installationContract)}`);
+    }
+    const contractPath = path.resolve(packageRoot, marker.installationContract);
+    assertInside(packageRoot, contractPath, "installation contract");
+    contractBytes = readFileSync(contractPath);
+    contract = JSON.parse(contractBytes.toString("utf8"));
+  } catch (error) {
+    fail(`packaged installation contract is unavailable or invalid: ${error instanceof Error ? error.message : String(error)}`, "ship one immutable installation-contract.json inside the package root");
+  }
   if (
     marker.schema !== MACOS_PACKAGE_SCHEMA ||
     marker.target !== "macos-arm64" ||
     marker.bundleIdentifier !== "com.meetless.app" ||
     marker.paseoCommit !== PINNED_PASEO_COMMIT ||
     marker.rendererOrigin !== MACOS_PACKAGE_RENDERER_ORIGIN ||
-    marker.runtimeRoot !== accepted.runtimeRoot ||
-    marker.recordingExports !== accepted.recordingExports ||
-    marker.identityPath !== accepted.identityPath ||
-    marker.hostBundlePath !== accepted.canonicalBundlePath
+    marker.listen !== accepted.listen ||
+    marker.installationContractSha256 !== installationContractSha256() ||
+    marker.installationContractSha256 !== sha256(contractBytes) ||
+    JSON.stringify(contract) !== JSON.stringify(MACOS_INSTALLATION_CONTRACT) ||
+    marker.hostBundlePath !== accepted.canonicalBundlePath ||
+    JSON.stringify(marker.resources) !== JSON.stringify(MACOS_INSTALLATION_CONTRACT.package.resources)
   ) {
     fail(
-      "packaged marker absolute path or identity does not match the accepted package locations",
-      "rebuild with the fixed Meetless package runtime, export, identity, and host paths",
+      "packaged marker, installation contract, or identity does not match the accepted direct-install locations",
+      "rebuild with the fixed /Applications host, per-user support root, and bundle-relative resources",
     );
   }
   const requiredResources = ["rendererRoot", "electronBinary", "nodeBinary", "captureHelper", "ffmpeg", "ffprobe"];
@@ -846,23 +1380,13 @@ function validatePackagedMarker(marker, packageRoot) {
   }
 }
 
-function validateHostConfig(configuration, bundlePath) {
-  const accepted = acceptedMacOSPackagePaths();
-  const canonicalPackageRoot = path.join(accepted.canonicalBundlePath, "Contents", "Resources", "meetless");
-  const expected = {
-    repositoryRoot: canonicalPackageRoot,
-    runtimeRoot: accepted.runtimeRoot,
-    rendererOrigin: accepted.rendererOrigin,
-    transcriptionSocket: path.join(accepted.runtimeRoot, "transcription.sock"),
-    transcriptionStaging: path.join(accepted.runtimeRoot, "meeting-store", "transcription-ranges"),
-    nodePath: path.join(canonicalPackageRoot, "runtime", "node"),
-    runtimeCliPath: path.join(canonicalPackageRoot, "packages", "runtime", "dist", "cli.js"),
-    identityPath: accepted.identityPath,
-  };
-  for (const [name, value] of Object.entries(expected)) {
-    if (configuration?.[name] !== value) {
-      fail(`host configuration ${name} is not bound to the accepted package path`, `rebuild host-config.json for ${bundlePath}`);
-    }
+export function validateHostConfig(configuration, bundlePath) {
+  const expected = packagedHostConfiguration();
+  if (configuration?.schema !== MACOS_HOST_CONFIG_SCHEMA || configuration?.mode !== "packaged") {
+    fail("host configuration is not the packaged v2 relative-path contract", `rebuild host-config.json for ${bundlePath}`);
+  }
+  if (JSON.stringify(configuration) !== JSON.stringify(expected)) {
+    fail("host configuration is not bound to the immutable relative-path contract", `rebuild host-config.json for ${bundlePath}`);
   }
   if (typeof configuration.listen !== "string" || !/^127\.0\.0\.1:\d+$/u.test(configuration.listen)) {
     fail("packaged daemon listener is not an exact loopback endpoint", "use a bounded package-owned loopback port");
@@ -873,23 +1397,23 @@ function validateHostConfig(configuration, bundlePath) {
   }
 }
 
-async function verifyCodeSignature(bundlePath) {
+async function verifyCodeSignature(bundlePath, { ownerMode = false } = {}) {
   try {
-    await execFileAsync("codesign", ["--verify", "--deep", "--strict", bundlePath]);
+    await execFileAsync(ownerMode ? MACOS_OWNER_TOOL_PATHS.codesign : "codesign", ["--verify", "--deep", "--strict", bundlePath], ownerMode ? { env: ownerToolEnvironment() } : undefined);
   } catch (error) {
     fail(`codesign verification failed: ${error.message}`, "sign the complete nested closure in the declared mode after composition");
   }
 }
 
-export async function verifyIndividualMachOSignatures(entries, bundlePath) {
+export async function verifyIndividualMachOSignatures(entries, bundlePath, { ownerMode = false } = {}) {
   for (const entry of entries) {
-    await verifyIndividualMachOSignature(entry.path, path.resolve(bundlePath, entry.path));
+    await verifyIndividualMachOSignature(entry.path, path.resolve(bundlePath, entry.path), { ownerMode });
   }
 }
 
-export async function verifyIndividualMachOSignature(relativePath, binaryPath) {
+export async function verifyIndividualMachOSignature(relativePath, binaryPath, { ownerMode = false } = {}) {
   try {
-    await execFileAsync("codesign", ["--verify", "--strict", "--verbose=2", binaryPath]);
+    await execFileAsync(ownerMode ? MACOS_OWNER_TOOL_PATHS.codesign : "codesign", ["--verify", "--strict", "--verbose=2", binaryPath], ownerMode ? { env: ownerToolEnvironment() } : undefined);
   } catch (error) {
     const detail = [error?.stderr, error?.stdout, error?.message]
       .filter((value) => typeof value === "string" && value.trim().length > 0)
@@ -903,11 +1427,12 @@ export async function verifyIndividualMachOSignature(relativePath, binaryPath) {
   }
 }
 
-async function verifyBundleIdentity(bundlePath) {
-  const { stdout } = await execFileAsync("plutil", ["-extract", "CFBundleIdentifier", "raw", path.join(bundlePath, "Contents", "Info.plist")]);
+async function verifyBundleIdentity(bundlePath, { ownerMode = false } = {}) {
+  const toolOptions = ownerMode ? { env: ownerToolEnvironment() } : undefined;
+  const { stdout } = await execFileAsync(ownerMode ? MACOS_OWNER_TOOL_PATHS.plutil : "plutil", ["-extract", "CFBundleIdentifier", "raw", path.join(bundlePath, "Contents", "Info.plist")], toolOptions);
   if (stdout.trim() !== "com.meetless.app") fail("top bundle identifier is not com.meetless.app", "keep Meetless.app as the only TCC owner");
   const executable = path.join(bundlePath, "Contents", "MacOS", "MeetlessHost");
-  const requirementResult = await execFileAsync("codesign", ["-d", "-r-", bundlePath]).catch((error) => {
+  const requirementResult = await execFileAsync(ownerMode ? MACOS_OWNER_TOOL_PATHS.codesign : "codesign", ["-d", "-r-", bundlePath], toolOptions).catch((error) => {
     fail(`could not inspect top designated requirement: ${error.message}`, "sign the top Meetless.app bundle");
   });
   const requirement = `${requirementResult.stdout}\n${requirementResult.stderr}`;

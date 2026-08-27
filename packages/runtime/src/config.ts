@@ -24,21 +24,75 @@ import { z } from "zod";
 
 export const PINNED_PASEO_COMMIT = "c81cb84735043c281a5a2d23d456d3708ce5d94e";
 export const DEFAULT_MEETLESS_LISTEN = "127.0.0.1:6777";
-export const PACKAGED_RUNTIME_ROOT = "/private/tmp/meetless-package-runtime";
-export const PACKAGED_RECORDING_EXPORTS = `${PACKAGED_RUNTIME_ROOT}/exports`;
-export const PACKAGED_IDENTITY_PATH = "/private/tmp/meetless-package-host-identity.json";
+export const MEETLESS_INSTALLATION_PATH = "/Applications/Meetless.app";
+export const MEETLESS_USER_SUPPORT_RELATIVE_PATH = "Library/Application Support/Meetless";
+export const MEETLESS_RECORDING_EXPORTS_RELATIVE_PATH = "Documents/meetings";
 export const PACKAGED_RENDERER_ORIGIN = "http://127.0.0.1:18082";
 const DARWIN_UNIX_SOCKET_PATH_BYTES = 103;
 
 const packageDirectory = path.dirname(fileURLToPath(import.meta.url));
 export const REPOSITORY_ROOT = path.resolve(packageDirectory, "../../..");
 const PACKAGED_MANIFEST_FILENAME = "meetless-package.json";
-const PACKAGED_MANIFEST_SCHEMA = "MEETLESS_MACOS_PACKAGE v1";
+const PACKAGED_MANIFEST_SCHEMA = "MEETLESS_MACOS_PACKAGE v2";
+const INSTALLATION_CONTRACT_SCHEMA = "MEETLESS_INSTALLATION_CONTRACT v1";
+const INSTALLATION_CONTRACT_FILENAME = "installation-contract.json";
+const HOST_CONFIG_SCHEMA = "MEETLESS_MACOS_HOST_CONFIG v2";
 const PACKAGED_MEDIA_CLOSURE_SCHEMA = "MEETLESS_PACKAGED_MEDIA_CLOSURE v1";
 const PACKAGED_MEDIA_CLOSURE_DIRECTORY = "media-tools";
 const PACKAGED_MEDIA_CLOSURE_MANIFEST = "media-tools.snapshot.json";
 const PACKAGED_MEDIA_CLOSURE_OWNER = ".meetless-media-closure-owner.json";
 const PACKAGED_MEDIA_CLOSURE_OWNER_SCHEMA = "MEETLESS_PACKAGED_MEDIA_CLOSURE_OWNER v1";
+
+const RelativeContractPathSchema = z.string().min(1).refine((value) =>
+  !path.isAbsolute(value) && !value.split("/").some((part) => part === ".." || part === ""),
+  "must be a non-empty relative path without traversal",
+);
+
+const InstallationContractSchema = z.object({
+  schema: z.literal(INSTALLATION_CONTRACT_SCHEMA),
+  bundleIdentifier: z.literal("com.meetless.app"),
+  installPath: z.literal(MEETLESS_INSTALLATION_PATH),
+  userSupportRelativePath: z.literal(MEETLESS_USER_SUPPORT_RELATIVE_PATH),
+  recordingExportsRelativePath: z.literal(MEETLESS_RECORDING_EXPORTS_RELATIVE_PATH),
+  identityRelativePath: RelativeContractPathSchema,
+  runtime: z.object({
+    paseoHomeRelativePath: RelativeContractPathSchema,
+    electronUserDataRelativePath: RelativeContractPathSchema,
+    meetingStoreRelativePath: RelativeContractPathSchema,
+    logsRelativePath: RelativeContractPathSchema,
+    daemonLogRelativePath: RelativeContractPathSchema,
+    manifestRelativePath: RelativeContractPathSchema,
+    recordingSocketRelativePath: RelativeContractPathSchema,
+    transcriptionSocketRelativePath: RelativeContractPathSchema,
+    transcriptionStagingRelativePath: RelativeContractPathSchema,
+  }).strict(),
+  listen: z.literal("127.0.0.1:16777"),
+  rendererOrigin: z.literal(PACKAGED_RENDERER_ORIGIN),
+  package: z.object({
+    rootRelativeToBundle: RelativeContractPathSchema,
+    markerFilename: z.literal(PACKAGED_MANIFEST_FILENAME),
+    contractFilename: z.literal(INSTALLATION_CONTRACT_FILENAME),
+    hostConfigRelativeToBundle: RelativeContractPathSchema,
+    resources: z.object({
+      rendererRoot: RelativeContractPathSchema,
+      electronBinary: RelativeContractPathSchema,
+      nodeBinary: RelativeContractPathSchema,
+      captureHelper: RelativeContractPathSchema,
+      ffmpeg: RelativeContractPathSchema,
+      ffprobe: RelativeContractPathSchema,
+    }).strict(),
+  }).strict(),
+  host: z.object({
+    executableRelativeToBundle: RelativeContractPathSchema,
+    configFilename: z.literal("host-config.json"),
+  }).strict(),
+  dmg: z.object({
+    volumeName: z.literal("Meetless"),
+    appName: z.literal("Meetless.app"),
+    applicationsLinkName: z.literal("Applications"),
+    applicationsLinkTarget: z.literal("/Applications"),
+  }).strict(),
+}).strict();
 
 const PackagedRuntimeManifestSchema = z.object({
   schema: z.literal(PACKAGED_MANIFEST_SCHEMA),
@@ -46,10 +100,10 @@ const PackagedRuntimeManifestSchema = z.object({
   bundleIdentifier: z.literal("com.meetless.app"),
   paseoCommit: z.string().regex(/^[a-f0-9]{40}$/u),
   rendererOrigin: z.literal(PACKAGED_RENDERER_ORIGIN),
-  runtimeRoot: z.literal(PACKAGED_RUNTIME_ROOT),
-  recordingExports: z.literal(PACKAGED_RECORDING_EXPORTS),
-  identityPath: z.literal(PACKAGED_IDENTITY_PATH),
-  hostBundlePath: z.string().startsWith("/"),
+  listen: z.literal("127.0.0.1:16777"),
+  installationContract: z.literal(INSTALLATION_CONTRACT_FILENAME),
+  installationContractSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  hostBundlePath: z.literal(MEETLESS_INSTALLATION_PATH),
   resources: z.object({
     rendererRoot: z.string().min(1),
     electronBinary: z.string().min(1),
@@ -136,6 +190,7 @@ const PackagedMediaClosureManifestSchema = z.object({
 }).strict();
 
 type PackagedRuntimeManifest = z.infer<typeof PackagedRuntimeManifestSchema>;
+type InstallationContract = z.infer<typeof InstallationContractSchema>;
 
 export interface RuntimePaths {
   root: string;
@@ -198,18 +253,28 @@ export function resolveRuntimeConfig(input: {
   const repositoryRoot = path.resolve(input.repositoryRoot ?? REPOSITORY_ROOT);
   const packagedManifest = readPackagedRuntimeManifest(repositoryRoot);
   const packaged = packagedManifest !== null;
+  const installationContract = packagedManifest
+    ? readPackagedInstallationContract(repositoryRoot, packagedManifest)
+    : readSourceInstallationContract(repositoryRoot);
   const packageResources = packagedManifest
-    ? resolvePackagedRuntimeResources(repositoryRoot, packagedManifest)
+    ? resolvePackagedRuntimeResources(repositoryRoot, packagedManifest, installationContract)
     : null;
+  const acceptedSupportRoot = resolveUserHomePath(userHome, installationContract.userSupportRelativePath, "user support root");
+  const acceptedRecordingExports = resolveUserHomePath(
+    userHome,
+    installationContract.recordingExportsRelativePath,
+    "recording exports",
+  );
   const requestedRuntimeRoot = input.runtimeRoot ?? sourceEnvironment.MEETLESS_RUNTIME_ROOT;
-  if (packagedManifest && requestedRuntimeRoot && path.resolve(requestedRuntimeRoot) !== packagedManifest.runtimeRoot) {
+  if (packagedManifest && requestedRuntimeRoot && path.resolve(requestedRuntimeRoot) !== acceptedSupportRoot) {
     throw new Error(
-      `Packaged runtime root ${requestedRuntimeRoot} differs from the accepted ${packagedManifest.runtimeRoot}. ` +
-        "Authority: docs/plans/active/v1-paseo-foundation.md. Next action: use the package-owned runtime root.",
+      `Packaged runtime root ${requestedRuntimeRoot} differs from the accepted per-user root ${acceptedSupportRoot}. ` +
+        "Authority: docs/decisions/0002-direct-notarized-macos-dmg.md and docs/plans/active/v1-paseo-foundation.md. " +
+        "Next action: use ~/Library/Application Support/Meetless; do not redirect packaged state to a builder or temporary path.",
     );
   }
   const root = path.resolve(
-    packagedManifest?.runtimeRoot ?? requestedRuntimeRoot ?? path.join(repositoryRoot, ".meetless-runtime"),
+    packaged ? acceptedSupportRoot : requestedRuntimeRoot ?? acceptedSupportRoot,
   );
   const listen = (input.listen ?? DEFAULT_MEETLESS_LISTEN).trim();
   const listenAddress = parseMeetlessListen(listen);
@@ -236,30 +301,46 @@ export function resolveRuntimeConfig(input: {
         "Authority: docs/plans/active/v1-paseo-foundation.md. Next action: use the packaged renderer origin.",
     );
   }
+  const requestedRecordingExports = sourceEnvironment.MEETLESS_EXPORT_ROOT?.trim();
+  if (packaged && requestedRecordingExports && path.resolve(requestedRecordingExports) !== acceptedRecordingExports) {
+    throw new Error(
+      `Packaged recording exports ${requestedRecordingExports} differs from the accepted per-user path ${acceptedRecordingExports}. ` +
+        "Authority: docs/product/recording.md and docs/decisions/0002-direct-notarized-macos-dmg.md. " +
+        "Next action: keep final recordings under ~/Documents/meetings.",
+    );
+  }
   const supervisorEntrypoint = path.join(
     repositoryRoot,
     "vendor/paseo/packages/server/dist/scripts/supervisor-entrypoint.js",
   );
+  const runtimeLayout = installationContract.runtime;
+  const paseoHome = path.join(root, runtimeLayout.paseoHomeRelativePath);
+  const meetingStore = path.join(root, runtimeLayout.meetingStoreRelativePath);
+  const logs = path.join(root, runtimeLayout.logsRelativePath);
   const paths: RuntimePaths = {
     root,
-    paseoHome: path.join(root, "paseo-home"),
-    electronUserData: path.join(root, "electron-user-data"),
-    meetingStore: path.join(root, "meeting-store"),
-    logs: path.join(root, "logs"),
-    daemonLog: path.join(root, "logs", "daemon.log"),
-    identity: path.join(root, "paseo-home", "server-id"),
-    pidLock: path.join(root, "paseo-home", "paseo.pid"),
-    supervisorMarker: path.join(root, "paseo-home", "meetless-supervisor-owner.json"),
-    config: path.join(root, "paseo-home", "config.json"),
-    manifest: path.join(root, "runtime.json"),
+    paseoHome,
+    electronUserData: path.join(root, runtimeLayout.electronUserDataRelativePath),
+    meetingStore,
+    logs,
+    daemonLog: path.join(root, runtimeLayout.daemonLogRelativePath),
+    identity: path.join(paseoHome, "server-id"),
+    pidLock: path.join(paseoHome, "paseo.pid"),
+    supervisorMarker: path.join(paseoHome, "meetless-supervisor-owner.json"),
+    config: path.join(paseoHome, "config.json"),
+    manifest: path.join(root, runtimeLayout.manifestRelativePath),
     plugin: path.join(repositoryRoot, "packages", "meetless-plugin"),
     captureHelper: packageResources?.captureHelper ??
       path.join(repositoryRoot, "native", "macos-capture", ".build", "release", "meetless-capture"),
-    recordingSocket: resolveRecordingSocket(path.join(root, "paseo-home")),
-    transcriptionSocket: path.join(root, "transcription.sock"),
-    transcriptionStaging: path.join(root, "meeting-store", "transcription-ranges"),
-    recordingExports: packagedManifest?.recordingExports ??
-      path.resolve(sourceEnvironment.MEETLESS_EXPORT_ROOT?.trim() || path.join(userHome, "Documents", "meetings")),
+    recordingSocket: resolveRecordingSocket(
+      path.join(root, runtimeLayout.recordingSocketRelativePath),
+      acceptedSupportRoot,
+    ),
+    transcriptionSocket: path.join(root, runtimeLayout.transcriptionSocketRelativePath),
+    transcriptionStaging: path.join(root, runtimeLayout.transcriptionStagingRelativePath),
+    recordingExports: packaged
+      ? acceptedRecordingExports
+      : path.resolve(requestedRecordingExports || acceptedRecordingExports),
   };
   assertIsolated(paths, listen, userHome);
   const inheritedEnvironment = copyEnvironmentWithoutUiTestControls(
@@ -273,8 +354,8 @@ export function resolveRuntimeConfig(input: {
     supervisorEntrypoint,
     paths,
     host: {
-      bundle: packagedManifest?.hostBundlePath ?? path.join(userHome, "Applications", "Meetless.app"),
-      identity: packagedManifest?.identityPath ?? path.join(userHome, "Library", "Application Support", "Meetless", "host-identity.json"),
+      bundle: MEETLESS_INSTALLATION_PATH,
+      identity: path.join(acceptedSupportRoot, installationContract.identityRelativePath),
     },
     companion: {
       relayEnabled: true,
@@ -345,9 +426,8 @@ function readPackagedRuntimeManifest(repositoryRoot: string): PackagedRuntimeMan
   if (!existsSync(markerPath)) return null;
   try {
     const manifest = PackagedRuntimeManifestSchema.parse(JSON.parse(readFileSync(markerPath, "utf8")));
-    const acceptedHost = path.resolve(homedir(), "Applications", "Meetless.app");
-    if (manifest.hostBundlePath !== acceptedHost) {
-      throw new Error(`Packaged host path ${manifest.hostBundlePath} is not the accepted ${acceptedHost}`);
+    if (manifest.hostBundlePath !== MEETLESS_INSTALLATION_PATH) {
+      throw new Error(`Packaged host path ${manifest.hostBundlePath} is not the accepted ${MEETLESS_INSTALLATION_PATH}`);
     }
     return manifest;
   } catch (error) {
@@ -358,10 +438,50 @@ function readPackagedRuntimeManifest(repositoryRoot: string): PackagedRuntimeMan
   }
 }
 
+function readSourceInstallationContract(repositoryRoot: string): InstallationContract {
+  const sourcePath = path.join(repositoryRoot, "scripts", "lib", "macos-package-contract.json");
+  return parseInstallationContract(sourcePath, "source");
+}
+
+function readPackagedInstallationContract(
+  packageRoot: string,
+  manifest: PackagedRuntimeManifest,
+): InstallationContract {
+  const contractPath = resolveRelativePackagePath(packageRoot, manifest.installationContract, "installation contract");
+  const contract = parseInstallationContract(contractPath, "packaged");
+  const digest = createHash("sha256").update(readFileSync(contractPath)).digest("hex");
+  if (digest !== manifest.installationContractSha256) {
+    throw new Error(
+      `Packaged installation contract digest ${digest} differs from the marker ${manifest.installationContractSha256}. ` +
+        "Authority: docs/decisions/0002-direct-notarized-macos-dmg.md. Next action: rebuild the package from one immutable contract.",
+    );
+  }
+  return contract;
+}
+
+function parseInstallationContract(contractPath: string, source: string): InstallationContract {
+  try {
+    return InstallationContractSchema.parse(JSON.parse(readFileSync(contractPath, "utf8")));
+  } catch (error) {
+    throw new Error(
+      `${source} Meetless installation contract is missing or invalid at ${contractPath}: ${describe(error)}. ` +
+        "Authority: docs/decisions/0002-direct-notarized-macos-dmg.md and docs/plans/active/v1-paseo-foundation.md. " +
+        "Next action: restore the owner-approved plain-data contract; do not use a repository or builder fallback for a packaged runtime.",
+    );
+  }
+}
+
 function resolvePackagedRuntimeResources(
   repositoryRoot: string,
   manifest: PackagedRuntimeManifest,
+  installationContract: InstallationContract,
 ): PackagedRuntimeResources {
+  if (manifest.listen !== installationContract.listen || manifest.rendererOrigin !== installationContract.rendererOrigin) {
+    throw new Error("Packaged marker listener/origin differs from the installation contract");
+  }
+  if (JSON.stringify(manifest.resources) !== JSON.stringify(installationContract.package.resources)) {
+    throw new Error("Packaged marker resources differ from the installation contract");
+  }
   const resources = Object.fromEntries(
     Object.entries(manifest.resources).map(([name, relativePath]) => {
       if (path.isAbsolute(relativePath)) {
@@ -382,6 +502,25 @@ function resolvePackagedRuntimeResources(
     assertPackagedRegularFile(resourcePath, name);
   }
   return { ...resources, paseoCommit: manifest.paseoCommit };
+}
+
+function resolveRelativePackagePath(packageRoot: string, relativePath: string, label: string): string {
+  if (!relativePath || path.isAbsolute(relativePath)) {
+    throw new Error(`Packaged ${label} must be relative to ${packageRoot}`);
+  }
+  const resolved = path.resolve(packageRoot, relativePath);
+  const relative = path.relative(packageRoot, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Packaged ${label} escapes the package root: ${relativePath}`);
+  }
+  return resolved;
+}
+
+function resolveUserHomePath(userHome: string, relativePath: string, label: string): string {
+  if (!relativePath || path.isAbsolute(relativePath) || relativePath.split("/").some((part) => part === ".." || part === "")) {
+    throw new Error(`Installation contract ${label} is not a secure user-home-relative path: ${relativePath}`);
+  }
+  return path.resolve(userHome, ...relativePath.split("/"));
 }
 
 function assertPackagedResourceResolution(candidate: string, packageRoot: string, label: string): void {
@@ -496,12 +635,17 @@ export function assertIsolated(paths: RuntimePaths, listen: string, userHome = h
   }
 }
 
-function resolveRecordingSocket(paseoHome: string): string {
-  const inHome = path.join(paseoHome, "recording-control.sock");
+function resolveRecordingSocket(recordingSocketPath: string, acceptedSupportRoot: string): string {
+  const inHome = path.resolve(recordingSocketPath);
   if (process.platform !== "darwin" || Buffer.byteLength(inHome) <= DARWIN_UNIX_SOCKET_PATH_BYTES) {
     return inHome;
   }
-  const identity = createHash("sha256").update(paseoHome).digest("hex").slice(0, 24);
+  if (path.resolve(path.dirname(path.dirname(inHome))) === path.resolve(acceptedSupportRoot)) {
+    throw new IsolationViolationError(
+      `Meetless recording socket path is too long for the per-user support root: ${inHome}`,
+    );
+  }
+  const identity = createHash("sha256").update(inHome).digest("hex").slice(0, 24);
   return `/private/tmp/meetless-recording-${identity}.sock`;
 }
 

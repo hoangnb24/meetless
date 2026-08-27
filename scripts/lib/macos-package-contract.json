@@ -1,0 +1,45 @@
+{
+  "schema": "MEETLESS_INSTALLATION_CONTRACT v1",
+  "bundleIdentifier": "com.meetless.app",
+  "installPath": "/Applications/Meetless.app",
+  "userSupportRelativePath": "Library/Application Support/Meetless",
+  "recordingExportsRelativePath": "Documents/meetings",
+  "identityRelativePath": "host-identity.json",
+  "runtime": {
+    "paseoHomeRelativePath": "paseo-home",
+    "electronUserDataRelativePath": "electron-user-data",
+    "meetingStoreRelativePath": "meeting-store",
+    "logsRelativePath": "logs",
+    "daemonLogRelativePath": "logs/daemon.log",
+    "manifestRelativePath": "runtime.json",
+    "recordingSocketRelativePath": "paseo-home/recording-control.sock",
+    "transcriptionSocketRelativePath": "transcription.sock",
+    "transcriptionStagingRelativePath": "meeting-store/transcription-ranges"
+  },
+  "listen": "127.0.0.1:16777",
+  "rendererOrigin": "http://127.0.0.1:18082",
+  "package": {
+    "rootRelativeToBundle": "Contents/Resources/meetless",
+    "markerFilename": "meetless-package.json",
+    "contractFilename": "installation-contract.json",
+    "hostConfigRelativeToBundle": "Contents/Resources/host-config.json",
+    "resources": {
+      "rendererRoot": "packages/meetless-app/dist",
+      "electronBinary": "runtime/electron/Electron.app/Contents/MacOS/Electron",
+      "nodeBinary": "runtime/node",
+      "captureHelper": "native/macos-capture/meetless-capture",
+      "ffmpeg": "runtime/media/bin/ffmpeg",
+      "ffprobe": "runtime/media/bin/ffprobe"
+    }
+  },
+  "host": {
+    "executableRelativeToBundle": "Contents/MacOS/MeetlessHost",
+    "configFilename": "host-config.json"
+  },
+  "dmg": {
+    "volumeName": "Meetless",
+    "appName": "Meetless.app",
+    "applicationsLinkName": "Applications",
+    "applicationsLinkTarget": "/Applications"
+  }
+}

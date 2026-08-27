@@ -89,6 +89,9 @@ try {
   ]);
   await cp(path.join(repositoryRoot, "native/macos-host/Info.plist"), path.join(contents, "Info.plist"));
   await writeFile(path.join(resources, "host-config.json"), `${JSON.stringify({
+    schema: "MEETLESS_MACOS_HOST_CONFIG v2",
+    mode: "development",
+    bundleIdentifier: "com.meetless.app",
     repositoryRoot,
     runtimeRoot: config.paths.root,
     listen: config.listen,

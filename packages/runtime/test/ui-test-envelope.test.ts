@@ -39,7 +39,7 @@ describe("controlled UI-test envelope", () => {
     expect(marker?.identity).toMatchObject({
       logicalDesktopId: "com.meetless.desktop",
       hostBundleIdentifier: "com.meetless.app",
-      hostBundlePath: "/Users/example/Applications/Meetless.app",
+      hostBundlePath: "/Applications/Meetless.app",
       hostCdHash: "a".repeat(40),
       transcriptionMode: "fake",
       accessibility: "forced-controlled-runtime",
@@ -231,9 +231,9 @@ function hostIdentity(): HostIdentity {
   return {
     version: 1,
     bundleIdentifier: "com.meetless.app",
-    bundlePath: "/Users/example/Applications/Meetless.app",
-    bundleRealPath: "/Users/example/Applications/Meetless.app",
-    executablePath: "/Users/example/Applications/Meetless.app/Contents/MacOS/MeetlessHost",
+    bundlePath: "/Applications/Meetless.app",
+    bundleRealPath: "/Applications/Meetless.app",
+    executablePath: "/Applications/Meetless.app/Contents/MacOS/MeetlessHost",
     designatedRequirement: "identifier \"com.meetless.app\"",
     cdHash: "a".repeat(40),
     binarySha256: "b".repeat(64),

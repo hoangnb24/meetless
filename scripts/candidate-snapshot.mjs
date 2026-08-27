@@ -10,7 +10,9 @@ export const PACKAGE_SOURCE_SNAPSHOT_COMMAND = "node scripts/candidate-snapshot.
 export const PACKAGE_SOURCE_DIGEST_DOMAIN = "MEETLESS_PACKAGE_SOURCE_SNAPSHOT_v1\0";
 export const PACKAGE_SOURCE_EXCLUDED_PATHS = Object.freeze([
   "test/evidence/m7/m7-f3-packaged-controlled-lifecycle.json",
+  "test/evidence/m7/m7-f6-real-no-timestamp-signing-validation.json",
 ]);
+const CANDIDATE_SNAPSHOT_AUTHORITY = "docs/plans/active/v1-paseo-foundation.md";
 
 const scope = [
   ".gitignore",
@@ -55,6 +57,41 @@ export function digestSnapshot({ mode = DEFAULT_SNAPSHOT_MODE, head, files, depe
   return hash.update(payload).digest("hex");
 }
 
+export function parsePorcelainStatus(raw) {
+  if (typeof raw !== "string") failMalformedStatus("status output is not text");
+  if (raw.length === 0) return [];
+  if (!raw.endsWith("\0")) failMalformedStatus("NUL-delimited output is not terminated by NUL");
+
+  const records = raw.slice(0, -1).split("\0");
+  const entries = [];
+  const currentPaths = new Set();
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (!record) failMalformedStatus(`record ${index + 1} is empty`);
+    if (record.length < 4 || record[2] !== " ") {
+      failMalformedStatus(`record ${index + 1} has no valid XY status separator`);
+    }
+    const status = record.slice(0, 2);
+    const path = record.slice(3);
+    if (!path) failMalformedStatus(`record ${index + 1} has an empty current path`);
+    if (currentPaths.has(path)) failMalformedStatus(`current path is repeated: ${path}`);
+
+    const entry = { status, path };
+    if (status.includes("R") || status.includes("C")) {
+      if (index + 1 >= records.length || !records[index + 1]) {
+        failMalformedStatus(`${status} record for ${path} has no historical path`);
+      }
+      const previousPath = records[index + 1];
+      if (previousPath === path) failMalformedStatus(`${status} record repeats current path as historical path: ${path}`);
+      entry.previousPath = previousPath;
+      index += 1;
+    }
+    currentPaths.add(path);
+    entries.push(entry);
+  }
+  return entries;
+}
+
 export function collectCandidateSnapshot(mode = DEFAULT_SNAPSHOT_MODE) {
   const raw = execFileSync(
     "git",
@@ -62,10 +99,7 @@ export function collectCandidateSnapshot(mode = DEFAULT_SNAPSHOT_MODE) {
     { encoding: "utf8" },
   );
   const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  const entries = raw
-    .split("\0")
-    .filter(Boolean)
-    .map((entry) => ({ status: entry.slice(0, 2), path: entry.slice(3) }))
+  const entries = parsePorcelainStatus(raw)
     .sort((left, right) => left.path.localeCompare(right.path));
   const allFiles = entries.map((entry) => {
     const stats = lstatSync(entry.path);
@@ -76,6 +110,7 @@ export function collectCandidateSnapshot(mode = DEFAULT_SNAPSHOT_MODE) {
     return {
       path: entry.path,
       status: entry.status,
+      ...(entry.previousPath ? { previousPath: entry.previousPath } : {}),
       mode: gitlink ? "160000" : (stats.mode & 0o777).toString(8).padStart(3, "0"),
       sha256: createHash("sha256").update(body).digest("hex"),
     };
@@ -129,6 +164,12 @@ export function collectCandidateSnapshot(mode = DEFAULT_SNAPSHOT_MODE) {
 function isGitlink(candidate) {
   return execFileSync("git", ["ls-files", "--stage", "--", candidate], { encoding: "utf8" })
     .startsWith("160000 ");
+}
+
+function failMalformedStatus(reason) {
+  throw new Error(
+    `candidate snapshot Git status record is malformed: ${reason}. Authority: ${CANDIDATE_SNAPSHOT_AUTHORITY}. Next action: rerun git status --porcelain=v1 -z and repair the rename/copy record before snapshotting.`,
+  );
 }
 
 const isMainModule = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;

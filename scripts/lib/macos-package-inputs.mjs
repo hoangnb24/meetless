@@ -204,13 +204,17 @@ function buildInputSpecs({ repositoryRoot, candidateSnapshot, mediaSources, prio
     {
       id: "package-assembly-scripts",
       kind: "package-build-script",
-      sourcePaths: ["scripts/package-macos.mjs", "scripts/build-native.mjs", "scripts/electron-bootstrap.mjs", "scripts/launch-macos-host.mjs", "scripts/stop-macos-host.mjs"],
-      artifactPathPrefixes: ["Contents/Resources/host-config.json", "Contents/Resources/meetless/meetless-package.json", "Contents/Resources/meetless/scripts/"],
+      sourcePaths: ["scripts/package-macos.mjs", "scripts/build-native.mjs", "scripts/electron-bootstrap.mjs", "scripts/launch-macos-host.mjs", "scripts/stop-macos-host.mjs", "scripts/lib/macos-package-contract.mjs", "scripts/lib/macos-package-contract.json"],
+      artifactPathPrefixes: ["Contents/Resources/host-config.json", "Contents/Resources/meetless/installation-contract.json", "Contents/Resources/meetless/meetless-package.json", "Contents/Resources/meetless/scripts/"],
     },
     {
       id: "paseo-source-bundle",
       kind: "paseo-source-bundle",
-      sourcePaths: [candidateSnapshot?.dependencyArtifacts?.paseo?.bundle?.path ?? "vendor/paseo-bundles"],
+      sourcePaths: [
+        candidateSnapshot?.dependencyArtifacts?.paseo?.bundle?.path ??
+          priorManifest?.inputs?.find((input) => input.id === "paseo-source-bundle")?.sourcePaths?.[0] ??
+          "vendor/paseo-bundles",
+      ],
       artifactPathPrefixes: ["Contents/Resources/meetless/vendor/paseo/"],
     },
     {

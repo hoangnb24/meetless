@@ -19,6 +19,76 @@ private func expectThrow(_ message: String, _ action: () throws -> Void) {
   } catch {}
 }
 
+private func testLaunchCoordinatorLifecycle() {
+  let fixtures: [(String, String, String, Bool)] = [
+    ("mounted", "/Volumes/Meetless/Meetless.app", "/Volumes/Meetless/Meetless.app", true),
+    ("alternate", "/Users/example/Desktop/Meetless.app", "/Users/example/Desktop/Meetless.app", true),
+    ("symlinked", "/Applications/Meetless.app", "/Volumes/Meetless/Meetless.app", true),
+    ("canonical", "/Applications/Meetless.app", "/Applications/Meetless.app", false),
+  ]
+  for (label, lexicalPath, resolvedPath, rejected) in fixtures {
+    var events: [String] = []
+    var guidanceMessage: String?
+    let coordinator = MeetlessLaunchCoordinator<String>(
+      locationCheck: {
+        events.append("location")
+        try MeetlessInstallLocation.validate(lexicalPath: lexicalPath, resolvedPath: resolvedPath)
+      },
+      processCheck: { events.append("process") },
+      guidance: { message in
+        events.append("guidance")
+        guidanceMessage = message
+      },
+      configurationCheck: {
+        events.append("configuration")
+        return "fixture-configuration"
+      },
+      resourceCheck: { configuration in
+        events.append("resources")
+        check(configuration == "fixture-configuration", "\(label) resource check must receive the loaded configuration")
+      },
+      identity: { configuration in
+        events.append("identity")
+        check(configuration == "fixture-configuration", "\(label) identity check must receive the loaded configuration")
+      },
+      configurationReady: { configuration in
+        events.append("configuration-ready")
+        check(configuration == "fixture-configuration", "\(label) configuration publication must receive the loaded configuration")
+      },
+      lock: { configuration in
+        events.append("lock")
+        check(configuration == "fixture-configuration", "\(label) lock must receive the loaded configuration")
+      },
+      capability: { configuration in
+        events.append("capability")
+        check(configuration == "fixture-configuration", "\(label) capability must receive the loaded configuration")
+      },
+      runtime: { configuration in
+        events.append("runtime")
+        check(configuration == "fixture-configuration", "\(label) runtime must receive the loaded configuration")
+      }
+    )
+
+    if rejected {
+      expectThrow("\(label) launch must stop at location guidance") { _ = try coordinator.run() }
+      check(events == ["location", "guidance"], "\(label) launch must have zero process, configuration, identity, lock, capability, or runtime effects")
+      check(guidanceMessage?.contains("/Applications/Meetless.app") == true, "\(label) launch guidance must name the exact install path")
+    } else {
+      do {
+        let configuration = try coordinator.run()
+        check(configuration == "fixture-configuration", "canonical launch must return its configuration")
+      } catch {
+        check(false, "canonical launch must complete the coordinator: \(error)")
+      }
+      check(
+        events == ["location", "process", "configuration", "resources", "identity", "configuration-ready", "lock", "capability", "runtime"],
+        "canonical launch must preserve the location, preflight, identity, lock, capability, and runtime order"
+      )
+      check(guidanceMessage == nil, "canonical launch must not show alternate-path guidance")
+    }
+  }
+}
+
 private func fixtureIdentity(_ data: Data) -> StagedRangeIdentity {
   StagedRangeIdentity(
     byteLength: Int64(data.count),
@@ -477,6 +547,7 @@ private func testProviderFailureNormalizationAndCancellation() {
 @main
 private struct TranscriptionCapabilityTests {
   static func main() {
+    testLaunchCoordinatorLifecycle()
     testPeerAncestry()
     testBoundedRequestLine()
     do { try testRealSocketStatusResponse() } catch {

@@ -78,7 +78,7 @@ describe("Meetless-owned production host invariant", () => {
     await expect(assertInstalledHostIdentity(config, {
       inspectInstalled: async () => drifted,
       readRecorded: async () => identity,
-    })).rejects.toThrow(/identity drifted.*--replace.*grant capture only to ~\/Applications\/Meetless\.app/s);
+    })).rejects.toThrow(/identity drifted.*--replace.*grant capture only to \/Applications\/Meetless\.app/s);
 
     const exactHost = processIdentity(identity, {
       pid: 100, ppid: 1, executablePath: identity.executablePath, arguments: [identity.executablePath],

@@ -23,32 +23,36 @@ import {
   createSigningMetadata,
   parseSigningArguments,
   resolveSigningInputs,
+  validateApprovedEntitlementMachOEntries,
 } from "./lib/macos-package-signing.mjs";
 import {
-  MACOS_PACKAGE_IDENTITY_PATH,
-  MACOS_PACKAGE_RUNTIME_ROOT,
   MACOS_PACKAGE_SCHEMA,
-  acceptedMacOSPackagePaths,
+  MACOS_PACKAGE_INSTALL_PATH,
+  installationContractBytes,
+  packagedHostConfiguration,
+  packagedMarker,
 } from "./lib/macos-package-contract.mjs";
+import {
+  parseMacOSProofRootArguments,
+  resolveMacOSDmgPaths,
+} from "./lib/macos-dmg-contract.mjs";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const releaseRoot = path.join(repositoryRoot, "release", "macos");
+const { proofRoot, remainingArguments } = parseMacOSProofRootArguments(process.argv.slice(2));
+const packagePaths = resolveMacOSDmgPaths(repositoryRoot, { proofRoot });
+const releaseRoot = packagePaths.releaseRoot;
 const bundlePath = path.join(releaseRoot, "Meetless.app");
 const contentsPath = path.join(bundlePath, "Contents");
 const packageRoot = path.join(contentsPath, "Resources", "meetless");
 const manifestPath = path.join(releaseRoot, "composition-manifest.json");
 const pinnedPaseoCommit = "c81cb84735043c281a5a2d23d456d3708ce5d94e";
-const packagePaths = acceptedMacOSPackagePaths();
-const canonicalBundlePath = packagePaths.canonicalBundlePath;
-const canonicalPackageRoot = path.join(canonicalBundlePath, "Contents", "Resources", "meetless");
-const runtimeRoot = MACOS_PACKAGE_RUNTIME_ROOT;
-const recordingExports = path.join(runtimeRoot, "exports");
-const identityPath = MACOS_PACKAGE_IDENTITY_PATH;
-const packageListen = "127.0.0.1:16777";
-const packageRendererOrigin = "http://127.0.0.1:18082";
+const canonicalBundlePath = MACOS_PACKAGE_INSTALL_PATH;
 
-const signingArguments = parseSigningArguments(process.argv.slice(2), { requireMode: true });
+const signingArguments = parseSigningArguments(remainingArguments, { requireMode: true });
+if (signingArguments.signingMode === "local-ad-hoc" && !proofRoot) {
+  throw new Error("local/ad-hoc package proof requires --proof-root outside repository release/macos; refusing to mutate release/macos");
+}
 
 const localPackages = [
   ["@meetless/runtime", "packages/runtime", ["dist"], []],
@@ -76,6 +80,7 @@ async function main(rawSigningOptions) {
     signingIdentity: rawSigningOptions.signingIdentity,
     entitlementsPath: rawSigningOptions.entitlementsPath,
     expectedTeamId: rawSigningOptions.expectedTeamId,
+    repositoryRoot,
   });
   const paseoCommit = await gitPaseoCommit();
   if (paseoCommit !== pinnedPaseoCommit) {
@@ -94,7 +99,7 @@ async function main(rawSigningOptions) {
   await createPackageDependencies();
   await createNotices(mediaSources);
   await normalizePackageMachOLoadPaths();
-  const finalMachOEntries = await enumerateFinalMachOEntries();
+  const finalMachOEntries = await enumerateFinalMachOEntries(signingInputs.entitlementPolicy);
   const signingOrder = buildSigningOrder(finalMachOEntries);
   await signMachOClosure(signingInputs, signingOrder);
   const packageInputCollection = await collectMacOSPackageInputs({
@@ -115,6 +120,7 @@ async function main(rawSigningOptions) {
   const signatureEvidence = await collectMacOSSignatureEvidence({
     bundlePath,
     machoPaths: signingOrder.nestedMachO,
+    machoEntries: finalMachOEntries,
     outerPath: signingOrder.outer,
     verify: true,
     requireCertificateEvidence: signingInputs.mode === "release",
@@ -127,8 +133,7 @@ async function main(rawSigningOptions) {
     certificateSha1: signingInputs.certificateSha1,
     expectedTeamId: signingInputs.expectedTeamId,
     resolvedTeamId: signingInputs.resolvedTeamId,
-    entitlementFileSha256: signingInputs.entitlementFileSha256,
-    entitlementOwnerCanonicalSha256: signingInputs.entitlementOwnerCanonicalSha256,
+    entitlementPolicy: signingInputs.entitlementPolicy,
     order: signatureEvidence.order,
     outer: signatureEvidence.outer,
     nestedMachO: signatureEvidence.nestedMachO,
@@ -140,8 +145,8 @@ async function main(rawSigningOptions) {
     repositoryRoot,
     signingMode: signingInputs.mode,
     signingIdentity: signingInputs.requestedIdentity,
-    entitlementsPath: signingInputs.entitlementsPath,
-      expectedTeamId: signingInputs.expectedTeamId,
+    expectedTeamId: signingInputs.expectedTeamId,
+    disposableProof: Boolean(proofRoot),
   });
   process.stdout.write(`${JSON.stringify({
     status: "candidate",
@@ -155,8 +160,8 @@ async function main(rawSigningOptions) {
     localOnly: signing.localOnly,
     releaseAcceptance: signing.distribution.releaseAcceptance,
     notarization: signing.distribution.notarization,
+    proofRoot,
     canonicalBundlePath,
-    runtimeRoot,
   }, null, 2)}\n`);
 }
 
@@ -206,17 +211,7 @@ async function createHostBundle() {
   await cp(path.join(repositoryRoot, "native/macos-host/Info.plist"), path.join(contentsPath, "Info.plist"));
   await writeFile(
     path.join(contentsPath, "Resources", "host-config.json"),
-    `${JSON.stringify({
-      repositoryRoot: canonicalPackageRoot,
-      runtimeRoot,
-      listen: packageListen,
-      rendererOrigin: packageRendererOrigin,
-      transcriptionSocket: path.join(runtimeRoot, "transcription.sock"),
-      transcriptionStaging: path.join(runtimeRoot, "meeting-store", "transcription-ranges"),
-      nodePath: path.join(canonicalPackageRoot, "runtime", "node"),
-      runtimeCliPath: path.join(canonicalPackageRoot, "packages", "runtime", "dist", "cli.js"),
-      identityPath,
-    }, null, 2)}\n`,
+    `${JSON.stringify(packagedHostConfiguration(), null, 2)}\n`,
     { mode: 0o644 },
   );
   await run("xcrun", [
@@ -244,6 +239,11 @@ async function createRuntimeTree(paseoCommit) {
   await copyFileIfPresent(
     "native/macos-capture/.build/release/meetless-capture",
     packagedCaptureHelper,
+  );
+  await writeFile(
+    path.join(packageRoot, "installation-contract.json"),
+    installationContractBytes(),
+    { mode: 0o644 },
   );
   await chmod(packagedCaptureHelper, 0o755);
   await copyFilteredTree(
@@ -278,25 +278,7 @@ async function createRuntimeTree(paseoCommit) {
     path.join(packageRoot, "notices", "expo-two-way-audio-LICENSE"),
   );
 
-  const marker = {
-    schema: MACOS_PACKAGE_SCHEMA,
-    target: "macos-arm64",
-    bundleIdentifier: "com.meetless.app",
-    paseoCommit,
-    rendererOrigin: packageRendererOrigin,
-    runtimeRoot,
-    recordingExports,
-    identityPath,
-    hostBundlePath: canonicalBundlePath,
-    resources: {
-      rendererRoot: "packages/meetless-app/dist",
-      electronBinary: "runtime/electron/Electron.app/Contents/MacOS/Electron",
-      nodeBinary: "runtime/node",
-      captureHelper: "native/macos-capture/meetless-capture",
-      ffmpeg: "runtime/media/bin/ffmpeg",
-      ffprobe: "runtime/media/bin/ffprobe",
-    },
-  };
+  const marker = packagedMarker({ paseoCommit });
   await writeFile(path.join(packageRoot, "meetless-package.json"), `${JSON.stringify(marker, null, 2)}\n`, { mode: 0o644 });
 }
 
@@ -501,7 +483,6 @@ async function signBundle(signingInputs) {
     identity: signingInputs.identity,
     target: bundlePath,
     identifier: "com.meetless.app",
-    entitlementsPath: signingInputs.entitlementsPath,
     outer: true,
   }));
   await run("codesign", ["--verify", "--deep", "--strict", bundlePath]);
@@ -516,16 +497,18 @@ async function signMachOClosure(signingInputs, signingOrder) {
         identity: signingInputs.identity,
         target: path.join(bundlePath, relativePath),
         identifier: machOSignatureIdentifier(relativePath),
+        entitlementsPath: signingInputs.entitlementPolicy?.entries.find((entry) => entry.path === relativePath)?.absolutePath ?? null,
         outer: false,
       }),
     ]);
   }
 }
 
-async function enumerateFinalMachOEntries() {
+async function enumerateFinalMachOEntries(entitlementPolicy) {
   const entries = await enumeratePackageEntries(bundlePath);
   const machos = await inspectPackageMachOEntries(bundlePath, entries);
   if (machos.length === 0) throw new Error("Final package contains no Mach-O files to sign");
+  validateApprovedEntitlementMachOEntries({ entries, machoEntries: machos, policy: entitlementPolicy });
   return machos;
 }
 
@@ -607,6 +590,7 @@ async function createCompositionManifest(paseoCommit, candidateSnapshot, license
     "Contents/Info.plist",
     "Contents/MacOS/MeetlessHost",
     "Contents/Resources/host-config.json",
+    "Contents/Resources/meetless/installation-contract.json",
     "Contents/Resources/meetless/meetless-package.json",
     "Contents/Resources/meetless/packages/meetless-app/dist/index.html",
     "Contents/Resources/meetless/packages/runtime/dist/cli.js",
@@ -656,6 +640,9 @@ async function createCompositionManifest(paseoCommit, candidateSnapshot, license
       size: rendererEntry.size,
     },
     packageInputs: packageInputManifest,
+    proof: proofRoot
+      ? { mode: "local-ad-hoc-disposable", rootRelativePath: "release/macos" }
+      : { mode: "repository-release", rootRelativePath: "release/macos" },
     signing,
     licenseInventory: createLicenseInventoryManifestBinding(entries, licenseInventory),
     notices: entries.filter((entry) => entry.path.includes("/notices/")).map((entry) => entry.path),

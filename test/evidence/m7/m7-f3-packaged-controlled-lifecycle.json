@@ -2,24 +2,24 @@
   "schema": "MEETLESS_M7_F3_PACKAGED_CONTROLLED_LIFECYCLE v1",
   "frontierId": "M7-F3-RUNTIME-MEDIA-CLOSURE",
   "status": "passed",
-  "runId": "m7-f3-1787586720021-18092ffb",
+  "runId": "m7-f3-1787632986883-9f988837",
   "candidate": {
     "sourceSnapshotMode": "package-source",
     "sourceSnapshotExcludedPaths": [
       "test/evidence/m7/m7-f3-packaged-controlled-lifecycle.json"
     ],
-    "sourceSnapshotDigest": "d2752eff76d3306ac006d34670ebf84c6df95bb8be641906917376df2524a077",
-    "sourceSnapshotHead": "bb678fa59674aa0292f56ada3beb57290faaf540",
-    "packageInputDigest": "ab8088c6bf184533738d6e306744dd155766ebee6b93f5af17fc55881171b8b3",
+    "sourceSnapshotDigest": "0e185083790cbff9c8ea8f9dd6cb3c3fb6c7d6b97e53c85c8064f1e9e9d40bad",
+    "sourceSnapshotHead": "af5f1817191ba5fd634c750e9345de7d575ba704",
+    "packageInputDigest": "d1e79c34be7b82390556d2c9bf14bd961a42162b75abe2bcb6d2502aa36b2e74",
     "artifactInputDigest": "81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1",
-    "artifactDigest": "c73f44c8fc9e0ceb07ce230a248d92c8c2c1137f4d8be525625d0a7866d9d40e",
+    "artifactDigest": "9110e6d0d65646e6c916250e855da54609ecb0e4baf58b92b1fd4e728f6cb3cc",
     "entryCount": 13774,
     "machoCount": 46,
     "paseoCommit": "c81cb84735043c281a5a2d23d456d3708ce5d94e"
   },
   "acceptedHost": {
     "bundleIdentifier": "com.meetless.app",
-    "cdHash": "cd3e2b88fd3d19a440235279accd9ff49640cd27",
+    "cdHash": "46add6d0e74bb244435e2a65e770b896de3591e6",
     "launchRoute": "LaunchServices open -g -a exact com.meetless.app bundle",
     "canonicalBundleRestored": true,
     "identityRestoredByteForByte": true
@@ -35,38 +35,38 @@
   },
   "lease": {
     "parent": "/private/tmp/meetless-package-proof-exports",
-    "proofSessionId": "m7-f3-1787586720021-18092ffb",
-    "root": "/private/tmp/meetless-package-proof-exports/m7-f3-1787586720021-18092ffb",
+    "proofSessionId": "m7-f3-1787632986883-9f988837",
+    "root": "/private/tmp/meetless-package-proof-exports/m7-f3-1787632986883-9f988837",
     "generation1": {
       "restartGeneration": 1,
-      "leaseId": "6fd0bdff-40cb-4e86-9b6e-5a9c10d9cb6b",
-      "leaseSha256": "7303c48a3b22e5694e600995158647183fe59562addc05fdfcc3276f67373e9f",
+      "leaseId": "b5944745-c99b-4535-a6f1-8d35902aaa02",
+      "leaseSha256": "aa97a3b26d88a4da277b4880935d0a2dc20d41bf5914349bf061f7644c4647d0",
       "leasePath": "meetless-export-lease.json",
-      "expiresAt": "2026-08-24T16:07:46.819Z"
+      "expiresAt": "2026-08-25T04:59:03.981Z"
     },
     "generation2": {
       "restartGeneration": 2,
-      "leaseId": "9e33c0f5-2004-4979-9ca2-cd7142a6dba4",
-      "leaseSha256": "642f7998b01f17373f6d1a8eb4565ac0082e56f9f89620cdd8f796ccce16f7d7",
+      "leaseId": "e5865fa1-949d-41c6-8375-b6f091c3cbd9",
+      "leaseSha256": "8ad6084eb941efbdb992a4d175cc584978074167779bc3426733ca275eb45ff9",
       "leasePath": "meetless-export-lease.json",
-      "expiresAt": "2026-08-24T16:08:20.986Z"
+      "expiresAt": "2026-08-25T04:59:36.985Z"
     },
     "cleanupGeneration": {
       "restartGeneration": 3,
-      "leaseId": "32b142f5-52c9-43d6-8fbd-4b5a1b290344",
-      "leaseSha256": "3f75dffe9187eaaafba0e628af8768e8ff5d4d286a1e2b6a776d02c8fc8e1343",
+      "leaseId": "00f3efae-d33e-48ce-9f38-c4594e32f292",
+      "leaseSha256": "2abb59d98fa598de5cc7b03b9b1481dd0f487f139e2955af7715e62f8d0e04ff",
       "leasePath": "meetless-export-lease.json",
-      "expiresAt": "2026-08-24T15:53:38.022Z"
+      "expiresAt": "2026-08-25T04:44:53.653Z"
     },
     "rootRemovedAfterExpiredOwnershipCheck": true
   },
   "generations": {
     "generation1": {
       "generation": 1,
-      "runId": "m7-f3-1787586720021-18092ffb-g1",
-      "runtimeInstanceId": "867d5969-c03f-4693-8e59-ab47e50c9e20",
-      "pluginPid": 10658,
-      "exportRoot": "/private/tmp/meetless-package-proof-exports/m7-f3-1787586720021-18092ffb",
+      "runId": "m7-f3-1787632986883-9f988837-g1",
+      "runtimeInstanceId": "33ab6dc5-52c0-4b6f-9863-939cb288fe63",
+      "pluginPid": 85710,
+      "exportRoot": "/private/tmp/meetless-package-proof-exports/m7-f3-1787632986883-9f988837",
       "captureMode": "fixture",
       "renderer": {
         "origin": "http://127.0.0.1:18082",
@@ -74,15 +74,15 @@
         "sha256": "abbb5dca1a703261130d5d23902a447d63168882491f7725ef46ee3510a2fcc0",
         "entry": "Contents/Resources/meetless/packages/meetless-app/dist/index.html"
       },
-      "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
-      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1"
+      "meetingId": "0baa7c17-6a91-4662-a344-df8ad1a32f55",
+      "recordingId": "9aafd9e4-5a9e-45aa-840f-1c389bbcb224"
     },
     "generation2": {
       "generation": 2,
-      "runId": "m7-f3-1787586720021-18092ffb-g2",
-      "runtimeInstanceId": "ccc867a5-71df-41d4-84bc-0f370b7b5fe7",
-      "pluginPid": 13258,
-      "exportRoot": "/private/tmp/meetless-package-proof-exports/m7-f3-1787586720021-18092ffb",
+      "runId": "m7-f3-1787632986883-9f988837-g2",
+      "runtimeInstanceId": "a52f54ce-b52b-4414-a64c-7ddad815ea12",
+      "pluginPid": 88637,
+      "exportRoot": "/private/tmp/meetless-package-proof-exports/m7-f3-1787632986883-9f988837",
       "captureMode": "fixture",
       "renderer": {
         "origin": "http://127.0.0.1:18082",
@@ -90,34 +90,34 @@
         "sha256": "abbb5dca1a703261130d5d23902a447d63168882491f7725ef46ee3510a2fcc0",
         "entry": "Contents/Resources/meetless/packages/meetless-app/dist/index.html"
       },
-      "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
-      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1"
+      "meetingId": "0baa7c17-6a91-4662-a344-df8ad1a32f55",
+      "recordingId": "9aafd9e4-5a9e-45aa-840f-1c389bbcb224"
     },
     "freshProcessIdentity": true
   },
   "topology": [
     {
       "generation": 1,
-      "hostPid": 9919,
-      "desktopPid": 9939,
-      "electronPid": 11470,
+      "hostPid": 84998,
+      "desktopPid": 85017,
+      "electronPid": 86551,
       "ancestry": [
-        9919,
-        9939,
-        11470
+        84998,
+        85017,
+        86551
       ],
       "nodePath": "/Users/tubakhuym/Applications/Meetless.app/Contents/Resources/meetless/runtime/node",
       "electronExecutable": "/Users/tubakhuym/Applications/Meetless.app/Contents/Resources/meetless/runtime/electron/Electron.app/Contents/MacOS/Electron"
     },
     {
       "generation": 2,
-      "hostPid": 12515,
-      "desktopPid": 12534,
-      "electronPid": 14079,
+      "hostPid": 87905,
+      "desktopPid": 87924,
+      "electronPid": 89353,
       "ancestry": [
-        12515,
-        12534,
-        14079
+        87905,
+        87924,
+        89353
       ],
       "nodePath": "/Users/tubakhuym/Applications/Meetless.app/Contents/Resources/meetless/runtime/node",
       "electronExecutable": "/Users/tubakhuym/Applications/Meetless.app/Contents/Resources/meetless/runtime/electron/Electron.app/Contents/MacOS/Electron"
@@ -137,8 +137,8 @@
     },
     "generation2": {
       "reopenedMeeting": true,
-      "sameMeetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
-      "sameRecordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+      "sameMeetingId": "0baa7c17-6a91-4662-a344-df8ad1a32f55",
+      "sameRecordingId": "9aafd9e4-5a9e-45aa-840f-1c389bbcb224",
       "sameMp3": true,
       "transcriptPreserved": true,
       "chatStatePreserved": true,
@@ -148,19 +148,19 @@
   },
   "correlations": {
     "sourceLabelEvidence": {
-      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+      "recordingId": "9aafd9e4-5a9e-45aa-840f-1c389bbcb224",
       "count": 2,
       "microphoneCount": 1,
       "systemCount": 1,
       "identities": [
         {
-          "storageKey": "sessions/d83fd01b-39e7-498f-a560-625385fa3ef1/chunk--microphone--000000--000000000000--000000016000--16000--1.wav",
+          "storageKey": "sessions/9aafd9e4-5a9e-45aa-840f-1c389bbcb224/chunk--microphone--000000--000000000000--000000016000--16000--1.wav",
           "source": "microphone",
           "byteLength": 32044,
           "sha256": "9e2c610d9b40fbfe83c6de65590d815834bfd2669e493c58ec526874222ec545"
         },
         {
-          "storageKey": "sessions/d83fd01b-39e7-498f-a560-625385fa3ef1/chunk--system--000000--000000000000--000000016000--16000--1.wav",
+          "storageKey": "sessions/9aafd9e4-5a9e-45aa-840f-1c389bbcb224/chunk--system--000000--000000000000--000000016000--16000--1.wav",
           "source": "system",
           "byteLength": 32044,
           "sha256": "b23dfcffe646eba0b3a0909a2d3ab1710855429694b8bcc0cf66299eb99514ec"
@@ -168,30 +168,30 @@
       ]
     },
     "mp3": {
-      "path": "22-24-08-26-2.mp3",
+      "path": "11-25-08-26-2.mp3",
       "byteLength": 6057,
       "sha256": "739bdeea34e5cec0fcbe66901ba3115abe537e8ccb30d21f8620ae54190ee210"
     },
     "collision": {
-      "path": "22-24-08-26.mp3",
-      "plannedPublishedPath": "22-24-08-26-2.mp3",
+      "path": "11-25-08-26.mp3",
+      "plannedPublishedPath": "11-25-08-26-2.mp3",
       "byteLength": 201,
-      "sha256": "6fc272c3290b6b1c018f5ad1cb3de273057fbfbb46af064b8be2c8c5ed9ece08",
+      "sha256": "15d57f03ef50efb2b7368b97c17425d0c366edbc752505696e0660a78b117985",
       "distinctOutputName": true
     },
     "transcript": {
       "status": "ready",
-      "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
-      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+      "meetingId": "0baa7c17-6a91-4662-a344-df8ad1a32f55",
+      "recordingId": "9aafd9e4-5a9e-45aa-840f-1c389bbcb224",
       "segmentCount": 1,
       "segments": [
         {
-          "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
-          "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+          "meetingId": "0baa7c17-6a91-4662-a344-df8ad1a32f55",
+          "recordingId": "9aafd9e4-5a9e-45aa-840f-1c389bbcb224",
           "ordinal": 0,
           "startMs": 0,
           "endMs": 1100,
-          "segmentId": "segment-9e03c03a5b731cebf3b11ad9e20ecc8d",
+          "segmentId": "segment-7870de9ff98701b4da9f0ada0a2c90a4",
           "segmentDigest": "8ecc5b3da864cf538d49ccc6661948e37f1de1ddc193ad2688873000b2c386f6",
           "segmentCharCount": 41,
           "ordered": true
@@ -204,9 +204,9 @@
       }
     },
     "citation": {
-      "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
-      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
-      "segmentId": "segment-9e03c03a5b731cebf3b11ad9e20ecc8d",
+      "meetingId": "0baa7c17-6a91-4662-a344-df8ad1a32f55",
+      "recordingId": "9aafd9e4-5a9e-45aa-840f-1c389bbcb224",
+      "segmentId": "segment-7870de9ff98701b4da9f0ada0a2c90a4",
       "startMs": 0,
       "endMs": 1100,
       "audio": {
@@ -220,9 +220,9 @@
       "pauseObserved": true,
       "maximumCurrentTime": 1.1,
       "citationIdentity": {
-        "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
-        "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
-        "segmentId": "segment-9e03c03a5b731cebf3b11ad9e20ecc8d",
+        "meetingId": "0baa7c17-6a91-4662-a344-df8ad1a32f55",
+        "recordingId": "9aafd9e4-5a9e-45aa-840f-1c389bbcb224",
+        "segmentId": "segment-7870de9ff98701b4da9f0ada0a2c90a4",
         "startMs": 0,
         "endMs": 1100
       },
@@ -237,9 +237,9 @@
       "pauseObserved": true,
       "maximumCurrentTime": 1.1,
       "citationIdentity": {
-        "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
-        "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
-        "segmentId": "segment-9e03c03a5b731cebf3b11ad9e20ecc8d",
+        "meetingId": "0baa7c17-6a91-4662-a344-df8ad1a32f55",
+        "recordingId": "9aafd9e4-5a9e-45aa-840f-1c389bbcb224",
+        "segmentId": "segment-7870de9ff98701b4da9f0ada0a2c90a4",
         "startMs": 0,
         "endMs": 1100
       },
@@ -250,17 +250,17 @@
     },
     "transcriptGeneration2": {
       "status": "ready",
-      "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
-      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+      "meetingId": "0baa7c17-6a91-4662-a344-df8ad1a32f55",
+      "recordingId": "9aafd9e4-5a9e-45aa-840f-1c389bbcb224",
       "segmentCount": 1,
       "segments": [
         {
-          "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
-          "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
+          "meetingId": "0baa7c17-6a91-4662-a344-df8ad1a32f55",
+          "recordingId": "9aafd9e4-5a9e-45aa-840f-1c389bbcb224",
           "ordinal": 0,
           "startMs": 0,
           "endMs": 1100,
-          "segmentId": "segment-9e03c03a5b731cebf3b11ad9e20ecc8d",
+          "segmentId": "segment-7870de9ff98701b4da9f0ada0a2c90a4",
           "segmentDigest": "8ecc5b3da864cf538d49ccc6661948e37f1de1ddc193ad2688873000b2c386f6",
           "segmentCharCount": 41,
           "ordered": true
@@ -273,9 +273,9 @@
       }
     },
     "citationGeneration2": {
-      "meetingId": "fb383661-7c45-44a0-a59e-4bad42764b6e",
-      "recordingId": "d83fd01b-39e7-498f-a560-625385fa3ef1",
-      "segmentId": "segment-9e03c03a5b731cebf3b11ad9e20ecc8d",
+      "meetingId": "0baa7c17-6a91-4662-a344-df8ad1a32f55",
+      "recordingId": "9aafd9e4-5a9e-45aa-840f-1c389bbcb224",
+      "segmentId": "segment-7870de9ff98701b4da9f0ada0a2c90a4",
       "startMs": 0,
       "endMs": 1100,
       "audio": {
@@ -325,20 +325,20 @@
     "generation1Store": {
       "path": "meeting-store/meetings.json",
       "byteLength": 4246,
-      "sha256": "5956e81c1763ac16d40ce8ec14702a06886fbec6a79685fb9ac702a2b5440c9a"
+      "sha256": "3735aa18f8c16623c7b35f7ab85fa6f2191368e4b60fbd6b4b308703ce778040"
     },
     "generation2Store": {
       "path": "meeting-store/meetings.json",
       "byteLength": 4246,
-      "sha256": "5956e81c1763ac16d40ce8ec14702a06886fbec6a79685fb9ac702a2b5440c9a"
+      "sha256": "3735aa18f8c16623c7b35f7ab85fa6f2191368e4b60fbd6b4b308703ce778040"
     },
     "externalMp3AfterGeneration1Stop": {
-      "path": "22-24-08-26-2.mp3",
+      "path": "11-25-08-26-2.mp3",
       "byteLength": 6057,
       "sha256": "739bdeea34e5cec0fcbe66901ba3115abe537e8ccb30d21f8620ae54190ee210"
     },
     "externalMp3AfterGeneration2Stop": {
-      "path": "22-24-08-26-2.mp3",
+      "path": "11-25-08-26-2.mp3",
       "byteLength": 6057,
       "sha256": "739bdeea34e5cec0fcbe66901ba3115abe537e8ccb30d21f8620ae54190ee210"
     }

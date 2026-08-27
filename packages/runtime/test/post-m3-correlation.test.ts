@@ -76,7 +76,7 @@ describe("post-M3 correlation validator", () => {
 function authority(): PostM3CorrelationAuthority {
   return {
     hostBundleIdentifier: "com.meetless.app",
-    hostBundlePath: "/Users/example/Applications/Meetless.app",
+    hostBundlePath: "/Applications/Meetless.app",
     hostCdHash: "a".repeat(40),
     runtimeRoot: "/tmp/runtime",
     listen: "127.0.0.1:6777",

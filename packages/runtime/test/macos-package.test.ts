@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -38,6 +39,7 @@ import {
   PACKAGE_SOURCE_MODE,
   PACKAGE_SOURCE_SNAPSHOT_COMMAND,
   digestSnapshot,
+  parsePorcelainStatus,
   snapshotFilesForMode,
 } from "../../../scripts/candidate-snapshot.mjs";
 
@@ -260,20 +262,35 @@ describe("macOS package composition manifest", () => {
     );
   });
 
-  it("domain-separates package-source identity and excludes only the published M7 evidence", () => {
+  it("domain-separates package-source identity and excludes only the two published M7 evidence files", () => {
     const head = "b".repeat(40);
     const dependencyArtifacts = { paseo: { expectedCommit: "c".repeat(40) } };
-    const evidencePath = PACKAGE_SOURCE_EXCLUDED_PATHS[0];
+    expect(PACKAGE_SOURCE_EXCLUDED_PATHS).toEqual([
+      "test/evidence/m7/m7-f3-packaged-controlled-lifecycle.json",
+      "test/evidence/m7/m7-f6-real-no-timestamp-signing-validation.json",
+    ]);
+    const [f3EvidencePath, f6EvidencePath] = PACKAGE_SOURCE_EXCLUDED_PATHS;
     const otherEvidencePath = "test/evidence/m7/other-controlled-proof.json";
     const files = [
-      { path: evidencePath, status: "??", mode: "644", sha256: "a".repeat(64) },
-      { path: otherEvidencePath, status: "??", mode: "644", sha256: "b".repeat(64) },
-      { path: "packages/runtime/src/config.ts", status: " M", mode: "644", sha256: "c".repeat(64) },
+      { path: f3EvidencePath, status: "??", mode: "644", sha256: "a".repeat(64) },
+      { path: f6EvidencePath, status: "??", mode: "644", sha256: "b".repeat(64) },
+      { path: otherEvidencePath, status: "??", mode: "644", sha256: "c".repeat(64) },
+      { path: "packages/runtime/src/config.ts", status: " M", mode: "644", sha256: "d".repeat(64) },
     ];
-    const evidenceEdited = files.map((file) => file.path === evidencePath ? { ...file, sha256: "d".repeat(64) } : file);
     const packageSourceDigest = digestSnapshot({ mode: PACKAGE_SOURCE_MODE, head, files, dependencyArtifacts });
-    expect(digestSnapshot({ mode: PACKAGE_SOURCE_MODE, head, files: evidenceEdited, dependencyArtifacts })).toBe(packageSourceDigest);
-    expect(digestSnapshot({ mode: "default", head, files: evidenceEdited, dependencyArtifacts })).not.toBe(
+    const packageInputDigest = digestJson({ sourceSnapshotDigest: packageSourceDigest, artifactInputDigest: "e".repeat(64) });
+    const artifactDigest = digestJson({ packageInputDigest, artifactInputDigest: "e".repeat(64) });
+    const f3EvidenceEdited = files.map((file) => file.path === f3EvidencePath ? { ...file, sha256: "e".repeat(64) } : file);
+    const f6EvidenceAdded = files.map((file) => file.path === f6EvidencePath ? { ...file, sha256: "f".repeat(64) } : file);
+    expect(digestSnapshot({ mode: PACKAGE_SOURCE_MODE, head, files: f3EvidenceEdited, dependencyArtifacts })).toBe(packageSourceDigest);
+    expect(digestSnapshot({ mode: PACKAGE_SOURCE_MODE, head, files: f6EvidenceAdded, dependencyArtifacts })).toBe(packageSourceDigest);
+    expect(digestSnapshot({ mode: PACKAGE_SOURCE_MODE, head, files, dependencyArtifacts })).toBe(
+      digestSnapshot({ mode: PACKAGE_SOURCE_MODE, head, files, dependencyArtifacts }),
+    );
+    expect(digestSnapshot({ mode: "default", head, files: f3EvidenceEdited, dependencyArtifacts })).not.toBe(
+      digestSnapshot({ mode: "default", head, files, dependencyArtifacts }),
+    );
+    expect(digestSnapshot({ mode: "default", head, files: f6EvidenceAdded, dependencyArtifacts })).not.toBe(
       digestSnapshot({ mode: "default", head, files, dependencyArtifacts }),
     );
     expect(digestSnapshot({ mode: PACKAGE_SOURCE_MODE, head, files, dependencyArtifacts })).not.toBe(
@@ -282,8 +299,70 @@ describe("macOS package composition manifest", () => {
     expect(digestSnapshot({ mode: PACKAGE_SOURCE_MODE, head, files: files.map((file) => file.path === otherEvidencePath ? { ...file, sha256: "e".repeat(64) } : file), dependencyArtifacts })).not.toBe(packageSourceDigest);
     expect(digestSnapshot({ mode: PACKAGE_SOURCE_MODE, head, files: files.map((file) => file.path === "packages/runtime/src/config.ts" ? { ...file, sha256: "f".repeat(64) } : file), dependencyArtifacts })).not.toBe(packageSourceDigest);
     expect(snapshotFilesForMode(files, "default")).toEqual(files);
-    expect(snapshotFilesForMode(files, PACKAGE_SOURCE_MODE)).toEqual(files.filter((file) => file.path !== evidencePath));
+    expect(snapshotFilesForMode(files, PACKAGE_SOURCE_MODE)).toEqual(files.filter((file) => !PACKAGE_SOURCE_EXCLUDED_PATHS.includes(file.path)));
+    expect(snapshotFilesForMode(files, "default").map((file) => file.path)).toEqual(expect.arrayContaining([f3EvidencePath, f6EvidencePath]));
+    const f3PackageInputDigest = digestJson({ sourceSnapshotDigest: digestSnapshot({ mode: PACKAGE_SOURCE_MODE, head, files: f3EvidenceEdited, dependencyArtifacts }), artifactInputDigest: "e".repeat(64) });
+    const f6PackageInputDigest = digestJson({ sourceSnapshotDigest: digestSnapshot({ mode: PACKAGE_SOURCE_MODE, head, files: f6EvidenceAdded, dependencyArtifacts }), artifactInputDigest: "e".repeat(64) });
+    expect(f3PackageInputDigest).toBe(packageInputDigest);
+    expect(f6PackageInputDigest).toBe(packageInputDigest);
+    expect(digestJson({ packageInputDigest: f3PackageInputDigest, artifactInputDigest: "e".repeat(64) })).toBe(artifactDigest);
+    expect(digestJson({ packageInputDigest: f6PackageInputDigest, artifactInputDigest: "e".repeat(64) })).toBe(artifactDigest);
     expect(PACKAGE_SOURCE_SNAPSHOT_COMMAND).toBe("node scripts/candidate-snapshot.mjs --mode=package-source");
+  });
+
+  it("rejects a broad or stale package-source evidence exclusion", () => {
+    const broadFiles = [{ path: "test/evidence/m7/other-controlled-proof.json", status: "??", mode: "644", sha256: "a".repeat(64) }];
+    expect(snapshotFilesForMode(broadFiles, PACKAGE_SOURCE_MODE)).toEqual(broadFiles);
+
+    const manifest = completeManifest();
+    manifest.candidateSnapshot.excludedPaths = [PACKAGE_SOURCE_EXCLUDED_PATHS[0]];
+    expect(() => validateManifestDocument(manifest)).toThrow(
+      /manifest candidate snapshot binding is missing or invalid.*rebuild from node scripts\/candidate-snapshot\.mjs/s,
+    );
+  });
+
+  it("consumes NUL-delimited Git rename/copy pairs once at the current path", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-snapshot-git-"));
+    symlinkFixtureRoots.add(root);
+    const git = (arguments_: string[]) => execFileSync("git", ["-C", root, ...arguments_], { encoding: "utf8" });
+    git(["init", "-q"]);
+    git(["config", "user.email", "fixture@example.invalid"]);
+    git(["config", "user.name", "Meetless fixture"]);
+    const original = path.join(root, "scripts", "fixture", "original.txt");
+    const current = path.join(root, "scripts", "fixture", "current.txt");
+    await mkdir(path.dirname(original), { recursive: true });
+    await writeFile(original, "rename fixture\n");
+    git(["add", "scripts/fixture/original.txt"]);
+    git(["commit", "-qm", "fixture"]);
+    git(["mv", "scripts/fixture/original.txt", "scripts/fixture/current.txt"]);
+
+    const renameEntries = parsePorcelainStatus(git(["status", "--porcelain=v1", "-z", "--untracked-files=all"]));
+    expect(renameEntries).toEqual([{
+      status: "R ",
+      path: "scripts/fixture/current.txt",
+      previousPath: "scripts/fixture/original.txt",
+    }]);
+    expect(renameEntries.map((entry) => entry.path)).toEqual(["scripts/fixture/current.txt"]);
+    expect(renameEntries.map((entry) => entry.path)).not.toContain("scripts/fixture/original.txt");
+    expect(current).toBe(path.join(root, renameEntries[0].path));
+
+    expect(parsePorcelainStatus("C  scripts/fixture/copy.txt\0scripts/fixture/current.txt\0")).toEqual([{
+      status: "C  ".slice(0, 2),
+      path: "scripts/fixture/copy.txt",
+      previousPath: "scripts/fixture/current.txt",
+    }]);
+    expect(parsePorcelainStatus(" M scripts/fixture/modified.txt\0?? scripts/fixture/untracked.txt\0")).toEqual([
+      { status: " M", path: "scripts/fixture/modified.txt" },
+      { status: "??", path: "scripts/fixture/untracked.txt" },
+    ]);
+  });
+
+  it.each([
+    ["missing NUL terminator", "R  scripts/current.txt\0scripts/original.txt", /not terminated by NUL/],
+    ["missing historical path", "R  scripts/current.txt\0", /has no historical path/],
+    ["malformed status separator", "R scripts/current.txt\0scripts/original.txt\0", /no valid XY status separator/],
+  ])("rejects %s Git status records with an actionable diagnostic", (_label, raw, diagnostic) => {
+    expect(() => parsePorcelainStatus(raw)).toThrow(new RegExp(`${diagnostic.source}.*Authority: docs\/plans\/active\/v1-paseo-foundation\\.md.*Next action:`));
   });
 
   it("rejects acceptance evidence with the wrong source or artifact identity", () => {
@@ -537,11 +616,13 @@ function completeManifest() {
       hardenedRuntime: false,
       entitlementsSha256: null,
       cdHash: "a".repeat(40),
+      timestamp: "none",
+      secureTimestamp: false,
     },
     nestedMachO: [],
   });
   const manifest = {
-    schema: "MEETLESS_MACOS_PACKAGE v1",
+    schema: "MEETLESS_MACOS_PACKAGE v2",
     target: "macos-arm64",
     bundlePath: "Meetless.app",
     packageRoot: "Contents/Resources/meetless",
@@ -558,7 +639,7 @@ function completeManifest() {
     },
     host: {
       bundleIdentifier: "com.meetless.app",
-      canonicalPath: path.join(homedir(), "Applications", "Meetless.app"),
+      canonicalPath: "/Applications/Meetless.app",
       tccOwner: "sole Meetless host",
     },
     renderer: { entry: "Contents/Info.plist", sha256: "a".repeat(64), size: 3 },

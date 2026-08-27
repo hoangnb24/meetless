@@ -1,0 +1,213 @@
+{
+  "schema": "MEETLESS_M7_F6_REAL_SIGNING_VALIDATION v1",
+  "frontierId": "M7-F6-REAL-NO-TIMESTAMP-SIGNING-VALIDATION",
+  "status": "dependency-request",
+  "outcome": "release package command stopped after the bounded first-codesign wait; no retry; baseline restored and proof-owned state removed",
+  "currentAttempt": 4,
+  "attemptHistory": [
+    {
+      "attempt": 1,
+      "status": "dependency-request",
+      "evidenceSha256": "39864e4edb65eea00c65ccdbb28b4e7878a03d1e6ab03eda0c39f3c88e629357",
+      "signedCandidate": false,
+      "packageCommandInvoked": true,
+      "codesignCallsCompleted": 0,
+      "restoration": "passed"
+    },
+    {
+      "attempt": 2,
+      "status": "reopen-request",
+      "expectedPackageSource": "0e185083790cbff9c8ea8f9dd6cb3c3fb6c7d6b97e53c85c8064f1e9e9d40bad",
+      "observedPackageSource": "50db08a850a67462eca3743063d58961403d6689d437728be6e51dcb00802cdd",
+      "snapshotExcludedPaths": [
+        "test/evidence/m7/m7-f3-packaged-controlled-lifecycle.json"
+      ],
+      "includedEvidencePath": "test/evidence/m7/m7-f6-real-no-timestamp-signing-validation.json",
+      "packageCommandInvoked": false,
+      "codesignCalls": 0,
+      "mutationStarted": false,
+      "proofOwnedStateRemoved": true,
+      "reason": "The accepted source identity cannot be reverified while the current M7-F6 evidence file is included by candidate-snapshot.mjs. Reopen the source-snapshot authority or accept a new source identity before signing."
+    },
+    {
+      "attempt": 3,
+      "cycle": 2,
+      "cycleAttempt": 1,
+      "status": "dependency-request",
+      "signedCandidate": false,
+      "packageCommandInvoked": true,
+      "packageCommandExitCode": null,
+      "packageCommandSignal": "SIGTERM",
+      "codesignCallsCompleted": 0,
+      "codesignCallsObserved": 1,
+      "restoration": "passed",
+      "noRetry": true,
+      "cleanup": "passed"
+    },
+    {
+      "attempt": 4,
+      "cycle": 3,
+      "cycleAttempt": 1,
+      "status": "dependency-request",
+      "signedCandidate": false,
+      "packageCommandInvoked": true,
+      "packageCommandExitCode": null,
+      "packageCommandSignal": "SIGTERM",
+      "codesignCallsCompleted": 0,
+      "codesignCallsObserved": 1,
+      "restoration": "passed",
+      "noRetry": true,
+      "cleanup": "passed"
+    }
+  ],
+  "candidate": {
+    "sourceCommit": "af5f1817191ba5fd634c750e9345de7d575ba704",
+    "paseoCommit": "c81cb84735043c281a5a2d23d456d3708ce5d94e",
+    "packageSource": "d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d",
+    "packageInput": "f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402",
+    "artifactInput": "81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1",
+    "baselineLocalArtifact": "fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa",
+    "baselineLocalSignatureState": "217e1edfc29521b67604230b5b2dfc173b328aad0c21c0151b6e3513f85a0184",
+    "signedArtifact": null,
+    "signedSignatureState": null,
+    "signedManifest": null
+  },
+  "authorizedPublicIdentity": {
+    "label": "Developer ID Application: Long Le (63M98WD275)",
+    "certificateSha1": "D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561",
+    "teamId": "63M98WD275",
+    "certificateSha256": null,
+    "certificateSha256Note": "No completed signed image exposed certificate evidence."
+  },
+  "policy": {
+    "files": {
+      "scripts/macos-entitlements/entitlements/jit.plist": "958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a",
+      "scripts/macos-entitlements/entitlements/audio-input.plist": "289696af9834a7ee41aca4c1cd3aa95fc38f9ae2e83655b1d4b86c1ccab771ee",
+      "scripts/macos-entitlements/entitlement-map.json": "6a98936fb517ddfdd3fbf445633b686b38e2ae36d6656ba47a5ee979aa355462"
+    },
+    "mapping": {
+      "allowJitOnly": [
+        "Contents/Resources/meetless/runtime/node",
+        "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/MacOS/Electron",
+        "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Helper (Renderer).app/Contents/MacOS/Electron Helper (Renderer)",
+        "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Helper (GPU).app/Contents/MacOS/Electron Helper (GPU)"
+      ],
+      "audioInputOnly": [
+        "Contents/Resources/meetless/native/macos-capture/meetless-capture"
+      ],
+      "allOtherCodeObjects": "no entitlements"
+    }
+  },
+  "preflight": {
+    "status": "passed",
+    "exactSourceAndPolicyHashesVerified": true,
+    "packageSource": "d3db4c8fbb2d97a1c1657aceca5e1390d807a6c16b01b5c5de6272307769409d",
+    "packageInput": "f560e082a5e3a01322b6d00bdd5e1ac08f89de8d9badc7ad555956dd95bb1402",
+    "artifactInput": "81739d31180e9e356dd677d83c3e1e7ecf98ea2864f90d9ff4794d4ad55eade1",
+    "baselineArtifact": "fbda82d2c76318afa2022f331ba7d37d621f84568c10c1dd0718d73658dcb4fa",
+    "baselineSignatureState": "217e1edfc29521b67604230b5b2dfc173b328aad0c21c0151b6e3513f85a0184",
+    "baselineManifestSha256": "03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b",
+    "baselineArtifactFingerprint": "c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e",
+    "baselineEntryCount": 13774,
+    "baselineMachOCount": 46,
+    "baselineSigningMode": "local-ad-hoc",
+    "baselineLocalOnly": true,
+    "baselineAll47EntitlementFree": true,
+    "exactExcludedPaths": [
+      "test/evidence/m7/m7-f3-packaged-controlled-lifecycle.json",
+      "test/evidence/m7/m7-f6-real-no-timestamp-signing-validation.json"
+    ],
+    "policyHashes": {
+      "scripts/macos-entitlements/entitlements/jit.plist": "958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a",
+      "scripts/macos-entitlements/entitlements/audio-input.plist": "289696af9834a7ee41aca4c1cd3aa95fc38f9ae2e83655b1d4b86c1ccab771ee",
+      "scripts/macos-entitlements/entitlement-map.json": "6a98936fb517ddfdd3fbf445633b686b38e2ae36d6656ba47a5ee979aa355462"
+    },
+    "existingF3EvidenceSha256": "d0c45d9948599d77a9d0e0139c2d894a7a363d15c1fcc54c7a6c23257cdf2c35",
+    "preservedBefore": {
+      "canonicalInstalledBundle": "a49c1985afc56b1d58b6717521e6ae4cd9ea33b1c975c0dd4779018039f013be",
+      "defaultRuntime": null,
+      "defaultExports": null,
+      "hostIdentity": null,
+      "f3Evidence": "d0c45d9948599d77a9d0e0139c2d894a7a363d15c1fcc54c7a6c23257cdf2c35"
+    }
+  },
+  "signingAttempt": {
+    "command": [
+      "node",
+      "scripts/package-macos.mjs",
+      "--signing-mode=release",
+      "--signing-identity=D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561",
+      "--team-id=63M98WD275"
+    ],
+    "timestampMode": "none",
+    "packageDependencyNetworkPolicy": "npm_config_offline=true",
+    "signingSequenceAttempts": 1,
+    "packageCommandInvoked": true,
+    "packageCommandOutcome": "release package command stopped after the bounded first-codesign wait; no retry",
+    "packageCommandExitCode": null,
+    "packageCommandSignal": "SIGTERM",
+    "firstCodesignTarget": "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler",
+    "firstCodesignTargetObserved": "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler",
+    "firstCodesignRequiredRuntime": true,
+    "codesignSigningCallsExpected": 47,
+    "codesignSigningCallsCompleted": 0,
+    "codesignProcessesObserved": 1,
+    "observedCodesignTargets": [
+      "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler"
+    ],
+    "publicOutcomeLines": [],
+    "keychainPrompt": {
+      "observable": false,
+      "text": null,
+      "target": "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler"
+    },
+    "noRetry": true,
+    "dependency": "Owner-reported Keychain allowance was treated as input; the run still blocked before a completed signing call. No private-key material was requested or handled."
+  },
+  "validation": {
+    "signedCandidateAvailable": false,
+    "perImageSignerTeamRuntimeEntitlementCounts": null,
+    "certificateEvidence": "not observed",
+    "hardenedRuntime": "not completed",
+    "approvedEntitlements": "not observed on a completed real candidate",
+    "arm64SliceChecks": "not completed on a completed real candidate",
+    "individualCodesignVerify": "not reached",
+    "outerDeepStrictVerify": "not reached",
+    "manifestAndSignatureStateConsistency": "not reached for a real candidate"
+  },
+  "restoration": {
+    "status": "passed",
+    "baselineArtifactFingerprint": "c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e",
+    "restoredArtifactFingerprint": "c05bc61e6e80628cb08f1d32fbbdeff2aabf472cd22181f17049ca500e11786e",
+    "baselineManifestSha256": "03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b",
+    "restoredManifestSha256": "03553448d9789b3579187a740a37d51aea55f43e1e5460f3715e1ac4029bb28b",
+    "canonicalInstalledBundleUnchanged": true,
+    "defaultRuntimeUnchanged": true,
+    "defaultExportsUnchanged": true,
+    "hostIdentityUnchanged": true,
+    "existingF3EvidenceUnchanged": true,
+    "existingF3EvidenceSha256": "d0c45d9948599d77a9d0e0139c2d894a7a363d15c1fcc54c7a6c23257cdf2c35",
+    "ownedProcessesRemaining": 0,
+    "ownedLocksRemaining": 0
+  },
+  "notRun": [
+    "spctl",
+    "LaunchServices",
+    "app launch",
+    "capture",
+    "TCC",
+    "notarization",
+    "upload",
+    "publication"
+  ],
+  "proofLimits": [
+    "No private-key data, Keychain path, password, token, cookie, or environment dump is included.",
+    "No release acceptance, hardened-runtime execution, TCC, clean-install, notarization, legal, or publication claim is made."
+  ],
+  "cleanup": {
+    "proofOwnedBackupAndJournalRestored": true,
+    "proofOwnedTemporaryStatePendingRemoval": false,
+    "proofOwnedRootAbsentAfterCleanup": true
+  },
+  "cycle": 3
+}

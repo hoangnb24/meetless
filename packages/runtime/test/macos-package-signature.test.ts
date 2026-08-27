@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { inspectPackageMachOEntries, parseMachOHeader, parseMachOHeaders } from "../../../scripts/lib/macos-package-inventory.mjs";
 import { verifyIndividualMachOSignature } from "../../../scripts/validate-macos-package.mjs";
 import {
   buildSigningOrder,
@@ -12,11 +13,22 @@ import {
   collectMacOSSignatureEvidence,
   createSigningMetadata,
   digestSignatureState,
+  loadEntitlementPolicy,
+  MACOS_APPROVED_ENTITLEMENT_MAP,
+  MACOS_ENTITLEMENT_MAP_PATH,
+  MACOS_REQUIRED_MACHO_ARCHITECTURE,
+  MACOS_REQUIRED_MACHO_FILE_TYPE,
+  MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1,
+  MACOS_REQUIRED_DEVELOPER_ID_TEAM,
+  MACOS_LOCAL_TIMESTAMP_ARGUMENT,
+  MACOS_RELEASE_TIMESTAMP_ARGUMENT,
   normalizeSigningOptions,
   parseCertificateEvidence,
+  parseCodesignDisplay,
   parseSecurityIdentityOutput,
   parseSigningArguments,
   resolveDeveloperIdSigner,
+  validateApprovedEntitlementMachOEntries,
   validateSigningMetadata,
 } from "../../../scripts/lib/macos-package-signing.mjs";
 
@@ -49,11 +61,14 @@ describe("macOS standalone Mach-O signing boundary", () => {
   it("requires an explicit release identity and entitlement input", () => {
     expect(() => parseSigningArguments([], { requireMode: true })).toThrow(/signing mode is not explicit/);
     expect(() => normalizeSigningOptions({ mode: "release" })).toThrow(/release signing identity is missing/);
-    expect(() => normalizeSigningOptions({ mode: "release", signingIdentity: "Developer ID Application: Meetless" })).toThrow(
-      /release entitlement file is missing/,
+    expect(() => normalizeSigningOptions({ mode: "release", signingIdentity: "Developer ID Application: Meetless", entitlementMapPath: "owner-map.json" })).toThrow(
+      /entitlement map override/,
     );
-    expect(() => normalizeSigningOptions({ mode: "release", signingIdentity: "-", entitlementsPath: "owner.plist" })).toThrow(
+    expect(() => normalizeSigningOptions({ mode: "release", signingIdentity: "-", entitlementMapPath: "owner-map.json" })).toThrow(
       /is ad-hoc/,
+    );
+    expect(() => normalizeSigningOptions({ mode: "release", signingIdentity: "Developer ID Application: Meetless (ABCDE12345)", entitlementsPath: "owner.plist", entitlementMapPath: "owner-map.json" })).toThrow(
+      /single outer-app entitlement file/,
     );
   });
 
@@ -61,32 +76,33 @@ describe("macOS standalone Mach-O signing boundary", () => {
     expect(parseSigningArguments([
       "--signing-mode=release",
       "--signing-identity=Developer ID Application: A=B (ABCDE12345)",
-      "--entitlements=/tmp/owner=release.plist",
+      "/tmp/manifest=release.json",
     ], { requireMode: true })).toMatchObject({
       signingMode: "release",
       signingIdentity: "Developer ID Application: A=B (ABCDE12345)",
-      entitlementsPath: "/tmp/owner=release.plist",
+      manifestPath: "/tmp/manifest=release.json",
     });
+    expect(() => parseSigningArguments(["--entitlement-map=/tmp/policy=release.json"])).toThrow(/cannot be overridden/);
     expect(() => parseSigningArguments(["--signing-mode=release=unexpected"], { requireMode: true })).toThrow(/unsupported signing mode release=unexpected/);
   });
 
   it("resolves one exact Developer ID Application certificate and rejects invalid or ambiguous identities", async () => {
-    const identity = "Developer ID Application: A=B (ABCDE12345)";
-    const identityOutput = `  1) ${"a".repeat(40)} "${identity}"\n     1 valid identities found`;
-    const certificateOutput = `SHA-256 hash: ${"b".repeat(64)}\nSHA-1 hash: ${"a".repeat(40)}\n`;
+    const identity = `Developer ID Application: A=B (${MACOS_REQUIRED_DEVELOPER_ID_TEAM})`;
+    const identityOutput = `  1) ${MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1} "${identity}"\n     1 valid identities found`;
+    const certificateOutput = `SHA-256 hash: ${"b".repeat(64)}\nSHA-1 hash: ${MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1}\n`;
     await expect(resolveDeveloperIdSigner({
       requestedIdentity: identity,
-      expectedTeamId: "ABCDE12345",
+      expectedTeamId: MACOS_REQUIRED_DEVELOPER_ID_TEAM,
       findIdentityOutput: identityOutput,
       findCertificateOutput: certificateOutput,
     })).resolves.toEqual({
       identity,
-      certificateSha1: "a".repeat(40),
+      certificateSha1: MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1,
       certificateFingerprint: "b".repeat(64),
-      teamId: "ABCDE12345",
+      teamId: MACOS_REQUIRED_DEVELOPER_ID_TEAM,
     });
     expect(parseSecurityIdentityOutput(identityOutput)).toHaveLength(1);
-    expect(parseCertificateEvidence(certificateOutput, "a".repeat(40)).certificateFingerprint).toBe("b".repeat(64));
+    expect(parseCertificateEvidence(certificateOutput, MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1).certificateFingerprint).toBe("b".repeat(64));
 
     for (const invalidIdentity of [
       "Apple Development: Meetless (ABCDE12345)",
@@ -94,7 +110,7 @@ describe("macOS standalone Mach-O signing boundary", () => {
     ]) {
       await expect(resolveDeveloperIdSigner({
         requestedIdentity: invalidIdentity,
-        findIdentityOutput: `  1) ${"a".repeat(40)} "${invalidIdentity}"`,
+        findIdentityOutput: `  1) ${MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1} "${invalidIdentity}"`,
         findCertificateOutput: certificateOutput,
       })).rejects.toThrow(/not a Developer ID Application leaf signer/);
     }
@@ -129,6 +145,227 @@ describe("macOS standalone Mach-O signing boundary", () => {
     await expect(canonicalizeEntitlements(Buffer.from(first))).resolves.not.toMatchObject(await canonicalizeEntitlements(Buffer.from(missing)));
   });
 
+  it("loads the exact owner-approved two-plist, five-executable map", async () => {
+    const policy = await loadEntitlementPolicy({
+      entitlementMapPath: MACOS_ENTITLEMENT_MAP_PATH,
+      repositoryRoot: process.cwd(),
+    });
+    expect(policy.mapPath).toBe(MACOS_ENTITLEMENT_MAP_PATH);
+    expect(policy.sourcePlists.map((source) => source.path)).toEqual([
+      "scripts/macos-entitlements/entitlements/audio-input.plist",
+      "scripts/macos-entitlements/entitlements/jit.plist",
+    ]);
+    expect(policy.entries.map(({ path, class: policyClass, plist }) => ({ path, class: policyClass, plist }))).toEqual(
+      MACOS_APPROVED_ENTITLEMENT_MAP.map(({ path, class: policyClass, plist }) => ({ path, class: policyClass, plist })),
+    );
+  });
+
+  it.each([
+    ["false-valued key", (plist: string) => plist.replace("<true/>", "<false/>")],
+    ["extra key", (plist: string) => plist.replace("</dict>", "<key>com.apple.security.cs.disable-library-validation</key><true/></dict>")],
+    ["changed key", (plist: string) => plist.replace("com.apple.security.cs.allow-jit", "com.apple.security.device.audio-input")],
+  ])("rejects %s in an owner plist", async (_label, mutate) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "meetless-entitlement-policy-test-"));
+    try {
+      await writeFile(path.join(root, "entitlement-map.json"), await readFile("scripts/macos-entitlements/entitlement-map.json"));
+      await mkdir(path.join(root, "entitlements"), { recursive: true });
+      await copyFile("scripts/macos-entitlements/entitlements/audio-input.plist", path.join(root, "entitlements/audio-input.plist"));
+      await copyFile("scripts/macos-entitlements/entitlements/jit.plist", path.join(root, "entitlements/jit.plist"));
+      const jitPath = path.join(root, "entitlements/jit.plist");
+      const jit = (await readFile(jitPath, "utf8"));
+      await writeFile(jitPath, mutate(jit));
+      await expect(loadEntitlementPolicy({ entitlementMapPath: path.join(root, "entitlement-map.json"), repositoryRoot: root })).rejects.toThrow(/owner entitlement plist|observed keys|expected policy/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("pins release policy loading to non-symlink, in-repository authority paths", async () => {
+    const cases = [
+      {
+        label: "symlink parent",
+        mutate: async (root: string, outside: string) => {
+          await mkdir(path.join(root, "real"), { recursive: true });
+          await copyPolicyFixture(path.join(root, "real"));
+          await symlink(path.join(root, "real"), path.join(root, "alias"));
+          return path.join(root, "alias", "entitlement-map.json");
+        },
+        expected: /symlink component/,
+      },
+      {
+        label: "symlink final map",
+        mutate: async (root: string, outside: string) => {
+          await copyPolicyFixture(root);
+          await symlink(path.join(root, "entitlement-map.json"), path.join(root, "map-link.json"));
+          return path.join(root, "map-link.json");
+        },
+        expected: /symlink component/,
+      },
+      {
+        label: "symlink plist",
+        mutate: async (root: string, outside: string) => {
+          await copyPolicyFixture(root);
+          await writeFile(path.join(outside, "jit.plist"), await readFile(path.join(root, "entitlements", "jit.plist")));
+          await rm(path.join(root, "entitlements", "jit.plist"));
+          await symlink(path.join(outside, "jit.plist"), path.join(root, "entitlements", "jit.plist"));
+          return path.join(root, "entitlement-map.json");
+        },
+        expected: /symlink component/,
+      },
+      {
+        label: "traversal",
+        mutate: async (root: string) => {
+          await copyPolicyFixture(root);
+          return `${root}/../${path.basename(root)}/entitlement-map.json`;
+        },
+        expected: /traversal path/,
+      },
+      {
+        label: "absolute escape",
+        mutate: async (root: string, outside: string) => {
+          await copyPolicyFixture(root);
+          return path.join(outside, "entitlement-map.json");
+        },
+        expected: /escapes repository authority/,
+      },
+    ];
+    for (const testCase of cases) {
+      const root = await mkdtemp(path.join(os.tmpdir(), "meetless-entitlement-authority-test-"));
+      const outside = await mkdtemp(path.join(os.tmpdir(), "meetless-entitlement-external-test-"));
+      try {
+        const mapPath = await testCase.mutate(root, outside);
+        await expect(loadEntitlementPolicy({ entitlementMapPath: mapPath, repositoryRoot: root })).rejects.toThrow(testCase.expected);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+        await rm(outside, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("requires every approved entitlement path to be a regular arm64 MH_EXECUTE", () => {
+    const entries = MACOS_APPROVED_ENTITLEMENT_MAP.map((mapping) => ({ path: mapping.path, type: "file" }));
+    const machoEntries = MACOS_APPROVED_ENTITLEMENT_MAP.map((mapping) => ({
+      path: mapping.path,
+      machOSlices: [{ fileType: MACOS_REQUIRED_MACHO_FILE_TYPE, architecture: MACOS_REQUIRED_MACHO_ARCHITECTURE }],
+    }));
+    const policy = { entries: MACOS_APPROVED_ENTITLEMENT_MAP };
+    expect(() => validateApprovedEntitlementMachOEntries({ entries, machoEntries, policy })).not.toThrow();
+    for (const invalidType of ["MH_DYLIB", "MH_BUNDLE", "MH_OBJECT"]) {
+      expect(() => validateApprovedEntitlementMachOEntries({
+        entries,
+        machoEntries: machoEntries.map((entry, index) => index === 0 ? { ...entry, machOSlices: [{ architecture: "arm64", fileType: invalidType }] } : entry),
+        policy,
+      })).toThrow(/runtime\/node.*expected exactly \[arm64\/all MH_EXECUTE\]/);
+    }
+    expect(() => validateApprovedEntitlementMachOEntries({
+      entries: entries.map((entry, index) => index === 0 ? { ...entry, type: "symlink" } : entry),
+      machoEntries,
+      policy,
+    })).toThrow(/runtime\/node.*not a regular file/);
+    expect(parseMachOHeader("Mach header\nMH_MAGIC_64 ARM64 ALL 0x00 EXECUTE 20 0 0")).toEqual({
+      machOFileType: MACOS_REQUIRED_MACHO_FILE_TYPE,
+      machOArchitecture: MACOS_REQUIRED_MACHO_ARCHITECTURE,
+    });
+  });
+
+  it("validates every Mach-O architecture slice before entitlement signing", () => {
+    const entries = MACOS_APPROVED_ENTITLEMENT_MAP.map((mapping) => ({ path: mapping.path, type: "file" }));
+    const policy = { entries: MACOS_APPROVED_ENTITLEMENT_MAP };
+    const validSlices = [{ architecture: "arm64", fileType: "MH_EXECUTE" }];
+    expect(parseMachOHeaders([
+      "Mach header",
+      "MH_MAGIC_64 ARM64 ALL 0x00 EXECUTE 20 0 0",
+      "Mach header",
+      "MH_MAGIC_64 X86_64 ALL 0x00 EXECUTE 20 0 0",
+    ].join("\n"), "universal-fixture")).toMatchObject({
+      machOSlices: [
+        { architecture: "arm64", fileType: "MH_EXECUTE" },
+        { architecture: "x86_64", fileType: "MH_EXECUTE" },
+      ],
+    });
+
+    for (const [label, slices] of [
+      ["universal arm64+x86_64", [{ architecture: "arm64", fileType: "MH_EXECUTE" }, { architecture: "x86_64", fileType: "MH_EXECUTE" }]],
+      ["universal arm64+arm64e", [{ architecture: "arm64", fileType: "MH_EXECUTE" }, { architecture: "arm64e", fileType: "MH_EXECUTE" }]],
+      ["arm64e-only", [{ architecture: "arm64e", fileType: "MH_EXECUTE" }]],
+      ["x86_64-only", [{ architecture: "x86_64", fileType: "MH_EXECUTE" }]],
+      ["multi-header MH_DYLIB", [{ architecture: "arm64", fileType: "MH_DYLIB" }, { architecture: "arm64e", fileType: "MH_DYLIB" }]],
+    ] as const) {
+      const machoEntries = MACOS_APPROVED_ENTITLEMENT_MAP.map((mapping, index) => ({
+        path: mapping.path,
+        machOSlices: index === 0 ? slices : validSlices,
+      }));
+      let codesignCalls = 0;
+      expect(() => {
+        validateApprovedEntitlementMachOEntries({ entries, machoEntries, policy });
+        codesignCalls += 1;
+      }, label).toThrow(/runtime\/node.*observed Mach-O slices.*expected exactly \[arm64\/all MH_EXECUTE\]/);
+      expect(codesignCalls, `${label} must reject before codesign`).toBe(0);
+    }
+
+    expect(() => parseMachOHeaders([
+      "Mach header",
+      "MH_MAGIC_64 ARM64 ALL 0x00 EXECUTE 20 0 0",
+      "Mach header",
+      "MH_MAGIC_64 ARM64 ALL 0x00 DYLIB 20 0 0",
+    ].join("\n"), "duplicate-fixture")).toThrow(/duplicate or ambiguous architecture arm64/);
+
+    expect(() => validateApprovedEntitlementMachOEntries({
+      entries,
+      machoEntries: MACOS_APPROVED_ENTITLEMENT_MAP.map((mapping) => ({ path: mapping.path, machOSlices: validSlices })),
+      policy,
+    })).not.toThrow();
+  });
+
+  it("uses actual otool -arch all inventory evidence for universal, arm64e, and thin arm64 fixtures", async () => {
+    if (process.platform !== "darwin" || process.arch !== "arm64") return;
+    const root = await mkdtemp(path.join(os.tmpdir(), "meetless-macho-arch-all-test-"));
+    try {
+      const universalEntries = await inspectPackageMachOEntries("/usr/bin", [{ path: "file", type: "file" }]);
+      const universal = universalEntries.find((entry) => entry.path === "file");
+      expect(universal?.machOSlices).toEqual([
+        { architecture: "arm64", cpuType: "arm64", cpuSubtype: "all", fileType: "MH_EXECUTE" },
+        { architecture: "arm64e", cpuType: "arm64", cpuSubtype: "e", fileType: "MH_EXECUTE" },
+        { architecture: "x86_64", cpuType: "x86_64", cpuSubtype: "all", fileType: "MH_EXECUTE" },
+      ]);
+      const universalPolicy = { entries: [{ path: "file", class: "jit" }] };
+      let codesignCalls = 0;
+      expect(() => {
+        validateApprovedEntitlementMachOEntries({
+          entries: [{ path: "file", type: "file" }],
+          machoEntries: universalEntries,
+          policy: universalPolicy,
+        });
+        codesignCalls += 1;
+      }).toThrow(/file.*observed Mach-O slices.*arm64e\/e.*x86_64\/all/);
+      expect(codesignCalls).toBe(0);
+
+      await execFileAsync("lipo", ["-thin", "arm64e", "/usr/bin/file", "-output", path.join(root, "arm64e-fixture")]);
+      const arm64eEntries = await inspectPackageMachOEntries(root, [{ path: "arm64e-fixture", type: "file" }]);
+      expect(arm64eEntries[0]?.machOSlices).toEqual([
+        { architecture: "arm64e", cpuType: "arm64", cpuSubtype: "e", fileType: "MH_EXECUTE" },
+      ]);
+      expect(() => validateApprovedEntitlementMachOEntries({
+        entries: [{ path: "arm64e-fixture", type: "file" }],
+        machoEntries: arm64eEntries,
+        policy: { entries: [{ path: "arm64e-fixture", class: "jit" }] },
+      })).toThrow(/arm64e-fixture.*arm64e\/e.*expected exactly \[arm64\/all MH_EXECUTE\]/);
+
+      await execFileAsync("lipo", ["-thin", "arm64", "/usr/bin/file", "-output", path.join(root, "arm64-fixture")]);
+      const arm64Entries = await inspectPackageMachOEntries(root, [{ path: "arm64-fixture", type: "file" }]);
+      expect(arm64Entries[0]?.machOSlices).toEqual([
+        { architecture: "arm64", cpuType: "arm64", cpuSubtype: "all", fileType: "MH_EXECUTE" },
+      ]);
+      expect(() => validateApprovedEntitlementMachOEntries({
+        entries: [{ path: "arm64-fixture", type: "file" }],
+        machoEntries: arm64Entries,
+        policy: { entries: [{ path: "arm64-fixture", class: "jit" }] },
+      })).not.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("records deterministic deepest-first signing and outer-last order", () => {
     const order = buildSigningOrder([
       "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/MacOS/Electron",
@@ -143,25 +380,36 @@ describe("macOS standalone Mach-O signing boundary", () => {
     expect(order.all.at(-1)).toBe("Meetless.app");
   });
 
-  it("adds hardened-runtime and owner entitlements only at the declared release boundary", () => {
+  it("adds hardened-runtime and only the mapped plist to each approved nested executable", () => {
     const nested = codesignArguments({
       mode: "release",
       identity: "Developer ID Application: Meetless (ABCDE12345)",
       target: "/tmp/nested",
       identifier: "com.meetless.nested",
+      entitlementsPath: "/tmp/jit.plist",
       outer: false,
     });
     expect(nested).toContain("runtime");
-    expect(nested).not.toContain("--entitlements");
+    expect(nested).toContain(MACOS_RELEASE_TIMESTAMP_ARGUMENT);
+    expect(nested).toEqual(expect.arrayContaining(["--entitlements", "/tmp/jit.plist"]));
     const outer = codesignArguments({
+      mode: "release",
+      identity: "Developer ID Application: Meetless (ABCDE12345)",
+      target: "/tmp/Meetless.app",
+      identifier: "com.meetless.app",
+      outer: true,
+    });
+    expect(outer).toEqual(expect.arrayContaining(["--options", "runtime"]));
+    expect(outer).toContain(MACOS_RELEASE_TIMESTAMP_ARGUMENT);
+    expect(outer).not.toContain("--entitlements");
+    expect(() => codesignArguments({
       mode: "release",
       identity: "Developer ID Application: Meetless (ABCDE12345)",
       target: "/tmp/Meetless.app",
       identifier: "com.meetless.app",
       entitlementsPath: "/tmp/owner.entitlements",
       outer: true,
-    });
-    expect(outer).toEqual(expect.arrayContaining(["--options", "runtime", "--entitlements", "/tmp/owner.entitlements"]));
+    })).toThrow(/outer app.*received an entitlement plist/);
     expect(codesignArguments({
       mode: "local-ad-hoc",
       identity: "-",
@@ -169,6 +417,44 @@ describe("macOS standalone Mach-O signing boundary", () => {
       identifier: "com.meetless.local",
       outer: false,
     })).not.toContain("runtime");
+    expect(codesignArguments({
+      mode: "local-ad-hoc",
+      identity: "-",
+      target: "/tmp/local",
+      identifier: "com.meetless.local",
+    })).toContain(MACOS_LOCAL_TIMESTAMP_ARGUMENT);
+  });
+
+  it("parses secure timestamp evidence and rejects a release signature without it", () => {
+    const common = [
+      "Identifier=com.meetless.fixture",
+      "TeamIdentifier=63M98WD275",
+      "Authority=Developer ID Application: Meetless (63M98WD275)",
+      "Signature=CMS",
+      "flags=0x10000(runtime)",
+      "CDHash=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ].join("\n");
+    expect(parseCodesignDisplay(`${common}\nTimestamp=none`, "nested")).toMatchObject({ timestamp: "none", secureTimestamp: false });
+    expect(parseCodesignDisplay(`${common}\nTimestamp=Aug 27, 2026 at 12:00:00 +0000`, "nested")).toMatchObject({ secureTimestamp: true });
+    const fixture = releaseFixture();
+    fixture.signatureState.nestedMachO[0].timestamp = "none";
+    fixture.signatureState.nestedMachO[0].secureTimestamp = false;
+    fixture.signatureStateDigest = digestSignatureState(fixture.signatureState);
+    fixture.manifestBinding.signatureStateDigest = fixture.signatureStateDigest;
+    expect(() => validateSigningMetadata(fixture, { machoPaths: fixture.order.nestedMachO, entitlementPolicy: fixture.policy })).toThrow(/secure timestamp/);
+  });
+
+  it("keeps local-ad-hoc metadata and every image entitlement-free", () => {
+    const fixture = localFixture();
+    expect(fixture.entitlements.observed.every((image: any) => image.signedSha256 === null && image.signedCanonicalSha256 === null && image.observedKeys.length === 0)).toBe(true);
+    fixture.signatureState.nestedMachO[0].entitlementsSha256 = "a".repeat(64);
+    fixture.signatureState.nestedMachO[0].entitlementsCanonicalSha256 = "b".repeat(64);
+    fixture.signatureState.nestedMachO[0].entitlementKeys = ["com.apple.security.cs.disable-library-validation"];
+    fixture.signatureStateDigest = digestSignatureState(fixture.signatureState);
+    fixture.manifestBinding.signatureStateDigest = fixture.signatureStateDigest;
+    expect(() => validateSigningMetadata(fixture, { machoPaths: fixture.order.nestedMachO })).toThrow(
+      /local ad-hoc image .*has entitlement keys.*remove --entitlements/,
+    );
   });
 
   it("accepts a structural Developer ID and hardened-runtime contract without a credential", () => {
@@ -182,9 +468,45 @@ describe("macOS standalone Mach-O signing boundary", () => {
       },
       expectedMode: "release",
       expectedIdentity: fixture.identity.requested,
-      entitlementFileSha256: fixture.entitlements.fileSha256,
+      entitlementPolicy: fixture.policy,
       expectedTeamId: fixture.identity.teamId,
     })).toEqual(fixture);
+  });
+
+  it.each([
+    ["JIT on the outer app", (fixture: any) => {
+      fixture.signatureState.outer.entitlementsSha256 = "4".repeat(64);
+      fixture.signatureState.outer.entitlementsCanonicalSha256 = "3".repeat(64);
+      fixture.signatureState.outer.entitlementKeys = ["com.apple.security.cs.allow-jit"];
+    }, /unmapped entitlement-bearing image Meetless\.app/],
+    ["audio input on the JIT executable", (fixture: any) => {
+      const image = fixture.signatureState.nestedMachO.find((entry: any) => entry.path.endsWith("runtime/node"));
+      image.entitlementsSha256 = "6".repeat(64);
+      image.entitlementsCanonicalSha256 = "5".repeat(64);
+      image.entitlementKeys = ["com.apple.security.device.audio-input"];
+    }, /entitlement path .*runtime\/node.*expected policy class jit/],
+    ["missing entitlement on an approved executable", (fixture: any) => {
+      const image = fixture.signatureState.nestedMachO.find((entry: any) => entry.path.endsWith("runtime/node"));
+      image.entitlementsSha256 = null;
+      image.entitlementsCanonicalSha256 = null;
+      image.entitlementKeys = [];
+    }, /entitlement path .*runtime\/node.*observed keys \[\]/],
+    ["union entitlement plist", (fixture: any) => {
+      const image = fixture.signatureState.nestedMachO.find((entry: any) => entry.path.endsWith("runtime/node"));
+      image.entitlementsSha256 = "d".repeat(64);
+      image.entitlementsCanonicalSha256 = "e".repeat(64);
+      image.entitlementKeys = ["com.apple.security.cs.allow-jit", "com.apple.security.device.audio-input"];
+    }, /entitlement path .*runtime\/node.*observed keys/],
+    ["risky entitlement key", (fixture: any) => {
+      const image = fixture.signatureState.nestedMachO.find((entry: any) => entry.path.endsWith("runtime/node"));
+      image.entitlementsSha256 = "d".repeat(64);
+      image.entitlementsCanonicalSha256 = "e".repeat(64);
+      image.entitlementKeys = ["com.apple.security.cs.allow-jit", "com.apple.security.cs.disable-library-validation"];
+    }, /entitlement path .*runtime\/node.*observed keys/],
+  ])("rejects %s", (_label, mutate, expected) => {
+    const fixture = releaseFixture();
+    mutate(fixture);
+    expect(() => rebuildStructuralSigning(fixture)).toThrow(expected);
   });
 
   it("populates each final signature from its own observed certificate evidence", async () => {
@@ -225,6 +547,83 @@ describe("macOS standalone Mach-O signing boundary", () => {
     expect(observed.outer.certificateFingerprint).toBe(certificate.certificateFingerprint);
   });
 
+  it("reads each image's signed entitlement plist independently", async () => {
+    const jitPlist = Buffer.from("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>com.apple.security.cs.allow-jit</key><true/></dict></plist>");
+    const audioPlist = Buffer.from("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>com.apple.security.device.audio-input</key><true/></dict></plist>");
+    const codesignCalls: Array<{ command: string; arguments_: string[] }> = [];
+    const observed = await collectMacOSSignatureEvidence({
+      bundlePath: "/tmp/structural-Meetless.app",
+      machoPaths: ["Contents/Resources/meetless/runtime/node", "Contents/Resources/meetless/native/macos-capture/meetless-capture"],
+      ownerMode: true,
+      runCodesign: async (command: string, arguments_: string[]) => {
+        codesignCalls.push({ command, arguments_ });
+        if (arguments_.includes("-dvvv")) {
+          return {
+            stdout: Buffer.from([
+              "Identifier=com.meetless.structural",
+              "TeamIdentifier=ABCDE12345",
+              "Authority=Developer ID Application: Meetless (ABCDE12345)",
+              "Signature=CMS",
+              "flags=0x10000(runtime)",
+              "CDHash=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "",
+            ].join("\n")),
+            stderr: Buffer.alloc(0),
+          };
+        }
+        if (arguments_.includes("--entitlements")) {
+          const binaryPath = String(arguments_.at(-1));
+          return { stdout: binaryPath.endsWith("Meetless.app") ? Buffer.alloc(0) : (binaryPath.endsWith("meetless-capture") ? audioPlist : jitPlist), stderr: Buffer.alloc(0) };
+        }
+        return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      },
+    });
+    const entitlementCalls = codesignCalls.filter(({ arguments_ }) => arguments_.includes("--entitlements"));
+    expect(entitlementCalls).toHaveLength(3);
+    expect(codesignCalls.every(({ command }) => command === "/usr/bin/codesign")).toBe(true);
+    expect(entitlementCalls.every(({ arguments_ }) => arguments_.includes("--xml") && arguments_.includes("-") && !arguments_.includes(":-"))).toBe(true);
+    expect(observed.nestedMachO.map((entry) => entry.entitlementKeys)).toEqual([
+      ["com.apple.security.device.audio-input"],
+      ["com.apple.security.cs.allow-jit"],
+    ]);
+    expect(observed.outer.entitlementKeys).toEqual([]);
+    expect(observed.outer.entitlementsSha256).toBeNull();
+    expect(observed.outer.entitlementsCanonicalSha256).toBeNull();
+  });
+
+  it.each([
+    ["abstract codesign output", Buffer.from("[Dict]\n[Key] = com.apple.security.cs.allow-jit\n[Bool] = true\n")],
+    ["malformed XML", Buffer.from("<?xml version=\"1.0\"?><plist><dict>")],
+  ])("rejects %s as a signed-entitlement extraction format defect", async (_label, output) => {
+    await expect(collectMacOSSignatureEvidence({
+      bundlePath: "/tmp/structural-Meetless.app",
+      machoPaths: ["Contents/Resources/meetless/runtime/node"],
+      ownerMode: true,
+      runCodesign: async (command: string, arguments_: string[]) => {
+        expect(command).toBe("/usr/bin/codesign");
+        if (arguments_.includes("-dvvv")) {
+          return {
+            stdout: Buffer.from([
+              "Identifier=com.meetless.structural",
+              "TeamIdentifier=ABCDE12345",
+              "Authority=Developer ID Application: Meetless (ABCDE12345)",
+              "Signature=CMS",
+              "flags=0x10000(runtime)",
+              "CDHash=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "",
+            ].join("\n")),
+            stderr: Buffer.alloc(0),
+          };
+        }
+        if (arguments_.includes("--entitlements")) {
+          expect(arguments_).toEqual(["-d", "--entitlements", "-", "--xml", "/tmp/structural-Meetless.app/Contents/Resources/meetless/runtime/node"]);
+          return { stdout: output, stderr: Buffer.alloc(0) };
+        }
+        return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      },
+    })).rejects.toThrow(/signed entitlement extraction format/);
+  });
+
   it.each([
     ["ad-hoc signer", (fixture: any) => { fixture.signatureState.outer.signature = "adhoc"; fixture.signatureState.outer.identity = "-"; fixture.signatureState.outer.teamId = null; }],
     ["missing hardened-runtime flag", (fixture: any) => { fixture.signatureState.outer.flags = []; fixture.signatureState.outer.hardenedRuntime = false; }],
@@ -243,29 +642,30 @@ describe("macOS standalone Mach-O signing boundary", () => {
       nestedMachO: fixture.signatureState.nestedMachO,
     });
     fixture.manifestBinding.signatureStateDigest = fixture.signatureStateDigest;
-    expect(() => validateSigningMetadata(fixture, { machoPaths: fixture.order.nestedMachO })).toThrow(
+    expect(() => validateSigningMetadata(fixture, { machoPaths: fixture.order.nestedMachO, entitlementPolicy: fixture.policy })).toThrow(
       /ad-hoc signer|hardened-runtime flag|Team ID evidence is mismatched|identity evidence is mismatched|Developer ID certificate evidence/,
     );
   });
 
   it("rejects stale entitlements, unsigned nested Mach-O, and post-signature mutation", () => {
     const staleEntitlements = releaseFixture();
-    staleEntitlements.entitlements.fileSha256 = "f".repeat(64);
+    staleEntitlements.entitlements.mapSha256 = "f".repeat(64);
     expect(() => validateSigningMetadata(staleEntitlements, {
       machoPaths: staleEntitlements.order.nestedMachO,
-      entitlementFileSha256: "e".repeat(64),
-    })).toThrow(/entitlement file digest is stale/);
+      entitlementPolicy: staleEntitlements.policy,
+    })).toThrow(/entitlement map.*stale|mismatched/);
 
     const changedEntitlements = releaseFixture();
-    changedEntitlements.entitlements.signedCanonicalSha256 = "d".repeat(64);
-    changedEntitlements.signatureState.outer.entitlementsCanonicalSha256 = "d".repeat(64);
+    changedEntitlements.entitlements.bindings[0].signedCanonicalSha256 = "d".repeat(64);
+    changedEntitlements.signatureState.nestedMachO[0].entitlementsCanonicalSha256 = "d".repeat(64);
+    changedEntitlements.signatureState.nestedMachO[0].entitlementKeys = ["changed"];
     changedEntitlements.signatureStateDigest = digestSignatureState({
       order: changedEntitlements.order,
       outer: changedEntitlements.signatureState.outer,
       nestedMachO: changedEntitlements.signatureState.nestedMachO,
     });
     changedEntitlements.manifestBinding.signatureStateDigest = changedEntitlements.signatureStateDigest;
-    expect(() => validateSigningMetadata(changedEntitlements, { machoPaths: changedEntitlements.order.nestedMachO })).toThrow(/semantically differ/);
+    expect(() => validateSigningMetadata(changedEntitlements, { machoPaths: changedEntitlements.order.nestedMachO, entitlementPolicy: changedEntitlements.policy })).toThrow(/entitlement map.*stale|observed keys/);
 
     const unsignedNested = releaseFixture();
     const actualWithoutNested = {
@@ -276,6 +676,7 @@ describe("macOS standalone Mach-O signing boundary", () => {
     expect(() => validateSigningMetadata(unsignedNested, {
       machoPaths: unsignedNested.order.nestedMachO,
       actual: actualWithoutNested,
+      entitlementPolicy: unsignedNested.policy,
     })).toThrow(/post-signature signing metadata differs/);
 
     const mutated = releaseFixture();
@@ -288,6 +689,7 @@ describe("macOS standalone Mach-O signing boundary", () => {
     mutated.manifestBinding.signatureStateDigest = mutated.signatureStateDigest;
     expect(() => validateSigningMetadata(mutated, {
       machoPaths: mutated.order.nestedMachO,
+      entitlementPolicy: mutated.policy,
       actual: {
         order: mutated.order,
         outer: releaseFixture().signatureState.outer,
@@ -305,38 +707,99 @@ describe("macOS standalone Mach-O signing boundary", () => {
   });
 });
 
-function releaseFixture() {
-  const teamId = "ABCDE12345";
-  const leafSigner = "Developer ID Application: Meetless (ABCDE12345)";
-  const certificateSha1 = "1".repeat(40);
-  const certificateFingerprint = "2".repeat(64);
-  const canonicalEntitlements = "3".repeat(64);
-  const nested = [
-    {
-      path: "Contents/Resources/meetless/native/macos-capture/meetless-capture",
-      identifier: "com.meetless.capture",
-      identity: leafSigner,
-      teamId,
-      signature: "cms",
-      authorities: [leafSigner],
-      flags: ["runtime"],
-      hardenedRuntime: true,
+async function copyPolicyFixture(root: string) {
+  await writeFile(path.join(root, "entitlement-map.json"), await readFile("scripts/macos-entitlements/entitlement-map.json"));
+  await mkdir(path.join(root, "entitlements"), { recursive: true });
+  await copyFile("scripts/macos-entitlements/entitlements/audio-input.plist", path.join(root, "entitlements/audio-input.plist"));
+  await copyFile("scripts/macos-entitlements/entitlements/jit.plist", path.join(root, "entitlements/jit.plist"));
+}
+
+function localFixture() {
+  const nested = [{
+    path: "Contents/MacOS/MeetlessHost",
+    identifier: "com.meetless.local.host",
+    identity: "-",
+    teamId: null,
+    signature: "adhoc",
+    authorities: [],
+    flags: [],
+    hardenedRuntime: false,
+    machOSlices: [{ fileType: "MH_EXECUTE", architecture: "arm64" }],
+    machOFileType: "MH_EXECUTE",
+    machOArchitecture: "arm64",
+    entitlementsSha256: null,
+    entitlementsCanonicalSha256: null,
+    entitlementKeys: [],
+    certificateFingerprint: null,
+    certificateSha1: null,
+    cdHash: "a".repeat(40),
+    timestamp: "none",
+    secureTimestamp: false,
+  }];
+  return createSigningMetadata({
+    mode: "local-ad-hoc",
+    requestedIdentity: "-",
+    order: buildSigningOrder(nested),
+    outer: {
+      path: "Meetless.app",
+      identifier: "com.meetless.app",
+      identity: "-",
+      teamId: null,
+      signature: "adhoc",
+      authorities: [],
+      flags: [],
+      hardenedRuntime: false,
+      machOSlices: [],
+      machOFileType: null,
+      machOArchitecture: null,
       entitlementsSha256: null,
       entitlementsCanonicalSha256: null,
-      certificateFingerprint,
-      certificateSha1,
+      entitlementKeys: [],
+      certificateFingerprint: null,
+      certificateSha1: null,
       cdHash: "b".repeat(40),
+      timestamp: "none",
+      secureTimestamp: false,
     },
-  ];
-  return createSigningMetadata({
+    nestedMachO: nested,
+  });
+}
+
+function releaseFixture() {
+  const teamId = MACOS_REQUIRED_DEVELOPER_ID_TEAM;
+  const leafSigner = `Developer ID Application: Meetless (${teamId})`;
+  const certificateSha1 = MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1;
+  const certificateFingerprint = "2".repeat(64);
+  const policy = structuralPolicy();
+  const nested = policy.entries.map((mapping, index) => ({
+    path: mapping.path,
+    identifier: `com.meetless.structural.${index}`,
+    identity: leafSigner,
+    teamId,
+    signature: "cms",
+    authorities: [leafSigner],
+    flags: ["runtime"],
+    hardenedRuntime: true,
+    machOSlices: [{ fileType: MACOS_REQUIRED_MACHO_FILE_TYPE, architecture: MACOS_REQUIRED_MACHO_ARCHITECTURE }],
+    machOFileType: MACOS_REQUIRED_MACHO_FILE_TYPE,
+    machOArchitecture: MACOS_REQUIRED_MACHO_ARCHITECTURE,
+    entitlementsSha256: mapping.class === "jit" ? "4".repeat(64) : "6".repeat(64),
+    entitlementsCanonicalSha256: mapping.ownerCanonicalSha256,
+    entitlementKeys: mapping.ownerKeys,
+    certificateFingerprint,
+    certificateSha1,
+    cdHash: `${String.fromCharCode(98 + index)}`.repeat(40),
+    timestamp: "Aug 27, 2026 at 12:00:00 +0000",
+    secureTimestamp: true,
+  }));
+  const signing = createSigningMetadata({
     mode: "release",
     requestedIdentity: leafSigner,
     resolvedIdentity: leafSigner,
     expectedTeamId: teamId,
     certificateFingerprint,
     certificateSha1,
-    entitlementFileSha256: "e".repeat(64),
-    entitlementOwnerCanonicalSha256: canonicalEntitlements,
+    entitlementPolicy: policy,
     order: buildSigningOrder(nested),
     outer: {
       path: "Meetless.app",
@@ -347,13 +810,68 @@ function releaseFixture() {
       authorities: [leafSigner],
       flags: ["runtime"],
       hardenedRuntime: true,
-      entitlementsSha256: "f".repeat(64),
-      entitlementsCanonicalSha256: canonicalEntitlements,
+      machOSlices: [],
+      machOFileType: null,
+      machOArchitecture: null,
+      entitlementsSha256: null,
+      entitlementsCanonicalSha256: null,
+      entitlementKeys: [],
       certificateFingerprint,
       certificateSha1,
       cdHash: "a".repeat(40),
+      timestamp: "Aug 27, 2026 at 12:00:00 +0000",
+      secureTimestamp: true,
     },
     nestedMachO: nested,
+  });
+  return { ...signing, policy };
+}
+
+function structuralPolicy() {
+  const jitCanonicalSha256 = "3".repeat(64);
+  const audioCanonicalSha256 = "5".repeat(64);
+  const sourcePlists = [
+    {
+      path: "scripts/macos-entitlements/entitlements/audio-input.plist",
+      fileSha256: "7".repeat(64),
+      canonicalSha256: audioCanonicalSha256,
+    },
+    {
+      path: "scripts/macos-entitlements/entitlements/jit.plist",
+      fileSha256: "8".repeat(64),
+      canonicalSha256: jitCanonicalSha256,
+    },
+  ];
+  return {
+    schema: "MEETLESS_MACOS_ENTITLEMENT_MAP v1",
+    mapPath: MACOS_ENTITLEMENT_MAP_PATH,
+    mapAbsolutePath: path.resolve(MACOS_ENTITLEMENT_MAP_PATH),
+    mapSha256: "9".repeat(64),
+    mapCanonicalSha256: "a".repeat(64),
+    sourcePlists,
+    entries: MACOS_APPROVED_ENTITLEMENT_MAP.map((mapping) => ({
+      ...mapping,
+      sourcePath: mapping.class === "jit" ? sourcePlists[1].path : sourcePlists[0].path,
+      absolutePath: path.resolve(mapping.plist),
+      ownerFileSha256: mapping.class === "jit" ? sourcePlists[1].fileSha256 : sourcePlists[0].fileSha256,
+      ownerCanonicalSha256: mapping.class === "jit" ? jitCanonicalSha256 : audioCanonicalSha256,
+      ownerKeys: [mapping.key],
+    })),
+  };
+}
+
+function rebuildStructuralSigning(fixture: any) {
+  return createSigningMetadata({
+    mode: "release",
+    requestedIdentity: fixture.identity.requested,
+    resolvedIdentity: fixture.identity.resolved,
+    expectedTeamId: fixture.identity.teamId,
+    certificateFingerprint: fixture.identity.certificateFingerprint,
+    certificateSha1: fixture.identity.certificateSha1,
+    entitlementPolicy: fixture.policy,
+    order: fixture.order,
+    outer: fixture.signatureState.outer,
+    nestedMachO: fixture.signatureState.nestedMachO,
   });
 }
 

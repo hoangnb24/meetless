@@ -1,11 +1,26 @@
 import { createHash, X509Certificate } from "node:crypto";
 import { execFile } from "node:child_process";
-import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { normalizeMachOSlices } from "./macos-package-inventory.mjs";
 
 const execFileAsync = promisify(execFile);
+
+export const MACOS_OWNER_TOOL_PATHS = Object.freeze({
+  codesign: "/usr/bin/codesign",
+  plutil: "/usr/bin/plutil",
+  security: "/usr/bin/security",
+});
+
+function ownerToolEnvironment(environment = process.env) {
+  const sanitized = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" };
+  for (const name of ["HOME", "USER", "LOGNAME", "TERM", "TERM_PROGRAM"]) {
+    if (typeof environment?.[name] === "string" && environment[name].length > 0) sanitized[name] = environment[name];
+  }
+  return sanitized;
+}
 
 export const MACOS_SIGNING_SCHEMA = "MEETLESS_MACOS_SIGNING v1";
 export const MACOS_SIGNING_AUTHORITY = "docs/plans/active/v1-paseo-foundation.md";
@@ -13,6 +28,47 @@ export const LOCAL_AD_HOC_SIGNING_MODE = "local-ad-hoc";
 export const RELEASE_SIGNING_MODE = "release";
 export const MACOS_SIGNING_MODES = Object.freeze([LOCAL_AD_HOC_SIGNING_MODE, RELEASE_SIGNING_MODE]);
 export const MACOS_SIGNING_OUTER_PATH = "Meetless.app";
+export const MACOS_ENTITLEMENT_POLICY_SCHEMA = "MEETLESS_MACOS_ENTITLEMENT_MAP v1";
+export const MACOS_ENTITLEMENT_MAP_PATH = "scripts/macos-entitlements/entitlement-map.json";
+export const MACOS_REQUIRED_MACHO_FILE_TYPE = "MH_EXECUTE";
+export const MACOS_REQUIRED_MACHO_ARCHITECTURE = "arm64";
+export const MACOS_REQUIRED_DEVELOPER_ID_TEAM = "63M98WD275";
+export const MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1 = "d3ca2aea2dcbf578d27cfc3557bffcb41e370561";
+export const MACOS_RELEASE_TIMESTAMP_ARGUMENT = "--timestamp";
+export const MACOS_LOCAL_TIMESTAMP_ARGUMENT = "--timestamp=none";
+
+export const MACOS_APPROVED_ENTITLEMENT_MAP = Object.freeze([
+  Object.freeze({
+    path: "Contents/Resources/meetless/runtime/node",
+    class: "jit",
+    plist: "entitlements/jit.plist",
+    key: "com.apple.security.cs.allow-jit",
+  }),
+  Object.freeze({
+    path: "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/MacOS/Electron",
+    class: "jit",
+    plist: "entitlements/jit.plist",
+    key: "com.apple.security.cs.allow-jit",
+  }),
+  Object.freeze({
+    path: "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Helper (Renderer).app/Contents/MacOS/Electron Helper (Renderer)",
+    class: "jit",
+    plist: "entitlements/jit.plist",
+    key: "com.apple.security.cs.allow-jit",
+  }),
+  Object.freeze({
+    path: "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/Frameworks/Electron Helper (GPU).app/Contents/MacOS/Electron Helper (GPU)",
+    class: "jit",
+    plist: "entitlements/jit.plist",
+    key: "com.apple.security.cs.allow-jit",
+  }),
+  Object.freeze({
+    path: "Contents/Resources/meetless/native/macos-capture/meetless-capture",
+    class: "audio-input",
+    plist: "entitlements/audio-input.plist",
+    key: "com.apple.security.device.audio-input",
+  }),
+]);
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const SHA1_PATTERN = /^[a-f0-9]{40}$/u;
@@ -43,7 +99,7 @@ export function parseSigningArguments(arguments_, { requireMode = false } = {}) 
       "--entitlements": "entitlementsPath",
       "--team-id": "expectedTeamId",
     }[name];
-    if (!option) throw signingError(`unsupported signing option ${name}`, "use --signing-mode, --signing-identity, --entitlements, or --team-id");
+    if (!option) throw signingError(`unsupported signing option ${name}`, "use --signing-mode, --signing-identity, --entitlements, or --team-id; the checked-in entitlement map cannot be overridden");
     if (arguments_.slice(0, index).some((candidate) => candidate === argument || candidate.startsWith(`${name}=`))) {
       throw signingError(`${name} was supplied more than once`, "supply one explicit value for each signing option");
     }
@@ -70,12 +126,13 @@ export function parseSigningArguments(arguments_, { requireMode = false } = {}) 
   return { signingMode, signingIdentity, entitlementsPath, expectedTeamId, manifestPath };
 }
 
-export function normalizeSigningOptions({ mode, signingMode = mode, signingIdentity = null, entitlementsPath = null, expectedTeamId = null } = {}) {
+export function normalizeSigningOptions({ mode, signingMode = mode, signingIdentity = null, entitlementsPath = null, entitlementMapPath = null, expectedTeamId = null, requireEntitlementMap = true } = {}) {
   if (!MACOS_SIGNING_MODES.includes(signingMode)) {
     throw signingError(`signing mode is ${String(signingMode)}`, "supply --signing-mode=local-ad-hoc or --signing-mode=release");
   }
   const identity = signingIdentity?.trim() || null;
   const entitlementFile = entitlementsPath?.trim() || null;
+  const entitlementMap = entitlementMapPath?.trim() || null;
   const teamId = expectedTeamId?.trim() || null;
   if (teamId !== null && !TEAM_ID_PATTERN.test(teamId)) {
     throw signingError(`Team ID ${teamId} is not a valid uppercase Apple Team ID evidence value`, "supply the Team ID shown by the signing identity");
@@ -84,8 +141,8 @@ export function normalizeSigningOptions({ mode, signingMode = mode, signingIdent
     if (identity !== null && identity !== "-") {
       throw signingError(`local ad-hoc mode received release identity ${identity}`, "use --signing-mode=release with an explicit signing identity");
     }
-    if (entitlementFile !== null) {
-      throw signingError("local ad-hoc mode received an entitlement file", "use --signing-mode=release for hardened-runtime entitlements");
+    if (entitlementFile !== null || entitlementMap !== null) {
+      throw signingError("local ad-hoc mode received an entitlement policy input", "use --signing-mode=release for hardened-runtime entitlements");
     }
     if (teamId !== null) {
       throw signingError("local ad-hoc mode received a Team ID", "use --signing-mode=release for Developer ID Team ID evidence");
@@ -94,6 +151,7 @@ export function normalizeSigningOptions({ mode, signingMode = mode, signingIdent
       mode: LOCAL_AD_HOC_SIGNING_MODE,
       identity: "-",
       entitlementsPath: null,
+      entitlementMapPath: null,
       expectedTeamId: null,
     };
   }
@@ -103,18 +161,25 @@ export function normalizeSigningOptions({ mode, signingMode = mode, signingIdent
   if (identity === "-" || /^adhoc$/iu.test(identity)) {
     throw signingError(`release signing identity ${identity} is ad-hoc`, "supply a non-ad-hoc Developer ID Application identity");
   }
-  if (!entitlementFile) {
-    throw signingError("release entitlement file is missing", "supply --entitlements with the owner-provided entitlement file");
+  if (entitlementFile !== null) {
+    throw signingError("release mode received a single outer-app entitlement file", `use the checked-in ${MACOS_ENTITLEMENT_MAP_PATH} per-executable policy`);
+  }
+  if (entitlementMap !== null && entitlementMap !== MACOS_ENTITLEMENT_MAP_PATH) {
+    throw signingError(
+      `release entitlement map override ${entitlementMap} is not the checked-in authority path`,
+      `use ${MACOS_ENTITLEMENT_MAP_PATH}; production release policy cannot be overridden`,
+    );
   }
   return {
     mode: RELEASE_SIGNING_MODE,
     identity,
-    entitlementsPath: path.resolve(entitlementFile),
+    entitlementsPath: null,
+    entitlementMapPath: MACOS_ENTITLEMENT_MAP_PATH,
     expectedTeamId: teamId,
   };
 }
 
-export async function resolveSigningInputs(options) {
+export async function resolveSigningInputs(options = {}) {
   const normalized = normalizeSigningOptions(options);
   if (normalized.mode === LOCAL_AD_HOC_SIGNING_MODE) {
     return {
@@ -125,25 +190,19 @@ export async function resolveSigningInputs(options) {
       certificateFingerprint: null,
       certificateSha1: null,
       resolvedTeamId: null,
-      entitlementFileSha256: null,
-      entitlementOwnerCanonicalSha256: null,
+      entitlementPolicy: null,
     };
   }
-  const inspected = await lstat(normalized.entitlementsPath).catch(() => null);
-  if (!inspected?.isFile() || inspected.isSymbolicLink()) {
-    throw signingError(
-      `release entitlement input is not a regular non-symlink file: ${normalized.entitlementsPath}`,
-      "supply the exact owner-provided entitlement file",
-    );
-  }
-  const bytes = await readFile(normalized.entitlementsPath);
-  if (bytes.byteLength === 0) {
-    throw signingError(`release entitlement input is empty: ${normalized.entitlementsPath}`, "supply the non-empty owner-provided entitlement file");
-  }
-  const canonicalEntitlements = await canonicalizeEntitlements(bytes, normalized.entitlementsPath);
+  const repositoryRoot = path.resolve(options.repositoryRoot ?? process.cwd());
+  const entitlementPolicy = await loadEntitlementPolicy({
+    entitlementMapPath: MACOS_ENTITLEMENT_MAP_PATH,
+    repositoryRoot,
+    ownerMode: options.ownerMode === true,
+  });
   const signer = await resolveDeveloperIdSigner({
     requestedIdentity: normalized.identity,
     expectedTeamId: normalized.expectedTeamId,
+    ownerMode: options.ownerMode === true,
   });
   return {
     ...normalized,
@@ -154,8 +213,7 @@ export async function resolveSigningInputs(options) {
     certificateFingerprint: signer.certificateFingerprint,
     certificateSha1: signer.certificateSha1,
     resolvedTeamId: signer.teamId,
-    entitlementFileSha256: sha256(bytes),
-    entitlementOwnerCanonicalSha256: canonicalEntitlements.sha256,
+    entitlementPolicy,
   };
 }
 
@@ -165,11 +223,12 @@ export async function resolveDeveloperIdSigner({
   findIdentityOutput = null,
   findCertificateOutput = null,
   runSecurity = runSecurityCommand,
+  ownerMode = false,
 } = {}) {
   if (typeof requestedIdentity !== "string" || !requestedIdentity) {
     throw signingError("release signing identity is missing", "supply the exact Developer ID Application identity");
   }
-  const identityOutput = findIdentityOutput ?? await runSecurity(["find-identity", "-v", "-p", "codesigning"]);
+  const identityOutput = findIdentityOutput ?? await runSecurity(["find-identity", "-v", "-p", "codesigning"], { ownerMode });
   const identities = parseSecurityIdentityOutput(identityOutput);
   const requestedFingerprint = requestedIdentity.toLowerCase();
   const matches = identities.filter((candidate) => candidate.identity === requestedIdentity || candidate.certificateSha1 === requestedFingerprint);
@@ -199,8 +258,20 @@ export async function resolveDeveloperIdSigner({
       "supply the Team ID belonging to the exact Developer ID Application certificate",
     );
   }
-  const certificateOutput = findCertificateOutput ?? await runSecurity(["find-certificate", "-a", "-Z", "-c", selected.identity]);
+  const certificateOutput = findCertificateOutput ?? await runSecurity(["find-certificate", "-a", "-Z", "-c", selected.identity], { ownerMode });
   const certificate = parseCertificateEvidence(certificateOutput, selected.certificateSha1);
+  if (teamId !== MACOS_REQUIRED_DEVELOPER_ID_TEAM) {
+    throw signingError(
+      `resolved Developer ID certificate Team ID ${teamId} is not the owner-approved Team ${MACOS_REQUIRED_DEVELOPER_ID_TEAM}`,
+      `supply the owner-approved Developer ID Application identity for Team ${MACOS_REQUIRED_DEVELOPER_ID_TEAM}`,
+    );
+  }
+  if (certificate.certificateSha1 !== MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1) {
+    throw signingError(
+      `resolved Developer ID certificate SHA-1 ${certificate.certificateSha1} is not the owner-approved certificate ${MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1}`,
+      `supply the owner-approved Developer ID certificate with SHA-1 ${MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1}`,
+    );
+  }
   return {
     identity: selected.identity,
     certificateSha1: selected.certificateSha1,
@@ -236,7 +307,7 @@ export function parseCertificateEvidence(output, certificateSha1) {
   return matches[0];
 }
 
-export async function canonicalizeEntitlements(value, label = "entitlements") {
+export async function canonicalizeEntitlements(value, label = "entitlements", { ownerMode = false } = {}) {
   const bytes = typeof value === "string" ? await readFile(value) : Buffer.from(value ?? "");
   if (bytes.byteLength === 0) {
     throw signingError(`${label} is empty`, "supply a non-empty owner-provided entitlement plist");
@@ -245,7 +316,10 @@ export async function canonicalizeEntitlements(value, label = "entitlements") {
   const temporaryPath = path.join(temporaryRoot, "entitlements.plist");
   try {
     await writeFile(temporaryPath, bytes, { mode: 0o600 });
-    const result = await execFileAsync("plutil", ["-convert", "json", "-o", "-", "--", temporaryPath], { encoding: "utf8" }).catch((error) => {
+    const result = await execFileAsync(ownerMode ? MACOS_OWNER_TOOL_PATHS.plutil : "plutil", ["-convert", "json", "-o", "-", "--", temporaryPath], {
+      encoding: "utf8",
+      ...(ownerMode ? { env: ownerToolEnvironment() } : {}),
+    }).catch((error) => {
       throw signingError(`${label} is not a valid plist: ${describe(error)}`, "supply the owner-provided entitlement plist in a valid macOS plist format");
     });
     let parsed;
@@ -255,14 +329,262 @@ export async function canonicalizeEntitlements(value, label = "entitlements") {
       throw signingError(`${label} did not convert to valid plist JSON: ${describe(error)}`, "supply a valid owner-provided entitlement plist");
     }
     const canonical = JSON.stringify(sortCanonicalValue(parsed));
-    return { canonical, sha256: sha256(Buffer.from(canonical)) };
+    return { canonical, sha256: sha256(Buffer.from(canonical)), value: parsed };
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 }
 
-async function runSecurityCommand(arguments_) {
-  const result = await execFileAsync("security", arguments_, { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 }).catch((error) => {
+export async function loadEntitlementPolicy({ entitlementMapPath = MACOS_ENTITLEMENT_MAP_PATH, repositoryRoot = process.cwd(), ownerMode = false } = {}) {
+  if (!entitlementMapPath) {
+    throw signingError("release entitlement map is missing", "supply the owner-approved per-executable entitlement map");
+  }
+  assertNoTraversal(entitlementMapPath, "release entitlement map");
+  const resolvedRepositoryRoot = path.resolve(repositoryRoot);
+  const requestedMapPath = path.isAbsolute(entitlementMapPath)
+    ? path.resolve(entitlementMapPath)
+    : path.resolve(resolvedRepositoryRoot, entitlementMapPath);
+  const mapPathEvidence = await assertContainedAuthorityPath(requestedMapPath, resolvedRepositoryRoot, "release entitlement map");
+  const resolvedMapPath = mapPathEvidence.absolutePath;
+  if (!mapPathEvidence.stat.isFile() || mapPathEvidence.stat.isSymbolicLink()) {
+    throw signingError(
+      `release entitlement map is not a regular non-symlink file: ${resolvedMapPath}`,
+      "supply the checked-in owner-approved per-executable entitlement map",
+    );
+  }
+  const mapBytes = await readFile(resolvedMapPath);
+  if (mapBytes.byteLength === 0) {
+    throw signingError(`release entitlement map is empty: ${resolvedMapPath}`, "supply the non-empty owner-approved per-executable entitlement map");
+  }
+  let document;
+  try {
+    document = JSON.parse(mapBytes.toString("utf8"));
+  } catch (error) {
+    throw signingError(`release entitlement map is not valid JSON: ${describe(error)}`, "supply the deterministic owner-approved entitlement map as JSON");
+  }
+  if (!document || typeof document !== "object" || Array.isArray(document) || document.schema !== MACOS_ENTITLEMENT_POLICY_SCHEMA || !Array.isArray(document.entries)) {
+    throw signingError(
+      `release entitlement map schema or entries are invalid; observed schema ${String(document?.schema)}`,
+      `use ${MACOS_ENTITLEMENT_POLICY_SCHEMA} with the exact owner-approved five-path map`,
+    );
+  }
+  const expectedEntries = MACOS_APPROVED_ENTITLEMENT_MAP.map(({ path: relativePath, class: policyClass, plist }) => ({ path: relativePath, class: policyClass, plist }));
+  const observedEntries = document.entries.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    return { path: entry.path, class: entry.class, plist: entry.plist };
+  });
+  if (JSON.stringify(observedEntries) !== JSON.stringify(expectedEntries)) {
+    throw signingError(
+      `release entitlement map entries differ from owner authority; observed ${JSON.stringify(observedEntries)}`,
+      "restore the exact five-path owner-approved map and do not add a union or inventory-derived entry",
+    );
+  }
+  for (const entry of document.entries) {
+    if (Object.keys(entry).sort((left, right) => left.localeCompare(right)).join(",") !== "class,path,plist") {
+      throw signingError(
+        `release entitlement map entry ${String(entry.path)} contains extra fields`,
+        "keep each mapping entry limited to path, class, and owner plist",
+      );
+    }
+    assertRelativePolicyPath(entry.path, "entitlement map executable path");
+    if (!path.isAbsolute(entry.plist) && (entry.plist === path.posix.normalize(entry.plist)) && !entry.plist.startsWith("../") && entry.plist !== "..") {
+      // The exact map comparison above binds the relative plist names. This branch
+      // keeps the path check explicit for diagnostics before reading the owner file.
+    } else {
+      throw signingError(
+        `entitlement map plist for ${entry.path} is not a safe relative path: ${entry.plist}`,
+        "use only the checked-in entitlements/jit.plist or entitlements/audio-input.plist source",
+      );
+    }
+  }
+
+  const mapCanonical = JSON.stringify(sortCanonicalValue(document));
+  const sourceByPath = new Map();
+  const resolvedEntries = [];
+  for (const approved of MACOS_APPROVED_ENTITLEMENT_MAP) {
+    const entry = document.entries.find((candidate) => candidate.path === approved.path);
+    const resolvedPlistPath = path.resolve(path.dirname(resolvedMapPath), entry.plist);
+    if (!isInsidePath(path.dirname(resolvedMapPath), resolvedPlistPath)) {
+      throw signingError(
+        `entitlement map plist for ${entry.path} escapes the map owner directory: ${entry.plist}`,
+        "keep owner plist inputs below the checked-in entitlement map directory",
+      );
+    }
+    const plistPathEvidence = await assertContainedAuthorityPath(resolvedPlistPath, path.dirname(resolvedMapPath), `owner entitlement plist for ${entry.path}`);
+    const plistStat = plistPathEvidence.stat;
+    if (!plistStat.isFile() || plistStat.isSymbolicLink()) {
+      throw signingError(
+        `owner entitlement plist for ${entry.path} is not a regular non-symlink file: ${resolvedPlistPath}`,
+        "restore the exact checked-in owner-approved plist input",
+      );
+    }
+    const plistBytes = await readFile(resolvedPlistPath);
+    const canonical = await canonicalizeEntitlements(plistBytes, `${entry.class} owner entitlement plist`, { ownerMode });
+    validateApprovedEntitlementValue(canonical.value, { ...entry, key: approved.key }, `${entry.class} owner entitlement plist`);
+    const sourcePath = repositoryRelativePath(resolvedRepositoryRoot, resolvedPlistPath);
+    const source = sourceByPath.get(sourcePath) ?? {
+      path: sourcePath,
+      fileSha256: sha256(plistBytes),
+      canonicalSha256: canonical.sha256,
+      absolutePath: resolvedPlistPath,
+    };
+    if (source.canonicalSha256 !== canonical.sha256 || source.fileSha256 !== sha256(plistBytes)) {
+      throw signingError(
+        `owner entitlement plist evidence for ${entry.path} is inconsistent`,
+        "use one stable checked-in plist for each approved entitlement class",
+      );
+    }
+    sourceByPath.set(sourcePath, source);
+    resolvedEntries.push({
+      path: entry.path,
+      class: entry.class,
+      plist: entry.plist,
+      sourcePath,
+      absolutePath: resolvedPlistPath,
+      key: approved.key,
+      ownerFileSha256: sha256(plistBytes),
+      ownerCanonicalSha256: canonical.sha256,
+      ownerKeys: Object.keys(canonical.value).sort((left, right) => left.localeCompare(right)),
+    });
+  }
+  const sourcePlists = [...sourceByPath.values()]
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .map(({ path: sourcePath, fileSha256, canonicalSha256 }) => ({ path: sourcePath, fileSha256, canonicalSha256 }));
+  return {
+    schema: MACOS_ENTITLEMENT_POLICY_SCHEMA,
+    mapPath: repositoryRelativePath(resolvedRepositoryRoot, resolvedMapPath),
+    mapAbsolutePath: resolvedMapPath,
+    mapSha256: sha256(mapBytes),
+    mapCanonicalSha256: sha256(Buffer.from(mapCanonical)),
+    sourcePlists,
+    entries: resolvedEntries,
+  };
+}
+
+function validateApprovedEntitlementValue(value, entry, label) {
+  const observedKeys = value && typeof value === "object" && !Array.isArray(value)
+    ? Object.keys(value).sort((left, right) => left.localeCompare(right))
+    : [];
+  if (observedKeys.length !== 1 || observedKeys[0] !== entry.key || value?.[entry.key] !== true) {
+    throw signingError(
+      `${label} for ${entry.path} has observed keys ${JSON.stringify(observedKeys)}; expected policy class ${entry.class} with ${entry.key}=true under owner authority`,
+      "restore the exact owner-approved plist and remove every extra, false, or risky entitlement key",
+    );
+  }
+}
+
+export function validateApprovedEntitlementMachOEntries({ entries = [], machoEntries = [], policy = null } = {}) {
+  if (!policy) return;
+  const entryByPath = new Map(entries.map((entry) => [entry.path, entry]));
+  const machoByPath = new Map(machoEntries.map((entry) => [entry.path, entry]));
+  for (const mapping of policy.entries) {
+    const packageEntry = entryByPath.get(mapping.path);
+    if (!packageEntry || packageEntry.type !== "file") {
+      throw signingError(
+        `approved entitlement path ${mapping.path} is not a regular file (observed ${packageEntry?.type ?? "missing"})`,
+        `restore the regular ${MACOS_REQUIRED_MACHO_ARCHITECTURE} Mach-O executable for policy class ${mapping.class} before signing; do not sign a symlink, directory, or missing path`,
+      );
+    }
+    const machoEntry = machoByPath.get(mapping.path);
+    if (!machoEntry) {
+      throw signingError(
+        `approved entitlement path ${mapping.path} is not a regular Mach-O file`,
+        `restore the ${MACOS_REQUIRED_MACHO_ARCHITECTURE} ${MACOS_REQUIRED_MACHO_FILE_TYPE} executable for policy class ${mapping.class} before signing`,
+      );
+    }
+    let machOSlices;
+    try {
+      machOSlices = normalizeMachOSlices(machoEntry.machOSlices, mapping.path);
+    } catch (error) {
+      throw signingError(
+        error instanceof Error ? error.message : String(error),
+        `inspect every architecture slice for ${mapping.path} and keep one regular arm64 ${MACOS_REQUIRED_MACHO_FILE_TYPE} executable before applying ${mapping.class} entitlements`,
+      );
+    }
+    const observedSlices = machOSlices.map((slice) => `${slice.architecture}/${slice.cpuSubtype} ${slice.fileType}`);
+    if (machOSlices.length !== 1 || machOSlices[0].architecture !== MACOS_REQUIRED_MACHO_ARCHITECTURE || machOSlices[0].cpuSubtype !== "all" || machOSlices[0].fileType !== MACOS_REQUIRED_MACHO_FILE_TYPE) {
+      throw signingError(
+        `approved entitlement path ${mapping.path} has observed Mach-O slices ${JSON.stringify(observedSlices)}; expected exactly [${MACOS_REQUIRED_MACHO_ARCHITECTURE}/all ${MACOS_REQUIRED_MACHO_FILE_TYPE}] for policy class ${mapping.class}`,
+        `replace the dylib, bundle, object, non-arm64 image, or other Mach-O with the exact regular arm64 executable before applying entitlements`,
+      );
+    }
+  }
+}
+
+function assertRelativePolicyPath(candidate, label) {
+  if (typeof candidate !== "string" || !candidate || path.isAbsolute(candidate) || path.posix.normalize(candidate) !== candidate || candidate === ".." || candidate.startsWith("../") || candidate.includes("/../")) {
+    throw signingError(`${label} is absolute, empty, or escapes its declared root: ${String(candidate)}`, "use the exact repository-relative owner policy path");
+  }
+}
+
+function repositoryRelativePath(repositoryRoot, candidate) {
+  const relative = path.relative(repositoryRoot, candidate).replaceAll(path.sep, "/");
+  if (!relative || relative === ".." || relative.startsWith("../") || path.isAbsolute(relative)) {
+    throw signingError(`entitlement policy path is outside repository authority: ${candidate}`, "keep the checked-in entitlement map and plists inside the repository");
+  }
+  return relative;
+}
+
+function isInsidePath(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function assertNoTraversal(candidate, label) {
+  const rawPath = String(candidate).replaceAll(path.sep, "/");
+  const normalizedPath = path.posix.normalize(rawPath);
+  if (rawPath.includes("..") && normalizedPath !== rawPath) {
+    throw signingError(
+      `${label} uses traversal path ${candidate}`,
+      "use the exact repository-relative checked-in authority path",
+    );
+  }
+}
+
+async function assertContainedAuthorityPath(candidate, authorityRoot, label) {
+  const rootPath = path.resolve(authorityRoot);
+  const absolutePath = path.resolve(candidate);
+  if (!isInsidePath(rootPath, absolutePath)) {
+    throw signingError(
+      `${label} escapes repository authority: ${candidate}`,
+      "keep the entitlement map and plists inside the checked-in repository authority",
+    );
+  }
+  const relative = path.relative(rootPath, absolutePath);
+  let cursor = rootPath;
+  for (const component of relative.split(path.sep).filter(Boolean)) {
+    cursor = path.join(cursor, component);
+    const componentStat = await lstat(cursor).catch(() => null);
+    if (!componentStat) {
+      throw signingError(
+        `${label} path is missing: ${absolutePath}`,
+        "restore the checked-in regular authority file and its parent directories",
+      );
+    }
+    if (componentStat.isSymbolicLink()) {
+      throw signingError(
+        `${label} path contains symlink component ${cursor}`,
+        "replace the symlink with a regular in-repository authority path",
+      );
+    }
+  }
+  const rootRealPath = await realpath(rootPath).catch(() => rootPath);
+  const candidateRealPath = await realpath(absolutePath).catch(() => null);
+  if (!candidateRealPath || !isInsidePath(rootRealPath, candidateRealPath)) {
+    throw signingError(
+      `${label} realpath escapes repository authority: ${absolutePath}`,
+      "keep the map and plist realpaths inside the checked-in repository authority",
+    );
+  }
+  return { absolutePath, stat: await lstat(absolutePath) };
+}
+
+async function runSecurityCommand(arguments_, { ownerMode = false } = {}) {
+  const result = await execFileAsync(ownerMode ? MACOS_OWNER_TOOL_PATHS.security : "security", arguments_, {
+    encoding: "utf8",
+    maxBuffer: 4 * 1024 * 1024,
+    ...(ownerMode ? { env: ownerToolEnvironment() } : {}),
+  }).catch((error) => {
     throw signingError(`security certificate lookup failed: ${describe(error)}`, "install or select the owner-approved Developer ID Application certificate");
   });
   return `${result.stdout}\n${result.stderr ?? ""}`;
@@ -304,17 +626,27 @@ export function codesignArguments({ mode, identity, target, identifier, entitlem
   const normalized = normalizeSigningOptions({
     mode,
     signingIdentity: identity,
-    entitlementsPath: mode === RELEASE_SIGNING_MODE ? (outer ? entitlementsPath : "nested-signature-entitlements-not-used") : null,
+    entitlementMapPath: mode === RELEASE_SIGNING_MODE ? MACOS_ENTITLEMENT_MAP_PATH : null,
+    requireEntitlementMap: false,
   });
   if (typeof target !== "string" || !target || typeof identifier !== "string" || !identifier) {
     throw signingError("codesign target or identifier is missing", "sign every final Mach-O and the outer app with explicit paths");
   }
+  if (outer && entitlementsPath !== null) {
+    throw signingError(
+      `outer app ${MACOS_SIGNING_OUTER_PATH} received an entitlement plist`,
+      "omit --entitlements for the outer app; apply only the exact per-executable map entries",
+    );
+  }
   const arguments_ = ["--force", "--sign", normalized.identity, "--identifier", identifier];
   if (normalized.mode === RELEASE_SIGNING_MODE) {
     arguments_.push("--options", "runtime");
-    if (outer) arguments_.push("--entitlements", normalized.entitlementsPath);
+    if (entitlementsPath !== null) arguments_.push("--entitlements", entitlementsPath);
   }
-  arguments_.push("--timestamp=none", target);
+  arguments_.push(
+    normalized.mode === RELEASE_SIGNING_MODE ? MACOS_RELEASE_TIMESTAMP_ARGUMENT : MACOS_LOCAL_TIMESTAMP_ARGUMENT,
+    target,
+  );
   return arguments_;
 }
 
@@ -323,11 +655,20 @@ export function parseCodesignDisplay(output, relativePath) {
   const identifier = matchLine(text, "Identifier") ?? null;
   const teamValue = matchLine(text, "TeamIdentifier");
   const teamId = teamValue && teamValue !== "not set" ? teamValue : null;
+  const timestampValue = matchLine(text, "Timestamp");
   const authorities = [...text.matchAll(/^Authority=(.+)$/gmu)].map((match) => match[1].trim());
   const flagMatch = text.match(/\bflags=0x[0-9a-f]+(?:\(([^)]*)\))?/iu);
   const flags = flagMatch?.[1] ? flagMatch[1].split(",").map((flag) => flag.trim()).filter(Boolean).sort() : [];
   const signatureValue = matchLine(text, "Signature");
   const signature = signatureValue ?? (teamId ? "cms" : "adhoc");
+  const timestamp = timestampValue && !/^(?:none|not set|absent)$/iu.test(timestampValue)
+    ? timestampValue
+    : timestampValue === null && signature === "adhoc"
+      ? "none"
+      : timestampValue === null
+        ? null
+        : "none";
+  const secureTimestamp = timestamp !== null && timestamp !== "none";
   const identity = signature === "adhoc" ? "-" : authorities[0] ?? null;
   const cdHash = matchLine(text, "CDHash") ?? null;
   if (!identifier || !CD_HASH_PATTERN.test(cdHash ?? "")) {
@@ -344,35 +685,45 @@ export function parseCodesignDisplay(output, relativePath) {
     hardenedRuntime: flags.includes("runtime"),
     entitlementsSha256: null,
     entitlementsCanonicalSha256: null,
+    entitlementKeys: [],
     certificateFingerprint: null,
     certificateSha1: null,
     cdHash,
+    timestamp,
+    secureTimestamp,
   };
 }
 
 export async function collectMacOSSignatureEvidence({
   bundlePath,
   machoPaths,
+  machoEntries = null,
   outerPath = MACOS_SIGNING_OUTER_PATH,
   verify = false,
   requireCertificateEvidence = false,
   extractCertificateEvidence = extractSignatureCertificateEvidence,
   runCodesign = execFileAsync,
+  ownerMode = false,
 } = {}) {
   const order = buildSigningOrder(machoPaths, outerPath);
+  const machoEvidenceByPath = new Map((machoEntries ?? []).map((entry) => [entry.path, entry]));
   const nestedMachO = [];
   for (const relativePath of order.nestedMachO) {
-    nestedMachO.push(await readSignatureEvidence(bundlePath, relativePath, false, verify, requireCertificateEvidence, extractCertificateEvidence, runCodesign));
+    nestedMachO.push(await readSignatureEvidence(bundlePath, relativePath, false, verify, requireCertificateEvidence, extractCertificateEvidence, runCodesign, machoEvidenceByPath.get(relativePath) ?? null, ownerMode));
   }
-  const outer = await readSignatureEvidence(bundlePath, order.outer, true, verify, requireCertificateEvidence, extractCertificateEvidence, runCodesign);
+  const outer = await readSignatureEvidence(bundlePath, order.outer, true, verify, requireCertificateEvidence, extractCertificateEvidence, runCodesign, null, ownerMode);
   return { order, outer, nestedMachO };
 }
 
-export async function extractSignatureCertificateEvidence(binaryPath, relativePath = binaryPath) {
+export async function extractSignatureCertificateEvidence(binaryPath, relativePath = binaryPath, { ownerMode = false } = {}) {
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "meetless-signature-certs-"));
   const prefix = path.join(temporaryRoot, "certificate-");
   try {
-    await execFileAsync("codesign", ["-d", `--extract-certificates=${prefix}`, binaryPath], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 }).catch((error) => {
+    await execFileAsync(ownerMode ? MACOS_OWNER_TOOL_PATHS.codesign : "codesign", ["-d", `--extract-certificates=${prefix}`, binaryPath], {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+      ...(ownerMode ? { env: ownerToolEnvironment() } : {}),
+    }).catch((error) => {
       throw signingError(`cannot extract the leaf certificate for ${relativePath}: ${describe(error)}`, "inspect the exact final signature and extract its certificate chain");
     });
     const leafPath = `${prefix}0`;
@@ -410,16 +761,20 @@ export function createSigningMetadata({
   resolvedTeamId = expectedTeamId,
   certificateFingerprint = null,
   certificateSha1 = null,
-  entitlementFileSha256 = null,
-  entitlementOwnerCanonicalSha256 = null,
+  entitlementPolicy = null,
   order,
   outer,
   nestedMachO,
 }) {
-  const normalized = normalizeSigningOptions({ mode, signingIdentity: requestedIdentity, entitlementsPath: mode === RELEASE_SIGNING_MODE ? "provided" : null, expectedTeamId });
-  if (mode === LOCAL_AD_HOC_SIGNING_MODE) {
-    // The placeholder above only selects the release/local validation branch.
-    normalized.entitlementsPath = null;
+  const normalized = normalizeSigningOptions({
+    mode,
+    signingIdentity: requestedIdentity,
+    entitlementMapPath: mode === RELEASE_SIGNING_MODE ? MACOS_ENTITLEMENT_MAP_PATH : null,
+    expectedTeamId,
+    requireEntitlementMap: false,
+  });
+  if (mode === RELEASE_SIGNING_MODE && !entitlementPolicy) {
+    throw signingError("release signing metadata has no entitlement map evidence", "load the exact owner-approved per-executable entitlement map before signing");
   }
   const state = normalizeSignatureState({ order, outer, nestedMachO });
   const actualTeamId = state.outer.teamId;
@@ -445,14 +800,7 @@ export function createSigningMetadata({
       flag: mode === RELEASE_SIGNING_MODE ? "runtime" : null,
       verified: state.outer.hardenedRuntime && state.nestedMachO.every((entry) => entry.hardenedRuntime),
     },
-    entitlements: {
-      required: mode === RELEASE_SIGNING_MODE,
-      scope: mode === RELEASE_SIGNING_MODE ? "outer-app" : null,
-      fileSha256: mode === RELEASE_SIGNING_MODE ? entitlementFileSha256 : null,
-      ownerCanonicalSha256: mode === RELEASE_SIGNING_MODE ? entitlementOwnerCanonicalSha256 : null,
-      signedSha256: mode === RELEASE_SIGNING_MODE ? state.outer.entitlementsSha256 : null,
-      signedCanonicalSha256: mode === RELEASE_SIGNING_MODE ? state.outer.entitlementsCanonicalSha256 : null,
-    },
+    entitlements: buildEntitlementMetadata(mode, entitlementPolicy, state),
     order: {
       nestedMachO: state.order.nestedMachO,
       outer: state.order.outer,
@@ -481,8 +829,7 @@ export function createSigningMetadata({
     expectedResolvedIdentity: mode === RELEASE_SIGNING_MODE ? resolvedIdentity : "-",
     expectedCertificateFingerprint: mode === RELEASE_SIGNING_MODE ? certificateFingerprint : null,
     expectedCertificateSha1: mode === RELEASE_SIGNING_MODE ? certificateSha1 : null,
-    entitlementFileSha256: mode === RELEASE_SIGNING_MODE ? entitlementFileSha256 : null,
-    entitlementOwnerCanonicalSha256: mode === RELEASE_SIGNING_MODE ? entitlementOwnerCanonicalSha256 : null,
+    entitlementPolicy,
     expectedTeamId: declaredTeamId,
   });
   return signing;
@@ -497,8 +844,7 @@ export function validateSigningMetadata(signing, {
   expectedResolvedIdentity = null,
   expectedCertificateFingerprint = null,
   expectedCertificateSha1 = null,
-  entitlementFileSha256 = null,
-  entitlementOwnerCanonicalSha256 = null,
+  entitlementPolicy = null,
   expectedTeamId = null,
 } = {}) {
   validateSigningDocument(signing, machoPaths);
@@ -520,11 +866,8 @@ export function validateSigningMetadata(signing, {
   if (expectedTeamId !== null && signing.identity.teamId !== expectedTeamId) {
     throw signingError(`manifest Team ID ${signing.identity.teamId ?? "missing"} differs from requested ${expectedTeamId}`, "validate with the Team ID belonging to the supplied signing identity");
   }
-  if (signing.mode === RELEASE_SIGNING_MODE && entitlementFileSha256 !== null && signing.entitlements.fileSha256 !== entitlementFileSha256) {
-    throw signingError("manifest entitlement file digest is stale or mismatched", "rebuild and validate with the exact supplied entitlement file");
-  }
-  if (signing.mode === RELEASE_SIGNING_MODE && entitlementOwnerCanonicalSha256 !== null && signing.entitlements.ownerCanonicalSha256 !== entitlementOwnerCanonicalSha256) {
-    throw signingError("manifest canonical owner entitlement digest is stale or mismatched", "rebuild and validate with the exact supplied entitlement plist semantics");
+  if (signing.mode === RELEASE_SIGNING_MODE && !entitlementPolicy) {
+    throw signingError("release signing metadata validation has no entitlement map evidence", "load the exact owner-approved per-executable entitlement map before validating");
   }
   if (machoPaths !== null) {
     const order = buildSigningOrder(machoPaths, outerPath);
@@ -541,8 +884,11 @@ export function validateSigningMetadata(signing, {
       throw signingError("post-signature signing state digest is stale", "recompute signing metadata after signing every final code object");
     }
   }
-  if (signing.mode === RELEASE_SIGNING_MODE && signing.entitlements.fileSha256 !== entitlementFileSha256 && entitlementFileSha256 !== null) {
-    throw signingError("release entitlement file digest does not match the declared contract", "use the same supplied entitlement file for signing and validation");
+  const validatedState = normalizeSignatureState(actual ?? signing.signatureState);
+  if (signing.mode === RELEASE_SIGNING_MODE) {
+    validateEntitlementPolicyBinding(signing, entitlementPolicy, validatedState);
+  } else if (JSON.stringify(signing.entitlements) !== JSON.stringify(buildEntitlementMetadata(LOCAL_AD_HOC_SIGNING_MODE, null, validatedState))) {
+    throw signingError("local ad-hoc entitlement metadata is stale or contains release evidence", "regenerate local-only metadata from the final entitlement-free signatures");
   }
   return signing;
 }
@@ -566,13 +912,8 @@ export function validateSigningDocument(signing, machoPaths = null) {
   if (!signing.hardenedRuntime || signing.hardenedRuntime.flag !== (signing.mode === RELEASE_SIGNING_MODE ? "runtime" : null) || typeof signing.hardenedRuntime.verified !== "boolean") {
     throw signingError("manifest hardened-runtime contract is missing or inconsistent", "record and verify the runtime CodeDirectory flag for every final Mach-O and the outer app");
   }
-  if (!signing.entitlements || signing.entitlements.required !== (signing.mode === RELEASE_SIGNING_MODE) || signing.entitlements.scope !== (signing.mode === RELEASE_SIGNING_MODE ? "outer-app" : null)) {
-    throw signingError("manifest entitlement contract is missing or has the wrong scope", "bind the supplied entitlement file to the outer app without inventing entitlement policy");
-  }
-  if (signing.mode === RELEASE_SIGNING_MODE && (!SHA256_PATTERN.test(signing.entitlements.fileSha256 ?? "") || !SHA256_PATTERN.test(signing.entitlements.ownerCanonicalSha256 ?? "") || !SHA256_PATTERN.test(signing.entitlements.signedSha256 ?? "") || !SHA256_PATTERN.test(signing.entitlements.signedCanonicalSha256 ?? ""))) {
-    throw signingError("release entitlement file or signed entitlement digest is missing", "supply the owner-provided entitlement file and regenerate post-signature metadata");
-  }
-  if (signing.mode === LOCAL_AD_HOC_SIGNING_MODE && (signing.identity.requested !== "-" || signing.identity.resolved !== "-" || signing.identity.teamId !== null || signing.identity.certificateFingerprint !== null || signing.identity.certificateSha1 !== null || signing.entitlements.fileSha256 !== null || signing.entitlements.ownerCanonicalSha256 !== null || signing.entitlements.signedSha256 !== null || signing.entitlements.signedCanonicalSha256 !== null)) {
+  validateEntitlementDocument(signing.entitlements, signing.mode);
+  if (signing.mode === LOCAL_AD_HOC_SIGNING_MODE && (signing.identity.requested !== "-" || signing.identity.resolved !== "-" || signing.identity.teamId !== null || signing.identity.certificateFingerprint !== null || signing.identity.certificateSha1 !== null)) {
     throw signingError("local ad-hoc metadata contains release identity, Team ID, or entitlement evidence", "keep local proof explicitly ad-hoc and non-distributable");
   }
   if (!signing.order || !Array.isArray(signing.order.nestedMachO) || signing.order.outer !== MACOS_SIGNING_OUTER_PATH || !Array.isArray(signing.order.all) || JSON.stringify(signing.order.all) !== JSON.stringify([...signing.order.nestedMachO, signing.order.outer])) {
@@ -612,6 +953,20 @@ function validateLocalState(signing, state) {
   if (signing.hardenedRuntime.verified || signatures.some((entry) => entry.hardenedRuntime || entry.teamId !== null || entry.signature !== "adhoc" || entry.identity !== "-")) {
     throw signingError("local ad-hoc package contains release-style signature evidence", "use local ad-hoc signatures only for non-distributable proof");
   }
+  const timestampedImage = signatures.find((entry) => entry.secureTimestamp === true || entry.timestamp !== "none");
+  if (timestampedImage) {
+    throw signingError(
+      `local ad-hoc image ${timestampedImage.path} has timestamp evidence ${timestampedImage.timestamp ?? "missing"}`,
+      "use --timestamp=none for every local ad-hoc signature and regenerate the package",
+    );
+  }
+  const entitlementBearingImage = signatures.find((entry) => entry.entitlementsSha256 !== null || entry.entitlementsCanonicalSha256 !== null || entry.entitlementKeys.length !== 0);
+  if (entitlementBearingImage) {
+    throw signingError(
+      `local ad-hoc image ${entitlementBearingImage.path} has entitlement keys ${JSON.stringify(entitlementBearingImage.entitlementKeys)} or signed entitlement digests`,
+      "remove --entitlements from local-ad-hoc signing, rebuild the image, and validate empty entitlement evidence",
+    );
+  }
   if (signing.distribution?.status !== "local-only") {
     throw signingError("local ad-hoc package is not marked local-only", "mark the package non-distributable");
   }
@@ -628,8 +983,11 @@ function validateReleaseState(signing, state) {
     !SHA256_PATTERN.test(signing.identity.certificateFingerprint ?? "") ||
     !SHA1_PATTERN.test(signing.identity.certificateSha1 ?? "") ||
     signatures.some((entry) => entry.signature === "adhoc" || entry.teamId === null || entry.identity === "-" || !parseDeveloperIdTeamId(entry.identity) || entry.certificateFingerprint !== signing.identity.certificateFingerprint || entry.certificateSha1 !== signing.identity.certificateSha1)
+    || signing.identity.teamId !== MACOS_REQUIRED_DEVELOPER_ID_TEAM
+    || signing.identity.certificateSha1 !== MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1
+    || signatures.some((entry) => entry.teamId !== MACOS_REQUIRED_DEVELOPER_ID_TEAM || entry.certificateSha1 !== MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1 || entry.secureTimestamp !== true || typeof entry.timestamp !== "string" || entry.timestamp === "none")
   ) {
-    throw signingError("release package uses an ad-hoc signer or lacks Developer ID certificate evidence", "resolve one exact Developer ID Application leaf certificate and sign every final code object with it");
+    throw signingError("release package uses an unapproved signer, lacks Developer ID certificate evidence, or lacks a secure timestamp", `use the owner-approved Developer ID certificate SHA-1 ${MACOS_REQUIRED_DEVELOPER_ID_CERTIFICATE_SHA1}, Team ${MACOS_REQUIRED_DEVELOPER_ID_TEAM}, and --timestamp for every final code object`);
   }
   if (!signing.hardenedRuntime.required || !signing.hardenedRuntime.verified || signatures.some((entry) => !entry.hardenedRuntime || !entry.flags.includes("runtime"))) {
     throw signingError("release package is missing the hardened-runtime flag on a final code object", "sign every final Mach-O and the outer app with --options runtime");
@@ -641,11 +999,134 @@ function validateReleaseState(signing, state) {
   if (!signing.identity.primaryAuthority || signing.identity.primaryAuthority !== signing.identity.observedLeafSigner || signatures.some((entry) => entry.identity !== signing.identity.observedLeafSigner)) {
     throw signingError("release package signing identity evidence is mismatched", "use one supplied Developer ID identity for every final code object");
   }
-  if (state.outer.entitlementsSha256 !== signing.entitlements.signedSha256 || state.outer.entitlementsCanonicalSha256 !== signing.entitlements.signedCanonicalSha256 || signing.entitlements.ownerCanonicalSha256 !== signing.entitlements.signedCanonicalSha256) {
-    throw signingError("outer app signed entitlements are missing or semantically differ from the owner plist", "re-sign the outer app with the owner-provided entitlement file without changing its values");
-  }
   if (signing.distribution?.status !== "developer-id-preparation") {
     throw signingError("release package preparation status is missing", "mark the artifact as Developer ID preparation without claiming release acceptance");
+  }
+}
+
+function buildEntitlementMetadata(mode, policy, state) {
+  const observed = [state.outer, ...state.nestedMachO]
+    .map((entry) => {
+      const mapping = policy?.entries.find((candidate) => candidate.path === entry.path) ?? null;
+      return {
+        path: entry.path,
+        expectedClass: mapping?.class ?? "none",
+        signedSha256: entry.entitlementsSha256,
+        signedCanonicalSha256: entry.entitlementsCanonicalSha256,
+        observedKeys: [...entry.entitlementKeys],
+      };
+    })
+    .sort((left, right) => left.path.localeCompare(right.path));
+  if (mode === LOCAL_AD_HOC_SIGNING_MODE) {
+    return {
+      required: false,
+      scope: "none",
+      mapPath: null,
+      mapSha256: null,
+      mapCanonicalSha256: null,
+      sourcePlists: [],
+      bindings: [],
+      observed,
+    };
+  }
+  return {
+    required: true,
+    scope: "per-executable",
+    mapPath: policy.mapPath,
+    mapSha256: policy.mapSha256,
+    mapCanonicalSha256: policy.mapCanonicalSha256,
+    sourcePlists: policy.sourcePlists.map((source) => ({ ...source })),
+    bindings: policy.entries.map((mapping) => {
+      const image = [state.outer, ...state.nestedMachO].find((entry) => entry.path === mapping.path) ?? null;
+      return {
+        path: mapping.path,
+        class: mapping.class,
+        sourcePath: mapping.sourcePath,
+        fileSha256: mapping.ownerFileSha256,
+        ownerCanonicalSha256: mapping.ownerCanonicalSha256,
+        expectedKeys: [...mapping.ownerKeys],
+        signedSha256: image?.entitlementsSha256 ?? null,
+        signedCanonicalSha256: image?.entitlementsCanonicalSha256 ?? null,
+        observedKeys: image ? [...image.entitlementKeys] : [],
+      };
+    }),
+    observed,
+  };
+}
+
+function validateEntitlementDocument(entitlements, mode) {
+  const expectedRelease = mode === RELEASE_SIGNING_MODE;
+  if (!entitlements || typeof entitlements !== "object" || Array.isArray(entitlements) || entitlements.required !== expectedRelease || entitlements.scope !== (expectedRelease ? "per-executable" : "none") || !Array.isArray(entitlements.sourcePlists) || !Array.isArray(entitlements.bindings) || !Array.isArray(entitlements.observed)) {
+    throw signingError("manifest entitlement contract is missing or has the wrong per-executable scope", "bind the owner-approved map and every observed image entitlement state");
+  }
+  if (expectedRelease) {
+    if (typeof entitlements.mapPath !== "string" || !entitlements.mapPath || !SHA256_PATTERN.test(entitlements.mapSha256 ?? "") || !SHA256_PATTERN.test(entitlements.mapCanonicalSha256 ?? "")) {
+      throw signingError("release entitlement map path or digest evidence is missing", "record the checked-in map bytes and canonical map digest");
+    }
+    if (entitlements.sourcePlists.length !== 2 || entitlements.bindings.length !== MACOS_APPROVED_ENTITLEMENT_MAP.length) {
+      throw signingError("release entitlement source or mapping evidence is incomplete", "record both owner plist digests and all five approved executable bindings");
+    }
+    for (const source of entitlements.sourcePlists) {
+      if (!source || typeof source.path !== "string" || !source.path || !SHA256_PATTERN.test(source.fileSha256 ?? "") || !SHA256_PATTERN.test(source.canonicalSha256 ?? "")) {
+        throw signingError("release owner entitlement source evidence is malformed", "record each owner plist path, raw digest, and canonical digest");
+      }
+    }
+    for (const binding of entitlements.bindings) {
+      if (!binding || typeof binding.path !== "string" || !binding.path || typeof binding.class !== "string" || !binding.class || typeof binding.sourcePath !== "string" || !binding.sourcePath || !SHA256_PATTERN.test(binding.fileSha256 ?? "") || !SHA256_PATTERN.test(binding.ownerCanonicalSha256 ?? "") || !Array.isArray(binding.expectedKeys) || !Array.isArray(binding.observedKeys) || (binding.signedSha256 !== null && !SHA256_PATTERN.test(binding.signedSha256)) || (binding.signedCanonicalSha256 !== null && !SHA256_PATTERN.test(binding.signedCanonicalSha256))) {
+        throw signingError("release entitlement binding evidence is malformed", "record path, policy class, owner digests, and observed signed digests for every approved executable");
+      }
+    }
+  } else if (entitlements.mapPath !== null || entitlements.mapSha256 !== null || entitlements.mapCanonicalSha256 !== null || entitlements.sourcePlists.length !== 0 || entitlements.bindings.length !== 0) {
+    throw signingError("local ad-hoc metadata contains release entitlement policy evidence", "keep local ad-hoc packages entitlement-free and local-only");
+  }
+  for (const observed of entitlements.observed) {
+    if (!observed || typeof observed.path !== "string" || !observed.path || typeof observed.expectedClass !== "string" || !Array.isArray(observed.observedKeys) || (observed.signedSha256 !== null && !SHA256_PATTERN.test(observed.signedSha256)) || (observed.signedCanonicalSha256 !== null && !SHA256_PATTERN.test(observed.signedCanonicalSha256))) {
+      throw signingError("per-image entitlement evidence is malformed", "record observed entitlement keys and raw/canonical digests for each final code object");
+    }
+  }
+}
+
+function validateEntitlementPolicyBinding(signing, policy, state) {
+  const stateByPath = new Map([state.outer, ...state.nestedMachO].map((entry) => [entry.path, entry]));
+  for (const mapping of policy.entries) {
+    const image = stateByPath.get(mapping.path);
+    const observedSlices = image?.machOSlices ?? [];
+    if (!image || observedSlices.length !== 1 || observedSlices[0].fileType !== MACOS_REQUIRED_MACHO_FILE_TYPE || observedSlices[0].architecture !== MACOS_REQUIRED_MACHO_ARCHITECTURE || observedSlices[0].cpuSubtype !== "all") {
+      throw signingError(
+        `approved entitlement path ${mapping.path} has observed Mach-O slices ${JSON.stringify(observedSlices.map((slice) => `${slice.architecture}/${slice.cpuSubtype} ${slice.fileType}`))}; expected exactly [${MACOS_REQUIRED_MACHO_ARCHITECTURE}/all ${MACOS_REQUIRED_MACHO_FILE_TYPE}] for policy class ${mapping.class}`,
+        "sign only the exact regular arm64 executable at the approved path; replace any universal, non-arm64, dylib, bundle, object, symlink, or other Mach-O type",
+      );
+    }
+  }
+  const expected = buildEntitlementMetadata(RELEASE_SIGNING_MODE, policy, state);
+  if (JSON.stringify(signing.entitlements) !== JSON.stringify(expected)) {
+    throw signingError(
+      "release entitlement map, owner digest, or observed per-image entitlement metadata is stale or mismatched",
+      "rebuild every approved executable with its exact policy plist, omit --entitlements for all other code objects, and regenerate post-signature metadata",
+    );
+  }
+  for (const mapping of policy.entries) {
+    const image = stateByPath.get(mapping.path);
+    if (!image) {
+      throw signingError(
+        `approved entitlement path ${mapping.path} is absent from the final Mach-O inventory`,
+        `restore the exact ${mapping.class} executable or remove the package candidate for owner review; do not spread entitlements to a new path`,
+      );
+    }
+    if (image.entitlementsCanonicalSha256 !== mapping.ownerCanonicalSha256 || JSON.stringify(image.entitlementKeys) !== JSON.stringify(mapping.ownerKeys)) {
+      throw signingError(
+        `entitlement path ${mapping.path} observed keys ${JSON.stringify(image.entitlementKeys)} do not match expected policy class ${mapping.class}`,
+        "sign the approved executable with its exact owner plist and read back the signed entitlements before writing the manifest",
+      );
+    }
+  }
+  for (const image of [state.outer, ...state.nestedMachO]) {
+    if (!policy.entries.some((mapping) => mapping.path === image.path) && (image.entitlementsSha256 !== null || image.entitlementsCanonicalSha256 !== null || image.entitlementKeys.length !== 0)) {
+      throw signingError(
+        `unmapped entitlement-bearing image ${image.path} has observed keys ${JSON.stringify(image.entitlementKeys)}`,
+        "omit --entitlements for every unapproved code object, including the outer app, helpers, frameworks, dylibs, and tools",
+      );
+    }
   }
 }
 
@@ -670,6 +1151,15 @@ function normalizeSignatureEvidence(evidence, fallbackPath = null) {
   }
   const pathValue = evidence.path ?? fallbackPath;
   const flags = Array.isArray(evidence.flags) ? [...new Set(evidence.flags)].sort() : [];
+  let machOSlices;
+  try {
+    machOSlices = normalizeMachOSlices(evidence.machOSlices ?? [], pathValue ?? "Mach-O");
+  } catch (error) {
+    throw signingError(
+      error instanceof Error ? error.message : String(error),
+      "record the complete normalized architecture slice set from the exact final Mach-O before writing signature metadata",
+    );
+  }
   const normalized = {
     path: pathValue,
     identifier: evidence.identifier ?? null,
@@ -679,42 +1169,65 @@ function normalizeSignatureEvidence(evidence, fallbackPath = null) {
     authorities: Array.isArray(evidence.authorities) ? [...evidence.authorities] : [],
     flags,
     hardenedRuntime: evidence.hardenedRuntime ?? flags.includes("runtime"),
+    machOSlices,
+    machOFileType: machOSlices.length === 1 ? machOSlices[0].fileType : null,
+    machOArchitecture: machOSlices.length === 1 ? machOSlices[0].architecture : null,
     entitlementsSha256: evidence.entitlementsSha256 ?? null,
     entitlementsCanonicalSha256: evidence.entitlementsCanonicalSha256 ?? null,
+    entitlementKeys: Array.isArray(evidence.entitlementKeys) ? [...new Set(evidence.entitlementKeys)].sort((left, right) => left.localeCompare(right)) : [],
     certificateFingerprint: evidence.certificateFingerprint ?? null,
     certificateSha1: evidence.certificateSha1 ?? null,
     cdHash: evidence.cdHash ?? null,
+    timestamp: evidence.timestamp ?? null,
+    secureTimestamp: evidence.secureTimestamp ?? (typeof evidence.timestamp === "string" && evidence.timestamp !== "none"),
   };
-  if (typeof normalized.path !== "string" || !normalized.path || path.isAbsolute(normalized.path) || typeof normalized.identifier !== "string" || !normalized.identifier || typeof normalized.identity !== "string" || !normalized.identity || (normalized.teamId !== null && !TEAM_ID_PATTERN.test(normalized.teamId)) || typeof normalized.signature !== "string" || !normalized.signature || typeof normalized.hardenedRuntime !== "boolean" || (normalized.entitlementsSha256 !== null && !SHA256_PATTERN.test(normalized.entitlementsSha256)) || (normalized.entitlementsCanonicalSha256 !== null && !SHA256_PATTERN.test(normalized.entitlementsCanonicalSha256)) || (normalized.certificateFingerprint !== null && !SHA256_PATTERN.test(normalized.certificateFingerprint)) || (normalized.certificateSha1 !== null && !SHA1_PATTERN.test(normalized.certificateSha1)) || !CD_HASH_PATTERN.test(normalized.cdHash ?? "")) {
-    throw signingError(`signature evidence for ${pathValue ?? "unknown path"} is malformed`, "record identifier, signer, Team ID, flags, entitlements, and CDHash evidence");
+  if (typeof normalized.path !== "string" || !normalized.path || path.isAbsolute(normalized.path) || typeof normalized.identifier !== "string" || !normalized.identifier || typeof normalized.identity !== "string" || !normalized.identity || (normalized.teamId !== null && !TEAM_ID_PATTERN.test(normalized.teamId)) || typeof normalized.signature !== "string" || !normalized.signature || typeof normalized.hardenedRuntime !== "boolean" || !normalized.machOSlices.every((slice) => /^[a-z0-9_]+$/u.test(slice.architecture) && /^[a-z0-9_]+$/u.test(slice.cpuType) && /^[a-z0-9_]+$/u.test(slice.cpuSubtype) && /^MH_[A-Z0-9_]+$/u.test(slice.fileType)) || (normalized.entitlementsSha256 !== null && !SHA256_PATTERN.test(normalized.entitlementsSha256)) || (normalized.entitlementsCanonicalSha256 !== null && !SHA256_PATTERN.test(normalized.entitlementsCanonicalSha256)) || !normalized.entitlementKeys.every((key) => typeof key === "string" && key) || (normalized.certificateFingerprint !== null && !SHA256_PATTERN.test(normalized.certificateFingerprint)) || (normalized.certificateSha1 !== null && !SHA1_PATTERN.test(normalized.certificateSha1)) || !CD_HASH_PATTERN.test(normalized.cdHash ?? "") || (normalized.timestamp !== null && (typeof normalized.timestamp !== "string" || !normalized.timestamp)) || typeof normalized.secureTimestamp !== "boolean" || (normalized.secureTimestamp && normalized.timestamp === null) || (normalized.timestamp === "none" && normalized.secureTimestamp)) {
+    throw signingError(`signature evidence for ${pathValue ?? "unknown path"} is malformed`, "record identifier, signer, Team ID, flags, timestamp, entitlements, and CDHash evidence");
   }
   return normalized;
 }
 
-async function readSignatureEvidence(bundlePath, relativePath, outer, verify, requireCertificateEvidence, extractCertificateEvidence, runCodesign) {
+async function readSignatureEvidence(bundlePath, relativePath, outer, verify, requireCertificateEvidence, extractCertificateEvidence, runCodesign, machoEvidence, ownerMode = false) {
   const binaryPath = outer && relativePath === MACOS_SIGNING_OUTER_PATH
     ? bundlePath
     : path.resolve(bundlePath, relativePath);
+  const command = ownerMode ? MACOS_OWNER_TOOL_PATHS.codesign : "codesign";
+  const options = ownerMode ? { env: ownerToolEnvironment() } : undefined;
+  const invoke = (arguments_, overrides = undefined) => runCodesign(command, arguments_, ownerMode ? { ...(overrides ?? {}), env: ownerToolEnvironment() } : overrides);
   if (verify) {
-    await runCodesign("codesign", ["--verify", ...(outer ? ["--deep"] : []), "--strict", binaryPath]).catch((error) => {
+    await invoke(["--verify", ...(outer ? ["--deep"] : []), "--strict", binaryPath], options).catch((error) => {
       throw signingError(`final signature verification failed for ${relativePath}: ${describe(error)}`, "sign every final code object in the declared mode before writing the manifest");
     });
   }
-  const details = await runCodesign("codesign", ["-dvvv", binaryPath], { encoding: "buffer", maxBuffer: 4 * 1024 * 1024 }).catch((error) => {
+  const details = await invoke(["-dvvv", binaryPath], { encoding: "buffer", maxBuffer: 4 * 1024 * 1024 }).catch((error) => {
     throw signingError(`cannot inspect final signature for ${relativePath}: ${describe(error)}`, "sign the final Mach-O or outer app before manifest generation");
   });
   const parsed = parseCodesignDisplay(`${bufferToString(details.stdout)}\n${bufferToString(details.stderr)}`, relativePath);
-  const entitlementResult = await runCodesign("codesign", ["-d", "--entitlements", "-", binaryPath], { encoding: "buffer", maxBuffer: 4 * 1024 * 1024 }).catch((error) => {
+  parsed.machOSlices = machoEvidence?.machOSlices ?? [];
+  const entitlementResult = await invoke(["-d", "--entitlements", "-", "--xml", binaryPath], { encoding: "buffer", maxBuffer: 4 * 1024 * 1024 }).catch((error) => {
     throw signingError(`cannot inspect entitlements for ${relativePath}: ${describe(error)}`, "inspect the final signature before writing the manifest");
   });
-  parsed.entitlementsSha256 = bufferToString(entitlementResult.stdout, true).byteLength > 0
-    ? sha256(bufferToString(entitlementResult.stdout, true))
+  const signedEntitlementBytes = bufferToString(entitlementResult.stdout, true);
+  parsed.entitlementsSha256 = signedEntitlementBytes.byteLength > 0
+    ? sha256(signedEntitlementBytes)
     : null;
-  parsed.entitlementsCanonicalSha256 = parsed.entitlementsSha256 === null
-    ? null
-    : (await canonicalizeEntitlements(bufferToString(entitlementResult.stdout, true), `${relativePath} signed entitlements`)).sha256;
+  let signedEntitlements = null;
+  if (parsed.entitlementsSha256 !== null) {
+    try {
+      signedEntitlements = await canonicalizeEntitlements(signedEntitlementBytes, `${relativePath} signed entitlements`, { ownerMode });
+    } catch {
+      throw signingError(
+        `signed entitlement extraction format for ${relativePath} is not a valid plist document`,
+        "read signed entitlements with codesign -d --entitlements --xml - and inspect the exact plist output; do not replace the approved entitlement input plist",
+      );
+    }
+  }
+  parsed.entitlementsCanonicalSha256 = signedEntitlements?.sha256 ?? null;
+  parsed.entitlementKeys = signedEntitlements?.value && typeof signedEntitlements.value === "object" && !Array.isArray(signedEntitlements.value)
+    ? Object.keys(signedEntitlements.value).sort((left, right) => left.localeCompare(right))
+    : [];
   const certificateEvidence = requireCertificateEvidence
-    ? await extractCertificateEvidence(binaryPath, relativePath)
+    ? await extractCertificateEvidence(binaryPath, relativePath, { ownerMode })
     : null;
   parsed.certificateFingerprint = certificateEvidence?.certificateFingerprint ?? null;
   parsed.certificateSha1 = certificateEvidence?.certificateSha1 ?? null;
