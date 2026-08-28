@@ -11,12 +11,34 @@ import {
   assertInstalledHostIdentity,
   assertSupervisorOwnedByHost,
   expectedHostConfiguration,
+  resolveHostConfiguration,
   type HostIdentity,
 } from "../src/host.js";
 
 const execFileAsync = promisify(execFile);
 
 describe("Meetless-owned production host invariant", () => {
+  test("projects the accepted development config envelope into launch configuration", () => {
+    const launch = {
+      repositoryRoot: process.cwd(),
+      runtimeRoot: "/tmp/meetless-development-host",
+      listen: "127.0.0.1:6777",
+      rendererOrigin: "http://127.0.0.1:8082",
+      transcriptionSocket: "/tmp/meetless-development-host/transcription.sock",
+      transcriptionStaging: "/tmp/meetless-development-host/transcription",
+      nodePath: process.execPath,
+      runtimeCliPath: path.resolve("packages/runtime/dist/cli.js"),
+      identityPath: "/tmp/meetless-development-host/host-identity.json",
+    };
+
+    expect(resolveHostConfiguration({
+      schema: "MEETLESS_MACOS_HOST_CONFIG v2",
+      mode: "development",
+      bundleIdentifier: "com.meetless.app",
+      ...launch,
+    }, "/Applications/Meetless.app")).toEqual(launch);
+  });
+
   test("accepts only LaunchServices → exact MeetlessHost → desktop → supervisor", async () => {
     const config = resolveRuntimeConfig();
     const identity = fakeIdentity(config);

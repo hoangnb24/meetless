@@ -89,6 +89,26 @@ private func testLaunchCoordinatorLifecycle() {
   }
 }
 
+private func testHostExecutableUsesPOSIXIdentity() throws {
+  let root = FileManager.default.temporaryDirectory
+    .appendingPathComponent("meetless-host-identity-\(UUID().uuidString)")
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let executable = root.appendingPathComponent("MeetlessHost")
+  try Data("fixture executable".utf8).write(to: executable)
+
+  let identity = try inspectMeetlessExecutableIdentity(executable.path)
+  check(identity.device > 0, "POSIX executable identity must include the device")
+  check(identity.inode > 0, "POSIX executable identity must include the inode")
+  check(identity.size == 18, "POSIX executable identity must include the byte size")
+
+  let link = root.appendingPathComponent("MeetlessHost-link")
+  try FileManager.default.createSymbolicLink(at: link, withDestinationURL: executable)
+  expectThrow("POSIX executable identity must reject symlinks") {
+    _ = try inspectMeetlessExecutableIdentity(link.path)
+  }
+}
+
 private func fixtureIdentity(_ data: Data) -> StagedRangeIdentity {
   StagedRangeIdentity(
     byteLength: Int64(data.count),
@@ -548,6 +568,10 @@ private func testProviderFailureNormalizationAndCancellation() {
 private struct TranscriptionCapabilityTests {
   static func main() {
     testLaunchCoordinatorLifecycle()
+    do { try testHostExecutableUsesPOSIXIdentity() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: POSIX host executable identity: \(error)\n".utf8))
+    }
     testPeerAncestry()
     testBoundedRequestLine()
     do { try testRealSocketStatusResponse() } catch {

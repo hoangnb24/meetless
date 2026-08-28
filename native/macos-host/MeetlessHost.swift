@@ -145,6 +145,26 @@ private struct HostIdentityDocument: Codable {
   let configuration: HostConfiguration
 }
 
+struct MeetlessExecutableIdentity {
+  let device: Int
+  let inode: Int
+  let size: Int
+}
+
+func inspectMeetlessExecutableIdentity(_ path: String) throws -> MeetlessExecutableIdentity {
+  var information = stat()
+  guard lstat(path, &information) == 0,
+        (information.st_mode & S_IFMT) == S_IFREG,
+        information.st_size > 0 else {
+    throw hostPreflightError("cannot inspect MeetlessHost executable metadata")
+  }
+  return MeetlessExecutableIdentity(
+    device: Int(information.st_dev),
+    inode: Int(information.st_ino),
+    size: Int(information.st_size)
+  )
+}
+
 private struct OwnedProcessRegistry: Decodable {
   struct Group: Decodable { let name: String; let pgid: Int32 }
   let version: Int
@@ -509,13 +529,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     let bundlePath = URL(fileURLWithPath: Bundle.main.bundlePath).standardizedFileURL.path
     let executablePath = URL(fileURLWithPath: bundlePath).appendingPathComponent("Contents/MacOS/MeetlessHost").path
     let binary = try readRequiredData(executablePath, label: "MeetlessHost executable")
-    let attributes = try FileManager.default.attributesOfItem(atPath: executablePath)
-    guard
-      let binaryDevice = (attributes[.deviceIdentifier] as? NSNumber)?.intValue,
-      let binaryInode = (attributes[.systemFileNumber] as? NSNumber)?.intValue,
-      let binarySize = (attributes[.size] as? NSNumber)?.intValue,
-      binarySize > 0
-    else { throw hostPreflightError("cannot inspect MeetlessHost executable metadata") }
+    let executableIdentity = try inspectMeetlessExecutableIdentity(executablePath)
     let requirementOutput = try inspectCodesign(["-d", "-r-", bundlePath], label: "designated requirement")
     guard let requirementLine = requirementOutput.split(separator: "\n").first(where: { $0.contains("designated =>") }) else {
       throw hostPreflightError("codesign did not report a designated requirement")
@@ -537,9 +551,9 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       designatedRequirement: designatedRequirement,
       cdHash: cdHash,
       binarySha256: sha256(binary),
-      binaryDevice: binaryDevice,
-      binaryInode: binaryInode,
-      binarySize: binarySize,
+      binaryDevice: executableIdentity.device,
+      binaryInode: executableIdentity.inode,
+      binarySize: executableIdentity.size,
       configuration: configuration
     )
     if FileManager.default.fileExists(atPath: configuration.identityPath) {

@@ -14,6 +14,7 @@ import {
   assertPreOwnerRecordingReady,
   inspectNativeArgumentVector,
   prepareCollisionEvidence,
+  requestRecordingRuntimeReadiness,
   type DaemonMeetlessPluginAttestation,
   type RuntimeReadinessReport,
   verifyCollisionEvidence,
@@ -201,6 +202,39 @@ describe("production recording readiness invariant", () => {
       await closeWebSocketServer(firstWs);
       await closeServer(firstHttp);
       if (replacementHttp) await closeServer(replacementHttp);
+    }
+  });
+
+  test("connects to a recording socket whose path contains spaces", async () => {
+    const root = await mkdtemp("/tmp/meetless readiness-");
+    roots.add(root);
+    const socketDirectory = path.join(root, "Application Support");
+    const socketPath = path.join(socketDirectory, "recording-control.sock");
+    await mkdir(socketDirectory, { recursive: true });
+    const config = withSocket(resolveRuntimeConfig({ runtimeRoot: root }), socketPath);
+    const http = createServer();
+    const websocket = new WebSocketServer({ noServer: true });
+    http.on("upgrade", (request, socket, head) => {
+      websocket.handleUpgrade(request, socket, head, (client) => websocket.emit("connection", client, request));
+    });
+    websocket.on("connection", (client) => {
+      client.on("message", (data) => void (async () => {
+        const request = JSON.parse(data.toString()) as { requestId: string };
+        const identity = await stat(socketPath);
+        client.send(JSON.stringify(await runtimeResponse(config, {
+          requestId: request.requestId,
+          socketIdentity: { device: identity.dev, inode: identity.ino },
+        })));
+      })());
+    });
+    await listen(http, socketPath);
+    try {
+      const response = await requestRecordingRuntimeReadiness(socketPath);
+      expect(response.ok).toBe(true);
+      expect(response.runtime.socketPath).toBe(socketPath);
+    } finally {
+      await closeWebSocketServer(websocket);
+      await closeServer(http);
     }
   });
 

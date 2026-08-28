@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFile, realpath, stat } from "node:fs/promises";
+import { connect } from "node:net";
 import path from "node:path";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WebSocketLike } from "@getpaseo/client/internal/daemon-client-transport-types";
@@ -234,7 +235,10 @@ export async function requestRecordingRuntimeReadiness(
   const before = await socketIdentity(socketPath);
   const requestId = `readiness-${process.pid}-${randomUUID()}`;
   const remaining = context ? Math.max(1, context.deadline - Date.now()) : 2_000;
-  const socket = new WebSocket(`ws+unix://${socketPath}:/ws`, { handshakeTimeout: Math.min(2_000, remaining) });
+  const socket = new WebSocket("ws://localhost/ws", {
+    createConnection: () => connect(socketPath),
+    handshakeTimeout: Math.min(2_000, remaining),
+  });
   const abort = () => socket.terminate();
   context?.signal.addEventListener("abort", abort, { once: true });
   try {

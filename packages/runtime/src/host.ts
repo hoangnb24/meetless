@@ -177,7 +177,19 @@ export async function inspectHostBundle(bundlePath: string): Promise<HostIdentit
 
 export function resolveHostConfiguration(configuration: unknown, bundlePath: string): HostLaunchConfiguration {
   const parsed = HostConfigurationFileSchema.parse(configuration);
-  if (parsed.mode === "development") return HostLaunchConfigurationSchema.parse(parsed);
+  if (parsed.mode === "development") {
+    return HostLaunchConfigurationSchema.parse({
+      repositoryRoot: parsed.repositoryRoot,
+      runtimeRoot: parsed.runtimeRoot,
+      listen: parsed.listen,
+      rendererOrigin: parsed.rendererOrigin,
+      transcriptionSocket: parsed.transcriptionSocket,
+      transcriptionStaging: parsed.transcriptionStaging,
+      nodePath: parsed.nodePath,
+      runtimeCliPath: parsed.runtimeCliPath,
+      identityPath: parsed.identityPath,
+    });
+  }
 
   const canonicalBundle = path.resolve(bundlePath);
   const packageRoot = resolveBundleRelativePath(canonicalBundle, parsed.packageRoot, "package root");
