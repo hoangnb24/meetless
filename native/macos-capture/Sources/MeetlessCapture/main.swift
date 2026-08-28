@@ -317,11 +317,71 @@ private final class FixtureSource: CaptureSource, @unchecked Sendable {
 }
 
 @available(macOS 15.0, *)
+private final class AudioNormalizer: @unchecked Sendable {
+  private let targetFormat = AVAudioFormat(standardFormatWithSampleRate: Double(sampleRate), channels: 1)!
+  private var sourceFormat: AVAudioFormat?
+  private var converter: AVAudioConverter?
+
+  func samples(from sampleBuffer: CMSampleBuffer) throws -> [Int16] {
+    guard let description = CMSampleBufferGetFormatDescription(sampleBuffer),
+          let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description),
+          let currentSourceFormat = AVAudioFormat(streamDescription: basic) else {
+      throw NSError(domain: "MeetlessCapture", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing audio format"])
+    }
+    if sourceFormat?.isEqual(currentSourceFormat) != true {
+      guard let replacement = AVAudioConverter(from: currentSourceFormat, to: targetFormat) else {
+        throw NSError(domain: "MeetlessCapture", code: 4)
+      }
+      sourceFormat = currentSourceFormat
+      converter = replacement
+    }
+    guard let converter else { throw NSError(domain: "MeetlessCapture", code: 4) }
+
+    let sourceFrames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
+    guard let input = AVAudioPCMBuffer(pcmFormat: currentSourceFormat, frameCapacity: sourceFrames) else {
+      throw NSError(domain: "MeetlessCapture", code: 3)
+    }
+    input.frameLength = sourceFrames
+    let copyStatus = CMSampleBufferCopyPCMDataIntoAudioBufferList(
+      sampleBuffer,
+      at: 0,
+      frameCount: Int32(sourceFrames),
+      into: input.mutableAudioBufferList
+    )
+    guard copyStatus == noErr else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(copyStatus)) }
+
+    let ratio = Double(sampleRate) / currentSourceFormat.sampleRate
+    let capacity = AVAudioFrameCount(ceil(Double(sourceFrames) * ratio) + 32)
+    guard let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else {
+      throw NSError(domain: "MeetlessCapture", code: 5)
+    }
+    final class Supply: @unchecked Sendable { var supplied = false }
+    let supply = Supply()
+    var conversionError: NSError?
+    let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
+      if supply.supplied { inputStatus.pointee = .noDataNow; return nil }
+      supply.supplied = true
+      inputStatus.pointee = .haveData
+      return input
+    }
+    if let conversionError { throw conversionError }
+    guard status != .error else { throw NSError(domain: "MeetlessCapture", code: 6) }
+    guard let channel = output.floatChannelData?[0] else { return [] }
+    return (0..<Int(output.frameLength)).map { index in
+      let clipped = max(-1.0, min(1.0, channel[index]))
+      return Int16(clipped * Float(Int16.max))
+    }
+  }
+}
+
+@available(macOS 15.0, *)
 private final class ScreenCaptureSource: NSObject, CaptureSource, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
   private let writer: ChunkWriter
   private var stream: SCStream?
   private let systemQueue = DispatchQueue(label: "meetless.capture.system")
   private let microphoneQueue = DispatchQueue(label: "meetless.capture.microphone")
+  private let systemNormalizer = AudioNormalizer()
+  private let microphoneNormalizer = AudioNormalizer()
   init(writer: ChunkWriter) { self.writer = writer }
 
   func start() async throws {
@@ -353,7 +413,8 @@ private final class ScreenCaptureSource: NSObject, CaptureSource, SCStreamOutput
       return
     }
     let presentationFrame = Int64((presentationSeconds * Double(sampleRate)).rounded())
-    do { try writer.append(try normalizedSamples(buffer), source: source, presentationFrame: presentationFrame) }
+    let normalizer = source == .microphone ? microphoneNormalizer : systemNormalizer
+    do { try writer.append(try normalizer.samples(from: buffer), source: source, presentationFrame: presentationFrame) }
     catch {
       let reason = "\(source.rawValue) capture failed: \(error.localizedDescription)"
       diagnostic(reason)
@@ -365,42 +426,6 @@ private final class ScreenCaptureSource: NSObject, CaptureSource, SCStreamOutput
     emit(ProtocolEvent(event: "captureFailed", error: error.localizedDescription))
   }
 
-  private func normalizedSamples(_ sampleBuffer: CMSampleBuffer) throws -> [Int16] {
-    guard let description = CMSampleBufferGetFormatDescription(sampleBuffer),
-          let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description),
-          let sourceFormat = AVAudioFormat(streamDescription: basic) else {
-      throw NSError(domain: "MeetlessCapture", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing audio format"])
-    }
-    let sourceFrames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
-    guard let input = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: sourceFrames) else {
-      throw NSError(domain: "MeetlessCapture", code: 3)
-    }
-    input.frameLength = sourceFrames
-    let copyStatus = CMSampleBufferCopyPCMDataIntoAudioBufferList(sampleBuffer, at: 0, frameCount: Int32(sourceFrames), into: input.mutableAudioBufferList)
-    guard copyStatus == noErr else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(copyStatus)) }
-    guard let targetFormat = AVAudioFormat(standardFormatWithSampleRate: Double(sampleRate), channels: 1),
-          let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
-      throw NSError(domain: "MeetlessCapture", code: 4)
-    }
-    let ratio = Double(sampleRate) / sourceFormat.sampleRate
-    let capacity = AVAudioFrameCount(ceil(Double(sourceFrames) * ratio) + 32)
-    guard let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else {
-      throw NSError(domain: "MeetlessCapture", code: 5)
-    }
-    final class Supply: @unchecked Sendable { var supplied = false }
-    let supply = Supply()
-    var conversionError: NSError?
-    converter.convert(to: output, error: &conversionError) { _, status in
-      if supply.supplied { status.pointee = .noDataNow; return nil }
-      supply.supplied = true; status.pointee = .haveData; return input
-    }
-    if let conversionError { throw conversionError }
-    guard let channel = output.floatChannelData?[0] else { return [] }
-    return (0..<Int(output.frameLength)).map { index in
-      let clipped = max(-1.0, min(1.0, channel[index]))
-      return Int16(clipped * Float(Int16.max))
-    }
-  }
 }
 
 private final class Runtime: @unchecked Sendable {
