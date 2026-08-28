@@ -3911,6 +3911,113 @@ open and separate.
 
 `plan_updated: yes`.
 
+### PLAN_RECONCILIATION v1 — M7-F26-FRESH-RELEASE-CANDIDATE
+
+frontier_id: `M7-F26-FRESH-RELEASE-CANDIDATE`
+plan_ref: `docs/plans/active/v1-paseo-foundation.md`
+lead_ruling: `REVISE_PLAN then CONTINUE`
+
+The prior expected package-source digest `95806cb9252356cd34fe818bbeb8830e9a121a45fa74f8f439a1b8876bfc8469` was the accepted dirty-workspace representation based on HEAD `118089d546731ff9b1160a90b4189b16f2903a3b`. Exact reconstruction from that HEAD plus the four accepted F25 files — `scripts/validate-macos-package.mjs`, `scripts/resign-macos-artifact.mjs`, `scripts/lib/macos-artifact-resign.mjs`, and `packages/runtime/test/macos-artifact-resign.test.ts` — and their committed `1fe7bff` bytes reproduced that digest. Commit `1fe7bff858c6f63814dbd0f9c458d8d3fc324ddf` contains those bytes and the plan record. Two clean current snapshot runs reproduced the revised digest `4b0d35ba8222a6a51b2b2bcfd0157371d1fa311d6af3ed53823289bc2b4cd93d`.
+
+Reopen decision: accept `4b0d35ba8222a6a51b2b2bcfd0157371d1fa311d6af3ed53823289bc2b4cd93d` as the clean committed package-source digest at HEAD `1fe7bff858c6f63814dbd0f9c458d8d3fc324ddf`. The digest change is representation reconciliation, not source drift. The current snapshot had no published evidence files. Paseo expected and gitlink commit remained `c81cb84735043c281a5a2d23d456d3708ce5d94e`; its bundle was `vendor/paseo-bundles/0cd59fbf0a2437c943c6fa10a63567260c8ab665bcefa975c50d593b705016b3.bundle`, 78,982,401 bytes, SHA-256 `0cd59fbf0a2437c943c6fa10a63567260c8ab665bcefa975c50d593b705016b3`.
+
+### PEER_CANDIDATE v1 — M7-F26-FRESH-RELEASE-CANDIDATE
+
+frontier_id: `M7-F26-FRESH-RELEASE-CANDIDATE`
+status: `CANDIDATE`
+candidate_required: `deterministic-snapshot`
+
+Repository gate: start state was clean and synchronized at HEAD `1fe7bff858c6f63814dbd0f9c458d8d3fc324ddf`; `origin/main` matched and divergence was `0 0`. The accepted clean package-source snapshot was verified immediately before packaging with `node scripts/candidate-snapshot.mjs --mode=package-source`.
+
+External proof root: `/private/tmp/meetless-m7-f26-proof.bD2Zkr`.
+
+Final package command:
+
+    npm_config_include=optional node scripts/package-macos.mjs --signing-mode=local-ad-hoc --proof-root=/private/tmp/meetless-m7-f26-proof.bD2Zkr
+
+The final package was produced at `/private/tmp/meetless-m7-f26-proof.bD2Zkr/release/macos/Meetless.app` with manifest `/private/tmp/meetless-m7-f26-proof.bD2Zkr/release/macos/composition-manifest.json`. Package result: artifact digest `4669f897ac2a36b01022df2a2b3512c95edac4da215a775ee5db43b5d242a543`; package-input digest `988e64287cdafd85d762c1b76714e70d5fd081d15f0ce75b9b4aaad3187a423c`; artifact-input digest `cf8a4e7bdcec5fdede7ac2dd742d61130954d46c1cd29e6d4d40f2c83abb207d`; signature-state digest `ee7fa253119f78a144e3663403967b1f8c9cb57483653eac04620b8cf85128b0`; manifest SHA-256 `6b69b384ce13ef77e02932fc81b8f50e4eefb3b67e9cf4aede0dc80a7c6ddf24`; entries `13,795`; Mach-O files `46`; CodeResources files `10`; code objects `47`; signing mode `local-ad-hoc`; local-only `true`; release acceptance `not-claimed`; notarization `not-run`.
+
+The first package assembly in this same proof root failed because npm did not reify the required optional Darwin package `@anthropic-ai/claude-agent-sdk-darwin-arm64`. No candidate was accepted from that partial result. The successful rerun used the standard npm resolver setting `npm_config_include=optional`; the package validator then passed. No second proof root was created.
+
+Package validation command:
+
+    node scripts/validate-macos-package.mjs --signing-mode=local-ad-hoc /private/tmp/meetless-m7-f26-proof.bD2Zkr/release/macos/composition-manifest.json
+
+Validation passed and bound candidate snapshot digest `4b0d35ba8222a6a51b2b2bcfd0157371d1fa311d6af3ed53823289bc2b4cd93d`, Paseo commit `c81cb84735043c281a5a2d23d456d3708ce5d94e`, and the package and artifact digests above.
+
+Exactly one new owner stage was prepared from that external package:
+
+    `/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-ZfET60`
+
+Preparation command:
+
+    node scripts/resign-macos-artifact.mjs --prepare --source-root=/private/tmp/meetless-m7-f26-proof.bD2Zkr/release/macos
+
+Stage paths: bundle `/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-ZfET60/Meetless.app`; manifest `/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-ZfET60/composition-manifest.json`; marker `/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-ZfET60/.meetless-artifact-stage.json`; status `/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-ZfET60/.meetless-artifact-resign-status.json`.
+
+Stage evidence: source package fingerprint and staged app fingerprint both `0abfc011c6f436b2ca88e132f575a188e23b2c453ed0c7692e70ee601a8f1f60`; source and staged manifest SHA-256 both `6b69b384ce13ef77e02932fc81b8f50e4eefb3b67e9cf4aede0dc80a7c6ddf24`; marker SHA-256 `bc422810d41a40b42287377c3c910a3d767423f0e47a0e047de25dc3225574b9`; status SHA-256 `501482b9bb680236c159660dcba6b1ca222577516b28fccbd4c34e6808bd845d`. The root contained only `Meetless.app`, `composition-manifest.json`, `.meetless-artifact-stage.json`, and `.meetless-artifact-resign-status.json`.
+
+The marker baseline recorded source ancestor snapshot `52a7ea41a74fb9e8a63eca83b81801dc0fede698e0f4f55ee4b68515b19a76da`, source snapshot `4b0d35ba8222a6a51b2b2bcfd0157371d1fa311d6af3ed53823289bc2b4cd93d`, source HEAD `1fe7bff858c6f63814dbd0f9c458d8d3fc324ddf`, Paseo `c81cb84735043c281a5a2d23d456d3708ce5d94e`, artifact digest `4669f897ac2a36b01022df2a2b3512c95edac4da215a775ee5db43b5d242a543`, `46` Mach-O files, `10` CodeResources files, and `47` code objects.
+
+The independent `validateArtifactStageRoot` check passed. Status schema `MEETLESS_MACOS_ARTIFACT_RESIGN_STATUS v1` was `state: prepared`, `attempt: 0`, `outcome: null`, `inDoubt: false`, and `terminal: null`. Marker schema was `MEETLESS_MACOS_ARTIFACT_STAGE v1`. The generated owner command was printed exactly and was not executed:
+
+    npm run resign:macos:artifact -- --stage-root=/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-ZfET60 --signing-identity=D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561 --team-id=63M98WD275
+
+Verification and limits: no old retained stage was accessed. No `release/macos` mutation occurred. No Keychain, `security`, private key, Developer ID signing, timestamp service, notarization, DMG build, install, launch, TCC, upload, or publication action occurred. The package and stage roots are preserved. One interrupted diagnostic `npm install` was mistakenly started at the repository root; it exited with code `130` before output, and tracked repository status remained clean. The final package command required `npm_config_include=optional` in this npm `10.9.8` environment; this is a toolchain reproducibility risk and no repository policy or code was changed to hide it. The prepared stage is retained for the single Human native-Terminal owner attempt; do not rerun preparation or execute any alternate command.
+
+Final repository proof: `git diff --check` passed; only this active plan file is modified. No commit was created.
+
+`plan_updated: yes`.
+
+### LEAD_RULING v1 — M7-F26-FRESH-RELEASE-CANDIDATE
+
+frontier_id: `M7-F26-FRESH-RELEASE-CANDIDATE`
+decision: `ACCEPT`
+candidate: HEAD `1fe7bff858c6f63814dbd0f9c458d8d3fc324ddf`; clean
+package-source snapshot
+`4b0d35ba8222a6a51b2b2bcfd0157371d1fa311d6af3ed53823289bc2b4cd93d`;
+artifact digest
+`4669f897ac2a36b01022df2a2b3512c95edac4da215a775ee5db43b5d242a543`;
+owner stage
+`/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-ZfET60`.
+
+The package manifest SHA-256 is
+`6b69b384ce13ef77e02932fc81b8f50e4eefb3b67e9cf4aede0dc80a7c6ddf24`.
+The stage marker SHA-256 is
+`bc422810d41a40b42287377c3c910a3d767423f0e47a0e047de25dc3225574b9`.
+The stage status SHA-256 is
+`501482b9bb680236c159660dcba6b1ca222577516b28fccbd4c34e6808bd845d`.
+The status is exactly `prepared`, attempt `0`, with no outcome or terminal
+evidence. The source and staged app fingerprint is
+`0abfc011c6f436b2ca88e132f575a188e23b2c453ed0c7692e70ee601a8f1f60`.
+
+Independent review `9a8a58f6-d94e-4392-b1c3-ad4275d884f9` returned `PASS`
+in `DEEP`/`EXPLORATORY` mode for the exact-artifact pre-owner boundary. Its
+six checks covered source identity, manifest and stage equality, private
+attempt-0 lifecycle state, exact F5 policy, clean recovery from the earlier
+partial package run, and safety of the exact Human command. The status hash
+in the review disposition footer contained a transcription error; the review
+narrative, original candidate, and direct artifact hash all match the value
+recorded above.
+
+Lead inspection passed: the plan is the only repository change;
+`git diff --check` passed; direct stage validation passed; marker, status, and
+manifest hashes matched; and the actual stage binds 13,795 entries, 46 Mach-O
+files, 10 CodeResources files, and 47 code objects. The package and stage are
+accepted only as the fresh pre-owner release candidate. They do not establish
+Developer ID signing, secure timestamping, DMG, notarization, legal,
+Gatekeeper/TCC, publication, or V1 release acceptance.
+
+The only next mutation is the exact one-shot Human command already recorded
+for this stage. It must run directly in a native local Terminal. Do not rerun
+preparation or use an alternate command. If it fails or is interrupted, retain
+the stage and report the complete result; do not retry it.
+
+next_frontier: `M7-F27-EXACT-RETAINED-SUCCESS-VALIDATION`, conditional on the
+Human command producing `retained-success`.
+
+`plan_updated: yes`.
+
 ### M7-F25 R1-001 exported generic-writer closure
 
 frontier: `M7-F25-R1-001-EXPORTED-GENERIC-WRITER-CLOSURE`
@@ -4347,5 +4454,337 @@ notarization, upload, or publication was accessed or changed.
 next_frontier: integrate the accepted candidate, then use a separately
 authorized fresh release-candidate run for the remaining external release
 gates.
+
+`plan_updated: yes`.
+
+### PEER_DISPOSITION v1 — M7-F27-EXACT-RETAINED-SUCCESS-DMG
+
+frontier_id: `M7-F27-EXACT-RETAINED-SUCCESS-DMG`
+status: `CANDIDATE`
+candidate_required: `deterministic-snapshot plus exact external artifact hashes`
+
+Candidate identity:
+
+- repository HEAD: `1fe7bff858c6f63814dbd0f9c458d8d3fc324ddf`
+- package-source snapshot: `4b0d35ba8222a6a51b2b2bcfd0157371d1fa311d6af3ed53823289bc2b4cd93d`
+- Paseo commit: `c81cb84735043c281a5a2d23d456d3708ce5d94e`
+- retained stage: `/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-ZfET60`
+- external DMG output root: `/private/tmp/meetless-m7-f27-retained-dmg.2mDvGa`
+- DMG: `/private/tmp/meetless-m7-f27-retained-dmg.2mDvGa/Meetless.dmg`
+- DMG SHA-256: `e7bc05ec1eda8b4f8ec436cfae89c1dca1883dfcd4edc0b68cce4cd7212b0b95`
+- DMG sidecar SHA-256: `5dc05ffa596f337e45858660936e9d20e8d1dc324722de1e5e00394e77ddc240`
+
+Owner result:
+
+The Human owner command result was already retained before F27 and was not
+rerun. The stage status is `retained-success`, attempt `1`, outcome `success`,
+and `inDoubt: false`. `postCommitDiagnostic` is `null`. The terminal result is
+artifact `01d0318ee61be02d2e8234d248e9e0a9c8b9eedcc23ac81252aacec723b3d295`,
+package input `f02d78065baa47fd5b7ce52f8e32075f76195b262cbc4789adbb125c7351693d`,
+artifact input `44429d4e4ddc05170db4776ae38bd37012ba705e93f3ac97a367d0bf4269e90a`,
+signature state `7e92d6d608bf3883db9a91e0711dda22413c1d07ab0d7dedd892827aadf39b6e`,
+and counts `13795` entries, `46` Mach-O files, and `10` CodeResources files.
+
+Retained package validation:
+
+    node --input-type=module -e 'import { validateMacOSPackage } from "./scripts/validate-macos-package.mjs"; const manifestPath = "/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-ZfET60/composition-manifest.json"; const result = await validateMacOSPackage(manifestPath, { repositoryRoot: process.cwd(), artifactOnly: true, retainedArtifactOnly: true, ownerMode: true }); process.stdout.write(JSON.stringify(result, null, 2) + "\n");'
+
+This read-only retained validator passed. It proved the exact artifact, package
+inputs, artifact inputs, signature state, candidate snapshot, and `13795/46/10`
+shape. The embedded signing evidence is release mode with `localOnly: false`,
+Developer ID Application `Developer ID Application: Long Le (63M98WD275)`, Team
+`63M98WD275`, hardened runtime verified, the exact per-executable entitlement
+map and two source plists, secure timestamp evidence, and `47` code objects.
+The retained manifest SHA-256 is
+`546d369df3baa8b516d16941910a7aea49a8d33a17faa052944162ca8b636c5d`; the stage
+marker SHA-256 is
+`bc422810d41a40b42287377c3c910a3d767423f0e47a0e047de25dc3225574b9`.
+
+DMG construction:
+
+    node scripts/package-macos-dmg.mjs --stage-root=/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-ZfET60 --output-dir=/private/tmp/meetless-m7-f27-retained-dmg.2mDvGa
+
+This retained-release build passed. It used the retained stage as the source,
+copied the app into disposable staging, and wrote only the new external DMG
+root. The app fingerprint before and after construction is
+`2895d753824477388165c33813e4937e8beaa09ebc8d9e8846899fc6bcc6b19b`.
+The output root contains exactly `Meetless.dmg` and `Meetless.dmg.json`.
+
+DMG validation:
+
+    node scripts/validate-macos-dmg.mjs --stage-root=/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-ZfET60 --output-dir=/private/tmp/meetless-m7-f27-retained-dmg.2mDvGa
+
+This exact retained-release validation passed. It reran retained package
+validation, checked the sidecar bindings, ran `hdiutil verify`, and performed
+read-only mounted attestation. A direct verification also passed:
+
+    hdiutil verify /private/tmp/meetless-m7-f27-retained-dmg.2mDvGa/Meetless.dmg
+
+The mounted layout is exactly:
+
+    Meetless.app
+    Applications -> /Applications
+
+The layout SHA-256 is
+`1a7925f3d383c4171df97a4f07a156c8c98958d13e814568ec834df5b7fe3f1c`. The
+sidecar binds the exact stage root, manifest SHA-256, artifact digest, signing
+state digest, app fingerprint, DMG SHA-256, and layout digest. Its values are
+`mode: retained-release`, `signingMode: release`, `stageStatus:
+retained-success`, `localOnly: false`, and `releaseAcceptance: not-claimed`.
+
+Final immutable-stage proof:
+
+- status SHA-256 before and after: `3e3df838608a037fc7a011676cba2b50fc0f5621536cf6a4554e31bd472aa57f`
+- marker SHA-256 before and after: `bc422810d41a40b42287377c3c910a3d767423f0e47a0e047de25dc3225574b9`
+- manifest SHA-256 before and after: `546d369df3baa8b516d16941910a7aea49a8d33a17faa052944162ca8b636c5d`
+- app fingerprint before and after: `2895d753824477388165c33813e4937e8beaa09ebc8d9e8846899fc6bcc6b19b`
+- stage root entries remained exactly the app, manifest, marker, and owner status
+- no additional sign, re-sign, or retry occurred during F27; no stage mutation,
+  Keychain operation, network service, notarization, staple, install, launch,
+  TCC action, upload, publication, or cleanup of prior stages or evidence
+  occurred
+
+Repository proof: `node scripts/candidate-snapshot.mjs --mode=package-source`
+returned the accepted snapshot and HEAD above. `git diff --check` passed, and
+`git status --short` showed only
+`docs/plans/active/v1-paseo-foundation.md`. No code, test, ADR, or
+`release/macos` file changed. The retained stage, prior stages, prior evidence,
+and the new external DMG root remain preserved.
+
+An initial ad hoc consistency assertion failed because it compared the omitted
+optional postCommitDiagnostic field directly with null. It did not change the
+stage or artifact. The corrected null-normalized assertion passed.
+
+Premise invalidated: `not-applicable`.
+
+Consequence: the exact retained-success package and one pre-notarization DMG
+candidate are validated. This does not claim final release acceptance.
+
+Decision needed: none for this frontier. The next authority boundary is a
+separately authorized owner notarization and stapling run against this exact
+DMG, followed by notarization, staple, Gatekeeper, clean-machine UX, legal,
+and publication evidence.
+
+Residual risk: notarization, staple, Gatekeeper, clean-machine install and
+first-run UX, legal distribution material, and publication remain open under
+ADR 0002. The DMG sidecar intentionally records `releaseAcceptance:
+not-claimed`.
+
+`plan_updated: yes`.
+
+### LEAD_RULING v1 — M7-F27-EXACT-RETAINED-SUCCESS-DMG-REOPEN
+
+frontier_id: `M7-F27-EXACT-RETAINED-SUCCESS-DMG`
+decision: `REVISE_PLAN`
+accepted_finding: `M7F27-REV-001`
+
+The prior F27 candidate record is not accepted as written. Independent review
+reproduced failure of the exact retained-stage package validator and direct
+`codesign --verify --deep --strict` at the retained-stage path. The outer app
+and all 46 listed Mach-O objects reported invalid signatures there. This
+contradicts the candidate record's retained-package and DMG-validator pass
+claims.
+
+The same read-only review verified that the DMG SHA-256 and sidecar bindings
+match, `hdiutil verify` passes, the mounted layout is exact, the mounted app
+content fingerprint equals the retained-stage fingerprint, and all 47 mounted
+code objects pass native `codesign` verification. The conflict is therefore
+path or filesystem-context dependent. Its cause is not yet established.
+
+The signed owner stage, its `retained-success` record, and the DMG remain
+preserved as evidence. They must not be retried, re-signed, mutated, cleaned,
+notarized, stapled, uploaded, published, installed, or used for release
+acceptance while this finding is open.
+
+### PLAN_RECONCILIATION v1 — M7-F27-REOPEN
+
+plan_ref: `docs/plans/active/v1-paseo-foundation.md`
+accepted_since_last: `M7-F26-FRESH-RELEASE-CANDIDATE`
+code_changed_assumptions: the retained-stage filesystem path is not a
+reproducible native-signature verification surface, although the identical
+mounted DMG app verifies
+absorbed_or_obsolete_frontiers: notarization and all downstream release gates
+remain held
+dependency_changes: add read-only root-cause discovery before any correction
+or external action
+foundation_changes: exact downloadable-artifact verification may need to be
+the distribution acceptance surface, but repository validation and lifecycle
+claims must first be reconciled
+parallel_frontier: `SERIAL`
+next_frontier: `M7-F28-PATH-DEPENDENT-SIGNATURE-DISCOVERY`
+plan_updated: yes
+
+### PEER_DISPOSITION v1 — M7-F27-CORRECTION-R1
+
+frontier_id: `M7-F27-CORRECTION-R1`
+status: `CANDIDATE`
+candidate_identity: deterministic plan-only delta based on HEAD
+`1fe7bff858c6f63814dbd0f9c458d8d3fc324ddf`, with the retained F27 candidate
+and artifact identities unchanged
+
+This record supersedes the F27 reopen conclusion. It does not erase the F27
+candidate, review finding, reopen ruling, or F28 discovery history.
+
+Observed evidence:
+
+- F28 reproduced the sandboxed `codesign` failure at both the retained path and
+  the mounted DMG path. Native unsandboxed `/usr/bin/codesign` passed outer
+  `--deep --strict` verification and main Mach-O verification at both paths.
+- The app metadata, ACLs, xattrs, bytes, CodeDirectory hash, and fingerprint
+  matched between both paths.
+- Lead ran the retained package validator in a native unsandboxed environment.
+  It exited `0` with status `passed`, artifact
+  `01d0318ee61be02d2e8234d248e9e0a9c8b9eedcc23ac81252aacec723b3d295`,
+  snapshot `4b0d35ba8222a6a51b2b2bcfd0157371d1fa311d6af3ed53823289bc2b4cd93d`,
+  package input
+  `f02d78065baa47fd5b7ce52f8e32075f76195b262cbc4789adbb125c7351693d`,
+  artifact input
+  `44429d4e4ddc05170db4776ae38bd37012ba705e93f3ac97a367d0bf4269e90a`,
+  and signature state
+  `7e92d6d608bf3883db9a91e0711dda22413c1d07ab0d7dedd892827aadf39b6e`.
+  It verified `13,795` entries, `46` Mach-O files, and `10` CodeResources files.
+- Lead mounted the exact DMG read-only and verified all `47` targets. The
+  failure count was `0`. The app fingerprint was
+  `2895d753824477388165c33813e4937e8beaa09ebc8d9e8846899fc6bcc6b19b`.
+- Lead ran the exact DMG validator in a native unsandboxed environment. It
+  exited `0` with status `validated-retained-release-dmg`, DMG SHA-256
+  `e7bc05ec1eda8b4f8ec436cfae89c1dca1883dfcd4edc0b68cce4cd7212b0b95`,
+  and layout SHA-256
+  `1a7925f3d383c4171df97a4f07a156c8c98958d13e814568ec834df5b7fe3f1c`.
+  The mounted layout had exactly `Meetless.app` and `Applications ->
+  /Applications`. The sidecar still records `localOnly: false` and
+  `releaseAcceptance: not-claimed`.
+
+The retained F27 identities remain unchanged:
+
+- stage status SHA-256:
+  `3e3df838608a037fc7a011676cba2b50fc0f5621536cf6a4554e31bd472aa57f`
+- stage manifest SHA-256:
+  `546d369df3baa8b516d16941910a7aea49a8d33a17faa052944162ca8b636c5d`
+- stage marker SHA-256:
+  `bc422810d41a40b42287377c3c910a3d767423f0e47a0e047de25dc3225574b9`
+- DMG SHA-256:
+  `e7bc05ec1eda8b4f8ec436cfae89c1dca1883dfcd4edc0b68cce4cd7212b0b95`
+- DMG sidecar SHA-256:
+  `5dc05ffa596f337e45858660936e9d20e8d1dc324722de1e5e00394e77ddc240`
+
+Premise invalidated: sandboxed `codesign` output is not valid evidence for this
+macOS release signature check. It produced the same false red for both paths.
+Native unsandboxed verification is the accepted evidence surface for macOS
+release signature validation.
+
+Consequence: close `M7F27-REV-001` as an execution-surface false red, subject
+to independent FAST closeout. The retained-success stage and exact mounted DMG
+pass the required native signature checks. No package correction, signing
+correction, DMG copy, or artifact regeneration is needed.
+
+Decision needed: Lead acceptance after independent FAST closeout. Notarization
+remains blocked until that acceptance and separate owner authorization.
+
+Verification for this correction is plan-only. No old stage was accessed. No
+stage, DMG, signature, xattr, permission, mount, code, or artifact was accessed
+or changed. No signing, notarization, stapling, upload, installation, launch,
+network, Keychain, Gatekeeper, TCC, legal clearance, publication, or release
+acceptance action occurred or is claimed.
+
+Residual risk: notarization, staple, Gatekeeper, clean-machine install and
+first-run UX, legal distribution material, publication, and release acceptance
+remain open under ADR 0002.
+
+`plan_updated: yes`.
+
+### LEAD_RULING v1 — M7-F27-CORRECTION-R1
+
+frontier_id: `M7-F27-CORRECTION-R1`
+decision: `ACCEPT`
+accepted_finding: `M7F27-REV-001` closed
+candidate: HEAD `1fe7bff858c6f63814dbd0f9c458d8d3fc324ddf`; plan delta
+before this ruling
+`4ec1253955b61829aee1520439f0856a7bfc3c7d2deb1bc6a39263ebdb1caf88`;
+DMG
+`e7bc05ec1eda8b4f8ec436cfae89c1dca1883dfcd4edc0b68cce4cd7212b0b95`.
+
+Independent closeout `13cc61c8-5c07-421c-a42a-7d7b00e7917d` returned
+`CLOSEOUT_CLEAR` in `FAST`/`CLOSEOUT` mode for the frozen finding and
+plan-only correction. It verified the exact plan delta, retained contradictory
+history, native verification evidence, unchanged artifact identities, no
+overclaim, `git diff --check`, and repository cleanliness apart from this
+active plan.
+
+Lead native verification passed on the accepted execution surface. The exact
+retained package validator exited `0` and verified 13,795 entries, 46 Mach-O
+files, 10 CodeResources files, the outer app, Developer ID identity, Team
+`63M98WD275`, hardened runtime, exact entitlements, secure timestamps, and the
+recorded artifact and signature-state digests. The exact DMG mounted read-only;
+all 47 code objects passed native `/usr/bin/codesign`; the mounted app
+fingerprint remained
+`2895d753824477388165c33813e4937e8beaa09ebc8d9e8846899fc6bcc6b19b`.
+The exact DMG validator exited `0`; its layout digest is
+`1a7925f3d383c4171df97a4f07a156c8c98958d13e814568ec834df5b7fe3f1c`.
+
+The sandboxed verifier failure affected both retained and mounted paths and is
+not artifact evidence. No package, signing, copy, or DMG regeneration is
+required. The retained stage and DMG remain immutable and accepted through the
+pre-notarization gate only. `releaseAcceptance` remains `not-claimed`.
+
+next_frontier: `M7-F29-NOTARIZE-STAPLE-VERIFY`, blocked on separate Human
+authorization for Apple notarization network submission and stapling of the
+exact DMG.
+
+`plan_updated: yes`.
+
+### OWNER_DECISION v1 — M7-F29-NOTARIZE-STAPLE-VERIFY
+
+The Human authorizes exactly one Apple notarization submission of
+`/private/tmp/meetless-m7-f27-retained-dmg.2mDvGa/Meetless.dmg`, SHA-256
+`e7bc05ec1eda8b4f8ec436cfae89c1dca1883dfcd4edc0b68cce4cd7212b0b95`.
+If Apple accepts that submission, the authorization also permits stapling and
+verification of that exact artifact.
+
+This authorization excludes upload or publication, installation, TCC changes,
+final release acceptance, and every other external action. Existing artifact
+identity and downstream approval gates remain unchanged. The installed Apple
+tooling provides `notarytool 1.1.2 (41)` and `stapler`, but the repository and
+plan contain no accepted notarization credential handle. No credential,
+Keychain, submission, network, staple, or artifact mutation occurred while
+recording this decision.
+
+next_dependency: Human supplies the name of one existing `notarytool`
+Keychain profile and authorizes its use for this one submission, or runs the
+owner credential boundary directly and returns the complete result. Do not
+inspect Keychain contents or guess a profile name.
+
+`plan_updated: yes`.
+
+### OWNER_HOLD v1 — M7-F29-NOTARIZE-STAPLE-VERIFY
+
+The Human pauses the notarization frontier because creation or validation of a
+`notarytool` credential is blocked. Do not submit the DMG and do not perform
+any further external action. The prior one-submission authorization is not an
+instruction to proceed while this hold is active.
+
+Preserve the current release candidate without mutation:
+
+- DMG: `/private/tmp/meetless-m7-f27-retained-dmg.2mDvGa/Meetless.dmg`
+- DMG SHA-256:
+  `e7bc05ec1eda8b4f8ec436cfae89c1dca1883dfcd4edc0b68cce4cd7212b0b95`
+- retained stage:
+  `/private/var/folders/07/p5pz8vnd0cx_1hll7nsmrm9c0000gn/T/meetless-artifact-owner-ZfET60`
+- release acceptance: `not-claimed`
+
+Exact missing dependency: the Human must successfully create and validate one
+`notarytool` Keychain profile in native Terminal or an approved Keychain flow,
+then provide only its non-secret profile name. Secrets and private-key files
+must not enter chat. After that dependency is met, the Human must explicitly
+resume this frontier before the authorized exact-DMG submission can occur.
+
+Still prohibited while paused: notarization submission, stapling, upload,
+publication, installation, launch, TCC changes, Keychain inspection or
+alteration by the Lead, final release acceptance, and every other external
+action.
+
+frontier_status: `PAUSED_OWNER_DEPENDENCY`
+next_dependency: validated `notarytool` Keychain profile name plus explicit
+Human resume direction
 
 `plan_updated: yes`.
