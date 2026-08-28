@@ -104,6 +104,12 @@ async function runPreparedStage(options, observer = null, { ownerMode = false, p
     repositoryRoot,
     ownerMode,
   });
+  const expectedStageBinding = {
+    stageRoot: stage.stageRoot,
+    stageRealPath: stage.stageRealPath,
+    markerIdentity: stage.markerIdentity,
+    parentBinding: stage.parentBinding,
+  };
   const manifestIdentity = await captureRegularFileIdentity(stage.manifestPath, "baseline staged composition manifest");
   const manifestBytes = manifestIdentity.bytes;
   const baselineManifest = validateManifestDocument(parseJson(manifestBytes, "staged composition manifest"));
@@ -427,16 +433,18 @@ async function runPreparedStage(options, observer = null, { ownerMode = false, p
         manifestPath: stage.manifestPath,
         repositoryRoot,
         expectedStatusIdentity: consumedStatusIdentity,
+        expectedStageBinding,
         result,
         signalController: ownerSignals,
       });
       await emitCommandLifecycleEvent(observer, lifecycleEvents, "retained-validation-complete", { status: committed.validator.status });
       await emitCommandLifecycleEvent(observer, lifecycleEvents, "terminal-retained-success", { state: committed.terminal.state, attempt: committed.terminal.attempt });
-      return { ...result, validator: committed.validator };
+      return { ...result, validator: committed.validator, postCommitDiagnostic: committed.postCommitDiagnostic };
     }
     return result;
   } catch (error) {
     if (ownerMode) {
+      if (error?.ownerCommitted === true) throw error;
       await ownerSignals?.waitForChildAbsence();
       const outcome = error?.ownerOutcome === "interrupted" || ownerSignals?.isInterrupted() ? "interrupted" : "failure";
       const terminal = await retainOwnerFailureOutcome({ stage, outcome, error, expectedStatusIdentity: consumedStatusIdentity });

@@ -71,6 +71,7 @@ import {
   assertExternalRetainedSuccessState,
   assertOwnerTerminalResult,
   assertRegularFileIdentity,
+  assertStageWritableSurface,
   assertReboundDigestEquality,
   bindMachOPayloads,
   captureRegularFileIdentity,
@@ -693,7 +694,7 @@ function assertRetainedValidationRepositoryRoot(repositoryRoot) {
   return resolved;
 }
 
-export async function commitRetainedMacOSPackageSuccess({ manifestPath, repositoryRoot, expectedStatusIdentity, result, signalController } = {}) {
+export async function commitRetainedMacOSPackageSuccess({ manifestPath, repositoryRoot, expectedStatusIdentity, expectedStageBinding = null, result, signalController } = {}) {
   const canonicalRepositoryRoot = assertRetainedValidationRepositoryRoot(repositoryRoot);
   if (!expectedStatusIdentity) {
     fail("retained-success commit is missing the exact consumed status identity", "retain the consumed status identity from the production attempt before final validation");
@@ -703,6 +704,7 @@ export async function commitRetainedMacOSPackageSuccess({ manifestPath, reposito
   }
   const stageRoot = path.dirname(path.resolve(manifestPath));
   const stage = await validateArtifactStageRoot({ stageRoot, repositoryRoot: canonicalRepositoryRoot, ownerMode: true });
+  await assertExpectedRetainedStageBinding(stage, expectedStageBinding);
   assertRegularFileIdentity(stage.statusIdentity, expectedStatusIdentity, "consumed owner attempt status before retained-success validation");
   assertConsumedRetainedStatus(stage.status);
   const validation = await validateMacOSPackageImplementation(manifestPath, {
@@ -727,7 +729,7 @@ export async function commitRetainedMacOSPackageSuccess({ manifestPath, reposito
     outcome: "success",
     terminal: terminalEvidence,
   });
-  await transitionPrivateRetainedSuccess({
+  const committedWrite = await transitionPrivateRetainedSuccess({
     stageRoot,
     statusPath: stage.statusPath,
     markerBytes: stage.markerBytes,
@@ -738,16 +740,55 @@ export async function commitRetainedMacOSPackageSuccess({ manifestPath, reposito
     terminal: terminalEvidence,
     expectedCurrentIdentity: expectedStatusIdentity,
     parentBinding: stage.parentBinding,
-    beforeRename: () => artifactBinding.assertCurrent(),
+    beforeRename: ({ temporaryPath }) => artifactBinding.assertCurrent({
+      expectedStageBinding,
+      expectedStatusIdentity,
+      temporaryPath,
+    }),
     beforeCommit: () => signalController.assertNotInterrupted(),
   });
-  const committedIdentity = await captureRegularFileIdentity(stage.statusPath, "committed retained-success status");
-  const committed = parseRetainedStatus(committedIdentity.bytes, "committed retained-success status");
-  assertExternalRetainedSuccess(committed, result, { stageRoot, markerBytes: stage.markerBytes });
-  if (JSON.stringify(committed) !== JSON.stringify(terminalStatus)) {
-    fail("committed retained-success status differs from the exact requested terminal result", "preserve the atomic terminal status bytes and do not return a stale success result");
+  let committedIdentity;
+  let committed;
+  try {
+    committedIdentity = await captureRegularFileIdentity(stage.statusPath, "committed retained-success status");
+    committed = parseRetainedStatus(committedIdentity.bytes, "committed retained-success status");
+    assertExternalRetainedSuccess(committed, result, { stageRoot, markerBytes: stage.markerBytes });
+    if (JSON.stringify(committed) !== JSON.stringify(terminalStatus)) {
+      fail("committed retained-success status differs from the exact requested terminal result", "preserve the atomic terminal status bytes and do not return a stale success result");
+    }
+  } catch (error) {
+    if (committedWrite.renamed) throw postCommitVerificationError(error, committedWrite.postCommitDiagnostic);
+    throw error;
   }
-  return { terminal: committed, validator: validationResult };
+  return { terminal: committed, validator: validationResult, postCommitDiagnostic: committedWrite.postCommitDiagnostic ?? null };
+}
+
+async function assertExpectedRetainedStageBinding(stage, expected) {
+  if (expected === null) return;
+  if (!expected || typeof expected !== "object" || typeof expected.stageRoot !== "string" || typeof expected.stageRealPath !== "string" || !expected.markerIdentity || !expected.parentBinding) {
+    fail("retained-success commit stage binding is missing exact marker, root, or parent facts", "pass the immutable stage binding captured by the production owner command");
+  }
+  if (stage.stageRoot !== expected.stageRoot || stage.stageRealPath !== expected.stageRealPath) {
+    fail("retained-success commit stage root realpath changed from the prepared owner stage", "stop the attempt and retain the exact prepared stage for inspection");
+  }
+  assertRegularFileIdentity(stage.markerIdentity, expected.markerIdentity, "stage marker before retained-success validation");
+  if (!stage.markerBytes.equals(expected.markerIdentity.bytes)) {
+    fail("stage marker bytes changed from the prepared owner stage", "stop the attempt and retain the exact prepared marker for inspection");
+  }
+  await assertOwnerParentBinding(expected.parentBinding, "owner status parent before retained-success validation");
+}
+
+function postCommitVerificationError(error, diagnostic = null) {
+  const wrapped = new Error(
+    `retained-success was atomically committed but its final status verification failed: ${error instanceof Error ? error.message : String(error)}. Authority: ${MACOS_ARTIFACT_RESIGN_AUTHORITY}. Next action: inspect the committed owner status without rewriting its terminal state.`,
+  );
+  wrapped.ownerCommitted = true;
+  wrapped.postCommitDiagnostic = diagnostic ?? {
+    phase: "post-commit-verification",
+    code: "POST_COMMIT_VERIFICATION_FAILED",
+    message: String(error instanceof Error ? error.message : error).replaceAll(/\s+/gu, " ").slice(0, 512),
+  };
+  return wrapped;
 }
 
 function buildPrivateSuccessEvidence({ stageRoot, markerBytes, status, result }) {
@@ -797,8 +838,8 @@ async function transitionPrivateRetainedSuccess({ stageRoot, statusPath, markerB
   validateOwnerStatusDocument(current, { stageRoot, markerBytes });
   assertConsumedRetainedStatus(current);
   const next = createPrivateSuccessStatus({ stageRoot, markerBytes, terminal });
-  await writePrivateSuccessStatusAtomically({ filePath: statusPath, value: next, expectedTarget: currentIdentity, parentBinding, beforeRename, beforeCommit });
-  return next;
+  const commit = await writePrivateSuccessStatusAtomically({ filePath: statusPath, value: next, expectedTarget: currentIdentity, parentBinding, beforeRename, beforeCommit });
+  return { status: next, ...commit };
 }
 
 async function writePrivateSuccessStatusAtomically({ filePath, value, expectedTarget, parentBinding, beforeRename, beforeCommit }) {
@@ -818,23 +859,44 @@ async function writePrivateSuccessStatusAtomically({ filePath, value, expectedTa
     await handle.close();
     handle = null;
     await assertOwnerParentBinding(parentBinding, "owner attempt status parent");
-    await beforeRename();
-    await assertOwnerParentBinding(parentBinding, "owner attempt status parent");
     const currentIdentity = await captureRegularFileIdentity(filePath, "owner attempt status");
     assertRegularFileIdentity(currentIdentity, expectedTarget, "owner attempt status");
+    const temporaryIdentity = await captureRegularFileIdentity(temporaryPath, "retained-success temporary status");
+    if (!temporaryIdentity.bytes.equals(serialized)) {
+      throw new Error("retained-success temporary status bytes changed before rename");
+    }
+    await beforeRename({ filePath, temporaryPath });
     beforeCommit();
     renameSync(temporaryPath, filePath);
     renamed = true;
-    const directory = await open(parent, fsConstants.O_RDONLY);
-    try { await directory.sync(); } finally { await directory.close(); }
-    await assertOwnerParentBinding(parentBinding, "owner attempt status parent");
   } catch (error) {
     await handle?.close().catch(() => {});
     if (!renamed) await unlink(temporaryPath).catch(() => {});
     if (error instanceof Error && error.message.includes("Authority: ")) throw error;
     fail(`cannot atomically commit retained-success: ${error instanceof Error ? error.message : String(error)}`, "preserve the consumed status and inspect the private owner stage before retrying");
   }
-  return { filePath, sha256: sha256(serialized), bytes: serialized };
+  let postCommitDiagnostic = null;
+  try {
+    const directory = await open(parent, fsConstants.O_RDONLY);
+    try { await directory.sync(); } finally { await directory.close(); }
+    await assertOwnerParentBinding(parentBinding, "owner attempt status parent");
+  } catch (error) {
+    postCommitDiagnostic = {
+      phase: "post-commit-durability",
+      code: "POST_COMMIT_DURABILITY_CONCERN",
+      message: String(error instanceof Error ? error.message : error).replaceAll(/\s+/gu, " ").slice(0, 512),
+    };
+  }
+  let committedIdentity;
+  try {
+    committedIdentity = await captureRegularFileIdentity(filePath, "committed retained-success status");
+    if (!committedIdentity.bytes.equals(serialized)) {
+      throw new Error("committed retained-success status bytes differ from the requested terminal record");
+    }
+  } catch (error) {
+    throw postCommitVerificationError(error, postCommitDiagnostic);
+  }
+  return { filePath, sha256: sha256(serialized), bytes: serialized, committedIdentity, renamed, postCommitDiagnostic };
 }
 
 function assertConsumedRetainedStatus(status) {
@@ -878,7 +940,7 @@ async function validateMacOSPackageImplementation(manifestPath, options = {}, { 
     : null;
   const manifest = validateManifestDocument(JSON.parse((manifestIdentity?.bytes ?? await readFile(manifestPath)).toString("utf8")));
   let retainedStage = null;
-  if (retainedArtifactOnly && requireRetainedSuccess) {
+  if (retainedArtifactOnly) {
     try {
       retainedStage = await validateArtifactStageRoot({ stageRoot: path.dirname(path.resolve(manifestPath)), repositoryRoot: validationRepositoryRoot, ownerMode: true });
       if (requireRetainedSuccess) assertExternalRetainedSuccessState(retainedStage.status);
@@ -1073,21 +1135,40 @@ async function validateMacOSPackageImplementation(manifestPath, options = {}, { 
   };
   if (!retainedArtifactOnly) return result;
   const retainedBinding = {
-    ...(requireRetainedSuccess ? {
-      status: retainedStage.status,
-      statusIdentity: retainedStage.statusIdentity,
-    } : {}),
+    stageRoot: retainedStage.stageRoot,
+    stageRealPath: retainedStage.stageRealPath,
+    markerIdentity: retainedStage.markerIdentity,
+    markerBytes: retainedStage.markerBytes,
+    parentBinding: retainedStage.parentBinding,
+    status: retainedStage.status,
+    statusIdentity: retainedStage.statusIdentity,
     manifestIdentity,
     result,
-    async assertCurrent() {
+    async assertCurrent({ expectedStageBinding = null, expectedStatusIdentity = null, temporaryPath = null } = {}) {
+      const currentStage = await validateArtifactStageRoot({
+        stageRoot: retainedStage.stageRoot,
+        repositoryRoot,
+        ownerMode: true,
+        temporaryPath,
+      });
+      if (currentStage.stageRealPath !== retainedStage.stageRealPath) {
+        fail("retained stage root realpath changed after artifact validation", "stop the owner attempt and retain the exact validated stage root");
+      }
+      assertRegularFileIdentity(currentStage.markerIdentity, retainedStage.markerIdentity, "stage marker after artifact validation");
+      if (!currentStage.markerBytes.equals(retainedStage.markerBytes)) {
+        fail("retained stage marker bytes changed after artifact validation", "stop the owner attempt and retain the exact validated marker");
+      }
+      await assertOwnerParentBinding(retainedStage.parentBinding, "owner status parent after artifact validation");
+      if (expectedStageBinding !== null) await assertExpectedRetainedStageBinding(currentStage, expectedStageBinding);
+      const currentStatusIdentity = currentStage.statusIdentity;
+      assertRegularFileIdentity(currentStatusIdentity, expectedStatusIdentity ?? retainedStage.statusIdentity, "owner attempt status after artifact validation");
+      if (!requireRetainedSuccess) assertConsumedRetainedStatus(currentStage.status);
       const currentManifestIdentity = await captureRegularFileIdentity(manifestPath, "retained composition manifest");
       assertRegularFileIdentity(currentManifestIdentity, manifestIdentity, "retained composition manifest");
-      if (requireRetainedSuccess) {
-        const currentStatusIdentity = await captureRegularFileIdentity(retainedStage.statusPath, "owner attempt status");
-        assertRegularFileIdentity(currentStatusIdentity, retainedStage.statusIdentity, "owner attempt status");
-      }
       const currentEntries = await enumeratePackageEntries(bundlePath);
       compareManifestEntrySets(manifest.entries, currentEntries, bundlePath);
+      await validatePackageSymlinkClosure(bundlePath, currentEntries);
+      await assertStageWritableSurface({ ...currentStage, temporaryPath });
       return result;
     },
   };

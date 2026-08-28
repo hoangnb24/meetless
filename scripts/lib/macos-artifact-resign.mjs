@@ -864,7 +864,7 @@ export function assertExternalArtifactStageRoot({ stageRoot, repositoryRoot = pr
   };
 }
 
-export async function validateArtifactStageRoot({ stageRoot, repositoryRoot = process.cwd(), canonicalReleaseRoot = null, markerPath = null, ownerMode = false } = {}) {
+export async function validateArtifactStageRoot({ stageRoot, repositoryRoot = process.cwd(), canonicalReleaseRoot = null, markerPath = null, ownerMode = false, temporaryPath = null } = {}) {
   const paths = assertExternalArtifactStageRoot({ stageRoot, repositoryRoot, canonicalReleaseRoot });
   const stageStat = await lstat(paths.stageRoot).catch(() => null);
   if (!stageStat?.isDirectory() || stageStat.isSymbolicLink()) {
@@ -877,11 +877,32 @@ export async function validateArtifactStageRoot({ stageRoot, repositoryRoot = pr
   const stageNames = (await readdir(paths.stageRoot)).sort((left, right) => left.localeCompare(right));
   const requiredStageNames = [MACOS_ARTIFACT_STAGE_BUNDLE_NAME, MACOS_ARTIFACT_STAGE_MANIFEST_NAME, MACOS_ARTIFACT_STAGE_MARKER_NAME];
   const ownerMetadataNames = [MACOS_ARTIFACT_OWNER_STATUS_NAME];
-  const allowedStageNames = new Set([...requiredStageNames, ...(ownerMode ? ownerMetadataNames : [])]);
-  if (stageNames.some((name) => !allowedStageNames.has(name)) || requiredStageNames.some((name) => !stageNames.includes(name)) || (ownerMode && !stageNames.includes(MACOS_ARTIFACT_OWNER_STATUS_NAME))) {
+  let temporaryName = null;
+  let resolvedTemporaryPath = null;
+  if (temporaryPath !== null) {
+    if (!ownerMode || typeof temporaryPath !== "string") {
+      throw artifactResignError("success stage revalidation received an invalid temporary status path", "revalidate the owner stage with only the private status writer temporary file allowed");
+    }
+    resolvedTemporaryPath = path.resolve(temporaryPath);
+    if (path.dirname(resolvedTemporaryPath) !== paths.stageRoot) {
+      throw artifactResignError(`success status temporary path is outside the exact owner stage root: ${resolvedTemporaryPath}`, "keep the private temporary status file beside the authoritative owner status");
+    }
+    temporaryName = path.basename(resolvedTemporaryPath);
+    if (!temporaryName.startsWith(`.${MACOS_ARTIFACT_OWNER_STATUS_NAME}.`) || !temporaryName.endsWith(".tmp")) {
+      throw artifactResignError(`success status temporary path has an invalid owner-writer name: ${temporaryName}`, "use the private owner status writer temporary-file naming contract");
+    }
+  }
+  const allowedStageNames = new Set([...requiredStageNames, ...(ownerMode ? ownerMetadataNames : []), ...(temporaryName ? [temporaryName] : [])]);
+  if (stageNames.some((name) => !allowedStageNames.has(name)) || requiredStageNames.some((name) => !stageNames.includes(name)) || (ownerMode && !stageNames.includes(MACOS_ARTIFACT_OWNER_STATUS_NAME)) || (temporaryName !== null && !stageNames.includes(temporaryName))) {
     throw artifactResignError(`staged root contains unexpected or missing entries: ${stageNames.join(", ")}`, ownerMode
       ? "retain only Meetless.app, composition-manifest.json, the F11 marker, and the one authoritative owner lifecycle status record"
       : "retain only Meetless.app, composition-manifest.json, and the owner stage marker");
+  }
+  if (resolvedTemporaryPath !== null) {
+    const temporaryStat = await lstat(resolvedTemporaryPath).catch(() => null);
+    if (!temporaryStat?.isFile() || temporaryStat.isSymbolicLink() || temporaryStat.nlink !== 1) {
+      throw artifactResignError(`success status temporary path is not one private regular file: ${resolvedTemporaryPath}`, "preserve the owner writer temporary status file as a single non-symlink inode");
+    }
   }
   const expectedMarkerPath = paths.markerPath;
   if (markerPath !== null && path.resolve(markerPath) !== expectedMarkerPath) {
@@ -891,7 +912,8 @@ export async function validateArtifactStageRoot({ stageRoot, repositoryRoot = pr
   if (!markerStat?.isFile() || markerStat.isSymbolicLink()) {
     throw artifactResignError(`stage marker is not a regular non-symlink file: ${expectedMarkerPath}`, "create the owner-controlled stage marker before invoking the artifact transform");
   }
-  const markerBytes = await readFile(expectedMarkerPath);
+  const markerIdentity = await captureRegularFileIdentity(expectedMarkerPath, "stage marker");
+  const markerBytes = markerIdentity.bytes;
   const marker = parseJson(markerBytes, "stage marker");
   validateArtifactStageMarker(marker, { stageRoot: paths.stageRoot, stageRealPath });
   const bundleStat = await lstat(paths.bundlePath).catch(() => null);
@@ -924,7 +946,7 @@ export async function validateArtifactStageRoot({ stageRoot, repositoryRoot = pr
     validateOwnerStatusDocument(status, { stageRoot: paths.stageRoot, markerBytes });
   }
   const writableSurface = await assertStageWritableSurface({ ...paths, statusPath: ownerMode ? statusPath : null });
-  return { ...paths, statusPath: ownerMode ? statusPath : null, statusIdentity, evidencePath: null, parentBinding, ownerMode, status, stageRealPath, markerBytes, marker, writableSurface };
+  return { ...paths, statusPath: ownerMode ? statusPath : null, statusIdentity, evidencePath: null, parentBinding, ownerMode, status, stageRealPath, markerIdentity, markerBytes, marker, writableSurface, temporaryPath: resolvedTemporaryPath };
 }
 
 export async function assertStageWritableSurface({ stageRoot, bundlePath, manifestPath, markerPath, statusPath = null, evidencePath = null } = {}) {

@@ -678,7 +678,7 @@ describe("macOS artifact-only re-sign foundation", () => {
     const operationProperties = operationCall && ts.isObjectLiteralExpression(operationCall.arguments[0])
       ? operationCall.arguments[0].properties.map((property) => "name" in property ? property.name.getText(syntax) : "")
       : [];
-    expect(operationProperties).toEqual(expect.arrayContaining(["manifestPath", "repositoryRoot", "expectedStatusIdentity", "result", "signalController"]));
+    expect(operationProperties).toEqual(expect.arrayContaining(["manifestPath", "repositoryRoot", "expectedStatusIdentity", "expectedStageBinding", "result", "signalController"]));
     const consumedTransition = calls.find((call) => ts.isIdentifier(call.expression) && call.expression.text === "transitionOwnerStatus" && ts.isObjectLiteralExpression(call.arguments[0]) && call.arguments[0].properties.some((property) => ts.isPropertyAssignment(property) && property.name.getText(syntax) === "state" && ts.isStringLiteral(property.initializer) && property.initializer.text === "consumed"));
     const consumedCapture = calls.find((call) => ts.isIdentifier(call.expression) && call.expression.text === "captureRegularFileIdentity" && ts.isStringLiteral(call.arguments[1]) && call.arguments[1].text === "consumed owner attempt status");
     expect(consumedTransition?.pos).toBeLessThan(consumedCapture?.pos ?? 0);
@@ -737,6 +737,22 @@ describe("macOS artifact-only re-sign foundation", () => {
     expect(ownerModeExpression.whenTrue.kind).toBe(ts.SyntaxKind.TrueKeyword);
     expect(validatorSyntax.statements.some((statement) => ts.isVariableStatement(statement) && statement.declarationList.declarations.some((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === "RETAINED_EVIDENCE_ONLY"))).toBe(false);
 
+    const retainedBinding = validatorFunction && findVariableDeclaration(validatorFunction, "retainedBinding");
+    const retainedBindingCalls = collectCallExpressions(retainedBinding as ts.Node);
+    const retainedBindingCallNames = retainedBindingCalls.map((call) => ts.isIdentifier(call.expression) ? call.expression.text : ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : "");
+    expect(retainedBindingCallNames).toEqual(expect.arrayContaining([
+      "validateArtifactStageRoot",
+      "assertRegularFileIdentity",
+      "assertOwnerParentBinding",
+      "captureRegularFileIdentity",
+      "enumeratePackageEntries",
+      "compareManifestEntrySets",
+      "validatePackageSymlinkClosure",
+      "assertStageWritableSurface",
+    ]));
+    const stageRevalidation = retainedBindingCalls.find((call) => ts.isIdentifier(call.expression) && call.expression.text === "validateArtifactStageRoot" && ts.isObjectLiteralExpression(call.arguments[0]) && call.arguments[0].properties.some((property) => "name" in property && property.name.getText(validatorSyntax) === "temporaryPath"));
+    expect(stageRevalidation).toBeDefined();
+
     const librarySource = await readFile(path.resolve("scripts/lib/macos-artifact-resign.mjs"), "utf8");
     const librarySyntax = ts.createSourceFile("macos-artifact-resign.mjs", librarySource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
     const atomicWrite = librarySyntax.statements.find((statement): statement is ts.FunctionDeclaration => ts.isFunctionDeclaration(statement) && statement.name?.text === "writeJsonAtomically");
@@ -758,6 +774,41 @@ describe("macOS artifact-only re-sign foundation", () => {
     const synchronousCommit = atomicCalls.find((call) => ts.isIdentifier(call.expression) && call.expression.text === "renameSync");
     expect(interruptionDecision?.pos).toBeLessThan(synchronousCommit?.pos ?? 0);
     expect(interruptionDecision?.parent.parent).toBe(synchronousCommit?.parent.parent);
+
+    const privateWriter = validatorSyntax.statements.find((statement): statement is ts.FunctionDeclaration => ts.isFunctionDeclaration(statement) && statement.name?.text === "writePrivateSuccessStatusAtomically");
+    const privateWriterSource = privateWriter?.getText(validatorSyntax) ?? "";
+    const privateWriterCalls = collectCallExpressions(privateWriter as ts.Node);
+    const privateRename = privateWriterCalls.find((call) => ts.isIdentifier(call.expression) && call.expression.text === "renameSync");
+    const committedStatusRead = privateWriterCalls.find((call) => ts.isIdentifier(call.expression) && call.expression.text === "captureRegularFileIdentity" && ts.isStringLiteral(call.arguments[1]) && call.arguments[1].text === "committed retained-success status");
+    expect(privateWriterSource).toMatch(/postCommitDiagnostic/u);
+    expect(privateWriterSource).toMatch(/POST_COMMIT_DURABILITY_CONCERN/u);
+    expect(validatorSource).toMatch(/function postCommitVerificationError[\s\S]*ownerCommitted/u);
+    expect(privateRename?.pos).toBeLessThan(committedStatusRead?.pos ?? 0);
+  });
+
+  it("rejects a replaced marker and added root state during final stage revalidation", async () => {
+    const stage = await createStageFixture();
+    const markerBytes = await readFile(stage.markerPath);
+    const statusPath = path.join(stage.stageRoot, MACOS_ARTIFACT_OWNER_STATUS_NAME);
+    const consumed = createOwnerStatusDocument({ stageRoot: stage.stageRoot, markerBytes, state: "consumed", attempt: 1 });
+    await writeFile(statusPath, JSON.stringify(consumed) + "\n", { mode: 0o600 });
+
+    const preparedStage = await validateArtifactStageRoot({ stageRoot: stage.stageRoot, repositoryRoot: process.cwd(), ownerMode: true });
+    const statusBefore = await readFile(statusPath);
+    const temporaryPath = path.join(stage.stageRoot, `.${MACOS_ARTIFACT_OWNER_STATUS_NAME}.test.tmp`);
+    await writeFile(temporaryPath, "pending\n", { mode: 0o600 });
+    await expect(validateArtifactStageRoot({ stageRoot: stage.stageRoot, repositoryRoot: process.cwd(), ownerMode: true, temporaryPath })).resolves.toMatchObject({ status: consumed });
+
+    const replacement = path.join(stage.stageRoot, "replacement-marker.json");
+    await writeFile(replacement, markerBytes, { mode: 0o600 });
+    await rename(replacement, stage.markerPath);
+    const replacedStage = await validateArtifactStageRoot({ stageRoot: stage.stageRoot, repositoryRoot: process.cwd(), ownerMode: true, temporaryPath });
+    expect(() => assertRegularFileIdentity(replacedStage.markerIdentity, preparedStage.markerIdentity, "final stage marker")).toThrow(/identity changed after validation/);
+    expect(await readFile(statusPath)).toEqual(statusBefore);
+
+    await writeFile(path.join(stage.stageRoot, "unexpected-root-state"), "unexpected\n", { mode: 0o600 });
+    await expect(validateArtifactStageRoot({ stageRoot: stage.stageRoot, repositoryRoot: process.cwd(), ownerMode: true, temporaryPath })).rejects.toThrow(/unexpected or missing entries/);
+    expect(await readFile(statusPath)).toEqual(statusBefore);
   });
 
   it("fails the end-to-end success operation before artifact validation for missing, wrong, or replaced consumed status", async () => {

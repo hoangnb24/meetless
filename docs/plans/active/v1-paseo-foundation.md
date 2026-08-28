@@ -4268,3 +4268,84 @@ publication, or promotion action occurred. The deferred runtime error was not
 touched. This candidate does not claim signing, release, or owner acceptance.
 
 `plan_updated: yes`.
+
+### PEER_DISPOSITION v1 — M7-F25-CORRECTION-R1
+
+frontier_id: `M7-F25-CORRECTION-R1`
+status: `CANDIDATE`
+candidate: HEAD `118089d546731ff9b1160a90b4189b16f2903a3b`; package-source
+snapshot `95806cb9252356cd34fe818bbeb8830e9a121a45fa74f8f439a1b8876bfc8469`;
+Paseo `c81cb84735043c281a5a2d23d456d3708ce5d94e`
+
+Correction identity and authority: ADR 0002, the accepted F24/F25 lifecycle in
+this plan, and frozen findings `M7F25-REV-001` and `M7F25-REV-002`. The existing
+production re-sign command remains the only success composition. Its final
+private status transition now binds the prepared marker identity and parent,
+revalidates the exact stage root, writable surface, consumed status, manifest,
+and complete artifact entry set with its known temporary status file, then
+linearizes success at synchronous status rename. Post-rename directory or
+parent concerns are diagnostic only; the status is reread and verified before
+the committed result is returned. No second lifecycle, retry, compatibility
+path, or generic success helper was added.
+
+Changed scope: `scripts/validate-macos-package.mjs`,
+`scripts/resign-macos-artifact.mjs`, `scripts/lib/macos-artifact-resign.mjs`,
+and `packages/runtime/test/macos-artifact-resign.test.ts`.
+
+Proof: focused lifecycle test 73/73; direct macOS package test 30/30; direct
+macOS package-signature test 38/38; typecheck passed; changed `.mjs` syntax
+checks passed; `git diff --check` passed. Negative proof covers same-byte
+marker inode replacement and an unexpected root entry while consumed status
+bytes remain unchanged. Structural proof covers the end-to-end pre-rename
+binding and post-rename committed reread.
+
+Enforcement: local focused Vitest and package validator are the owners. No
+optional hook was found or changed. No checked-in CI invocation was found. Git
+branch protection is unverified.
+
+Limits: no retained signed stage was accessed or changed. No Keychain,
+Developer ID signing, timestamp, notarization, upload, publication, launch,
+or external release action occurred. A live owner-stage post-rename fault
+injection was not run; the proof is repository-local and credential-free.
+
+`plan_updated: yes`.
+
+### LEAD_RULING v1 — M7-F25-CORRECTION-R1
+
+frontier_id: `M7-F25-CORRECTION-R1`
+decision: `ACCEPT`
+candidate: HEAD `118089d546731ff9b1160a90b4189b16f2903a3b`; package-source
+snapshot `95806cb9252356cd34fe818bbeb8830e9a121a45fa74f8f439a1b8876bfc8469`;
+Paseo `c81cb84735043c281a5a2d23d456d3708ce5d94e`
+
+Accepted findings `M7F25-REV-001` and `M7F25-REV-002` are closed. The final
+pre-rename boundary rechecks the prepared marker identity and bytes, stage
+root and realpath, exact root entries, parent binding, consumed status,
+manifest, complete artifact entries, symlink closure, and writable surface.
+The synchronous owner-status rename remains the success linearization point.
+Post-rename concerns are committed-state diagnostics and cannot enter failure
+terminalization or rewrite retained success. The committed status is reread
+and verified before the operation returns.
+
+Independent closeout: `CLOSEOUT_CLEAR` from reviewer
+`984e97a8-9ac2-4c4a-83a6-110d03154224`; review class `FAST`; review mode
+`CLOSEOUT`; review model actual `codex-review/gpt-5.6-luna`.
+
+Lead verification passed: three direct test files, 141/141 tests; `npm run
+typecheck`; syntax checks for the three changed `.mjs` files; `git diff
+--check`; and deterministic package-source snapshot reproduction. The
+repository-local guard has positive proof and negative proof for same-byte
+marker replacement and unexpected root state. No optional hook or checked-in
+CI invocation was found. Branch protection remains unverified.
+
+This ruling accepts only the F25 retained-success lifecycle correction. It
+does not retroactively re-run an earlier owner signing attempt and does not
+claim DMG, notarization, Gatekeeper/TCC, legal, publication, or V1 release
+acceptance. No retained stage, Keychain, signing identity, timestamp service,
+notarization, upload, or publication was accessed or changed.
+
+next_frontier: integrate the accepted candidate, then use a separately
+authorized fresh release-candidate run for the remaining external release
+gates.
+
+`plan_updated: yes`.
