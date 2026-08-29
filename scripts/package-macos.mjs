@@ -9,6 +9,7 @@ import {
   PACKAGE_SOURCE_MODE,
   PACKAGE_SOURCE_SNAPSHOT_COMMAND,
 } from "./candidate-snapshot.mjs";
+import { PASEO_DEPENDENCY } from "./lib/paseo-dependency.mjs";
 import { digestManifest, validateMacOSPackage } from "./validate-macos-package.mjs";
 import { enumeratePackageEntries, inspectMachO, inspectPackageMachOEntries } from "./lib/macos-package-inventory.mjs";
 import {
@@ -47,7 +48,7 @@ const bundlePath = path.join(releaseRoot, "Meetless.app");
 const contentsPath = path.join(bundlePath, "Contents");
 const packageRoot = path.join(contentsPath, "Resources", "meetless");
 const manifestPath = path.join(releaseRoot, "composition-manifest.json");
-const pinnedPaseoCommit = "c81cb84735043c281a5a2d23d456d3708ce5d94e";
+const pinnedPaseoCommit = PASEO_DEPENDENCY.expectedCommit;
 const canonicalBundlePath = MACOS_PACKAGE_INSTALL_PATH;
 
 const signingArguments = parseSigningArguments(rawSigningArguments, { requireMode: true });

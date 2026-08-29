@@ -22,7 +22,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
-export const PINNED_PASEO_COMMIT = "c81cb84735043c281a5a2d23d456d3708ce5d94e";
+export const PINNED_PASEO_COMMIT = "7618cda71e2836f9ba7e821286504841203cb745";
 export const DEFAULT_MEETLESS_LISTEN = "127.0.0.1:6777";
 export const MEETLESS_INSTALLATION_PATH = "/Applications/Meetless.app";
 export const MEETLESS_USER_SUPPORT_RELATIVE_PATH = "Library/Application Support/Meetless";

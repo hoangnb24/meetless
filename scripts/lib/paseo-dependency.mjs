@@ -1,7 +1,7 @@
 export const PASEO_DEPENDENCY = Object.freeze({
-  expectedCommit: "c81cb84735043c281a5a2d23d456d3708ce5d94e",
+  expectedCommit: "7618cda71e2836f9ba7e821286504841203cb745",
   bundleRef: "refs/meetless/bundle-candidate",
-  bundlePath: "vendor/paseo-bundles/0cd59fbf0a2437c943c6fa10a63567260c8ab665bcefa975c50d593b705016b3.bundle",
-  bundleSha256: "0cd59fbf0a2437c943c6fa10a63567260c8ab665bcefa975c50d593b705016b3",
-  bundleSize: 78_982_401,
+  bundlePath: "vendor/paseo-bundles/018c81149bc6963759df8016dd316188cb9956b8904972c3240f9f0be82a886a.bundle",
+  bundleSha256: "018c81149bc6963759df8016dd316188cb9956b8904972c3240f9f0be82a886a",
+  bundleSize: 102_244_892,
 });

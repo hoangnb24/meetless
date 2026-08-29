@@ -15,6 +15,7 @@ import {
   PACKAGE_SOURCE_MODE,
   PACKAGE_SOURCE_SNAPSHOT_COMMAND,
 } from "./candidate-snapshot.mjs";
+import { PASEO_DEPENDENCY } from "./lib/paseo-dependency.mjs";
 import {
   MACOS_LICENSE_INVENTORY_AUTHORITY,
   MACOS_LICENSE_INVENTORY_EXCLUDED_PATH_PREFIXES,
@@ -93,7 +94,7 @@ const CANONICAL_REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import
 const execFileAsync = promisify(execFile);
 const FORBIDDEN_LOAD_PATHS = ["/opt/homebrew", "/usr/local"];
 const CANDIDATE_SNAPSHOT_COMMAND = PACKAGE_SOURCE_SNAPSHOT_COMMAND;
-const PINNED_PASEO_COMMIT = "c81cb84735043c281a5a2d23d456d3708ce5d94e";
+const PINNED_PASEO_COMMIT = PASEO_DEPENDENCY.expectedCommit;
 
 function ownerToolEnvironment(environment = process.env) {
   const sanitized = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" };
