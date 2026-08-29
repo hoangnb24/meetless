@@ -57,9 +57,26 @@ describe("isolated daemon stop authorization", () => {
     expect(() => authorize()).not.toThrow();
   });
 
+  test.each([
+    ["the observed packaged bootstrap delay", "2026-08-16T12:00:03.259Z"],
+    ["the exact bounded acquisition delay", "2026-08-16T12:00:05.000Z"],
+  ])("accepts %s", (_label, startedAt) => {
+    expect(() => authorize({ lock: { startedAt } })).not.toThrow();
+  });
+
+  test.each([
+    ["a lock timestamp before process birth", "2026-08-16T11:59:59.999Z"],
+    ["an acquisition beyond the bounded startup interval", "2026-08-16T12:00:05.001Z"],
+    ["an invalid lock timestamp", "not-a-timestamp"],
+  ])("rejects %s", (_label, startedAt) => {
+    expect(() => authorize({ lock: { startedAt } })).toThrow(
+      /lock start.*does not follow live process start.*within 5000ms.*stale or reused/s,
+    );
+  });
+
   test("rejects a stale lock whose PID was reused by a later process", () => {
     expect(() => authorize({ live: { startedAt: "2026-08-16T13:00:00.000Z" } })).toThrow(
-      /lock start.*does not match live process start.*stale or reused/s,
+      /lock start.*does not follow live process start.*stale or reused/s,
     );
   });
 

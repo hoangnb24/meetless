@@ -135,6 +135,41 @@ describe("M7 direct-DMG installation contract", () => {
     expect(() => assertStableHostIdentity(base, { ...base, designatedRequirement: "identifier \"other\"" })).toThrow(/designated requirement/);
   });
 
+  test("allows one verified legacy ad-hoc migration and rejects weaker identity changes", () => {
+    const config = resolveRuntimeConfig({ runtimeRoot: "/tmp/meetless-f23-identity-migration", repositoryRoot: process.cwd() });
+    const current = {
+      ...fakeIdentity(config),
+      designatedRequirement: 'identifier "com.meetless.app" and anchor apple generic and certificate leaf[subject.OU] = "63M98WD275"',
+    };
+    const legacy = {
+      ...current,
+      designatedRequirement: `cdhash H"${"a".repeat(40)}"`,
+      cdHash: "a".repeat(40),
+    };
+    expect(() => assertStableHostIdentity(legacy, current, { packagedDeveloperIdVerified: true })).not.toThrow();
+    expect(() => assertStableHostIdentity(legacy, current)).toThrow(/identity refresh is refused/);
+    expect(() => assertStableHostIdentity(
+      legacy,
+      { ...current, bundlePath: "/Volumes/Meetless/Meetless.app" },
+      { packagedDeveloperIdVerified: true },
+    )).toThrow(/identity refresh is refused/);
+    expect(() => assertStableHostIdentity(
+      { ...legacy, bundleIdentifier: "com.other.app" } as HostIdentity,
+      current,
+      { packagedDeveloperIdVerified: true },
+    )).toThrow(/bundle identifier/);
+    expect(() => assertStableHostIdentity(
+      { ...legacy, designatedRequirement: 'identifier "com.meetless.app" and anchor cdhash H"abc"' },
+      current,
+      { packagedDeveloperIdVerified: true },
+    )).toThrow(/identity refresh is refused/);
+    expect(() => assertStableHostIdentity(
+      legacy,
+      { ...current, designatedRequirement: `cdhash H"${"b".repeat(40)}"` },
+      { packagedDeveloperIdVerified: false },
+    )).toThrow(/identity refresh is refused/);
+  });
+
   test("accepts the exact DMG layout and rejects extra, missing, or retargeted entries", () => {
     const expected = expectedMacOSDmgLayout();
     expect(validateMacOSDmgLayout(expected)).toEqual(expected);
@@ -161,6 +196,18 @@ describe("M7 direct-DMG installation contract", () => {
     expect(() => resolveMacOSDmgPaths(process.cwd(), {
       outputDir: path.resolve("release/macos/Meetless.app"),
     })).toThrow(/mutate the source Meetless\.app/);
+
+    const releaseOptions = parseMacOSDmgArguments([
+      "--proof-root=/private/tmp/meetless-release-proof",
+      "--signing-mode=release",
+      "--signing-identity=D3CA2AEA2DCBF578D27CFC3557BFFCB41E370561",
+      "--team-id=63M98WD275",
+    ]);
+    expect(resolveMacOSDmgPaths(process.cwd(), releaseOptions).mode).toBe("disposable-release");
+    expect(() => parseMacOSDmgArguments([
+      "--proof-root=/private/tmp/meetless-release-proof",
+      "--signing-mode=release",
+    ])).toThrow(/requires --signing-identity and --team-id/);
   });
 
   test("routes retained release DMG output to a distinct external sibling", () => {
@@ -337,6 +384,38 @@ describe("M7 direct-DMG installation contract", () => {
     expect(() => validateMacOSDmgSidecar({ ...sidecar, compositionArtifactDigest: "f".repeat(64) })).toThrow(/aliases differ/);
     expect(() => validateMacOSDmgSidecar({ ...sidecar, layout: [...layout, { name: "extra", type: "file" }] })).toThrow(/exact app-plus-Applications/);
     expect(() => validateMacOSDmgSidecar({ ...sidecar, stageStatus: "retained-failure" })).toThrow(/retained-stage status/);
+  });
+
+  test("binds a direct Developer ID DMG to its disposable package", () => {
+    const source = "a".repeat(64);
+    const layout = expectedMacOSDmgLayout();
+    const sidecar = {
+      schema: MACOS_DMG_SCHEMA,
+      authority: MACOS_DMG_AUTHORITY,
+      target: "macos-arm64",
+      sourceAppPath: "Meetless.app",
+      sourceAppSha256: source,
+      sourceAppBeforeSha256: source,
+      sourceAppAfterSha256: source,
+      artifactPath: "Meetless.dmg",
+      artifactSha256: "b".repeat(64),
+      manifestSha256: "c".repeat(64),
+      artifactDigest: "d".repeat(64),
+      compositionArtifactDigest: "d".repeat(64),
+      signatureStateDigest: "e".repeat(64),
+      layout,
+      layoutSha256: digestMacOSDmgLayout(layout),
+      localOnly: false,
+      mode: "disposable-release",
+      signingMode: "release",
+      stageStatus: "direct-release-candidate",
+      stageRoot: null,
+      releaseAcceptance: "not-claimed",
+      proofRoot: "external-disposable",
+      compositionManifest: "composition-manifest.json",
+    };
+    expect(validateMacOSDmgSidecar(sidecar)).toEqual(sidecar);
+    expect(() => validateMacOSDmgSidecar({ ...sidecar, mode: "local-ad-hoc" })).toThrow(/mode|status/);
   });
 
   test("derives host identity configuration from the same runtime contract", () => {

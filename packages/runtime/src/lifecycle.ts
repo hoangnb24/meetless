@@ -31,6 +31,8 @@ export interface LiveProcessIdentity {
   listener: LiveListenerIdentity | null;
 }
 
+const PID_LOCK_ACQUISITION_MAX_DELAY_MS = 5_000;
+
 export function readProcessStartInstance(pid: number): string {
   if (!Number.isInteger(pid) || pid <= 1) throw new Error(`Cannot inspect invalid process PID ${pid}`);
   const startedAt = inspectRequired("ps", ["-p", String(pid), "-o", "lstart="], `start time for ${pid}`).trim();
@@ -148,9 +150,16 @@ export function assertStopAuthorization(input: {
   }
   const liveStartedAt = live.startedAt;
   if (!liveStartedAt) return refuse("live process start time cannot be verified");
-  const startDelta = Math.abs(Date.parse(lock.startedAt) - Date.parse(liveStartedAt));
-  if (!Number.isFinite(startDelta) || startDelta > 2_000) {
-    refuse(`lock start ${lock.startedAt} does not match live process start ${liveStartedAt}`);
+  const lockAcquisitionDelay = Date.parse(lock.startedAt) - Date.parse(liveStartedAt);
+  if (
+    !Number.isFinite(lockAcquisitionDelay) ||
+    lockAcquisitionDelay < 0 ||
+    lockAcquisitionDelay > PID_LOCK_ACQUISITION_MAX_DELAY_MS
+  ) {
+    refuse(
+      `lock start ${lock.startedAt} does not follow live process start ${liveStartedAt} ` +
+        `within ${PID_LOCK_ACQUISITION_MAX_DELAY_MS}ms`,
+    );
   }
   if (live.commandLine !== "Paseo Supervisor") {
     refuse(`live command is not exactly the pinned Paseo supervisor identity (${live.commandLine || "empty"})`);

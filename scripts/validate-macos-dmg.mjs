@@ -23,7 +23,7 @@ const dmgPaths = resolveMacOSDmgPaths(
   dmgOptions,
 );
 const { mode, proofRoot, stageRoot, sourceAppPath: bundlePath, manifestPath, outputRoot, dmgPath, sidecarPath } = dmgPaths;
-if (mode === "local-ad-hoc" && !proofRoot) {
+if (mode !== "retained-release" && !proofRoot) {
   throw new Error("local/ad-hoc DMG validation requires --proof-root outside repository release/macos; refusing to validate repository release bytes");
 }
 
@@ -49,6 +49,9 @@ async function main() {
       repositoryRoot,
       artifactOnly: false,
       disposableProof: true,
+      signingMode: mode === "disposable-release" ? "release" : "local-ad-hoc",
+      signingIdentity: dmgOptions.signingIdentity,
+      expectedTeamId: dmgOptions.expectedTeamId,
     });
   const manifestBytes = await readFile(manifestPath);
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
@@ -67,7 +70,7 @@ async function main() {
   const actualLayout = await attestMacOSDmgLayout(dmgPath, { mountParent: proofRoot ?? outputRoot });
   assertMacOSDmgLayoutMatches(sidecar.layout, actualLayout);
   process.stdout.write(`${JSON.stringify({
-    status: mode === "retained-release" ? "validated-retained-release-dmg" : "validated-local-ad-hoc-dmg",
+    status: mode === "retained-release" ? "validated-retained-release-dmg" : mode === "disposable-release" ? "validated-direct-release-dmg" : "validated-local-ad-hoc-dmg",
     proofRoot,
     dmgPath,
     sidecarPath,

@@ -1,6 +1,7 @@
 import { open, type FileHandle } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { prepareRuntime, resolveRuntimeConfig } from "./config.js";
+import { prepareRuntime, resolveRuntimeConfig, type RuntimeConfig } from "./config.js";
+import { assertSupervisorOwnedByHost } from "./host.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
 import { activateUiTestRun } from "./ui-test-envelope.js";
 
@@ -13,6 +14,7 @@ async function main(): Promise<void> {
     listen: process.env.MEETLESS_LISTEN,
   });
   if (command === "daemon") {
+    await assertPackagedDaemonOwnedByHost(config);
     await activateUiTestRun(config);
     await prepareRuntime(config);
     Object.assign(process.env, config.environment);
@@ -100,6 +102,14 @@ async function main(): Promise<void> {
   throw new Error(`Unknown runtime command: ${command}`);
 }
 
+export async function assertPackagedDaemonOwnedByHost(
+  config: RuntimeConfig,
+  currentPid = process.pid,
+  ownershipCheck: typeof assertSupervisorOwnedByHost = assertSupervisorOwnedByHost,
+): Promise<void> {
+  if (config.packaged) await ownershipCheck(config, currentPid);
+}
+
 function isRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -109,9 +119,11 @@ function isRunning(pid: number): boolean {
   }
 }
 
-void main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  void main().catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
+}
 
 void supervisorOwnershipMarker;

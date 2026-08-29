@@ -17,6 +17,10 @@ const DMG_ARGUMENTS = new Map([
   ["--output-dir", "outputDir"],
   ["--proof-root", "proofRoot"],
   ["--stage-root", "stageRoot"],
+  ["--signing-mode", "signingMode"],
+  ["--signing-identity", "signingIdentity"],
+  ["--team-id", "expectedTeamId"],
+  ["--build-number", "buildNumber"],
 ]);
 
 export function parseMacOSDmgArguments(arguments_) {
@@ -47,6 +51,18 @@ export function parseMacOSDmgArguments(arguments_) {
       throw layoutError(`${name} must be an absolute ${key === "stageRoot" ? "retained stage" : "disposable"} directory`);
     }
     options[key] = value;
+  }
+  if (options.signingMode !== undefined && !["local-ad-hoc", "release"].includes(options.signingMode)) {
+    throw layoutError(`unsupported DMG signing mode ${options.signingMode}`);
+  }
+  if (options.signingMode === "release" && (!options.signingIdentity || !options.expectedTeamId)) {
+    throw layoutError("release DMG requires --signing-identity and --team-id");
+  }
+  if (options.signingMode !== "release" && (options.signingIdentity || options.expectedTeamId)) {
+    throw layoutError("DMG signing identity and Team ID require --signing-mode=release");
+  }
+  if (options.buildNumber !== undefined && !/^[1-9][0-9]*$/u.test(options.buildNumber)) {
+    throw layoutError("DMG build number must be a positive integer");
   }
   return options;
 }
@@ -87,12 +103,13 @@ export function resolveMacOSDmgPaths(repositoryRoot, options = {}) {
     ? null
     : path.resolve(options.stageRoot);
   if (proofRoot && stageRoot) throw layoutError("a DMG cannot combine a disposable proof root with a retained signing stage");
+  if (stageRoot && options.signingMode !== undefined) throw layoutError("a retained release stage cannot combine with direct package signing options");
   if (proofRoot) assertDisposableProofRoot(proofRoot, root);
   if (stageRoot) {
     assertNoResolvedEntry(stageRoot, root, "retained DMG source stage");
     assertNoResolvedEntry(stageRoot, MACOS_PACKAGE_INSTALL_PATH, "retained DMG source stage");
   }
-  const mode = stageRoot ? "retained-release" : "local-ad-hoc";
+  const mode = stageRoot ? "retained-release" : options.signingMode === "release" ? "disposable-release" : "local-ad-hoc";
   const releaseRoot = stageRoot ?? path.join(proofRoot ?? root, "release", "macos");
   const sourceAppPath = path.join(releaseRoot, "Meetless.app");
   const manifestPath = path.join(releaseRoot, "composition-manifest.json");
@@ -219,8 +236,10 @@ export function validateMacOSDmgSidecar(sidecar, expected = {}) {
   if (!sidecar || typeof sidecar !== "object" || Array.isArray(sidecar)) {
     throw layoutError("DMG sidecar is not an object");
   }
-  const retained = sidecar.localOnly === false;
-  const expectedMode = retained ? "retained-release" : "local-ad-hoc";
+  const retained = sidecar.mode === "retained-release";
+  const directRelease = sidecar.mode === "disposable-release";
+  const release = retained || directRelease;
+  const expectedMode = retained ? "retained-release" : directRelease ? "disposable-release" : "local-ad-hoc";
   if (
     sidecar.schema !== MACOS_DMG_SCHEMA ||
     sidecar.authority !== MACOS_DMG_AUTHORITY ||
@@ -228,9 +247,10 @@ export function validateMacOSDmgSidecar(sidecar, expected = {}) {
     typeof sidecar.localOnly !== "boolean" ||
     sidecar.mode !== expectedMode ||
     sidecar.releaseAcceptance !== "not-claimed" ||
+    sidecar.localOnly !== !release ||
     sidecar.proofRoot !== (retained ? "external-retained-sibling" : "external-disposable") ||
-    sidecar.stageStatus !== (retained ? "retained-success" : "local-ad-hoc-candidate") ||
-    sidecar.signingMode !== (retained ? "release" : "local-ad-hoc") ||
+    sidecar.stageStatus !== (retained ? "retained-success" : directRelease ? "direct-release-candidate" : "local-ad-hoc-candidate") ||
+    sidecar.signingMode !== (release ? "release" : "local-ad-hoc") ||
     sidecar.sourceAppPath !== "Meetless.app" ||
     sidecar.artifactPath !== "Meetless.dmg" ||
     sidecar.compositionManifest !== "composition-manifest.json"

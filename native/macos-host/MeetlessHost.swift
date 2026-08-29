@@ -5,6 +5,8 @@ import Foundation
 
 private let meetlessInstallPath = "/Applications/Meetless.app"
 private let meetlessBundleIdentifier = "com.meetless.app"
+private let meetlessDeveloperIDTeam = "63M98WD275"
+private let meetlessDeveloperIDRequirement = "identifier \"com.meetless.app\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"63M98WD275\""
 private let meetlessHostConfigSchema = "MEETLESS_MACOS_HOST_CONFIG v2"
 private let meetlessInstallationContractSchema = "MEETLESS_INSTALLATION_CONTRACT v1"
 private let meetlessPackageSchema = "MEETLESS_MACOS_PACKAGE v2"
@@ -273,6 +275,29 @@ private func firstMatch(_ value: String, pattern: String) -> String? {
   return String(value[range])
 }
 
+func meetlessMayMigrateLegacyIdentity(
+  previousRequirement: String,
+  currentRequirement: String,
+  packagedDeveloperIDVerified: Bool
+) -> Bool {
+  guard packagedDeveloperIDVerified, previousRequirement != currentRequirement else { return false }
+  return previousRequirement.range(
+    of: #"\Acdhash H\"[0-9A-Fa-f]{40}\"\z"#,
+    options: .regularExpression
+  ) != nil
+}
+
+private func assertApprovedPackagedDeveloperIDSignature(_ bundlePath: String) throws {
+  _ = try inspectCodesign([
+    "--verify",
+    "--deep",
+    "--strict",
+    "--verbose=4",
+    "-R=\(meetlessDeveloperIDRequirement)",
+    bundlePath,
+  ], label: "Developer ID signature for team \(meetlessDeveloperIDTeam)")
+}
+
 private func writeIdentityAtomically(_ data: Data, to identityPath: String, runtimeRoot: String) throws {
   let identityURL = URL(fileURLWithPath: identityPath).standardizedFileURL
   let rootURL = URL(fileURLWithPath: runtimeRoot).standardizedFileURL
@@ -523,6 +548,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     guard FileManager.default.isExecutableFile(atPath: hostExecutable) else {
       throw hostPreflightError("MeetlessHost executable is missing or not executable")
     }
+    try assertApprovedPackagedDeveloperIDSignature(Bundle.main.bundlePath)
   }
 
   private func publishIdentity(_ configuration: HostConfiguration) throws {
@@ -559,13 +585,28 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     if FileManager.default.fileExists(atPath: configuration.identityPath) {
       let previousData = try readRequiredData(configuration.identityPath, label: "recorded host identity")
       let previous = try JSONDecoder().decode(HostIdentityDocument.self, from: previousData)
-      guard
-        previous.bundleIdentifier == identity.bundleIdentifier,
-        previous.bundlePath == meetlessInstallPath,
-        previous.bundleRealPath == meetlessInstallPath,
+      let stableIdentity =
+        previous.bundleIdentifier == identity.bundleIdentifier &&
+        previous.bundlePath == meetlessInstallPath &&
+        previous.bundleRealPath == meetlessInstallPath &&
         previous.designatedRequirement == identity.designatedRequirement
-      else {
-        throw hostPreflightError("recorded host identity drifted in path, bundle identifier, or designated requirement; refusing to refresh it")
+      if !stableIdentity {
+        let packaged = configuration.repositoryRoot.hasPrefix(bundlePath + "/")
+        let sameOwner = previous.bundleIdentifier == identity.bundleIdentifier &&
+          previous.bundlePath == meetlessInstallPath &&
+          previous.bundleRealPath == meetlessInstallPath &&
+          identity.bundlePath == meetlessInstallPath &&
+          identity.bundleRealPath == meetlessInstallPath
+        let trustedMigration = sameOwner && meetlessMayMigrateLegacyIdentity(
+          previousRequirement: previous.designatedRequirement,
+          currentRequirement: identity.designatedRequirement,
+          packagedDeveloperIDVerified: packaged
+        )
+        if trustedMigration {
+          try assertApprovedPackagedDeveloperIDSignature(bundlePath)
+        } else {
+          throw hostPreflightError("recorded host identity drifted in path, bundle identifier, or designated requirement; refusing to refresh it")
+        }
       }
     }
     let encoder = JSONEncoder()

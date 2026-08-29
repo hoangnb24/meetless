@@ -40,6 +40,7 @@ import {
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const { proofRoot, remainingArguments } = parseMacOSProofRootArguments(process.argv.slice(2));
+const { buildNumber, signingArguments: rawSigningArguments } = parsePackageBuildArguments(remainingArguments);
 const packagePaths = resolveMacOSDmgPaths(repositoryRoot, { proofRoot });
 const releaseRoot = packagePaths.releaseRoot;
 const bundlePath = path.join(releaseRoot, "Meetless.app");
@@ -49,7 +50,7 @@ const manifestPath = path.join(releaseRoot, "composition-manifest.json");
 const pinnedPaseoCommit = "c81cb84735043c281a5a2d23d456d3708ce5d94e";
 const canonicalBundlePath = MACOS_PACKAGE_INSTALL_PATH;
 
-const signingArguments = parseSigningArguments(remainingArguments, { requireMode: true });
+const signingArguments = parseSigningArguments(rawSigningArguments, { requireMode: true });
 if (signingArguments.signingMode === "local-ad-hoc" && !proofRoot) {
   throw new Error("local/ad-hoc package proof requires --proof-root outside repository release/macos; refusing to mutate release/macos");
 }
@@ -209,6 +210,9 @@ async function createHostBundle() {
   await mkdir(path.dirname(executable), { recursive: true, mode: 0o755 });
   await mkdir(path.join(contentsPath, "Resources"), { recursive: true, mode: 0o755 });
   await cp(path.join(repositoryRoot, "native/macos-host/Info.plist"), path.join(contentsPath, "Info.plist"));
+  if (buildNumber !== null) {
+    await run("plutil", ["-replace", "CFBundleVersion", "-string", buildNumber, path.join(contentsPath, "Info.plist")]);
+  }
   await writeFile(
     path.join(contentsPath, "Resources", "host-config.json"),
     `${JSON.stringify(packagedHostConfiguration(), null, 2)}\n`,
@@ -228,6 +232,25 @@ async function createHostBundle() {
     executable,
   ]);
   await chmod(executable, 0o755);
+}
+
+function parsePackageBuildArguments(arguments_) {
+  let buildNumber = null;
+  const signingArguments = [];
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    const equals = argument.indexOf("=");
+    const name = equals === -1 ? argument : argument.slice(0, equals);
+    if (name !== "--build-number") {
+      signingArguments.push(argument);
+      continue;
+    }
+    if (buildNumber !== null) throw new Error("--build-number was supplied more than once");
+    const value = equals === -1 ? arguments_[++index] : argument.slice(equals + 1);
+    if (!value || !/^[1-9][0-9]*$/u.test(value)) throw new Error("--build-number must be a positive integer");
+    buildNumber = value;
+  }
+  return { buildNumber, signingArguments };
 }
 
 async function createRuntimeTree(paseoCommit) {

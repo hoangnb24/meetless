@@ -300,15 +300,24 @@ export function assertExactInstalledHostPath(bundlePath: string): void {
   }
 }
 
-export function assertStableHostIdentity(previous: HostIdentity, current: HostIdentity): void {
-  if (
-    previous.bundleIdentifier !== current.bundleIdentifier ||
-    previous.bundlePath !== MEETLESS_HOST_INSTALL_PATH ||
-    previous.bundleRealPath !== MEETLESS_HOST_INSTALL_PATH ||
-    current.bundlePath !== MEETLESS_HOST_INSTALL_PATH ||
-    current.bundleRealPath !== MEETLESS_HOST_INSTALL_PATH ||
-    previous.designatedRequirement !== current.designatedRequirement
-  ) {
+export function assertStableHostIdentity(
+  previous: HostIdentity,
+  current: HostIdentity,
+  options: { packagedDeveloperIdVerified?: boolean } = {},
+): void {
+  const exactLocationAndOwner =
+    previous.bundleIdentifier === MEETLESS_HOST_BUNDLE_ID &&
+    current.bundleIdentifier === MEETLESS_HOST_BUNDLE_ID &&
+    previous.bundlePath === MEETLESS_HOST_INSTALL_PATH &&
+    previous.bundleRealPath === MEETLESS_HOST_INSTALL_PATH &&
+    current.bundlePath === MEETLESS_HOST_INSTALL_PATH &&
+    current.bundleRealPath === MEETLESS_HOST_INSTALL_PATH;
+  const stable = exactLocationAndOwner && previous.designatedRequirement === current.designatedRequirement;
+  const legacyMigration = exactLocationAndOwner &&
+    options.packagedDeveloperIdVerified === true &&
+    /^cdhash H"[0-9A-Fa-f]{40}"$/u.test(previous.designatedRequirement) &&
+    previous.designatedRequirement !== current.designatedRequirement;
+  if (!stable && !legacyMigration) {
     throw hostFailure(
       "host replacement changed the exact installed path, bundle identifier, or designated requirement; identity refresh is refused",
     );

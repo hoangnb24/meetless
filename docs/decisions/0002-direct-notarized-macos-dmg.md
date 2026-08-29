@@ -67,6 +67,17 @@ before child startup. An update may refresh identity only when the exact path,
 identity drift fails closed. The bundle ID, TCC owner, and accepted entitlement
 map are unchanged.
 
+One migration exception is accepted for users who installed an earlier
+development/ad-hoc build. The host may replace a recorded requirement only
+when all of these facts hold: the recorded requirement is exactly the legacy
+`cdhash H"<40 hex characters>"` form; the running app is the real
+`/Applications/Meetless.app`; its bundle ID is `com.meetless.app`; all packaged
+resources pass attestation; and `codesign` verifies the complete bundle against
+the Developer ID Application certificate OIDs and team `63M98WD275`. The host
+then records the stable Developer ID designated requirement. Every later update
+must match that requirement exactly. Ad-hoc-to-ad-hoc rotation, another path,
+another bundle ID, another team, and invalid packaged resources remain rejected.
+
 DMG construction is an outer packaging operation. It copies the app into a
 disposable staging directory, creates the `Applications -> /Applications`
 layout, and proves the source app fingerprint is unchanged before and after.
@@ -75,6 +86,59 @@ signing, secure timestamping, notarization, publication, or release acceptance.
 
 The owner-deferred unclassified runtime-error item remains open. M7-F23 does
 not classify, close, or change that owner decision.
+
+### Packaged media update adoption (Option 1)
+
+The owner approved Option 1 for the signed-update media-cache correction. The
+native host remains the trust boundary: before the runtime can prepare or adopt
+media, it must verify the exact `/Applications/Meetless.app` path, bundle ID
+`com.meetless.app`, complete packaged-resource closure, and the Developer ID
+signature requirement for team `63M98WD275`. The real packaged composition
+performs that host verification before `prepareRuntime`; an arbitrary source
+path is not an additional trust input.
+
+The runtime owns one private `media-tools` closure under the accepted Meetless
+support root. Its owner marker and manifest bind the closure to that runtime,
+the package source, and the complete `bin`/`lib` tree. A complete source with
+the recorded fingerprint is reused idempotently. When a complete verified
+packaged source has a different fingerprint, the runtime copies it to a
+staging directory, validates the copied closure, renames the existing closure
+to an owned recoverable `previous` directory, and atomically publishes the
+staged directory at `media-tools`. The previous directory is removed only
+after the published closure is revalidated; a restart restores a previous
+closure when publication stopped between the two renames and removes an owned
+previous directory when the new closure is already visible.
+
+Failures before publication leave the prior closure intact. Tampered,
+partial, unowned, incomplete, escaping, non-packaged, system, and Homebrew
+media remain fail-closed; no source or host-tool fallback is permitted. This
+operation changes only the private media closure and its recovery metadata. It
+does not inspect, replace, delete, or migrate meetings, recordings, audio,
+transcripts, chats, exports, or other user data. The signer, bundle identity,
+installation path, and trust set are unchanged.
+
+### Transactional correction batch (SMTM-001–003)
+
+Packaged CLI daemon startup is an additional host-owned entry point and must
+fail closed before UI-test activation or `prepareRuntime` unless
+`assertSupervisorOwnedByHost(config, process.pid)` proves the exact
+LaunchServices → signed MeetlessHost → desktop → daemon topology. Development
+daemon startup remains usable without that packaged-only assertion.
+
+Replacement recovery records one private, owner-bound transaction manifest with
+the exact staging path, previous path, new snapshot fingerprint, transaction
+phase, and previous-directory device/inode. Recovery validates the published
+target first. Only a published target whose fingerprint matches that durable
+transaction may authorize cleanup of the exact recorded previous directory;
+cleanup does not require the previous directory's contents to remain complete,
+so an interrupted recursive removal can converge on restart. Missing,
+malformed, mismatched, unowned, or arbitrary cleanup authorization fails
+closed. A previous directory without a transaction manifest is only an active
+rollback candidate and may be restored when the published target is absent; it
+is never treated as obsolete cleanup state.
+
+The correction preserves active-snapshot tamper rejection, package-root source
+containment, no system/Homebrew fallback, and the no-user-data boundary.
 
 ### M7-F23 local proof
 

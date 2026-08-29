@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
+import { assertPackagedDaemonOwnedByHost } from "../src/cli.js";
 import { resolveRuntimeConfig } from "../src/config.js";
 import { HostOwnedRuntimeShutdown } from "../src/desktop.js";
 import {
@@ -62,6 +63,41 @@ describe("Meetless-owned production host invariant", () => {
       desktopPid: 200,
       supervisorPid: 300,
     });
+  });
+
+  test("rejects a direct packaged daemon before activation or media preparation while preserving development behavior", async () => {
+    const packagedConfig = { ...resolveRuntimeConfig(), packaged: true };
+    let ownershipChecked = false;
+    await expect(assertPackagedDaemonOwnedByHost(
+      packagedConfig,
+      300,
+      async () => {
+        ownershipChecked = true;
+        throw new Error("direct packaged daemon has no verified host topology");
+      },
+    )).rejects.toThrow(/direct packaged daemon has no verified host topology/);
+    expect(ownershipChecked).toBe(true);
+
+    let developmentOwnershipChecked = false;
+    await expect(assertPackagedDaemonOwnedByHost(
+      { ...packagedConfig, packaged: false },
+      300,
+      async () => {
+        developmentOwnershipChecked = true;
+        throw new Error("development must not require packaged host ownership");
+      },
+    )).resolves.toBeUndefined();
+    expect(developmentOwnershipChecked).toBe(false);
+
+    const source = await readFile("packages/runtime/src/cli.ts", "utf8");
+    const daemonStart = source.indexOf('if (command === "daemon")');
+    const ownershipGate = source.indexOf("await assertPackagedDaemonOwnedByHost(config);", daemonStart);
+    const activation = source.indexOf("await activateUiTestRun(config);", daemonStart);
+    const preparation = source.indexOf("await prepareRuntime(config);", daemonStart);
+    expect(daemonStart).toBeGreaterThanOrEqual(0);
+    expect(ownershipGate).toBeGreaterThan(daemonStart);
+    expect(ownershipGate).toBeLessThan(activation);
+    expect(ownershipGate).toBeLessThan(preparation);
   });
 
   test("rejects Paseo.app, Terminal-style ancestry, and a changed installed identity", async () => {

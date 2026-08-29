@@ -564,6 +564,43 @@ private func testProviderFailureNormalizationAndCancellation() {
   check(timeoutSession.task.cancelled, "timed-out upload task must be cancelled")
 }
 
+private func testLegacyIdentityMigrationBoundary() {
+  let legacy = "cdhash H\"0123456789abcdef0123456789abcdef01234567\""
+  let stableDeveloperID = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[subject.OU] = \"63M98WD275\""
+  check(
+    meetlessMayMigrateLegacyIdentity(
+      previousRequirement: legacy,
+      currentRequirement: stableDeveloperID,
+      packagedDeveloperIDVerified: true
+    ),
+    "verified Developer ID package must migrate one exact legacy ad-hoc identity"
+  )
+  check(
+    !meetlessMayMigrateLegacyIdentity(
+      previousRequirement: legacy,
+      currentRequirement: stableDeveloperID,
+      packagedDeveloperIDVerified: false
+    ),
+    "unverified signer or team must not migrate legacy identity"
+  )
+  check(
+    !meetlessMayMigrateLegacyIdentity(
+      previousRequirement: "identifier \"com.meetless.app\" and anchor cdhash H\"abc\"",
+      currentRequirement: stableDeveloperID,
+      packagedDeveloperIDVerified: true
+    ),
+    "non-canonical legacy requirements must not migrate"
+  )
+  check(
+    !meetlessMayMigrateLegacyIdentity(
+      previousRequirement: legacy,
+      currentRequirement: legacy,
+      packagedDeveloperIDVerified: true
+    ),
+    "migration helper must not classify an unchanged identity as migration"
+  )
+}
+
 @main
 private struct TranscriptionCapabilityTests {
   static func main() {
@@ -604,6 +641,7 @@ private struct TranscriptionCapabilityTests {
     testMultipartFields()
     testHostEnvironmentFiltering()
     testProviderFailureNormalizationAndCancellation()
+    testLegacyIdentityMigrationBoundary()
 
     if failures > 0 { exit(1) }
     print("Meetless native transcription boundary tests passed")

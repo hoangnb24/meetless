@@ -42,6 +42,10 @@ const PACKAGED_MEDIA_CLOSURE_DIRECTORY = "media-tools";
 const PACKAGED_MEDIA_CLOSURE_MANIFEST = "media-tools.snapshot.json";
 const PACKAGED_MEDIA_CLOSURE_OWNER = ".meetless-media-closure-owner.json";
 const PACKAGED_MEDIA_CLOSURE_OWNER_SCHEMA = "MEETLESS_PACKAGED_MEDIA_CLOSURE_OWNER v1";
+const PACKAGED_MEDIA_CLOSURE_STAGING_PREFIX = `${PACKAGED_MEDIA_CLOSURE_DIRECTORY}.staging-`;
+const PACKAGED_MEDIA_CLOSURE_PREVIOUS_PREFIX = `${PACKAGED_MEDIA_CLOSURE_DIRECTORY}.previous-`;
+const PACKAGED_MEDIA_CLOSURE_TRANSACTION = "media-tools.transaction.json";
+const PACKAGED_MEDIA_CLOSURE_TRANSACTION_SCHEMA = "MEETLESS_PACKAGED_MEDIA_CLOSURE_TRANSACTION v1";
 
 const RelativeContractPathSchema = z.string().min(1).refine((value) =>
   !path.isAbsolute(value) && !value.split("/").some((part) => part === ".." || part === ""),
@@ -131,7 +135,13 @@ export interface PackagedMediaClosureSnapshot {
   fingerprint: string;
 }
 
-export type MediaClosurePublicationFault = "before-rename" | "after-rename";
+export type MediaClosurePublicationFault =
+  | "before-rename"
+  | "after-rename"
+  | "before-replacement"
+  | "after-old-rename"
+  | "after-new-rename"
+  | "after-publication";
 
 type MediaClosureEntry = {
   path: string;
@@ -189,8 +199,23 @@ const PackagedMediaClosureManifestSchema = z.object({
   }).strict(),
 }).strict();
 
+const PackagedMediaClosureTransactionSchema = z.object({
+  schema: z.literal(PACKAGED_MEDIA_CLOSURE_TRANSACTION_SCHEMA),
+  version: z.literal(1),
+  phase: z.enum(["prepared", "quarantined", "published"]),
+  runtimeRoot: z.string().startsWith("/"),
+  targetRoot: z.string().startsWith("/"),
+  previousRoot: z.string().startsWith("/"),
+  stagingRoot: z.string().startsWith("/"),
+  newSnapshotFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+  ownerUid: z.number().int().nonnegative().nullable(),
+  previousDevice: z.number().int().nonnegative().optional(),
+  previousInode: z.number().int().nonnegative().optional(),
+}).strict();
+
 type PackagedRuntimeManifest = z.infer<typeof PackagedRuntimeManifestSchema>;
 type InstallationContract = z.infer<typeof InstallationContractSchema>;
+type PackagedMediaClosureTransaction = z.infer<typeof PackagedMediaClosureTransactionSchema>;
 
 export interface RuntimePaths {
   root: string;
@@ -736,8 +761,10 @@ async function packagedMediaTools(config: RuntimeConfig): Promise<[string, strin
         "Next action: rebuild the package with the complete signed media closure; do not use host tools.",
     );
   }
+  const packageRoot = path.resolve(config.paths.plugin, "..", "..");
   const snapshot = await snapshotPackagedMediaClosure({
     runtimeRoot: config.paths.root,
+    packageRoot,
     ffmpeg: config.packageResources.ffmpeg,
     ffprobe: config.packageResources.ffprobe,
   });
@@ -759,6 +786,7 @@ async function developmentMediaTools(config: RuntimeConfig): Promise<[string, st
  */
 export async function snapshotPackagedMediaClosure(input: {
   runtimeRoot: string;
+  packageRoot: string;
   ffmpeg: string;
   ffprobe: string;
   faultAt?: MediaClosurePublicationFault;
@@ -766,79 +794,412 @@ export async function snapshotPackagedMediaClosure(input: {
   const runtimeRoot = path.resolve(input.runtimeRoot);
   await assertSecureRuntimeDirectory(runtimeRoot);
   const source = derivePackagedMediaRoot(input.ffmpeg, input.ffprobe);
+  await assertPackagedMediaSourceBoundToPackage(source, input.packageRoot);
   const targetRoot = path.join(runtimeRoot, PACKAGED_MEDIA_CLOSURE_DIRECTORY);
   const manifestPath = path.join(targetRoot, PACKAGED_MEDIA_CLOSURE_MANIFEST);
   assertContainedPath(targetRoot, runtimeRoot, "packaged media snapshot");
   assertContainedPath(manifestPath, runtimeRoot, "packaged media snapshot manifest");
+  await recoverPackagedMediaReplacement(runtimeRoot, targetRoot, source);
   await cleanupOwnedMediaStaging(runtimeRoot, targetRoot);
 
+  const legacyRoot = await stageLegacyDevelopmentMediaTools(runtimeRoot, targetRoot);
   const targetState = await inspectPath(targetRoot);
-  if (targetState.exists) {
-    if (targetState.kind !== "directory") {
-      throw mediaClosureError(`packaged media snapshot ownership is invalid at ${targetRoot}`);
-    }
-    await assertOwnedMediaDirectory(targetRoot, "packaged media snapshot");
-    await assertMediaClosureOwner(targetRoot, { runtimeRoot, targetRoot });
-    const manifest = await readMediaClosureManifest(manifestPath);
-    assertMediaClosureManifestOwner(manifest, { runtimeRoot, targetRoot, sourceRoot: source.root });
-    const snapshotTree = await inspectMediaTree(targetRoot, "snapshot", mediaClosureMetadataNames());
-    assertMediaClosureTreeMatchesManifest(snapshotTree, manifest, targetRoot);
-    const sourceTree = await inspectSourceIfPresent(source.root, source.ffmpeg, source.ffprobe);
-    if (sourceTree && sourceTree.fingerprint !== manifest.sourceFingerprint) {
-      throw mediaClosureError(
-        `packaged media source changed for ${source.root}; refusing a wrong-source snapshot`,
-      );
-    }
-    return packagedMediaSnapshot(targetRoot, manifest.snapshotFingerprint);
-  }
-
-  const sourceTree = await inspectSourceRequired(source.root, source.ffmpeg, source.ffprobe);
-  const temporaryRoot = path.join(
-    runtimeRoot,
-    `${PACKAGED_MEDIA_CLOSURE_DIRECTORY}.staging-${process.pid}-${randomUUID()}`,
-  );
-  await mkdir(temporaryRoot, { recursive: false, mode: sourceTree.rootMode });
-  await writeMediaClosureOwner(temporaryRoot, { runtimeRoot, targetRoot });
-  let published = false;
-  let preserveStaging = false;
   try {
-    await chmod(temporaryRoot, sourceTree.rootMode);
-    await copyMediaTree(source.root, temporaryRoot, sourceTree);
+    if (targetState.exists) {
+      if (targetState.kind !== "directory") {
+        throw mediaClosureError(`packaged media snapshot ownership is invalid at ${targetRoot}`);
+      }
+      const manifest = await readValidatedMediaClosure(targetRoot, { runtimeRoot, targetRoot, sourceRoot: source.root }, "snapshot");
+      const sourceTree = await inspectSourceIfPresent(source.root, source.ffmpeg, source.ffprobe);
+      if (!sourceTree || sourceTree.fingerprint === manifest.sourceFingerprint) {
+        return packagedMediaSnapshot(targetRoot, manifest.snapshotFingerprint);
+      }
+      const snapshot = await publishPackagedMediaClosure({
+        runtimeRoot,
+        targetRoot,
+        source,
+        sourceTree,
+        faultAt: input.faultAt,
+        replaceExisting: true,
+      });
+      if (legacyRoot) await rm(legacyRoot, { recursive: true, force: false });
+      return snapshot;
+    }
+
+    const sourceTree = await inspectSourceRequired(source.root, source.ffmpeg, source.ffprobe);
+    const snapshot = await publishPackagedMediaClosure({
+      runtimeRoot,
+      targetRoot,
+      source,
+      sourceTree,
+      faultAt: input.faultAt,
+      replaceExisting: false,
+    });
+    if (legacyRoot) await rm(legacyRoot, { recursive: true, force: false });
+    return snapshot;
+  } catch (error) {
+    if (legacyRoot) {
+      await recoverLegacyDevelopmentMediaToolsAfterFailure(legacyRoot, targetRoot, runtimeRoot, source.root);
+    }
+    throw error;
+  }
+}
+
+async function publishPackagedMediaClosure(input: {
+  runtimeRoot: string;
+  targetRoot: string;
+  source: { root: string; ffmpeg: string; ffprobe: string };
+  sourceTree: MediaClosureTree;
+  faultAt?: MediaClosurePublicationFault;
+  replaceExisting: boolean;
+}): Promise<PackagedMediaClosureSnapshot> {
+  const transactionId = `${process.pid}-${randomUUID()}`;
+  const temporaryRoot = path.join(input.runtimeRoot, `${PACKAGED_MEDIA_CLOSURE_STAGING_PREFIX}${transactionId}`);
+  const previousRoot = path.join(input.runtimeRoot, `${PACKAGED_MEDIA_CLOSURE_PREVIOUS_PREFIX}${transactionId}`);
+  assertContainedPath(temporaryRoot, input.runtimeRoot, "packaged media staging");
+  assertContainedPath(previousRoot, input.runtimeRoot, "packaged media previous snapshot");
+  let previousPublished = false;
+  let newPublished = false;
+  let preserveTransaction = false;
+  let transaction: PackagedMediaClosureTransaction | null = null;
+  try {
+    await mkdir(temporaryRoot, { recursive: false, mode: input.sourceTree.rootMode });
+    await writeMediaClosureOwner(temporaryRoot, { runtimeRoot: input.runtimeRoot, targetRoot: input.targetRoot });
+    await chmod(temporaryRoot, input.sourceTree.rootMode);
+    await copyMediaTree(input.source.root, temporaryRoot, input.sourceTree);
     const copiedTree = await inspectMediaTree(temporaryRoot, "staged snapshot", mediaClosureMetadataNames());
-    if (copiedTree.fingerprint !== sourceTree.fingerprint) {
+    if (copiedTree.fingerprint !== input.sourceTree.fingerprint) {
       throw mediaClosureError("packaged media closure changed during atomic snapshot");
     }
     const manifest: PackagedMediaClosureManifest = {
       schema: PACKAGED_MEDIA_CLOSURE_SCHEMA,
       version: 1,
-      runtimeRoot,
-      targetRoot,
-      sourceRoot: source.root,
-      sourceFingerprint: sourceTree.fingerprint,
+      runtimeRoot: input.runtimeRoot,
+      targetRoot: input.targetRoot,
+      sourceRoot: input.source.root,
+      sourceFingerprint: input.sourceTree.fingerprint,
       snapshotFingerprint: copiedTree.fingerprint,
       rootMode: copiedTree.rootMode,
       entries: copiedTree.entries,
       tools: { ffmpeg: "bin/ffmpeg", ffprobe: "bin/ffprobe" },
     };
     await writeJsonAtomic(path.join(temporaryRoot, PACKAGED_MEDIA_CLOSURE_MANIFEST), manifest);
-    if (input.faultAt === "before-rename") {
-      preserveStaging = true;
+    await syncDirectory(temporaryRoot);
+    if (input.replaceExisting) {
+      transaction = {
+        schema: PACKAGED_MEDIA_CLOSURE_TRANSACTION_SCHEMA,
+        version: 1,
+        phase: "prepared",
+        runtimeRoot: input.runtimeRoot,
+        targetRoot: input.targetRoot,
+        previousRoot,
+        stagingRoot: temporaryRoot,
+        newSnapshotFingerprint: copiedTree.fingerprint,
+        ownerUid: typeof process.getuid === "function" ? process.getuid() : null,
+      };
+      await writeMediaClosureTransaction(transaction);
+    }
+    if (input.faultAt === "before-rename" || (input.replaceExisting && input.faultAt === "before-replacement")) {
+      preserveTransaction = true;
       throw mediaClosureError("injected crash before media closure publication");
     }
-    await rename(temporaryRoot, targetRoot);
-    published = true;
-    if (input.faultAt === "after-rename") {
+    if (input.replaceExisting) {
+      await rename(input.targetRoot, previousRoot);
+      previousPublished = true;
+      await syncDirectory(input.runtimeRoot);
+      const previousStats = await lstat(previousRoot);
+      if (!previousStats.isDirectory() || previousStats.isSymbolicLink()) {
+        throw mediaClosureError(`packaged media replacement snapshot is not an owned directory at ${previousRoot}`);
+      }
+      transaction = {
+        ...transaction!,
+        phase: "quarantined",
+        previousDevice: previousStats.dev,
+        previousInode: previousStats.ino,
+      };
+      await writeMediaClosureTransaction(transaction);
+      if (input.faultAt === "after-old-rename") {
+        preserveTransaction = true;
+        throw mediaClosureError("injected crash after old media closure was quarantined");
+      }
+    }
+    await rename(temporaryRoot, input.targetRoot);
+    newPublished = true;
+    await syncDirectory(input.runtimeRoot);
+    if (transaction) {
+      transaction = { ...transaction, phase: "published" };
+      await writeMediaClosureTransaction(transaction);
+    }
+    if (input.faultAt === "after-rename" || input.faultAt === "after-new-rename" || input.faultAt === "after-publication") {
+      preserveTransaction = true;
       throw mediaClosureError("injected crash after media closure publication");
     }
-    const publishedManifest = await readMediaClosureManifest(manifestPath);
-    await assertMediaClosureOwner(targetRoot, { runtimeRoot, targetRoot });
-    assertMediaClosureManifestOwner(publishedManifest, { runtimeRoot, targetRoot, sourceRoot: source.root });
-    const publishedTree = await inspectMediaTree(targetRoot, "published snapshot", mediaClosureMetadataNames());
-    assertMediaClosureTreeMatchesManifest(publishedTree, publishedManifest, targetRoot);
-    return packagedMediaSnapshot(targetRoot, publishedManifest.snapshotFingerprint);
+    const publishedManifest = await readValidatedMediaClosure(
+      input.targetRoot,
+      { runtimeRoot: input.runtimeRoot, targetRoot: input.targetRoot, sourceRoot: input.source.root },
+      "published snapshot",
+    );
+    if (transaction) {
+      await removeAuthorizedPreviousMediaClosure(transaction);
+      await removeMediaClosureTransaction(transaction);
+    }
+    return packagedMediaSnapshot(input.targetRoot, publishedManifest.snapshotFingerprint);
+  } catch (error) {
+    if (previousPublished && !newPublished && !preserveTransaction) {
+      try {
+        await rename(previousRoot, input.targetRoot);
+        await syncDirectory(input.runtimeRoot);
+      } catch (rollbackError) {
+        preserveTransaction = true;
+        throw new AggregateError([error, rollbackError], "media closure replacement rollback failed; recovery is required");
+      }
+    }
+    throw error;
   } finally {
-    if (!published && !preserveStaging) await rm(temporaryRoot, { recursive: true, force: true });
+    if (!newPublished && !preserveTransaction) {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
   }
+}
+
+async function writeMediaClosureTransaction(transaction: PackagedMediaClosureTransaction): Promise<void> {
+  const transactionPath = path.join(transaction.runtimeRoot, PACKAGED_MEDIA_CLOSURE_TRANSACTION);
+  assertContainedPath(transactionPath, transaction.runtimeRoot, "packaged media transaction");
+  await writeJsonAtomic(transactionPath, transaction);
+  await syncDirectory(transaction.runtimeRoot);
+}
+
+async function readMediaClosureTransaction(
+  runtimeRoot: string,
+  targetRoot: string,
+): Promise<PackagedMediaClosureTransaction | null> {
+  const transactionPath = path.join(runtimeRoot, PACKAGED_MEDIA_CLOSURE_TRANSACTION);
+  const state = await inspectPath(transactionPath);
+  if (!state.exists) return null;
+  if (state.kind !== "file") {
+    throw mediaClosureError(`packaged media transaction ownership is invalid at ${transactionPath}`);
+  }
+  const stats = await lstat(transactionPath);
+  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  if (stats.isSymbolicLink() || (uid !== undefined && stats.uid !== uid) || (stats.mode & 0o077) !== 0) {
+    throw mediaClosureError(`packaged media transaction is not a private owned file at ${transactionPath}`);
+  }
+  let transaction: PackagedMediaClosureTransaction;
+  try {
+    transaction = PackagedMediaClosureTransactionSchema.parse(JSON.parse(await readFile(transactionPath, "utf8")));
+  } catch (error) {
+    throw mediaClosureError(`packaged media transaction is invalid: ${describe(error)}`);
+  }
+  assertMediaClosureTransaction(transaction, runtimeRoot, targetRoot);
+  return transaction;
+}
+
+function assertMediaClosureTransaction(
+  transaction: PackagedMediaClosureTransaction,
+  runtimeRoot: string,
+  targetRoot: string,
+): void {
+  if (transaction.runtimeRoot !== runtimeRoot || transaction.targetRoot !== targetRoot) {
+    throw mediaClosureError("packaged media transaction does not belong to this runtime");
+  }
+  assertContainedPath(transaction.previousRoot, runtimeRoot, "packaged media transaction previous snapshot");
+  assertContainedPath(transaction.stagingRoot, runtimeRoot, "packaged media transaction staging snapshot");
+  if (path.resolve(transaction.previousRoot) === path.resolve(targetRoot) || path.resolve(transaction.stagingRoot) === path.resolve(targetRoot)) {
+    throw mediaClosureError("packaged media transaction aliases the published snapshot");
+  }
+  const previousName = path.basename(transaction.previousRoot);
+  const stagingName = path.basename(transaction.stagingRoot);
+  if (!previousName.startsWith(PACKAGED_MEDIA_CLOSURE_PREVIOUS_PREFIX)) {
+    throw mediaClosureError("packaged media transaction previous snapshot name is not owner-bound");
+  }
+  const transactionId = previousName.slice(PACKAGED_MEDIA_CLOSURE_PREVIOUS_PREFIX.length);
+  if (!transactionId || stagingName !== `${PACKAGED_MEDIA_CLOSURE_STAGING_PREFIX}${transactionId}`) {
+    throw mediaClosureError("packaged media transaction staging snapshot name is not owner-bound");
+  }
+  if ((transaction.previousDevice === undefined) !== (transaction.previousInode === undefined)) {
+    throw mediaClosureError("packaged media transaction previous snapshot identity is incomplete");
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  if (uid !== undefined && transaction.ownerUid !== uid) {
+    throw mediaClosureError("packaged media transaction owner differs from this runtime");
+  }
+}
+
+async function removeMediaClosureTransaction(transaction: PackagedMediaClosureTransaction): Promise<void> {
+  const current = await readMediaClosureTransaction(transaction.runtimeRoot, transaction.targetRoot);
+  if (!current || JSON.stringify(current) !== JSON.stringify(transaction)) {
+    throw mediaClosureError("packaged media transaction changed before cleanup");
+  }
+  const transactionPath = path.join(transaction.runtimeRoot, PACKAGED_MEDIA_CLOSURE_TRANSACTION);
+  await rm(transactionPath, { force: false });
+  await syncDirectory(transaction.runtimeRoot);
+}
+
+async function removeAuthorizedPreviousMediaClosure(transaction: PackagedMediaClosureTransaction): Promise<void> {
+  if (transaction.phase !== "published" || transaction.previousDevice === undefined || transaction.previousInode === undefined) {
+    throw mediaClosureError("packaged media previous cleanup lacks a durable publication authorization");
+  }
+  const state = await inspectPath(transaction.previousRoot);
+  if (!state.exists) return;
+  if (state.kind !== "directory") {
+    throw mediaClosureError(`packaged media previous cleanup path is not a directory at ${transaction.previousRoot}`);
+  }
+  const stats = await lstat(transaction.previousRoot);
+  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  if (
+    stats.isSymbolicLink() ||
+    (uid !== undefined && stats.uid !== uid) ||
+    (transaction.ownerUid !== null && stats.uid !== transaction.ownerUid) ||
+    stats.dev !== transaction.previousDevice ||
+    stats.ino !== transaction.previousInode
+  ) {
+    throw mediaClosureError(`packaged media previous cleanup path is not the authorized owner-bound directory at ${transaction.previousRoot}`);
+  }
+  await rm(transaction.previousRoot, { recursive: true, force: false });
+  await syncDirectory(transaction.runtimeRoot);
+}
+
+async function removeAuthorizedMediaStaging(transaction: PackagedMediaClosureTransaction): Promise<void> {
+  const state = await inspectPath(transaction.stagingRoot);
+  if (!state.exists) return;
+  if (state.kind !== "directory") {
+    throw mediaClosureError(`packaged media transaction staging path is not a directory at ${transaction.stagingRoot}`);
+  }
+  await assertOwnedMediaDirectory(transaction.stagingRoot, "packaged media transaction staging");
+  await assertMediaClosureOwner(transaction.stagingRoot, {
+    runtimeRoot: transaction.runtimeRoot,
+    targetRoot: transaction.targetRoot,
+  });
+  await rm(transaction.stagingRoot, { recursive: true, force: false });
+  await syncDirectory(transaction.runtimeRoot);
+}
+
+async function recoverPackagedMediaReplacement(
+  runtimeRoot: string,
+  targetRoot: string,
+  source: { root: string; ffmpeg: string; ffprobe: string },
+): Promise<void> {
+  const transaction = await readMediaClosureTransaction(runtimeRoot, targetRoot);
+  const previousNames = (await readdir(runtimeRoot)).filter((name) => name.startsWith(PACKAGED_MEDIA_CLOSURE_PREVIOUS_PREFIX));
+  if (previousNames.length > 1) {
+    throw mediaClosureError(`multiple packaged media replacement snapshots require recovery in ${runtimeRoot}`);
+  }
+  if (transaction) {
+    const previousRoot = path.join(runtimeRoot, previousNames[0] ?? path.basename(transaction.previousRoot));
+    assertContainedPath(previousRoot, runtimeRoot, "packaged media previous snapshot");
+    if (previousNames.length === 1 && path.resolve(previousRoot) !== path.resolve(transaction.previousRoot)) {
+      throw mediaClosureError("packaged media previous snapshot is not the transaction-authorized path");
+    }
+    const targetState = await inspectPath(targetRoot);
+    if (targetState.exists) {
+      if (targetState.kind !== "directory") {
+        throw mediaClosureError(`packaged media snapshot ownership is invalid at ${targetRoot}`);
+      }
+      const targetManifest = await readValidatedMediaClosure(
+        targetRoot,
+        { runtimeRoot, targetRoot, sourceRoot: source.root },
+        "published snapshot",
+      );
+      if (targetManifest.snapshotFingerprint === transaction.newSnapshotFingerprint) {
+        if (transaction.phase !== "published") {
+          if (transaction.previousDevice === undefined || transaction.previousInode === undefined) {
+            throw mediaClosureError("packaged media publication has no durable previous-directory identity");
+          }
+          const publishedTransaction = { ...transaction, phase: "published" as const };
+          await writeMediaClosureTransaction(publishedTransaction);
+          await removeAuthorizedPreviousMediaClosure(publishedTransaction);
+          await removeAuthorizedMediaStaging(publishedTransaction);
+          await removeMediaClosureTransaction(publishedTransaction);
+          return;
+        }
+        await removeAuthorizedPreviousMediaClosure(transaction);
+        await removeAuthorizedMediaStaging(transaction);
+        await removeMediaClosureTransaction(transaction);
+        return;
+      }
+      if ((transaction.phase === "prepared" || transaction.phase === "quarantined") && previousNames.length === 0) {
+        await removeAuthorizedMediaStaging(transaction);
+        await removeMediaClosureTransaction(transaction);
+        return;
+      }
+      throw mediaClosureError("packaged media transaction does not match the published snapshot");
+    }
+    await readValidatedMediaClosure(previousRoot, { runtimeRoot, targetRoot }, "previous media snapshot");
+    await rename(previousRoot, targetRoot);
+    await syncDirectory(runtimeRoot);
+    await removeAuthorizedMediaStaging(transaction);
+    await removeMediaClosureTransaction(transaction);
+    return;
+  }
+  if (previousNames.length === 0) return;
+  const previousRoot = path.join(runtimeRoot, previousNames[0]!);
+  assertContainedPath(previousRoot, runtimeRoot, "packaged media previous snapshot");
+  const targetState = await inspectPath(targetRoot);
+  if (targetState.exists) {
+    throw mediaClosureError("packaged media previous snapshot has no durable cleanup authorization");
+  }
+  await readValidatedMediaClosure(previousRoot, { runtimeRoot, targetRoot }, "previous media snapshot");
+  await rename(previousRoot, targetRoot);
+  await syncDirectory(runtimeRoot);
+}
+
+async function stageLegacyDevelopmentMediaTools(runtimeRoot: string, targetRoot: string): Promise<string | null> {
+  const state = await inspectPath(targetRoot);
+  if (!state.exists || state.kind !== "directory") return null;
+  const directory = await lstat(targetRoot);
+  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  if (directory.isSymbolicLink() || (uid !== undefined && directory.uid !== uid) || (directory.mode & 0o077) !== 0) return null;
+  const names = (await readdir(targetRoot)).sort();
+  if (names.join("\0") !== "ffmpeg\0ffprobe") return null;
+  for (const name of names) {
+    const tool = await lstat(path.join(targetRoot, name));
+    if (!tool.isFile() || tool.isSymbolicLink() || tool.size <= 0 || (uid !== undefined && tool.uid !== uid) || (tool.mode & 0o077) !== 0) {
+      return null;
+    }
+  }
+  const legacyRoot = path.join(runtimeRoot, `${PACKAGED_MEDIA_CLOSURE_DIRECTORY}.legacy-${process.pid}-${randomUUID()}`);
+  assertContainedPath(legacyRoot, runtimeRoot, "legacy development media quarantine");
+  await rename(targetRoot, legacyRoot);
+  return legacyRoot;
+}
+
+async function restoreLegacyDevelopmentMediaTools(legacyRoot: string, targetRoot: string, runtimeRoot: string): Promise<void> {
+  assertContainedPath(legacyRoot, runtimeRoot, "legacy development media quarantine");
+  const targetState = await inspectPath(targetRoot);
+  if (targetState.exists) {
+    await assertMediaClosureOwner(targetRoot, { runtimeRoot, targetRoot });
+    await rm(targetRoot, { recursive: true, force: false });
+  }
+  await rename(legacyRoot, targetRoot);
+}
+
+async function recoverLegacyDevelopmentMediaToolsAfterFailure(
+  legacyRoot: string,
+  targetRoot: string,
+  runtimeRoot: string,
+  sourceRoot: string,
+): Promise<void> {
+  const targetState = await inspectPath(targetRoot);
+  if (!targetState.exists) {
+    await restoreLegacyDevelopmentMediaTools(legacyRoot, targetRoot, runtimeRoot);
+    return;
+  }
+  if (targetState.kind === "directory") {
+    try {
+      await readValidatedMediaClosure(
+        targetRoot,
+        { runtimeRoot, targetRoot, sourceRoot },
+        "published snapshot",
+      );
+      await rm(legacyRoot, { recursive: true, force: false });
+      await syncDirectory(runtimeRoot);
+      return;
+    } catch {
+      // A failed publication must not discard the exact legacy cache unless the
+      // replacement directory is a complete runtime-owned snapshot.
+    }
+  }
+  await restoreLegacyDevelopmentMediaTools(legacyRoot, targetRoot, runtimeRoot);
 }
 
 function derivePackagedMediaRoot(ffmpegValue: string, ffprobeValue: string): {
@@ -867,6 +1228,52 @@ function derivePackagedMediaRoot(ffmpegValue: string, ffprobeValue: string): {
     throw mediaClosureError(`packaged media root must be the package media directory, received ${root}`);
   }
   return { root, ffmpeg, ffprobe };
+}
+
+async function assertPackagedMediaSourceBoundToPackage(
+  source: { root: string; ffmpeg: string; ffprobe: string },
+  packageRootValue: string,
+): Promise<void> {
+  if (!path.isAbsolute(packageRootValue)) {
+    throw mediaClosureError("packaged media package root must be an absolute verified package path");
+  }
+  const packageRoot = path.resolve(packageRootValue);
+  for (const filename of [PACKAGED_MANIFEST_FILENAME, INSTALLATION_CONTRACT_FILENAME]) {
+    const packageEntry = await lstat(path.join(packageRoot, filename)).catch((error: unknown) => {
+      throw mediaClosureError(`verified packaged media root is missing ${filename}: ${describe(error)}`);
+    });
+    if (!packageEntry.isFile() || packageEntry.isSymbolicLink()) {
+      throw mediaClosureError(`verified packaged media root has an invalid ${filename}`);
+    }
+  }
+  const [packageRootReal, sourceRootReal] = await Promise.all([
+    realpath(packageRoot).catch((error: unknown) => {
+      throw mediaClosureError(`packaged media package root is unavailable: ${describe(error)}`);
+    }),
+    realpath(source.root).catch((error: unknown) => {
+      if (isErrno(error, "ENOENT")) return null;
+      throw mediaClosureError(`packaged media source root is unavailable: ${describe(error)}`);
+    }),
+  ]);
+  if (
+    (!isSameOrDescendant(source.root, packageRoot) || path.resolve(source.root) === packageRoot) ||
+    (sourceRootReal !== null && (!isSameOrDescendant(sourceRootReal, packageRootReal) || sourceRootReal === packageRootReal))
+  ) {
+    throw mediaClosureError(
+      `packaged media source ${source.root} is not inside the verified package root ${packageRoot}; arbitrary source paths are rejected`,
+    );
+  }
+  if (sourceRootReal === null) return;
+  for (const [label, tool] of [["ffmpeg", source.ffmpeg], ["ffprobe", source.ffprobe]] as const) {
+    const toolReal = await realpath(tool).catch((error: unknown) => {
+      throw mediaClosureError(`packaged ${label} is unavailable: ${describe(error)}`);
+    });
+    if (!isSameOrDescendant(toolReal, packageRootReal)) {
+      throw mediaClosureError(
+        `packaged ${label} ${tool} is not inside the verified package root ${packageRoot}; arbitrary source paths are rejected`,
+      );
+    }
+  }
 }
 
 async function inspectSourceRequired(sourceRoot: string, ffmpeg: string, ffprobe: string): Promise<MediaClosureTree> {
@@ -1042,8 +1449,7 @@ function mediaClosureMetadataNames(): Set<string> {
 
 async function cleanupOwnedMediaStaging(runtimeRoot: string, targetRoot: string): Promise<void> {
   const names = await readdir(runtimeRoot);
-  const prefix = `${PACKAGED_MEDIA_CLOSURE_DIRECTORY}.staging-`;
-  for (const name of names.filter((candidate) => candidate.startsWith(prefix))) {
+  for (const name of names.filter((candidate) => candidate.startsWith(PACKAGED_MEDIA_CLOSURE_STAGING_PREFIX))) {
     const stagingRoot = path.join(runtimeRoot, name);
     assertContainedPath(stagingRoot, runtimeRoot, "packaged media staging");
     const state = await inspectPath(stagingRoot);
@@ -1101,6 +1507,40 @@ async function assertMediaClosureOwner(directory: string, expected: { runtimeRoo
   }
 }
 
+async function readValidatedMediaClosure(
+  directory: string,
+  expected: { runtimeRoot: string; targetRoot: string; sourceRoot?: string },
+  label: string,
+): Promise<PackagedMediaClosureManifest> {
+  await assertOwnedMediaDirectory(directory, `${label} root`);
+  await assertMediaClosureOwner(directory, expected);
+  const manifest = await readMediaClosureManifest(path.join(directory, PACKAGED_MEDIA_CLOSURE_MANIFEST));
+  assertMediaClosureManifestOwner(manifest, expected);
+  const tree = await inspectMediaTree(directory, label, mediaClosureMetadataNames());
+  assertMediaClosureTreeMatchesManifest(tree, manifest, directory);
+  return manifest;
+}
+
+async function removeOwnedMediaClosure(directory: string, runtimeRoot: string, targetRoot: string): Promise<void> {
+  const state = await inspectPath(directory);
+  if (!state.exists) return;
+  if (state.kind !== "directory") {
+    throw mediaClosureError(`packaged media replacement snapshot ownership is invalid at ${directory}`);
+  }
+  await readValidatedMediaClosure(directory, { runtimeRoot, targetRoot }, "media replacement snapshot");
+  await rm(directory, { recursive: true, force: false });
+  await syncDirectory(runtimeRoot);
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const handle = await open(directory, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 function assertContainedPath(candidate: string, parent: string, label: string): void {
   if (!isSameOrDescendant(candidate, parent) || path.resolve(candidate) === path.resolve(parent)) {
     throw mediaClosureError(`${label} escapes its owned runtime root`);
@@ -1135,12 +1575,12 @@ async function readMediaClosureManifest(manifestPath: string): Promise<PackagedM
 
 function assertMediaClosureManifestOwner(
   manifest: PackagedMediaClosureManifest,
-  expected: { runtimeRoot: string; targetRoot: string; sourceRoot: string },
+  expected: { runtimeRoot: string; targetRoot: string; sourceRoot?: string },
 ): void {
   if (
     manifest.runtimeRoot !== expected.runtimeRoot ||
     manifest.targetRoot !== expected.targetRoot ||
-    manifest.sourceRoot !== expected.sourceRoot ||
+    (expected.sourceRoot !== undefined && manifest.sourceRoot !== expected.sourceRoot) ||
     manifest.tools.ffmpeg !== "bin/ffmpeg" ||
     manifest.tools.ffprobe !== "bin/ffprobe" ||
     manifest.rootMode !== (manifest.rootMode & 0o7777) ||

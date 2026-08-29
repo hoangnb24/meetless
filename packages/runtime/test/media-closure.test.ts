@@ -67,14 +67,132 @@ describe("packaged media closure snapshot", () => {
     await expect(snapshotPackagedMediaClosure(fixture)).rejects.toThrow(/symlink .* escapes/);
   });
 
-  test("rejects a changed or wrong source instead of replacing the owned snapshot", async () => {
+  test("adopts a complete changed packaged closure and removes the prior snapshot", async () => {
+    const fixture = await mediaFixture();
+    const first = await snapshotPackagedMediaClosure(fixture);
+    await writeFile(path.join(fixture.sourceRoot, "bin", "ffmpeg"), "updated packaged ffmpeg\n");
+    await writeFile(path.join(fixture.sourceRoot, "lib", "libavdevice.62.dylib"), "updated packaged dylib\n");
+
+    const second = await snapshotPackagedMediaClosure(fixture);
+    expect(second.root).toBe(first.root);
+    expect(second.fingerprint).not.toBe(first.fingerprint);
+    expect(await readFile(second.ffmpeg, "utf8")).toBe("updated packaged ffmpeg\n");
+    expect(await readFile(path.join(second.root, "lib", "libavdevice.62.dylib"), "utf8"))
+      .toBe("updated packaged dylib\n");
+    expect(await readdir(fixture.runtimeRoot)).not.toEqual(expect.arrayContaining([
+      expect.stringMatching(/^media-tools\.(?:staging|previous)-/u),
+    ]));
+  });
+
+  test("keeps the prior snapshot on a pre-publication replacement failure", async () => {
+    const fixture = await mediaFixture();
+    const first = await snapshotPackagedMediaClosure(fixture);
+    await writeFile(path.join(fixture.sourceRoot, "bin", "ffprobe"), "updated packaged ffprobe\n");
+
+    await expect(snapshotPackagedMediaClosure({ ...fixture, faultAt: "before-replacement" }))
+      .rejects.toThrow(/injected crash before media closure publication/);
+    expect(await readFile(first.ffprobe, "utf8")).toBe("packaged ffprobe\n");
+    expect(await readdir(fixture.runtimeRoot)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^media-tools\.staging-/u),
+    ]));
+
+    const recovered = await snapshotPackagedMediaClosure(fixture);
+    expect(await readFile(recovered.ffprobe, "utf8")).toBe("updated packaged ffprobe\n");
+    expect(await readdir(fixture.runtimeRoot)).not.toEqual(expect.arrayContaining([
+      expect.stringMatching(/^media-tools\.(?:staging|previous)-/u),
+    ]));
+  });
+
+  test("restores the prior snapshot after a crash while replacing it", async () => {
+    const fixture = await mediaFixture();
+    const first = await snapshotPackagedMediaClosure(fixture);
+    await writeFile(path.join(fixture.sourceRoot, "bin", "ffmpeg"), "recovered packaged ffmpeg\n");
+
+    await expect(snapshotPackagedMediaClosure({ ...fixture, faultAt: "after-old-rename" }))
+      .rejects.toThrow(/old media closure was quarantined/);
+    expect(await readdir(fixture.runtimeRoot)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^media-tools\.staging-/u),
+      expect.stringMatching(/^media-tools\.previous-/u),
+    ]));
+    await expect(readFile(first.ffmpeg, "utf8")).rejects.toThrow();
+
+    const recovered = await snapshotPackagedMediaClosure(fixture);
+    expect(await readFile(recovered.ffmpeg, "utf8")).toBe("recovered packaged ffmpeg\n");
+    expect(await readdir(fixture.runtimeRoot)).not.toEqual(expect.arrayContaining([
+      expect.stringMatching(/^media-tools\.(?:staging|previous)-/u),
+    ]));
+  });
+
+  test("converges after publication with the new snapshot already visible", async () => {
+    const fixture = await mediaFixture();
+    const first = await snapshotPackagedMediaClosure(fixture);
+    await writeFile(path.join(fixture.sourceRoot, "bin", "ffmpeg"), "published packaged ffmpeg\n");
+
+    await expect(snapshotPackagedMediaClosure({ ...fixture, faultAt: "after-rename" }))
+      .rejects.toThrow(/injected crash after media closure publication/);
+    expect(await readFile(first.ffmpeg, "utf8")).toBe("published packaged ffmpeg\n");
+    expect(await readdir(fixture.runtimeRoot)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^media-tools\.previous-/u),
+    ]));
+    const previousName = (await readdir(fixture.runtimeRoot)).find((name) => /^media-tools\.previous-/u.test(name));
+    expect(previousName).toBeDefined();
+    await rm(path.join(fixture.runtimeRoot, previousName!, ".meetless-media-closure-owner.json"));
+    await rm(path.join(fixture.runtimeRoot, previousName!, "lib"), { recursive: true });
+
+    const recovered = await snapshotPackagedMediaClosure(fixture);
+    expect(await readFile(recovered.ffmpeg, "utf8")).toBe("published packaged ffmpeg\n");
+    expect(await readdir(fixture.runtimeRoot)).not.toEqual(expect.arrayContaining([
+      expect.stringMatching(/^media-tools\.(?:staging|previous)-/u),
+    ]));
+  });
+
+  test("fails closed when a visible new closure has no durable previous-cleanup authorization", async () => {
     const fixture = await mediaFixture();
     await snapshotPackagedMediaClosure(fixture);
-    await writeFile(path.join(fixture.sourceRoot, "lib", "libavdevice.62.dylib"), "wrong source\n");
+    await writeFile(path.join(fixture.sourceRoot, "bin", "ffmpeg"), "published without authorization\n");
 
-    await expect(snapshotPackagedMediaClosure(fixture)).rejects.toThrow(/wrong-source snapshot/);
-    expect(await readFile(path.join(fixture.runtimeRoot, "media-tools", "lib", "libavdevice.62.dylib"), "utf8"))
-      .toBe("packaged dylib\n");
+    await expect(snapshotPackagedMediaClosure({ ...fixture, faultAt: "after-rename" }))
+      .rejects.toThrow(/injected crash after media closure publication/);
+    const previousName = (await readdir(fixture.runtimeRoot)).find((name) => /^media-tools\.previous-/u.test(name));
+    expect(previousName).toBeDefined();
+    await rm(path.join(fixture.runtimeRoot, "media-tools.transaction.json"));
+
+    await expect(snapshotPackagedMediaClosure(fixture))
+      .rejects.toThrow(/no durable cleanup authorization/);
+    expect(await readFile(path.join(fixture.runtimeRoot, previousName!, "bin", "ffmpeg"), "utf8"))
+      .toBe("packaged ffmpeg\n");
+  });
+
+  test.each([
+    ["incomplete", async (fixture: MediaFixture) => {
+      await rm(path.join(fixture.sourceRoot, "lib"), { recursive: true });
+    }, /packaged media closure must contain sibling bin and lib directories/],
+    ["escaping", async (fixture: MediaFixture) => {
+      const outside = path.join(fixture.root, "outside-updated.dylib");
+      await writeFile(outside, "outside\n", { mode: 0o644 });
+      await symlink(
+        path.relative(path.join(fixture.sourceRoot, "lib"), outside),
+        path.join(fixture.sourceRoot, "lib", "updated-escape.dylib"),
+      );
+    }, /symlink .* escapes/],
+  ])("keeps the prior snapshot when the new closure is %s", async (_label, mutate, expected) => {
+    const fixture = await mediaFixture();
+    const first = await snapshotPackagedMediaClosure(fixture);
+    await mutate(fixture);
+
+    await expect(snapshotPackagedMediaClosure(fixture)).rejects.toThrow(expected);
+    expect(await readFile(first.ffmpeg, "utf8")).toBe("packaged ffmpeg\n");
+  });
+
+  test("rejects a media source outside the verified package root", async () => {
+    const fixture = await mediaFixture();
+    const wrongPackageRoot = path.join(fixture.root, "other-package");
+    await mkdir(wrongPackageRoot, { mode: 0o755 });
+    await writeFile(path.join(wrongPackageRoot, "meetless-package.json"), "fixture package marker\n", { mode: 0o644 });
+    await writeFile(path.join(wrongPackageRoot, "installation-contract.json"), "fixture installation contract\n", { mode: 0o644 });
+
+    await expect(snapshotPackagedMediaClosure({ ...fixture, packageRoot: wrongPackageRoot }))
+      .rejects.toThrow(/arbitrary source paths are rejected/);
   });
 
   test("rejects non-packaged paths and never falls back to host tools", async () => {
@@ -95,6 +213,32 @@ describe("packaged media closure snapshot", () => {
 
     await expect(snapshotPackagedMediaClosure(fixture)).rejects.toThrow(/owner marker is unavailable/);
     expect(await readFile(sentinel, "utf8")).toBe("unowned\n");
+  });
+
+  test("migrates only the exact legacy development tool cache", async () => {
+    const fixture = await mediaFixture();
+    const targetRoot = path.join(fixture.runtimeRoot, "media-tools");
+    await mkdir(targetRoot, { mode: 0o700 });
+    await writeFile(path.join(targetRoot, "ffmpeg"), "legacy ffmpeg\n", { mode: 0o700 });
+    await writeFile(path.join(targetRoot, "ffprobe"), "legacy ffprobe\n", { mode: 0o700 });
+
+    const snapshot = await snapshotPackagedMediaClosure(fixture);
+    expect(await readFile(snapshot.ffmpeg, "utf8")).toBe("packaged ffmpeg\n");
+    expect(await readFile(path.join(targetRoot, ".meetless-media-closure-owner.json"), "utf8"))
+      .toMatch(/MEETLESS_PACKAGED_MEDIA_CLOSURE_OWNER v1/);
+    expect((await readdir(fixture.runtimeRoot)).some((name) => name.startsWith("media-tools.legacy-"))).toBe(false);
+  });
+
+  test("does not migrate a legacy-like cache with any extra entry", async () => {
+    const fixture = await mediaFixture();
+    const targetRoot = path.join(fixture.runtimeRoot, "media-tools");
+    await mkdir(targetRoot, { mode: 0o700 });
+    await writeFile(path.join(targetRoot, "ffmpeg"), "legacy ffmpeg\n", { mode: 0o700 });
+    await writeFile(path.join(targetRoot, "ffprobe"), "legacy ffprobe\n", { mode: 0o700 });
+    await writeFile(path.join(targetRoot, "sentinel"), "keep\n", { mode: 0o600 });
+
+    await expect(snapshotPackagedMediaClosure(fixture)).rejects.toThrow(/owner marker is unavailable/);
+    expect(await readFile(path.join(targetRoot, "sentinel"), "utf8")).toBe("keep\n");
   });
 
   test("recovers an owned staging directory after a crash before publication", async () => {
@@ -160,6 +304,7 @@ describe("packaged media closure snapshot", () => {
 type MediaFixture = {
   root: string;
   runtimeRoot: string;
+  packageRoot: string;
   sourceRoot: string;
   ffmpeg: string;
   ffprobe: string;
@@ -169,12 +314,15 @@ async function mediaFixture(): Promise<MediaFixture> {
   const root = await mkdtemp(path.join(tmpdir(), "meetless-media-closure-"));
   roots.add(root);
   const runtimeRoot = path.join(root, "runtime");
-  const sourceRoot = path.join(root, "package", "runtime", "media");
+  const packageRoot = path.join(root, "package");
+  const sourceRoot = path.join(packageRoot, "runtime", "media");
   const bin = path.join(sourceRoot, "bin");
   const lib = path.join(sourceRoot, "lib");
   await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
   await mkdir(bin, { recursive: true, mode: 0o755 });
   await mkdir(lib, { recursive: true, mode: 0o755 });
+  await writeFile(path.join(packageRoot, "meetless-package.json"), "fixture package marker\n", { mode: 0o644 });
+  await writeFile(path.join(packageRoot, "installation-contract.json"), "fixture installation contract\n", { mode: 0o644 });
   await chmod(sourceRoot, 0o755);
   await writeFile(path.join(bin, "ffmpeg"), "packaged ffmpeg\n", { mode: 0o755 });
   await writeFile(path.join(bin, "ffprobe"), "packaged ffprobe\n", { mode: 0o755 });
@@ -183,6 +331,7 @@ async function mediaFixture(): Promise<MediaFixture> {
   return {
     root,
     runtimeRoot,
+    packageRoot,
     sourceRoot,
     ffmpeg: path.join(bin, "ffmpeg"),
     ffprobe: path.join(bin, "ffprobe"),

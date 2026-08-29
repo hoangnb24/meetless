@@ -26,11 +26,11 @@ const dmgOptions = parseMacOSDmgArguments(process.argv.slice(2));
 const dmgPaths = resolveMacOSDmgPaths(repositoryRoot, dmgOptions);
 const { mode, proofRoot, stageRoot, sourceAppPath: bundlePath, manifestPath, outputRoot, dmgPath, sidecarPath } = dmgPaths;
 
-if (mode === "local-ad-hoc") requireDisposableProofRoot(proofRoot);
+if (mode !== "retained-release") requireDisposableProofRoot(proofRoot);
 if (mode === "retained-release" && dmgOptions.buildPackage) {
   throw new Error("retained release DMG packaging cannot rebuild the package; use the retained-success stage as its read-only source");
 }
-if (dmgOptions.buildPackage) await buildDisposablePackage(proofRoot);
+if (dmgOptions.buildPackage) await buildDisposablePackage(proofRoot, dmgOptions);
 await main();
 
 async function main() {
@@ -54,6 +54,9 @@ async function main() {
       repositoryRoot,
       artifactOnly: false,
       disposableProof: true,
+      signingMode: mode === "disposable-release" ? "release" : "local-ad-hoc",
+      signingIdentity: dmgOptions.signingIdentity,
+      expectedTeamId: dmgOptions.expectedTeamId,
     });
   const manifestBytes = await readFile(manifestPath);
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
@@ -105,7 +108,7 @@ async function main() {
     localOnly: mode === "local-ad-hoc",
     mode,
     signingMode: manifest.signing.mode,
-    stageStatus: mode === "retained-release" ? stage.status.state : "local-ad-hoc-candidate",
+    stageStatus: mode === "retained-release" ? stage.status.state : mode === "disposable-release" ? "direct-release-candidate" : "local-ad-hoc-candidate",
     stageRoot: stageRoot ?? null,
     releaseAcceptance: "not-claimed",
     proofRoot: mode === "retained-release" ? "external-retained-sibling" : "external-disposable",
@@ -114,7 +117,7 @@ async function main() {
   };
   await writeFile(sidecarPath, `${JSON.stringify(sidecar, null, 2)}\n`, { mode: 0o644 });
   process.stdout.write(`${JSON.stringify({
-    status: mode === "retained-release" ? "retained-release-dmg-candidate" : "local-ad-hoc-candidate",
+    status: mode === "retained-release" ? "retained-release-dmg-candidate" : mode === "disposable-release" ? "direct-release-dmg-candidate" : "local-ad-hoc-candidate",
     bundlePath,
     manifestPath,
     dmgPath,
@@ -138,14 +141,19 @@ async function validateRetainedStage() {
   return stage;
 }
 
-async function buildDisposablePackage(disposableRoot) {
+async function buildDisposablePackage(disposableRoot, options) {
   assertDarwinArm64();
   await run("npm", ["run", "build"]);
-  await run(process.execPath, [
+  const packageArguments = [
     path.join(repositoryRoot, "scripts", "package-macos.mjs"),
-    "--signing-mode=local-ad-hoc",
+    `--signing-mode=${options.signingMode ?? "local-ad-hoc"}`,
     `--proof-root=${disposableRoot}`,
-  ]);
+  ];
+  if (options.signingMode === "release") {
+    packageArguments.push(`--signing-identity=${options.signingIdentity}`, `--team-id=${options.expectedTeamId}`);
+  }
+  if (options.buildNumber) packageArguments.push(`--build-number=${options.buildNumber}`);
+  await run(process.execPath, packageArguments);
 }
 
 async function inspectLayout(root) {
