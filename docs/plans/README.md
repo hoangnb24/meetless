@@ -30,6 +30,8 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 
 ## Active Plans
 
+- [Meeting library and chat controls](active/meeting-library-chat-controls.md)
+  — reopened for failed-recording deletion and direct model-picker behavior.
 - [Meetless V1 release readiness](active/v1-paseo-foundation.md) — Milestone 7
   acceptance, distribution, supported-target, and residual-risk proof.
 
