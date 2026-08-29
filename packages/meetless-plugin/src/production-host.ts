@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import net from "node:net";
 import { z } from "zod";
 
 const AUTHORITY = "docs/plans/active/v1-paseo-foundation.md";
@@ -87,6 +88,41 @@ export async function assertProductionHostProvenance(
   const code = dependencies.inspectCode(canonicalBundle);
   if (code.cdHash !== identity.cdHash || code.designatedRequirement !== identity.designatedRequirement) {
     throw hostFailure("the live host CDHash/designated requirement differs from the installed identity");
+  }
+}
+
+export async function assertCapturePermissionsReady(environment: NodeJS.ProcessEnv = process.env): Promise<void> {
+  if (environment.MEETLESS_CAPTURE_MODE === "fixture") return;
+  const socketPath = environment.MEETLESS_TRANSCRIPTION_SOCKET?.trim();
+  if (!socketPath || !path.isAbsolute(socketPath)) throw hostFailure("the native capture-permission socket is unavailable");
+  const requestId = randomUUID();
+  const response = await new Promise<Record<string, unknown>>((resolve, reject) => {
+    const socket = net.createConnection(socketPath);
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.once("error", () => reject(hostFailure("the native capture-permission check failed")));
+    socket.once("connect", () => socket.end(`${JSON.stringify({ version: 1, requestId, operation: "capturePermissionStatus" })}\n`));
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) return;
+      socket.destroy();
+      try { resolve(JSON.parse(buffer.slice(0, newline)) as Record<string, unknown>); }
+      catch { reject(hostFailure("the native capture-permission response is invalid")); }
+    });
+  });
+  assertCapturePermissionResponse(response, requestId);
+}
+
+export function assertCapturePermissionResponse(response: Record<string, unknown>, requestId: string): void {
+  if (response.requestId !== requestId || response.type !== "capture.permissions" || response.ok !== true) {
+    throw hostFailure("the native capture-permission response is invalid");
+  }
+  if (response.microphone !== "authorized") {
+    throw hostFailure(`capture permission microphone/${String(response.microphone)} is not ready`);
+  }
+  if (response.systemAudio !== "authorized") {
+    throw hostFailure(`capture permission systemAudio/${String(response.systemAudio)} is not ready`);
   }
 }
 

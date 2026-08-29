@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import net from "node:net";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +12,8 @@ import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./life
 import { activateUiTestRun, removeUiTestRunState } from "./ui-test-envelope.js";
 
 const rendererAbortListeners = new WeakMap<Server, { signal: AbortSignal; listener: () => void }>();
+const capturePermissionIntentHeader = "x-meetless-permission-intent";
+const capturePermissionIntentLifetimeMs = 5_000;
 
 export function buildRendererUrl(config: RuntimeConfig): string {
   const configured = process.env.MEETLESS_RENDERER_URL?.trim();
@@ -314,7 +318,16 @@ async function waitForDaemon(config: RuntimeConfig, child: ChildProcess, signal:
   throw new Error(`Timed out starting isolated Meetless daemon at ${config.listen}`);
 }
 
-async function startPackagedRenderer(config: RuntimeConfig, signal: AbortSignal): Promise<Server> {
+export interface CapturePermissionBoundaryOptions {
+  nativeRequest?: typeof nativeCapturePermissionRequest;
+  now?: () => number;
+}
+
+async function startPackagedRenderer(
+  config: RuntimeConfig,
+  signal: AbortSignal,
+  boundaryOptions: CapturePermissionBoundaryOptions = {},
+): Promise<Server> {
   const rendererRoot = config.packageResources?.rendererRoot;
   if (!rendererRoot) {
     throw new Error(
@@ -332,8 +345,13 @@ async function startPackagedRenderer(config: RuntimeConfig, signal: AbortSignal)
   const origin = new URL(config.rendererOrigin);
   const port = Number(origin.port);
   const host = origin.hostname === "localhost" ? "127.0.0.1" : origin.hostname.replace(/^\[|\]$/gu, "");
+  const permissionBoundary = createCapturePermissionBoundary(
+    origin,
+    config.paths?.transcriptionSocket,
+    boundaryOptions,
+  );
   const server = createServer((request, response) => {
-    void servePackagedRendererRequest(rendererRoot, request.url ?? "/", request.method ?? "GET", response);
+    void servePackagedRendererRequest(rendererRoot, request, response, permissionBoundary);
   });
   let aborted = signal.aborted;
   const closeOnAbort = () => {
@@ -378,11 +396,13 @@ export async function startPackagedRendererForTest(
   rendererRoot: string,
   rendererOrigin: string,
   signal: AbortSignal,
+  options: CapturePermissionBoundaryOptions & { nativeSocket?: string } = {},
 ): Promise<Server> {
   return startPackagedRenderer({
     packageResources: { rendererRoot } as RuntimeConfig["packageResources"],
     rendererOrigin,
-  } as RuntimeConfig, signal);
+    paths: { transcriptionSocket: options.nativeSocket } as RuntimeConfig["paths"],
+  } as RuntimeConfig, signal, options);
 }
 
 export async function closePackagedRendererForTest(server: Server): Promise<void> {
@@ -391,10 +411,16 @@ export async function closePackagedRendererForTest(server: Server): Promise<void
 
 async function servePackagedRendererRequest(
   rendererRoot: string,
-  requestUrl: string,
-  method: string,
-  response: import("node:http").ServerResponse,
+  request: IncomingMessage,
+  response: ServerResponse,
+  permissionBoundary: CapturePermissionBoundary,
 ): Promise<void> {
+  const requestUrl = request.url ?? "/";
+  const method = request.method ?? "GET";
+  if (requestUrl.startsWith("/__meetless/capture-permissions")) {
+    await serveCapturePermissionRequest(request, response, permissionBoundary);
+    return;
+  }
   if (method !== "GET" && method !== "HEAD") {
     response.writeHead(405, { Allow: "GET, HEAD" });
     response.end();
@@ -430,6 +456,182 @@ async function servePackagedRendererRequest(
   response.writeHead(200, { "Content-Type": contentType(filePath), "Content-Length": file.byteLength });
   if (method === "HEAD") response.end();
   else response.end(file);
+}
+
+type CapturePermissionOperation = "capturePermissionStatus" | "capturePermissionRequest" | "capturePermissionSettings";
+
+interface CapturePermissionBoundary {
+  rendererOrigin: URL;
+  nativeSocket?: string;
+  nativeRequest: typeof nativeCapturePermissionRequest;
+  now: () => number;
+  intents: Map<string, number>;
+}
+
+function createCapturePermissionBoundary(
+  rendererOrigin: URL,
+  nativeSocket: string | undefined,
+  options: CapturePermissionBoundaryOptions,
+): CapturePermissionBoundary {
+  return {
+    rendererOrigin,
+    nativeSocket,
+    nativeRequest: options.nativeRequest ?? nativeCapturePermissionRequest,
+    now: options.now ?? Date.now,
+    intents: new Map(),
+  };
+}
+
+async function serveCapturePermissionRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  boundary: CapturePermissionBoundary,
+): Promise<void> {
+  const method = request.method ?? "GET";
+  const url = new URL(request.url ?? "/", boundary.rendererOrigin);
+  const noStoreHeaders = { "Content-Type": "application/json", "Cache-Control": "no-store" };
+  const statusPath = "/__meetless/capture-permissions";
+  const intentPath = `${statusPath}/intent`;
+  const requestPath = `${statusPath}/request`;
+  const settingsPath = `${statusPath}/settings`;
+
+  if (url.pathname === statusPath) {
+    if (method !== "GET" || url.searchParams.size !== 0) {
+      respondJson(response, 405, { error: "capture permission status accepts GET only" }, noStoreHeaders);
+      return;
+    }
+    if (!boundary.nativeSocket) {
+      respondJson(response, 503, { error: "capture permission boundary unavailable" }, noStoreHeaders);
+      return;
+    }
+    await invokeCapturePermissionBoundary(response, boundary, "capturePermissionStatus", null);
+    return;
+  }
+
+  if (url.pathname === intentPath) {
+    if (method !== "POST" || url.searchParams.size !== 0 || !isTrustedRendererMutation(request, boundary)) {
+      respondJson(response, 403, { error: "trusted renderer intent required" }, noStoreHeaders);
+      return;
+    }
+    const now = boundary.now();
+    removeExpiredIntents(boundary, now);
+    const intentToken = randomUUID();
+    const expiresAt = now + capturePermissionIntentLifetimeMs;
+    boundary.intents.set(intentToken, expiresAt);
+    respondJson(response, 200, { intentToken, expiresAt }, noStoreHeaders);
+    return;
+  }
+
+  if (url.pathname !== requestPath && url.pathname !== settingsPath) {
+    respondJson(response, 404, { error: "capture permission route not found" }, noStoreHeaders);
+    return;
+  }
+  if (method !== "POST" || !isTrustedRendererMutation(request, boundary)) {
+    respondJson(response, 403, { error: "trusted renderer mutation required" }, noStoreHeaders);
+    return;
+  }
+  const token = singleHeader(request, capturePermissionIntentHeader);
+  if (!token || !consumeFreshIntent(boundary, token)) {
+    respondJson(response, 409, { error: "fresh one-use permission intent required" }, noStoreHeaders);
+    return;
+  }
+  if (!boundary.nativeSocket) {
+    respondJson(response, 503, { error: "capture permission boundary unavailable" }, noStoreHeaders);
+    return;
+  }
+
+  if (url.pathname === requestPath) {
+    if (url.searchParams.size !== 0) {
+      respondJson(response, 400, { error: "capture permission request source is not accepted" }, noStoreHeaders);
+      return;
+    }
+    await invokeCapturePermissionBoundary(response, boundary, "capturePermissionRequest", null);
+    return;
+  }
+
+  const sources = url.searchParams.getAll("source");
+  const source = sources.length === 1 ? sources[0] : null;
+  if (url.searchParams.size !== 1 || (source !== "microphone" && source !== "systemAudio")) {
+    respondJson(response, 400, { error: "capture permission settings source is invalid" }, noStoreHeaders);
+    return;
+  }
+  await invokeCapturePermissionBoundary(response, boundary, "capturePermissionSettings", source);
+}
+
+function isTrustedRendererMutation(request: IncomingMessage, boundary: CapturePermissionBoundary): boolean {
+  const contentType = singleHeader(request, "content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  return singleHeader(request, "host") === boundary.rendererOrigin.host
+    && singleHeader(request, "origin") === boundary.rendererOrigin.origin
+    && contentType === "application/json";
+}
+
+function singleHeader(request: IncomingMessage, name: string): string | null {
+  const value = request.headers[name];
+  return typeof value === "string" ? value : null;
+}
+
+function removeExpiredIntents(boundary: CapturePermissionBoundary, now: number): void {
+  for (const [token, expiresAt] of boundary.intents) if (expiresAt <= now) boundary.intents.delete(token);
+}
+
+function consumeFreshIntent(boundary: CapturePermissionBoundary, token: string): boolean {
+  const expiresAt = boundary.intents.get(token);
+  boundary.intents.delete(token);
+  return expiresAt !== undefined && expiresAt > boundary.now();
+}
+
+async function invokeCapturePermissionBoundary(
+  response: ServerResponse,
+  boundary: CapturePermissionBoundary,
+  operation: CapturePermissionOperation,
+  source: string | null,
+): Promise<void> {
+  const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" };
+  try {
+    const result = await boundary.nativeRequest(boundary.nativeSocket!, operation, source);
+    respondJson(response, 200, result, headers);
+  } catch (error) {
+    respondJson(response, 503, { error: describe(error) }, headers);
+  }
+}
+
+function respondJson(
+  response: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string>,
+): void {
+  response.writeHead(status, headers);
+  response.end(JSON.stringify(body));
+}
+
+export function nativeCapturePermissionRequest(
+  socketPath: string,
+  operation: CapturePermissionOperation,
+  source: string | null = null,
+): Promise<unknown> {
+  const requestId = randomUUID();
+  const payload = JSON.stringify({ version: 1, requestId, operation, ...(source ? { source } : {}) });
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(socketPath);
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.once("error", reject);
+    socket.once("connect", () => socket.end(`${payload}\n`));
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) return;
+      socket.destroy();
+      try {
+        const decoded = JSON.parse(buffer.slice(0, newline)) as Record<string, unknown>;
+        if (decoded.requestId !== requestId || decoded.type !== "capture.permissions" || decoded.ok !== true) {
+          throw new Error("native capture permission response is invalid");
+        }
+        resolve(decoded);
+      } catch (error) { reject(error); }
+    });
+  });
 }
 
 function contentType(filePath: string): string {

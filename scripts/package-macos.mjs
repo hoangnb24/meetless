@@ -506,6 +506,7 @@ async function signBundle(signingInputs) {
     identity: signingInputs.identity,
     target: bundlePath,
     identifier: "com.meetless.app",
+    entitlementsPath: signingInputs.entitlementPolicy?.outer.absolutePath ?? null,
     outer: true,
   }));
   await run("codesign", ["--verify", "--deep", "--strict", bundlePath]);

@@ -537,6 +537,12 @@ private func testHostEnvironmentFiltering() {
   check(!isOpenAISecretEnvironmentEntry(key: "OPENAI_BASE_URL", value: "https://example.invalid"), "host may preserve non-secret OpenAI configuration")
 }
 
+private func testCaptureSettingsFallbackPolicy() {
+  check(meetlessSettingsNavigation(applicationOpened: true, fallbackOpened: false) == "system-settings-application", "supported System Settings application opening must be primary")
+  check(meetlessSettingsNavigation(applicationOpened: false, fallbackOpened: true) == "best-effort-pane-url", "undocumented pane URL must be only a best-effort fallback")
+  check(meetlessSettingsNavigation(applicationOpened: false, fallbackOpened: false) == "unavailable", "failed settings recovery must remain visible")
+}
+
 private func testProviderFailureNormalizationAndCancellation() {
   for statusCode in [401, 403] {
     let authSession = FakeUploadSession()
@@ -640,6 +646,7 @@ private struct TranscriptionCapabilityTests {
     testKeychainStatusDoesNotRequestData()
     testMultipartFields()
     testHostEnvironmentFiltering()
+    testCaptureSettingsFallbackPolicy()
     testProviderFailureNormalizationAndCancellation()
     testLegacyIdentityMigrationBoundary()
 

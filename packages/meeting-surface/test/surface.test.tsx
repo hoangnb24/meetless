@@ -93,6 +93,7 @@ describe("global recording strip", () => {
   test.each([
     ["microphone capture failed: permission denied", "Microphone access needs attention. Check microphone access, then try again."],
     ["system capture failed: permission denied", "System audio access needs attention. Check system audio access, then try again."],
+    ["SCStreamErrorDomain Code=-3801: The user declined TCCs for application, window, display capture", "Recording needs attention. Try again."],
   ])("maps known %s failures to source-specific recovery copy", async (error, expected) => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
@@ -116,7 +117,30 @@ describe("global recording strip", () => {
     renderer!.unmount();
   });
 
-  test("keeps Start available after a known capture failure and shows source recovery copy", async () => {
+  test("does not infer System Audio from localized display-capture text", async () => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<RecordingStrip
+        elapsedMs={0}
+        error="SCStreamErrorDomain Code=-3801: The user declined TCCs for application, window, display capture"
+        onPause={async () => undefined}
+        onResume={async () => undefined}
+        onRetry={async () => undefined}
+        onStart={async () => undefined}
+        onStop={async () => undefined}
+        pending={false}
+        status={{ status: "failed", recordingId: "r-1", meetingId: "m-1", title: "Failed",
+          elapsedMs: 0, paused: false, chunks: [], inventoryState: "pending", chunkCount: 0,
+          microphoneCount: 0, systemCount: 0, inventoryDigest: null, retryEligible: false,
+          outputPath: null, error: "No valid committed media survived inventory reconciliation" }}
+      />);
+    });
+    expect(renderer!.root.findByProps({ testID: "recording-error" }).props.children)
+      .toBe("No usable recording was preserved.");
+    renderer!.unmount();
+  });
+
+  test("keeps Start available after a TCC capture failure and shows source recovery copy", async () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
@@ -131,19 +155,61 @@ describe("global recording strip", () => {
           recordingSetup={{
             available: true,
             pending: false,
-            error: "capture start failed: microphone capture failed: permission denied",
+            error: null,
+            permissions: { microphone: "denied", systemAudio: "denied", checking: false, error: null },
             onStart: async () => undefined,
+            onOpenPermissionSettings: async () => undefined,
+            onRecheckPermissions: async () => undefined,
           }}
         />,
       );
     });
     await act(async () => { renderer!.root.findByProps({ testID: "record-meeting-entry" }).props.onPress(); });
-    expect(renderer!.root.findByProps({ testID: "recording-setup-error" }).props.children)
-      .toBe("Microphone access needs attention. Check microphone access, then try again.");
+    expect(renderer!.root.findByProps({ testID: "permission-guidance-microphone" })).toBeTruthy();
+    expect(renderer!.root.findByProps({ testID: "permission-guidance-systemAudio" })).toBeTruthy();
+    expect(renderer!.root.findByProps({ testID: "permission-settings-microphone" })).toBeTruthy();
+    expect(renderer!.root.findByProps({ testID: "permission-recheck-systemAudio" })).toBeTruthy();
     const start = renderer!.root.findByProps({ testID: "recording-start" });
     expect(start.props.disabled).toBe(true);
     await act(async () => { renderer!.root.findByProps({ testID: "recording-setup-title" }).props.onChangeText("Retry source"); });
     expect(renderer!.root.findByProps({ testID: "recording-start" }).props.disabled).toBe(false);
+    renderer!.unmount();
+  });
+
+  test("keeps transport failure actionable and renders rejected recovery actions", async () => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          canRecord
+          layoutTier="desktop"
+          connectionLabel="Host online"
+          hostConnectionStatus="online"
+          hostLabel="this host"
+          meetings={[]}
+          onRefresh={async () => undefined}
+          recordingSetup={{
+            available: true,
+            pending: false,
+            error: null,
+            permissions: {
+              microphone: null,
+              systemAudio: null,
+              checking: false,
+              error: "Capture permission status is unavailable. Recheck to try again.",
+            },
+            onStart: async () => undefined,
+            onRecheckPermissions: async () => { throw new Error("transport unavailable"); },
+          }}
+        />,
+      );
+    });
+    await act(async () => { renderer!.root.findByProps({ testID: "record-meeting-entry" }).props.onPress(); });
+    expect(renderer!.root.findByProps({ testID: "permission-guidance-unavailable" })).toBeTruthy();
+    expect(renderer!.root.findAllByType("Text").filter((node) => node.props.children === "Proposed")).toHaveLength(2);
+    await act(async () => { await renderer!.root.findByProps({ testID: "permission-recheck-unavailable" }).props.onPress(); });
+    expect(renderer!.root.findByProps({ testID: "permission-recovery-error" }).props.children)
+      .toContain("Permission recovery failed");
     renderer!.unmount();
   });
 });

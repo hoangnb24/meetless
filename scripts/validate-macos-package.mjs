@@ -55,6 +55,7 @@ import {
   parseSigningArguments,
   resolveSigningInputs,
   validateApprovedEntitlementMachOEntries,
+  validateMacOSPurposeStrings,
   validateSigningMetadata,
   validateSigningDocument,
 } from "./lib/macos-package-signing.mjs";
@@ -1512,6 +1513,12 @@ async function verifyBundleIdentity(bundlePath, { ownerMode = false } = {}) {
   const toolOptions = ownerMode ? { env: ownerToolEnvironment() } : undefined;
   const { stdout } = await execFileAsync(ownerMode ? MACOS_OWNER_TOOL_PATHS.plutil : "plutil", ["-extract", "CFBundleIdentifier", "raw", path.join(bundlePath, "Contents", "Info.plist")], toolOptions);
   if (stdout.trim() !== "com.meetless.app") fail("top bundle identifier is not com.meetless.app", "keep Meetless.app as the only TCC owner");
+  const purposeResult = await execFileAsync(ownerMode ? MACOS_OWNER_TOOL_PATHS.plutil : "plutil", ["-convert", "json", "-o", "-", "--", path.join(bundlePath, "Contents", "Info.plist")], toolOptions);
+  try {
+    validateMacOSPurposeStrings(JSON.parse(purposeResult.stdout));
+  } catch (error) {
+    fail(`outer Info.plist purpose-string validation failed: ${error instanceof Error ? error.message : String(error)}`, "restore all three non-empty TCC purpose strings before signing the package");
+  }
   const executable = path.join(bundlePath, "Contents", "MacOS", "MeetlessHost");
   const requirementResult = await execFileAsync(ownerMode ? MACOS_OWNER_TOOL_PATHS.codesign : "codesign", ["-d", "-r-", bundlePath], toolOptions).catch((error) => {
     fail(`could not inspect top designated requirement: ${error.message}`, "sign the top Meetless.app bundle");

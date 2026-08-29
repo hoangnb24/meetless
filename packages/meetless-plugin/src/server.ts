@@ -5,7 +5,7 @@ import { MeetingStore } from "@meetless/meeting-store";
 import type { MeetingDeleteStoreResult } from "@meetless/meeting-store";
 import { RecordingService } from "./recording-service.js";
 import { RecordingControlServer } from "./control-server.js";
-import { assertProductionHostProvenance } from "./production-host.js";
+import { assertCapturePermissionsReady, assertProductionHostProvenance } from "./production-host.js";
 import { FfmpegAudioInspector, TranscriptionService } from "./transcription-service.js";
 import {
   DeterministicFixtureTranscriptionProvider,
@@ -202,7 +202,10 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
     exportNow: fixtureExportNow,
     fixtureStampApplied: fixtureExportNow !== undefined,
     failFinalizationOnce: process.env.MEETLESS_FIXTURE_FAIL_FINALIZATION_ONCE === "1",
-    authorizeProductionStart: assertProductionHostProvenance,
+    authorizeProductionStart: async () => {
+      await assertProductionHostProvenance();
+      await assertCapturePermissionsReady();
+    },
     transcription: transcript,
   }, getMeetingStore(), meetingLifecycle);
   const identity = {

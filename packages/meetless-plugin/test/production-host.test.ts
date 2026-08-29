@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { assertProductionHostProvenance } from "../src/production-host.js";
+import { assertCapturePermissionResponse, assertProductionHostProvenance } from "../src/production-host.js";
 
 const roots = new Set<string>();
 
@@ -13,6 +13,13 @@ afterEach(async () => {
 });
 
 describe("production recording host provenance", () => {
+  test("accepts only typed authorized microphone and System Audio states", () => {
+    const allowed = { requestId: "permission", type: "capture.permissions", ok: true, microphone: "authorized", systemAudio: "authorized" };
+    expect(() => assertCapturePermissionResponse(allowed, "permission")).not.toThrow();
+    expect(() => assertCapturePermissionResponse({ ...allowed, microphone: "notDetermined" }, "permission")).toThrow(/microphone\/notDetermined.*not ready/);
+    expect(() => assertCapturePermissionResponse({ ...allowed, microphone: "denied" }, "permission")).toThrow(/microphone\/denied.*not ready/);
+    expect(() => assertCapturePermissionResponse({ ...allowed, systemAudio: "denied" }, "permission")).toThrow(/systemAudio\/denied.*not ready/);
+  });
   test("accepts the exact live MeetlessHost identity and keeps fixture mode exempt", async () => {
     const fixture = await hostFixture();
     await expect(assertProductionHostProvenance(fixture.environment, 400, fixture.dependencies)).resolves.toBeUndefined();

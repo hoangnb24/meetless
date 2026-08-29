@@ -77,6 +77,7 @@ import {
 } from "../../../scripts/validate-macos-package.mjs";
 import {
   MACOS_APPROVED_ENTITLEMENT_MAP,
+  MACOS_APPROVED_OUTER_ENTITLEMENT,
   MACOS_ENTITLEMENT_MAP_PATH,
   loadEntitlementPolicy,
   MACOS_OWNER_TOOL_PATHS as MACOS_SIGNING_OWNER_TOOL_PATHS,
@@ -140,8 +141,8 @@ describe("macOS artifact-only re-sign foundation", () => {
       ...buildSigningOrder(fixture.macho).nestedMachO,
       "Meetless.app",
     ]);
-    expect(calls.filter((call) => call.context.entitlement !== null)).toHaveLength(5);
-    expect(calls.filter((call) => call.arguments_.includes("--entitlements"))).toHaveLength(5);
+    expect(calls.filter((call) => call.context.entitlement !== null)).toHaveLength(6);
+    expect(calls.filter((call) => call.arguments_.includes("--entitlements"))).toHaveLength(7);
     expect(calls.at(-1)?.context.outer).toBe(true);
     expect(nested.order.all).toEqual([...nested.order.nestedMachO, "Meetless.app"]);
     expect(outer.observed).toEqual(["Meetless.app"]);
@@ -1389,7 +1390,7 @@ type Entry = {
 
 function createFixture() {
   const approved = MACOS_APPROVED_ENTITLEMENT_MAP.map((entry) => entry.path);
-  const synthetic = Array.from({ length: 41 }, (_, index) => "Contents/Resources/fixture/" + String(index).padStart(2, "0") + "/binary");
+  const synthetic = Array.from({ length: 40 }, (_, index) => "Contents/Resources/fixture/" + String(index).padStart(2, "0") + "/binary");
   const macho = [...approved, ...synthetic];
   const machoPayloads = macho.map((relativePath, index) => payloadBinding(relativePath, index));
   const codeResources = [
@@ -1454,6 +1455,14 @@ function fixturePolicy() {
       { path: "scripts/macos-entitlements/entitlements/audio-input.plist", fileSha256: "a".repeat(64), canonicalSha256: "b".repeat(64) },
       { path: "scripts/macos-entitlements/entitlements/jit.plist", fileSha256: "d".repeat(64), canonicalSha256: "e".repeat(64) },
     ],
+    outer: {
+      ...MACOS_APPROVED_OUTER_ENTITLEMENT,
+      sourcePath: "scripts/macos-entitlements/entitlements/audio-input.plist",
+      absolutePath: "/tmp/entitlements/audio-input.plist",
+      ownerFileSha256: "a".repeat(64),
+      ownerCanonicalSha256: "b".repeat(64),
+      ownerKeys: [MACOS_APPROVED_OUTER_ENTITLEMENT.key],
+    },
     entries: MACOS_APPROVED_ENTITLEMENT_MAP.map((entry) => ({
       ...entry,
       absolutePath: "/tmp/" + entry.plist,

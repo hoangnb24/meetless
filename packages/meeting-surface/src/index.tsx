@@ -83,6 +83,14 @@ export interface RecordingSetupController {
   pending: boolean;
   error: string | null;
   onStart(title: string): Promise<void>;
+  permissions?: {
+    microphone: "authorized" | "notDetermined" | "denied" | "restricted" | null;
+    systemAudio: "authorized" | "notDetermined" | "denied" | "restricted" | null;
+    checking: boolean;
+    error: string | null;
+  };
+  onOpenPermissionSettings?(source: "microphone" | "systemAudio"): Promise<void>;
+  onRecheckPermissions?(): Promise<void>;
 }
 
 export function RecordingStrip(props: {
@@ -591,6 +599,16 @@ function MeetingSidebar({
 
 function RecordingSetup({ controller, onCancel }: { controller: RecordingSetupController; onCancel(): void }) {
   const [title, setTitle] = useState("");
+  const [permissionActionError, setPermissionActionError] = useState<string | null>(null);
+  const runPermissionAction = async (operation: (() => Promise<void>) | undefined) => {
+    setPermissionActionError(null);
+    try {
+      if (!operation) throw new Error("Permission recovery is unavailable");
+      await operation();
+    } catch {
+      setPermissionActionError("Permission recovery failed. Try Recheck, or open Privacy & Security in System Settings manually.");
+    }
+  };
   const submit = async () => {
     const normalized = title.trim();
     if (!normalized || controller.pending) return;
@@ -622,16 +640,46 @@ function RecordingSetup({ controller, onCancel }: { controller: RecordingSetupCo
         </View>
         <Text style={styles.fieldLabel}>Audio sources</Text>
         <View style={styles.sourceList}>
-          <SourceRow name="Microphone" description="Selected for your voice." />
-          <SourceRow name="System audio" description="Selected for meeting audio." />
+          <SourceRow name="Microphone" description="Selected for your voice." status={controller.permissions?.microphone} />
+          <SourceRow name="System audio" description="Selected for meeting audio." status={controller.permissions?.systemAudio} />
         </View>
-        <Text style={styles.proposedNotice}>Readiness is Proposed until the runtime can confirm each source. It does not block Start.</Text>
+        {controller.permissions && (controller.permissions.microphone === "denied" || controller.permissions.microphone === "restricted") ? (
+          <PermissionGuidance
+            source="microphone"
+            label="Microphone"
+            onOpen={() => runPermissionAction(() => controller.onOpenPermissionSettings?.("microphone") ?? Promise.reject(new Error("unavailable")))}
+            onRecheck={() => runPermissionAction(controller.onRecheckPermissions)}
+          />
+        ) : null}
+        {controller.permissions && (controller.permissions.systemAudio === "denied" || controller.permissions.systemAudio === "restricted") ? (
+          <PermissionGuidance
+            source="systemAudio"
+            label="Screen & System Audio Recording"
+            onOpen={() => runPermissionAction(() => controller.onOpenPermissionSettings?.("systemAudio") ?? Promise.reject(new Error("unavailable")))}
+            onRecheck={() => runPermissionAction(controller.onRecheckPermissions)}
+          />
+        ) : null}
+        {!controller.permissions ? <Text style={styles.proposedNotice}>Meetless checks both capture sources before recording starts.</Text> : null}
+        {controller.permissions?.error || permissionActionError ? (
+          <View testID="permission-guidance-unavailable">
+            <Text style={styles.error} testID="permission-recovery-error">{permissionActionError ?? controller.permissions?.error}</Text>
+            <FocusPressable
+              accessibilityLabel="Recheck capture permissions"
+              accessibilityRole="button"
+              onPress={() => void runPermissionAction(controller.onRecheckPermissions)}
+              style={styles.ghostButton}
+              testID="permission-recheck-unavailable"
+            >
+              <Text style={styles.ghostButtonText}>Recheck access</Text>
+            </FocusPressable>
+          </View>
+        ) : null}
         {controller.error ? <Text style={styles.error} testID="recording-setup-error">{recordingStartErrorCopy(controller.error)}</Text> : null}
         <View style={styles.setupActions}>
           <FocusPressable accessibilityLabel="Cancel recording setup" accessibilityRole="button" disabled={controller.pending} onPress={onCancel} style={styles.ghostButton} testID="recording-setup-cancel">
             <Text style={styles.ghostButtonText}>Cancel</Text>
           </FocusPressable>
-          <FocusPressable accessibilityLabel="Start recording" accessibilityRole="button" accessibilityState={{ disabled: controller.pending || !title.trim() }} disabled={controller.pending || !title.trim()} onPress={() => void submit()} style={styles.primaryButton} testID="recording-start">
+          <FocusPressable accessibilityLabel="Start recording" accessibilityRole="button" accessibilityState={{ disabled: controller.pending || controller.permissions?.checking || !title.trim() }} disabled={controller.pending || controller.permissions?.checking || !title.trim()} onPress={() => void submit()} style={styles.primaryButton} testID="recording-start">
             <Text style={styles.buttonText}>{controller.pending ? "Starting…" : "Start recording"}</Text>
           </FocusPressable>
         </View>
@@ -640,7 +688,7 @@ function RecordingSetup({ controller, onCancel }: { controller: RecordingSetupCo
   );
 }
 
-function SourceRow({ name, description }: { name: string; description: string }) {
+function SourceRow({ name, description, status }: { name: string; description: string; status?: "authorized" | "notDetermined" | "denied" | "restricted" | null }) {
   return (
     <View style={styles.sourceRow} testID={`recording-source-${name.toLowerCase().replace(/\s+/gu, "-")}`}>
       <View style={styles.sourceCheck} accessibilityElementsHidden>•</View>
@@ -648,7 +696,28 @@ function SourceRow({ name, description }: { name: string; description: string })
         <Text style={styles.sourceName}>{name}</Text>
         <Text style={styles.sourceDescription}>{description}</Text>
       </View>
-      <Text style={styles.proposedTag}>Proposed</Text>
+      <Text style={styles.proposedTag}>{status === "authorized" ? "Ready" : status === "denied" || status === "restricted" ? "Needs access" : status === "notDetermined" ? "Will ask" : "Proposed"}</Text>
+    </View>
+  );
+}
+
+function PermissionGuidance({ source, label, onOpen, onRecheck }: {
+  source: "microphone" | "systemAudio";
+  label: string;
+  onOpen(): Promise<void>;
+  onRecheck(): Promise<void>;
+}) {
+  return (
+    <View testID={`permission-guidance-${source}`}>
+      <Text style={styles.error}>{label} access is off. Open System Settings, allow Meetless, return here, then recheck.</Text>
+      <View style={styles.setupActions}>
+        <FocusPressable accessibilityLabel={`Open ${label} settings`} accessibilityRole="button" onPress={() => void onOpen()} style={styles.ghostButton} testID={`permission-settings-${source}`}>
+          <Text style={styles.ghostButtonText}>Open System Settings</Text>
+        </FocusPressable>
+        <FocusPressable accessibilityLabel={`Recheck ${label} access`} accessibilityRole="button" onPress={() => void onRecheck()} style={styles.ghostButton} testID={`permission-recheck-${source}`}>
+          <Text style={styles.ghostButtonText}>Recheck access</Text>
+        </FocusPressable>
+      </View>
     </View>
   );
 }
@@ -1462,14 +1531,18 @@ function recordingStateCopy(status: RecordingStatusWire): { title: string; detai
 
 function recordingErrorCopy(status: RecordingStatusWire, error?: string | null): string {
   if (status.status === "recoverable") return "Completed audio is safe. Retry save is available.";
+  const operationDetail = recordingStartErrorCopy(error);
+  if (operationDetail !== "Recording needs attention. Try again.") return operationDetail;
   if (status.status === "failed") return recordingFailureDetail(status.error ?? error);
   return "Recording needs attention. Try again.";
 }
 
 function recordingFailureDetail(error: string | null | undefined): string {
   const normalized = error?.toLowerCase() ?? "";
+  const startDetail = recordingStartErrorCopy(error);
+  if (startDetail !== "Recording needs attention. Try again.") return startDetail;
   if (/no valid|no usable|inventory|capture start failed/u.test(normalized)) return "No usable recording was preserved.";
-  return recordingStartErrorCopy(error);
+  return startDetail;
 }
 
 function recordingStartErrorCopy(error: string | null | undefined): string {
@@ -1478,7 +1551,7 @@ function recordingStartErrorCopy(error: string | null | undefined): string {
   if (captureFailure && /microphone|mic/u.test(normalized)) {
     return "Microphone access needs attention. Check microphone access, then try again.";
   }
-  if (captureFailure && /system audio|system capture|screen capture|display capture/u.test(normalized)) {
+  if (captureFailure && /systemaudio|system audio|system capture|screen capture/u.test(normalized)) {
     return "System audio access needs attention. Check system audio access, then try again.";
   }
   return "Recording needs attention. Try again.";

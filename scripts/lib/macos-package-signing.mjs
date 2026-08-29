@@ -39,6 +39,12 @@ export const MACOS_LOCAL_TIMESTAMP_ARGUMENT = "--timestamp=none";
 
 export const MACOS_APPROVED_ENTITLEMENT_MAP = Object.freeze([
   Object.freeze({
+    path: "Contents/MacOS/MeetlessHost",
+    class: "audio-input",
+    plist: "entitlements/audio-input.plist",
+    key: "com.apple.security.device.audio-input",
+  }),
+  Object.freeze({
     path: "Contents/Resources/meetless/runtime/node",
     class: "jit",
     plist: "entitlements/jit.plist",
@@ -68,6 +74,17 @@ export const MACOS_APPROVED_ENTITLEMENT_MAP = Object.freeze([
     plist: "entitlements/audio-input.plist",
     key: "com.apple.security.device.audio-input",
   }),
+]);
+export const MACOS_APPROVED_OUTER_ENTITLEMENT = Object.freeze({
+  path: MACOS_SIGNING_OUTER_PATH,
+  class: "audio-input",
+  plist: "entitlements/audio-input.plist",
+  key: "com.apple.security.device.audio-input",
+});
+export const MACOS_REQUIRED_PURPOSE_STRINGS = Object.freeze([
+  "NSMicrophoneUsageDescription",
+  "NSScreenCaptureUsageDescription",
+  "NSAudioCaptureUsageDescription",
 ]);
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -368,6 +385,23 @@ export async function loadEntitlementPolicy({ entitlementMapPath = MACOS_ENTITLE
       `use ${MACOS_ENTITLEMENT_POLICY_SCHEMA} with the exact owner-approved five-path map`,
     );
   }
+  const observedOuter = document.outer && typeof document.outer === "object" && !Array.isArray(document.outer)
+    ? { path: document.outer.path, class: document.outer.class, plist: document.outer.plist }
+    : document.outer;
+  const expectedOuter = {
+    path: MACOS_APPROVED_OUTER_ENTITLEMENT.path,
+    class: MACOS_APPROVED_OUTER_ENTITLEMENT.class,
+    plist: MACOS_APPROVED_OUTER_ENTITLEMENT.plist,
+  };
+  if (JSON.stringify(observedOuter) !== JSON.stringify(expectedOuter)) {
+    throw signingError(
+      `release outer entitlement target differs from owner authority; observed ${JSON.stringify(observedOuter)}`,
+      `restore ${MACOS_SIGNING_OUTER_PATH} with exactly audio-input in ${MACOS_SIGNING_AUTHORITY}`,
+    );
+  }
+  if (Object.keys(document.outer).sort((left, right) => left.localeCompare(right)).join(",") !== "class,path,plist") {
+    throw signingError(`release outer entitlement target contains extra fields`, `keep ${MACOS_SIGNING_OUTER_PATH} limited to path, class, and the exact owner plist in ${MACOS_SIGNING_AUTHORITY}`);
+  }
   const expectedEntries = MACOS_APPROVED_ENTITLEMENT_MAP.map(({ path: relativePath, class: policyClass, plist }) => ({ path: relativePath, class: policyClass, plist }));
   const observedEntries = document.entries.map((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
@@ -376,7 +410,7 @@ export async function loadEntitlementPolicy({ entitlementMapPath = MACOS_ENTITLE
   if (JSON.stringify(observedEntries) !== JSON.stringify(expectedEntries)) {
     throw signingError(
       `release entitlement map entries differ from owner authority; observed ${JSON.stringify(observedEntries)}`,
-      "restore the exact five-path owner-approved map and do not add a union or inventory-derived entry",
+      `restore the exact owner-approved executable map in ${MACOS_SIGNING_AUTHORITY} and do not add a union or inventory-derived entry`,
     );
   }
   for (const entry of document.entries) {
@@ -447,6 +481,11 @@ export async function loadEntitlementPolicy({ entitlementMapPath = MACOS_ENTITLE
       ownerKeys: Object.keys(canonical.value).sort((left, right) => left.localeCompare(right)),
     });
   }
+  const audioEntry = resolvedEntries.find((entry) => entry.plist === MACOS_APPROVED_OUTER_ENTITLEMENT.plist);
+  const outerSource = audioEntry ? sourceByPath.get(audioEntry.sourcePath) : null;
+  if (!outerSource) {
+    throw signingError(`outer entitlement source ${MACOS_APPROVED_OUTER_ENTITLEMENT.plist} is unavailable`, `restore the audio-input plist required by ${MACOS_SIGNING_AUTHORITY}`);
+  }
   const sourcePlists = [...sourceByPath.values()]
     .sort((left, right) => left.path.localeCompare(right.path))
     .map(({ path: sourcePath, fileSha256, canonicalSha256 }) => ({ path: sourcePath, fileSha256, canonicalSha256 }));
@@ -458,6 +497,14 @@ export async function loadEntitlementPolicy({ entitlementMapPath = MACOS_ENTITLE
     mapCanonicalSha256: sha256(Buffer.from(mapCanonical)),
     sourcePlists,
     entries: resolvedEntries,
+    outer: {
+      ...MACOS_APPROVED_OUTER_ENTITLEMENT,
+      sourcePath: outerSource.path,
+      absolutePath: outerSource.absolutePath,
+      ownerFileSha256: outerSource.fileSha256,
+      ownerCanonicalSha256: outerSource.canonicalSha256,
+      ownerKeys: [MACOS_APPROVED_OUTER_ENTITLEMENT.key],
+    },
   };
 }
 
@@ -632,16 +679,16 @@ export function codesignArguments({ mode, identity, target, identifier, entitlem
   if (typeof target !== "string" || !target || typeof identifier !== "string" || !identifier) {
     throw signingError("codesign target or identifier is missing", "sign every final Mach-O and the outer app with explicit paths");
   }
-  if (outer && entitlementsPath !== null) {
-    throw signingError(
-      `outer app ${MACOS_SIGNING_OUTER_PATH} received an entitlement plist`,
-      "omit --entitlements for the outer app; apply only the exact per-executable map entries",
-    );
+  if (outer && normalized.mode === LOCAL_AD_HOC_SIGNING_MODE && entitlementsPath !== null) {
+    throw signingError(`local outer app ${MACOS_SIGNING_OUTER_PATH} received an entitlement plist`, "keep local ad-hoc signatures entitlement-free");
   }
   const arguments_ = ["--force", "--sign", normalized.identity, "--identifier", identifier];
   if (normalized.mode === RELEASE_SIGNING_MODE) {
     arguments_.push("--options", "runtime");
-    if (entitlementsPath !== null) arguments_.push("--entitlements", entitlementsPath);
+    const effectiveEntitlements = outer && entitlementsPath === null
+      ? path.resolve(path.dirname(MACOS_ENTITLEMENT_MAP_PATH), MACOS_APPROVED_OUTER_ENTITLEMENT.plist)
+      : entitlementsPath;
+    if (effectiveEntitlements !== null) arguments_.push("--entitlements", effectiveEntitlements);
   }
   arguments_.push(
     normalized.mode === RELEASE_SIGNING_MODE ? MACOS_RELEASE_TIMESTAMP_ARGUMENT : MACOS_LOCAL_TIMESTAMP_ARGUMENT,
@@ -1007,7 +1054,7 @@ function validateReleaseState(signing, state) {
 function buildEntitlementMetadata(mode, policy, state) {
   const observed = [state.outer, ...state.nestedMachO]
     .map((entry) => {
-      const mapping = policy?.entries.find((candidate) => candidate.path === entry.path) ?? null;
+      const mapping = entry.path === MACOS_SIGNING_OUTER_PATH ? policy?.outer ?? null : policy?.entries.find((candidate) => candidate.path === entry.path) ?? null;
       return {
         path: entry.path,
         expectedClass: mapping?.class ?? "none",
@@ -1036,7 +1083,7 @@ function buildEntitlementMetadata(mode, policy, state) {
     mapSha256: policy.mapSha256,
     mapCanonicalSha256: policy.mapCanonicalSha256,
     sourcePlists: policy.sourcePlists.map((source) => ({ ...source })),
-    bindings: policy.entries.map((mapping) => {
+    bindings: [policy.outer, ...policy.entries].map((mapping) => {
       const image = [state.outer, ...state.nestedMachO].find((entry) => entry.path === mapping.path) ?? null;
       return {
         path: mapping.path,
@@ -1063,8 +1110,8 @@ function validateEntitlementDocument(entitlements, mode) {
     if (typeof entitlements.mapPath !== "string" || !entitlements.mapPath || !SHA256_PATTERN.test(entitlements.mapSha256 ?? "") || !SHA256_PATTERN.test(entitlements.mapCanonicalSha256 ?? "")) {
       throw signingError("release entitlement map path or digest evidence is missing", "record the checked-in map bytes and canonical map digest");
     }
-    if (entitlements.sourcePlists.length !== 2 || entitlements.bindings.length !== MACOS_APPROVED_ENTITLEMENT_MAP.length) {
-      throw signingError("release entitlement source or mapping evidence is incomplete", "record both owner plist digests and all five approved executable bindings");
+    if (entitlements.sourcePlists.length !== 2 || entitlements.bindings.length !== MACOS_APPROVED_ENTITLEMENT_MAP.length + 1) {
+      throw signingError("release entitlement source or mapping evidence is incomplete", `record both owner plist digests and every owner-approved signing target from ${MACOS_SIGNING_AUTHORITY}`);
     }
     for (const source of entitlements.sourcePlists) {
       if (!source || typeof source.path !== "string" || !source.path || !SHA256_PATTERN.test(source.fileSha256 ?? "") || !SHA256_PATTERN.test(source.canonicalSha256 ?? "")) {
@@ -1098,6 +1145,13 @@ function validateEntitlementPolicyBinding(signing, policy, state) {
       );
     }
   }
+  const outer = stateByPath.get(MACOS_SIGNING_OUTER_PATH);
+  if (!outer || outer.entitlementsCanonicalSha256 !== policy.outer.ownerCanonicalSha256 || JSON.stringify(outer.entitlementKeys) !== JSON.stringify(policy.outer.ownerKeys)) {
+    throw signingError(
+      `entitlement path ${MACOS_SIGNING_OUTER_PATH} observed keys ${JSON.stringify(outer?.entitlementKeys ?? [])} do not match expected policy class audio-input`,
+      `sign the final outer app with its exact audio-input plist required by ${MACOS_SIGNING_AUTHORITY}`,
+    );
+  }
   const expected = buildEntitlementMetadata(RELEASE_SIGNING_MODE, policy, state);
   if (JSON.stringify(signing.entitlements) !== JSON.stringify(expected)) {
     throw signingError(
@@ -1116,15 +1170,27 @@ function validateEntitlementPolicyBinding(signing, policy, state) {
     if (image.entitlementsCanonicalSha256 !== mapping.ownerCanonicalSha256 || JSON.stringify(image.entitlementKeys) !== JSON.stringify(mapping.ownerKeys)) {
       throw signingError(
         `entitlement path ${mapping.path} observed keys ${JSON.stringify(image.entitlementKeys)} do not match expected policy class ${mapping.class}`,
-        "sign the approved executable with its exact owner plist and read back the signed entitlements before writing the manifest",
+        `sign the approved executable with its exact owner plist required by ${MACOS_SIGNING_AUTHORITY}, then read back the signed entitlements before writing the manifest`,
       );
     }
   }
   for (const image of [state.outer, ...state.nestedMachO]) {
-    if (!policy.entries.some((mapping) => mapping.path === image.path) && (image.entitlementsSha256 !== null || image.entitlementsCanonicalSha256 !== null || image.entitlementKeys.length !== 0)) {
+    if (image.path !== MACOS_SIGNING_OUTER_PATH && !policy.entries.some((mapping) => mapping.path === image.path) && (image.entitlementsSha256 !== null || image.entitlementsCanonicalSha256 !== null || image.entitlementKeys.length !== 0)) {
       throw signingError(
         `unmapped entitlement-bearing image ${image.path} has observed keys ${JSON.stringify(image.entitlementKeys)}`,
-        "omit --entitlements for every unapproved code object, including the outer app, helpers, frameworks, dylibs, and tools",
+        `omit --entitlements for every unapproved code object; only ${MACOS_SIGNING_OUTER_PATH}, MeetlessHost, meetless-capture, and the accepted JIT paths are approved by ${MACOS_SIGNING_AUTHORITY}`,
+      );
+    }
+  }
+}
+
+export function validateMacOSPurposeStrings(info) {
+  for (const key of MACOS_REQUIRED_PURPOSE_STRINGS) {
+    const value = info?.[key];
+    if (typeof value !== "string" || value.trim().length === 0) {
+      throw signingError(
+        `outer Info.plist purpose string ${key} is missing or empty`,
+        `set a non-empty ${key} in native/macos-host/Info.plist as required by ${MACOS_SIGNING_AUTHORITY}`,
       );
     }
   }

@@ -656,7 +656,10 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
           available: recordingEntryAvailable,
           pending: recording.pending,
           error: recording.error,
+          permissions: recording.permissions,
           onStart: startRecording,
+          onOpenPermissionSettings: recording.openPermissionSettings,
+          onRecheckPermissions: recording.recheckPermissions,
         } : undefined}
         onRefresh={interactive ? refresh : async () => undefined}
         pending={recording.pending}

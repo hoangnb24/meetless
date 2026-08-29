@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { RecordingStrip } from "@meetless/meeting-surface";
 import type { RecordingStatusWire } from "@meetless/meeting-contracts";
@@ -31,8 +31,23 @@ function ConnectedStrip() {
   />;
 }
 
+function ProbeView(_props: { state: ReturnType<typeof useRecording> }) { return null; }
+function ConnectedPermissionProbe() { return <ProbeView state={useRecording()} />; }
+
 describe("production recording UI status delivery", () => {
   let renderer: ReactTestRenderer | null = null;
+
+  beforeEach(() => {
+    let intent = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => ({
+      ok: true,
+      json: async () => input.includes("/intent")
+        ? ({ intentToken: `intent-${++intent}`, expiresAt: Date.now() + 5_000 })
+        : input.includes("/settings")
+          ? ({ settingsOpened: true })
+          : ({ microphone: "authorized", systemAudio: "authorized" }),
+    })));
+  });
 
   afterEach(async () => {
     if (renderer) await act(async () => renderer?.unmount());
@@ -173,5 +188,116 @@ describe("production recording UI status delivery", () => {
     expect(renderer!.root.findByType(RecordingStrip).props.status).toEqual(response);
     expect(renderer!.root.findByProps({ testID: "recording-error" }).children.join("")).toBe(expectedError);
     expect(renderer!.root.findAllByProps({ testID: "recording-retry" }).length > 0).toBe(retryVisible);
+  });
+
+  test("does not send Start when a user-initiated permission request returns denied", async () => {
+    let intent = 0;
+    const fetchMock = vi.fn(async (input: string) => ({
+      ok: true,
+      json: async () => input.includes("/intent")
+        ? ({ intentToken: `denied-intent-${++intent}`, expiresAt: Date.now() + 5_000 })
+        : input.endsWith("/request")
+          ? ({ microphone: "denied", systemAudio: "authorized" })
+          : ({ microphone: "notDetermined", systemAudio: "authorized" }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const invoke = vi.fn(async (command: string) => command === "open_local_daemon_transport" ? "permission-session" : undefined);
+    vi.stubGlobal("window", {
+      paseoDesktop: { platform: "darwin", invoke, events: { on: async () => () => undefined } },
+    });
+    await act(async () => { renderer = create(<RecordingProvider enabled><ConnectedStrip /></RecordingProvider>); });
+    await act(async () => {
+      await renderer!.root.findByType(RecordingStrip).props.onStart("Denied").catch(() => undefined);
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/__meetless/capture-permissions/intent", expect.objectContaining({ method: "POST" }));
+    expect(fetchMock).toHaveBeenCalledWith("/__meetless/capture-permissions/request", expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ "X-Meetless-Permission-Intent": "denied-intent-1" }),
+    }));
+    expect(invoke).not.toHaveBeenCalledWith("send_local_daemon_transport_message", expect.objectContaining({ text: expect.stringContaining('"command":"start"') }));
+  });
+
+  test("rechecks not-determined access and exposes supported settings recovery", async () => {
+    let statusCalls = 0;
+    let intent = 0;
+    const fetchMock = vi.fn(async (input: string) => ({
+      ok: true,
+      json: async () => {
+        if (input.includes("/intent")) return { intentToken: `recheck-intent-${++intent}`, expiresAt: Date.now() + 5_000 };
+        if (input.includes("/settings")) return { settingsOpened: true, settingsNavigation: "best-effort-pane-url" };
+        statusCalls += 1;
+        return statusCalls === 1
+          ? { microphone: "notDetermined", systemAudio: "notDetermined" }
+          : { microphone: "authorized", systemAudio: "authorized" };
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { paseoDesktop: { platform: "darwin", invoke: async (command: string) => command === "open_local_daemon_transport" ? "recheck-session" : undefined, events: { on: async () => () => undefined } } });
+    await act(async () => { renderer = create(<RecordingProvider enabled><ConnectedPermissionProbe /></RecordingProvider>); });
+    await vi.waitFor(() => expect(renderer!.root.findByType(ProbeView).props.state.permissions.microphone).toBe("notDetermined"));
+    await act(async () => { await renderer!.root.findByType(ProbeView).props.state.recheckPermissions(); });
+    expect(renderer!.root.findByType(ProbeView).props.state.permissions).toMatchObject({ microphone: "authorized", systemAudio: "authorized" });
+    await act(async () => { await renderer!.root.findByType(ProbeView).props.state.openPermissionSettings("microphone"); });
+    expect(fetchMock).toHaveBeenCalledWith("/__meetless/capture-permissions/settings?source=microphone", expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ "X-Meetless-Permission-Intent": "recheck-intent-1" }),
+    }));
+  });
+
+  test("turns initial status transport failure into actionable recheck and recovers", async () => {
+    let statusCalls = 0;
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input !== "/__meetless/capture-permissions") throw new Error("unexpected mutation");
+      statusCalls += 1;
+      if (statusCalls === 1) throw new Error("renderer boundary unavailable");
+      return {
+        ok: true,
+        json: async () => ({ microphone: "authorized", systemAudio: "authorized" }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { paseoDesktop: { platform: "darwin", invoke: async (command: string) => command === "open_local_daemon_transport" ? "transport-recovery-session" : undefined, events: { on: async () => () => undefined } } });
+
+    await act(async () => { renderer = create(<RecordingProvider enabled><ConnectedPermissionProbe /></RecordingProvider>); });
+    await vi.waitFor(() => expect(renderer!.root.findByType(ProbeView).props.state.permissions).toMatchObject({
+      microphone: null,
+      systemAudio: null,
+      checking: false,
+      error: expect.stringContaining("Recheck"),
+    }));
+    await expect(act(async () => {
+      await renderer!.root.findByType(ProbeView).props.state.recheckPermissions();
+    })).resolves.toBeUndefined();
+    expect(renderer!.root.findByType(ProbeView).props.state.permissions).toMatchObject({
+      microphone: "authorized",
+      systemAudio: "authorized",
+      checking: false,
+      error: null,
+    });
+  });
+
+  test.each([
+    ["settingsOpened=false", async () => ({ ok: true, json: async () => ({ settingsOpened: false }) })],
+    ["settings transport error", async () => { throw new Error("settings transport unavailable"); }],
+  ])("surfaces %s without rejecting the user action", async (_caseName, settingsResult) => {
+    let intent = 0;
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input.includes("/intent")) return {
+        ok: true,
+        json: async () => ({ intentToken: `settings-intent-${++intent}`, expiresAt: Date.now() + 5_000 }),
+      };
+      if (input.includes("/settings")) return settingsResult();
+      return { ok: true, json: async () => ({ microphone: "denied", systemAudio: "authorized" }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { paseoDesktop: { platform: "darwin", invoke: async (command: string) => command === "open_local_daemon_transport" ? "settings-failure-session" : undefined, events: { on: async () => () => undefined } } });
+
+    await act(async () => { renderer = create(<RecordingProvider enabled><ConnectedPermissionProbe /></RecordingProvider>); });
+    await vi.waitFor(() => expect(renderer!.root.findByType(ProbeView).props.state.permissions.microphone).toBe("denied"));
+    await expect(act(async () => {
+      await renderer!.root.findByType(ProbeView).props.state.openPermissionSettings("microphone");
+    })).resolves.toBeUndefined();
+    expect(renderer!.root.findByType(ProbeView).props.state.permissions.error)
+      .toContain("could not open System Settings");
   });
 });

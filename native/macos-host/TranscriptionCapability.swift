@@ -1,4 +1,7 @@
 import Darwin
+import AppKit
+import AVFoundation
+import CoreGraphics
 import CryptoKit
 import Foundation
 import Security
@@ -28,6 +31,7 @@ final class MeetlessTranscriptionCapability {
   private let keychain: MeetlessKeychainAccess
   private let transcribe: (Data, String, NativeRequestCancellation) throws -> OpenAIResult
   private let leaseIssued: (() -> Void)?
+  private let capturePermissions: MeetlessCapturePermissionAccess
   private let acceptQueue = DispatchQueue(label: "com.meetless.transcription-capability.accept", qos: .userInitiated)
   private let requestQueue = DispatchQueue(label: "com.meetless.transcription-capability.request", qos: .userInitiated, attributes: .concurrent)
   private let lifecycleLock = NSLock()
@@ -43,7 +47,8 @@ final class MeetlessTranscriptionCapability {
     transcribe: @escaping (Data, String, NativeRequestCancellation) throws -> OpenAIResult = { audio, apiKey, cancellation in
       try OpenAITranscriber(apiKey: apiKey).transcribe(audio: audio, cancellation: cancellation)
     },
-    leaseIssued: (() -> Void)? = nil
+    leaseIssued: (() -> Void)? = nil,
+    capturePermissions: MeetlessCapturePermissionAccess = MeetlessCapturePermissions()
   ) {
     self.socketPath = socketPath
     self.stagingDirectory = URL(fileURLWithPath: stagingDirectory).standardizedFileURL.path
@@ -51,6 +56,7 @@ final class MeetlessTranscriptionCapability {
     self.keychain = keychain
     self.transcribe = transcribe
     self.leaseIssued = leaseIssued
+    self.capturePermissions = capturePermissions
   }
 
   func start() throws {
@@ -160,6 +166,20 @@ final class MeetlessTranscriptionCapability {
       writeResponse(client, requestId: requestId, ok: true, status: status, text: nil, languages: nil, usage: nil)
       return
     }
+    if operation == "capturePermissionStatus" || operation == "capturePermissionRequest" || operation == "capturePermissionSettings" {
+      let source = request["source"] as? String
+      let result = runtimeAuthorization.withValidLease(lease) {
+        if operation == "capturePermissionRequest" { return capturePermissions.request() }
+        if operation == "capturePermissionSettings" { return capturePermissions.openSettings(source: source) }
+        return capturePermissions.status()
+      }
+      guard let result else {
+        writeResponse(client, requestId: requestId, ok: false, status: "invalid", text: nil, languages: nil, usage: nil)
+        return
+      }
+      writeCapturePermissionResponse(client, requestId: requestId, result: result)
+      return
+    }
     guard operation == "transcribe",
           let audioPath = request["audioPath"] as? String,
           let audioByteLength = (request["audioByteLength"] as? NSNumber)?.int64Value,
@@ -214,6 +234,21 @@ final class MeetlessTranscriptionCapability {
     }
   }
 
+  private func writeCapturePermissionResponse(_ descriptor: Int32, requestId: String, result: MeetlessCapturePermissionResult) {
+    let response: [String: Any] = [
+      "version": 1,
+      "requestId": requestId,
+      "ok": true,
+      "type": "capture.permissions",
+      "microphone": result.microphone.rawValue,
+      "systemAudio": result.systemAudio.rawValue,
+      "settingsOpened": result.settingsOpened,
+      "settingsNavigation": result.settingsNavigation,
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: response) else { return }
+    writeAll(descriptor, data: data + Data([10]))
+  }
+
   private func writeResponse(
     _ descriptor: Int32,
     requestId: String,
@@ -231,6 +266,89 @@ final class MeetlessTranscriptionCapability {
     guard let data = try? JSONSerialization.data(withJSONObject: response) else { return }
     writeAll(descriptor, data: data + Data([10]))
   }
+}
+
+enum MeetlessCapturePermissionStatus: String {
+  case authorized
+  case notDetermined
+  case denied
+  case restricted
+}
+
+struct MeetlessCapturePermissionResult {
+  let microphone: MeetlessCapturePermissionStatus
+  let systemAudio: MeetlessCapturePermissionStatus
+  let settingsOpened: Bool
+  let settingsNavigation: String
+}
+
+protocol MeetlessCapturePermissionAccess {
+  func status() -> MeetlessCapturePermissionResult
+  func request() -> MeetlessCapturePermissionResult
+  func openSettings(source: String?) -> MeetlessCapturePermissionResult
+}
+
+final class MeetlessCapturePermissions: MeetlessCapturePermissionAccess {
+  private let screenRequestKey = "MeetlessScreenCaptureRequestAttempted"
+
+  func status() -> MeetlessCapturePermissionResult {
+    result(settingsOpened: false, navigation: "none")
+  }
+
+  func request() -> MeetlessCapturePermissionResult {
+    if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+      let semaphore = DispatchSemaphore(value: 0)
+      AVCaptureDevice.requestAccess(for: .audio) { _ in semaphore.signal() }
+      semaphore.wait()
+    }
+    if !CGPreflightScreenCaptureAccess() {
+      UserDefaults.standard.set(true, forKey: screenRequestKey)
+      _ = onMain { CGRequestScreenCaptureAccess() }
+    }
+    return result(settingsOpened: false, navigation: "none")
+  }
+
+  func openSettings(source: String?) -> MeetlessCapturePermissionResult {
+    let applicationURL = URL(fileURLWithPath: "/System/Applications/System Settings.app")
+    let opened = onMain { NSWorkspace.shared.open(applicationURL) }
+    if opened { return result(settingsOpened: true, navigation: meetlessSettingsNavigation(applicationOpened: true, fallbackOpened: false)) }
+
+    let pane = source == "microphone"
+      ? "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+      : "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+    let fallbackOpened = URL(string: pane).map { url in onMain { NSWorkspace.shared.open(url) } } ?? false
+    return result(settingsOpened: fallbackOpened, navigation: meetlessSettingsNavigation(applicationOpened: false, fallbackOpened: fallbackOpened))
+  }
+
+  private func result(settingsOpened: Bool, navigation: String) -> MeetlessCapturePermissionResult {
+    MeetlessCapturePermissionResult(
+      microphone: microphoneStatus(AVCaptureDevice.authorizationStatus(for: .audio)),
+      systemAudio: CGPreflightScreenCaptureAccess()
+        ? .authorized
+        : (UserDefaults.standard.bool(forKey: screenRequestKey) ? .denied : .notDetermined),
+      settingsOpened: settingsOpened,
+      settingsNavigation: navigation
+    )
+  }
+
+  private func microphoneStatus(_ status: AVAuthorizationStatus) -> MeetlessCapturePermissionStatus {
+    switch status {
+    case .authorized: return .authorized
+    case .notDetermined: return .notDetermined
+    case .denied: return .denied
+    case .restricted: return .restricted
+    @unknown default: return .restricted
+    }
+  }
+
+  private func onMain<T>(_ action: () -> T) -> T {
+    Thread.isMainThread ? action() : DispatchQueue.main.sync(execute: action)
+  }
+}
+
+func meetlessSettingsNavigation(applicationOpened: Bool, fallbackOpened: Bool) -> String {
+  if applicationOpened { return "system-settings-application" }
+  return fallbackOpened ? "best-effort-pane-url" : "unavailable"
 }
 
 final class RuntimePeerAuthorizer {
