@@ -573,3 +573,35 @@ Developer ID Application identity for team `63M98WD275`; the DMG checksum is
 valid. Notarization was not run, neither app nor DMG has a stapled ticket, and
 Gatekeeper reports `Unnotarized Developer ID`. Stale-Meeting deletion remains
 pending owner acceptance and is not claimed by this automated handback.
+
+## Recording-start TCC correction candidate (2026-08-29)
+
+`TCC-V1-CORRECTION-R2` preserves the accepted transactional zero-media
+recording-start rollback and media-recovery dirty diff. Permission readiness
+now fails before Meeting creation and helper startup through the signed host's
+typed public-API boundary; the existing second pre-helper authorization and
+rollback path remain intact. Focused plugin proof, including permission denial,
+rollback cleanup failure, retained-media recovery, and retry behavior, passed
+as part of the 217-test correction run. No Meeting or recording data was
+deleted or mutated by validation.
+
+### TCC correction R3 progress (2026-08-29)
+
+R3 retains both accepted recording authorization gates and clarifies that the
+pre-authorization prohibition starts at Meeting creation (`store.create`) and
+helper spawn, not MeetingStore bootstrap. This preserves in-context denied and
+not-determined recovery while keeping transactional rollback and media recovery
+unchanged. Implementation is limited to renderer-route intent binding and
+app/surface permission-state recovery.
+
+Correction implemented: permission mutations now require exact packaged
+renderer Origin/Host plus a fresh five-second one-use token obtained immediately
+before the user action. Negative proof rejects missing, invalid, replayed,
+foreign-origin, foreign-Host, and malformed-source requests before native
+invocation. Status transport/decode and settings failures clear checking, remain
+visible, and always leave an actionable Recheck path; `settingsOpened=false` is
+a failure. Absent runtime state is again Proposed and typed `notDetermined` is
+Will ask. Direct proof passed 59 of 59 tests; the serialized focused regression
+passed 604 of 604. Native and TypeScript builds, app typecheck/export, and diff
+checks passed without launch, real permission action, signing, installation,
+data deletion, or commit.

@@ -4788,3 +4788,156 @@ next_dependency: validated `notarytool` Keychain profile name plus explicit
 Human resume direction
 
 `plan_updated: yes`.
+
+### OWNER_POLICY_SUPERSESSION v1 — TCC-V1-CORRECTION-R2 (2026-08-29)
+
+The owner supersedes the historical helper-only audio-input entitlement policy
+for all future package candidates. Historical records remain unchanged as the
+truth for the candidates they described; they are not authority for this
+frontier.
+
+The binding policy for `TCC-V1-CORRECTION-R2` is exact and fail-closed:
+
+- the final outer `Meetless.app` signature, its main executable
+  `Contents/MacOS/MeetlessHost`, and the independently signed
+  `Contents/Resources/meetless/native/macos-capture/meetless-capture` each carry
+  exactly `com.apple.security.device.audio-input=true`;
+- no other executable gains audio-input, the four existing JIT executable
+  paths retain their exact JIT policy, and no screen-capture entitlement is
+  introduced;
+- the outer `Info.plist` owns non-empty `NSMicrophoneUsageDescription`,
+  `NSScreenCaptureUsageDescription`, and `NSAudioCaptureUsageDescription`;
+- `MeetlessHost` owns public-API microphone and Screen/System Audio readiness,
+  user-initiated request, return-active recheck, and supported System Settings
+  recovery; `meetless-capture` continues to own capture and chunks;
+- recording/session creation and helper startup cannot begin until the typed
+  permission state is ready, while the accepted zero-media rollback and media
+  recovery behavior remain unchanged.
+
+Progress: authority recorded before implementation. Next, update the existing
+signing/package validation owner, then wire the smallest typed host/runtime/app
+permission boundary and focused behavior proof. This frontier permits only
+source, documentation, tests, and local deterministic validation; it does not
+permit signing, Keychain access, timestamps, notarization, installation,
+launch, TCC mutation, settings mutation, upload, publication, or commits.
+
+`plan_updated: yes`.
+
+### CANDIDATE_RECORD v1 — TCC-V1-CORRECTION-R2 (2026-08-29)
+
+Candidate base is HEAD `414f8067c879cab9b212487e304aca8887da0dbb`
+plus the preserved pre-existing recording-start dirty diff. The final
+package-source snapshot is
+`6d2a3afd118188232b216e4ae239c30aa206b49bc75b75696a918301900f4162`.
+No Developer ID
+signing, package artifact, install, launch, real permission request, TCC or
+System Settings mutation, Keychain access, timestamp service, notarization,
+upload, publication, stale Meeting deletion, or commit occurred.
+
+The signing owner now models the final outer `Meetless.app` target separately
+and the nested `Contents/MacOS/MeetlessHost` executable in the exact checked-in
+map. Release signing applies the one-key audio-input plist to the outer app,
+MeetlessHost, and `meetless-capture`; the four JIT paths remain exact and every
+other image must remain entitlement-free. Post-signature validation reads the
+final outer and nested state. The package validator also fails closed unless
+all three outer purpose strings are non-empty. Positive and negative proof
+covers the exact host/helper/outer policy, missing host, missing helper, an
+outer-last state with a dropped host entitlement, audio-input on an unapproved
+image, and each missing purpose string. Diagnostics name the object, this plan
+as authority, and the compliant next action.
+
+The native host uses `AVCaptureDevice.authorizationStatus` and
+`requestAccess(for: .audio)` plus `CGPreflightScreenCaptureAccess` and
+`CGRequestScreenCaptureAccess`. Typed source statuses travel over the existing
+authenticated native capability socket and packaged renderer origin. The app
+requests both sources from the user action before recording Start, rechecks on
+return-active, and exposes supported `NSWorkspace` System Settings opening
+with a pane URL only as a best-effort fallback. The plugin independently
+requires both typed states to be authorized before MeetingStore creation and
+again before helper construction. The helper remains the capture/chunk owner;
+no XPC, screen-capture entitlement, topology change, or unrelated lifecycle
+refactor was introduced. Typed UI guidance always distinguishes Microphone
+from Screen & System Audio, while localized `SCStream` `-3801` display-capture
+text is no longer inferred to mean System Audio.
+
+Observed proof: 217 focused package/signing, artifact re-sign, host, plugin
+rollback/recovery, app, and surface tests passed in one run; the one packaged
+renderer socket lifecycle test passed separately outside the restricted socket
+sandbox. The final signing invariant rerun passed 43 of 43. The Swift native
+build and native boundary suite passed outside the SwiftPM sandbox. Runtime,
+plugin, surface, and app TypeScript checks passed; the repository Meetless
+build and app web export passed; three JavaScript syntax checks and final diff
+checks passed. The accepted recording-start rollback/recovery tests remain
+green.
+
+Enforcement: the repository-local Vitest and package validator commands are
+available and passed. No optional hook or checked-in CI invocation was found;
+none was added. Local `main` tracks `origin/main`; external branch protection
+remains unverified and unchanged.
+
+This is an implementation candidate for Lead acceptance, not release or TCC
+acceptance. `plan_updated: yes`.
+
+### CORRECTION_PROGRESS v1 — TCC-V1-CORRECTION-R3 (2026-08-29)
+
+Candidate authority is the exact TCC-scoped R2 diff SHA-256
+`15c66054babecce250f692306d90d2e38ba7db78a1136ffac51207f7b0611e1c`
+on HEAD `414f8067c879cab9b212487e304aca8887da0dbb`. R3 accepts
+`TCC-REV-001` and `TCC-REV-003/004`: mutating permission routes require the
+exact packaged renderer Host/Origin and a fresh, one-use server-issued user
+intent; transport/settings failures remain visible and recoverable; absent
+runtime permission state remains Proposed.
+
+The owner rejects a literal pre-MeetingStore-construction rule. Store bootstrap
+remains available so the app can open and render permission recovery. The exact
+invariant is unchanged: both existing authorization gates remain, and neither
+`store.create` (Meeting/session creation) nor helper spawn may occur before
+authorization.
+
+Progress: authority recorded before implementation. Next, encode the one-use
+intent guard in the existing packaged renderer server and add positive/replay/
+origin/Host/malformed-source proof, then correct app/surface failure recovery
+without changing native, signing, plugin, store, or helper files.
+
+`plan_updated: yes`.
+
+### CORRECTION_CANDIDATE v1 — TCC-V1-CORRECTION-R3 (2026-08-29)
+
+The packaged renderer now issues a five-second, one-use permission-intent token
+only to an exact renderer Origin/Host JSON request. Permission request and
+settings POSTs require the same exact renderer identity and consume one fresh
+token before any native capability invocation. Missing, invalid, expired, or
+replayed tokens fail closed; foreign Origin/Host and form-shaped requests fail
+closed; settings source accepts exactly `microphone` or `systemAudio`. The GET
+status route remains read-only and `no-store`. UUID response correlation remains
+separate and is not treated as user intent.
+
+The app obtains a fresh intent immediately before each user-started permission
+request or settings action, validates every JSON response, and treats native
+`settingsOpened=false` as failure. Permission status fetch/decode failure always
+clears `checking`, preserves an explicit actionable error, and exposes Recheck
+even when neither source has a typed denied state. Recheck and settings failures
+are rendered without rejected user-action promises escaping. Source-specific
+denied/restricted guidance is unchanged. Missing runtime status renders
+`Proposed`; only typed `notDetermined` renders `Will ask`.
+
+Observable proof passed: the four directly affected test files passed 59 of 59,
+including valid intent, missing/invalid/replay, foreign Origin/Host,
+malformed-source/no-native-call, initial transport failure/recheck/recovery,
+settings false/error, and surfaced rejected-action cases. The serialized
+repository focused suite passed 52 files and 604 tests. A parallel focused run
+passed 603 of 604 and its sole startup-deadline failure then passed 20 of 20 in
+the isolated readiness suite; the serialized run removed that contention.
+Runtime and meeting-surface builds, repository Meetless TypeScript build, app
+typecheck, app web export, Swift native build/boundary tests, and diff checks
+passed. The restricted sandbox blocked socket/process/DMG and SwiftPM operations;
+the same deterministic checks passed with the required local permissions. No
+app launch, real permission request, TCC or Settings change, package signing,
+install, Keychain access, timestamp network, notarization, upload, publication,
+Meeting deletion, or commit occurred.
+
+The existing MeetingStore bootstrap remains available. The invariant continues
+to prohibit `store.create` and helper spawn before authorization through the two
+existing gates; neither gate nor recording rollback/recovery was changed.
+
+`plan_updated: yes`.
