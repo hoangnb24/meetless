@@ -237,6 +237,7 @@ function fakeStore() {
     return state.thread ? [state.thread] : [];
   });
   state.port = {
+    listChatThreads: async () => state.thread ? [state.thread] : [],
     reconcileChatAfterRestart: state.reconcile,
     getChatThread: async () => state.thread,
     getTranscriptForMeeting: async () => transcript(),

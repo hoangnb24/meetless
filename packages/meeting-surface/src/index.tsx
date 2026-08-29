@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Pressable,
   ScrollView,
@@ -236,6 +236,13 @@ export interface MeetingListSurfaceProps {
   onAskQuestion?(question: string): Promise<void>;
   onRetryQuestion?(): Promise<void>;
   onChangeHost?(): void | Promise<void>;
+  deleteConfirmationMeetingId?: string | null;
+  deletePending?: boolean;
+  deleteError?: string | null;
+  deleteDisabled?: boolean;
+  onRequestDeleteMeeting?(meetingId: string): void;
+  onCancelDeleteMeeting?(): void;
+  onConfirmDeleteMeeting?(): Promise<void>;
 }
 
 export function MeetingListSurface({
@@ -273,6 +280,13 @@ export function MeetingListSurface({
   onAskQuestion,
   onRetryQuestion,
   onChangeHost,
+  deleteConfirmationMeetingId = null,
+  deletePending = false,
+  deleteError = null,
+  deleteDisabled = false,
+  onRequestDeleteMeeting,
+  onCancelDeleteMeeting,
+  onConfirmDeleteMeeting,
 }: MeetingListSurfaceProps) {
   const tier = requestedTier ?? (compact ? "phone" : "desktop");
   const [task, setTask] = useState<MeetingTask>("transcript");
@@ -355,6 +369,10 @@ export function MeetingListSurface({
       onChangeHost={onChangeHost ? requestChangeHost : undefined}
       task={task}
       onTaskChange={setTask}
+      deletePending={deletePending}
+      deleteError={deleteError}
+      deleteDisabled={deleteDisabled}
+      onRequestDeleteMeeting={onRequestDeleteMeeting}
     />
   );
 
@@ -395,6 +413,14 @@ export function MeetingListSurface({
           <ChangeHostConfirmation
             onCancel={() => setChangeHostOpen(false)}
             onConfirm={confirmChangeHost}
+          />
+        ) : null}
+        {deleteConfirmationMeetingId && onCancelDeleteMeeting && onConfirmDeleteMeeting ? (
+          <DeleteMeetingConfirmation
+            meeting={meetings.find((candidate) => candidate.id === deleteConfirmationMeetingId) ?? null}
+            pending={deletePending}
+            onCancel={onCancelDeleteMeeting}
+            onConfirm={onConfirmDeleteMeeting}
           />
         ) : null}
       </View>
@@ -462,7 +488,13 @@ function MeetingSidebar({
   const groups = groupMeetings(meetings);
   return (
     <View style={styles.sidebar} testID="meeting-sidebar">
-      <ScrollView style={styles.sidebarScroll} contentContainerStyle={styles.sidebarContent} testID="meeting-surface">
+      <ScrollView
+        scrollEnabled
+        showsVerticalScrollIndicator={false}
+        style={styles.sidebarScroll}
+        contentContainerStyle={styles.sidebarContent}
+        testID="meeting-surface"
+      >
         <View style={styles.sidebarHead}>
           <Text style={styles.overline}>Meetings</Text>
           {canRecord && onOpenRecordingSetup ? (
@@ -651,6 +683,10 @@ interface MeetingDetailProps {
   onChangeHost?: () => void | Promise<void>;
   task: MeetingTask;
   onTaskChange(task: MeetingTask): void;
+  deletePending: boolean;
+  deleteError: string | null;
+  deleteDisabled: boolean;
+  onRequestDeleteMeeting?: (meetingId: string) => void;
 }
 
 function MeetingDetail(props: MeetingDetailProps) {
@@ -684,6 +720,10 @@ function MeetingDetail(props: MeetingDetailProps) {
     onChangeHost,
     task,
     onTaskChange,
+    deletePending,
+    deleteError,
+    deleteDisabled,
+    onRequestDeleteMeeting,
   } = props;
 
   if (!selectedMeetingId && !transcript) {
@@ -716,6 +756,19 @@ function MeetingDetail(props: MeetingDetailProps) {
             <Text style={styles.statusText}>{detailStatus}</Text>
           </View>
         </View>
+        {selectedMeeting && onRequestDeleteMeeting ? (
+          <FocusPressable
+            accessibilityLabel={`Delete ${selectedMeeting.title}`}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: deleteDisabled }}
+            disabled={deleteDisabled}
+            onPress={() => onRequestDeleteMeeting(selectedMeeting.id)}
+            style={styles.ghostButton}
+            testID="meeting-delete-action"
+          >
+            <Text style={styles.dangerButtonText}>{deletePending ? "Deleting…" : "Delete"}</Text>
+          </FocusPressable>
+        ) : null}
         {onChangeHost ? (
           <FocusPressable accessibilityLabel="Change host" accessibilityRole="button" onPress={() => void onChangeHost()} style={styles.ghostButton} testID="detail-change-companion-host">
             <Text style={styles.ghostButtonText}>Change host</Text>
@@ -731,6 +784,7 @@ function MeetingDetail(props: MeetingDetailProps) {
           testID={`detail-host-${hostConnectionStatus}`}
         />
       ) : null}
+      {deleteError ? <Text accessibilityRole="alert" style={styles.error} testID="meeting-delete-error">{deleteError}</Text> : null}
       {layoutTier !== "desktop" ? <TaskSwitcher task={task} onTaskChange={onTaskChange} /> : null}
       <View style={[styles.detailContent, layoutTier === "desktop" && styles.desktopDetailContent]}>
         {showTranscript ? (
@@ -770,6 +824,36 @@ function MeetingDetail(props: MeetingDetailProps) {
             testID="ask-pane"
           />
         ) : null}
+      </View>
+    </View>
+  );
+}
+
+function DeleteMeetingConfirmation({
+  meeting,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  meeting: MeetingWire | null;
+  pending: boolean;
+  onCancel(): void;
+  onConfirm(): Promise<void>;
+}) {
+  if (!meeting) return null;
+  return (
+    <View style={styles.setupBackdrop} testID="meeting-delete-confirmation" accessibilityViewIsModal>
+      <View style={styles.setupPanel}>
+        <Text accessibilityRole="header" style={styles.setupTitle}>Delete “{meeting.title}”?</Text>
+        <Text style={styles.setupDescription}>This permanently deletes the meeting, its audio, transcript, and chat. You cannot undo this action.</Text>
+        <View style={styles.setupActions}>
+          <FocusPressable accessibilityLabel="Cancel deletion" accessibilityRole="button" disabled={pending} onPress={onCancel} style={styles.ghostButton} testID="meeting-delete-cancel">
+            <Text style={styles.ghostButtonText}>Cancel</Text>
+          </FocusPressable>
+          <FocusPressable accessibilityLabel={`Permanently delete ${meeting.title}`} accessibilityRole="button" accessibilityState={{ disabled: pending }} disabled={pending} onPress={() => void onConfirm()} style={styles.primaryButton} testID="meeting-delete-confirm">
+            <Text style={styles.buttonText}>{pending ? "Deleting…" : "Delete"}</Text>
+          </FocusPressable>
+        </View>
       </View>
     </View>
   );
@@ -997,25 +1081,61 @@ function ProviderPicker({
   providers: ChatProviderWire[];
 }) {
   const [open, setOpen] = useState(false);
+  const [invalidSelectionDismissed, setInvalidSelectionDismissed] = useState(false);
+  const pickerRef = useRef<View | null>(null);
   const selectedProvider = providers.find((candidate) => candidate.id === provider) ?? null;
   const selectedModel = selectedProvider?.models.find((candidate) => candidate.id === model) ?? null;
+  const selectionValid = selectedProvider !== null && selectedModel !== null;
+  const optionsVisible = providers.length > 0 && (open || (!selectionValid && !invalidSelectionDismissed));
   const label = selectedProvider && selectedModel ? `${selectedProvider.label} · ${selectedModel.label}` : "Choose provider/model";
+
+  const closePicker = useCallback(() => {
+    setOpen(false);
+    setInvalidSelectionDismissed(true);
+  }, []);
+
+  useEffect(() => {
+    setInvalidSelectionDismissed(false);
+  }, [model, provider, providers]);
+
+  useEffect(() => {
+    if (!optionsVisible || typeof document === "undefined") return;
+
+    const dismissOnOutsidePointer = (event: PointerEvent) => {
+      const pickerNode = pickerRef.current as unknown as {
+        contains?: (target: EventTarget | null) => boolean;
+      } | null;
+      if (pickerNode?.contains?.(event.target)) return;
+      closePicker();
+    };
+
+    document.addEventListener("pointerdown", dismissOnOutsidePointer, true);
+    return () => document.removeEventListener("pointerdown", dismissOnOutsidePointer, true);
+  }, [closePicker, optionsVisible]);
+
   return (
-    <View style={styles.providerPicker}>
+    <View ref={pickerRef} style={styles.providerPicker} testID="chat-provider-picker">
       <FocusPressable
         accessibilityLabel={`Provider and model: ${label}`}
         accessibilityRole="button"
-        accessibilityState={{ disabled: !interactive || !providers.length, expanded: open }}
-        aria-expanded={open}
+        accessibilityState={{ disabled: !interactive || !providers.length, expanded: optionsVisible }}
+        aria-expanded={optionsVisible}
         disabled={!interactive || !providers.length}
-        onPress={() => setOpen((current) => !current)}
+        onPress={() => {
+          if (optionsVisible) {
+            closePicker();
+            return;
+          }
+          setInvalidSelectionDismissed(false);
+          setOpen(true);
+        }}
         style={styles.providerChip}
         testID="chat-provider-trigger"
       >
         <Text style={styles.providerChipText} numberOfLines={1}>{label}</Text>
         <Text style={styles.providerChevron} accessibilityElementsHidden>⌄</Text>
       </FocusPressable>
-      <View style={[styles.pickerOptions, !open && styles.hidden]} testID="chat-provider-options" aria-hidden={!open}>
+      <View style={[styles.pickerOptions, !optionsVisible && styles.hidden]} testID="chat-provider-options" aria-hidden={!optionsVisible}>
         {providers.map((option) => option.models.map((candidate) => {
           const selected = provider === option.id && model === candidate.id;
           return (
@@ -1023,13 +1143,13 @@ function ProviderPicker({
               key={`${option.id}-${candidate.id}`}
               accessibilityLabel={`${option.label}, ${candidate.label}`}
               accessibilityRole="button"
-              accessibilityState={{ disabled: !interactive || !onSelection || !open, selected }}
+              accessibilityState={{ disabled: !interactive || !onSelection || !optionsVisible, selected }}
               aria-pressed={selected}
               aria-selected={selected}
-              disabled={!interactive || !onSelection || !open}
+              disabled={!interactive || !onSelection || !optionsVisible}
               onPress={() => {
                 onSelection?.(option.id, candidate.id);
-                setOpen(false);
+                closePicker();
               }}
               style={[styles.providerOption, selected && styles.providerOptionSelected]}
               testID={`chat-model-${option.id}-${candidate.id}`}
@@ -1480,8 +1600,8 @@ const styles = StyleSheet.create({
   taskTabTextSelected: { color: colors.foreground },
   pane: { flex: 1, minWidth: 0, minHeight: 0 },
   transcriptPane: { flex: 1.28, borderRightColor: colors.borderSoft, borderRightWidth: 1 },
-  askPane: { flex: 1 },
-  paneHead: { minHeight: 48, flexShrink: 0, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, paddingHorizontal: 24, paddingTop: 14 },
+  askPane: { flex: 1, zIndex: 2, overflow: "visible" },
+  paneHead: { position: "relative", minHeight: 48, flexShrink: 0, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, paddingHorizontal: 24, paddingTop: 14, zIndex: 20, overflow: "visible" },
   paneTitle: { color: colors.muted, fontFamily: mono, fontSize: 11, letterSpacing: 0.8, textTransform: "uppercase" },
   paneScroll: { flex: 1, minHeight: 0 },
   paneScrollContent: { gap: 16, paddingHorizontal: 24, paddingTop: 8, paddingBottom: 32 },
@@ -1501,15 +1621,15 @@ const styles = StyleSheet.create({
   segmentText: { color: colors.secondary, flex: 1, minWidth: 0, fontSize: 14, lineHeight: 22 },
   askHeading: { flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 },
   askScope: { color: colors.muted, fontFamily: mono, fontSize: 10.5, borderColor: colors.borderSoft, borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
-  providerPicker: { position: "relative", maxWidth: "62%", zIndex: 5 },
+  providerPicker: { position: "relative", maxWidth: "62%", zIndex: 30 },
   providerChip: { minHeight: 30, maxWidth: "100%", flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, borderColor: colors.border, borderWidth: 1, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.04)" },
   providerChipText: { color: colors.secondary, fontSize: 12, flexShrink: 1 },
   providerChevron: { color: colors.muted, fontSize: 14 },
-  pickerOptions: { position: "absolute", top: 36, right: 0, minWidth: 190, gap: 2, padding: 6, borderColor: colors.border, borderWidth: 1, borderRadius: 8, backgroundColor: colors.surface },
+  pickerOptions: { position: "absolute", top: 36, right: 0, minWidth: 190, gap: 2, padding: 6, borderColor: colors.border, borderWidth: 1, borderRadius: 8, backgroundColor: colors.surface, zIndex: 40, elevation: 12 },
   providerOption: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 5 },
   providerOptionSelected: { backgroundColor: "rgba(94,106,210,0.16)" },
   providerOptionText: { color: colors.secondary, fontSize: 12 },
-  chat: { flex: 1, minHeight: 0 },
+  chat: { flex: 1, minHeight: 0, zIndex: 0 },
   chatScroll: { flex: 1, minHeight: 0 },
   chatContent: { gap: 12, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 20 },
   chatHint: { color: colors.muted, fontSize: 12.5, lineHeight: 19 },
@@ -1539,6 +1659,7 @@ const styles = StyleSheet.create({
   secondaryButtonText: { color: colors.secondary, fontSize: 12.5 },
   ghostButton: { minHeight: 30, alignItems: "center", justifyContent: "center", paddingHorizontal: 8, borderRadius: 6 },
   ghostButtonText: { color: colors.secondary, fontSize: 12.5 },
+  dangerButtonText: { color: colors.dangerText, fontSize: 12.5 },
   buttonText: { color: "#ffffff", fontSize: 13, fontWeight: "500" },
   error: { color: colors.dangerText, fontSize: 13, lineHeight: 19 },
   connectionNotice: { flexShrink: 0, gap: 6, margin: 12, padding: 12, borderColor: "rgba(234,179,8,0.35)", borderWidth: 1, borderRadius: 8, backgroundColor: "rgba(234,179,8,0.08)" },

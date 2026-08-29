@@ -25,6 +25,27 @@ export const MeetingListRpc = defineRpc({
   output: z.object({ meetings: z.array(MeetingWireSchema) }).strict(),
 });
 
+export const MeetingDeleteResultSchema = z.object({
+  meetingId: z.string().trim().min(1),
+  outcome: z.enum(["deleted", "not_found", "refused"]),
+  reason: z.enum(["active_capture", "finalization", "transcription", "ask"]).nullable(),
+}).strict().superRefine((result, context) => {
+  if (result.outcome === "refused" && result.reason === null) {
+    context.addIssue({ code: "custom", path: ["reason"], message: "Refused deletion requires an active-work reason" });
+  }
+  if (result.outcome !== "refused" && result.reason !== null) {
+    context.addIssue({ code: "custom", path: ["reason"], message: "Only refused deletion can include a reason" });
+  }
+});
+
+export type MeetingDeleteResultWire = z.infer<typeof MeetingDeleteResultSchema>;
+
+export const MeetingDeleteRpc = defineRpc({
+  name: "meeting.delete",
+  input: z.object({ meetingId: z.string().trim().min(1) }).strict(),
+  output: MeetingDeleteResultSchema,
+});
+
 export const TranscriptRangeWireSchema = z.object({
   ordinal: z.number().int().nonnegative(),
   startMs: z.number().int().nonnegative(),

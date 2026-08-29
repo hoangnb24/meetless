@@ -91,6 +91,15 @@ describe("Meetless capability gate", () => {
       "meeting.chat.providers", "meeting.chat.get", "meeting.chat.ask", "meeting.chat.retry",
     ]);
   });
+
+  test("routes meeting deletion with only the plain meeting ID", async () => {
+    const invokePluginRpc = vi.fn(async () => ({ meetingId: "m-1", outcome: "deleted", reason: null }));
+    const client = new MeetlessClient(daemon({ invokePluginRpc }));
+    await client.initialize();
+
+    await expect(client.deleteMeeting("m-1")).resolves.toEqual({ meetingId: "m-1", outcome: "deleted", reason: null });
+    expect(invokePluginRpc).toHaveBeenCalledWith("meetless", "meeting.delete", { meetingId: "m-1" });
+  });
 });
 
 const recordingStatus: RecordingStatusWire = {

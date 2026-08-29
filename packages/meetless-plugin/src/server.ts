@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { access, lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import { MeetingStore } from "@meetless/meeting-store";
+import type { MeetingDeleteStoreResult } from "@meetless/meeting-store";
 import { RecordingService } from "./recording-service.js";
 import { RecordingControlServer } from "./control-server.js";
 import { assertProductionHostProvenance } from "./production-host.js";
@@ -21,6 +22,8 @@ import {
   PaseoMeetingChatAgentPort,
   resolveChatExecutionRoot,
 } from "./chat-service.js";
+import { MeetingLifecycleCoordinator, type MeetingWorkKind } from "./meeting-lifecycle-coordinator.js";
+import { listRecordingOwnedStagePaths } from "./finalizer.js";
 
 let store: MeetingStore | null = null;
 let recordingService: RecordingService | null = null;
@@ -30,6 +33,67 @@ let citationPlaybackService: CitationPlaybackService | null = null;
 let recordingStart: Promise<void> | null = null;
 let runtimeIdentity: { instanceId: string; startedAt: string; uiTest: UiTestIdentity | null } | null = null;
 let chatService: MeetingChatService | null = null;
+const meetingLifecycle = new MeetingLifecycleCoordinator();
+
+export async function deleteMeetingSafely(
+  meetingStore: Pick<MeetingStore, "deleteMeeting">,
+  meetingId: string,
+  activity: { transcription?: boolean; ask?: boolean } = {},
+): Promise<MeetingDeleteStoreResult> {
+  if (activity.transcription) return { meetingId, outcome: "refused", reason: "transcription" };
+  if (activity.ask) return { meetingId, outcome: "refused", reason: "ask" };
+  return meetingStore.deleteMeeting(meetingId);
+}
+
+export function deleteMeeting(meetingId: string): Promise<MeetingDeleteStoreResult> {
+  const acquisition = meetingLifecycle.tryAcquireDeletion(meetingId);
+  if (!acquisition.acquired) {
+    return Promise.resolve({ meetingId, outcome: "refused", reason: deletionReason(acquisition.active) });
+  }
+  return (async () => {
+    try {
+      const meetingStore = getMeetingStore();
+      if (!recordingService) {
+        return await deleteMeetingBeforeRecordingBootstrap(
+          meetingStore,
+          meetingId,
+          requiredAbsolute("MEETLESS_EXPORT_ROOT"),
+          requiredAbsolute("MEETLESS_STORE_ROOT"),
+        );
+      }
+      const recordingStagePaths = await recordingService.ownedStagePaths(meetingId);
+      return await meetingStore.deleteMeeting(meetingId, { recordingStagePaths });
+    } finally {
+      acquisition.lease.release();
+    }
+  })();
+}
+
+export async function deleteMeetingBeforeRecordingBootstrap(
+  meetingStore: Pick<MeetingStore, "listRecordings" | "deleteMeeting">,
+  meetingId: string,
+  exportRoot: string,
+  storeRoot: string,
+): Promise<MeetingDeleteStoreResult> {
+  const candidates = (await meetingStore.listRecordings()).filter((recording) => recording.meetingId === meetingId);
+  const recordingIds = (await Promise.all(candidates.map(async (recording) => {
+    if (["recording", "interrupted", "recoverable", "finalizing"].includes(recording.status)) return recording.id;
+    if (recording.status !== "failed") return null;
+    return lstat(path.join(storeRoot, "sessions", recording.id)).then(
+      (state) => state.isDirectory() && !state.isSymbolicLink() ? recording.id : null,
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error),
+    );
+  }))).filter((recordingId): recordingId is string => recordingId !== null);
+  const recordingStagePaths = await listRecordingOwnedStagePaths(exportRoot, recordingIds);
+  return meetingStore.deleteMeeting(meetingId, { recordingStagePaths });
+}
+
+function deletionReason(active: MeetingWorkKind[]): "active_capture" | "finalization" | "transcription" | "ask" {
+  if (active.includes("active_capture")) return "active_capture";
+  if (active.includes("finalization")) return "finalization";
+  if (active.includes("transcription")) return "transcription";
+  return "ask";
+}
 
 export function getMeetingStore(): MeetingStore {
   if (store) return store;
@@ -39,7 +103,11 @@ export function getMeetingStore(): MeetingStore {
       "MEETLESS_STORE_ROOT must be an absolute isolated path fixed by the Meetless launcher",
     );
   }
-  store = new MeetingStore({ root: configuredRoot });
+  const exportRoot = process.env.MEETLESS_EXPORT_ROOT?.trim();
+  store = new MeetingStore({
+    root: configuredRoot,
+    approvedExportRoots: exportRoot && path.isAbsolute(exportRoot) ? [exportRoot] : [],
+  });
   return store;
 }
 
@@ -49,6 +117,7 @@ export async function getMeetingChatService(
   chatService ??= new MeetingChatService(
     getMeetingStore(),
     new PaseoMeetingChatAgentPort(paseo, resolveChatExecutionRoot()),
+    meetingLifecycle,
   );
   await chatService.initialize();
   return chatService;
@@ -125,7 +194,7 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
         path.join(storeRoot, "transcription-source-snapshots"),
         "transcription-source",
       ),
-    })
+    }, meetingLifecycle)
     : undefined;
   const service = new RecordingService({
     storeRoot, helperPath, ffmpeg, ffprobe, exportRoot,
@@ -135,7 +204,7 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
     failFinalizationOnce: process.env.MEETLESS_FIXTURE_FAIL_FINALIZATION_ONCE === "1",
     authorizeProductionStart: assertProductionHostProvenance,
     transcription: transcript,
-  }, getMeetingStore());
+  }, getMeetingStore(), meetingLifecycle);
   const identity = {
     instanceId: randomUUID(),
     startedAt: new Date().toISOString(),

@@ -23,6 +23,23 @@ interface ActiveConnection {
   close?(): Promise<void>;
 }
 
+function resolveChatSelection(
+  providers: ChatProviderWire[],
+  savedSelection: MeetingChatThreadWire["selection"],
+): { provider: string | null; model: string | null } {
+  const savedProvider = savedSelection
+    ? providers.find((candidate) => candidate.id === savedSelection.provider)
+    : undefined;
+  const savedModel = savedProvider?.models.find((candidate) => candidate.id === savedSelection?.model);
+  if (savedProvider && savedModel) return { provider: savedProvider.id, model: savedModel.id };
+
+  const firstProvider = providers[0];
+  if (!firstProvider) return { provider: null, model: null };
+  const firstModel = firstProvider.models.find((candidate) => candidate.isDefault) ?? firstProvider.models[0];
+  if (!firstModel) return { provider: null, model: null };
+  return { provider: firstProvider.id, model: firstModel.id };
+}
+
 export function App() {
   const mode = useMemo(() => resolveAppMode(), []);
   const recordingEnabled = useMemo(() => supportsDesktopRecording(), []);
@@ -58,22 +75,37 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [chatProvider, setChatProvider] = useState<string | null>(null);
   const [chatModel, setChatModel] = useState<string | null>(null);
   const [citationEvidence, setCitationEvidence] = useState<CitationEvidenceState | null>(null);
+  const [deleteConfirmationMeetingId, setDeleteConfirmationMeetingId] = useState<string | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const playback = useRef<CitationPlaybackHandle | null>(null);
   const selectionVersion = useRef(0);
   const citationSequence = useRef(0);
   const selectedMeetingIdRef = useRef<string | null>(null);
+  const deletePendingRef = useRef(false);
+  const deleteOperationEpoch = useRef(0);
   const layoutTier: LayoutTier = dimensions.width <= 639 ? "phone" : dimensions.width < 1120 ? "tablet" : "desktop";
   const recordingStatus = recording.status?.status;
   const recordingMeetingId = recording.status?.meetingId;
 
+  const resetDeleteState = useCallback(() => {
+    deleteOperationEpoch.current += 1;
+    deletePendingRef.current = false;
+    setDeletePending(false);
+    setDeleteConfirmationMeetingId(null);
+    setDeleteError(null);
+  }, []);
+
   const installConnection = useCallback((client: MeetlessClient, close?: () => Promise<void>): ActiveConnection => {
+    resetDeleteState();
     const active = { client, epoch: connectionEpoch.current + 1, ...(close ? { close } : {}) };
     connectionEpoch.current = active.epoch;
     connection.current = active;
     return active;
-  }, []);
+  }, [resetDeleteState]);
 
   const invalidateConnection = useCallback(() => {
+    resetDeleteState();
     connectionEpoch.current += 1;
     citationSequence.current += 1;
     playback.current?.stop();
@@ -84,7 +116,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
       status: "failed",
       error: "Host connection lost. Try again.",
     } : current);
-  }, []);
+  }, [resetDeleteState]);
 
   const isCurrentConnection = useCallback((active: ActiveConnection): boolean =>
     connection.current === active && connectionEpoch.current === active.epoch, []);
@@ -106,6 +138,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   }, [isCurrentConnection, mode]);
 
   const openTranscript = useCallback(async (meetingId: string) => {
+    if (deletePendingRef.current) return;
     const active = connection.current;
     if (!active) throw new Error("Meetless host is not connected yet");
     const version = selectionVersion.current + 1;
@@ -143,16 +176,11 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
             active.client.getMeetingChat(meetingId),
           ]);
           if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+          const selection = resolveChatSelection(providerResult.providers, thread?.selection ?? null);
           setChatProviders(providerResult.providers);
           setChatThread(thread);
-          const selectedProvider = thread?.selection?.provider ?? providerResult.providers[0]?.id ?? null;
-          const provider = providerResult.providers.find((candidate) => candidate.id === selectedProvider);
-          const selectedModel = thread?.selection?.model
-            ?? provider?.models.find((candidate) => candidate.isDefault)?.id
-            ?? provider?.models[0]?.id
-            ?? null;
-          setChatProvider(selectedProvider);
-          setChatModel(selectedModel);
+          setChatProvider(selection.provider);
+          setChatModel(selection.model);
           setChatError(null);
         } catch (chatReason) {
           if (isCurrentConnection(active) && selectionVersion.current === version && selectedMeetingIdRef.current === meetingId) {
@@ -192,11 +220,61 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setChatModel(null);
   }, []);
 
+  const requestDeleteMeeting = useCallback((meetingId: string) => {
+    if (deletePending || selectedMeetingIdRef.current !== meetingId) return;
+    setDeleteError(null);
+    setDeleteConfirmationMeetingId(meetingId);
+  }, [deletePending]);
+
+  const cancelDeleteMeeting = useCallback(() => {
+    if (!deletePending) setDeleteConfirmationMeetingId(null);
+  }, [deletePending]);
+
+  const confirmDeleteMeeting = useCallback(async () => {
+    const active = connection.current;
+    const meetingId = deleteConfirmationMeetingId;
+    if (!active || !meetingId || deletePending || selectedMeetingIdRef.current !== meetingId) return;
+    const operationEpoch = deleteOperationEpoch.current + 1;
+    deleteOperationEpoch.current = operationEpoch;
+    setDeletePending(true);
+    deletePendingRef.current = true;
+    setDeleteError(null);
+    try {
+      const result = await active.client.deleteMeeting(meetingId);
+      if (!isCurrentConnection(active)) return;
+      if (result.outcome === "refused") {
+        setDeleteConfirmationMeetingId(null);
+        if (selectedMeetingIdRef.current === meetingId) {
+          setDeleteError("This meeting has active work. Wait for it to finish, then try again.");
+        }
+        return;
+      }
+      setMeetings((current) => current.filter((meeting) => meeting.id !== meetingId));
+      setDeleteConfirmationMeetingId(null);
+      if (selectedMeetingIdRef.current === meetingId) closeTranscript();
+      const nextMeetings = await active.client.listMeetings();
+      if (!isCurrentConnection(active)) return;
+      setMeetings(nextMeetings);
+    } catch {
+      if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) {
+        setDeleteConfirmationMeetingId(null);
+        setDeleteError("We could not delete this meeting. It is still in your library.");
+      }
+    } finally {
+      if (deleteOperationEpoch.current === operationEpoch) {
+        deletePendingRef.current = false;
+        if (isCurrentConnection(active)) setDeletePending(false);
+      }
+    }
+  }, [closeTranscript, deleteConfirmationMeetingId, deletePending, isCurrentConnection]);
+
   const selectChatModel = useCallback((provider: string, model: string) => {
+    const currentProvider = chatProviders.find((candidate) => candidate.id === provider);
+    if (!currentProvider?.models.some((candidate) => candidate.id === model)) return;
     setChatProvider(provider);
     setChatModel(model);
     setChatError(null);
-  }, []);
+  }, [chatProviders]);
 
   const askQuestion = useCallback(async (question: string) => {
     const active = connection.current;
@@ -546,6 +624,12 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const interactive = mode === "desktop" || hostConnectionStatus === "online";
   const recordingEntryAvailable = mode === "desktop" && hostConnectionStatus === "online" &&
     ["idle", "saved", "failed"].includes(recordingStatus ?? "");
+  const selectedMeetingStatus = meetings.find((meeting) => meeting.id === selectedMeetingId)?.status ?? null;
+  const deleteDisabled = !interactive || deletePending || chatLoading || chatThread?.status === "running" ||
+    transcriptLoading || transcript?.status === "pending" || transcript?.status === "transcribing" ||
+    selectedMeetingStatus === "processing" ||
+    (recordingMeetingId === selectedMeetingId &&
+      ["recording", "interrupted", "recoverable", "finalizing"].includes(recordingStatus ?? ""));
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="light" />
@@ -557,7 +641,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         onRetry={recording.retry}
         onStart={recording.start}
         onStop={recording.stop}
-        pending={recording.pending}
+        pending={recording.pending || deletePending}
         status={recording.status}
       /> : null}
       <MeetingListSurface
@@ -599,6 +683,13 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         onAskQuestion={interactive ? askQuestion : undefined}
         onRetryQuestion={interactive ? retryQuestion : undefined}
         onChangeHost={mode === "companion" ? changeCompanionHost : undefined}
+        deleteConfirmationMeetingId={deleteConfirmationMeetingId}
+        deletePending={deletePending}
+        deleteError={deleteError}
+        deleteDisabled={deleteDisabled}
+        onRequestDeleteMeeting={interactive ? requestDeleteMeeting : undefined}
+        onCancelDeleteMeeting={cancelDeleteMeeting}
+        onConfirmDeleteMeeting={confirmDeleteMeeting}
       />
     </SafeAreaView>
   );
@@ -631,19 +722,14 @@ export async function loadCompanionRestoration(client: MeetlessClient, selectedM
     client.listChatProviders(),
     client.getMeetingChat(selectedMeetingId),
   ]);
-  const chatProvider = chatThread?.selection?.provider ?? providerResult.providers[0]?.id ?? null;
-  const provider = providerResult.providers.find((candidate) => candidate.id === chatProvider);
-  const chatModel = chatThread?.selection?.model
-    ?? provider?.models.find((candidate) => candidate.isDefault)?.id
-    ?? provider?.models[0]?.id
-    ?? null;
+  const selection = resolveChatSelection(providerResult.providers, chatThread?.selection ?? null);
   return {
     meetings,
     detail,
     chatProviders: providerResult.providers,
     chatThread,
-    chatProvider,
-    chatModel,
+    chatProvider: selection.provider,
+    chatModel: selection.model,
   };
 }
 

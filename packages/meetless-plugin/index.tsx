@@ -6,6 +6,7 @@ import {
   MeetingChatRetryRpc,
   MeetingCitationResolveRpc,
   MeetingCreateRpc,
+  MeetingDeleteRpc,
   MeetingListRpc,
   MeetingTranscriptRpc,
   MeetingTranscriptionConsentRpc,
@@ -22,6 +23,10 @@ export default function contribute(plugin: PluginContext) {
   plugin.handle(MeetingListRpc, async () => {
     const server = await import("./src/server.js");
     return { meetings: await server.getMeetingStore().list() };
+  });
+  plugin.handle(MeetingDeleteRpc, async ({ meetingId }) => {
+    const server = await import("./src/server.js");
+    return server.deleteMeeting(meetingId);
   });
   plugin.handle(MeetingTranscriptRpc, async ({ meetingId }) => {
     const server = await import("./src/server.js");

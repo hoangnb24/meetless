@@ -19,6 +19,7 @@ import type {
 import { TranscriptionProviderError } from "./transcription-provider.js";
 import { randomUUID } from "node:crypto";
 import { sweepOwnedAudioCandidates, type AudioSnapshotStore } from "./private-audio-snapshot.js";
+import { MeetingLifecycleCoordinator } from "./meeting-lifecycle-coordinator.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -82,19 +83,31 @@ export interface TranscriptionServiceOptions {
 
 export class TranscriptionService {
   private readonly running = new Map<string, Promise<TranscriptState>>();
+  private readonly runningMeetings = new Set<string>();
 
   constructor(
     readonly store: MeetingStore,
     readonly provider: TranscriptionProvider,
     private readonly options: TranscriptionServiceOptions,
+    private readonly lifecycle = new MeetingLifecycleCoordinator(),
   ) {}
 
   async initialize(): Promise<void> {
-    await Promise.all([this.options.sourceSnapshots.initialize(), this.options.inspector.initialize()]);
-    await this.store.reconcileTranscriptPublications();
-    const consent = await this.store.transcriptionConsent();
-    if (consent.status !== "granted") return;
-    await this.scheduleSavedRecordings();
+    const pending = (await this.store.listTranscripts())
+      .filter((transcript) => transcript.status === "pending" || transcript.status === "transcribing")
+      .map((transcript) => ({
+        meetingId: transcript.meetingId,
+        lease: this.lifecycle.tryAcquireWork(transcript.meetingId, "transcription"),
+      }))
+      .filter((entry): entry is { meetingId: string; lease: NonNullable<typeof entry.lease> } => entry.lease !== null);
+    try {
+      await Promise.all([this.options.sourceSnapshots.initialize(), this.options.inspector.initialize()]);
+      await this.store.reconcileTranscriptPublications(pending.map((entry) => entry.meetingId));
+      const consent = await this.store.transcriptionConsent();
+      if (consent.status === "granted") await this.scheduleSavedRecordings();
+    } finally {
+      for (const entry of pending) entry.lease.release();
+    }
   }
 
   async providerStatus(): Promise<TranscriptionProviderStatus> {
@@ -118,13 +131,36 @@ export class TranscriptionService {
 
   schedule(recording: RecordingSession): void {
     if (this.running.has(recording.id) || recording.status !== "saved" || !recording.savedOutput) return;
-    const promise = this.transcribeSavedRecording(recording.id)
+    const lease = this.lifecycle.tryAcquireWork(recording.meetingId, "transcription");
+    if (!lease) return;
+    this.runningMeetings.add(recording.meetingId);
+    const promise = this.transcribeSavedRecordingOwned(recording.id)
       .catch(() => this.store.getTranscriptForMeeting(recording.meetingId).then((transcript) => transcript ?? this.fallbackState(recording)))
-      .finally(() => this.running.delete(recording.id));
+      .finally(() => {
+        this.running.delete(recording.id);
+        this.runningMeetings.delete(recording.meetingId);
+        lease.release();
+      });
     this.running.set(recording.id, promise);
   }
 
+  isMeetingRunning(meetingId: string): boolean {
+    return this.runningMeetings.has(meetingId);
+  }
+
   async transcribeSavedRecording(recordingId: string): Promise<TranscriptState> {
+    const recording = (await this.store.listRecordings()).find((candidate) => candidate.id === recordingId);
+    if (!recording) throw new Error(`Saved recording not found: ${recordingId}`);
+    const lease = this.lifecycle.tryAcquireWork(recording.meetingId, "transcription");
+    if (!lease) throw new Error("Meeting deletion is in progress");
+    try {
+      return await this.transcribeSavedRecordingOwned(recordingId);
+    } finally {
+      lease.release();
+    }
+  }
+
+  private async transcribeSavedRecordingOwned(recordingId: string): Promise<TranscriptState> {
     if ((await this.store.transcriptionConsent()).status !== "granted") {
       throw new Error("Cloud transcription consent is required");
     }

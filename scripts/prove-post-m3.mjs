@@ -360,6 +360,16 @@ async function runM5ChatJourney(input) {
   if (!model) throw new Error("M5 Codex discovery returned no selectable model");
   await waitFor(() => input.page.locator('[data-testid="meeting-chat"]').isVisible(), "M5 chat panel");
   await input.page.getByTestId("chat-provider-trigger").click();
+  await waitFor(
+    async () => await input.page.getByTestId("chat-provider-options").getAttribute("aria-hidden") === "false",
+    "M5 provider/model options",
+  );
+  await input.page.getByTestId("chat-question-input").click();
+  await waitFor(
+    async () => await input.page.getByTestId("chat-provider-options").getAttribute("aria-hidden") === "true",
+    "M5 provider/model options to close after outside interaction",
+  );
+  await input.page.getByTestId("chat-provider-trigger").click();
   await input.page.getByTestId(`chat-model-${codex.id}-${model.id}`).click();
   await input.page.getByTestId("chat-question-input").fill("Which interval contains eight hundred eighty hertz?");
   await input.page.getByTestId("chat-ask").click();

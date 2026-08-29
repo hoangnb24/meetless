@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   MeetingCitationResolveRpc,
+  MeetingDeleteRpc,
   RecordingControlRequestSchema,
   RecordingStatusWireSchema,
 } from "../src/index.js";
@@ -50,5 +51,14 @@ describe("private recording wire contracts", () => {
       meetingId: "m-1", recordingId: "r-1", segmentId: "segment-1",
       startMs: 2_000, endMs: 4_000, text: "hello", audio: { mimeType: "audio/mpeg", base64: "AQID" },
     })).not.toHaveProperty("audioPath");
+  });
+
+  test("defines strict explicit meeting deletion outcomes", () => {
+    expect(MeetingDeleteRpc.input.parse({ meetingId: "m-1" })).toEqual({ meetingId: "m-1" });
+    expect(MeetingDeleteRpc.output.parse({ meetingId: "m-1", outcome: "not_found", reason: null }))
+      .toEqual({ meetingId: "m-1", outcome: "not_found", reason: null });
+    expect(() => MeetingDeleteRpc.output.parse({ meetingId: "m-1", outcome: "refused", reason: null }))
+      .toThrow(/active-work reason/);
+    expect(() => MeetingDeleteRpc.input.parse({ meetingId: "m-1", recursive: true })).toThrow();
   });
 });

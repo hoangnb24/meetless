@@ -37,6 +37,40 @@ afterEach(async () => {
 });
 
 describe("daemon recording service", () => {
+  test("startup removes only exact stage names owned by known recordings", async () => {
+    const config = await fixtureConfig();
+    const store = new MeetingStore({ root: config.storeRoot, approvedExportRoots: [config.exportRoot] });
+    await store.create({ id: "meeting-stage", title: "Stage recovery" });
+    await store.startRecording({ id: "recording-stage", meetingId: "meeting-stage" });
+    await mkdir(config.exportRoot, { recursive: true });
+    const owned = path.join(config.exportRoot, ".meetless-recording-stage-00000000-0000-4000-8000-000000000000.mp3.stage");
+    const unrelated = path.join(config.exportRoot, ".meetless-other-recording-00000000-0000-4000-8000-000000000000.mp3.stage");
+    const deceptive = path.join(config.exportRoot, ".meetless-recording-stage-not-a-uuid.mp3.stage");
+    await Promise.all([writeFile(owned, "owned"), writeFile(unrelated, "other"), writeFile(deceptive, "deceptive")]);
+
+    const service = new RecordingService(config, store); services.add(service);
+    await service.initialize();
+
+    await expect(access(owned)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(unrelated)).resolves.toBeUndefined();
+    await expect(access(deceptive)).resolves.toBeUndefined();
+  });
+
+  test("startup does not enumerate exports for failed recordings", async () => {
+    const config = await fixtureConfig();
+    await mkdir(path.dirname(config.exportRoot), { recursive: true });
+    await writeFile(config.exportRoot, "not a directory");
+    const store = new MeetingStore({ root: config.storeRoot, approvedExportRoots: [path.dirname(config.exportRoot)] });
+    await store.create({ id: "meeting-failed", title: "Failed" });
+    await store.startRecording({ id: "recording-failed", meetingId: "meeting-failed" });
+    await mkdir(path.join(config.storeRoot, "sessions", "recording-failed"), { recursive: true });
+    await store.interruptRecording("recording-failed", "capture failed");
+    await store.assessInterruption("recording-failed", { recoverable: false });
+
+    const service = new RecordingService(config, store); services.add(service);
+    await expect(service.initialize()).resolves.toBeUndefined();
+  });
+
   test("rejects a direct production start before creating a session or spawning the helper", async () => {
     const config = await fixtureConfig({
       fixture: false,

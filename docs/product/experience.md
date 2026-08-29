@@ -251,6 +251,36 @@ The user selects a meeting from the library.
 - A playback error stays attached to the selected citation or segment.
 - On narrow screens, Back returns to the prior list position.
 
+### Flow: Delete one meeting
+
+**Trigger**
+
+The user selects **Delete** from an open meeting.
+
+**Steps**
+
+1. Show a confirmation that names the meeting.
+2. State that deletion is permanent and has no undo.
+3. Disable Delete while that meeting is capturing or finalizing audio,
+   transcribing, or running Ask.
+4. After confirmation, delete only that meeting's durable graph, audio,
+   chunks, transcript and sidecars, chat, and owned temporary files.
+5. Keep the action pending until the host returns an explicit result.
+6. On success, refresh the library and clear the deleted detail. Do not open
+   another meeting unless the current navigation path makes that selection
+   race-free.
+
+**Failure / recovery**
+
+- A failure before the durable commit keeps the meeting and restores staged
+  files.
+- Cleanup after the durable commit is retried on restart and must not recreate
+  meeting state.
+- A repeated request for an absent meeting returns **not found** and changes
+  nothing.
+- Show a safe error and preserve the list and detail when deletion fails.
+- A delete request must never change a different meeting.
+
 ### Flow: Ask and verify
 
 **Trigger**

@@ -6,6 +6,7 @@ import {
   MeetingChatProvidersRpc,
   MeetingChatRetryRpc,
   MeetingCreateRpc,
+  MeetingDeleteRpc,
   MeetingCitationResolveRpc,
   MeetingListRpc,
   MeetingTranscriptRpc,
@@ -15,6 +16,7 @@ import {
   type CitationWire,
   type ChatProviderWire,
   type MeetingChatThreadWire,
+  type MeetingDeleteResultWire,
   type TranscriptionProviderStatusWire,
   RecordingControlResponseSchema,
   RecordingStatusEventSchema,
@@ -268,6 +270,15 @@ export class MeetlessClient {
       {},
     );
     return output.meetings;
+  }
+
+  async deleteMeeting(meetingId: string): Promise<MeetingDeleteResultWire> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingDeleteRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      { meetingId },
+    );
   }
 
   async getMeetingTranscript(meetingId: string): Promise<{

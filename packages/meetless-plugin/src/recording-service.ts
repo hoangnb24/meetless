@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { lstat, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { MeetingStore } from "@meetless/meeting-store";
 import { recordingElapsedMs, type RecordingSession } from "@meetless/meeting-domain";
@@ -8,6 +8,7 @@ import { fileIdentity, Mp3Finalizer } from "./finalizer.js";
 import { readInventory, RecordingInventoryReconciler, resolveStorePath, ZeroValidMediaError } from "./inventory.js";
 import type { CollisionEvidence } from "./readiness-protocol.js";
 import type { TranscriptionService } from "./transcription-service.js";
+import { MeetingLifecycleCoordinator, type MeetingLifecycleLease } from "./meeting-lifecycle-coordinator.js";
 
 export interface RecordingServiceConfig {
   storeRoot: string;
@@ -37,8 +38,13 @@ export class RecordingService {
   private statusTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly scans = new Map<string, { controller: AbortController; promise: Promise<void> }>();
   private inventoryStartTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly recordingLeases = new Map<string, MeetingLifecycleLease>();
 
-  constructor(readonly config: RecordingServiceConfig, store?: MeetingStore) {
+  constructor(
+    readonly config: RecordingServiceConfig,
+    store?: MeetingStore,
+    private readonly lifecycle = new MeetingLifecycleCoordinator(),
+  ) {
     this.store = store ?? new MeetingStore({ root: config.storeRoot });
     this.finalizer = new Mp3Finalizer({
       ffmpeg: config.ffmpeg, ffprobe: config.ffprobe, exportRoot: config.exportRoot, storeRoot: config.storeRoot,
@@ -55,6 +61,15 @@ export class RecordingService {
   async initialize(): Promise<void> {
     await mkdir(path.join(this.config.storeRoot, "sessions"), { recursive: true, mode: 0o700 });
     const recordings = await this.store.listRecordings();
+    for (const recording of recordings) {
+      if (["recording", "interrupted", "recoverable", "finalizing"].includes(recording.status)) {
+        if (!this.registerRecordingWork(recording)) throw new Error("Meeting deletion is in progress");
+      }
+    }
+    const startupStageOwners = recordings
+      .filter((recording) => ["recording", "interrupted", "recoverable", "finalizing"].includes(recording.status))
+      .map((recording) => recording.id);
+    await this.finalizer.sweepOwnedStages(startupStageOwners);
     for (const recording of recordings) {
       if (recording.status === "recording" || recording.status === "interrupted") {
         await this.store.prepareInventoryRecovery(recording.id, "daemon restarted while capture was active");
@@ -131,6 +146,8 @@ export class RecordingService {
         await this.emitStatus();
       }
     });
+    for (const lease of this.recordingLeases.values()) lease.release();
+    this.recordingLeases.clear();
   }
 
   helperRuntime(): { pid: number | null; executable: string; arguments: string[] } {
@@ -139,6 +156,15 @@ export class RecordingService {
       executable: this.helper?.executable ?? this.config.helperPath,
       arguments: [...(this.helper?.arguments ?? this.config.helperArguments ?? (this.config.fixture ? ["--fixture"] : []))],
     };
+  }
+
+  async ownedStagePaths(meetingId: string): Promise<Array<{ recordingId: string; path: string }>> {
+    const candidates = (await this.store.listRecordings()).filter((recording) => recording.meetingId === meetingId);
+    const recordingIds = (await Promise.all(candidates.map(async (recording) => ({
+      recording,
+      ownsStage: await requiresFinalizerStageEnumeration(recording, this.config.storeRoot),
+    })))).filter((entry) => entry.ownsStage).map((entry) => entry.recording.id);
+    return this.finalizer.ownedStagePaths(recordingIds);
   }
 
   prepareCollisionEvidence(runtimeInstanceId: string, now = this.config.exportNow?.() ?? new Date()): Promise<CollisionEvidence> {
@@ -178,7 +204,16 @@ export class RecordingService {
     }
     await this.authorizeProductionStart();
     const meeting = await this.store.create({ title });
-    const recording = await this.store.startRecording({ meetingId: meeting.id });
+    const lease = this.lifecycle.tryAcquireWork(meeting.id, "active_capture");
+    if (!lease) throw new Error("Meeting deletion is in progress");
+    let recording: RecordingSession;
+    try {
+      recording = await this.store.startRecording({ meetingId: meeting.id });
+      this.recordingLeases.set(recording.id, lease);
+    } catch (error) {
+      lease.release();
+      throw error;
+    }
     const sessionDirectory = path.join(this.config.storeRoot, "sessions", recording.id);
     await mkdir(sessionDirectory, { recursive: true, mode: 0o700 });
     try {
@@ -326,6 +361,7 @@ export class RecordingService {
     const saved = await this.store.markRecordingSaved(recording.id, {
       destination: intent.destination, identity: verified.identity, readable: true,
     });
+    this.releaseRecordingWork(recording.id);
     const cleanupInventory = await this.store.cleanupEligibleInventory(recording.id, {
       destination: intent.destination, identity: verified.identity, readable: true,
     });
@@ -397,6 +433,9 @@ export class RecordingService {
       })
       .finally(async () => {
         this.scans.delete(recording.id);
+        const current = (await this.store.listRecordings().catch(() => []))
+          .find((candidate) => candidate.id === recording.id);
+        if (!current || current.status === "failed" || current.status === "saved") this.releaseRecordingWork(recording.id);
         if (!this.shuttingDown) await this.emitStatus().catch(() => undefined);
       });
     this.scans.set(recording.id, { controller, promise });
@@ -448,6 +487,20 @@ export class RecordingService {
     return recording;
   }
 
+  private registerRecordingWork(recording: RecordingSession): boolean {
+    if (this.recordingLeases.has(recording.id)) return true;
+    const kind = recording.finalization ? "finalization" : "active_capture";
+    const lease = this.lifecycle.tryAcquireWork(recording.meetingId, kind);
+    if (!lease) return false;
+    this.recordingLeases.set(recording.id, lease);
+    return true;
+  }
+
+  private releaseRecordingWork(recordingId: string): void {
+    this.recordingLeases.get(recordingId)?.release();
+    this.recordingLeases.delete(recordingId);
+  }
+
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.commandTail.then(operation);
     this.commandTail = result.then(() => undefined, () => undefined);
@@ -465,6 +518,15 @@ export class RecordingService {
     }, 100);
   }
   private notify(status: RecordingStatusWire): void { for (const listener of this.listeners) listener(status); }
+}
+
+async function requiresFinalizerStageEnumeration(recording: RecordingSession, storeRoot: string): Promise<boolean> {
+  if (["recording", "interrupted", "recoverable", "finalizing"].includes(recording.status)) return true;
+  if (recording.status !== "failed") return false;
+  return lstat(path.join(storeRoot, "sessions", recording.id)).then(
+    (state) => state.isDirectory() && !state.isSymbolicLink(),
+    (error: NodeJS.ErrnoException) => error.code === "ENOENT" ? false : Promise.reject(error),
+  );
 }
 
 function idleStatus(): RecordingStatusWire {

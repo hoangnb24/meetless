@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { open, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { open, lstat, mkdir, readFile, readdir, realpath, rename, rm, rmdir, stat } from "node:fs/promises";
 import path from "node:path";
 import {
   adoptOrphanChunk,
@@ -637,6 +637,26 @@ interface MeetingState {
   chatThreads: MeetingChatThread[];
 }
 
+const DeletionManifestSchema = z.object({
+  version: z.literal(1),
+  operationId: z.string().uuid(),
+  meetingId: z.string().trim().min(1),
+  entries: z.array(z.object({
+    kind: z.enum(["session", "output", "transcript", "stage"]),
+    ownerId: z.string().trim().min(1),
+    approvedRoot: z.string().trim().min(1),
+    original: z.string().trim().min(1),
+    quarantine: z.string().trim().min(1),
+  }).strict()),
+  integritySha256: z.string().regex(/^[a-f0-9]{64}$/u),
+}).strict();
+
+type DeletionManifest = z.infer<typeof DeletionManifestSchema>;
+
+export type MeetingDeleteStoreResult =
+  | { meetingId: string; outcome: "deleted" | "not_found"; reason: null }
+  | { meetingId: string; outcome: "refused"; reason: "active_capture" | "finalization" | "transcription" | "ask" };
+
 export class MeetingStoreCorruptError extends Error {
   constructor(filePath: string, cause: unknown) {
     super(`Meeting state is corrupt at ${filePath}; repair or restore it before retrying`, { cause });
@@ -662,8 +682,27 @@ export class RecordingOwnedMeetingTransitionError extends Error {
 
 export interface MeetingStoreOptions {
   root: string;
+  approvedExportRoots?: readonly string[];
   now?: () => string;
   createId?: () => string;
+  deletionIo?: Partial<MeetingDeletionIo>;
+}
+
+export interface MeetingDeletionIo {
+  open: typeof open;
+  rename: typeof rename;
+  rm: typeof rm;
+  syncDirectory(directory: string): Promise<void>;
+}
+
+export interface MeetingDeleteInput {
+  recordingStagePaths?: ReadonlyArray<{ recordingId: string; path: string }>;
+}
+
+class MeetingStateReplacementError extends Error {
+  constructor(readonly replaced: boolean, cause: unknown) {
+    super("Meeting state replacement failed", { cause });
+  }
 }
 
 export class MeetingStore {
@@ -671,13 +710,23 @@ export class MeetingStore {
   private readonly root: string;
   private readonly now: () => string;
   private readonly createId: () => string;
+  private readonly approvedExportRoots: string[];
+  private readonly deletionIo: MeetingDeletionIo;
   private mutationTail: Promise<void> = Promise.resolve();
 
   constructor(options: MeetingStoreOptions) {
     this.root = path.resolve(options.root);
     this.filePath = path.join(this.root, "meetings.json");
+    this.approvedExportRoots = (options.approvedExportRoots ?? []).map((root) => path.resolve(root));
     this.now = options.now ?? (() => new Date().toISOString());
     this.createId = options.createId ?? (() => randomUUID());
+    this.deletionIo = {
+      open,
+      rename,
+      rm,
+      syncDirectory,
+      ...options.deletionIo,
+    };
   }
 
   async list(): Promise<Meeting[]> {
@@ -828,10 +877,12 @@ export class MeetingStore {
     });
   }
 
-  async reconcileTranscriptPublications(): Promise<TranscriptState[]> {
+  async reconcileTranscriptPublications(meetingIds?: readonly string[]): Promise<TranscriptState[]> {
     return this.mutate(async (state) => {
+      const allowed = meetingIds ? new Set(meetingIds) : null;
       for (let index = 0; index < state.transcripts.length; index += 1) {
         const current = state.transcripts[index]!;
+        if (allowed && !allowed.has(current.meetingId)) continue;
         if (current.status === "ready") {
           await this.assertTranscriptSidecar(current);
           continue;
@@ -978,9 +1029,11 @@ export class MeetingStore {
     });
   }
 
-  reconcileChatAfterRestart(): Promise<MeetingChatThread[]> {
+  reconcileChatAfterRestart(meetingIds?: readonly string[]): Promise<MeetingChatThread[]> {
     return this.mutate(async (state) => {
-      state.chatThreads = state.chatThreads.map((thread) => reconcileChatAfterRestart(thread, this.now()));
+      const allowed = meetingIds ? new Set(meetingIds) : null;
+      state.chatThreads = state.chatThreads.map((thread) =>
+        !allowed || allowed.has(thread.meetingId) ? reconcileChatAfterRestart(thread, this.now()) : thread);
       return state.chatThreads.map((thread) => structuredClone(thread));
     });
   }
@@ -1002,6 +1055,77 @@ export class MeetingStore {
       state.meetings.push(meeting);
       return meeting;
     });
+  }
+
+  deleteMeeting(meetingId: string, input: MeetingDeleteInput = {}): Promise<MeetingDeleteStoreResult> {
+    const operation = this.mutationTail.then(async () => {
+      const state = await this.readState();
+      const meeting = state.meetings.find((candidate) => candidate.id === meetingId);
+      if (!meeting) return { meetingId, outcome: "not_found" as const, reason: null };
+
+      const recordings = state.recordings.filter((recording) => recording.meetingId === meetingId);
+      const unsafeRecording = recordings.find((recording) =>
+        ["recording", "interrupted", "recoverable"].includes(recording.status));
+      if (unsafeRecording) {
+        return {
+          meetingId,
+          outcome: "refused" as const,
+          reason: unsafeRecording.finalization ? "finalization" as const : "active_capture" as const,
+        };
+      }
+      if (recordings.some((recording) => recording.status === "finalizing")) {
+        return { meetingId, outcome: "refused" as const, reason: "finalization" as const };
+      }
+      if (state.transcripts.some((transcript) => transcript.meetingId === meetingId &&
+        (transcript.status === "pending" || transcript.status === "transcribing"))) {
+        return { meetingId, outcome: "refused" as const, reason: "transcription" as const };
+      }
+      if (state.chatThreads.some((thread) => thread.meetingId === meetingId && thread.status === "running")) {
+        return { meetingId, outcome: "refused" as const, reason: "ask" as const };
+      }
+
+      const operationId = randomUUID();
+      const entries = await this.deletionOwnedEntries(state, meetingId, input);
+      const unsigned = {
+        version: 1 as const,
+        operationId,
+        meetingId,
+        entries: entries.map((entry) => ({ ...entry,
+          quarantine: path.join(path.dirname(entry.original), `.${path.basename(entry.original)}.meetless-delete-${operationId}`),
+        })),
+      };
+      const manifest: DeletionManifest = { ...unsigned, integritySha256: manifestIntegrity(unsigned) };
+      const manifestPath = await this.writeDeletionManifest(manifest);
+      const staged: DeletionManifest["entries"] = [];
+      try {
+        for (const entry of manifest.entries) {
+          try {
+            await this.assertSafeDeletionEntry(entry, false);
+            await this.deletionIo.rename(entry.original, entry.quarantine);
+            staged.push(entry);
+            await this.deletionIo.syncDirectory(path.dirname(entry.original));
+          } catch (error) {
+            if (!isErrno(error, "ENOENT")) throw error;
+          }
+        }
+        state.chatThreads = state.chatThreads.filter((thread) => thread.meetingId !== meetingId);
+        state.transcripts = state.transcripts.filter((transcript) => transcript.meetingId !== meetingId);
+        const recordingIds = new Set(recordings.map((recording) => recording.id));
+        state.recordings = state.recordings.filter((recording) => !recordingIds.has(recording.id));
+        state.meetings = state.meetings.filter((candidate) => candidate.id !== meetingId);
+        await this.replaceState(state);
+      } catch (error) {
+        if (!(error instanceof MeetingStateReplacementError) || !error.replaced) {
+          await this.restoreDeletionEntries(staged);
+          await this.removeDeletionManifest(manifestPath);
+        }
+        throw error;
+      }
+      await this.finishDeletionManifest(manifestPath, manifest).catch(() => undefined);
+      return { meetingId, outcome: "deleted" as const, reason: null };
+    });
+    this.mutationTail = operation.then(() => undefined, () => undefined);
+    return operation;
   }
 
   transition(id: string, status: MeetingStatus): Promise<Meeting> {
@@ -1415,36 +1539,292 @@ export class MeetingStore {
     try {
       contents = await readFile(this.filePath, "utf8");
     } catch (error) {
-      if (isErrno(error, "ENOENT")) return { version: 4, meetings: [], recordings: [], transcripts: [], cloudConsent: null, chatThreads: [] };
+      if (isErrno(error, "ENOENT")) {
+        const empty = { version: 4 as const, meetings: [], recordings: [], transcripts: [], cloudConsent: null, chatThreads: [] };
+        await this.reconcileDeletionManifests(empty);
+        return empty;
+      }
       throw error;
     }
     try {
       const decoded: unknown = JSON.parse(contents);
       const v1 = StateV1Schema.safeParse(decoded);
-      if (v1.success) return { version: 4, meetings: v1.data.meetings, recordings: [], transcripts: [], cloudConsent: null, chatThreads: [] };
+      if (v1.success) return await this.withDeletionRecovery({ version: 4, meetings: v1.data.meetings, recordings: [], transcripts: [], cloudConsent: null, chatThreads: [] });
       const v2 = MeetingStateV2Schema.safeParse(decoded);
-      if (v2.success) return migrateV2(v2.data);
+      if (v2.success) return await this.withDeletionRecovery(migrateV2(v2.data));
       const v3 = StateV3Schema.safeParse(decoded);
-      if (v3.success) return {
+      if (v3.success) return await this.withDeletionRecovery({
         version: 4,
         meetings: v3.data.meetings,
         recordings: v3.data.recordings,
         transcripts: v3.data.transcripts ?? [],
         cloudConsent: v3.data.cloudConsent ?? null,
         chatThreads: [],
-      };
+      });
       const parsed = MeetingStateSchema.parse(decoded);
-      return {
+      return await this.withDeletionRecovery({
         version: 4,
         meetings: parsed.meetings,
         recordings: parsed.recordings,
         transcripts: parsed.transcripts ?? [],
         cloudConsent: parsed.cloudConsent ?? null,
         chatThreads: parsed.chatThreads ?? [],
-      };
+      });
     } catch (error) {
       throw new MeetingStoreCorruptError(this.filePath, error);
     }
+  }
+
+  private async deletionOwnedEntries(
+    state: MeetingState,
+    meetingId: string,
+    input: MeetingDeleteInput,
+  ): Promise<Array<Omit<DeletionManifest["entries"][number], "quarantine">>> {
+    const recordings = state.recordings.filter((recording) => recording.meetingId === meetingId);
+    const recordingIds = new Set(recordings.map((recording) => recording.id));
+    const entries: Array<Omit<DeletionManifest["entries"][number], "quarantine">> = [];
+    for (const recording of recordings) {
+      entries.push({
+        kind: "session", ownerId: recording.id, approvedRoot: this.root,
+        original: path.join(this.root, "sessions", recording.id),
+      });
+      for (const output of [recording.savedOutput?.destination, recording.finalization?.publishIntent.destination]) {
+        if (!output) continue;
+        entries.push({
+          kind: "output", ownerId: recording.id,
+          approvedRoot: this.approvedRootFor(path.resolve(output), [this.root, ...this.approvedExportRoots]),
+          original: path.resolve(output),
+        });
+      }
+    }
+    for (const transcript of state.transcripts.filter((candidate) => candidate.meetingId === meetingId)) {
+      if (!transcript.publication) continue;
+      const expected = this.transcriptSidecarPath(transcript);
+      if (path.resolve(this.root, transcript.publication.storageKey) !== expected) {
+        throw new Error(`Transcript ${transcript.id} deletion path does not match its exact owned sidecar`);
+      }
+      entries.push({ kind: "transcript", ownerId: transcript.id, approvedRoot: this.root, original: expected });
+    }
+    for (const stage of input.recordingStagePaths ?? []) {
+      if (!recordingIds.has(stage.recordingId)) {
+        throw new Error(`Stage path is not owned by meeting ${meetingId}: ${stage.recordingId}`);
+      }
+      const original = path.resolve(stage.path);
+      const approvedRoot = this.approvedRootFor(original, this.approvedExportRoots);
+      if (!isExactRecordingStageName(path.basename(original), stage.recordingId)) {
+        throw new Error(`Stage path is not an exact recording-owned .stage file: ${stage.path}`);
+      }
+      entries.push({ kind: "stage", ownerId: stage.recordingId, approvedRoot, original });
+    }
+    const unique = deduplicateDeletionEntries(entries);
+    this.assertNoSharedDeletionPaths(state, meetingId, unique);
+    for (const entry of unique) await this.assertSafeDeletionEntry(entry, false);
+    return unique.filter((entry) => !unique.some((parent) =>
+      parent.original !== entry.original && parent.kind === "session" && isPathInside(parent.original, entry.original)));
+  }
+
+  private async writeDeletionManifest(manifest: DeletionManifest): Promise<string> {
+    const directory = path.join(this.root, ".deletions");
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const manifestPath = path.join(directory, `${manifest.operationId}.json`);
+    const temporaryPath = path.join(directory, `.${manifest.operationId}.${randomUUID()}.tmp`);
+    let published = false;
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      handle = await this.deletionIo.open(temporaryPath, "wx", 0o600);
+      await handle.writeFile(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      await this.deletionIo.rename(temporaryPath, manifestPath);
+      published = true;
+      await this.deletionIo.syncDirectory(directory);
+      return manifestPath;
+    } catch (error) {
+      await this.deletionIo.rm(temporaryPath, { force: true }).catch(() => undefined);
+      if (published) await this.deletionIo.rm(manifestPath, { force: true }).catch(() => undefined);
+      await this.deletionIo.syncDirectory(directory).catch(() => undefined);
+      throw error;
+    } finally {
+      await handle?.close().catch(() => undefined);
+      await this.deletionIo.rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
+  }
+
+  private async withDeletionRecovery(state: MeetingState): Promise<MeetingState> {
+    await this.reconcileDeletionManifests(state);
+    return state;
+  }
+
+  private async reconcileDeletionManifests(state: MeetingState): Promise<void> {
+    const directory = path.join(this.root, ".deletions");
+    let names: string[];
+    try {
+      names = await readdir(directory);
+    } catch (error) {
+      if (isErrno(error, "ENOENT")) return;
+      throw error;
+    }
+    for (const name of names.filter((candidate) => candidate.endsWith(".json")).sort()) {
+      const manifestPath = path.join(directory, name);
+      let manifest: DeletionManifest;
+      try {
+        manifest = DeletionManifestSchema.parse(JSON.parse(await readFile(manifestPath, "utf8")));
+        this.assertDeletionManifestPaths(manifest);
+        if (manifest.integritySha256 !== manifestIntegrity({
+          version: manifest.version, operationId: manifest.operationId, meetingId: manifest.meetingId, entries: manifest.entries,
+        })) throw new Error("Deletion manifest integrity check failed");
+        for (const entry of manifest.entries) await this.assertSafeDeletionEntry(entry, true);
+        this.assertDeletionManifestOwnership(state, manifest);
+      } catch (error) {
+        throw new MeetingStoreCorruptError(manifestPath, error);
+      }
+      if (state.meetings.some((meeting) => meeting.id === manifest.meetingId)) {
+        await this.restoreDeletionEntries(manifest.entries);
+        await this.removeDeletionManifest(manifestPath);
+      } else {
+        await this.finishDeletionManifest(manifestPath, manifest);
+      }
+    }
+    let removedDirectory = false;
+    await rmdir(directory).then(() => { removedDirectory = true; }).catch((error) => {
+      if (!isErrno(error, "ENOENT") && !isErrno(error, "ENOTEMPTY")) throw error;
+    });
+    if (removedDirectory) await this.deletionIo.syncDirectory(this.root);
+  }
+
+  private assertDeletionManifestPaths(manifest: DeletionManifest): void {
+    for (const entry of manifest.entries) {
+      if (!path.isAbsolute(entry.original) || !path.isAbsolute(entry.quarantine)) {
+        throw new Error("Deletion manifest paths must be absolute");
+      }
+      const expected = path.join(
+        path.dirname(entry.original),
+        `.${path.basename(entry.original)}.meetless-delete-${manifest.operationId}`,
+      );
+      if (entry.quarantine !== expected) throw new Error("Deletion manifest quarantine path is invalid");
+      if (path.resolve(entry.original) !== entry.original || path.resolve(entry.approvedRoot) !== entry.approvedRoot) {
+        throw new Error("Deletion manifest paths must be normalized");
+      }
+      const approvedRoots = entry.kind === "session" || entry.kind === "transcript"
+        ? [this.root]
+        : [this.root, ...this.approvedExportRoots];
+      if (!approvedRoots.includes(entry.approvedRoot)) throw new Error("Deletion manifest root is not approved");
+    }
+  }
+
+  private async restoreDeletionEntries(entries: DeletionManifest["entries"]): Promise<void> {
+    for (const entry of [...entries].reverse()) {
+      try {
+        await this.deletionIo.rename(entry.quarantine, entry.original);
+        await this.deletionIo.syncDirectory(path.dirname(entry.original));
+      } catch (error) {
+        if (!isErrno(error, "ENOENT")) throw error;
+      }
+    }
+  }
+
+  private async finishDeletionManifest(manifestPath: string, manifest: DeletionManifest): Promise<void> {
+    for (const entry of manifest.entries) {
+      try {
+        await lstat(entry.quarantine);
+      } catch (error) {
+        if (isErrno(error, "ENOENT")) continue;
+        throw error;
+      }
+      await this.deletionIo.rm(entry.quarantine, { recursive: entry.kind === "session", force: true });
+      await this.deletionIo.syncDirectory(path.dirname(entry.quarantine));
+    }
+    await this.removeDeletionManifest(manifestPath);
+  }
+
+  private async removeDeletionManifest(manifestPath: string): Promise<void> {
+    await this.deletionIo.rm(manifestPath, { force: true });
+    await this.deletionIo.syncDirectory(path.dirname(manifestPath));
+  }
+
+  private approvedRootFor(candidate: string, roots: readonly string[]): string {
+    const root = roots.find((approved) => isPathInside(approved, candidate));
+    if (!root) {
+      throw new Error(`Deletion path is outside approved store/export roots: ${candidate}`);
+    }
+    return root;
+  }
+
+  private async assertSafeDeletionEntry(
+    entry: Omit<DeletionManifest["entries"][number], "quarantine"> | DeletionManifest["entries"][number],
+    recovery: boolean,
+  ): Promise<void> {
+    if (!isPathInside(entry.approvedRoot, entry.original)) {
+      throw new Error(`Deletion path escapes approved root: ${entry.original}`);
+    }
+    if ((entry.kind === "session" && entry.original !== path.join(this.root, "sessions", entry.ownerId)) ||
+      (entry.kind === "transcript" && entry.original !== path.join(this.root, "transcripts", `${entry.ownerId}.json`)) ||
+      (entry.kind === "stage" && !isExactRecordingStageName(path.basename(entry.original), entry.ownerId))) {
+      throw new Error(`Deletion path does not match exact meeting ownership: ${entry.original}`);
+    }
+    const rootReal = await realpath(entry.approvedRoot);
+    const candidatePath = recovery && "quarantine" in entry ? entry.quarantine : entry.original;
+    const candidateReal = await realExistingPathOrAncestor(candidatePath);
+    if (!isPathInside(rootReal, candidateReal) && candidateReal !== rootReal) {
+      throw new Error(`Deletion path has symlink ancestry outside approved root: ${candidatePath}`);
+    }
+    try {
+      const info = await lstat(candidatePath);
+      if (info.isSymbolicLink()) throw new Error(`Deletion target cannot be a symlink: ${candidatePath}`);
+      if (entry.kind === "session" ? !info.isDirectory() : !info.isFile()) {
+        throw new Error(`Deletion target has an invalid file type: ${candidatePath}`);
+      }
+    } catch (error) {
+      if (!isErrno(error, "ENOENT")) throw error;
+    }
+  }
+
+  private assertNoSharedDeletionPaths(
+    state: MeetingState,
+    meetingId: string,
+    entries: ReadonlyArray<Omit<DeletionManifest["entries"][number], "quarantine">>,
+  ): void {
+    const owned = new Set(entries.map((entry) => entry.original));
+    for (const recording of state.recordings.filter((candidate) => candidate.meetingId !== meetingId)) {
+      const paths = [
+        path.join(this.root, "sessions", recording.id),
+        recording.savedOutput?.destination,
+        recording.finalization?.publishIntent.destination,
+      ].filter((candidate): candidate is string => Boolean(candidate)).map((candidate) => path.resolve(candidate));
+      const shared = paths.find((candidate) => owned.has(candidate));
+      if (shared) throw new Error(`Deletion path is shared with meeting ${recording.meetingId}: ${shared}`);
+    }
+    for (const transcript of state.transcripts.filter((candidate) => candidate.meetingId !== meetingId && candidate.publication)) {
+      const shared = path.resolve(this.root, transcript.publication!.storageKey);
+      if (owned.has(shared)) throw new Error(`Deletion path is shared with meeting ${transcript.meetingId}: ${shared}`);
+    }
+  }
+
+  private assertDeletionManifestOwnership(state: MeetingState, manifest: DeletionManifest): void {
+    const meetingExists = state.meetings.some((meeting) => meeting.id === manifest.meetingId);
+    if (!meetingExists) return;
+    const recordingIds = new Set(state.recordings
+      .filter((recording) => recording.meetingId === manifest.meetingId).map((recording) => recording.id));
+    const transcriptIds = new Set(state.transcripts
+      .filter((transcript) => transcript.meetingId === manifest.meetingId).map((transcript) => transcript.id));
+    for (const entry of manifest.entries) {
+      if ((entry.kind === "session" || entry.kind === "output" || entry.kind === "stage") && !recordingIds.has(entry.ownerId)) {
+        throw new Error(`Deletion manifest entry is not owned by meeting ${manifest.meetingId}`);
+      }
+      if (entry.kind === "transcript" && !transcriptIds.has(entry.ownerId)) {
+        throw new Error(`Deletion manifest transcript is not owned by meeting ${manifest.meetingId}`);
+      }
+      if (entry.kind === "output") {
+        const recording = state.recordings.find((candidate) => candidate.id === entry.ownerId);
+        const exactOutputs = [recording?.savedOutput?.destination, recording?.finalization?.publishIntent.destination]
+          .filter((candidate): candidate is string => Boolean(candidate)).map((candidate) => path.resolve(candidate));
+        if (!exactOutputs.includes(entry.original)) {
+          throw new Error(`Deletion manifest output is not exactly owned by recording ${entry.ownerId}`);
+        }
+      }
+    }
+    this.assertNoSharedDeletionPaths(state, manifest.meetingId, manifest.entries);
   }
 
   private async writeState(state: MeetingState): Promise<void> {
@@ -1456,29 +1836,95 @@ export class MeetingStore {
       ...(state.cloudConsent ? { cloudConsent: state.cloudConsent } : {}),
       ...(state.chatThreads.length > 0 ? { chatThreads: state.chatThreads } : {}),
     });
+    await this.replaceStateBytes(`${JSON.stringify(checked, null, 2)}\n`);
+  }
+
+  private async replaceState(state: MeetingState): Promise<void> {
+    const checked = MeetingStateSchema.parse({
+      version: state.version,
+      meetings: state.meetings,
+      recordings: state.recordings,
+      ...(state.transcripts.length > 0 ? { transcripts: state.transcripts } : {}),
+      ...(state.cloudConsent ? { cloudConsent: state.cloudConsent } : {}),
+      ...(state.chatThreads.length > 0 ? { chatThreads: state.chatThreads } : {}),
+    });
+    await this.replaceStateBytes(`${JSON.stringify(checked, null, 2)}\n`);
+  }
+
+  private async replaceStateBytes(contents: string): Promise<void> {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const temporaryPath = path.join(this.root, `.meetings.${process.pid}.${randomUUID()}.tmp`);
     let temporaryCreated = false;
+    let replaced = false;
     try {
-      const handle = await open(temporaryPath, "wx", 0o600);
+      const handle = await this.deletionIo.open(temporaryPath, "wx", 0o600);
       temporaryCreated = true;
       try {
-        await handle.writeFile(`${JSON.stringify(checked, null, 2)}\n`, "utf8");
+        await handle.writeFile(contents, "utf8");
         await handle.sync();
       } finally {
         await handle.close();
       }
-      await rename(temporaryPath, this.filePath);
+      await this.deletionIo.rename(temporaryPath, this.filePath);
+      replaced = true;
       temporaryCreated = false;
-      await syncDirectory(this.root);
+      await this.deletionIo.syncDirectory(this.root);
+    } catch (error) {
+      throw new MeetingStateReplacementError(replaced, error);
     } finally {
-      if (temporaryCreated) await rm(temporaryPath, { force: true }).catch(() => undefined);
+      if (temporaryCreated) await this.deletionIo.rm(temporaryPath, { force: true }).catch(() => undefined);
     }
   }
 }
 
 function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === code;
+}
+
+function isPathInside(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function deduplicateDeletionEntries(
+  entries: ReadonlyArray<Omit<DeletionManifest["entries"][number], "quarantine">>,
+): Array<Omit<DeletionManifest["entries"][number], "quarantine">> {
+  const byPath = new Map<string, Omit<DeletionManifest["entries"][number], "quarantine">>();
+  for (const entry of entries) {
+    const existing = byPath.get(entry.original);
+    if (existing && (existing.kind !== entry.kind || existing.ownerId !== entry.ownerId)) {
+      throw new Error(`Deletion path has more than one owner: ${entry.original}`);
+    }
+    byPath.set(entry.original, entry);
+  }
+  return [...byPath.values()];
+}
+
+function manifestIntegrity(manifest: Omit<DeletionManifest, "integritySha256">): string {
+  return createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+}
+
+function isExactRecordingStageName(name: string, recordingId: string): boolean {
+  const escaped = recordingId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(
+    `^\\.meetless-${escaped}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-(?:microphone|system)\\.wav|\\.mp3)\\.stage$`,
+    "u",
+  ).test(name);
+}
+
+async function realExistingPathOrAncestor(candidate: string): Promise<string> {
+  let current = candidate;
+  for (;;) {
+    try {
+      const resolved = await realpath(current);
+      return current === candidate ? resolved : path.join(resolved, path.relative(current, candidate));
+    } catch (error) {
+      if (!isErrno(error, "ENOENT")) throw error;
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      current = parent;
+    }
+  }
 }
 
 async function syncDirectory(directory: string): Promise<void> {

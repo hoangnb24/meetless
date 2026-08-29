@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open as fsOpen, readFile, readdir, rename as fsRename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { InvalidMeetingTransitionError } from "@meetless/meeting-domain";
 import {
   MeetingStore,
@@ -273,7 +273,7 @@ describe("meeting store", () => {
     await lifecycleStore.transition("m-1", "ready");
     await lifecycleStore.transition("m-1", "archived");
 
-    const restarted = new MeetingStore({ root });
+    const restarted = new MeetingStore({ root, approvedExportRoots: [path.join(root, "exports")] });
     await expect(restarted.cleanupEligibleInventory("r-1", verification)).resolves.toMatchObject({
       pointer: { digest: "chunk-set-sha", chunkCount: 1 }, legacyChunks: [],
     });
@@ -547,7 +547,392 @@ describe("meeting store", () => {
       failureReason: "Transcription interrupted after the final allowed attempt",
     });
   });
+
+  test("deletes one durable meeting graph and owned files across restart, with idempotent not-found", async () => {
+    const root = await temporaryRoot();
+    const store = new MeetingStore({
+      root, approvedExportRoots: [path.join(root, "exports")], now: () => "2026-08-29T10:00:00.000Z",
+    });
+    const owned = await prepareReadyMeetingGraph(store, root, "m-delete", "r-delete");
+    const stagePath = path.join(root, "exports", ".meetless-r-delete-00000000-0000-4000-8000-000000000000.mp3.stage");
+    await writeFile(stagePath, "stage");
+    owned.push(stagePath);
+    await store.create({ id: "m-keep", title: "Keep this meeting" });
+    const cleanup = vi.spyOn(
+      store as unknown as { finishDeletionManifest(manifestPath: string, manifest: unknown): Promise<void> },
+      "finishDeletionManifest",
+    ).mockRejectedValueOnce(new Error("injected post-commit cleanup failure"));
+
+    await expect(store.deleteMeeting("m-delete", {
+      recordingStagePaths: [{ recordingId: "r-delete", path: stagePath }],
+    })).resolves.toEqual({
+      meetingId: "m-delete", outcome: "deleted", reason: null,
+    });
+    cleanup.mockRestore();
+    await expect(readdir(path.join(root, ".deletions"))).resolves.toHaveLength(1);
+
+    const restarted = new MeetingStore({ root, approvedExportRoots: [path.join(root, "exports")] });
+    await expect(restarted.list()).resolves.toMatchObject([{ id: "m-keep" }]);
+    await expect(restarted.listRecordings()).resolves.toEqual([]);
+    await expect(restarted.listTranscripts()).resolves.toEqual([]);
+    await expect(restarted.listChatThreads()).resolves.toEqual([]);
+    for (const filePath of owned) await expect(readFile(filePath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readdir(path.join(root, ".deletions"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(restarted.deleteMeeting("m-delete")).resolves.toEqual({
+      meetingId: "m-delete", outcome: "not_found", reason: null,
+    });
+    await expect(restarted.list()).resolves.toMatchObject([{ id: "m-keep" }]);
+  });
+
+  test("deletes a failed recording whose parent meeting still has recording status", async () => {
+    const root = await temporaryRoot();
+    const store = new MeetingStore({ root });
+    await store.create({ id: "m-failed", title: "Failed capture" });
+    await store.startRecording({ id: "r-failed", meetingId: "m-failed" });
+    await store.interruptRecording("r-failed", "capture helper exited");
+    await store.assessInterruption("r-failed", { recoverable: false, reason: "No valid media remains" });
+
+    await expect(store.list()).resolves.toMatchObject([{ id: "m-failed", status: "recording" }]);
+    await expect(store.listRecordings()).resolves.toMatchObject([{ id: "r-failed", status: "failed" }]);
+    await expect(store.deleteMeeting("m-failed")).resolves.toEqual({
+      meetingId: "m-failed", outcome: "deleted", reason: null,
+    });
+    await expect(new MeetingStore({ root }).list()).resolves.toEqual([]);
+    await expect(new MeetingStore({ root }).listRecordings()).resolves.toEqual([]);
+  });
+
+  test("rolls staged files back when the durable graph commit fails", async () => {
+    const root = await temporaryRoot();
+    const seed = new MeetingStore({ root, now: () => "2026-08-29T10:00:00.000Z" });
+    const owned = await prepareReadyMeetingGraph(seed, root, "m-rollback", "r-rollback");
+    const synced: string[] = [];
+    const store = new MeetingStore({ root, deletionIo: { syncDirectory: async (directory) => {
+      synced.push(directory);
+      const handle = await fsOpen(directory, "r");
+      try { await handle.sync(); } finally { await handle.close(); }
+    } } });
+    const writeState = vi.spyOn(store as unknown as { replaceState(state: unknown): Promise<void> }, "replaceState")
+      .mockRejectedValueOnce(new Error("injected durable commit failure"));
+
+    await expect(store.deleteMeeting("m-rollback")).rejects.toThrow("injected durable commit failure");
+    writeState.mockRestore();
+
+    const restarted = new MeetingStore({ root });
+    await expect(restarted.list()).resolves.toMatchObject([{ id: "m-rollback" }]);
+    await expect(restarted.listRecordings()).resolves.toHaveLength(1);
+    await expect(restarted.listTranscripts()).resolves.toHaveLength(1);
+    await expect(restarted.listChatThreads()).resolves.toHaveLength(1);
+    for (const filePath of owned) await expect(readFile(filePath)).resolves.toBeTruthy();
+    expect(synced.filter((directory) => directory === path.join(root, "sessions"))).toHaveLength(2);
+    expect(synced.filter((directory) => directory === path.join(root, "exports"))).toHaveLength(2);
+    expect(synced.filter((directory) => directory === path.join(root, "transcripts"))).toHaveLength(2);
+  });
+
+  test("rolls the current entry back when its post-rename directory sync fails", async () => {
+    const root = await temporaryRoot();
+    const seed = new MeetingStore({ root, now: () => "2026-08-29T10:00:00.000Z" });
+    const owned = await prepareReadyMeetingGraph(seed, root, "m-stage-sync", "r-stage-sync");
+    const failingParent = path.join(root, "sessions");
+    let failed = false;
+    const store = new MeetingStore({ root, deletionIo: { syncDirectory: async (directory) => {
+      if (!failed && directory === failingParent) {
+        failed = true;
+        throw new Error("injected staging directory sync failure");
+      }
+      const handle = await fsOpen(directory, "r");
+      try { await handle.sync(); } finally { await handle.close(); }
+    } } });
+
+    await expect(store.deleteMeeting("m-stage-sync")).rejects.toThrow("injected staging directory sync failure");
+
+    const restarted = new MeetingStore({ root });
+    await expect(restarted.list()).resolves.toMatchObject([{ id: "m-stage-sync", status: "ready" }]);
+    await expect(restarted.listRecordings()).resolves.toMatchObject([{ id: "r-stage-sync", meetingId: "m-stage-sync" }]);
+    await expect(restarted.listTranscripts()).resolves.toHaveLength(1);
+    await expect(restarted.listChatThreads()).resolves.toHaveLength(1);
+    for (const filePath of owned) await expect(readFile(filePath)).resolves.toBeTruthy();
+    await expect(readdir(path.join(root, ".deletions"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readdir(failingParent)).resolves.not.toContainEqual(expect.stringContaining(".meetless-delete-"));
+  });
+
+  test.each([
+    ["active_capture", "recording"],
+    ["finalization", "finalizing"],
+  ] as const)("refuses %s without changing another meeting", async (reason, status) => {
+    const root = await temporaryRoot();
+    const store = new MeetingStore({ root });
+    await store.create({ id: "m-busy", title: "Busy" });
+    await store.create({ id: "m-other", title: "Other" });
+    await store.startRecording({ id: "r-busy", meetingId: "m-busy" });
+    if (status === "finalizing") {
+      await store.commitChunk("r-busy", {
+        id: "chunk", source: "microphone", storageKey: "sessions/r-busy/chunk.wav", byteLength: 1,
+        sha256: "chunk", committedAt: "2026-08-29T10:00:00.000Z", logicalStartMs: 0, durationMs: 1,
+        sampleRate: 16_000, channels: 1, format: "wav",
+      });
+      await completeInventory(store, "r-busy", "digest");
+      await store.beginFinalization("r-busy", {
+        openChunksDurablyClosed: true, chunkSetDigest: "digest", destination: path.join(root, "busy.mp3"),
+        expectedIdentity: { byteLength: 1, sha256: "audio" },
+      });
+    }
+    await expect(store.deleteMeeting("m-busy")).resolves.toEqual({ meetingId: "m-busy", outcome: "refused", reason });
+    await expect(store.list()).resolves.toMatchObject([{ id: "m-busy" }, { id: "m-other" }]);
+  });
+
+  test("refuses transcription and Ask while each durable operation is active", async () => {
+    const root = await temporaryRoot();
+    const store = new MeetingStore({ root, now: () => "2026-08-29T10:00:00.000Z" });
+    await prepareSavedMeeting(store, root, "m-transcribing", "r-transcribing");
+    const transcript = await store.ensureTranscript({
+      meetingId: "m-transcribing", recordingId: "r-transcribing",
+      audio: { destination: path.join(root, "exports", "r-transcribing.mp3"), byteLength: 5, sha256: "audio-sha", durationMs: 1_000 },
+    });
+    await store.beginTranscriptRequest(transcript.id);
+    await expect(store.deleteMeeting("m-transcribing")).resolves.toEqual({
+      meetingId: "m-transcribing", outcome: "refused", reason: "transcription",
+    });
+
+    await prepareReadyMeetingGraph(store, root, "m-asking", "r-asking");
+    await store.startChatQuestion({ meetingId: "m-asking", question: "Still running?", provider: "codex", model: "gpt-5" });
+    await expect(store.deleteMeeting("m-asking")).resolves.toEqual({
+      meetingId: "m-asking", outcome: "refused", reason: "ask",
+    });
+    expect((await store.list()).map((meeting) => meeting.id)).toEqual(["m-transcribing", "m-asking"]);
+  });
+
+  test("refuses deletion while recording recovery is durable", async () => {
+    const root = await temporaryRoot();
+    const store = new MeetingStore({ root });
+    await store.create({ id: "m-recovery", title: "Recovery" });
+    await store.startRecording({ id: "r-recovery", meetingId: "m-recovery" });
+    await store.commitChunk("r-recovery", {
+      id: "chunk", source: "microphone", storageKey: "sessions/r-recovery/chunk.wav", byteLength: 1,
+      sha256: "chunk", committedAt: "2026-08-29T10:00:00.000Z", logicalStartMs: 0, durationMs: 1,
+      sampleRate: 16_000, channels: 1, format: "wav",
+    });
+    await store.interruptRecording("r-recovery", "capture stopped");
+    await store.assessInterruption("r-recovery", { recoverable: true });
+
+    await expect(store.deleteMeeting("m-recovery")).resolves.toEqual({
+      meetingId: "m-recovery", outcome: "refused", reason: "active_capture",
+    });
+  });
+
+  test.each(["write", "sync", "rename"] as const)("cleans failed manifest temp publication after %s failure", async (failure) => {
+    const root = await temporaryRoot();
+    const seed = new MeetingStore({ root });
+    const owned = await prepareReadyMeetingGraph(seed, root, "m-manifest", "r-manifest");
+    const store = new MeetingStore({
+      root,
+      deletionIo: {
+        open: (async (...args: Parameters<typeof fsOpen>) => {
+          const handle = await fsOpen(...args);
+          if (!String(args[0]).includes(`${path.sep}.deletions${path.sep}.`)) return handle;
+          if (failure === "write") handle.writeFile = async () => { throw new Error("injected manifest write failure"); };
+          if (failure === "sync") handle.sync = async () => { throw new Error("injected manifest sync failure"); };
+          return handle;
+        }) as typeof fsOpen,
+        rename: (async (from: string, to: string) => {
+          if (failure === "rename" && from.includes(`${path.sep}.deletions${path.sep}.`)) {
+            throw new Error("injected manifest rename failure");
+          }
+          await fsRename(from, to);
+        }) as typeof fsRename,
+      },
+    });
+
+    await expect(store.deleteMeeting("m-manifest")).rejects.toThrow(`injected manifest ${failure} failure`);
+    expect((await new MeetingStore({ root }).list()).map((meeting) => meeting.id)).toEqual(["m-manifest"]);
+    for (const filePath of owned) await expect(readFile(filePath)).resolves.toBeTruthy();
+    await expect(readdir(path.join(root, ".deletions"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("keeps the manifest after state replacement sync failure and converges on restart", async () => {
+    const root = await temporaryRoot();
+    const seed = new MeetingStore({ root });
+    const owned = await prepareReadyMeetingGraph(seed, root, "m-post-replace", "r-post-replace");
+    let stateReplaced = false;
+    const store = new MeetingStore({
+      root,
+      deletionIo: {
+        rename: (async (from: string, to: string) => {
+          await fsRename(from, to);
+          if (to === path.join(root, "meetings.json")) stateReplaced = true;
+        }) as typeof fsRename,
+        syncDirectory: async (directory) => {
+          if (stateReplaced && directory === root) throw new Error("injected post-replace directory sync failure");
+          const handle = await fsOpen(directory, "r");
+          try { await handle.sync(); } finally { await handle.close(); }
+        },
+      },
+    });
+
+    await expect(store.deleteMeeting("m-post-replace")).rejects.toThrow("Meeting state replacement failed");
+    await expect(readdir(path.join(root, ".deletions"))).resolves.toHaveLength(1);
+    const restarted = new MeetingStore({ root });
+    await expect(restarted.list()).resolves.toEqual([]);
+    for (const filePath of owned) await expect(readFile(filePath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readdir(path.join(root, ".deletions"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("fsyncs affected parents for staging, replacement, cleanup, and manifest removal", async () => {
+    const root = await temporaryRoot();
+    const seed = new MeetingStore({ root });
+    await prepareReadyMeetingGraph(seed, root, "m-sync", "r-sync");
+    const synced: string[] = [];
+    const store = new MeetingStore({ root, deletionIo: { syncDirectory: async (directory) => {
+      synced.push(directory);
+      const handle = await fsOpen(directory, "r");
+      try { await handle.sync(); } finally { await handle.close(); }
+    } } });
+    await store.deleteMeeting("m-sync");
+
+    expect(synced.filter((directory) => directory === path.join(root, "sessions"))).toHaveLength(2);
+    expect(synced.filter((directory) => directory === path.join(root, "exports"))).toHaveLength(2);
+    expect(synced.filter((directory) => directory === path.join(root, "transcripts"))).toHaveLength(2);
+    expect(synced).toContain(root);
+    expect(synced.filter((directory) => directory === path.join(root, ".deletions")).length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("rejects traversal, outside roots, symlinks, shared paths, and output directories", async () => {
+    for (const violation of ["traversal", "outside", "symlink", "shared", "directory"] as const) {
+      const root = await temporaryRoot();
+      const store = new MeetingStore({ root });
+      const owned = await prepareReadyMeetingGraph(store, root, "m-target", "r-target");
+      const output = path.join(root, "exports", "r-target.mp3");
+      if (violation === "shared") await prepareReadyMeetingGraph(store, root, "m-other", "r-other");
+      const persisted = JSON.parse(await readFile(store.filePath, "utf8")) as any;
+      if (violation === "traversal") persisted.transcripts[0].publication.storageKey = "../outside.json";
+      if (violation === "outside") {
+        const outside = path.join(path.dirname(root), `${path.basename(root)}-outside.mp3`);
+        await writeFile(outside, "audio"); roots.add(outside);
+        persisted.recordings[0].savedOutput.destination = outside;
+        persisted.recordings[0].finalization.publishIntent.destination = outside;
+      }
+      if (violation === "shared") {
+        persisted.recordings[1].savedOutput.destination = output;
+        persisted.recordings[1].finalization.publishIntent.destination = output;
+      }
+      await writeFile(store.filePath, `${JSON.stringify(persisted, null, 2)}\n`);
+      if (violation === "symlink") {
+        await rm(output);
+        const outside = path.join(root, "outside-audio.mp3");
+        await writeFile(outside, "audio");
+        await symlink(outside, output);
+      }
+      if (violation === "directory") {
+        await rm(output);
+        await mkdir(output);
+      }
+
+      await expect(new MeetingStore({ root }).deleteMeeting("m-target"), violation).rejects.toThrow(
+        /exact owned sidecar|outside approved|symlink|shared|invalid file type/u,
+      );
+      await expect(new MeetingStore({ root }).list()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "m-target" }),
+      ]));
+      expect(owned.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("fails closed on a tampered manifest during restart recovery", async () => {
+    const root = await temporaryRoot();
+    const store = new MeetingStore({ root });
+    await prepareReadyMeetingGraph(store, root, "m-tamper", "r-tamper");
+    const cleanup = vi.spyOn(
+      store as unknown as { finishDeletionManifest(manifestPath: string, manifest: unknown): Promise<void> },
+      "finishDeletionManifest",
+    ).mockRejectedValueOnce(new Error("leave manifest"));
+    await store.deleteMeeting("m-tamper");
+    cleanup.mockRestore();
+    const directory = path.join(root, ".deletions");
+    const name = (await readdir(directory))[0]!;
+    const manifestPath = path.join(directory, name);
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.entries[0].original = path.join(root, "tampered");
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    await expect(new MeetingStore({ root }).list()).rejects.toThrow(/corrupt|integrity/u);
+  });
+
+  test("fails closed when a quarantined recovery path becomes a symlink", async () => {
+    const root = await temporaryRoot();
+    const store = new MeetingStore({ root });
+    await prepareReadyMeetingGraph(store, root, "m-recovery-link", "r-recovery-link");
+    const cleanup = vi.spyOn(
+      store as unknown as { finishDeletionManifest(manifestPath: string, manifest: unknown): Promise<void> },
+      "finishDeletionManifest",
+    ).mockRejectedValueOnce(new Error("leave manifest"));
+    await store.deleteMeeting("m-recovery-link");
+    cleanup.mockRestore();
+    const directory = path.join(root, ".deletions");
+    const manifestPath = path.join(directory, (await readdir(directory))[0]!);
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    const entry = manifest.entries.find((candidate: { kind: string }) => candidate.kind === "output");
+    const outside = path.join(path.dirname(root), `${path.basename(root)}-recovery-outside.mp3`);
+    await writeFile(outside, "outside"); roots.add(outside);
+    await rm(entry.quarantine, { force: true });
+    await symlink(outside, entry.quarantine);
+
+    await expect(new MeetingStore({ root }).list()).rejects.toThrow(/corrupt|symlink/u);
+  });
 });
+
+async function prepareReadyMeetingGraph(store: MeetingStore, root: string, meetingId: string, recordingId: string): Promise<string[]> {
+  const owned = await prepareSavedMeeting(store, root, meetingId, recordingId);
+  const outputPath = path.join(root, "exports", `${recordingId}.mp3`);
+  const transcript = await store.ensureTranscript({
+    meetingId, recordingId,
+    audio: { destination: outputPath, byteLength: 5, sha256: "audio-sha", durationMs: 1_000 },
+  });
+  const request = await store.beginTranscriptRequest(transcript.id);
+  await store.checkpointTranscriptRange(transcript.id, {
+    range: request!.range, attempts: request!.attempt, text: "Decision", usage: null, detectedLanguages: ["en"],
+  });
+  const ready = await store.publishTranscript(transcript.id);
+  const thread = await store.startChatQuestion({ meetingId, question: "What changed?", provider: "codex", model: "gpt-5" });
+  await store.recordChatRetrieval(meetingId, thread.activeAttemptId!, [ready.ranges[0]!.segmentId]);
+  await store.completeChatTurn(meetingId, {
+    attemptId: thread.activeAttemptId!, outcome: "supported", text: "A decision changed.",
+    citationSegmentIds: [ready.ranges[0]!.segmentId],
+  });
+  return [...owned, path.join(root, ready.publication!.storageKey)];
+}
+
+async function prepareSavedMeeting(store: MeetingStore, root: string, meetingId: string, recordingId: string): Promise<string[]> {
+  const sessionDirectory = path.join(root, "sessions", recordingId);
+  const outputPath = path.join(root, "exports", `${recordingId}.mp3`);
+  await mkdir(sessionDirectory, { recursive: true });
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  const chunkPath = path.join(sessionDirectory, "chunk.wav");
+  const inventoryPath = path.join(sessionDirectory, "inventory.ndjson");
+  await writeFile(chunkPath, "chunk");
+  await writeFile(inventoryPath, "inventory");
+  await writeFile(outputPath, "audio");
+  await store.create({ id: meetingId, title: `Delete ${meetingId}` });
+  await store.startRecording({ id: recordingId, meetingId });
+  await store.commitChunk(recordingId, {
+    id: `${recordingId}-chunk`, source: "microphone", storageKey: path.relative(root, chunkPath), byteLength: 5,
+    sha256: "chunk-sha", committedAt: "2026-08-29T10:00:00.000Z", logicalStartMs: 0, durationMs: 1_000,
+    sampleRate: 16_000, channels: 1, format: "wav",
+  });
+  const recovered = await store.prepareInventoryRecovery(recordingId, "ready");
+  await store.markInventoryScanning(recordingId);
+  await store.publishInventory(recordingId, {
+    storageKey: path.relative(root, inventoryPath), digest: "inventory-sha", chunkCount: recovered.inventory.knownChunkCount,
+    microphoneCount: recovered.inventory.microphoneCount, systemCount: recovered.inventory.systemCount,
+    publishedAt: "2026-08-29T10:00:00.000Z",
+  });
+  await store.beginFinalization(recordingId, {
+    openChunksDurablyClosed: true, chunkSetDigest: "inventory-sha", destination: outputPath,
+    expectedIdentity: { byteLength: 5, sha256: "audio-sha" },
+  });
+  await store.markRecordingSaved(recordingId, {
+    destination: outputPath, identity: { byteLength: 5, sha256: "audio-sha" }, readable: true,
+  });
+  return [chunkPath, inventoryPath, outputPath];
+}
 
 async function completeInventory(store: MeetingStore, recordingId: string, digest: string): Promise<void> {
   const recovered = await store.prepareInventoryRecovery(recordingId, "capture closed for inventory");

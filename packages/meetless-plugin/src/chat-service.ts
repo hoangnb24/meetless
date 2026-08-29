@@ -7,6 +7,7 @@ import type { MeetingChatThreadWire } from "@meetless/meeting-contracts";
 import type { MeetingChatThread, TranscriptState } from "@meetless/meeting-domain";
 import type { MeetingStore } from "@meetless/meeting-store";
 import { z } from "zod";
+import { MeetingLifecycleCoordinator, type MeetingLifecycleLease } from "./meeting-lifecycle-coordinator.js";
 
 const AgentAnswerSchema = z.discriminatedUnion("outcome", [
   z.object({
@@ -48,15 +49,30 @@ export interface MeetingChatAgentPort {
 export class MeetingChatService {
   private initialized: Promise<void> | null = null;
   private readonly active = new Set<Promise<void>>();
+  private readonly activeMeetings = new Set<string>();
 
   constructor(
     private readonly store: MeetingStore,
     private readonly agent: MeetingChatAgentPort,
+    private readonly lifecycle = new MeetingLifecycleCoordinator(),
   ) {}
 
   initialize(): Promise<void> {
-    this.initialized ??= this.store.reconcileChatAfterRestart().then(() => undefined);
+    this.initialized ??= this.initializeOnce();
     return this.initialized;
+  }
+
+  private async initializeOnce(): Promise<void> {
+    const running = (await this.store.listChatThreads()).filter((thread) => thread.status === "running");
+    const acquired = running.map((thread) => ({
+      meetingId: thread.meetingId,
+      lease: this.lifecycle.tryAcquireWork(thread.meetingId, "ask"),
+    })).filter((entry): entry is { meetingId: string; lease: MeetingLifecycleLease } => entry.lease !== null);
+    try {
+      await this.store.reconcileChatAfterRestart(acquired.map((entry) => entry.meetingId));
+    } finally {
+      for (const entry of acquired) entry.lease.release();
+    }
   }
 
   async providers(): Promise<ChatProviderOption[]> {
@@ -76,10 +92,17 @@ export class MeetingChatService {
     provider: string;
     model: string;
   }): Promise<MeetingChatThreadWire> {
-    await this.initialize();
-    const thread = await this.store.startChatQuestion(input);
-    this.startExecution(input.meetingId, thread);
-    return toThreadWire(thread);
+    const lease = this.lifecycle.tryAcquireWork(input.meetingId, "ask");
+    if (!lease) throw new Error("Meeting deletion is in progress");
+    try {
+      await this.initialize();
+      const thread = await this.store.startChatQuestion(input);
+      this.startExecution(input.meetingId, thread, lease);
+      return toThreadWire(thread);
+    } catch (error) {
+      lease.release();
+      throw error;
+    }
   }
 
   async retry(input: {
@@ -87,10 +110,17 @@ export class MeetingChatService {
     provider: string;
     model: string;
   }): Promise<MeetingChatThreadWire> {
-    await this.initialize();
-    const thread = await this.store.retryChatTurn(input.meetingId, input);
-    this.startExecution(input.meetingId, thread);
-    return toThreadWire(thread);
+    const lease = this.lifecycle.tryAcquireWork(input.meetingId, "ask");
+    if (!lease) throw new Error("Meeting deletion is in progress");
+    try {
+      await this.initialize();
+      const thread = await this.store.retryChatTurn(input.meetingId, input);
+      this.startExecution(input.meetingId, thread, lease);
+      return toThreadWire(thread);
+    } catch (error) {
+      lease.release();
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
@@ -98,10 +128,19 @@ export class MeetingChatService {
     await Promise.allSettled([...this.active]);
   }
 
-  private startExecution(meetingId: string, thread: MeetingChatThread): void {
+  isMeetingRunning(meetingId: string): boolean {
+    return this.activeMeetings.has(meetingId);
+  }
+
+  private startExecution(meetingId: string, thread: MeetingChatThread, lease: MeetingLifecycleLease): void {
     const attempt = thread.attempts.find((candidate) => candidate.id === thread.activeAttemptId);
     if (!attempt) throw new Error("Running chat thread has no active attempt");
-    const work = this.execute(meetingId, thread, attempt.id).finally(() => this.active.delete(work));
+    this.activeMeetings.add(meetingId);
+    const work = this.execute(meetingId, thread, attempt.id).finally(() => {
+      this.active.delete(work);
+      this.activeMeetings.delete(meetingId);
+      lease.release();
+    });
     this.active.add(work);
   }
 

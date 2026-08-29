@@ -3,9 +3,10 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { MeetlessClient } from "@meetless/client";
 
-const { connectMeetlessClient, playCitationAudio } = vi.hoisted(() => ({
+const { connectMeetlessClient, playCitationAudio, recordingState } = vi.hoisted(() => ({
   connectMeetlessClient: vi.fn(),
   playCitationAudio: vi.fn(),
+  recordingState: { current: { enabled: false } as Record<string, unknown> },
 }));
 
 vi.mock("@meetless/client", () => ({ connectMeetlessClient }));
@@ -21,7 +22,7 @@ vi.mock("@meetless/meeting-surface", () => ({
 }));
 vi.mock("../src/recording-provider.js", () => ({
   RecordingProvider: ({ children }: { children: React.ReactNode }) => children,
-  useRecording: () => ({ enabled: false }),
+  useRecording: () => recordingState.current,
 }));
 
 import { AppContent, loadCompanionRestoration } from "../src/App.js";
@@ -32,6 +33,7 @@ describe("transcript meeting selection ordering", () => {
   afterEach(async () => {
     if (renderer) await act(async () => renderer?.unmount());
     renderer = null;
+    recordingState.current = { enabled: false };
     vi.clearAllMocks();
   });
 
@@ -111,6 +113,128 @@ describe("transcript meeting selection ordering", () => {
     expect(surface().props.transcript).toBeNull();
   });
 
+  test("confirmed deletion stays pending, then refreshes the list and clears only the deleted detail", async () => {
+    const deletion = deferred<{ meetingId: string; outcome: "deleted"; reason: null }>();
+    const listMeetings = vi.fn()
+      .mockResolvedValueOnce([meeting("m-1"), meeting("m-2")])
+      .mockResolvedValueOnce([meeting("m-2")]);
+    const client = {
+      listMeetings,
+      getMeetingTranscript: async () => transcriptResponse("m-1", "segment-m-1", "current"),
+      listChatProviders: async () => ({ providers: [] }),
+      getMeetingChat: async () => null,
+      deleteMeeting: vi.fn(() => deletion.promise),
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    const staleOpen = surface().props.onOpenTranscript;
+    await act(async () => { surface().props.onRequestDeleteMeeting("m-1"); });
+    expect(surface().props.deleteConfirmationMeetingId).toBe("m-1");
+
+    let request!: Promise<void>;
+    await act(async () => { request = surface().props.onConfirmDeleteMeeting(); });
+    expect(surface().props.deletePending).toBe(true);
+    expect(surface().props.selectedMeetingId).toBe("m-1");
+    expect(surface().props.meetings.map((candidate: { id: string }) => candidate.id)).toEqual(["m-1", "m-2"]);
+    await act(async () => { await staleOpen("m-2"); });
+    expect(surface().props.selectedMeetingId).toBe("m-1");
+
+    await act(async () => { deletion.resolve({ meetingId: "m-1", outcome: "deleted", reason: null }); await request; });
+    expect(client.deleteMeeting).toHaveBeenCalledWith("m-1");
+    expect(surface().props.meetings.map((candidate: { id: string }) => candidate.id)).toEqual(["m-2"]);
+    expect(surface().props.selectedMeetingId).toBeNull();
+    expect(surface().props.transcript).toBeNull();
+    expect(surface().props.deletePending).toBe(false);
+  });
+
+  test.each([
+    ["runtime is idle", { enabled: true, status: { meetingId: null, status: "idle" }, displayElapsedMs: 0 }],
+    ["runtime belongs to another meeting", { enabled: true, status: { meetingId: "m-other", status: "recording" }, displayElapsedMs: 1_000 }],
+  ])("deletes a persisted Recording meeting when %s", async (_scenario, runtimeState) => {
+    const stale = { ...meeting("m-stale"), status: "recording" as const };
+    let deleted = false;
+    recordingState.current = runtimeState;
+    const listMeetings = vi.fn(async () => deleted ? [] : [stale]);
+    const client = {
+      listMeetings,
+      getMeetingTranscript: async () => ({
+        meeting: stale, transcript: null, consent: { status: "unknown" as const }, provider: { status: "missing" as const },
+      }),
+      listChatProviders: async () => ({ providers: [] }),
+      getMeetingChat: async () => null,
+      deleteMeeting: vi.fn(async () => {
+        deleted = true;
+        return { meetingId: "m-stale", outcome: "deleted" as const, reason: null };
+      }),
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-stale"); });
+    expect(surface().props.deleteDisabled).toBe(false);
+    await act(async () => { surface().props.onRequestDeleteMeeting("m-stale"); });
+    expect(surface().props.deleteConfirmationMeetingId).toBe("m-stale");
+    await act(async () => { await surface().props.onConfirmDeleteMeeting(); });
+    expect(client.deleteMeeting).toHaveBeenCalledWith("m-stale");
+    expect(surface().props.meetings).toEqual([]);
+    expect(surface().props.selectedMeetingId).toBeNull();
+  });
+
+  test("keeps delete disabled for a genuinely active recording", async () => {
+    const active = { ...meeting("m-active"), status: "recording" as const };
+    const deleteMeeting = vi.fn();
+    recordingState.current = {
+      enabled: true,
+      status: { meetingId: "m-active", status: "recording" },
+      displayElapsedMs: 1_000,
+    };
+    connectMeetlessClient.mockResolvedValue({
+      client: {
+        listMeetings: async () => [active],
+        getMeetingTranscript: async () => ({
+          meeting: active, transcript: null, consent: { status: "unknown" as const }, provider: { status: "missing" as const },
+        }),
+        deleteMeeting,
+      },
+      close: async () => undefined,
+      serverInfo: null,
+    });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-active"); });
+    expect(surface().props.deleteDisabled).toBe(true);
+    expect(surface().props.deleteConfirmationMeetingId).toBeNull();
+    expect(deleteMeeting).not.toHaveBeenCalled();
+  });
+
+  test("delete failure preserves the list and selected detail with safe error copy", async () => {
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getMeetingTranscript: async () => transcriptResponse("m-1", "segment-m-1", "current"),
+      listChatProviders: async () => ({ providers: [] }),
+      getMeetingChat: async () => null,
+      deleteMeeting: vi.fn(async () => { throw new Error("private filesystem path"); }),
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    await act(async () => { surface().props.onRequestDeleteMeeting("m-1"); });
+    await act(async () => { await surface().props.onConfirmDeleteMeeting(); });
+
+    expect(surface().props.selectedMeetingId).toBe("m-1");
+    expect(surface().props.transcript).toMatchObject({ meetingId: "m-1" });
+    expect(surface().props.meetings).toHaveLength(1);
+    expect(surface().props.deleteError).toBe("We could not delete this meeting. It is still in your library.");
+    expect(surface().props.deleteError).not.toContain("filesystem");
+  });
+
   test("Retry transcription reuses the idempotent consent operation and refreshes the selected transcript", async () => {
     let transcriptCalls = 0;
     const grantTranscriptionConsent = vi.fn(async () => ({
@@ -142,6 +266,29 @@ describe("transcript meeting selection ordering", () => {
     expect(grantTranscriptionConsent).toHaveBeenCalledOnce();
     expect(client.getMeetingTranscript).toHaveBeenCalledTimes(2);
     expect(surface().props.transcript).toMatchObject({ status: "ready", meetingId: "m-1" });
+  });
+
+  test.each([
+    ["stale provider", { provider: "removed-provider", model: "gpt-5" }, "codex", "gpt-5"],
+    ["stale model", { provider: "anthropic", model: "removed-model" }, "codex", "gpt-5"],
+    ["valid saved choice", { provider: "anthropic", model: "claude-sonnet" }, "anthropic", "claude-sonnet"],
+  ] as const)("openTranscript resolves a %s against the current provider inventory", async (_name, savedSelection, expectedProvider, expectedModel) => {
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getMeetingTranscript: async () => transcriptResponse("m-1", "segment-m-1", "current citation"),
+      listChatProviders: async () => ({ providers: providerInventory() }),
+      getMeetingChat: async () => chatResponse(savedSelection),
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+
+    expect(surface().props.chatProvider).toBe(expectedProvider);
+    expect(surface().props.chatModel).toBe(expectedModel);
+    expect(surface().props.chatProviders).toEqual(providerInventory());
   });
 
   test("late same-meeting citation success stops its stale handle and cannot replace the latest playback", async () => {
@@ -244,6 +391,25 @@ describe("companion transactional restoration", () => {
     } as unknown as MeetlessClient;
     await expect(loadCompanionRestoration(client, "m-1")).rejects.toThrow("durable chat unavailable");
   });
+
+  test.each([
+    ["stale provider", { provider: "removed-provider", model: "gpt-5" }, "codex", "gpt-5"],
+    ["stale model", { provider: "anthropic", model: "removed-model" }, "codex", "gpt-5"],
+    ["valid saved choice", { provider: "anthropic", model: "claude-sonnet" }, "anthropic", "claude-sonnet"],
+  ] as const)("resolves a %s before companion restoration exposes chat state", async (_name, savedSelection, expectedProvider, expectedModel) => {
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getMeetingTranscript: async () => transcriptResponse("m-1", "segment-m-1", "current citation"),
+      listChatProviders: async () => ({ providers: providerInventory() }),
+      getMeetingChat: async () => chatResponse(savedSelection),
+    } as unknown as MeetlessClient;
+
+    await expect(loadCompanionRestoration(client, "m-1")).resolves.toMatchObject({
+      chatProvider: expectedProvider,
+      chatModel: expectedModel,
+      chatProviders: providerInventory(),
+    });
+  });
 });
 
 function meeting(id: string) {
@@ -273,12 +439,19 @@ function citationResponse(meetingId: string, segmentId: string) {
   };
 }
 
-function chatResponse() {
+function providerInventory() {
+  return [
+    { id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] },
+    { id: "anthropic", label: "Anthropic", models: [{ id: "claude-sonnet", label: "Claude Sonnet", isDefault: true }] },
+  ];
+}
+
+function chatResponse(selection: { provider: string; model: string } = { provider: "codex", model: "gpt-5" }) {
   return {
     meetingId: "m-1",
     status: "ready" as const,
     messages: [],
-    selection: { provider: "codex", model: "gpt-5" },
+    selection,
     failure: null,
   };
 }

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { access, link, mkdir, open, rm, stat, writeFile } from "node:fs/promises";
+import { access, link, mkdir, open, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { CommittedRecordingChunk, OutputIdentity, RecordingInventoryPointer } from "@meetless/meeting-domain";
@@ -19,6 +19,17 @@ export interface FinalizerConfig {
 
 export class Mp3Finalizer {
   constructor(readonly config: FinalizerConfig) {}
+
+  async ownedStagePaths(recordingIds: readonly string[]): Promise<Array<{ recordingId: string; path: string }>> {
+    return listRecordingOwnedStagePaths(this.config.exportRoot, recordingIds);
+  }
+
+  async sweepOwnedStages(recordingIds: readonly string[]): Promise<void> {
+    for (const stage of await this.ownedStagePaths(recordingIds)) {
+      await rm(stage.path, { force: true });
+      await syncDirectory(this.config.exportRoot);
+    }
+  }
 
   async stage(recordingId: string, inventory: RecordingInventoryPointer): Promise<{
     stagePath: string;
@@ -227,6 +238,41 @@ export class Mp3Finalizer {
     }
     return { path: candidate };
   }
+}
+
+export async function listRecordingOwnedStagePaths(
+  exportRoot: string,
+  recordingIds: readonly string[],
+): Promise<Array<{ recordingId: string; path: string }>> {
+  if (recordingIds.length === 0) return [];
+  let names: string[];
+  try {
+    names = await readdir(exportRoot);
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return [];
+    throw error;
+  }
+  const owned: Array<{ recordingId: string; path: string }> = [];
+  for (const recordingId of recordingIds) {
+    for (const name of names) {
+      if (isRecordingOwnedStageName(name, recordingId)) {
+        owned.push({ recordingId, path: path.join(exportRoot, name) });
+      }
+    }
+  }
+  return owned;
+}
+
+export function isRecordingOwnedStageName(name: string, recordingId: string): boolean {
+  const escaped = recordingId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(
+    `^\\.meetless-${escaped}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-(?:microphone|system)\\.wav|\\.mp3)\\.stage$`,
+    "u",
+  ).test(name);
+}
+
+function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === code;
 }
 
 function chunkStartFrame(id: string): number {

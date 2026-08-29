@@ -1,6 +1,6 @@
 import React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { RecordingStatusWire, TranscriptWire } from "@meetless/meeting-contracts";
 import { MeetingListSurface, RecordingStrip, surfaceLayout } from "../src/index.js";
 
@@ -61,6 +61,10 @@ function renderSurface(props: Record<string, unknown>): ReactTestRenderer {
 }
 
 describe("new-design composition", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   test("maps the three width tiers to their intended composition model", () => {
     expect(surfaceLayout("phone")).toMatchObject({ row: { direction: "column" }, content: { padding: 12 } });
     expect(surfaceLayout("tablet")).toMatchObject({ row: { direction: "column" }, content: { padding: 16 } });
@@ -127,6 +131,14 @@ describe("new-design composition", () => {
     phoneDetail.unmount();
   });
 
+  test("hides the meeting-list scrollbar while retaining scrolling", () => {
+    const renderer = renderSurface({ layoutTier: "desktop", meetings: [baseMeeting] });
+    const list = renderer.root.findByProps({ testID: "meeting-surface" });
+    expect(list.props.showsVerticalScrollIndicator).toBe(false);
+    expect(list.props.scrollEnabled).toBe(true);
+    renderer.unmount();
+  });
+
   test("keeps the phone list instance mounted across detail navigation", async () => {
     const renderer = renderSurface({ layoutTier: "phone" });
     const listBefore = renderer.root.findByProps({ testID: "meeting-surface" });
@@ -178,14 +190,62 @@ describe("new-design composition", () => {
     renderer.unmount();
   });
 
-  test("keeps provider and model selection compact until expanded and exposes selected state", async () => {
+  test("names the meeting, warns that deletion is permanent, and disables pending confirmation", async () => {
+    const onRequest = vi.fn();
+    const onConfirm = vi.fn(async () => undefined);
+    const onCancel = vi.fn();
+    const renderer = renderSurface({
+      layoutTier: "desktop",
+      selectedMeetingId: "m-1",
+      transcript: baseTranscript,
+      onRequestDeleteMeeting: onRequest,
+      onCancelDeleteMeeting: onCancel,
+      onConfirmDeleteMeeting: onConfirm,
+    });
+    await act(async () => { renderer.root.findByProps({ testID: "meeting-delete-action" }).props.onPress(); });
+    expect(onRequest).toHaveBeenCalledWith("m-1");
+
+    await act(async () => {
+      renderer.update(<MeetingListSurface
+        connectionLabel="Host online" hostConnectionStatus="online" hostLabel="this host"
+        meetings={[baseMeeting]} onRefresh={async () => undefined} layoutTier="desktop"
+        selectedMeetingId="m-1" transcript={baseTranscript}
+        deleteConfirmationMeetingId="m-1" deletePending
+        onRequestDeleteMeeting={onRequest} onCancelDeleteMeeting={onCancel} onConfirmDeleteMeeting={onConfirm}
+      />);
+    });
+    const copy = JSON.stringify(renderer.toJSON());
+    expect(copy).toContain("Delete “");
+    expect(copy).toContain("Weekly sync");
+    expect(copy).toContain("permanently deletes");
+    expect(copy).toContain("cannot undo");
+    expect(renderer.root.findByProps({ testID: "meeting-delete-confirm" }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ testID: "meeting-delete-cancel" }).props.disabled).toBe(true);
+    renderer.unmount();
+  });
+
+  test("disables delete during active work and shows a safe failure", () => {
+    const renderer = renderSurface({
+      layoutTier: "desktop", selectedMeetingId: "m-1", transcript: baseTranscript,
+      deleteDisabled: true, deleteError: "We could not delete this meeting. It is still in your library.",
+      onRequestDeleteMeeting: vi.fn(),
+    });
+    expect(renderer.root.findByProps({ testID: "meeting-delete-action" }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ testID: "meeting-delete-error" }).props.children).toContain("still in your library");
+    renderer.unmount();
+  });
+
+  test("keeps provider and model selection compact until expanded and can choose any option", async () => {
     const onSelection = vi.fn();
     const renderer = renderSurface({
       layoutTier: "desktop",
       selectedMeetingId: "m-1",
       transcript: baseTranscript,
       consentStatus: "granted",
-      chatProviders: [{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }, { id: "gpt-4o", label: "GPT-4o", isDefault: false }] }],
+      chatProviders: [
+        { id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }, { id: "gpt-4o", label: "GPT-4o", isDefault: false }] },
+        { id: "anthropic", label: "Anthropic", models: [{ id: "claude-sonnet", label: "Claude Sonnet", isDefault: true }] },
+      ],
       chatProvider: "codex",
       chatModel: "gpt-5",
       onChatSelection: onSelection,
@@ -197,8 +257,71 @@ describe("new-design composition", () => {
     expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(false);
     const selected = renderer.root.findByProps({ testID: "chat-model-codex-gpt-5" });
     expect(selected.props.accessibilityState).toMatchObject({ disabled: false, selected: true });
-    await act(async () => { renderer.root.findByProps({ testID: "chat-model-codex-gpt-4o" }).props.onPress(); });
-    expect(onSelection).toHaveBeenCalledWith("codex", "gpt-4o");
+    await act(async () => { renderer.root.findByProps({ testID: "chat-model-anthropic-claude-sonnet" }).props.onPress(); });
+    expect(onSelection).toHaveBeenCalledWith("anthropic", "claude-sonnet");
+    expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(true);
+    renderer.unmount();
+  });
+
+  test("opens the full provider/model inventory for an invalid saved selection", () => {
+    const renderer = renderSurface({
+      layoutTier: "desktop",
+      selectedMeetingId: "m-1",
+      transcript: baseTranscript,
+      consentStatus: "granted",
+      chatProviders: [{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }],
+      chatProvider: "removed-provider",
+      chatModel: "removed-model",
+      onChatSelection: vi.fn(),
+    });
+    expect(renderer.root.findByProps({ testID: "chat-provider-trigger" }).props.accessibilityState).toMatchObject({ expanded: true });
+    expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(false);
+    renderer.unmount();
+  });
+
+  test("closes provider/model options on an outside pointer without consuming that interaction", async () => {
+    let outsidePointer: ((event: { target: object }) => void) | null = null;
+    const outsideAction = vi.fn();
+    const pickerNode = { contains: (target: object) => target === pickerNode };
+    vi.stubGlobal("document", {
+      addEventListener: vi.fn((type: string, listener: (event: { target: object }) => void) => {
+        if (type === "pointerdown") outsidePointer = listener;
+      }),
+      removeEventListener: vi.fn(),
+    });
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <MeetingListSurface
+          connectionLabel="Host online"
+          hostConnectionStatus="online"
+          hostLabel="this host"
+          meetings={[baseMeeting]}
+          layoutTier="desktop"
+          selectedMeetingId="m-1"
+          transcript={baseTranscript}
+          consentStatus="granted"
+          chatProviders={[{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }]}
+          chatProvider="codex"
+          chatModel="gpt-5"
+          onChatSelection={vi.fn()}
+          onRefresh={async () => undefined}
+        />,
+        { createNodeMock: (element) => element.props.testID === "chat-provider-picker" ? pickerNode : {} },
+      );
+    });
+    await act(async () => { renderer.root.findByProps({ testID: "chat-provider-trigger" }).props.onPress(); });
+    expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(false);
+    expect(outsidePointer).toEqual(expect.any(Function));
+
+    await act(async () => {
+      outsidePointer?.({ target: {} });
+      outsideAction();
+    });
+
+    expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(true);
+    expect(outsideAction).toHaveBeenCalledOnce();
     renderer.unmount();
   });
 
