@@ -27,6 +27,7 @@ export interface CaptureHelperOptions {
   storeRoot: string;
   fixture: boolean;
   arguments?: string[];
+  startTimeoutMs?: number;
   onChunk(chunk: CommittedRecordingChunk): Promise<void>;
   onFailure(reason: string): Promise<void>;
   onDiagnostic?(line: string): void;
@@ -40,6 +41,7 @@ export class CaptureHelper {
   private waiters = new Map<string, Array<{ resolve(): void; reject(error: Error): void }>>();
   private expectedExit = false;
   private failed = false;
+  private started = false;
 
   constructor(private readonly options: CaptureHelperOptions) {}
 
@@ -71,7 +73,16 @@ export class CaptureHelper {
         if (!this.expectedExit) void this.fail(`capture helper exited unexpectedly (${code ?? signal ?? "unknown"}): ${this.stderr}`);
       });
     });
-    await this.commandAndWait("started", { version: 1, command: "start", sessionDirectory: this.options.sessionDirectory, elapsedMs: 0 });
+    await this.commandAndWait(
+      "started",
+      { version: 1, command: "start", sessionDirectory: this.options.sessionDirectory, elapsedMs: 0 },
+      this.options.startTimeoutMs ?? 30_000,
+    );
+    // A late `started` event after the waiter has timed out is not a successful
+    // start acknowledgement. Keeping this assignment on the awaited side also
+    // prevents a subsequent late failure from re-entering RecordingService
+    // while startup rollback is draining the helper event queue.
+    this.started = true;
   }
 
   pause(): Promise<void> { return this.commandAndWait("paused", { version: 1, command: "pause" }); }
@@ -93,11 +104,11 @@ export class CaptureHelper {
     child.kill("SIGTERM");
     if (await this.waitForExit(2_000)) { await this.drainEvents(); return; }
     child.kill("SIGKILL");
-    await this.waitForExit(2_000);
+    if (!(await this.waitForExit(2_000))) throw new Error(`Capture helper ${child.pid ?? "unknown"} did not exit after SIGKILL`);
     await this.drainEvents();
   }
 
-  private commandAndWait(event: string, command: Record<string, unknown>): Promise<void> {
+  private commandAndWait(event: string, command: Record<string, unknown>, timeoutMs = 30_000): Promise<void> {
     const child = this.child;
     if (!child?.stdin.writable) return Promise.reject(new Error("Capture helper is unavailable"));
     const pending = new Promise<void>((resolve, reject) => {
@@ -106,7 +117,7 @@ export class CaptureHelper {
       this.waiters.set(event, entries);
     });
     child.stdin.write(`${JSON.stringify(command)}\n`);
-    return withTimeout(pending, 30_000, `Timed out waiting for helper ${event}`);
+    return withTimeout(pending, timeoutMs, `Timed out waiting for helper ${event}`);
   }
 
   private receiveStdout(chunk: string): void {
@@ -150,7 +161,10 @@ export class CaptureHelper {
     this.expectedExit = true;
     this.rejectWaiters(new Error(reason));
     this.child?.kill("SIGTERM");
-    await this.options.onFailure(reason);
+    // RecordingService owns failures before the started acknowledgement. Calling
+    // back while start() is serialized would wait behind start() and prevent the
+    // service from draining this event queue before rollback.
+    if (this.started) await this.options.onFailure(reason);
   }
 
   private rejectWaiters(error: Error): void {

@@ -1,14 +1,15 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { promisify } from "node:util";
 import { MeetingStore } from "@meetless/meeting-store";
-import { RecordingService } from "../src/recording-service.js";
+import { RecordingService, RecordingStartRollbackError } from "../src/recording-service.js";
 import { RecordingInventoryReconciler } from "../src/inventory.js";
 import { resolveFixtureExportNow } from "../src/server.js";
+import { MeetingLifecycleCoordinator } from "../src/meeting-lifecycle-coordinator.js";
 
 const roots = new Set<string>();
 const services = new Set<RecordingService>();
@@ -121,10 +122,225 @@ describe("daemon recording service", () => {
     await expect(startResult).resolves.toMatchObject({ message: "live host identity changed before helper spawn" });
     expect(inspections).toBe(2);
     expect(service.helperRuntime().pid).toBeNull();
-    expect(await service.status()).toMatchObject({
-      status: "failed", inventoryState: "pending", chunkCount: 0, retryEligible: false,
-      error: "No valid committed media survived inventory reconciliation",
+    expect(await service.store.list()).toEqual([]);
+    expect(await service.store.listRecordings()).toEqual([]);
+    expect(await service.status()).toMatchObject({ status: "idle", recordingId: null, meetingId: null });
+  });
+
+  test("rolls back a meeting when capture permission fails before any media is committed", async () => {
+    const config = await fixtureConfig({
+      fixture: false,
+      helperPath: process.execPath,
+      helperArguments: [path.resolve("packages/meetless-plugin/test/fixtures/start-permission-denied.mjs")],
+      authorizeProductionStart: async () => undefined,
     });
+    const service = new RecordingService(config); services.add(service); await service.initialize();
+
+    await expect(service.execute({ version: 1, requestId: "denied", command: "start", title: "Not started" }))
+      .rejects.toThrow("The user declined TCCs for application, window, display capture");
+
+    expect(await service.store.list()).toEqual([]);
+    expect(await service.store.listRecordings()).toEqual([]);
+    expect(await readdir(path.join(config.storeRoot, "sessions"))).toEqual([]);
+    expect(await service.status()).toMatchObject({ status: "idle", recordingId: null, meetingId: null });
+  });
+
+  test("quiesces a timed-out helper before deleting a conclusively empty start", async () => {
+    const config = await fixtureConfig({
+      fixture: false,
+      helperPath: process.execPath,
+      helperStartTimeoutMs: 50,
+      authorizeProductionStart: async () => undefined,
+    });
+    const pidPath = path.join(path.dirname(config.storeRoot), "hanging-helper.pid");
+    const exitPath = path.join(path.dirname(config.storeRoot), "hanging-helper.exited");
+    config.helperArguments = [
+      path.resolve("packages/meetless-plugin/test/fixtures/start-hangs.mjs"),
+      pidPath,
+      exitPath,
+    ];
+    const service = new RecordingService(config); services.add(service); await service.initialize();
+
+    await expect(service.execute({ version: 1, requestId: "timeout", command: "start", title: "Timed out" }))
+      .rejects.toThrow("Timed out waiting for helper started");
+
+    const helperPid = Number((await readFile(pidPath, "utf8")).trim());
+    expect(await readFile(exitPath, "utf8")).toBe("exited\n");
+    expect(processExists(helperPid)).toBe(false);
+    expect(await service.store.list()).toEqual([]);
+    expect(await readdir(path.join(config.storeRoot, "sessions"))).toEqual([]);
+  });
+
+  test("does not deadlock when started and failure events arrive after the start timeout", async () => {
+    const lifecycle = new MeetingLifecycleCoordinator();
+    const config = await fixtureConfig({
+      fixture: false,
+      helperPath: process.execPath,
+      helperArguments: [
+        path.resolve("packages/meetless-plugin/test/fixtures/start-late-events.mjs"),
+        "75",
+      ],
+      helperStartTimeoutMs: 20,
+      authorizeProductionStart: async () => undefined,
+    });
+    const service = new RecordingService(config, undefined, lifecycle); services.add(service); await service.initialize();
+
+    await expect(service.execute({ version: 1, requestId: "late-timeout", command: "start", title: "Late" }))
+      .rejects.toThrow("Timed out waiting for helper started");
+
+    expect(await service.store.list()).toEqual([]);
+    expect(await service.store.listRecordings()).toEqual([]);
+    expect(await readdir(path.join(config.storeRoot, "sessions"))).toEqual([]);
+    expect(await service.status()).toMatchObject({ status: "idle", recordingId: null, meetingId: null });
+  }, 5_000);
+
+  test("rolls back a meeting when recording creation fails before helper startup", async () => {
+    const config = await fixtureConfig();
+    const store = new MeetingStore({ root: config.storeRoot, approvedExportRoots: [config.exportRoot] });
+    const originalStartRecording = store.startRecording.bind(store);
+    store.startRecording = async () => { throw new Error("recording state write failed"); };
+    const service = new RecordingService(config, store); services.add(service); await service.initialize();
+
+    await expect(service.execute({ version: 1, requestId: "state-failure", command: "start", title: "State failure" }))
+      .rejects.toThrow("recording state write failed");
+
+    expect(await store.list()).toEqual([]);
+    expect(await store.listRecordings()).toEqual([]);
+    store.startRecording = originalStartRecording;
+  });
+
+  test("rolls back without inventory when session setup fails before helper construction", async () => {
+    const config = await fixtureConfig({
+      fixture: false,
+      authorizeProductionStart: async () => undefined,
+    });
+    const service = new RecordingService(config); services.add(service); await service.initialize();
+    const sessions = path.join(config.storeRoot, "sessions");
+    await chmod(sessions, 0o500);
+    try {
+      await expect(service.execute({ version: 1, requestId: "session-failure", command: "start", title: "Session failure" }))
+        .rejects.toMatchObject({ code: "EACCES" });
+    } finally {
+      await chmod(sessions, 0o700);
+    }
+
+    expect(await service.store.list()).toEqual([]);
+    expect(await service.store.listRecordings()).toEqual([]);
+    expect(await readdir(sessions)).toEqual([]);
+  });
+
+  test.each(["committed", "orphan", "late"] as const)(
+    "preserves %s media when helper startup fails",
+    async (mode) => {
+      const config = await fixtureConfig({
+        fixture: false,
+        helperPath: process.execPath,
+        authorizeProductionStart: async () => undefined,
+      });
+      const sourceWav = await createSourceWav(config, `startup-${mode}`);
+      config.helperArguments = [
+        path.resolve("packages/meetless-plugin/test/fixtures/start-failure-after-media.mjs"),
+        sourceWav,
+        mode,
+      ];
+      const service = new RecordingService(config); services.add(service); await service.initialize();
+
+      await expect(service.execute({ version: 1, requestId: mode, command: "start", title: `Keep ${mode}` }))
+        .rejects.toThrow("capture startup failed after media");
+
+      expect(await service.store.list()).toHaveLength(1);
+      expect(await service.store.listRecordings()).toHaveLength(1);
+      expect(await service.status()).toMatchObject({
+        status: "recoverable",
+        inventoryState: "complete",
+        chunkCount: 1,
+        retryEligible: true,
+      });
+    },
+    15_000,
+  );
+
+  test("allows permission denial followed by a successful start after service relaunch", async () => {
+    const config = await fixtureConfig({
+      fixture: false,
+      helperPath: process.execPath,
+      authorizeProductionStart: async () => undefined,
+    });
+    const permissionState = path.join(path.dirname(config.storeRoot), "permission-granted");
+    const sourceWav = await createSourceWav(config, "permission-retry");
+    config.helperArguments = [
+      path.resolve("packages/meetless-plugin/test/fixtures/start-permission-retry.mjs"),
+      permissionState,
+      sourceWav,
+    ];
+    const first = new RecordingService(config); services.add(first); await first.initialize();
+
+    await expect(first.execute({ version: 1, requestId: "denied", command: "start", title: "First" }))
+      .rejects.toThrow("The user declined TCCs for application, window, display capture");
+    expect(await first.store.list()).toEqual([]);
+    await first.shutdown(); services.delete(first);
+
+    const relaunched = new RecordingService(config); services.add(relaunched); await relaunched.initialize();
+    await expect(relaunched.execute({ version: 1, requestId: "granted", command: "start", title: "Second" }))
+      .resolves.toMatchObject({ status: "recording", title: "Second" });
+    await waitFor(async () => (await relaunched.status()).chunks.length === 1);
+    expect(await relaunched.store.list()).toHaveLength(1);
+  }, 15_000);
+
+  test("holds active-capture exclusion until zero-media rollback commits", async () => {
+    const lifecycle = new MeetingLifecycleCoordinator();
+    const config = await fixtureConfig({
+      fixture: false,
+      helperPath: process.execPath,
+      helperArguments: [path.resolve("packages/meetless-plugin/test/fixtures/start-permission-denied.mjs")],
+      authorizeProductionStart: async () => undefined,
+    });
+    const service = new RecordingService(config, undefined, lifecycle); services.add(service); await service.initialize();
+    const originalDelete = service.store.deleteMeeting.bind(service.store);
+    let releaseDelete!: () => void;
+    const deleteGate = new Promise<void>((resolve) => { releaseDelete = resolve; });
+    let enteredDelete!: (meetingId: string) => void;
+    const deleteEntered = new Promise<string>((resolve) => { enteredDelete = resolve; });
+    service.store.deleteMeeting = async (meetingId, input) => {
+      enteredDelete(meetingId);
+      await deleteGate;
+      return originalDelete(meetingId, input);
+    };
+
+    const start = service.execute({ version: 1, requestId: "race", command: "start", title: "Race" });
+    const meetingId = await deleteEntered;
+    expect(lifecycle.tryAcquireDeletion(meetingId)).toEqual({ acquired: false, active: ["active_capture"] });
+    releaseDelete();
+    await expect(start).rejects.toThrow("The user declined TCCs for application, window, display capture");
+    const after = lifecycle.tryAcquireDeletion(meetingId);
+    expect(after.acquired).toBe(true);
+    if (after.acquired) after.lease.release();
+  });
+
+  test("keeps the actionable start error primary when rollback cleanup fails", async () => {
+    const lifecycle = new MeetingLifecycleCoordinator();
+    const config = await fixtureConfig({
+      fixture: false,
+      helperPath: process.execPath,
+      helperArguments: [path.resolve("packages/meetless-plugin/test/fixtures/start-permission-denied.mjs")],
+      authorizeProductionStart: async () => undefined,
+    });
+    const service = new RecordingService(config, undefined, lifecycle); services.add(service); await service.initialize();
+    service.store.deleteMeeting = async () => { throw new Error("injected rollback cleanup failure"); };
+
+    const error = await service.execute({ version: 1, requestId: "cleanup", command: "start", title: "Cleanup" })
+      .then(() => null, (reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(RecordingStartRollbackError);
+    expect(error).toMatchObject({
+      message: "The user declined TCCs for application, window, display capture",
+      rollbackError: expect.objectContaining({ message: "injected rollback cleanup failure" }),
+    });
+    expect(await service.status()).toMatchObject({ status: "failed", chunkCount: 0 });
+    const meetingId = (await service.store.list())[0]!.id;
+    const deletion = lifecycle.tryAcquireDeletion(meetingId);
+    expect(deletion.acquired).toBe(true);
+    if (deletion.acquired) deletion.lease.release();
   });
 
   test("production ignores fixture export stamps", () => {
@@ -505,4 +721,21 @@ async function waitFor(condition: () => Promise<boolean>, timeoutMs = 8_000): Pr
 async function identity(filePath: string) {
   const data = await readFile(filePath); const info = await stat(filePath);
   return { byteLength: info.size, sha256: createHash("sha256").update(data).digest("hex") };
+}
+
+async function createSourceWav(
+  config: Awaited<ReturnType<typeof fixtureConfig>>,
+  name: string,
+): Promise<string> {
+  const sourceWav = path.join(path.dirname(config.storeRoot), `${name}.wav`);
+  await execFileAsync(config.ffmpeg, [
+    "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+    "sine=frequency=440:duration=1:sample_rate=16000", "-ar", "16000", "-ac", "1", sourceWav,
+  ]);
+  return sourceWav;
+}
+
+function processExists(pid: number): boolean {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
 }

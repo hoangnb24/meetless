@@ -18,6 +18,7 @@ export interface RecordingServiceConfig {
   exportRoot: string;
   fixture: boolean;
   helperArguments?: string[];
+  helperStartTimeoutMs?: number;
   exportNow?: () => Date;
   fixtureStampApplied?: boolean;
   failFinalizationOnce?: boolean;
@@ -206,17 +207,16 @@ export class RecordingService {
     const meeting = await this.store.create({ title });
     const lease = this.lifecycle.tryAcquireWork(meeting.id, "active_capture");
     if (!lease) throw new Error("Meeting deletion is in progress");
-    let recording: RecordingSession;
+    let recording: RecordingSession | null = null;
+    let startupHelper: CaptureHelper | null = null;
+    let sessionPrepared = false;
     try {
       recording = await this.store.startRecording({ meetingId: meeting.id });
       this.recordingLeases.set(recording.id, lease);
-    } catch (error) {
-      lease.release();
-      throw error;
-    }
-    const sessionDirectory = path.join(this.config.storeRoot, "sessions", recording.id);
-    await mkdir(sessionDirectory, { recursive: true, mode: 0o700 });
-    try {
+      const establishedRecording = recording;
+      const sessionDirectory = path.join(this.config.storeRoot, "sessions", establishedRecording.id);
+      await mkdir(sessionDirectory, { recursive: true, mode: 0o700 });
+      sessionPrepared = true;
       await this.authorizeProductionStart();
       const helper = new CaptureHelper({
         executable: this.config.helperPath,
@@ -224,19 +224,77 @@ export class RecordingService {
         storeRoot: this.config.storeRoot,
         fixture: this.config.fixture,
         arguments: this.config.helperArguments,
+        startTimeoutMs: this.config.helperStartTimeoutMs,
         onChunk: async (chunk) => {
-          await this.store.commitChunk(recording.id, chunk);
+          await this.store.commitChunk(establishedRecording.id, chunk);
           this.scheduleStatus();
         },
-        onFailure: (reason) => this.handleHelperFailure(recording.id, reason),
+        onFailure: (reason) => this.handleHelperFailure(establishedRecording.id, reason),
         onDiagnostic: (line) => process.stderr.write(`[meetless-capture] ${line}\n`),
       });
+      startupHelper = helper;
       this.helper = helper;
       await helper.start();
     }
     catch (error) {
-      this.helper = null;
-      await this.interruptAndAssess(recording.id, `capture start failed: ${describe(error)}`);
+      let rollbackError: unknown = null;
+      try {
+        // Capture must be unable to publish another chunk before inventory can
+        // prove that the session contains no recoverable media.
+        await startupHelper?.terminate();
+        if (this.helper === startupHelper) this.helper = null;
+        recording ??= (await this.store.listRecordings())
+          .find((candidate) => candidate.meetingId === meeting.id) ?? null;
+        if (recording && !this.recordingLeases.has(recording.id)) {
+          this.recordingLeases.set(recording.id, lease);
+        }
+        if (recording && (startupHelper || sessionPrepared)) {
+          await this.interruptAndAssess(
+            recording.id,
+            `capture start failed: ${describe(error)}`,
+            { retainTerminalWork: true },
+          );
+        } else if (recording) {
+          const interrupted = await this.store.interruptRecording(
+            recording.id,
+            `capture setup failed before a session directory was available: ${describe(error)}`,
+          );
+          await this.store.assessInterruption(recording.id, {
+            recoverable: interrupted.inventory.knownChunkCount > 0,
+            reason: interrupted.inventory.knownChunkCount > 0
+              ? undefined
+              : "Capture never started and no committed media exists",
+          });
+        }
+        const assessed = recording ? await this.findRecording(recording.id) : null;
+        // If session preparation itself failed there is no directory a helper
+        // could have published into. Avoid inventory, which depends on that same
+        // path; preserve any already-committed media if store state says it exists.
+        if (!assessed || (assessed.status === "failed" && assessed.inventory.knownChunkCount === 0)) {
+          const deleted = await this.store.deleteMeeting(meeting.id);
+          if (deleted.outcome !== "deleted") {
+            throw new Error(
+              `zero-media recording cleanup ${deleted.outcome}` +
+              (deleted.reason ? ` (${deleted.reason})` : ""),
+            );
+          }
+          if (recording) this.releaseRecordingWork(recording.id);
+          else lease.release();
+        }
+      } catch (cleanupError) {
+        rollbackError = cleanupError;
+        process.stderr.write(
+          `[meetless-recording] start rollback incomplete after ${describe(error)}: ${describe(cleanupError)}\n`,
+        );
+        // A failed rollback must not leave an invisible lifecycle lease. If the
+        // helper itself did not quiesce, keep its handle and active-work lease so
+        // destructive deletion remains refused.
+        if (!startupHelper?.pid) {
+          if (recording) this.releaseRecordingWork(recording.id);
+          else lease.release();
+        }
+      }
+      if (rollbackError) throw new RecordingStartRollbackError(error, rollbackError);
       throw error;
     }
   }
@@ -405,11 +463,15 @@ export class RecordingService {
     });
   }
 
-  private async interruptAndAssess(recordingId: string, reason: string): Promise<void> {
+  private async interruptAndAssess(
+    recordingId: string,
+    reason: string,
+    options: { retainTerminalWork?: boolean } = {},
+  ): Promise<void> {
     const current = await this.findRecording(recordingId);
     if (current.status === "recording") {
       const recovered = await this.store.prepareInventoryRecovery(recordingId, reason);
-      await this.startInventoryScan(recovered);
+      await this.startInventoryScan(recovered, options);
       return;
     }
     const interrupted = await this.store.interruptRecording(recordingId, reason);
@@ -419,7 +481,10 @@ export class RecordingService {
     });
   }
 
-  private startInventoryScan(recording: RecordingSession): Promise<void> {
+  private startInventoryScan(
+    recording: RecordingSession,
+    options: { retainTerminalWork?: boolean } = {},
+  ): Promise<void> {
     if (this.shuttingDown) return Promise.resolve();
     const existing = this.scans.get(recording.id);
     if (existing) return existing.promise;
@@ -435,7 +500,10 @@ export class RecordingService {
         this.scans.delete(recording.id);
         const current = (await this.store.listRecordings().catch(() => []))
           .find((candidate) => candidate.id === recording.id);
-        if (!current || current.status === "failed" || current.status === "saved") this.releaseRecordingWork(recording.id);
+        if (
+          !options.retainTerminalWork &&
+          (!current || current.status === "failed" || current.status === "saved")
+        ) this.releaseRecordingWork(recording.id);
         if (!this.shuttingDown) await this.emitStatus().catch(() => undefined);
       });
     this.scans.set(recording.id, { controller, promise });
@@ -562,6 +630,16 @@ function sameIdentity(left: { byteLength: number; sha256: string }, right: { byt
 }
 
 function describe(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+
+export class RecordingStartRollbackError extends Error {
+  readonly rollbackError: unknown;
+
+  constructor(startError: unknown, rollbackError: unknown) {
+    super(describe(startError), { cause: startError });
+    this.name = "RecordingStartRollbackError";
+    this.rollbackError = rollbackError;
+  }
+}
 function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === code;
 }
