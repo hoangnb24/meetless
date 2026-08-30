@@ -31,6 +31,7 @@
   <div style="display:flex;flex:1;min-height:0">
     <aside class="side" id="nav">
       <a href="app-surface.html" data-src="app-surface.html">Applied UI surface</a>
+      <a href="provider-model-controls.html" data-src="provider-model-controls.html">Ask composer · model picker</a>
       <a href="colors-primary.html" data-src="colors-primary.html">Color</a>
       <a href="typography-specimens.html" data-src="typography-specimens.html">Typography</a>
       <a href="spacing-tokens.html" data-src="spacing-tokens.html">Spacing · Radius · Elevation</a>
@@ -48,7 +49,7 @@
 </div>
 <script>
 const links=document.querySelectorAll('#nav a');
-links.forEach(a=>{a.addEventListener('click',()=>{const s=a.getAttribute('data-src');if(s)document.getElementById('frame').src=s;});});
+links.forEach(a=>{a.addEventListener('click',(e)=>{e.preventDefault();const s=a.getAttribute('data-src');if(s)document.getElementById('frame').src=s;});});
 </script>
 </body>
 </html>

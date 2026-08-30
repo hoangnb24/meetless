@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Preview · Ask composer</title>
+<link rel="stylesheet" href="../tokens.css" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+* { box-sizing: border-box; }
+html, body { min-height: 100%; margin: 0; background: var(--bg); color: var(--fg); }
+body { padding: 26px; font-family: var(--font-body); -webkit-font-smoothing: antialiased; }
+.wrap { width: min(1200px, 100%); margin: 0 auto; }
+h1 { margin: 0 0 4px; font-size: 24px; font-weight: 590; letter-spacing: -0.015em; }
+.sub { max-width: 760px; margin: 0 0 18px; color: var(--muted); font-size: 13.5px; line-height: 1.55; }
+.links { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 0 14px; border: 1px solid transparent; border-radius: var(--radius-sm); background: var(--accent); color: var(--accent-on); font-size: 13px; font-weight: 510; cursor: pointer; }
+.btn:hover { background: var(--accent-hover); }
+.source { color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+iframe { display: block; width: 100%; height: 820px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg); box-shadow: var(--elev-raised); }
+.states { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 10px; color: var(--muted); font-family: var(--font-mono); font-size: 10.5px; }
+@media (max-width: 639px) {
+  body { padding: 16px 12px; }
+  h1 { font-size: 21px; }
+  iframe { height: 844px; }
+}
+</style>
+</head>
+<body class="ds">
+<main class="wrap">
+  <h1>Ask composer · model picker</h1>
+  <p class="sub">A compact Paseo-aligned composer row for meeting-scoped model, Thinking, and Fast choices. Profiles and providers stay behind an anchored picker while the Ask task remains primary.</p>
+  <div class="links"><button class="btn" type="button" data-action="reload">Reload surface</button><span class="source">source: examples/provider-model-controls.html</span></div>
+  <iframe id="frame" src="../examples/provider-model-controls.html" title="Meetless Ask composer prototype"></iframe>
+  <div class="states"><span>Desktop: anchored model picker at 1440 × 900</span><span>Compact: full-width bottom sheet at 390 × 844</span></div>
+</main>
+<script>
+document.querySelector('[data-action="reload"]').addEventListener('click', () => {
+  document.getElementById('frame').src = '../examples/provider-model-controls.html';
+});
+</script>
+</body>
+</html>

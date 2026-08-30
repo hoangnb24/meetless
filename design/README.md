@@ -37,7 +37,7 @@ recovery-focused voice. See **DESIGN.md** for the complete visual contract.
 ├── context/             Source context and provenance
 ├── assets/meetless-mark.svg   Vector brand mark (dark + light)
 ├── fonts/README.md      Font pairing + licensing note
-├── examples/            Preserved source prototype (full interaction evidence)
+├── examples/            Preserved source prototype + focused Ask composer example
 ├── preview/             Review cards + gallery + manifest
 └── ui_kits/app/         Applied interface kit (library, detail, recording, sources, pairing)
 ```
@@ -57,6 +57,7 @@ recovery-focused voice. See **DESIGN.md** for the complete visual contract.
 | Card | File |
 |---|---|
 | Applied UI surface | `preview/app-surface.html` |
+| Ask composer · model picker | `preview/provider-model-controls.html` |
 | Color | `preview/colors-primary.html` |
 | Typography | `preview/typography-specimens.html` |
 | Spacing · Radius · Elevation | `preview/spacing-tokens.html` |

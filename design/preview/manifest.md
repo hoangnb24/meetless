@@ -9,6 +9,7 @@ Start reviewers at **Applied UI surface** (live prototype), then **Color** and
 | Card | File | Loads |
 |---|---|---|
 | Applied UI surface | `app-surface.html` | **live iframe** of `examples/meetless-prototype.html` |
+| Ask composer | `provider-model-controls.html` | **live iframe** of `examples/provider-model-controls.html` |
 | Color | `colors-primary.html` | `tokens.css` + `colors_and_type.css` |
 | Typography | `typography-specimens.html` | `tokens.css` + `colors_and_type.css` |
 | Spacing · Radius · Elevation | `spacing-tokens.html` | `tokens.css` |
@@ -23,6 +24,9 @@ Start reviewers at **Applied UI surface** (live prototype), then **Color** and
 
 - `../examples/meetless-prototype.html` — full preserved interaction prototype, embedded
   by the applied-surface card.
+- `../examples/provider-model-controls.html` — focused Ask composer prototype
+  with a Paseo-aligned model picker, Thinking menu, Fast feature, and responsive
+  desktop/mobile popup states.
 - `../../docs/product/experience.md` — accepted product and UX authority outside
   this visual package.
 

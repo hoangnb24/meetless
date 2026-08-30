@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Meetless — Ask composer model picker</title>
+<meta name="description" content="Meetless prototype for a compact Ask composer model picker." />
+<style>
+/* Inlined verbatim from design/tokens.css so this review artifact remains
+   fully styled when downloaded and opened outside the Meetless workspace. */
+:root {
+  --bg: #08090a;
+  --surface: #191a1b;
+  --surface-warm: var(--surface);
+  --fg: #f7f8f8;
+  --fg-2: #d0d6e0;
+  --muted: #8a8f98;
+  --meta: #62666d;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-soft: rgba(255, 255, 255, 0.05);
+  --accent: #5e6ad2;
+  --accent-on: #ffffff;
+  --accent-hover: #828fff;
+  --accent-active: #4752c4;
+  --success: #27a644;
+  --warn: #eab308;
+  --danger: #dc2626;
+  --font-display: "Inter Variable", "Inter", "SF Pro Display", -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-body: "Inter Variable", "Inter", "SF Pro Display", -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+  --text-2xl: 32px;
+  --text-3xl: 48px;
+  --text-4xl: 72px;
+  --leading-body: 1.5;
+  --leading-tight: 1;
+  --tracking-display: -0.022em;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --section-y-desktop: 80px;
+  --section-y-tablet: 48px;
+  --section-y-phone: 32px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 9999px;
+  --elev-flat: none;
+  --elev-ring: 0 0 0 1px var(--border);
+  --elev-raised: rgba(0, 0, 0, 0.4) 0 2px 4px, 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --focus-ring: 0 0 0 2px color-mix(in oklab, var(--accent), transparent 30%), 0 4px 12px rgba(0, 0, 0, 0.1);
+  --motion-fast: 150ms;
+  --motion-base: 200ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --container-max: 1200px;
+  --container-gutter-desktop: 24px;
+  --container-gutter-tablet: 16px;
+  --container-gutter-phone: 12px;
+}
+
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; }
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: var(--leading-body);
+  font-feature-settings: "cv01", "ss03";
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, p { margin: 0; }
+button, input, textarea { font: inherit; }
+button { cursor: pointer; color: inherit; }
+button:disabled { cursor: not-allowed; }
+input, textarea { color: inherit; }
+input::placeholder, textarea::placeholder { color: var(--muted); }
+:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+svg { display: block; flex: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* ─── Meetless shell ───────────────────────────────────────── */
+.app-shell { display: flex; flex-direction: column; width: 100%; height: 100vh; min-height: 0; }
+.topbar {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: 52px;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: color-mix(in oklch, var(--bg) 96%, transparent);
+}
+.brand { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-size: 15px; font-weight: 590; letter-spacing: -0.01em; }
+.brand .mark { position: relative; width: 18px; height: 18px; flex: none; border-radius: 5px; background: var(--accent); }
+.brand .mark::after { content: ""; position: absolute; inset: 5px; border-radius: 2px; background: var(--bg); }
+.host-chip { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 240px; padding: 5px 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-pill); background: color-mix(in oklch, var(--fg) 3%, transparent); color: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+.host-chip .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--success); }
+.host-chip .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-spacer { flex: 1; min-width: 8px; }
+.topbar-note { color: var(--muted); font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
+.workspace { display: grid; grid-template-columns: 248px minmax(0, 1fr); flex: 1; min-height: 0; }
+.library { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border-soft); background: color-mix(in oklch, var(--bg) 60%, transparent); }
+.library-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 16px 14px 10px; }
+.overline { color: var(--muted); font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.library-list { min-height: 0; overflow: auto; padding: 4px 10px 12px; }
+.library-group { padding: 14px 6px 6px; color: var(--muted); font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.07em; text-transform: uppercase; }
+.meeting-row { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 9px 10px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; text-align: left; }
+.meeting-row:hover { background: color-mix(in oklch, var(--fg) 5%, transparent); }
+.meeting-row.selected { border-color: color-mix(in oklch, var(--accent) 38%, transparent); background: color-mix(in oklch, var(--accent) 13%, transparent); }
+.meeting-row .title { overflow: hidden; color: var(--fg); font-size: 13.5px; font-weight: 510; text-overflow: ellipsis; white-space: nowrap; }
+.meeting-row .meta { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+.meeting-row .status { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; white-space: nowrap; }
+.meeting-row .status i { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+.library-foot { margin-top: auto; padding: 12px 14px; border-top: 1px solid var(--border-soft); color: var(--muted); font-size: 12px; }
+.local-line { display: flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 11px; }
+.local-line i { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+
+/* ─── meeting detail ───────────────────────────────────────── */
+.detail { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+.meeting-head { flex: none; padding: 18px 24px 12px; border-bottom: 1px solid var(--border-soft); background: color-mix(in oklch, var(--bg) 92%, transparent); }
+.meeting-head h1 { overflow: hidden; font-size: 20px; font-weight: 590; letter-spacing: -0.015em; text-overflow: ellipsis; white-space: nowrap; }
+.meeting-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 4px; color: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+.ready-state { display: inline-flex; align-items: center; gap: 6px; }
+.ready-state i { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+.task-tabs { display: none; gap: 4px; margin-top: 12px; }
+.task-tab { min-height: 36px; padding: 7px 13px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: 13px; }
+.task-tab:hover { color: var(--fg); background: color-mix(in oklch, var(--fg) 5%, transparent); }
+.task-tab.active { border-color: var(--border); background: color-mix(in oklch, var(--fg) 6%, transparent); color: var(--fg); }
+.detail-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.8fr); flex: 1; min-height: 0; }
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.transcript-pane { border-right: 1px solid var(--border-soft); }
+.pane-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 24px 0; }
+.pane-title { color: var(--muted); font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.scroll { min-height: 0; overflow: auto; }
+.transcript-body { padding: 8px 24px 28px; }
+.segment { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 12px; width: 100%; margin: 2px 0; padding: 9px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; text-align: left; }
+.segment:hover { background: color-mix(in oklch, var(--fg) 5%, transparent); }
+.segment .time { padding-top: 1px; color: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+.segment .copy { min-width: 0; color: var(--fg-2); font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.segment.current { background: color-mix(in oklch, var(--accent) 14%, transparent); }
+.segment.current .time, .segment.current .copy { color: var(--fg); }
+
+/* ─── Ask thread + Paseo-shaped composer ───────────────────── */
+.ask-pane { background: color-mix(in oklch, var(--bg) 98%, var(--surface)); }
+.ask-head-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ask-scope { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-pill); color: var(--muted); font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap; }
+.thread { display: flex; flex-direction: column; gap: 16px; padding: 14px 24px 20px; }
+.turn { max-width: 100%; }
+.turn.user { align-self: flex-end; max-width: 86%; padding: 9px 14px; border-radius: 14px 14px 4px 14px; background: var(--accent); color: var(--accent-on); font-size: 13.5px; }
+.turn.assistant { align-self: flex-start; display: flex; flex-direction: column; gap: 8px; max-width: 94%; }
+.turn.assistant .body { color: var(--fg-2); font-size: 13.5px; line-height: 1.6; }
+.cite-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.cite { display: inline-flex; align-items: center; padding: 4px 9px; border: 1px solid color-mix(in oklch, var(--accent) 30%, transparent); border-radius: var(--radius-pill); background: color-mix(in oklch, var(--accent) 12%, transparent); color: var(--accent-hover); font-family: var(--font-mono); font-size: 11px; }
+.cite:hover { background: color-mix(in oklch, var(--accent) 22%, transparent); }
+.evidence { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid color-mix(in oklch, var(--accent) 35%, transparent); border-radius: var(--radius-md); background: color-mix(in oklch, var(--accent) 8%, transparent); }
+.evidence-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--accent-hover); font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; }
+.evidence-copy { color: var(--fg-2); font-size: 13px; line-height: 1.55; }
+.ask-composer { position: relative; display: flex; flex-direction: column; gap: 9px; padding: 12px 24px 16px; border-top: 1px solid var(--border-soft); background: color-mix(in oklch, var(--bg) 96%, transparent); }
+.ask-composer textarea { width: 100%; min-height: 44px; max-height: 120px; resize: none; padding: 11px 13px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: color-mix(in oklch, var(--fg) 3.5%, transparent); font-size: 13.5px; line-height: 1.5; }
+.ask-composer textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.composer-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 14px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; font-size: 13px; font-weight: 510; letter-spacing: -0.005em; transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast), color var(--motion-fast); }
+.btn:active { transform: translateY(1px); }
+.btn-primary { border-color: transparent; background: var(--accent); color: var(--accent-on); }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:active { background: var(--accent-active); }
+.model-pill, .thinking-pill, .feature-button { min-height: 36px; border: 1px solid var(--border); background: color-mix(in oklch, var(--fg) 4%, transparent); color: var(--fg-2); }
+.model-pill, .thinking-pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: var(--radius-pill); font-size: 12px; white-space: nowrap; }
+.model-pill:hover, .thinking-pill:hover, .feature-button:hover { background: color-mix(in oklch, var(--fg) 8%, transparent); color: var(--fg); }
+.model-pill[aria-expanded="true"], .thinking-pill[aria-expanded="true"] { border-color: color-mix(in oklch, var(--accent) 50%, transparent); background: color-mix(in oklch, var(--accent) 11%, transparent); color: var(--fg); }
+.provider-mini, .provider-icon { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 5px; background: color-mix(in oklch, var(--fg) 9%, transparent); color: var(--fg-2); font-family: var(--font-mono); font-size: 10px; }
+.pill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pill-chevron { color: var(--muted); }
+.thinking-icon { width: 15px; height: 15px; color: var(--fg-2); }
+.feature-button { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 38px; padding: 0; border-radius: var(--radius-pill); color: var(--muted); }
+.feature-button.active { border-color: color-mix(in oklch, var(--accent) 50%, transparent); background: color-mix(in oklch, var(--accent) 15%, transparent); color: var(--accent-hover); }
+.feature-button::after { position: absolute; bottom: calc(100% + 7px); left: 50%; z-index: 2; padding: 5px 7px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); box-shadow: var(--elev-raised); color: var(--fg-2); content: attr(data-tooltip); font-size: 11px; opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(2px); transition: opacity var(--motion-fast), transform var(--motion-fast); white-space: nowrap; }
+.feature-button:hover::after, .feature-button:focus-visible::after { opacity: 1; transform: translateX(-50%) translateY(0); }
+.bolt-icon { width: 16px; height: 16px; }
+
+/* ─── anchored model picker ───────────────────────────────── */
+.popup-layer { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+.popup-dismiss { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; pointer-events: auto; }
+.model-picker, .thinking-menu { position: absolute; z-index: 1; pointer-events: auto; }
+.model-picker { width: min(360px, calc(100vw - 24px)); max-height: min(620px, calc(100vh - 24px)); overflow: auto; padding: 8px 0; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--elev-raised); }
+.picker-search { position: relative; padding: 0 8px 8px; }
+.picker-search input { width: 100%; height: 42px; padding: 0 11px 0 34px; border: 0; border-bottom: 1px solid var(--border-soft); border-radius: var(--radius-sm) var(--radius-sm) 0 0; outline: none; background: transparent; color: var(--fg); font-size: 13px; }
+.picker-search input:focus { background: color-mix(in oklch, var(--fg) 3%, transparent); box-shadow: var(--focus-ring); }
+.search-icon { position: absolute; top: 13px; left: 18px; width: 14px; height: 14px; color: var(--muted); pointer-events: none; }
+.picker-section { padding-top: 7px; }
+.picker-section + .picker-section { border-top: 1px solid var(--border-soft); }
+.picker-label { padding: 0 12px 4px; color: var(--muted); font-size: 11px; }
+.picker-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; width: 100%; min-height: 46px; padding: 7px 12px; border: 0; border-radius: 0; background: transparent; text-align: left; }
+.picker-row:hover, .picker-row:focus-visible { background: color-mix(in oklch, var(--fg) 6%, transparent); }
+.picker-row.selected { background: color-mix(in oklch, var(--accent) 10%, transparent); }
+.profile-glyph { display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); font-family: var(--font-mono); font-size: 10px; }
+.row-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.row-copy strong { overflow: hidden; color: var(--fg); font-size: 13px; font-weight: 480; text-overflow: ellipsis; white-space: nowrap; }
+.row-copy span { overflow: hidden; color: var(--muted); font-size: 11.5px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.row-meta { color: var(--muted); font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap; }
+.row-chevron { width: 13px; height: 13px; color: var(--muted); }
+.provider-icon { width: 18px; height: 18px; border: 1px solid var(--border-soft); border-radius: 5px; }
+.model-glyph { display: grid; place-items: center; width: 18px; height: 18px; color: var(--muted); font-size: 14px; }
+.model-row .row-copy strong { font-weight: 510; }
+.check-icon { width: 15px; height: 15px; color: var(--accent-hover); }
+.empty-row { padding: 14px 12px; color: var(--muted); font-size: 12px; }
+.picker-header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 2px 8px 8px; }
+.back-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; padding: 5px 7px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: 12px; }
+.back-button:hover { background: color-mix(in oklch, var(--fg) 6%, transparent); color: var(--fg); }
+.back-icon { width: 14px; height: 14px; }
+.picker-context { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.picker-context strong { overflow: hidden; font-size: 13px; font-weight: 510; text-overflow: ellipsis; white-space: nowrap; }
+.picker-count { color: var(--muted); font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap; }
+.thinking-menu { width: 176px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--elev-raised); }
+.thinking-option { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 42px; padding: 8px 11px; border: 0; background: transparent; color: var(--fg-2); text-align: left; font-size: 13px; }
+.thinking-option:hover, .thinking-option:focus-visible { background: color-mix(in oklch, var(--fg) 6%, transparent); color: var(--fg); }
+.thinking-option[aria-checked="true"] { color: var(--fg); }
+.thinking-option .thinking-choice-icon { width: 15px; height: 15px; color: var(--muted); }
+.thinking-option .check-icon { margin-left: auto; }
+
+/* ─── responsive tiers ─────────────────────────────────────── */
+@media (min-width: 640px) and (max-width: 1119px) {
+  .detail-grid { grid-template-columns: 1fr; }
+  .transcript-pane { display: none; }
+  .task-tabs { display: flex; }
+}
+@media (max-width: 639px) {
+  .topbar { gap: 8px; padding: 0 10px; }
+  .brand { font-size: 14px; }
+  .host-chip { max-width: 108px; padding-inline: 8px; }
+  .topbar-note { display: none; }
+  .workspace { display: block; }
+  .library { display: none; }
+  .meeting-head { padding: 14px 14px 10px; }
+  .meeting-head h1 { font-size: 18px; }
+  .task-tabs { display: flex; }
+  .task-tab { min-height: 42px; }
+  .detail-grid { display: block; }
+  .ask-pane { height: 100%; }
+  .detail-grid.task-transcript .ask-pane { display: none; }
+  .detail-grid.task-transcript .transcript-pane { display: flex; height: 100%; border-right: 0; }
+  .detail-grid.task-ask .transcript-pane { display: none; }
+  .detail-grid.task-ask .ask-pane { display: flex; }
+  .pane-head { padding: 10px 14px 0; }
+  .thread { padding: 10px 14px 18px; }
+  .transcript-body { padding: 6px 14px 22px; }
+  .segment { grid-template-columns: 58px minmax(0, 1fr); gap: 8px; padding: 10px 8px; }
+  .ask-composer { padding: 10px 14px 12px; }
+  .composer-toolbar { align-items: stretch; }
+  .composer-controls { flex: 1; gap: 5px; }
+  .composer-controls .model-pill, .composer-controls .thinking-pill, .composer-controls .feature-button, .ask-submit { min-height: 44px; }
+  .model-pill, .thinking-pill { padding-inline: 9px; }
+  .feature-button { width: 44px; }
+  .ask-submit { padding-inline: 13px; }
+  .popup-layer { display: flex; align-items: flex-end; background: color-mix(in oklch, var(--bg) 68%, transparent); pointer-events: auto; }
+  .popup-dismiss { background: transparent; }
+  .model-picker { position: relative; width: 100%; max-width: none; max-height: calc(100vh - 12px); padding: 10px 0 12px; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+  .picker-search { padding-inline: 12px; }
+  .picker-search input { height: 44px; }
+  .search-icon { top: 15px; left: 22px; }
+  .picker-row { min-height: 48px; padding-block: 8px; }
+  .picker-row .row-copy span { white-space: normal; }
+  .picker-header { padding: 3px 12px 9px; }
+  .back-button { min-height: 44px; }
+  .thinking-menu { position: relative; width: min(220px, calc(100vw - 24px)); max-height: calc(100vh - 24px); }
+  .thinking-option { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 0.001ms !important; }
+  .btn:active { transform: none; }
+}
+</style>
+</head>
+<body>
+<div id="prototype" aria-live="polite"></div>
+<div id="popupRoot"></div>
+<script>
+"use strict";
+
+const ICONS = {
+  search: '<svg class="search-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.25" fill="none" stroke="currentColor" stroke-width="1.35"/><path d="m10.3 10.3 3 3" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>',
+  chevron: '<svg class="row-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  back: '<svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.8 3.5 5.3 8l4.5 4.5M5.6 8h7" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  check: '<svg class="check-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.2 8.3 3 3 6.6-6.6" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  spark: '<svg class="thinking-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 9.4 6.6 14.2 8l-4.8 1.4L8 14.2 6.6 9.4 1.8 8l4.8-1.4L8 1.8Z" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round"/><path d="m12.3 1.8.35 1.2 1.2.35-1.2.35-.35 1.2-.35-1.2-1.2-.35 1.2-.35.35-1.2Z" fill="currentColor"/></svg>',
+  bolt: '<svg class="bolt-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.3 1.7 3.8 8.1h3.7l-.8 6.2 5.5-6.8H8.5l.8-5.8Z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>',
+};
+
+const PROVIDERS = [
+  {
+    id: "openai",
+    name: "OpenAI",
+    mark: "O",
+    summary: "General-purpose answers",
+    models: [
+      { id: "gpt-4.1", name: "GPT-4.1", note: "Nuanced answers for longer discussions", thinking: ["Off", "Standard", "Extended"] },
+      { id: "gpt-4o-mini", name: "GPT-4o mini", note: "Quick, concise answers", thinking: ["Off", "Standard"] },
+      { id: "o3-mini", name: "o3-mini", note: "Careful answers for complex questions", thinking: ["Standard", "Extended"] },
+    ],
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    mark: "A",
+    summary: "Thoughtful, calm answers",
+    models: [
+      { id: "claude-sonnet", name: "Claude Sonnet", note: "Balanced detail for meeting context", thinking: ["Off", "Standard", "Extended"] },
+      { id: "claude-haiku", name: "Claude Haiku", note: "Short answers for quick checks", thinking: [] },
+    ],
+  },
+  {
+    id: "google",
+    name: "Google",
+    mark: "G",
+    summary: "Fast answers for broad context",
+    models: [
+      { id: "gemini-flash", name: "Gemini Flash", note: "Responsive answers for everyday questions", thinking: ["Off", "Standard"] },
+      { id: "gemini-pro", name: "Gemini Pro", note: "More detail for involved discussions", thinking: ["Standard", "Extended"] },
+    ],
+  },
+];
+
+const PROFILES = [
+  { id: "quick", glyph: "Q", name: "Quick answers", summary: "GPT-4o mini · Off · Fast", providerId: "openai", modelId: "gpt-4o-mini", thinking: "Off", fast: true },
+  { id: "analyst", glyph: "M", name: "Meeting analyst", summary: "Claude Sonnet · Standard", providerId: "anthropic", modelId: "claude-sonnet", thinking: "Standard", fast: false },
+  { id: "deep", glyph: "D", name: "Deep review", summary: "o3-mini · Extended", providerId: "openai", modelId: "o3-mini", thinking: "Extended", fast: false },
+];
+
+const SEEDED_TURNS = [
+  { role: "user", text: "What did we decide about the budget for Q3?" },
+  { role: "assistant", text: "Stay on current tier pricing through Q3. The billing rework is deferred to Q4 so engineering stays focused on onboarding, and September is limited to onboarding improvements.", cites: ["00:04:12–00:07:48", "00:12:21–00:18:03"] },
+];
+
+const state = {
+  task: "ask",
+  popup: null,
+  popupView: "root",
+  providerId: "openai",
+  query: "",
+  question: "",
+  returnFocusId: null,
+  turns: SEEDED_TURNS.map((turn) => ({ ...turn })),
+  committed: { providerId: "openai", modelId: "gpt-4.1", thinking: "Standard", fast: false },
+};
+
+const $ = (selector, root = document) => root.querySelector(selector);
+const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+const providerFor = (id) => PROVIDERS.find((provider) => provider.id === id) || PROVIDERS[0];
+const modelFor = (providerId, modelId) => providerFor(providerId).models.find((model) => model.id === modelId) || providerFor(providerId).models[0];
+const currentModel = () => modelFor(state.committed.providerId, state.committed.modelId);
+const modelCount = (provider) => `${provider.models.length} ${provider.models.length === 1 ? "model" : "models"}`;
+const searchMatch = (query, value) => !query || value.toLowerCase().includes(query);
+const iconForProvider = (provider) => `<span class="provider-icon" aria-hidden="true">${esc(provider.mark)}</span>`;
+
+function draw(options = {}) {
+  const active = document.activeElement;
+  const focusId = options.focusId || (active && active.id);
+  const selection = options.selection == null ? null : options.selection;
+  $("#prototype").innerHTML = surfaceHTML();
+  renderPopup();
+  const popup = activePopup();
+  const next = focusId ? document.getElementById(focusId) : null;
+  if (popup) {
+    const popupNext = next && popup.contains(next) ? next : null;
+    (popupNext || focusPopupDefault()).focus();
+    if (selection != null && popupNext && typeof popupNext.setSelectionRange === "function") popupNext.setSelectionRange(selection, selection);
+  } else if (next) {
+    next.focus();
+    if (selection != null && typeof next.setSelectionRange === "function") next.setSelectionRange(selection, selection);
+  }
+}
+
+function activePopup() {
+  return state.popup === "thinking" ? $("#thinkingMenu") : $("#modelPicker");
+}
+
+function popupFocusables(popup = activePopup()) {
+  if (!popup) return [];
+  return [...popup.querySelectorAll("button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])")]
+    .filter((element) => element.getClientRects().length && getComputedStyle(element).visibility !== "hidden");
+}
+
+function focusPopupDefault() {
+  const popup = activePopup();
+  if (!popup) return document.body;
+  const preferred = state.popup === "thinking"
+    ? popup.querySelector("[aria-checked='true']")
+    : popup.querySelector("#modelSearch, #providerModelSearch");
+  return preferred || popupFocusables(popup)[0] || popup;
+}
+
+function surfaceHTML() {
+  const config = state.committed;
+  const provider = providerFor(config.providerId);
+  const model = currentModel();
+  const askTurns = state.turns.map((turn, index) => turn.role === "user"
+    ? `<div class="turn user" data-od-id="ask-turn-${index}">${esc(turn.text)}</div>`
+    : `<div class="turn assistant" data-od-id="ask-turn-${index}">
+        <div class="body">${esc(turn.text)}</div>
+        <div class="cite-row"><button class="cite" type="button">${esc(turn.cites ? turn.cites[0] : "00:04:12–00:07:48")}</button><button class="cite" type="button">${esc(turn.cites ? turn.cites[1] : "00:12:21–00:18:03")}</button></div>
+        <div class="evidence" data-od-id="evidence-panel">
+          <div class="evidence-head"><span>Evidence · validated segment</span><span class="mono">00:04:12–00:07:48</span></div>
+          <div class="evidence-copy">Budget stays on the current tier through Q3; the billing rework moves to Q4.</div>
+          <button class="btn btn-primary" type="button">Play from here</button>
+        </div>
+      </div>`).join("");
+  const thinking = model.thinking.length ? (model.thinking.includes(config.thinking) ? config.thinking : model.thinking[0]) : null;
+  return `<div class="app-shell">
+    <header class="topbar" data-od-id="app-topbar">
+      <div class="brand"><span class="mark"></span><span>Meetless</span></div>
+      <span class="host-chip"><span class="dot"></span><span class="label">Host online</span></span>
+      <span class="topbar-spacer"></span>
+      <span class="topbar-note">Ask composer prototype</span>
+    </header>
+    <main class="workspace">
+      <aside class="library" aria-label="Meetings">
+        <div class="library-head"><span class="overline">Meetings</span><button class="btn" type="button">Record meeting</button></div>
+        <div class="library-list">
+          <div class="library-group">Today</div>
+          <button class="meeting-row selected" type="button"><span class="title">Design crit — weekly sync</span><span class="meta"><span>09:30</span><span>42 min</span><span class="status"><i></i>Ready</span></span></button>
+          <button class="meeting-row" type="button"><span class="title">Product roadmap review</span><span class="meta"><span>11:15</span><span>31 min</span><span class="status"><i></i>Ready</span></span></button>
+          <div class="library-group">Yesterday</div>
+          <button class="meeting-row" type="button"><span class="title">1:1 with Mina — career path</span><span class="meta"><span>16:40</span><span>28 min</span><span class="status"><i></i>Ready</span></span></button>
+        </div>
+        <div class="library-foot"><span class="local-line"><i></i>Local · private · on this computer</span></div>
+      </aside>
+      <section class="detail" aria-label="Design crit meeting">
+        <header class="meeting-head">
+          <h1>Design crit — weekly sync</h1>
+          <div class="meeting-meta"><span>Today</span><span>09:30</span><span>42 min</span><span class="ready-state"><i></i>Ready</span></div>
+          <div class="task-tabs" role="tablist" aria-label="Meeting task">
+            <button class="task-tab${state.task === "transcript" ? " active" : ""}" type="button" role="tab" aria-selected="${state.task === "transcript"}" data-action="task" data-task="transcript">Transcript</button>
+            <button class="task-tab${state.task === "ask" ? " active" : ""}" type="button" role="tab" aria-selected="${state.task === "ask"}" data-action="task" data-task="ask">Ask</button>
+          </div>
+        </header>
+        <div class="detail-grid task-${state.task}">
+          <section class="pane transcript-pane" aria-label="Transcript">
+            <div class="pane-head"><span class="pane-title">Transcript</span><span class="mono" style="color:var(--muted);font-size:11px">10 segments</span></div>
+            <div class="scroll"><div class="transcript-body">
+              <button class="segment" type="button"><span class="time">00:00–04:11</span><span class="copy">Welcome, team. Quick agenda: billing decisions, design critique cadence, and the September roadmap.</span></button>
+              <button class="segment current" type="button"><span class="time">04:12–07:48</span><span class="copy">Budget: we stay on current tier pricing through Q3. The billing rework moves to Q4 so engineering stays focused on onboarding.</span></button>
+              <button class="segment" type="button"><span class="time">07:49–12:20</span><span class="copy">Weekly design critiques stay on the calendar through the October review. No changes to the Thursday slot.</span></button>
+              <button class="segment" type="button"><span class="time">12:21–18:03</span><span class="copy">Onboarding improvements are the only September commitment. Anything beyond that needs a written proposal.</span></button>
+              <button class="segment" type="button"><span class="time">18:04–24:16</span><span class="copy">The trial-usage drop is most likely activation: new users never reach the recording step.</span></button>
+              <button class="segment" type="button"><span class="time">24:17–31:09</span><span class="copy">Instrument the recording setup page with event markers, but no new model spend this quarter.</span></button>
+            </div></div>
+          </section>
+          <section class="pane ask-pane" aria-label="Ask">
+            <div class="pane-head">
+              <span class="pane-title">Ask</span>
+              <div class="ask-head-actions"><span class="ask-scope">This meeting only</span></div>
+            </div>
+            <div class="scroll"><div class="thread">${askTurns || `<div class="body">Ask about this meeting.</div>`}</div></div>
+            <div class="ask-composer" id="askComposer" data-od-id="ask-composer">
+              <textarea id="askInput" rows="1" aria-label="Ask about this meeting" placeholder="Ask about this meeting…">${esc(state.question)}</textarea>
+              <div class="composer-toolbar">
+                <div class="composer-controls" aria-label="Ask controls">
+                  <button class="model-pill" id="modelTrigger" type="button" aria-label="Model ${esc(model.name)}. Change model" aria-haspopup="dialog" aria-expanded="${state.popup === "model"}" aria-controls="modelPicker" data-action="open-model-picker" data-od-id="model-trigger">
+                    <span class="provider-mini" aria-hidden="true">${esc(provider.mark)}</span><span class="pill-label">${esc(model.name)}</span>${ICONS.chevron}
+                  </button>
+                  ${thinking ? `<button class="thinking-pill" id="thinkingTrigger" type="button" aria-label="Thinking ${esc(thinking)}. Change thinking" aria-haspopup="menu" aria-expanded="${state.popup === "thinking"}" aria-controls="thinkingMenu" data-action="open-thinking" data-od-id="thinking-trigger">${ICONS.spark}<span class="pill-label">${esc(thinking)}</span>${ICONS.chevron}</button>` : ""}
+                  <button class="feature-button${config.fast ? " active" : ""}" id="fastTrigger" type="button" aria-label="Fast ${config.fast ? "on" : "off"}" aria-pressed="${config.fast}" title="Fast · favor a quicker answer" data-tooltip="Fast · ${config.fast ? "on" : "off"}" data-action="toggle-fast" data-od-id="fast-trigger">${ICONS.bolt}<span class="sr-only">Fast</span></button>
+                </div>
+                <button class="btn btn-primary ask-submit" type="button" data-action="ask">Ask</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>`;
+}
+
+function profileRowHTML(profile) {
+  return `<button class="picker-row profile-row" type="button" data-action="apply-profile" data-profile="${profile.id}" data-od-id="profile-${profile.id}">
+    <span class="profile-glyph" aria-hidden="true">${esc(profile.glyph)}</span><span class="row-copy"><strong>${esc(profile.name)}</strong><span>${esc(profile.summary)}</span></span>
+  </button>`;
+}
+
+function providerRowHTML(provider) {
+  return `<button class="picker-row" type="button" data-action="open-provider" data-provider="${provider.id}" data-od-id="provider-${provider.id}">
+    ${iconForProvider(provider)}<span class="row-copy"><strong>${esc(provider.name)}</strong><span>${esc(provider.summary)}</span></span><span class="row-meta">Ready · ${modelCount(provider)}</span>${ICONS.chevron}
+  </button>`;
+}
+
+function modelRowHTML(provider, model) {
+  const selected = state.committed.providerId === provider.id && state.committed.modelId === model.id;
+  return `<button class="picker-row model-row${selected ? " selected" : ""}" type="button" aria-pressed="${selected}" data-action="select-model" data-provider="${provider.id}" data-model="${model.id}" data-od-id="model-${model.id}">
+    <span class="model-glyph" aria-hidden="true">◌</span><span class="row-copy"><strong>${esc(model.name)}</strong><span>${esc(model.note)}</span></span>${selected ? `${ICONS.check}<span class="sr-only">Selected</span>` : ""}
+  </button>`;
+}
+
+function providerMatches(provider, query) {
+  return searchMatch(query, `${provider.name} ${provider.summary} ${provider.models.map((model) => `${model.name} ${model.note}`).join(" ")}`.toLowerCase());
+}
+
+function profileMatches(profile, query) {
+  const provider = providerFor(profile.providerId);
+  const model = modelFor(profile.providerId, profile.modelId);
+  return searchMatch(query, `${profile.name} ${profile.summary} ${provider.name} ${model.name}`.toLowerCase());
+}
+
+function modelPickerHTML() {
+  const query = state.query.trim().toLowerCase();
+  const provider = providerFor(state.providerId);
+  const compact = window.matchMedia("(max-width: 639px)").matches;
+  if (state.popupView === "provider") {
+    const matchingProfiles = PROFILES.filter((profile) => profile.providerId === provider.id && profileMatches(profile, query));
+    const models = provider.models.filter((model) => searchMatch(query, `${model.name} ${model.note}`.toLowerCase()));
+    return `<section class="model-picker" id="modelPicker" role="dialog" aria-modal="${compact}" aria-labelledby="pickerTitle" tabindex="-1" data-popup="provider">
+      <h2 class="sr-only" id="pickerTitle">Choose a model from ${esc(provider.name)}</h2>
+      <div class="picker-header"><button class="back-button" type="button" aria-label="Back to model picker" data-action="back-root">${ICONS.back}<span>Back</span></button><div class="picker-context">${iconForProvider(provider)}<strong>${esc(provider.name)}</strong></div><span class="picker-count">${modelCount(provider)}</span></div>
+      <div class="picker-search">${ICONS.search}<input id="providerModelSearch" type="search" value="${esc(state.query)}" placeholder="Search models…" aria-label="Search models" data-action="search-models" /></div>
+      ${matchingProfiles.length ? `<div class="picker-section"><div class="picker-label">Profiles</div>${matchingProfiles.map(profileRowHTML).join("")}</div>` : ""}
+      <div class="picker-section"><div class="picker-label">Models</div>${models.length ? models.map((model) => modelRowHTML(provider, model)).join("") : `<div class="empty-row">No models match “${esc(state.query)}”.</div>`}</div>
+    </section>`;
+  }
+  const profiles = PROFILES.filter((profile) => profileMatches(profile, query));
+  const providers = PROVIDERS.filter((item) => providerMatches(item, query));
+  return `<section class="model-picker" id="modelPicker" role="dialog" aria-modal="${compact}" aria-labelledby="pickerTitle" tabindex="-1" data-popup="root">
+    <h2 class="sr-only" id="pickerTitle">Choose an Ask model</h2>
+    <div class="picker-search">${ICONS.search}<input id="modelSearch" type="search" value="${esc(state.query)}" placeholder="Search all models…" aria-label="Search all models" data-action="search-models" /></div>
+    <div class="picker-section"><div class="picker-label">Profiles</div>${profiles.length ? profiles.map(profileRowHTML).join("") : `<div class="empty-row">No profiles match “${esc(state.query)}”.</div>`}</div>
+    <div class="picker-section"><div class="picker-label">Providers</div>${providers.length ? providers.map(providerRowHTML).join("") : `<div class="empty-row">No providers or models match “${esc(state.query)}”.</div>`}</div>
+  </section>`;
+}
+
+function thinkingMenuHTML() {
+  const model = currentModel();
+  return `<div class="thinking-menu" id="thinkingMenu" role="menu" aria-label="Thinking choices" tabindex="-1">
+    ${model.thinking.map((choice) => `<button class="thinking-option" type="button" role="menuitemradio" aria-checked="${state.committed.thinking === choice}" data-action="select-thinking" data-thinking="${esc(choice)}">${ICONS.spark}<span>${esc(choice)}</span>${state.committed.thinking === choice ? ICONS.check : ""}</button>`).join("")}
+  </div>`;
+}
+
+function renderPopup() {
+  const root = $("#popupRoot");
+  if (!state.popup) { root.innerHTML = ""; return; }
+  const content = state.popup === "thinking" ? thinkingMenuHTML() : modelPickerHTML();
+  root.innerHTML = `<div class="popup-layer" data-popup-layer><button class="popup-dismiss" type="button" tabindex="-1" aria-hidden="true" aria-label="Close popup" data-action="dismiss-popup"></button>${content}</div>`;
+  positionPopup();
+}
+
+function positionPopup() {
+  const popup = activePopup();
+  if (!popup || window.matchMedia("(max-width: 639px)").matches) return;
+  const trigger = document.getElementById(state.popup === "thinking" ? "thinkingTrigger" : "modelTrigger");
+  if (!trigger) return;
+  const triggerBox = trigger.getBoundingClientRect();
+  const popupWidth = popup.getBoundingClientRect().width;
+  const popupHeight = popup.getBoundingClientRect().height;
+  const left = Math.min(Math.max(12, triggerBox.left), Math.max(12, window.innerWidth - popupWidth - 12));
+  let top = triggerBox.top - popupHeight - 8;
+  if (top < 12) top = Math.min(window.innerHeight - popupHeight - 12, triggerBox.bottom + 8);
+  popup.style.left = `${left}px`;
+  popup.style.top = `${Math.max(12, top)}px`;
+}
+
+function openModelPicker() {
+  state.popup = "model";
+  state.popupView = "root";
+  state.providerId = state.committed.providerId;
+  state.query = "";
+  state.returnFocusId = "modelTrigger";
+  draw();
+}
+
+function openThinking() {
+  if (!currentModel().thinking.length) return;
+  state.popup = "thinking";
+  state.returnFocusId = "thinkingTrigger";
+  draw();
+}
+
+function closePopup() {
+  const openerId = state.returnFocusId || (state.popup === "thinking" ? "thinkingTrigger" : "modelTrigger");
+  state.popup = null;
+  state.popupView = "root";
+  state.query = "";
+  state.returnFocusId = null;
+  draw();
+  const opener = document.getElementById(openerId);
+  if (opener) opener.focus();
+}
+
+function applyProfile(id) {
+  const profile = PROFILES.find((item) => item.id === id);
+  if (!profile) return;
+  state.committed = { providerId: profile.providerId, modelId: profile.modelId, thinking: profile.thinking, fast: profile.fast };
+  closePopup();
+}
+
+function openProvider(id) {
+  state.providerId = id;
+  state.popupView = "provider";
+  state.query = "";
+  draw();
+}
+
+function backToRoot() {
+  state.popupView = "root";
+  state.query = "";
+  draw();
+}
+
+function selectModel(providerId, modelId) {
+  const model = modelFor(providerId, modelId);
+  const thinking = model.thinking.includes(state.committed.thinking) ? state.committed.thinking : (model.thinking[0] || null);
+  state.committed = { ...state.committed, providerId, modelId: model.id, thinking };
+  closePopup();
+}
+
+function selectThinking(choice) {
+  if (!currentModel().thinking.includes(choice)) return;
+  state.committed.thinking = choice;
+  closePopup();
+}
+
+function toggleFast() {
+  state.committed.fast = !state.committed.fast;
+  draw({ focusId: "fastTrigger" });
+}
+
+function askQuestion() {
+  const text = state.question.trim();
+  if (!text) return;
+  state.turns.push({ role: "user", text }, { role: "assistant", text: "The transcript supports the decisions and timelines shown here. Open a citation to inspect the validated segment.", cites: ["00:04:12–00:07:48", "00:12:21–00:18:03"] });
+  state.question = "";
+  draw({ focusId: "askInput" });
+}
+
+document.addEventListener("click", (event) => {
+  const action = event.target.closest("[data-action]");
+  if (!action) return;
+  event.preventDefault();
+  const type = action.getAttribute("data-action");
+  if (type === "dismiss-popup") closePopup();
+  else if (type === "open-model-picker") openModelPicker();
+  else if (type === "open-thinking") openThinking();
+  else if (type === "apply-profile") applyProfile(action.getAttribute("data-profile"));
+  else if (type === "open-provider") openProvider(action.getAttribute("data-provider"));
+  else if (type === "back-root") backToRoot();
+  else if (type === "select-model") selectModel(action.getAttribute("data-provider"), action.getAttribute("data-model"));
+  else if (type === "select-thinking") selectThinking(action.getAttribute("data-thinking"));
+  else if (type === "toggle-fast") toggleFast();
+  else if (type === "task") { state.task = action.getAttribute("data-task"); draw(); }
+  else if (type === "ask") askQuestion();
+});
+
+document.addEventListener("input", (event) => {
+  if (event.target.id === "modelSearch" || event.target.id === "providerModelSearch") {
+    state.query = event.target.value;
+    draw({ focusId: event.target.id, selection: state.query.length });
+  } else if (event.target.id === "askInput") {
+    state.question = event.target.value;
+  }
+});
+
+document.addEventListener("focusin", (event) => {
+  const popup = activePopup();
+  if (!popup || popup.contains(event.target)) return;
+  focusPopupDefault().focus();
+});
+
+document.addEventListener("keydown", (event) => {
+  const popup = activePopup();
+  if (popup && event.key === "Escape") { event.preventDefault(); closePopup(); return; }
+  if (popup && event.key === "Tab") {
+    const focusables = popupFocusables(popup);
+    if (!focusables.length) { event.preventDefault(); popup.focus(); return; }
+    const activeIndex = focusables.indexOf(document.activeElement);
+    if (event.shiftKey && (activeIndex <= 0 || activeIndex === -1)) {
+      event.preventDefault();
+      focusables[focusables.length - 1].focus();
+    } else if (!event.shiftKey && (activeIndex === focusables.length - 1 || activeIndex === -1)) {
+      event.preventDefault();
+      focusables[0].focus();
+    }
+    return;
+  }
+  if (event.key === "Enter" && !event.shiftKey && event.target.id === "askInput") { event.preventDefault(); askQuestion(); }
+});
+
+window.addEventListener("resize", () => { if (state.popup) positionPopup(); });
+draw();
+</script>
+</body>
+</html>

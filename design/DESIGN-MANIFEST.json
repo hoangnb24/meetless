@@ -23,6 +23,7 @@
       "context/source-context.md",
       "DESIGN.md",
       "examples/meetless-prototype.html",
+      "examples/provider-model-controls.html",
       "fonts/README.md",
       "preview/app-surface.html",
       "preview/brand-assets.html",
@@ -30,6 +31,7 @@
       "preview/components-buttons.html",
       "preview/index.html",
       "preview/manifest.md",
+      "preview/provider-model-controls.html",
       "preview/spacing-tokens.html",
       "preview/typography-specimens.html",
       "README.md",
@@ -46,11 +48,13 @@
     ],
     "html": [
       "examples/meetless-prototype.html",
+      "examples/provider-model-controls.html",
       "preview/app-surface.html",
       "preview/brand-assets.html",
       "preview/colors-primary.html",
       "preview/components-buttons.html",
       "preview/index.html",
+      "preview/provider-model-controls.html",
       "preview/spacing-tokens.html",
       "preview/typography-specimens.html",
       "ui_kits/app/detail.html",
@@ -98,9 +102,19 @@
       "implementationNote": "Preserve visual hierarchy, responsive behavior, and interactive states from this screen."
     },
     {
+      "file": "examples/provider-model-controls.html",
+      "role": "product-screen",
+      "implementationNote": "Preserve the compact Ask composer row, anchored model picker, responsive popup behavior, and interactive profile/provider/model states from this screen."
+    },
+    {
       "file": "preview/app-surface.html",
       "role": "product-screen",
       "implementationNote": "Preserve visual hierarchy, responsive behavior, and interactive states from this screen."
+    },
+    {
+      "file": "preview/provider-model-controls.html",
+      "role": "product-screen",
+      "implementationNote": "Use this card to review the Paseo-aligned Ask composer row, anchored model picker, Thinking menu, and Fast feature at desktop and compact viewports."
     },
     {
       "file": "preview/brand-assets.html",
