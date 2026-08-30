@@ -68,8 +68,9 @@ Out of scope:
 ## Progress
 
 - [x] Reproduce the architectural mismatch from source and accepted prototype.
-- [ ] Complete independent foundation judgment.
-- [ ] Freeze the overlay/scroll contract and dispatch one writer.
+- [x] Complete independent foundation judgment.
+- [x] Record and freeze the overlay/scroll contract at design authority.
+- [ ] Dispatch one writer for the atomic consumer migration and invariant proof.
 - [ ] Accept focused and built-artifact proof.
 - [ ] Install and launch the accepted signed package.
 
@@ -79,6 +80,14 @@ Out of scope:
   foundation defect, not separate Model and Thinking bugs.
 - 2026-08-30: Preserve all chat selection and backend contracts; only overlay
   presentation, lifecycle composition, scroll ownership, and proof may change.
+- 2026-08-30 `FOUNDATION_CHECK v1`: use a reusable presentation owner because
+  four real consumers share geometry and lifecycle while their data and
+  selection semantics vary independently. Migrate model, thinking,
+  feature-select, and legacy ProviderPicker atomically; do not leave an
+  absolute-position fallback under the claimed standard.
+- 2026-08-30: `design/DESIGN.md` now owns the exact externally observable chat
+  popup and scroll rule. Repository-native surface tests must provide positive
+  and negative proof before the implementation is accepted.
 
 ## Validation
 

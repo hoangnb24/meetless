@@ -155,6 +155,28 @@ The app is a **three-tier responsive shell**.
   text. Do not show playback Pause, Stop, seek, or progress controls.
 - **Field/input:** 44px field, `--border`, focus accent ring; invalid → danger border.
 
+### Chat popup and scroll contract
+
+- Model, thinking-level, dynamic feature-select, and legacy provider/model
+  popups use one shared presentation owner. Consumer data, selection state, and
+  callbacks remain outside that owner.
+- On desktop and tablet, chat popups render in one fixed viewport layer. Their
+  measured content stays at least 12px from every viewport edge, uses an 8px
+  trigger gap, prefers placement above the trigger, and falls below when the
+  measured content cannot fit above.
+- Popup height is constrained by available viewport space. Overflow scrolls
+  inside the popup; a popup must not create page-level scrolling, clipped rows,
+  trailing blank space, or an independent browser scrollbar.
+- On phone, the same presenter renders a viewport-bounded bottom sheet with a
+  dismissal backdrop and 44px minimum interaction targets.
+- Outside interaction and Escape dismiss every chat popup. Focus remains within
+  the open popup, returns to its initiating trigger on close, and open popups
+  reposition after viewport resize.
+- A chat popup must not own independent absolute/downward-only geometry or a
+  duplicate dismissal/focus lifecycle. The Paseo-aligned reference behavior is
+  `design/examples/provider-model-controls.html`; implementation recovery is
+  tracked by `docs/plans/active/chat-overlay-scroll-foundation.md`.
+
 ## 7. Motion & interaction
 
 - **Timing:** `--motion-fast 150ms`, `--motion-base 200ms`, `cubic-bezier(.2 0 0 1)`.
