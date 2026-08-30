@@ -11,6 +11,10 @@ import {
   recordingStripPointerGeometry,
 } from "../src/index.js";
 
+vi.mock("@expo/vector-icons", () => ({
+  MaterialCommunityIcons: (props: Record<string, unknown>) => React.createElement("MaterialCommunityIcons", props),
+}));
+
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });

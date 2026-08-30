@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
   Platform,
   Pressable,
@@ -1342,7 +1343,9 @@ function ProviderPicker({
         testID="chat-provider-trigger"
       >
         <Text style={styles.providerChipText} numberOfLines={1}>{label}</Text>
-        <Text style={styles.providerChevron} accessibilityElementsHidden>⌄</Text>
+        <View style={styles.chatChevronBox} testID="chat-provider-chevron-box" accessibilityElementsHidden>
+          <MaterialCommunityIcons color={colors.muted} name="chevron-down" size={12} testID="chat-provider-chevron-icon" />
+        </View>
       </FocusPressable>
       <View style={[styles.pickerOptions, !optionsVisible && styles.hidden]} testID="chat-provider-options" aria-hidden={!optionsVisible}>
         {providers.map((option) => option.models.map((candidate) => {
@@ -1406,7 +1409,10 @@ function ChatControls({
   const selectedModel = selectedProvider?.models.find((candidate) => candidate.id === selection?.model) ?? null;
   const currentThinking = selectedModel?.thinkingOptions.find((candidate) => candidate.id === selection?.thinkingOptionId) ?? null;
   const fastFeature = features?.status === "ready"
-    ? features.features?.find((feature) => /fast/u.test(`${feature.id} ${feature.label}`)) ?? null
+    ? features.features?.find((feature) => feature.type === "toggle" && (feature.id === "fast_mode" || feature.icon === "zap")) ?? null
+    : null;
+  const planFeature = features?.status === "ready"
+    ? features.features?.find((feature) => feature.type === "toggle" && (feature.id === "plan_mode" || feature.icon === "list-todo")) ?? null
     : null;
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleProfiles = profiles.filter((profile) => {
@@ -1566,7 +1572,9 @@ function ChatControls({
             testID="chat-model-trigger"
           >
             <Text style={styles.chatModelPillText} numberOfLines={1}>{modelLabel}</Text>
-            <Text style={styles.providerChevron} accessibilityElementsHidden>⌄</Text>
+            <View style={styles.chatChevronBox} testID="chat-model-chevron-box" accessibilityElementsHidden>
+              <MaterialCommunityIcons color={colors.muted} name="chevron-down" size={12} testID="chat-model-chevron-icon" />
+            </View>
           </FocusPressable>
           {open ? (
             <>
@@ -1704,7 +1712,9 @@ function ChatControls({
               testID="chat-thinking-trigger"
             >
               <Text style={styles.chatSecondaryPillText} numberOfLines={1}>{currentThinking?.label ?? "Thinking"}</Text>
-              <Text style={styles.providerChevron} accessibilityElementsHidden>⌄</Text>
+              <View style={styles.chatChevronBox} testID="chat-thinking-chevron-box" accessibilityElementsHidden>
+                <MaterialCommunityIcons color={colors.muted} name="chevron-down" size={12} testID="chat-thinking-chevron-icon" />
+              </View>
             </FocusPressable>
             {thinkingOpen ? <View style={styles.chatMiniMenu} testID="chat-thinking-menu">
               {selectedModel.thinkingOptions.map((option) => (
@@ -1723,21 +1733,31 @@ function ChatControls({
             </View> : null}
           </View>
         ) : null}
-        {fastFeature?.type === "toggle" ? (
+        {([
+          { feature: fastFeature, label: "Fast", icon: "lightning-bolt" as const, activeStyle: styles.chatFastToggleSelected, activeColor: "#facc15", testID: "chat-fast-toggle" },
+          { feature: planFeature, label: "Plan", icon: "format-list-checks" as const, activeStyle: styles.chatPlanToggleSelected, activeColor: colors.accentHover, testID: "chat-plan-toggle" },
+        ]).map(({ feature, label, icon, activeStyle, activeColor, testID }) => feature?.type === "toggle" ? (
           <FocusPressable
-            accessibilityLabel={`Fast ${fastFeature.value ? "on" : "off"}`}
+            key={testID}
+            accessibilityHint={feature.tooltip ?? feature.description ?? `Toggle ${label.toLocaleLowerCase()} mode`}
+            accessibilityLabel={`${label} ${feature.value ? "on" : "off"}`}
             accessibilityRole="button"
-            accessibilityState={{ disabled: !interactive || !selection, selected: fastFeature.value }}
-            aria-pressed={fastFeature.value}
+            accessibilityState={{ disabled: !interactive || !selection, selected: feature.value }}
+            aria-pressed={feature.value}
             disabled={!interactive || !selection}
-            onPress={() => toggleFeature(fastFeature)}
-            style={[styles.chatSecondaryPill, layoutTier === "phone" && styles.chatPhoneTarget, fastFeature.value && styles.chatSecondaryPillSelected]}
-            testID="chat-fast-toggle"
+            onPress={() => toggleFeature(feature)}
+            style={[styles.chatIconToggle, layoutTier === "phone" && styles.chatPhoneTargetSquare, feature.value && activeStyle]}
+            testID={testID}
           >
-            <Text style={styles.chatSecondaryPillText}>Fast</Text>
+            <MaterialCommunityIcons
+              color={feature.value ? activeColor : colors.secondary}
+              name={icon}
+              size={18}
+              testID={`${testID}-icon`}
+            />
           </FocusPressable>
-        ) : null}
-        {availableFeatures.filter((feature) => feature !== fastFeature).map((feature) => feature.type === "toggle" ? (
+        ) : null)}
+        {availableFeatures.filter((feature) => feature !== fastFeature && feature !== planFeature).map((feature) => feature.type === "toggle" ? (
           <FocusPressable
             key={feature.id}
             accessibilityLabel={`${feature.label} ${feature.value ? "on" : "off"}`}
@@ -2315,10 +2335,14 @@ const styles = StyleSheet.create({
   chatPhoneTargetSquare: { width: 44, height: 44 },
   chatModelPillUnavailable: { borderColor: "rgba(234,179,8,0.45)" },
   chatModelPillText: { color: colors.foreground, fontSize: 12.5, fontWeight: "500", flexShrink: 1 },
+  chatChevronBox: { width: 12, height: 12, alignItems: "center", justifyContent: "center" },
   chatThinkingControl: { position: "relative", zIndex: 70 },
   chatSecondaryPill: { minHeight: 32, maxWidth: 180, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 9, borderColor: colors.borderSoft, borderWidth: 1, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.025)" },
   chatSecondaryPillSelected: { borderColor: "rgba(130,143,255,0.5)", backgroundColor: "rgba(94,106,210,0.16)" },
   chatSecondaryPillText: { color: colors.secondary, fontSize: 11.5, flexShrink: 1 },
+  chatIconToggle: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderColor: colors.borderSoft, borderWidth: 1, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.025)" },
+  chatFastToggleSelected: { borderColor: "rgba(234,179,8,0.5)", backgroundColor: "rgba(234,179,8,0.13)" },
+  chatPlanToggleSelected: { borderColor: "rgba(130,143,255,0.5)", backgroundColor: "rgba(94,106,210,0.16)" },
   chatPicker: { gap: 8, overflow: "hidden", padding: 8, borderColor: colors.border, borderWidth: 1, borderRadius: 10, backgroundColor: colors.surface, zIndex: 100, elevation: 20, shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 18, shadowOffset: { width: 0, height: 8 } },
   chatPickerViewport: { position: "fixed" } as unknown as ViewStyle,
   chatPickerViewportPending: { top: CHAT_PICKER_VIEWPORT_MARGIN, left: CHAT_PICKER_VIEWPORT_MARGIN, width: CHAT_PICKER_WIDTH, maxHeight: CHAT_PICKER_MAX_HEIGHT, opacity: 0 },

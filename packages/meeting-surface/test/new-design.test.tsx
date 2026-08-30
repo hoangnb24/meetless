@@ -11,6 +11,10 @@ import type {
 } from "@meetless/meeting-contracts";
 import { chatPickerGeometry, MeetingListSurface, RecordingStrip, surfaceLayout } from "../src/index.js";
 
+vi.mock("@expo/vector-icons", () => ({
+  MaterialCommunityIcons: (props: Record<string, unknown>) => React.createElement("MaterialCommunityIcons", props),
+}));
+
 const baseMeeting = {
   id: "m-1",
   title: "Weekly sync",
@@ -80,7 +84,11 @@ const controlsProfile: ChatProfileWire = {
 
 const controlsFeatures: ChatFeatureDiscoveryWire = {
   version: 1, selection: controlsSelection, status: "ready", error: null,
-  features: [{ type: "toggle", id: "fast_mode", label: "Fast mode", value: false }],
+  features: [
+    { type: "toggle", id: "fast_mode", label: "Fast mode", tooltip: "Use faster responses", value: false },
+    { type: "toggle", id: "plan_mode", label: "Plan mode", description: "Plan before responding", value: false },
+    { type: "toggle", id: "custom_mode", label: "Custom mode", value: false },
+  ],
 };
 
 function renderSurface(props: Record<string, unknown>): ReactTestRenderer {
@@ -319,6 +327,8 @@ describe("new-design composition", () => {
     });
     const trigger = renderer.root.findByProps({ testID: "chat-provider-trigger" });
     expect(trigger.props.accessibilityState).toMatchObject({ disabled: false, expanded: false });
+    expect(renderer.root.findByProps({ testID: "chat-provider-chevron-box" }).props.style).toMatchObject({ width: 12, height: 12 });
+    expect(renderer.root.findByProps({ testID: "chat-provider-chevron-icon" }).props.name).toBe("chevron-down");
     expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(true);
     await act(async () => { trigger.props.onPress(); });
     expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(false);
@@ -349,7 +359,7 @@ describe("new-design composition", () => {
     renderer.unmount();
   });
 
-  test("applies full profile, conditional thinking, and dynamic Fast feature controls", async () => {
+  test("uses real compact icons for chat selectors and known feature toggles", async () => {
     const onSelection = vi.fn(async () => undefined);
     const renderer = renderSurface({
       layoutTier: "phone", selectedMeetingId: "m-1", transcript: baseTranscript, consentStatus: "granted",
@@ -357,14 +367,59 @@ describe("new-design composition", () => {
       chatFeatures: controlsFeatures, onChatSelectionBundle: onSelection,
     });
     await act(async () => { renderer.root.findByProps({ testID: "task-tab-ask" }).props.onPress(); });
-    expect(renderer.root.findByProps({ testID: "chat-thinking-trigger" })).toBeTruthy();
-    expect(renderer.root.findByProps({ testID: "chat-fast-toggle" })).toBeTruthy();
-    await act(async () => { renderer.root.findByProps({ testID: "chat-fast-toggle" }).props.onPress(); });
+    const modelChevronBox = renderer.root.findByProps({ testID: "chat-model-chevron-box" });
+    const thinkingChevronBox = renderer.root.findByProps({ testID: "chat-thinking-chevron-box" });
+    expect(modelChevronBox.props.style).toMatchObject({ width: 12, height: 12, alignItems: "center", justifyContent: "center" });
+    expect(thinkingChevronBox.props.style).toMatchObject({ width: 12, height: 12, alignItems: "center", justifyContent: "center" });
+    expect(renderer.root.findByProps({ testID: "chat-model-chevron-icon" }).props.name).toBe("chevron-down");
+    expect(renderer.root.findByProps({ testID: "chat-thinking-chevron-icon" }).props.name).toBe("chevron-down");
+    expect(renderer.root.findAllByType("Text").some((node) => node.props.children === "⌄")).toBe(false);
+
+    const fast = renderer.root.findByProps({ testID: "chat-fast-toggle" });
+    const plan = renderer.root.findByProps({ testID: "chat-plan-toggle" });
+    expect(renderer.root.findByProps({ testID: "chat-fast-toggle-icon" }).props.name).toBe("lightning-bolt");
+    expect(renderer.root.findByProps({ testID: "chat-plan-toggle-icon" }).props.name).toBe("format-list-checks");
+    expect(fast.props.accessibilityLabel).toBe("Fast off");
+    expect(fast.props.accessibilityHint).toBe("Use faster responses");
+    expect(fast.props.accessibilityState).toMatchObject({ selected: false, disabled: false });
+    expect(plan.props.accessibilityLabel).toBe("Plan off");
+    expect(plan.props.accessibilityHint).toBe("Plan before responding");
+    expect(plan.props.accessibilityState).toMatchObject({ selected: false, disabled: false });
+    expect(renderer.root.findAllByType("Text").some((node) => node.props.children === "Fast" || node.props.children === "Plan")).toBe(false);
+    expect(renderer.root.findAllByType("Text").some((node) => node.props.children === "Custom mode")).toBe(true);
+    expect(Object.assign({}, ...(fast.props.style as object[]).filter(Boolean))).toMatchObject({ width: 44, height: 44 });
+    expect(Object.assign({}, ...(plan.props.style as object[]).filter(Boolean))).toMatchObject({ width: 44, height: 44 });
+
+    await act(async () => { fast.props.onPress(); });
     expect(onSelection).toHaveBeenCalledWith({ ...controlsSelection, featureValues: { fast_mode: true } });
     await act(async () => { renderer.root.findByProps({ testID: "chat-model-trigger" }).props.onPress(); });
     await act(async () => { renderer.root.findByProps({ testID: "chat-profile-profile-1" }).props.onPress(); });
     expect(onSelection).toHaveBeenLastCalledWith(controlsProfile.selection);
     expect(renderer.root.findAllByProps({ testID: "chat-model-picker" })).toHaveLength(0);
+    renderer.unmount();
+  });
+
+  test("distinguishes active Fast and Plan controls while desktop targets stay 32 pixels", async () => {
+    const activeFeatures: ChatFeatureDiscoveryWire = {
+      ...controlsFeatures,
+      features: controlsFeatures.features?.map((feature) => feature.type === "toggle" && feature.id !== "custom_mode"
+        ? { ...feature, value: true }
+        : feature) ?? [],
+    };
+    const renderer = renderSurface({
+      layoutTier: "desktop", selectedMeetingId: "m-1", transcript: baseTranscript, consentStatus: "granted",
+      chatCatalog: controlsCatalog, chatProfiles: [], chatSelection: controlsSelection,
+      chatFeatures: activeFeatures, onChatSelectionBundle: vi.fn(),
+    });
+    const fast = renderer.root.findByProps({ testID: "chat-fast-toggle" });
+    const plan = renderer.root.findByProps({ testID: "chat-plan-toggle" });
+    const fastStyle = Object.assign({}, ...(fast.props.style as object[]).filter(Boolean));
+    const planStyle = Object.assign({}, ...(plan.props.style as object[]).filter(Boolean));
+    expect(fastStyle).toMatchObject({ width: 32, height: 32, borderColor: "rgba(234,179,8,0.5)", backgroundColor: "rgba(234,179,8,0.13)" });
+    expect(planStyle).toMatchObject({ width: 32, height: 32, borderColor: "rgba(130,143,255,0.5)", backgroundColor: "rgba(94,106,210,0.16)" });
+    expect(fastStyle).not.toEqual(planStyle);
+    expect(fast.props.accessibilityState.selected).toBe(true);
+    expect(plan.props.accessibilityState.selected).toBe(true);
     renderer.unmount();
   });
 
