@@ -116,6 +116,29 @@ Implementation evidence observed on 2026-08-30:
   passed. `git diff --check` passed. Design contract coordination digest stayed
   `b39addfab13fe8f350033f289e2bce1085d492c43a0937d73c9c80d19b654cbd`.
 
+Correction evidence observed on 2026-08-30 against base `f269bf0`:
+
+- The focused correction regressions first failed 4/4 against the original
+  presenter: no unconstrained content measurement node, query rerender focused
+  the first control again, model close stole focus from thinking, and the
+  non-web path still emitted fixed web geometry. After correction,
+  `npx vitest run --config vitest.config.ts packages/meeting-surface` passed all
+  65 tests.
+- The presenter now measures its unconstrained content container and owns the
+  only picker `ScrollView`; the consumer model lists no longer impose a nested
+  340px scroll constraint. Deterministic non-web tests prove visible absolute
+  desktop and phone fallbacks, numeric bounded geometry, and presenter-owned
+  scrolling. Physical-device proof was not run.
+- `npm run proof:chat-popup-overlay` passed from a fresh emitted Expo fixture.
+  At both 877px and 1440px, the 40-model drilldown expanded the root popup from
+  109px to 420px, exposed a 402px presenter viewport over 1825px of scrollable
+  content, and kept page height at 900px. At 390px the sheet remained 366px by
+  820px. Direct model-to-thinking and model-to-feature switches left the
+  replacement popup open with focus inside it at all three widths.
+- Meeting-surface typecheck/build, app typecheck/build/export, and
+  `git diff --check` passed. The design contract coordination digest remains
+  `b39addfab13fe8f350033f289e2bce1085d492c43a0937d73c9c80d19b654cbd`.
+
 ## Result
 
 Atomic implementation and writer-owned proof are complete. Lead acceptance,

@@ -138,7 +138,10 @@ function ChatPopupPresenter({
   const [geometry, setGeometry] = useState<ChatPickerGeometry | null>(null);
   const rootRef = useRef<View | null>(null);
   const popupRef = useRef<View | null>(null);
+  const contentRef = useRef<View | null>(null);
   const wasOpenRef = useRef(false);
+  const didFocusOpenRef = useRef(false);
+  const returnFocusOnCloseRef = useRef<"none" | "force" | "conditional">("none");
 
   const focusTrigger = useCallback(() => {
     const root = rootRef.current as unknown as { querySelector?: (selector: string) => { focus?: () => void } | null } | null;
@@ -146,17 +149,20 @@ function ChatPopupPresenter({
   }, []);
 
   const positionPopup = useCallback(() => {
-    if (!open || layoutTier === "phone" || typeof window === "undefined") return;
+    if (!open || layoutTier === "phone" || Platform.OS !== "web" || typeof window === "undefined") return;
     const root = rootRef.current as unknown as {
       querySelector?: (selector: string) => { getBoundingClientRect?: () => ChatPickerAnchorRect } | null;
     } | null;
     const popup = popupRef.current as unknown as {
       getBoundingClientRect?: () => { height: number };
+    } | null;
+    const content = contentRef.current as unknown as {
+      getBoundingClientRect?: () => { height: number };
       scrollHeight?: number;
     } | null;
     const triggerRect = root?.querySelector?.("button")?.getBoundingClientRect?.();
     if (!triggerRect || !popup?.getBoundingClientRect) return;
-    const contentHeight = popup.scrollHeight ?? popup.getBoundingClientRect().height;
+    const contentHeight = content?.scrollHeight ?? content?.getBoundingClientRect?.().height ?? popup.getBoundingClientRect().height;
     const next = chatPickerGeometry(triggerRect, { width: window.innerWidth, height: window.innerHeight }, contentHeight);
     setGeometry((current) => current
       && current.top === next.top
@@ -171,21 +177,44 @@ function ChatPopupPresenter({
   useLayoutEffect(() => {
     if (!open) return;
     positionPopup();
-    if (typeof document === "undefined") return;
-    const popup = popupRef.current as unknown as { querySelector?: (selector: string) => { focus?: () => void } | null } | null;
-    popup?.querySelector?.("button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])")?.focus?.();
   }, [children, open, positionPopup]);
 
+  useLayoutEffect(() => {
+    if (!open) {
+      didFocusOpenRef.current = false;
+      return;
+    }
+    if (didFocusOpenRef.current || Platform.OS !== "web" || typeof document === "undefined") return;
+    didFocusOpenRef.current = true;
+    const popup = popupRef.current as unknown as { querySelector?: (selector: string) => { focus?: () => void } | null } | null;
+    popup?.querySelector?.("button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])")?.focus?.();
+  }, [open]);
+
   useEffect(() => {
-    if (wasOpenRef.current && !open) focusTrigger();
+    if (wasOpenRef.current && !open) {
+      const focusReturn = returnFocusOnCloseRef.current === "none" ? "conditional" : returnFocusOnCloseRef.current;
+      returnFocusOnCloseRef.current = "none";
+      if (Platform.OS === "web") queueMicrotask(() => {
+        if (typeof document === "undefined") return;
+        const activeElement = document.activeElement;
+        const root = rootRef.current as unknown as { contains?: (target: EventTarget | null) => boolean } | null;
+        const meaningfulExternalFocus = activeElement
+          && activeElement !== document.body
+          && activeElement !== document.documentElement
+          && !root?.contains?.(activeElement);
+        if (focusReturn === "force" || !meaningfulExternalFocus) focusTrigger();
+      });
+    }
     wasOpenRef.current = open;
   }, [focusTrigger, open]);
 
   useEffect(() => {
-    if (!open || typeof document === "undefined") return;
+    if (!open || Platform.OS !== "web" || typeof document === "undefined") return;
+    const documentObject = document;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        returnFocusOnCloseRef.current = "force";
         onDismiss();
         return;
       }
@@ -197,36 +226,40 @@ function ChatPopupPresenter({
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && documentObject.activeElement === first) {
         event.preventDefault();
         last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && documentObject.activeElement === last) {
         event.preventDefault();
         first?.focus();
-      } else if (!focusable.includes(document.activeElement as HTMLElement)) {
+      } else if (!focusable.includes(documentObject.activeElement as HTMLElement)) {
         event.preventDefault();
         first?.focus();
       }
     };
     const onPointerDown = (event: PointerEvent) => {
       const root = rootRef.current as unknown as { contains?: (target: EventTarget | null) => boolean } | null;
-      if (!root?.contains?.(event.target)) onDismiss();
+      if (!root?.contains?.(event.target)) {
+        returnFocusOnCloseRef.current = "conditional";
+        onDismiss();
+      }
     };
-    document.addEventListener("keydown", onKeyDown, true);
-    document.addEventListener("pointerdown", onPointerDown, true);
+    documentObject.addEventListener("keydown", onKeyDown, true);
+    documentObject.addEventListener("pointerdown", onPointerDown, true);
     return () => {
-      document.removeEventListener("keydown", onKeyDown, true);
-      document.removeEventListener("pointerdown", onPointerDown, true);
+      documentObject.removeEventListener("keydown", onKeyDown, true);
+      documentObject.removeEventListener("pointerdown", onPointerDown, true);
     };
   }, [onDismiss, open]);
 
   useEffect(() => {
-    if (!open || layoutTier === "phone" || typeof window === "undefined") return;
-    window.addEventListener("resize", positionPopup);
-    window.addEventListener("scroll", positionPopup, true);
+    if (!open || layoutTier === "phone" || Platform.OS !== "web" || typeof window === "undefined") return;
+    const windowObject = window;
+    windowObject.addEventListener("resize", positionPopup);
+    windowObject.addEventListener("scroll", positionPopup, true);
     return () => {
-      window.removeEventListener("resize", positionPopup);
-      window.removeEventListener("scroll", positionPopup, true);
+      windowObject.removeEventListener("resize", positionPopup);
+      windowObject.removeEventListener("scroll", positionPopup, true);
     };
   }, [layoutTier, open, positionPopup]);
 
@@ -239,8 +272,11 @@ function ChatPopupPresenter({
             <FocusPressable
               accessibilityLabel={`Close ${consumer} popup`}
               accessibilityRole="button"
-              onPress={onDismiss}
-              style={styles.chatPopupBackdrop}
+              onPress={() => {
+                returnFocusOnCloseRef.current = "force";
+                onDismiss();
+              }}
+              style={Platform.OS === "web" ? styles.chatPopupBackdropWeb : styles.chatPopupBackdropNative}
               testID={`${popupTestID}-dismiss`}
             />
           ) : null}
@@ -250,17 +286,19 @@ function ChatPopupPresenter({
             style={[
               styles.chatPopup,
               layoutTier === "phone"
-                ? styles.chatPopupPhone
-                : [styles.chatPopupViewport, geometry ? {
+                ? (Platform.OS === "web" ? styles.chatPopupPhoneWeb : styles.chatPopupPhoneNative)
+                : Platform.OS === "web" ? [styles.chatPopupViewport, geometry ? {
                     top: geometry.top,
                     left: geometry.left,
                     width: geometry.width,
                     maxHeight: geometry.maxHeight,
-                  } : styles.chatPopupViewportPending],
+                  } : styles.chatPopupViewportPending] : styles.chatPopupNative,
             ]}
             testID={popupTestID}
           >
-            <View style={styles.chatPopupScroller}>{children}</View>
+            <ScrollView keyboardShouldPersistTaps="handled" style={styles.chatPopupScroller} testID={`${popupTestID}-scroll`}>
+              <View ref={contentRef} style={styles.chatPopupContent} testID={`${popupTestID}-content`}>{children}</View>
+            </ScrollView>
           </View>
         </>
       ) : null}
@@ -1674,7 +1712,7 @@ function ChatControls({
                 />
               </View>
               {view === "root" ? (
-                <ScrollView style={styles.chatPickerScroll} keyboardShouldPersistTaps="handled">
+                <View>
                   {visibleProfiles.length > 0 ? <Text style={styles.chatPickerSection}>Profiles</Text> : null}
                   {visibleProfiles.map((profile) => {
                     const selected = Boolean(selection && sameSurfaceSelection(selection, profile.selection));
@@ -1718,9 +1756,9 @@ function ChatControls({
                   ))}
                   {!visibleProfiles.length && !visibleProviders.length ? <Text style={styles.chatPickerEmpty}>No matching models.</Text> : null}
                   {catalogError ? <Text style={styles.chatPickerError}>{catalogError.message}</Text> : null}
-                </ScrollView>
+                </View>
               ) : (
-                <ScrollView style={styles.chatPickerScroll} keyboardShouldPersistTaps="handled">
+                <View>
                   <Text style={styles.chatPickerSection}>{pickerProvider?.label ?? "Provider"}</Text>
                   {pickerProvider?.models.filter((model) => !normalizedQuery || `${model.label} ${model.id}`.toLocaleLowerCase().includes(normalizedQuery)).map((model) => {
                     const selected = selection?.provider === pickerProvider.id && selection.model === model.id;
@@ -1743,7 +1781,7 @@ function ChatControls({
                       </FocusPressable>
                     );
                   })}
-                </ScrollView>
+                </View>
               )}
         </ChatPopupPresenter>
         {selectedModel && selectedModel.thinkingOptions.length > 0 ? (
@@ -2407,14 +2445,17 @@ const styles = StyleSheet.create({
   chatPopup: { overflow: "hidden", padding: 8, borderColor: colors.border, borderWidth: 1, borderRadius: 10, backgroundColor: colors.surface, zIndex: 100, elevation: 20, shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 18, shadowOffset: { width: 0, height: 8 } },
   chatPopupViewport: { position: "fixed" } as unknown as ViewStyle,
   chatPopupViewportPending: { top: CHAT_PICKER_VIEWPORT_MARGIN, left: CHAT_PICKER_VIEWPORT_MARGIN, width: CHAT_PICKER_WIDTH, maxHeight: CHAT_PICKER_MAX_HEIGHT, opacity: 0 },
-  chatPopupPhone: { position: "fixed", top: "auto", right: 12, bottom: 12, left: 12, width: "auto", maxHeight: "calc(100vh - 24px)", borderRadius: 14, padding: 12 } as unknown as ViewStyle,
-  chatPopupBackdrop: { position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.42)", zIndex: 90 } as unknown as ViewStyle,
-  chatPopupScroller: { flexShrink: 1, minHeight: 0, overflow: "auto" } as unknown as ViewStyle,
+  chatPopupPhoneWeb: { position: "fixed", top: "auto", right: 12, bottom: 12, left: 12, width: "auto", maxHeight: "calc(100vh - 24px)", borderRadius: 14, padding: 12 } as unknown as ViewStyle,
+  chatPopupNative: { position: "absolute", right: 0, bottom: 40, width: CHAT_PICKER_WIDTH, maxHeight: CHAT_PICKER_MAX_HEIGHT },
+  chatPopupPhoneNative: { position: "absolute", right: 0, bottom: 52, left: 0, maxHeight: CHAT_PICKER_MAX_HEIGHT, borderRadius: 14, padding: 12 },
+  chatPopupBackdropWeb: { position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.42)", zIndex: 90 } as unknown as ViewStyle,
+  chatPopupBackdropNative: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.42)", zIndex: 90 },
+  chatPopupScroller: { flexShrink: 1, minHeight: 0 } as ViewStyle,
+  chatPopupContent: { flexGrow: 0 },
   chatPickerHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
   chatPickerBack: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 6 },
   chatPickerBackText: { color: colors.secondary, fontSize: 22 },
   chatPickerSearch: { flex: 1, minHeight: 40, paddingHorizontal: 10, borderColor: colors.border, borderWidth: 1, borderRadius: 6, backgroundColor: "rgba(255,255,255,0.035)", color: colors.foreground, fontSize: 13 },
-  chatPickerScroll: { flexGrow: 0, flexShrink: 1, maxHeight: 340 },
   chatPickerSection: { color: colors.muted, fontFamily: mono, fontSize: 10.5, letterSpacing: 0.8, textTransform: "uppercase", paddingHorizontal: 8, paddingTop: 8, paddingBottom: 5 },
   chatPickerOption: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 9, paddingVertical: 7, borderRadius: 6 },
   chatPickerOptionSelected: { backgroundColor: "rgba(94,106,210,0.16)" },

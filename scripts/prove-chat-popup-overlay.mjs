@@ -94,11 +94,24 @@ async function proveModern(width, port) {
     ["feature", "chat-feature-select-response_style", "chat-feature-menu-response_style"],
   ];
   const boxes = {};
+  let modelExpansion = null;
   for (const [consumer, triggerId, popupId] of consumers) {
     await page.getByTestId(triggerId).click();
     const popup = page.getByTestId(popupId);
     await popup.waitFor({ state: "visible" });
-    if (consumer === "model") await page.getByTestId("chat-provider-codex").click();
+    if (consumer === "model") {
+      const root = width === 390 ? null : await popupDimensions(popup);
+      await page.getByTestId("chat-provider-codex").click();
+      if (width !== 390) {
+        await page.waitForFunction((testID) => {
+          const node = document.querySelector(`[data-testid="${testID}"]`);
+          return node && node.getBoundingClientRect().height >= 340;
+        }, popupId);
+        const drilldown = await popupDimensions(popup);
+        assertUsefulModelExpansion(root, drilldown, width);
+        modelExpansion = { root, drilldown };
+      }
+    }
     boxes[consumer] = await assertPopup(page, popup, page.getByTestId(triggerId), width, height, consumer);
     if (width === 390) await assertMinimumTargets(popup, consumer);
     await page.keyboard.press("Escape");
@@ -111,8 +124,9 @@ async function proveModern(width, port) {
   if (finalPageHeight !== initialPageHeight || finalPageHeight > height) {
     throw new Error(`modern shared-popup rule: popup changed page scroll height ${initialPageHeight} -> ${finalPageHeight} at ${width}px`);
   }
+  const focusSwitching = await proveFocusSwitching(page);
   await page.close();
-  return { family: "modern", width, initialPageHeight, finalPageHeight, boxes };
+  return { family: "modern", width, initialPageHeight, finalPageHeight, modelExpansion, focusSwitching, boxes };
 }
 
 async function proveLegacy(width, port) {
@@ -141,13 +155,14 @@ async function assertPopup(page, popup, trigger, width, height, consumer) {
   ]) {
     if (actual < limit - 0.5) throw new Error(`${consumer} shared-popup rule: ${edge} margin ${actual}px is below ${limit}px`);
   }
-  const scrollOwners = await popup.evaluate((node) => Array.from(node.querySelectorAll("*")).map((candidate) => ({
-    clientHeight: candidate.clientHeight,
-    scrollHeight: candidate.scrollHeight,
-    overflow: getComputedStyle(candidate).overflowY,
-  })).filter((candidate) => candidate.scrollHeight > candidate.clientHeight && ["auto", "scroll"].includes(candidate.overflow)));
-  if ((consumer === "model" || consumer === "legacy-provider") && !scrollOwners.length) {
-    throw new Error(`${consumer} shared-popup rule: tall emitted content has no constrained internal scroll owner`);
+  const presenterScroll = await popup.locator('[data-testid$="-scroll"]').evaluate((node) => ({
+    clientHeight: node.clientHeight,
+    scrollHeight: node.scrollHeight,
+    overflow: getComputedStyle(node).overflowY,
+  }));
+  if ((consumer === "model" || consumer === "legacy-provider")
+    && !(presenterScroll.scrollHeight > presenterScroll.clientHeight && ["auto", "scroll"].includes(presenterScroll.overflow))) {
+    throw new Error(`${consumer} shared-popup rule: the presenter is not the constrained internal scroll owner (${JSON.stringify(presenterScroll)})`);
   }
   let triggerGap = null;
   let placement = "sheet";
@@ -160,7 +175,54 @@ async function assertPopup(page, popup, trigger, width, height, consumer) {
     triggerGap = placement === "above" ? aboveGap : belowGap;
     if (Math.abs(triggerGap - 8) > 0.75) throw new Error(`${consumer} shared-popup rule: ${placement}-trigger gap is ${triggerGap}px instead of 8px`);
   }
-  return { x: box.x, y: box.y, width: box.width, height: box.height, position, placement, triggerGap, scrollOwners };
+  return { x: box.x, y: box.y, width: box.width, height: box.height, position, placement, triggerGap, presenterScroll };
+}
+
+async function popupDimensions(popup) {
+  const box = await popup.boundingBox();
+  if (!box) throw new Error("model expansion proof: popup has no bounding box");
+  const presenterScroll = await popup.locator('[data-testid$="-scroll"]').evaluate((node) => ({
+    clientHeight: node.clientHeight,
+    scrollHeight: node.scrollHeight,
+  }));
+  return { popupHeight: box.height, presenterScroll };
+}
+
+function assertUsefulModelExpansion(root, drilldown, width) {
+  if (!root) throw new Error(`model expansion proof: missing root dimensions at ${width}px`);
+  if (drilldown.popupHeight < 340) {
+    throw new Error(`model expansion proof: 40-model popup is ${drilldown.popupHeight}px at ${width}px; expected at least the former 340px list cap`);
+  }
+  if (drilldown.presenterScroll.clientHeight < 320) {
+    throw new Error(`model expansion proof: 40-model presenter viewport is ${drilldown.presenterScroll.clientHeight}px at ${width}px; expected at least 320px within the 340/420 caps`);
+  }
+  if (drilldown.popupHeight < root.popupHeight + 100) {
+    throw new Error(`model expansion proof: content growth only changed popup ${root.popupHeight}px -> ${drilldown.popupHeight}px at ${width}px`);
+  }
+  if (drilldown.presenterScroll.scrollHeight <= drilldown.presenterScroll.clientHeight) {
+    throw new Error(`model expansion proof: 40 models are not internally scrollable at ${width}px`);
+  }
+}
+
+async function proveFocusSwitching(page) {
+  const facts = {};
+  for (const [replacement, triggerId, popupId] of [
+    ["thinking", "chat-thinking-trigger", "chat-thinking-menu"],
+    ["feature", "chat-feature-select-response_style", "chat-feature-menu-response_style"],
+  ]) {
+    await page.getByTestId("chat-model-trigger").click();
+    const modelPopup = page.getByTestId("chat-model-picker");
+    await modelPopup.waitFor({ state: "visible" });
+    await page.getByTestId(triggerId).evaluate((node) => { node.focus(); node.click(); });
+    const replacementPopup = page.getByTestId(popupId);
+    await replacementPopup.waitFor({ state: "visible" });
+    if (await modelPopup.count()) throw new Error(`focus switching proof: model popup remained open after switching to ${replacement}`);
+    const active = await replacementPopup.evaluate((node) => node.contains(document.activeElement));
+    if (!active) throw new Error(`focus switching proof: focus escaped the replacement ${replacement} popup`);
+    facts[replacement] = { popupOpen: true, focusWithinPopup: true };
+    await page.keyboard.press("Escape");
+  }
+  return facts;
 }
 
 async function assertMinimumTargets(popup, consumer) {
