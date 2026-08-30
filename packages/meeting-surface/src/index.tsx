@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Platform,
   Pressable,
@@ -64,6 +64,51 @@ const mono = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 
 export type LayoutTier = "phone" | "tablet" | "desktop";
 export type MeetingTask = "transcript" | "ask";
+
+const CHAT_PICKER_VIEWPORT_MARGIN = 12;
+const CHAT_PICKER_TRIGGER_GAP = 8;
+const CHAT_PICKER_WIDTH = 300;
+const CHAT_PICKER_MAX_HEIGHT = 420;
+
+export interface ChatPickerAnchorRect {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+export interface ChatPickerViewport {
+  width: number;
+  height: number;
+}
+
+export interface ChatPickerGeometry {
+  top: number;
+  left: number;
+  width: number;
+  maxHeight: number;
+  placement: "above" | "below";
+}
+
+export function chatPickerGeometry(
+  trigger: ChatPickerAnchorRect,
+  viewport: ChatPickerViewport,
+): ChatPickerGeometry {
+  const width = Math.max(0, Math.min(CHAT_PICKER_WIDTH, viewport.width - CHAT_PICKER_VIEWPORT_MARGIN * 2));
+  const left = Math.min(
+    Math.max(CHAT_PICKER_VIEWPORT_MARGIN, trigger.left),
+    Math.max(CHAT_PICKER_VIEWPORT_MARGIN, viewport.width - CHAT_PICKER_VIEWPORT_MARGIN - width),
+  );
+  const availableAbove = Math.max(0, trigger.top - CHAT_PICKER_TRIGGER_GAP - CHAT_PICKER_VIEWPORT_MARGIN);
+  const availableBelow = Math.max(0, viewport.height - trigger.bottom - CHAT_PICKER_TRIGGER_GAP - CHAT_PICKER_VIEWPORT_MARGIN);
+  const placement = availableAbove >= availableBelow ? "above" : "below";
+  const maxHeight = Math.min(CHAT_PICKER_MAX_HEIGHT, placement === "above" ? availableAbove : availableBelow);
+  const top = placement === "above"
+    ? trigger.top - CHAT_PICKER_TRIGGER_GAP - maxHeight
+    : trigger.bottom + CHAT_PICKER_TRIGGER_GAP;
+
+  return { top, left, width, maxHeight, placement };
+}
 
 export interface RecordingStripPointerGeometry {
   controlTopY: number;
@@ -1349,6 +1394,7 @@ function ChatControls({
   const [query, setQuery] = useState("");
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [featureId, setFeatureId] = useState<string | null>(null);
+  const [pickerGeometry, setPickerGeometry] = useState<ChatPickerGeometry | null>(null);
   const pickerRef = useRef<View | null>(null);
   const selectedProvider = selection ? catalog.providers.find((candidate) => candidate.id === selection.provider) ?? null : null;
   const selectedModel = selectedProvider?.models.find((candidate) => candidate.id === selection?.model) ?? null;
@@ -1379,6 +1425,27 @@ function ChatControls({
     setFeatureId(null);
     focusTrigger();
   }, [focusTrigger]);
+
+  const positionPicker = useCallback(() => {
+    if (layoutTier === "phone" || Platform.OS !== "web" || typeof window === "undefined") return;
+    const node = pickerRef.current as unknown as {
+      querySelector?: (selector: string) => { getBoundingClientRect?: () => ChatPickerAnchorRect } | null;
+    } | null;
+    const triggerRect = node?.querySelector?.("button")?.getBoundingClientRect?.();
+    if (!triggerRect) return;
+    setPickerGeometry(chatPickerGeometry(triggerRect, { width: window.innerWidth, height: window.innerHeight }));
+  }, [layoutTier]);
+
+  useLayoutEffect(() => {
+    if (!open || layoutTier === "phone" || Platform.OS !== "web" || typeof window === "undefined") return;
+    positionPicker();
+    window.addEventListener("resize", positionPicker);
+    window.addEventListener("scroll", positionPicker, true);
+    return () => {
+      window.removeEventListener("resize", positionPicker);
+      window.removeEventListener("scroll", positionPicker, true);
+    };
+  }, [layoutTier, open, positionPicker]);
 
   useEffect(() => {
     if (!open) return;
@@ -1482,7 +1549,23 @@ function ChatControls({
                   testID="chat-picker-dismiss"
                 />
               ) : null}
-              <View style={[styles.chatPicker, layoutTier === "phone" && styles.chatPickerPhone]} testID="chat-model-picker" accessibilityViewIsModal>
+              <View
+                style={[
+                  styles.chatPicker,
+                  layoutTier === "phone"
+                    ? styles.chatPickerPhone
+                    : Platform.OS === "web"
+                      ? [styles.chatPickerViewport, pickerGeometry ? {
+                          top: pickerGeometry.top,
+                          left: pickerGeometry.left,
+                          width: pickerGeometry.width,
+                          maxHeight: pickerGeometry.maxHeight,
+                        } : styles.chatPickerViewportPending]
+                      : styles.chatPickerNative,
+                ]}
+                testID="chat-model-picker"
+                accessibilityViewIsModal
+              >
               <View style={styles.chatPickerHeader}>
                 {view === "provider" ? (
                   <FocusPressable accessibilityLabel="Back to model providers" accessibilityRole="button" onPress={() => { setView("root"); setProviderId(null); }} style={[styles.chatPickerBack, layoutTier === "phone" && styles.chatPhoneTargetSquare]} testID="chat-picker-back">
@@ -2205,14 +2288,17 @@ const styles = StyleSheet.create({
   chatSecondaryPill: { minHeight: 32, maxWidth: 180, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 9, borderColor: colors.borderSoft, borderWidth: 1, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.025)" },
   chatSecondaryPillSelected: { borderColor: "rgba(130,143,255,0.5)", backgroundColor: "rgba(94,106,210,0.16)" },
   chatSecondaryPillText: { color: colors.secondary, fontSize: 11.5, flexShrink: 1 },
-  chatPicker: { position: "absolute", top: 38, right: 0, width: 300, maxHeight: 420, gap: 8, padding: 8, borderColor: colors.border, borderWidth: 1, borderRadius: 10, backgroundColor: colors.surface, zIndex: 100, elevation: 20, shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 18, shadowOffset: { width: 0, height: 8 } },
+  chatPicker: { gap: 8, overflow: "hidden", padding: 8, borderColor: colors.border, borderWidth: 1, borderRadius: 10, backgroundColor: colors.surface, zIndex: 100, elevation: 20, shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 18, shadowOffset: { width: 0, height: 8 } },
+  chatPickerViewport: { position: "fixed" } as unknown as ViewStyle,
+  chatPickerViewportPending: { opacity: 0 },
+  chatPickerNative: { position: "absolute", right: 0, bottom: 38, width: CHAT_PICKER_WIDTH, maxHeight: CHAT_PICKER_MAX_HEIGHT },
   chatPickerPhone: { position: "fixed", top: "auto", right: 8, bottom: 8, left: 8, width: "auto", maxHeight: "78vh", borderRadius: 14, padding: 12 } as unknown as ViewStyle,
   chatPickerBackdrop: { position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.42)", zIndex: 90 } as unknown as ViewStyle,
   chatPickerHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
   chatPickerBack: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 6 },
   chatPickerBackText: { color: colors.secondary, fontSize: 22 },
   chatPickerSearch: { flex: 1, minHeight: 40, paddingHorizontal: 10, borderColor: colors.border, borderWidth: 1, borderRadius: 6, backgroundColor: "rgba(255,255,255,0.035)", color: colors.foreground, fontSize: 13 },
-  chatPickerScroll: { flexGrow: 0, maxHeight: 340 },
+  chatPickerScroll: { flexGrow: 0, flexShrink: 1, maxHeight: 340 },
   chatPickerSection: { color: colors.muted, fontFamily: mono, fontSize: 10.5, letterSpacing: 0.8, textTransform: "uppercase", paddingHorizontal: 8, paddingTop: 8, paddingBottom: 5 },
   chatPickerOption: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 9, paddingVertical: 7, borderRadius: 6 },
   chatPickerOptionSelected: { backgroundColor: "rgba(94,106,210,0.16)" },

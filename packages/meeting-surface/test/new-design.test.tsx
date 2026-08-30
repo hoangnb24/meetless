@@ -9,7 +9,7 @@ import type {
   RecordingStatusWire,
   TranscriptWire,
 } from "@meetless/meeting-contracts";
-import { MeetingListSurface, RecordingStrip, surfaceLayout } from "../src/index.js";
+import { chatPickerGeometry, MeetingListSurface, RecordingStrip, surfaceLayout } from "../src/index.js";
 
 const baseMeeting = {
   id: "m-1",
@@ -109,6 +109,30 @@ describe("new-design composition", () => {
     expect(surfaceLayout("phone")).toMatchObject({ row: { direction: "column" }, content: { padding: 12 } });
     expect(surfaceLayout("tablet")).toMatchObject({ row: { direction: "column" }, content: { padding: 16 } });
     expect(surfaceLayout("desktop")).toMatchObject({ row: { direction: "row" }, content: { padding: 24, maxWidth: 1200 } });
+  });
+
+  test.each([
+    {
+      name: "877px tablet viewport",
+      viewport: { width: 877, height: 768 },
+      trigger: { top: 690, right: 325, bottom: 722, left: 203 },
+      expectedLeft: 203,
+    },
+    {
+      name: "desktop viewport",
+      viewport: { width: 1440, height: 900 },
+      trigger: { top: 820, right: 1250, bottom: 852, left: 1100 },
+      expectedLeft: 1100,
+    },
+  ])("keeps the model picker above a bottom composer trigger inside the $name", ({ viewport, trigger, expectedLeft }) => {
+    const geometry = chatPickerGeometry(trigger, viewport);
+    expect(geometry.placement).toBe("above");
+    expect(geometry.left).toBe(expectedLeft);
+    expect(geometry.top + geometry.maxHeight).toBeLessThanOrEqual(trigger.top);
+    expect(geometry.top).toBeGreaterThanOrEqual(0);
+    expect(geometry.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.left + geometry.width).toBeLessThanOrEqual(viewport.width);
+    expect(geometry.top + geometry.maxHeight).toBeLessThanOrEqual(viewport.height);
   });
 
   test("opens one Record meeting setup with Proposed sources and no Create meeting task", async () => {
@@ -350,6 +374,13 @@ describe("new-design composition", () => {
     await act(async () => { renderer.root.findByProps({ testID: "task-tab-ask" }).props.onPress(); });
     await act(async () => { renderer.root.findByProps({ testID: "chat-model-trigger" }).props.onPress(); });
     expect(renderer.root.findByProps({ testID: "chat-picker-dismiss" })).toBeTruthy();
+    const pickerStyle = Object.assign(
+      {},
+      ...(renderer.root.findByProps({ testID: "chat-model-picker" }).props.style as object[]).flat(Infinity),
+    );
+    expect(pickerStyle).toMatchObject({
+      position: "fixed", top: "auto", right: 8, bottom: 8, left: 8, width: "auto", maxHeight: "78vh",
+    });
     await act(async () => { renderer.root.findByProps({ testID: "chat-picker-dismiss" }).props.onPress(); });
     expect(renderer.root.findAllByProps({ testID: "chat-model-picker" })).toHaveLength(0);
     renderer.unmount();
