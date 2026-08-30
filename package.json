@@ -50,6 +50,7 @@
     "proof:m1": "node scripts/prove-m1.mjs",
     "proof:m2": "npm run build:native && npm run build:meetless && node scripts/prove-m2.mjs",
     "proof:m2:scale": "npm run build:meetless && node scripts/prove-scalable-inventory.mjs",
+    "proof:chat-popup-overlay": "node scripts/prove-chat-popup-overlay.mjs",
     "proof:m3:park-default": "node scripts/m3-live-proof.mjs park-default",
     "proof:m3:prepare": "npm run build:meetless && node scripts/m3-live-proof.mjs prepare",
     "proof:m3:inspect": "npm run build:meetless && node scripts/m3-live-proof.mjs inspect",

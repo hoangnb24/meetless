@@ -1,4 +1,5 @@
 import React from "react";
+import { readFileSync } from "node:fs";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type {
@@ -88,6 +89,9 @@ const controlsFeatures: ChatFeatureDiscoveryWire = {
     { type: "toggle", id: "fast_mode", label: "Fast mode", tooltip: "Use faster responses", value: false },
     { type: "toggle", id: "plan_mode", label: "Plan mode", description: "Plan before responding", value: false },
     { type: "toggle", id: "custom_mode", label: "Custom mode", value: false },
+    { type: "select", id: "response_style", label: "Response style", value: "brief", options: [
+      { id: "brief", label: "Brief" }, { id: "detailed", label: "Detailed" },
+    ] },
   ],
 };
 
@@ -144,6 +148,30 @@ describe("new-design composition", () => {
     const trigger = { top: 40, right: 325, bottom: 72, left: 203 };
     const geometry = chatPickerGeometry(trigger, { width: 877, height: 768 }, 180);
     expect(geometry).toMatchObject({ placement: "below", top: 80, left: 203, width: 300, maxHeight: 180 });
+  });
+
+  test.each([
+    [390, { top: 20, right: 52, bottom: 64, left: 8 }, 600],
+    [877, { top: 700, right: 875, bottom: 744, left: 830 }, 700],
+    [1440, { top: 420, right: 1438, bottom: 464, left: 1400 }, 180],
+  ] as const)("shared chat popup geometry clamps every edge at %ipx", (width, trigger, contentHeight) => {
+    const viewport = { width, height: width === 390 ? 844 : 900 };
+    const geometry = chatPickerGeometry(trigger, viewport, contentHeight);
+    expect(geometry.left, "shared-popup rule: left edge keeps the 12px design margin").toBeGreaterThanOrEqual(12);
+    expect(geometry.left + geometry.width, "shared-popup rule: right edge keeps the 12px design margin").toBeLessThanOrEqual(width - 12);
+    expect(geometry.top, "shared-popup rule: top edge keeps the 12px design margin").toBeGreaterThanOrEqual(12);
+    expect(geometry.top + geometry.maxHeight, "shared-popup rule: bottom edge keeps the 12px design margin").toBeLessThanOrEqual(viewport.height - 12);
+  });
+
+  test("all four named chat consumers compose through the shared popup presenter", () => {
+    const source = readFileSync(new URL("../src/index.tsx", import.meta.url), "utf8");
+    for (const consumer of ["model", "thinking", "feature", "legacy-provider"]) {
+      expect(source, `${consumer} violates shared-popup rule (design/DESIGN.md): compose it through ChatPopupPresenter`)
+        .toContain(`consumer="${consumer}"`);
+    }
+    expect(source.match(/<ChatPopupPresenter/g), "shared-popup rule requires exactly four production consumer compositions").toHaveLength(4);
+    expect(source, "shared-popup rule forbids the former absolute/downward-only chatMiniMenu geometry").not.toContain("chatMiniMenu:");
+    expect(source, "shared-popup rule forbids the former absolute/downward-only pickerOptions geometry").not.toContain("pickerOptions:");
   });
 
   test("opens one Record meeting setup with Proposed sources and no Create meeting task", async () => {
@@ -329,14 +357,14 @@ describe("new-design composition", () => {
     expect(trigger.props.accessibilityState).toMatchObject({ disabled: false, expanded: false });
     expect(renderer.root.findByProps({ testID: "chat-provider-chevron-box" }).props.style).toMatchObject({ width: 12, height: 12 });
     expect(renderer.root.findByProps({ testID: "chat-provider-chevron-icon" }).props.name).toBe("chevron-down");
-    expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(true);
+    expect(renderer.root.findAllByProps({ testID: "chat-provider-options" })).toHaveLength(0);
     await act(async () => { trigger.props.onPress(); });
-    expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(false);
+    expect(renderer.root.findByProps({ testID: "chat-provider-options" })).toBeTruthy();
     const selected = renderer.root.findByProps({ testID: "chat-model-codex-gpt-5" });
     expect(selected.props.accessibilityState).toMatchObject({ disabled: false, selected: true });
     await act(async () => { renderer.root.findByProps({ testID: "chat-model-anthropic-claude-sonnet" }).props.onPress(); });
     expect(onSelection).toHaveBeenCalledWith("anthropic", "claude-sonnet");
-    expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(true);
+    expect(renderer.root.findAllByProps({ testID: "chat-provider-options" })).toHaveLength(0);
     renderer.unmount();
   });
 
@@ -431,16 +459,106 @@ describe("new-design composition", () => {
     });
     await act(async () => { renderer.root.findByProps({ testID: "task-tab-ask" }).props.onPress(); });
     await act(async () => { renderer.root.findByProps({ testID: "chat-model-trigger" }).props.onPress(); });
-    expect(renderer.root.findByProps({ testID: "chat-picker-dismiss" })).toBeTruthy();
+    expect(renderer.root.findByProps({ testID: "chat-model-picker-dismiss" })).toBeTruthy();
     const pickerStyle = Object.assign(
       {},
       ...(renderer.root.findByProps({ testID: "chat-model-picker" }).props.style as object[]).flat(Infinity),
     );
     expect(pickerStyle).toMatchObject({
-      position: "fixed", top: "auto", right: 8, bottom: 8, left: 8, width: "auto", maxHeight: "78vh",
+      position: "fixed", top: "auto", right: 12, bottom: 12, left: 12, width: "auto", maxHeight: "calc(100vh - 24px)",
     });
-    await act(async () => { renderer.root.findByProps({ testID: "chat-picker-dismiss" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ testID: "chat-model-picker-dismiss" }).props.onPress(); });
     expect(renderer.root.findAllByProps({ testID: "chat-model-picker" })).toHaveLength(0);
+    renderer.unmount();
+  });
+
+  test("thinking and dynamic select-feature consumers preserve selection through the shared presenter", async () => {
+    const onSelection = vi.fn(async () => undefined);
+    const renderer = renderSurface({
+      layoutTier: "desktop", selectedMeetingId: "m-1", transcript: baseTranscript, consentStatus: "granted",
+      chatCatalog: controlsCatalog, chatProfiles: [], chatSelection: controlsSelection,
+      chatFeatures: controlsFeatures, onChatSelectionBundle: onSelection,
+    });
+
+    await act(async () => { renderer.root.findByProps({ testID: "chat-thinking-trigger" }).props.onPress(); });
+    expect(renderer.root.findByProps({ testID: "chat-popup-presenter-thinking" })).toBeTruthy();
+    expect(renderer.root.findByProps({ testID: "chat-thinking-menu" })).toBeTruthy();
+    await act(async () => { renderer.root.findByProps({ testID: "chat-thinking-high" }).props.onPress(); });
+    expect(onSelection, "thinking consumer shared-popup rule preserves thinking selection").toHaveBeenLastCalledWith({
+      ...controlsSelection, thinkingOptionId: "high",
+    });
+
+    await act(async () => { renderer.root.findByProps({ testID: "chat-feature-select-response_style" }).props.onPress(); });
+    expect(renderer.root.findByProps({ testID: "chat-popup-presenter-feature" })).toBeTruthy();
+    expect(renderer.root.findByProps({ testID: "chat-feature-menu-response_style" })).toBeTruthy();
+    await act(async () => { renderer.root.findByProps({ testID: "chat-feature-response_style-detailed" }).props.onPress(); });
+    expect(onSelection, "select-feature consumer shared-popup rule preserves feature selection").toHaveBeenLastCalledWith({
+      ...controlsSelection, featureValues: { ...controlsSelection.featureValues, response_style: "detailed" },
+    });
+    renderer.unmount();
+  });
+
+  test("shared popup owns constrained internal scrolling, resize reposition, Escape, focus containment and return", async () => {
+    let keydown: ((event: { key: string; shiftKey?: boolean; preventDefault(): void }) => void) | null = null;
+    let resize: (() => void) | null = null;
+    const triggerFocus = vi.fn();
+    const firstFocus = { focus: vi.fn(), getAttribute: () => null };
+    const lastFocus = { focus: vi.fn(), getAttribute: () => null };
+    const triggerNode = { focus: triggerFocus, getBoundingClientRect: () => ({ top: 700, right: 360, bottom: 744, left: 340 }) };
+    const rootNode = { contains: () => false, querySelector: () => triggerNode };
+    const popupNode = {
+      scrollHeight: 700,
+      getBoundingClientRect: () => ({ height: 420 }),
+      querySelector: () => firstFocus,
+      querySelectorAll: () => [firstFocus, lastFocus],
+    };
+    const documentMock = {
+      activeElement: lastFocus,
+      addEventListener: vi.fn((type: string, listener: typeof keydown) => { if (type === "keydown") keydown = listener; }),
+      removeEventListener: vi.fn(),
+    };
+    const windowMock = {
+      innerWidth: 877,
+      innerHeight: 768,
+      addEventListener: vi.fn((type: string, listener: () => void) => { if (type === "resize") resize = listener; }),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal("document", documentMock);
+    vi.stubGlobal("window", windowMock);
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <MeetingListSurface
+          connectionLabel="Host online" hostConnectionStatus="online" hostLabel="this host"
+          meetings={[baseMeeting]} layoutTier="desktop" selectedMeetingId="m-1" transcript={baseTranscript}
+          consentStatus="granted" chatCatalog={controlsCatalog} chatProfiles={[]} chatSelection={controlsSelection}
+          chatFeatures={controlsFeatures} onChatSelectionBundle={vi.fn()} onRefresh={async () => undefined}
+        />,
+        { createNodeMock: (element) => {
+          if (element.props.testID === "chat-popup-presenter-model") return rootNode;
+          if (element.props.testID === "chat-model-picker") return popupNode;
+          return {};
+        } },
+      );
+    });
+    await act(async () => { renderer.root.findByProps({ testID: "chat-model-trigger" }).props.onPress(); });
+    const popup = renderer.root.findByProps({ testID: "chat-model-picker" });
+    const scroller = popup.children[0] as { props: { style: Record<string, unknown> } };
+    expect(renderer.root.findByProps({ testID: "chat-model-picker" }).props.style.flat(Infinity))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ position: "fixed" })]));
+    expect(resize, "model consumer shared-popup rule registers resize reposition").toEqual(expect.any(Function));
+    expect(scroller.props.style, "shared-popup rule constrains overflow inside the popup").toMatchObject({ overflow: "auto", minHeight: 0 });
+
+    await act(async () => { keydown?.({ key: "Tab", preventDefault: vi.fn() }); });
+    expect(firstFocus.focus, "shared-popup rule contains focus at the last tabbable item").toHaveBeenCalled();
+    windowMock.innerWidth = 390;
+    await act(async () => { resize?.(); });
+    const positioned = Object.assign({}, ...(renderer.root.findByProps({ testID: "chat-model-picker" }).props.style as object[]).flat(Infinity));
+    expect(positioned.left, "shared-popup rule repositions after viewport resize").toBeGreaterThanOrEqual(12);
+    await act(async () => { keydown?.({ key: "Escape", preventDefault: vi.fn() }); });
+    expect(renderer.root.findAllByProps({ testID: "chat-model-picker" })).toHaveLength(0);
+    expect(triggerFocus, "model consumer shared-popup rule returns focus to its trigger after Escape").toHaveBeenCalled();
     renderer.unmount();
   });
 
@@ -456,14 +574,15 @@ describe("new-design composition", () => {
       onChatSelection: vi.fn(),
     });
     expect(renderer.root.findByProps({ testID: "chat-provider-trigger" }).props.accessibilityState).toMatchObject({ expanded: true });
-    expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(false);
+    expect(renderer.root.findByProps({ testID: "chat-provider-options" })).toBeTruthy();
     renderer.unmount();
   });
 
   test("closes provider/model options on an outside pointer without consuming that interaction", async () => {
     let outsidePointer: ((event: { target: object }) => void) | null = null;
     const outsideAction = vi.fn();
-    const pickerNode = { contains: (target: object) => target === pickerNode };
+    const focus = vi.fn();
+    const pickerNode = { contains: (target: object) => target === pickerNode, querySelector: () => ({ focus }) };
     vi.stubGlobal("document", {
       addEventListener: vi.fn((type: string, listener: (event: { target: object }) => void) => {
         if (type === "pointerdown") outsidePointer = listener;
@@ -489,11 +608,11 @@ describe("new-design composition", () => {
           onChatSelection={vi.fn()}
           onRefresh={async () => undefined}
         />,
-        { createNodeMock: (element) => element.props.testID === "chat-provider-picker" ? pickerNode : {} },
+        { createNodeMock: (element) => element.props.testID === "chat-popup-presenter-legacy-provider" ? pickerNode : {} },
       );
     });
     await act(async () => { renderer.root.findByProps({ testID: "chat-provider-trigger" }).props.onPress(); });
-    expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(false);
+    expect(renderer.root.findByProps({ testID: "chat-provider-options" })).toBeTruthy();
     expect(outsidePointer).toEqual(expect.any(Function));
 
     await act(async () => {
@@ -501,8 +620,9 @@ describe("new-design composition", () => {
       outsideAction();
     });
 
-    expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(true);
+    expect(renderer.root.findAllByProps({ testID: "chat-provider-options" })).toHaveLength(0);
     expect(outsideAction).toHaveBeenCalledOnce();
+    expect(focus, "legacy provider shared-popup rule returns focus to its trigger").toHaveBeenCalledOnce();
     renderer.unmount();
   });
 

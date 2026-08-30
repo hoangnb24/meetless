@@ -70,7 +70,7 @@ Out of scope:
 - [x] Reproduce the architectural mismatch from source and accepted prototype.
 - [x] Complete independent foundation judgment.
 - [x] Record and freeze the overlay/scroll contract at design authority.
-- [ ] Dispatch one writer for the atomic consumer migration and invariant proof.
+- [x] Dispatch one writer for the atomic consumer migration and invariant proof.
 - [ ] Accept focused and built-artifact proof.
 - [ ] Install and launch the accepted signed package.
 
@@ -98,6 +98,25 @@ Out of scope:
 - Repository-required checks: meeting-surface tests/typecheck/build, app
   typecheck/build/export, `git diff --check`, signed-package verification.
 
+Implementation evidence observed on 2026-08-30:
+
+- `npx vitest run --config vitest.config.ts packages/meeting-surface`: 61 tests
+  passed, including all four shared-presenter routes, geometry, lifecycle,
+  selection behavior, phone targets, and retained sidebar scrolling.
+- Recoverable negative mutation: restoring the thinking popup as an absolute
+  downward-only menu failed the named shared-popup invariant; restoring the
+  presenter made the same focused test pass.
+- `npm run proof:chat-popup-overlay`: passed against a deterministic temporary
+  Expo export built from emitted `packages/meeting-surface/dist/index.js` at
+  390px, 877px, and 1440px for modern model, thinking, select-feature, and
+  legacy provider/model popups. Observed fixed bounds, 12px margins, exact 8px
+  above/below gaps where available, internal overflow, unchanged page height,
+  phone sheets, 44px targets, Escape dismissal, and focus return.
+- Meeting-surface typecheck/build, app typecheck/build, and app Expo web export
+  passed. `git diff --check` passed. Design contract coordination digest stayed
+  `b39addfab13fe8f350033f289e2bce1085d492c43a0937d73c9c80d19b654cbd`.
+
 ## Result
 
-Pending implementation and acceptance.
+Atomic implementation and writer-owned proof are complete. Lead acceptance,
+signed-package verification, install, and launch remain pending.
