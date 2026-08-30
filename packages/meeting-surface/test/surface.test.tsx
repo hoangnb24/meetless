@@ -19,6 +19,13 @@ beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
+const activePremium = {
+  entitlement: "premium" as const,
+  status: "active" as const,
+  packages: [],
+  reason: null,
+};
+
 describe("global recording strip", () => {
   test("clears desktop recording controls below the Electron titlebar hit-test region", async () => {
     const oldStripStyle = { minHeight: 64, paddingVertical: 9 };
@@ -420,6 +427,7 @@ describe("companion meeting surface", () => {
           selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
           chatProviders={[{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }]}
           chatProvider="codex" chatModel="gpt-5"
+          premiumAccess={activePremium}
           chatThread={{
             meetingId: "m-1", status: "failed",
             messages: [
@@ -463,6 +471,7 @@ describe("companion meeting surface", () => {
           chatSelection={selection}
           chatFeatures={{ version: 1, selection, status: "ready", features: [], error: null }}
           chatProvider="codex" chatModel="gpt-5" onAskQuestion={onAsk} onCitation={onCitation}
+          premiumAccess={activePremium}
           chatThread={{
             meetingId: "m-1", status: "ready",
             messages: [{ role: "assistant", outcome: "supported", text: "Decision", citations: [{ meetingId: "m-1", segmentId: "segment-1" }], createdAt: "2026-08-21T00:00:01.000Z" }],
@@ -482,6 +491,49 @@ describe("companion meeting surface", () => {
     expect(onAsk).toHaveBeenCalledWith("Next step?");
     await act(async () => { renderer!.root.findByProps({ testID: "chat-citation-segment-1" }).props.onPress(); });
     expect(onCitation).toHaveBeenCalledWith({ meetingId: "m-1", segmentId: "segment-1" });
+    renderer!.unmount();
+  });
+
+  test("keeps the Ask draft and opens store-localized Premium plans before model execution", async () => {
+    const onAsk = vi.fn(async () => undefined);
+    const onPurchase = vi.fn(async () => undefined);
+    const onRestore = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          canCreate={false} layoutTier="desktop" connectionLabel="Connected" hostLabel="isolated host"
+          meetings={[meeting("m-1")]} onRefresh={async () => undefined}
+          selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
+          chatProviders={[{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }]}
+          chatProvider="codex" chatModel="gpt-5" onAskQuestion={onAsk}
+          premiumAccess={{
+            entitlement: "premium", status: "inactive", reason: null,
+            packages: [{
+              packageId: "annual", productId: "com.meetless.app.premium.annual",
+              localizedPrice: "799.000 ₫", trialEligible: true,
+            }],
+          }}
+          onPurchasePremium={onPurchase}
+          onRestorePremium={onRestore}
+        />,
+      );
+    });
+
+    await act(async () => { renderer!.root.findByProps({ testID: "chat-question-input" }).props.onChangeText(" What changed? "); });
+    await act(async () => { renderer!.root.findByProps({ testID: "chat-ask" }).props.onPress(); });
+    expect(onAsk).not.toHaveBeenCalled();
+    expect(renderer!.root.findByProps({ testID: "chat-question-input" }).props.value).toBe(" What changed? ");
+    expect(renderer!.root.findByProps({ testID: "premium-paywall" })).toBeTruthy();
+    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === "799.000 ₫")).toBe(true);
+    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === "Includes a 7-day free trial")).toBe(true);
+    await act(async () => { renderer!.root.findByProps({ testID: "premium-purchase-annual" }).props.onPress(); });
+    expect(onPurchase).toHaveBeenCalledWith("annual");
+    await act(async () => { renderer!.root.findByProps({ testID: "premium-restore" }).props.onPress(); });
+    expect(onRestore).toHaveBeenCalledOnce();
+    await act(async () => { renderer!.root.findByProps({ testID: "premium-close" }).props.onPress(); });
+    expect(renderer!.root.findAllByProps({ testID: "premium-paywall" })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ testID: "chat-question-input" }).props.value).toBe(" What changed? ");
     renderer!.unmount();
   });
 });

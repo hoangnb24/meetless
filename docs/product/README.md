@@ -8,6 +8,8 @@ This directory is the sole authority for accepted V1 consumer behavior and UX:
 - [Platforms](platforms.md): recording-host and companion-client matrix.
 - [Experience](experience.md): accepted end-to-end UX, screen behavior, states,
   copy, responsive behavior, and design implementation guidance.
+- [Premium And Monetization](monetization.md): free and paid capabilities,
+  subscription offer, trial, purchase, and restore behavior.
 
 The active execution plan tracks delivery. When behavior changes, update the
 owning product document first, then the plan and executable proof.

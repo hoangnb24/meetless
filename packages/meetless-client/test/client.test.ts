@@ -150,6 +150,34 @@ describe("Meetless capability gate", () => {
     await expect(client.deleteMeeting("m-1")).resolves.toEqual({ meetingId: "m-1", outcome: "deleted", reason: null });
     expect(invokePluginRpc).toHaveBeenCalledWith("meetless", "meeting.delete", { meetingId: "m-1" });
   });
+
+  test("routes Premium status, purchase, and restore through strict plugin RPCs", async () => {
+    const access = {
+      entitlement: "premium" as const,
+      status: "inactive" as const,
+      packages: [{
+        packageId: "monthly" as const,
+        productId: "com.meetless.app.premium.monthly",
+        localizedPrice: "$9.99",
+        trialEligible: true,
+      }],
+      reason: null,
+    };
+    const invokePluginRpc = vi.fn(async (_id: string, method: string) =>
+      method === "meeting.premium.status" ? access : { outcome: "active", access: { ...access, status: "active" } },
+    );
+    const client = new MeetlessClient(daemon({ invokePluginRpc }));
+    await client.initialize();
+
+    await expect(client.getPremiumAccess()).resolves.toEqual(access);
+    await expect(client.purchasePremium("monthly")).resolves.toMatchObject({ outcome: "active" });
+    await expect(client.restorePremium()).resolves.toMatchObject({ outcome: "active" });
+    expect(invokePluginRpc.mock.calls).toEqual([
+      ["meetless", "meeting.premium.status", {}],
+      ["meetless", "meeting.premium.purchase", { packageId: "monthly" }],
+      ["meetless", "meeting.premium.restore", {}],
+    ]);
+  });
 });
 
 const recordingStatus: RecordingStatusWire = {

@@ -14,6 +14,9 @@ import {
   MeetingDeleteRpc,
   MeetingCitationResolveRpc,
   MeetingListRpc,
+  MeetingPremiumPurchaseRpc,
+  MeetingPremiumRestoreRpc,
+  MeetingPremiumStatusRpc,
   MeetingTranscriptRpc,
   MeetingTranscriptionConsentRpc,
   type MeetingWire,
@@ -25,6 +28,8 @@ import {
   type ChatSelectionWire,
   type MeetingChatThreadWire,
   type MeetingDeleteResultWire,
+  type PremiumAccessWire,
+  type PremiumMutationResultWire,
   type TranscriptionProviderStatusWire,
   RecordingControlResponseSchema,
   RecordingStatusEventSchema,
@@ -321,6 +326,33 @@ export class MeetlessClient {
       MeetingCitationResolveRpc,
       (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
       input,
+    );
+  }
+
+  async getPremiumAccess(): Promise<PremiumAccessWire> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingPremiumStatusRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      {},
+    );
+  }
+
+  async purchasePremium(packageId: "monthly" | "annual"): Promise<PremiumMutationResultWire> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingPremiumPurchaseRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      { packageId },
+    );
+  }
+
+  async restorePremium(): Promise<PremiumMutationResultWire> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingPremiumRestoreRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      {},
     );
   }
 

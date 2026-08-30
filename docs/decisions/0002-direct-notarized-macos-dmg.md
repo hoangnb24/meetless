@@ -4,7 +4,10 @@ Date: 2026-08-26
 
 ## Status
 
-Accepted
+Superseded by [ADR0005](0005-mac-app-store-and-revenuecat.md) on 2026-08-30.
+
+This document remains historical authority for direct-DMG artifacts and proof.
+Those artifacts must not be presented as Mac App Store evidence.
 
 ## Context
 

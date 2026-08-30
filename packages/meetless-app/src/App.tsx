@@ -16,6 +16,7 @@ import {
   type ChatSelectionWire,
   type MeetingChatThreadWire,
   type MeetingWire,
+  type PremiumAccessWire,
 } from "@meetless/meeting-contracts";
 import type { CitationWire, TranscriptWire, TranscriptionProviderStatusWire } from "@meetless/meeting-contracts";
 import { MeetingListSurface, RecordingStrip, type CitationEvidenceState, type LayoutTier } from "@meetless/meeting-surface";
@@ -66,6 +67,9 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [chatThread, setChatThread] = useState<MeetingChatThreadWire | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [premiumAccess, setPremiumAccess] = useState<PremiumAccessWire | null>(null);
+  const [premiumPending, setPremiumPending] = useState(false);
+  const [premiumError, setPremiumError] = useState<string | null>(null);
   const [citationEvidence, setCitationEvidence] = useState<CitationEvidenceState | null>(null);
   const [deleteConfirmationMeetingId, setDeleteConfirmationMeetingId] = useState<string | null>(null);
   const [deletePending, setDeletePending] = useState(false);
@@ -104,6 +108,9 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     playback.current?.stop();
     playback.current = null;
     connection.current = null;
+    setPremiumAccess(null);
+    setPremiumPending(false);
+    setPremiumError(null);
     setCitationEvidence((current) => current ? {
       ...current,
       status: "failed",
@@ -129,6 +136,59 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     }
     setError(null);
   }, [isCurrentConnection, mode]);
+
+  const refreshPremium = useCallback(async () => {
+    const active = connection.current;
+    if (!active) throw new Error("Meetless host is not connected yet");
+    setPremiumPending(true);
+    setPremiumError(null);
+    try {
+      const access = await active.client.getPremiumAccess();
+      if (isCurrentConnection(active)) setPremiumAccess(access);
+    } catch {
+      if (isCurrentConnection(active)) {
+        setPremiumAccess({ entitlement: "premium", status: "unavailable", packages: [], reason: "store_unavailable" });
+        setPremiumError("Premium plans could not be loaded. Try again.");
+      }
+    } finally {
+      if (isCurrentConnection(active)) setPremiumPending(false);
+    }
+  }, [isCurrentConnection]);
+
+  const purchasePremium = useCallback(async (packageId: "monthly" | "annual") => {
+    const active = connection.current;
+    if (!active) throw new Error("Meetless host is not connected yet");
+    setPremiumPending(true);
+    setPremiumError(null);
+    try {
+      const result = await active.client.purchasePremium(packageId);
+      if (!isCurrentConnection(active)) return;
+      setPremiumAccess(result.access);
+      if (result.outcome === "failed") setPremiumError("Purchase could not complete. Try again.");
+      if (result.outcome === "pending") setPremiumError("Purchase is pending approval. Ask will unlock after approval.");
+    } catch {
+      if (isCurrentConnection(active)) setPremiumError("Purchase could not complete. Try again.");
+    } finally {
+      if (isCurrentConnection(active)) setPremiumPending(false);
+    }
+  }, [isCurrentConnection]);
+
+  const restorePremium = useCallback(async () => {
+    const active = connection.current;
+    if (!active) throw new Error("Meetless host is not connected yet");
+    setPremiumPending(true);
+    setPremiumError(null);
+    try {
+      const result = await active.client.restorePremium();
+      if (!isCurrentConnection(active)) return;
+      setPremiumAccess(result.access);
+      if (result.outcome !== "active") setPremiumError("No active Premium purchase was found.");
+    } catch {
+      if (isCurrentConnection(active)) setPremiumError("Purchases could not be restored. Try again.");
+    } finally {
+      if (isCurrentConnection(active)) setPremiumPending(false);
+    }
+  }, [isCurrentConnection]);
 
   const openTranscript = useCallback(async (meetingId: string) => {
     if (deletePendingRef.current) return;
@@ -299,11 +359,13 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     } catch (reason) {
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) {
         setChatError(reason instanceof Error ? reason.message : String(reason));
+        if (reason instanceof Error && /Premium/u.test(reason.message)) void refreshPremium();
       }
+      throw reason;
     } finally {
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) setChatLoading(false);
     }
-  }, [chatSelection, isCurrentConnection]);
+  }, [chatSelection, isCurrentConnection, refreshPremium]);
 
   const retryQuestion = useCallback(async () => {
     const active = connection.current;
@@ -512,7 +574,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         const active = installConnection(connected.client, connected.close);
         const controlsSelectionEpoch = selectionVersion.current;
         const controlsSelectionRequest = chatSelectionRequest.current;
-        await refresh();
+        await Promise.all([refresh(), refreshPremium()]);
         if (cancelled || !isCurrentConnection(active)) return;
         if (typeof active.client.getChatControls === "function") {
           try {
@@ -552,7 +614,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
       invalidateConnection();
       if (active?.close) void active.close();
     };
-  }, [daemonUrl, installConnection, invalidateConnection, isCurrentConnection, mode, refresh]);
+  }, [daemonUrl, installConnection, invalidateConnection, isCurrentConnection, mode, refresh, refreshPremium]);
 
   useEffect(() => {
     if (mode !== "companion") return;
@@ -577,6 +639,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         throw new Error("Companion restoration epoch changed");
       }
       installConnection(client);
+      await refreshPremium();
       setMeetings(restored.meetings);
       if (typeof console !== "undefined") {
         console.info(`[meetless-surface] ${JSON.stringify({
@@ -636,7 +699,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
       invalidateConnection();
       void session.close();
     };
-  }, [installConnection, invalidateConnection, mode, profile]);
+  }, [installConnection, invalidateConnection, mode, profile, refreshPremium]);
 
   const pairCompanion = useCallback(async (next: CompanionProfile) => {
     await saveCompanionProfile(next);
@@ -753,9 +816,15 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         chatThread={chatThread}
         chatLoading={chatLoading}
         chatError={chatError}
+        premiumAccess={premiumAccess}
+        premiumPending={premiumPending}
+        premiumError={premiumError}
         onChatSelectionBundle={selectChatSelection}
         onAskQuestion={interactive ? askQuestion : undefined}
         onRetryQuestion={interactive ? retryQuestion : undefined}
+        onRefreshPremium={interactive ? refreshPremium : undefined}
+        onPurchasePremium={interactive ? purchasePremium : undefined}
+        onRestorePremium={interactive ? restorePremium : undefined}
         onChangeHost={mode === "companion" ? changeCompanionHost : undefined}
         deleteConfirmationMeetingId={deleteConfirmationMeetingId}
         deletePending={deletePending}

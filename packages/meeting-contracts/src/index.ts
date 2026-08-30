@@ -141,6 +141,56 @@ export const MeetingCitationResolveRpc = defineRpc({
 
 export type CitationWire = z.infer<typeof MeetingCitationResolveRpc.output>;
 
+export const PremiumPackageWireSchema = z.object({
+  packageId: z.enum(["monthly", "annual"]),
+  productId: z.string().trim().min(1),
+  localizedPrice: z.string().trim().min(1),
+  trialEligible: z.boolean(),
+}).strict();
+
+export type PremiumPackageWire = z.infer<typeof PremiumPackageWireSchema>;
+
+export const PremiumAccessWireSchema = z.object({
+  entitlement: z.literal("premium"),
+  status: z.enum(["active", "inactive", "unavailable"]),
+  packages: z.array(PremiumPackageWireSchema),
+  reason: z.enum(["not_configured", "store_unavailable"]).nullable(),
+}).strict().superRefine((access, context) => {
+  if (access.status === "unavailable" && access.reason === null) {
+    context.addIssue({ code: "custom", path: ["reason"], message: "Unavailable Premium status requires a redacted reason" });
+  }
+  if (access.status !== "unavailable" && access.reason !== null) {
+    context.addIssue({ code: "custom", path: ["reason"], message: "Only unavailable Premium status can include a reason" });
+  }
+});
+
+export type PremiumAccessWire = z.infer<typeof PremiumAccessWireSchema>;
+
+export const PremiumMutationResultWireSchema = z.object({
+  outcome: z.enum(["active", "cancelled", "pending", "failed"]),
+  access: PremiumAccessWireSchema,
+}).strict();
+
+export type PremiumMutationResultWire = z.infer<typeof PremiumMutationResultWireSchema>;
+
+export const MeetingPremiumStatusRpc = defineRpc({
+  name: "meeting.premium.status",
+  input: z.object({}).strict(),
+  output: PremiumAccessWireSchema,
+});
+
+export const MeetingPremiumPurchaseRpc = defineRpc({
+  name: "meeting.premium.purchase",
+  input: z.object({ packageId: z.enum(["monthly", "annual"]) }).strict(),
+  output: PremiumMutationResultWireSchema,
+});
+
+export const MeetingPremiumRestoreRpc = defineRpc({
+  name: "meeting.premium.restore",
+  input: z.object({}).strict(),
+  output: PremiumMutationResultWireSchema,
+});
+
 export const ChatProviderModelWireSchema = z.object({
   id: z.string().trim().min(1),
   label: z.string().trim().min(1),
