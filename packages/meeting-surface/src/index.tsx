@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -8,6 +9,7 @@ import {
   View,
   type PressableProps,
   type TextInputProps,
+  type ViewStyle,
 } from "react-native";
 import type {
   ChatProviderWire,
@@ -22,6 +24,15 @@ import type {
 export const ELECTRON_TITLEBAR_HIT_TEST_HEIGHT = 29;
 const RECORDING_CONTROL_HEIGHT = 40;
 const RECORDING_STRIP_VERTICAL_PADDING = 9;
+
+const electronTitlebarDragRegionStyle = {
+  position: "absolute",
+  top: 0,
+  right: 0,
+  left: 0,
+  height: ELECTRON_TITLEBAR_HIT_TEST_HEIGHT,
+  WebkitAppRegion: "drag",
+} as unknown as ViewStyle;
 
 const colors = {
   bg: "#08090a",
@@ -64,6 +75,11 @@ export function recordingStripPointerGeometry(titlebarClearance: number): Record
 
 export function clearsElectronTitlebarHitTest(pointY: number): boolean {
   return pointY > ELECTRON_TITLEBAR_HIT_TEST_HEIGHT;
+}
+
+function ElectronTitlebarDragRegion({ regionID }: { regionID: string }) {
+  if (Platform.OS !== "web") return null;
+  return <View aria-hidden style={electronTitlebarDragRegionStyle} testID={regionID} />;
 }
 
 const recordingStripGeometry = recordingStripPointerGeometry(ELECTRON_TITLEBAR_HIT_TEST_HEIGHT);
@@ -114,6 +130,7 @@ export function RecordingStrip(props: {
   if (active) {
     return (
       <View style={styles.recordingStrip} testID="global-recording-strip">
+        <ElectronTitlebarDragRegion regionID="recording-titlebar-drag-region" />
         <View style={styles.recordingLiveDot} accessibilityElementsHidden />
         <View style={styles.recordingIdentity}>
           <Text style={styles.recordingTitle} numberOfLines={1}>{props.status.title ?? "Meeting"}</Text>
@@ -153,6 +170,7 @@ export function RecordingStrip(props: {
 
   return (
     <View style={styles.recordingStrip} testID="global-recording-strip">
+      <ElectronTitlebarDragRegion regionID="recording-titlebar-drag-region" />
       <View style={[styles.recordingLiveDot, state.tone === "warning" && styles.recordingLiveDotWarning]} accessibilityElementsHidden />
       <View style={styles.recordingIdentity}>
         <Text accessibilityLiveRegion="polite" style={styles.recordingTitle} testID="recording-state">{state.title}</Text>
@@ -444,6 +462,7 @@ function AppTopbar({
   const display = hostStatusCopy(connectionStatus);
   return (
     <View style={styles.topbar} testID="app-topbar">
+      <ElectronTitlebarDragRegion regionID="app-titlebar-drag-region" />
       <View style={styles.brand}>
         <View style={styles.mark} accessibilityElementsHidden />
         <Text style={styles.brandText}>Meetless</Text>

@@ -46,6 +46,14 @@ describe("global recording strip", () => {
       minHeight: 87,
       paddingTop: 38,
     });
+    expect(renderer!.root.findByProps({ testID: "recording-titlebar-drag-region" }).props.style).toMatchObject({
+      position: "absolute",
+      top: 0,
+      right: 0,
+      left: 0,
+      height: ELECTRON_TITLEBAR_HIT_TEST_HEIGHT,
+      WebkitAppRegion: "drag",
+    });
     expect(renderer!.root.findByProps({ testID: "recording-error" }).props.children)
       .toBe("No usable recording was preserved.");
     renderer!.unmount();
@@ -215,6 +223,32 @@ describe("global recording strip", () => {
 });
 
 describe("companion meeting surface", () => {
+  test("keeps a draggable Electron titlebar region above the meeting surface", async () => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          canCreate={false}
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          meetings={[]}
+          onRefresh={async () => undefined}
+        />,
+      );
+    });
+
+    expect(renderer!.root.findByProps({ testID: "app-titlebar-drag-region" }).props.style).toMatchObject({
+      position: "absolute",
+      top: 0,
+      right: 0,
+      left: 0,
+      height: ELECTRON_TITLEBAR_HIT_TEST_HEIGHT,
+      WebkitAppRegion: "drag",
+    });
+    renderer!.unmount();
+  });
+
   test("shows host offline as unknown host state, not an empty meeting list", async () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
