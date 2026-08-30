@@ -12,7 +12,7 @@ export const PACKAGE_SOURCE_EXCLUDED_PATHS = Object.freeze([
   "test/evidence/m7/m7-f3-packaged-controlled-lifecycle.json",
   "test/evidence/m7/m7-f6-real-no-timestamp-signing-validation.json",
 ]);
-const CANDIDATE_SNAPSHOT_AUTHORITY = "docs/plans/active/v1-paseo-foundation.md";
+const CANDIDATE_SNAPSHOT_AUTHORITY = "docs/specs/macos-artifact-validation.md";
 
 const scope = [
   ".gitignore",

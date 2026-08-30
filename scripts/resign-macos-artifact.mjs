@@ -95,7 +95,7 @@ export async function run(arguments_, hooks = {}) {
 
 async function runPreparedStage(options, observer = null, { ownerMode = false, preparedStage = null } = {}) {
   if (!ownerMode) {
-    throw new Error("artifact re-sign consumption requires the explicit owner stage mode. Authority: docs/plans/active/v1-paseo-foundation.md. Next action: run the generated native-Terminal command with --stage-root.");
+    throw new Error("artifact re-sign consumption requires the explicit owner stage mode. Authority: docs/specs/macos-artifact-validation.md. Next action: run the generated native-Terminal command with --stage-root.");
   }
   const validatePackage = validateMacOSPackage;
   const lifecycleEvents = [];
@@ -698,7 +698,7 @@ async function emitCommandLifecycleEvent(observer, events, event, details = {}) 
 
 function assertDarwinArm64() {
   if (process.platform !== "darwin" || process.arch !== "arm64") {
-    throw new Error("artifact re-sign requires macOS arm64. Authority: docs/plans/active/v1-paseo-foundation.md. Next action: run the owner-authorized transform only on the accepted macOS arm64 host.");
+    throw new Error("artifact re-sign requires macOS arm64. Authority: docs/specs/macos-artifact-validation.md. Next action: run the owner-authorized transform only on the accepted macOS arm64 host.");
   }
 }
 
@@ -723,5 +723,5 @@ function sha256(bytes) {
 }
 
 function artifactResignError(reason, nextAction) {
-  return new Error(`${reason}. Authority: docs/plans/active/v1-paseo-foundation.md. Next action: ${nextAction}.`);
+  return new Error(`${reason}. Authority: docs/specs/macos-artifact-validation.md. Next action: ${nextAction}.`);
 }

@@ -78,7 +78,7 @@ describe("daemon recording service", () => {
       authorizeProductionStart: async () => {
         throw new Error(
           "Production recording start rejected before helper spawn: direct daemon ancestry. " +
-          "Authority: docs/plans/active/v1-paseo-foundation.md. Next action: launch with npm run runtime:host.",
+          "Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md. Next action: launch with npm run runtime:host.",
         );
       },
     });

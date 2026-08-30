@@ -42,7 +42,7 @@ async function main(): Promise<void> {
       throw new Error(
         "Production pre-owner readiness requires a live MeetlessHost-owned runtime. " +
         "Launch it with npm run runtime:host; direct npm runtime ownership is rejected. " +
-        "Authority: docs/plans/active/v1-paseo-foundation.md.",
+        "Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md.",
       );
     }
     const { assertSupervisorOwnedByHost } = await import("./host.js");

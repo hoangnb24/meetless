@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const APP_BOUNDARY_AUTHORITY = "docs/plans/active/v1-paseo-foundation.md:272";
+export const APP_BOUNDARY_AUTHORITY = "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md";
 
 export interface AppSourceFile {
   path: string;

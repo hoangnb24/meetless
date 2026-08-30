@@ -16,7 +16,7 @@ const digest = createHash("sha256").update(bundleBytes).digest("hex");
 if (digest !== PASEO_DEPENDENCY.bundleSha256 || bundleStats.size !== PASEO_DEPENDENCY.bundleSize) {
   throw new Error(
     `Paseo dependency bundle does not match its content address. ` +
-    `Authority: docs/plans/active/v1-paseo-foundation.md, M6 host-auth review R1. ` +
+    `Authority: docs/decisions/0001-maintained-paseo-fork.md. ` +
     `Next action: restore ${PASEO_DEPENDENCY.bundlePath} with SHA-256 ${PASEO_DEPENDENCY.bundleSha256}.`,
   );
 }

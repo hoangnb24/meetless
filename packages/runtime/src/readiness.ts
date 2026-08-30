@@ -16,7 +16,7 @@ import { REPOSITORY_ROOT, type RuntimeConfig } from "./config.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
 import { readConsumedUiTestMarkerSync } from "./ui-test-envelope.js";
 
-export const RECORDING_READINESS_AUTHORITY = "docs/plans/active/v1-paseo-foundation.md";
+export const RECORDING_READINESS_AUTHORITY = "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md and docs/decisions/0004-recording-host-and-capture-permission-boundary.md";
 
 type ReadinessOperation = "status" | "prepareCollision" | "validateCollision";
 type ProcessEntry = { pid: number; ppid: number; command: string };

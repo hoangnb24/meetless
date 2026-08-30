@@ -432,7 +432,7 @@ describe("macOS standalone Mach-O signing boundary", () => {
     const valid = Object.fromEntries(["NSMicrophoneUsageDescription", "NSScreenCaptureUsageDescription", "NSAudioCaptureUsageDescription"].map((key) => [key, "Meetless needs access."]));
     expect(() => validateMacOSPurposeStrings(valid)).not.toThrow();
     for (const key of Object.keys(valid)) {
-      expect(() => validateMacOSPurposeStrings({ ...valid, [key]: "" })).toThrow(new RegExp(`${key}.*native/macos-host/Info\\.plist.*docs/plans/active/v1-paseo-foundation\\.md`, "s"));
+      expect(() => validateMacOSPurposeStrings({ ...valid, [key]: "" })).toThrow(new RegExp(`${key}.*native/macos-host/Info\\.plist.*docs/specs/macos-artifact-validation\\.md`, "s"));
     }
   });
 

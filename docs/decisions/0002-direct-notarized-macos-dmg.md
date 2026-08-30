@@ -33,6 +33,14 @@ component does not establish release acceptance.
 Mac App Store sandboxing, App Store Connect submission, and App Review are out
 of scope unless the owner changes the distribution decision.
 
+The repeatable candidate, package, sign, re-sign, and validation mechanics are
+defined in the [macOS artifact-validation specification](../specs/macos-artifact-validation.md).
+This decision remains the authority for the direct-install path and the
+owner-bound package/media transaction. Runtime topology and host ownership are
+defined by [ADR0003](0003-meetless-runtime-isolation-and-host-ownership.md);
+recording permissions and helper ownership are defined by
+[ADR0004](0004-recording-host-and-capture-permission-boundary.md).
+
 ## Consequences
 
 - Developer ID signing, secure timestamping, notarization, stapling, and

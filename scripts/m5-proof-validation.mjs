@@ -4,7 +4,7 @@ import {
   M4_EXPECTED_RANGES,
 } from "./m4-proof-validation.mjs";
 
-const AUTHORITY = "docs/plans/active/v1-paseo-foundation.md#milestone-5-chat-with-one-meeting";
+const AUTHORITY = "docs/product/knowledge-and-citations.md";
 
 export class M5ProofValidationError extends Error {
   constructor(stage, message, nextAction) {

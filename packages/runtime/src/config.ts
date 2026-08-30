@@ -258,7 +258,7 @@ export interface RuntimeConfig {
 export class IsolationViolationError extends Error {
   constructor(message: string) {
     super(
-      `${message}. Authority: docs/plans/active/v1-paseo-foundation.md, M6 foundation gate and Lead ruling. ` +
+      `${message}. Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md. ` +
         "Next action: keep the Meetless runtime isolated, use a non-6767 endpoint, and configure Paseo direct authentication for LAN exposure.",
     );
     this.name = "IsolationViolationError";
@@ -294,7 +294,7 @@ export function resolveRuntimeConfig(input: {
   if (packagedManifest && requestedRuntimeRoot && path.resolve(requestedRuntimeRoot) !== acceptedSupportRoot) {
     throw new Error(
       `Packaged runtime root ${requestedRuntimeRoot} differs from the accepted per-user root ${acceptedSupportRoot}. ` +
-        "Authority: docs/decisions/0002-direct-notarized-macos-dmg.md and docs/plans/active/v1-paseo-foundation.md. " +
+        "Authority: docs/decisions/0002-direct-notarized-macos-dmg.md. " +
         "Next action: use ~/Library/Application Support/Meetless; do not redirect packaged state to a builder or temporary path.",
     );
   }
@@ -323,7 +323,7 @@ export function resolveRuntimeConfig(input: {
   if (packagedManifest && requestedRendererOrigin && resolveRendererOrigin(requestedRendererOrigin) !== rendererOrigin) {
     throw new Error(
       `Packaged renderer origin ${requestedRendererOrigin} differs from the host-configured ${rendererOrigin}. ` +
-        "Authority: docs/plans/active/v1-paseo-foundation.md. Next action: use the packaged renderer origin.",
+        "Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md. Next action: use the packaged renderer origin.",
     );
   }
   const requestedRecordingExports = sourceEnvironment.MEETLESS_EXPORT_ROOT?.trim();
@@ -458,7 +458,7 @@ function readPackagedRuntimeManifest(repositoryRoot: string): PackagedRuntimeMan
   } catch (error) {
     throw new Error(
       `Packaged Meetless runtime marker is missing or invalid at ${markerPath}: ${describe(error)}. ` +
-        "Authority: docs/plans/active/v1-paseo-foundation.md. Next action: rebuild the complete macOS package; do not fall back to repository resources.",
+        "Authority: docs/specs/macos-artifact-validation.md. Next action: rebuild the complete macOS package; do not fall back to repository resources.",
     );
   }
 }
@@ -490,7 +490,7 @@ function parseInstallationContract(contractPath: string, source: string): Instal
   } catch (error) {
     throw new Error(
       `${source} Meetless installation contract is missing or invalid at ${contractPath}: ${describe(error)}. ` +
-        "Authority: docs/decisions/0002-direct-notarized-macos-dmg.md and docs/plans/active/v1-paseo-foundation.md. " +
+        "Authority: docs/decisions/0002-direct-notarized-macos-dmg.md. " +
         "Next action: restore the owner-approved plain-data contract; do not use a repository or builder fallback for a packaged runtime.",
     );
   }
@@ -584,7 +584,7 @@ function assertPackagedDirectory(candidate: string, label: string): void {
   if (!statSync(candidate, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(
       `Packaged ${label} resource is missing: ${candidate}. ` +
-        "Authority: docs/plans/active/v1-paseo-foundation.md. Next action: rebuild the macOS package with all emitted resources.",
+        "Authority: docs/specs/macos-artifact-validation.md. Next action: rebuild the macOS package with all emitted resources.",
     );
   }
 }
@@ -593,7 +593,7 @@ function assertPackagedRegularFile(candidate: string, label: string): void {
   if (!statSync(candidate, { throwIfNoEntry: false })?.isFile()) {
     throw new Error(
       `Packaged ${label} resource is missing: ${candidate}. ` +
-        "Authority: docs/plans/active/v1-paseo-foundation.md. Next action: rebuild the macOS package with the resource inside the artifact.",
+        "Authority: docs/specs/macos-artifact-validation.md. Next action: rebuild the macOS package with the resource inside the artifact.",
     );
   }
 }
@@ -757,7 +757,7 @@ export async function prepareRuntime(config: RuntimeConfig): Promise<void> {
 async function packagedMediaTools(config: RuntimeConfig): Promise<[string, string]> {
   if (!config.packageResources) {
     throw new Error(
-      "Packaged media resources are missing. Authority: docs/plans/active/v1-paseo-foundation.md. " +
+      "Packaged media resources are missing. Authority: docs/decisions/0002-direct-notarized-macos-dmg.md. " +
         "Next action: rebuild the package with the complete signed media closure; do not use host tools.",
     );
   }
@@ -1622,7 +1622,7 @@ function packagedMediaSnapshot(targetRoot: string, fingerprint: string): Package
 
 function mediaClosureError(message: string): Error {
   return new Error(
-    `${message}. Authority: docs/plans/active/v1-paseo-foundation.md, packaged media-closure boundary. ` +
+    `${message}. Authority: docs/decisions/0002-direct-notarized-macos-dmg.md, packaged media-closure boundary. ` +
       "Next action: rebuild or remove only the owned proof runtime; do not fall back to source or host tools.",
   );
 }

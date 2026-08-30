@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "authority": "docs/plans/active/v1-paseo-foundation.md#milestone-3-transcription-and-audio-grounded-citations",
+  "authority": "docs/decisions/0004-recording-host-and-capture-permission-boundary.md",
   "generator": "node scripts/generate-m3-fixtures.mjs",
   "fixtures": [
     {

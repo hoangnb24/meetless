@@ -1728,7 +1728,7 @@ function sha256(bytes) {
 
 function fail(reason, nextAction) {
   throw new Error(
-    `${reason}. Authority: docs/plans/active/v1-paseo-foundation.md. Next action: ${nextAction}.`,
+    `${reason}. Authority: docs/specs/macos-artifact-validation.md. Next action: ${nextAction}.`,
   );
 }
 

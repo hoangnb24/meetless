@@ -275,7 +275,7 @@ export async function publishM3Evidence(input, dependencies) {
     runId,
     observedAt: new Date().toISOString(),
     candidateSnapshot: context.candidateSnapshot,
-    authority: "docs/plans/active/v1-paseo-foundation.md#milestone-3-transcription-and-audio-grounded-citations",
+    authority: "docs/decisions/0004-recording-host-and-capture-permission-boundary.md",
     runtime: { isolated: true, listen: context.listen, rootOwnedByRun: context.preservation?.defaultRuntimeStaged !== true },
     providerStatus: inspection.providerStatus,
     meetings: inspection.meetings,

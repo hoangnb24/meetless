@@ -8,8 +8,10 @@ Start with the smallest applicable surface.
   and UX.
 - [`WORKFLOW.md`](WORKFLOW.md): request shape, planning, judgment, operation,
   validation, and completion.
-- [`decisions/`](decisions/README.md): lasting technical and adoption decisions.
+- [`decisions/`](decisions/README.md): lasting technical, runtime, permission,
+  and adoption decisions.
 - [`plans/`](plans/README.md): active execution memory and completed evidence.
+- [`specs/`](specs/README.md): stable operational validation specifications.
 - [`patterns/encoding-invariants.md`](patterns/encoding-invariants.md): method for
   encoding an accepted repository rule.
 - [`post-m3-electron-harness.md`](post-m3-electron-harness.md): commands and

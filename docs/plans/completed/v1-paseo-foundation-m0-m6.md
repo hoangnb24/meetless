@@ -2,7 +2,9 @@
 
 This file preserves the accepted decisions, candidate identities, validation,
 and recovery evidence through Milestone 6 and the new-design workstream. The
-current Milestone 7 plan is
+absorbed M7 ledger is
+[`v1-paseo-foundation-m7-accepted-history.md`](v1-paseo-foundation-m7-accepted-history.md);
+the remaining live frontiers are in
 [`../active/v1-paseo-foundation.md`](../active/v1-paseo-foundation.md).
 
 On 2026-08-24, the owner authorized a documentation reorganization. Product and
@@ -10,8 +12,8 @@ UX authority moved from the former design-package path to
 [`docs/product/experience.md`](../../product/experience.md). References below
 use the current authority path. The move did not change accepted product policy.
 Exact duplicate product and prototype copies were removed after their retained
-files were hash-matched. Milestone 7 moved to the active plan; this file keeps
-the completed M0–M6 and accepted new-design evidence.
+files were hash-matched. Milestone 7 history moved to the completed M7 ledger;
+this file keeps the completed M0–M6 and accepted new-design evidence.
 
 Date: 2026-08-16
 

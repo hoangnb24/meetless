@@ -5,7 +5,7 @@ import path from "node:path";
 import net from "node:net";
 import { z } from "zod";
 
-const AUTHORITY = "docs/plans/active/v1-paseo-foundation.md";
+const AUTHORITY = "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md and docs/decisions/0004-recording-host-and-capture-permission-boundary.md";
 const HostIdentitySchema = z.object({
   version: z.literal(1),
   bundleIdentifier: z.literal("com.meetless.app"),

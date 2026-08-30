@@ -12,7 +12,7 @@ import { parseConnectionOfferFromUrl } from "@getpaseo/protocol/connection-offer
 import { MeetlessClient, type MeetlessDaemonPort } from "./index.js";
 
 export const COMPANION_AUTHORITY =
-  "docs/plans/active/v1-paseo-foundation.md, M6 foundation gate and LEAD_RULING v1 — M6-FOUNDATION-DISCOVERY";
+  "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md";
 
 export interface DirectCompanionProfile {
   version: 1;

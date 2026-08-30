@@ -362,7 +362,7 @@ describe("macOS package composition manifest", () => {
     ["missing historical path", "R  scripts/current.txt\0", /has no historical path/],
     ["malformed status separator", "R scripts/current.txt\0scripts/original.txt\0", /no valid XY status separator/],
   ])("rejects %s Git status records with an actionable diagnostic", (_label, raw, diagnostic) => {
-    expect(() => parsePorcelainStatus(raw)).toThrow(new RegExp(`${diagnostic.source}.*Authority: docs\/plans\/active\/v1-paseo-foundation\\.md.*Next action:`));
+    expect(() => parsePorcelainStatus(raw)).toThrow(new RegExp(`${diagnostic.source}.*Authority: docs\/specs\/macos-artifact-validation\\.md.*Next action:`));
   });
 
   it("rejects acceptance evidence with the wrong source or artifact identity", () => {

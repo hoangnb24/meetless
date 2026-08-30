@@ -178,7 +178,7 @@ async function visit(root, directory, entries) {
       await visit(root, absolute, entries);
     } else {
       throw new Error(
-        `package entry ${relative} has unsupported lstat type (mode ${inspected.mode.toString(8)}). Authority: docs/plans/active/v1-paseo-foundation.md. Next action: remove the FIFO, socket, device, or unsupported entry, or obtain an accepted package-entry rule before signing.`,
+        `package entry ${relative} has unsupported lstat type (mode ${inspected.mode.toString(8)}). Authority: docs/specs/macos-artifact-validation.md. Next action: remove the FIFO, socket, device, or unsupported entry, or obtain an accepted package-entry rule before signing.`,
       );
     }
   }

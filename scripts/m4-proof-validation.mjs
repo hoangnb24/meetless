@@ -1,6 +1,6 @@
 import path from "node:path";
 
-const AUTHORITY = "docs/plans/active/v1-paseo-foundation.md#milestone-4-meeting-sidebar-and-transcript-reader";
+const AUTHORITY = "docs/product/experience.md";
 
 export const M4_TARGET_MEETING_ID = "m4-proof-target";
 export const M4_DISTRACTOR_MEETING_ID = "m4-proof-distractor";

@@ -304,7 +304,7 @@ export class RecordingService {
     if (!this.config.authorizeProductionStart) {
       throw new Error(
         "Production recording start rejected before helper spawn: MeetlessHost provenance is unavailable. " +
-        "Authority: docs/plans/active/v1-paseo-foundation.md. Next action: launch with npm run runtime:host.",
+        "Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md. Next action: launch with npm run runtime:host.",
       );
     }
     await this.config.authorizeProductionStart();

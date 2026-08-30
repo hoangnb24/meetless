@@ -23,7 +23,7 @@ function ownerToolEnvironment(environment = process.env) {
 }
 
 export const MACOS_SIGNING_SCHEMA = "MEETLESS_MACOS_SIGNING v1";
-export const MACOS_SIGNING_AUTHORITY = "docs/plans/active/v1-paseo-foundation.md";
+export const MACOS_SIGNING_AUTHORITY = "docs/specs/macos-artifact-validation.md";
 export const LOCAL_AD_HOC_SIGNING_MODE = "local-ad-hoc";
 export const RELEASE_SIGNING_MODE = "release";
 export const MACOS_SIGNING_MODES = Object.freeze([LOCAL_AD_HOC_SIGNING_MODE, RELEASE_SIGNING_MODE]);

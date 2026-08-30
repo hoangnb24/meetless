@@ -52,7 +52,7 @@ describe("daemon isolation invariant", () => {
   test("rejects production port 6767 with an actionable authority pointer", () => {
     expect(() =>
       resolveRuntimeConfig({ runtimeRoot: "/tmp/meetless-safe", listen: "127.0.0.1:6767" }),
-    ).toThrowError(/Refusing production Paseo port 6767.*docs\/plans\/active\/v1-paseo-foundation\.md/s);
+    ).toThrowError(/Refusing production Paseo port 6767.*docs\/decisions\/0003-meetless-runtime-isolation-and-host-ownership\.md/s);
   });
 
   test("rejects the production Paseo home, exact private binds, and public listeners", () => {

@@ -12,7 +12,7 @@ Complete the bounded post-M3 recording correction without owner-operated UI by
 adding repository-native automation for capabilities 1, 3, 4, and 5 in the
 2026-08-20 project-owner directive. The fixed worker starts from repository
 revision `c4a4640`, uses the accepted M1-M3 authority in
-[`v1-paseo-foundation.md`](../active/v1-paseo-foundation.md), preserves
+[`v1-paseo-foundation-m7-accepted-history.md`](v1-paseo-foundation-m7-accepted-history.md), preserves
 `com.meetless.app` as the sole production host/TCC authority, excludes
 XCUITest, keeps M4 closed, does not push, and stops rather than claiming a
 physical or live-source result from fixture, DevTools, or accessibility events.

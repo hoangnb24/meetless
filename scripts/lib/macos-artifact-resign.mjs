@@ -47,7 +47,7 @@ export const MACOS_ARTIFACT_OWNER_TERMINAL_STATES = Object.freeze([
   "retained-failure",
   "retained-interrupted",
 ]);
-export const MACOS_ARTIFACT_RESIGN_AUTHORITY = "docs/plans/active/v1-paseo-foundation.md";
+export const MACOS_ARTIFACT_RESIGN_AUTHORITY = "docs/specs/macos-artifact-validation.md";
 export const MACOS_OWNER_TOOL_PATHS = Object.freeze({
   codesign: "/usr/bin/codesign",
 });

@@ -34,7 +34,7 @@ describe("Meetless app coding-product import boundary", () => {
         repositoryRoot,
       ),
     ).toThrow(
-      /violation\.tsx imports forbidden coding-product module.*docs\/plans\/active\/v1-paseo-foundation\.md:272.*Depend on @meetless\/client/s,
+      /violation\.tsx imports forbidden coding-product module.*docs\/decisions\/0003-meetless-runtime-isolation-and-host-ownership\.md.*Depend on @meetless\/client/s,
     );
   });
 });

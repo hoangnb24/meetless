@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const ISOLATION_AUTHORITY = "docs/plans/active/v1-paseo-foundation.md";
+export const ISOLATION_AUTHORITY = "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md";
 
 export function assertLauncherOrdering(input: {
   daemonLauncher: string;

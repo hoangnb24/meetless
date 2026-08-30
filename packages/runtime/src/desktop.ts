@@ -226,7 +226,7 @@ export class HostOwnedRuntimeShutdown {
       throw new Error(
         `MeetlessHost shutdown failed closed: ${describe(gracefulError ?? "owned runtime did not release")}. ` +
         `Expected no owned process groups, listeners ${this.listenerPorts().join("/")}, or socket ${this.config.paths.recordingSocket}. ` +
-        "Authority: docs/plans/active/v1-paseo-foundation.md. Inspect only the repo-owned tree before retrying.",
+        "Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md. Inspect only the repo-owned tree before retrying.",
       );
     }
     await removeUiTestRunState(this.config.paths.root);
@@ -331,14 +331,14 @@ async function startPackagedRenderer(
   const rendererRoot = config.packageResources?.rendererRoot;
   if (!rendererRoot) {
     throw new Error(
-      "Packaged Meetless renderer resource is unavailable. Authority: docs/plans/active/v1-paseo-foundation.md. " +
+      "Packaged Meetless renderer resource is unavailable. Authority: docs/specs/macos-artifact-validation.md. " +
         "Next action: rebuild the complete macOS package; packaged mode does not start an Expo or repository renderer.",
     );
   }
   const indexPath = path.join(rendererRoot, "index.html");
   if (!(await stat(indexPath).catch(() => null))?.isFile()) {
     throw new Error(
-      `Packaged Meetless renderer entry is missing: ${indexPath}. Authority: docs/plans/active/v1-paseo-foundation.md. ` +
+      `Packaged Meetless renderer entry is missing: ${indexPath}. Authority: docs/specs/macos-artifact-validation.md. ` +
         "Next action: rebuild the emitted renderer before launching the package.",
     );
   }
@@ -381,7 +381,7 @@ async function startPackagedRenderer(
     if (server.listening) server.close();
     throw new Error(
       `Packaged Meetless renderer could not bind ${origin}: ${describe(error)}. ` +
-        "Authority: docs/plans/active/v1-paseo-foundation.md. Next action: use the package's isolated renderer endpoint.",
+        "Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md. Next action: use the package's isolated renderer endpoint.",
     );
   });
   rendererAbortListeners.set(server, { signal, listener: closeOnAbort });

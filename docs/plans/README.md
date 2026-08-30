@@ -31,9 +31,9 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 ## Active Plans
 
 - [Meeting library and chat controls](active/meeting-library-chat-controls.md)
-  — reopened for failed-recording deletion and direct model-picker behavior.
-- [Meetless V1 release readiness](active/v1-paseo-foundation.md) — Milestone 7
-  acceptance, distribution, supported-target, and residual-risk proof.
+  — stale failed-Recording owner acceptance only.
+- [Meetless V1 release readiness](active/v1-paseo-foundation.md)
+  — residual M7, paused M7-F29, and TCC R3 candidate acceptance.
 
 ## Completed Harness Improvements
 
@@ -46,3 +46,8 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 - [Meetless V1 foundation, M0–M6, and new design](completed/v1-paseo-foundation-m0-m6.md)
   — accepted decisions, candidates, validation, recovery evidence, and the
   authority-path reorganization record before M7.
+- [Meetless V1 release-readiness and TCC history](completed/v1-paseo-foundation-m7-accepted-history.md)
+  — absorbed M7/TCC execution ledger preserved as evidence after plan
+  reconciliation.
+- [Meeting library and chat implementation history](completed/meeting-library-chat-controls-implementation-history.md)
+  — absorbed implementation, deletion, chat/design, and owner-retest evidence.

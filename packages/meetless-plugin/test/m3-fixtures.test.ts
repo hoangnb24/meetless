@@ -20,7 +20,7 @@ describe("committed M3 live-acceptance audio fixtures", () => {
         maximumDurationSeconds: number;
       }>;
     };
-    expect(manifest.authority).toContain("v1-paseo-foundation.md#milestone-3");
+    expect(manifest.authority).toContain("docs/decisions/0004-recording-host-and-capture-permission-boundary.md");
     expect(manifest.generator).toBe("node scripts/generate-m3-fixtures.mjs");
     expect(manifest.fixtures.map((fixture) => fixture.languages)).toEqual([["en"], ["vi"], ["en", "vi"]]);
     expect(manifest.fixtures.map((fixture) => fixture.expectedExactPhrase)).toEqual([
