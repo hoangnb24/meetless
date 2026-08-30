@@ -4,7 +4,7 @@ Date: 2026-08-30
 
 ## Status
 
-Completed
+Active — reopened for F-002 proof close-out
 
 ## Outcome
 
@@ -71,8 +71,8 @@ Out of scope:
 - [x] Complete independent foundation judgment.
 - [x] Record and freeze the overlay/scroll contract at design authority.
 - [x] Dispatch one writer for the atomic consumer migration and invariant proof.
-- [x] Accept focused and built-artifact proof.
-- [x] Install and launch the accepted signed package.
+- [ ] Accept the tightened F-002 built-artifact proof.
+- [ ] Reclassify the installed signed package from provisional to accepted.
 
 ## Decisions
 
@@ -88,12 +88,11 @@ Out of scope:
 - 2026-08-30: `design/DESIGN.md` now owns the exact externally observable chat
   popup and scroll rule. Repository-native surface tests must provide positive
   and negative proof before the implementation is accepted.
-- 2026-08-30 close-out: F-001, F-003, and F-004 were confirmed resolved. The
-  original F-002 false-positive was also resolved because the emitted proof now
-  rejects the reproduced 121px/63px stale-height case. A proposed assertion for
-  exact 420px/402px fixture dimensions was not accepted: those values are an
-  implementation detail, while the durable contract is useful expansion,
-  viewport bounds, and presenter-owned internal scrolling.
+- 2026-08-30 correction: the prior F-002 ruling was reversed. For the fixed
+  emitted-artifact fixture at 877px and 1440px, acceptance requires
+  tolerance-based checks for the observed 109px root, 420px drilldown popup,
+  and 402px presenter viewport. A 340px/320px result must fail. The installed
+  package remains provisional until that proof and close-out pass.
 
 ## Validation
 
@@ -147,7 +146,7 @@ Correction evidence observed on 2026-08-30 against base `f269bf0`:
 
 ## Result
 
-Accepted at `facc81070a65e19e020a1a3576e0625e429c4e83`. Lead reran all 65
+Provisionally installed from `facc81070a65e19e020a1a3576e0625e429c4e83`. Lead reran all 65
 meeting-surface tests, the emitted-artifact popup proof at 390px, 877px, and
 1440px, meeting-surface and app typecheck/build, and the app Expo export. The
 Developer-ID package passed deep strict code-signature verification with Team
@@ -156,5 +155,7 @@ and launched successfully. Runtime evidence showed bootstrap completion, the
 server listening on `127.0.0.1:16777`, the Meetless plugin loaded, and the
 Electron renderer connected from `127.0.0.1:18082`.
 
-Physical-device native behavior remains unverified; native fallback coverage is
-deterministic composition and style proof.
+Acceptance is reopened for the narrow F-002 proof correction. No implementation
+change is authorized unless the tightened proof fails against the current
+artifact. Physical-device native behavior remains unverified; native fallback
+coverage is deterministic composition and style proof.
