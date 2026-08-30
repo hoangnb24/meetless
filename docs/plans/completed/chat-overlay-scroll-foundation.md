@@ -4,7 +4,7 @@ Date: 2026-08-30
 
 ## Status
 
-Active — reopened for F-002 proof close-out
+Completed
 
 ## Outcome
 
@@ -72,7 +72,7 @@ Out of scope:
 - [x] Record and freeze the overlay/scroll contract at design authority.
 - [x] Dispatch one writer for the atomic consumer migration and invariant proof.
 - [x] Encode and run the tightened F-002 built-artifact proof for Lead review.
-- [ ] Reclassify the installed signed package from provisional to accepted.
+- [x] Reclassify the installed signed package from provisional to accepted.
 
 ## Decisions
 
@@ -146,7 +146,8 @@ Correction evidence observed on 2026-08-30 against base `f269bf0`:
 
 ## Result
 
-Provisionally installed from `facc81070a65e19e020a1a3576e0625e429c4e83`. Lead reran all 65
+Accepted product artifact from `facc81070a65e19e020a1a3576e0625e429c4e83`,
+with the proof gate closed by `148e5cbb492455a1de0e18e1d8a7c6872687b6c8`. Lead reran all 65
 meeting-surface tests, the emitted-artifact popup proof at 390px, 877px, and
 1440px, meeting-surface and app typecheck/build, and the app Expo export. The
 Developer-ID package passed deep strict code-signature verification with Team
@@ -155,10 +156,12 @@ and launched successfully. Runtime evidence showed bootstrap completion, the
 server listening on `127.0.0.1:16777`, the Meetless plugin loaded, and the
 Electron renderer connected from `127.0.0.1:18082`.
 
-Acceptance is reopened for the narrow F-002 proof correction. No implementation
-change is authorized unless the tightened proof fails against the current
-artifact. Physical-device native behavior remains unverified; native fallback
-coverage is deterministic composition and style proof.
+Lead close-out reran the negative 340px/320px fixture and observed the required
+`F-002 shared-popup rule` failure, then reran the emitted-artifact proof and
+observed 109px/420px/402px at both 877px and 1440px. Product code did not change,
+so the already installed signed bundle is the accepted artifact. Physical-device
+native behavior remains unverified; native fallback coverage is deterministic
+composition and style proof.
 
 F-002 proof correction observed on 2026-08-30 against base `0a23761`:
 
