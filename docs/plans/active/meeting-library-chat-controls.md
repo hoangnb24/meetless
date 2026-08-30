@@ -54,8 +54,11 @@ recording, export, or chat state.
 
 ## Explicit Boundaries
 
-- Do not reopen committed chat controls or design work.
-- Do not change provider/model behavior, scrollbar behavior, runtime startup,
+- This plan does not reopen committed chat controls or design work. The owner
+  separately reopened overlay and scroll presentation on 2026-08-30 after the
+  installed build reproduced the same clipping family in the Thinking menu;
+  `chat-overlay-scroll-foundation.md` exclusively owns that correction.
+- Do not change provider/model selection behavior, runtime startup,
   package/media transaction, signing, TCC, companion transport, or recording
   lifecycle in this frontier.
 - Keep the existing durable store/lifecycle protection as the deletion authority;
@@ -68,6 +71,10 @@ recording, export, or chat state.
   its implementation and validation records remain inspectable.
 - No product behavior is changed by this correction. The active plan retains
   only the stale-delete owner decision and its safety boundary.
+- 2026-08-30 `PLAN_RECONCILIATION v1`: new owner runtime evidence reopened only
+  chat overlay/scroll presentation under `chat-overlay-scroll-foundation.md`.
+  This plan remains unchanged in purpose and owns only stale-delete acceptance;
+  selection policy, deletion, runtime, and signing scopes do not overlap.
 
 ## Validation
 
