@@ -552,6 +552,7 @@ export class PaseoMeetingChatAgentPort implements MeetingChatAgentPort {
     try {
       result = await actions.listFeatures({
         provider: `${selection.provider}/${selection.model}`,
+        cwd: this.executionRoot,
         ...(selection.modeId === null ? {} : { modeId: selection.modeId }),
         ...(selection.thinkingOptionId === null ? {} : { thinkingOptionId: selection.thinkingOptionId }),
         featureValues: selection.featureValues,

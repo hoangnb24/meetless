@@ -246,6 +246,7 @@ describe("Paseo execution adapter", () => {
   });
 
   test("projects full profiles, validates dynamic controls, preserves mode IDs, and fixes the evidence envelope", async () => {
+    const store = fakeStore();
     const executionRoot = await mkdtemp(path.join(tmpdir(), "meetless-controls-"));
     roots.push(executionRoot);
     const create = vi.fn(async () => ({
@@ -255,6 +256,10 @@ describe("Paseo execution adapter", () => {
       }),
       archive: async () => ({ archivedAt: new Date().toISOString() }),
     }));
+    const listFeatures = vi.fn(async () => ({ features: [
+      { type: "toggle", id: "fast_mode", label: "Fast mode", value: false },
+      { type: "select", id: "effort", label: "Effort", value: "high", options: [{ id: "high", label: "High" }] },
+    ] }));
     const paseo = {
       providers: {
         waitForReady: async () => ({ entries: [{
@@ -262,10 +267,7 @@ describe("Paseo execution adapter", () => {
           modes: [{ id: "danger-mode", label: "Danger mode" }],
           models: [{ provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true, thinkingOptions: [{ id: "high", label: "High" }], defaultThinkingOptionId: "high" }],
         }] }),
-        listFeatures: vi.fn(async () => ({ features: [
-          { type: "toggle", id: "fast_mode", label: "Fast mode", value: false },
-          { type: "select", id: "effort", label: "Effort", value: "high", options: [{ id: "high", label: "High" }] },
-        ] })),
+        listFeatures,
       },
       config: { get: async () => ({ requestId: "profiles-request", config: { agentProfiles: [{
         id: "profile-1", name: "Danger profile", icon: "✦", color: "red",
@@ -283,9 +285,12 @@ describe("Paseo execution adapter", () => {
     expect(JSON.stringify(controls)).not.toContain("approval_policy");
 
     const selection = controls.profiles[0]!.selection;
+    const service = new MeetingChatService(store.port, port);
+    await expect(service.select(selection)).resolves.toEqual({ version: 1, selection });
+    await expect(store.port.getChatSelection()).resolves.toEqual(selection);
     await port.execute({ provider: "codex", model: "gpt-5", selection, messages: [{ role: "user", text: "Question" }], transcript: transcript(), recordRetrieved: async () => undefined });
     expect(paseo.providers.listFeatures).toHaveBeenCalledWith({
-      provider: "codex/gpt-5", modeId: "danger-mode", thinkingOptionId: "high",
+      provider: "codex/gpt-5", cwd: executionRoot, modeId: "danger-mode", thinkingOptionId: "high",
       featureValues: { fast_mode: true, effort: "high" },
     }, expect.objectContaining({ requestId: expect.stringMatching(/^meetless-features-/u) }));
     const options = create.mock.calls[0]![0] as Record<string, any>;

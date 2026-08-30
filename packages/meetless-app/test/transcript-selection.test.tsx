@@ -336,6 +336,61 @@ describe("transcript meeting selection ordering", () => {
     });
   });
 
+  test("retains a successfully applied ready-catalog model and forwards it to Ask", async () => {
+    const selection = {
+      provider: "codex", model: "gpt-5-mini", modeId: "worker", thinkingOptionId: "high",
+      featureValues: {},
+    };
+    const controls = {
+      version: 1 as const,
+      catalog: {
+        providers: [{
+          id: "codex", label: "Codex", status: "ready" as const,
+          models: [
+            { id: "gpt-5", label: "GPT-5", isDefault: true, thinkingOptions: [{ id: "high", label: "High" }], defaultThinkingOptionId: "high" },
+            { id: "gpt-5-mini", label: "GPT-5 mini", isDefault: false, thinkingOptions: [{ id: "high", label: "High" }], defaultThinkingOptionId: "high" },
+          ],
+          modes: [{ id: "worker", label: "Worker" }], defaultModeId: "worker", error: null,
+        }],
+      },
+      profiles: [], catalogError: null, lastSelection: null,
+      lastSelectionState: "available" as const, lastSelectionError: null,
+    };
+    const applyChatSelection = vi.fn(async (asked: typeof selection) => asked);
+    const askMeetingQuestionWithSelection = vi.fn(async ({ meetingId, question, selection: asked }: {
+      meetingId: string;
+      question: string;
+      selection: typeof selection;
+    }) => ({
+      ...chatResponse(), meetingId, status: "running" as const,
+      selection: { provider: asked.provider, model: asked.model },
+      messages: [{ role: "user" as const, text: question, createdAt: "2026-08-21T00:00:00.000Z" }],
+    }));
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getChatControls: vi.fn(async () => controls),
+      getMeetingTranscript: async () => transcriptResponse("m-1", "segment-m-1", "current citation"),
+      getMeetingChat: async () => chatResponse(),
+      discoverChatFeatures: async (asked: typeof selection) => featureResponse(asked),
+      applyChatSelection,
+      askMeetingQuestionWithSelection,
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    await act(async () => { await surface().props.onChatSelectionBundle(selection); });
+    expect(applyChatSelection).toHaveBeenCalledWith(selection);
+    expect(surface().props.chatSelection).toEqual(selection);
+
+    await act(async () => { await surface().props.onAskQuestion("What changed?"); });
+    expect(askMeetingQuestionWithSelection).toHaveBeenCalledWith({
+      meetingId: "m-1", question: "What changed?", selection,
+    });
+  });
+
   test("does not let a delayed initial controls response overwrite a newer local selection", async () => {
     const initialSelection = {
       provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high", featureValues: { fast_mode: false },

@@ -440,6 +440,9 @@ describe("companion meeting surface", () => {
   test("submits a selected-model question and forwards only the chat citation identity", async () => {
     const onAsk = vi.fn(async () => undefined);
     const onCitation = vi.fn(async () => undefined);
+    const selection = {
+      provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high", featureValues: {},
+    } as const;
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
@@ -447,7 +450,14 @@ describe("companion meeting surface", () => {
           canCreate={false} layoutTier="desktop" connectionLabel="Connected" hostLabel="isolated host"
           meetings={[meeting("m-1")]} onRefresh={async () => undefined}
           selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
-          chatProviders={[{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }]}
+          chatCatalog={{ providers: [{
+            id: "codex", label: "Codex", status: "ready", models: [{
+              id: "gpt-5", label: "GPT-5", isDefault: true,
+              thinkingOptions: [{ id: "high", label: "High" }], defaultThinkingOptionId: "high",
+            }], modes: [{ id: "worker", label: "Worker" }], defaultModeId: "worker", error: null,
+          }] }}
+          chatSelection={selection}
+          chatFeatures={{ version: 1, selection, status: "ready", features: [], error: null }}
           chatProvider="codex" chatModel="gpt-5" onAskQuestion={onAsk} onCitation={onCitation}
           chatThread={{
             meetingId: "m-1", status: "ready",
@@ -457,7 +467,13 @@ describe("companion meeting surface", () => {
         />,
       );
     });
-    await act(async () => { renderer!.root.findByProps({ testID: "chat-question-input" }).props.onChangeText(" Next step? "); });
+    const input = renderer!.root.findByProps({ testID: "chat-question-input" });
+    const ask = renderer!.root.findByProps({ testID: "chat-ask" });
+    expect(input.props.editable).toBe(true);
+    expect(ask.props.disabled).toBe(true);
+    await act(async () => { input.props.onChangeText(" Next step? "); });
+    expect(renderer!.root.findByProps({ testID: "chat-question-input" }).props.value).toBe(" Next step? ");
+    expect(renderer!.root.findByProps({ testID: "chat-ask" }).props.disabled).toBe(false);
     await act(async () => { renderer!.root.findByProps({ testID: "chat-ask" }).props.onPress(); });
     expect(onAsk).toHaveBeenCalledWith("Next step?");
     await act(async () => { renderer!.root.findByProps({ testID: "chat-citation-segment-1" }).props.onPress(); });
