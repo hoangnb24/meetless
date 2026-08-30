@@ -111,28 +111,31 @@ describe("new-design composition", () => {
     expect(surfaceLayout("desktop")).toMatchObject({ row: { direction: "row" }, content: { padding: 24, maxWidth: 1200 } });
   });
 
-  test.each([
-    {
-      name: "877px tablet viewport",
-      viewport: { width: 877, height: 768 },
-      trigger: { top: 690, right: 325, bottom: 722, left: 203 },
-      expectedLeft: 203,
-    },
-    {
-      name: "desktop viewport",
-      viewport: { width: 1440, height: 900 },
-      trigger: { top: 820, right: 1250, bottom: 852, left: 1100 },
-      expectedLeft: 1100,
-    },
-  ])("keeps the model picker above a bottom composer trigger inside the $name", ({ viewport, trigger, expectedLeft }) => {
-    const geometry = chatPickerGeometry(trigger, viewport);
+  test("anchors a short-content picker exactly eight pixels above the composer trigger", () => {
+    const trigger = { top: 820, right: 1250, bottom: 852, left: 1100 };
+    const geometry = chatPickerGeometry(trigger, { width: 1440, height: 900 }, 180);
     expect(geometry.placement).toBe("above");
-    expect(geometry.left).toBe(expectedLeft);
-    expect(geometry.top + geometry.maxHeight).toBeLessThanOrEqual(trigger.top);
+    expect(geometry).toMatchObject({ top: 632, left: 1100, width: 300, maxHeight: 180 });
+    expect(geometry.top + geometry.maxHeight).toBe(trigger.top - 8);
+  });
+
+  test("caps tall content and keeps the 877px tablet picker inside the viewport", () => {
+    const viewport = { width: 877, height: 768 };
+    const trigger = { top: 690, right: 325, bottom: 722, left: 203 };
+    const geometry = chatPickerGeometry(trigger, viewport, 700);
+    expect(geometry).toMatchObject({ placement: "above", top: 262, left: 203, width: 300, maxHeight: 420 });
+    expect(geometry.maxHeight).toBeLessThan(700);
+    expect(geometry.top + geometry.maxHeight).toBe(trigger.top - 8);
     expect(geometry.top).toBeGreaterThanOrEqual(0);
     expect(geometry.left).toBeGreaterThanOrEqual(0);
     expect(geometry.left + geometry.width).toBeLessThanOrEqual(viewport.width);
     expect(geometry.top + geometry.maxHeight).toBeLessThanOrEqual(viewport.height);
+  });
+
+  test("places short content below when there is not enough room above", () => {
+    const trigger = { top: 40, right: 325, bottom: 72, left: 203 };
+    const geometry = chatPickerGeometry(trigger, { width: 877, height: 768 }, 180);
+    expect(geometry).toMatchObject({ placement: "below", top: 80, left: 203, width: 300, maxHeight: 180 });
   });
 
   test("opens one Record meeting setup with Proposed sources and no Create meeting task", async () => {
