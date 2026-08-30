@@ -71,7 +71,7 @@ Out of scope:
 - [x] Complete independent foundation judgment.
 - [x] Record and freeze the overlay/scroll contract at design authority.
 - [x] Dispatch one writer for the atomic consumer migration and invariant proof.
-- [ ] Accept the tightened F-002 built-artifact proof.
+- [x] Encode and run the tightened F-002 built-artifact proof for Lead review.
 - [ ] Reclassify the installed signed package from provisional to accepted.
 
 ## Decisions
@@ -159,3 +159,22 @@ Acceptance is reopened for the narrow F-002 proof correction. No implementation
 change is authorized unless the tightened proof fails against the current
 artifact. Physical-device native behavior remains unverified; native fallback
 coverage is deterministic composition and style proof.
+
+F-002 proof correction observed on 2026-08-30 against base `0a23761`:
+
+- The emitted-artifact assertion now checks the 877px and 1440px deterministic
+  fixtures within ±1px of the accepted 109px root popup, 420px model drilldown,
+  and 402px presenter viewport while retaining content-growth and internal-scroll
+  checks.
+- `node scripts/prove-chat-popup-overlay.mjs --negative-f002-fixture` failed as
+  required for a 340px popup and 320px presenter viewport with the actionable
+  `F-002 shared-popup rule` diagnostic.
+- `npm run proof:chat-popup-overlay` passed against a fresh emitted Expo web
+  artifact. At both 877px and 1440px it reported 109px root, 420px drilldown,
+  402px presenter viewport over 1825px of content, and unchanged 900px page
+  height; the retained 390px, focus, placement, target-size, and legacy checks
+  also passed.
+- Enforcement inspection: the local npm command exists and passed; no installed
+  non-sample Git hook or configured `core.hooksPath` was found; no checked-in CI
+  invocation was found; the GitHub API reported `main` is not protected. No
+  hook, CI, or external repository setting was changed.

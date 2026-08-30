@@ -6,6 +6,22 @@ import path from "node:path";
 import { chromium } from "playwright";
 
 const repositoryRoot = process.cwd();
+const f002ExpectedDimensions = {
+  rootPopupHeight: 109,
+  drilldownPopupHeight: 420,
+  presenterViewportHeight: 402,
+  tolerance: 1,
+};
+
+if (process.argv.includes("--negative-f002-fixture")) {
+  assertUsefulModelExpansion(
+    { popupHeight: 109, presenterScroll: { clientHeight: 91, scrollHeight: 91 } },
+    { popupHeight: 340, presenterScroll: { clientHeight: 320, scrollHeight: 1825 } },
+    877,
+  );
+  throw new Error("F-002 negative fixture unexpectedly passed");
+}
+
 const proofRoot = mkdtempSync(path.join(tmpdir(), "meetless-chat-popup-proof-"));
 let browser;
 let server;
@@ -190,11 +206,19 @@ async function popupDimensions(popup) {
 
 function assertUsefulModelExpansion(root, drilldown, width) {
   if (!root) throw new Error(`model expansion proof: missing root dimensions at ${width}px`);
-  if (drilldown.popupHeight < 340) {
-    throw new Error(`model expansion proof: 40-model popup is ${drilldown.popupHeight}px at ${width}px; expected at least the former 340px list cap`);
-  }
-  if (drilldown.presenterScroll.clientHeight < 320) {
-    throw new Error(`model expansion proof: 40-model presenter viewport is ${drilldown.presenterScroll.clientHeight}px at ${width}px; expected at least 320px within the 340/420 caps`);
+  const observed = {
+    rootPopupHeight: root.popupHeight,
+    drilldownPopupHeight: drilldown.popupHeight,
+    presenterViewportHeight: drilldown.presenterScroll.clientHeight,
+  };
+  const mismatches = Object.entries(observed)
+    .filter(([name, value]) => Math.abs(value - f002ExpectedDimensions[name]) > f002ExpectedDimensions.tolerance)
+    .map(([name, value]) => `${name}=${value}px (expected ~${f002ExpectedDimensions[name]}px)`);
+  if (mismatches.length) {
+    throw new Error(
+      `F-002 shared-popup rule: emitted ${width}px fixture dimensions are outside ±${f002ExpectedDimensions.tolerance}px tolerance: ${mismatches.join(", ")}. `
+      + "Authority: docs/plans/active/chat-overlay-scroll-foundation.md. Next action: use the shared popup presenter so the 40-model drilldown grows to the accepted emitted-artifact dimensions.",
+    );
   }
   if (drilldown.popupHeight < root.popupHeight + 100) {
     throw new Error(`model expansion proof: content growth only changed popup ${root.popupHeight}px -> ${drilldown.popupHeight}px at ${width}px`);
