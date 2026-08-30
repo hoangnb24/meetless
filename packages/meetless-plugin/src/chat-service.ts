@@ -76,16 +76,24 @@ export interface MeetingChatAgentPort {
   validateSelection?(selection: ChatSelection): Promise<ChatSelection>;
 }
 
+export interface MeetingChatPremiumGate {
+  requireActive(): Promise<void>;
+}
+
 export class MeetingChatService {
   private initialized: Promise<void> | null = null;
   private readonly active = new Set<Promise<void>>();
   private readonly activeMeetings = new Set<string>();
+  private readonly requirePremium: () => Promise<void>;
 
   constructor(
     private readonly store: MeetingStore,
     private readonly agent: MeetingChatAgentPort,
+    premium: MeetingChatPremiumGate | (() => Promise<void>),
     private readonly lifecycle = new MeetingLifecycleCoordinator(),
-  ) {}
+  ) {
+    this.requirePremium = typeof premium === "function" ? premium : () => premium.requireActive();
+  }
 
   initialize(): Promise<void> {
     this.initialized ??= this.initializeOnce();
@@ -142,6 +150,7 @@ export class MeetingChatService {
     provider: string;
     model: string;
   }): Promise<MeetingChatThreadWire> {
+    await this.requirePremium();
     const lease = this.lifecycle.tryAcquireWork(input.meetingId, "ask");
     if (!lease) throw new Error("Meeting deletion is in progress");
     try {
@@ -160,6 +169,7 @@ export class MeetingChatService {
     provider: string;
     model: string;
   }): Promise<MeetingChatThreadWire> {
+    await this.requirePremium();
     const lease = this.lifecycle.tryAcquireWork(input.meetingId, "ask");
     if (!lease) throw new Error("Meeting deletion is in progress");
     try {
@@ -178,6 +188,7 @@ export class MeetingChatService {
     question: string;
     selection: ChatSelection;
   }): Promise<MeetingChatThreadWire> {
+    await this.requirePremium();
     const lease = this.lifecycle.tryAcquireWork(input.meetingId, "ask");
     if (!lease) throw new Error("Meeting deletion is in progress");
     try {
@@ -202,6 +213,7 @@ export class MeetingChatService {
     attemptId?: string;
     selection: ChatSelection;
   }): Promise<MeetingChatThreadWire> {
+    await this.requirePremium();
     const lease = this.lifecycle.tryAcquireWork(input.meetingId, "ask");
     if (!lease) throw new Error("Meeting deletion is in progress");
     try {

@@ -208,6 +208,7 @@ async function readCandidateSnapshot() {
 
 async function createHostBundle() {
   const executable = path.join(contentsPath, "MacOS", "MeetlessHost");
+  const hostArtifact = await requireRevenueCatHostArtifact();
   await mkdir(path.dirname(executable), { recursive: true, mode: 0o755 });
   await mkdir(path.join(contentsPath, "Resources"), { recursive: true, mode: 0o755 });
   await cp(path.join(repositoryRoot, "native/macos-host/Info.plist"), path.join(contentsPath, "Info.plist"));
@@ -219,20 +220,31 @@ async function createHostBundle() {
     `${JSON.stringify(packagedHostConfiguration(), null, 2)}\n`,
     { mode: 0o644 },
   );
-  await run("xcrun", [
-    "swiftc",
-    "-O",
-    "-framework",
-    "AppKit",
-    "-framework",
-    "Security",
-    path.join(repositoryRoot, "native/macos-host/MeetlessHost.swift"),
-    path.join(repositoryRoot, "native/macos-host/TranscriptionCapability.swift"),
-    path.join(repositoryRoot, "native/macos-host/main.swift"),
-    "-o",
-    executable,
-  ]);
+  await cp(hostArtifact, executable);
   await chmod(executable, 0o755);
+}
+
+async function requireRevenueCatHostArtifact() {
+  const candidate = path.join(repositoryRoot, "native/macos-host/.build/release/MeetlessHost");
+  const inspected = await stat(candidate).catch(() => null);
+  if (!inspected?.isFile()) {
+    throw new Error(
+      `Required SwiftPM RevenueCat-linked host artifact is missing at ${candidate}. ` +
+      "Run npm run build:native before packaging the host.",
+    );
+  }
+  const { stdout: fileOutput } = await run("file", [candidate]);
+  if (!/Mach-O 64-bit executable arm64/u.test(fileOutput)) {
+    throw new Error(`Required host artifact is not an arm64 Mach-O executable: ${candidate}`);
+  }
+  const { stdout: symbols } = await run("nm", ["-gU", candidate]);
+  if (!/\$s10RevenueCat/u.test(symbols)) {
+    throw new Error(
+      `Required host artifact has no linked RevenueCat symbols: ${candidate}. ` +
+      "Refusing to package the #else not_configured fallback.",
+    );
+  }
+  return candidate;
 }
 
 function parsePackageBuildArguments(arguments_) {

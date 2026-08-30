@@ -42,6 +42,7 @@
   "package:macos:arm64": "npm run build && node scripts/package-macos.mjs --signing-mode=local-ad-hoc --proof-root=$(mktemp -d /private/tmp/meetless-package-proof.XXXXXX)",
   "package:macos:dmg": "node scripts/package-macos-dmg.mjs --build-package --proof-root=$(mktemp -d /private/tmp/meetless-dmg-proof.XXXXXX)",
     "package:macos:arm64:release": "npm run build && node scripts/package-macos.mjs --signing-mode=release",
+    "validate:macos:app-store": "node scripts/validate-macos-app-store-baseline.mjs",
     "validate:macos:dmg": "node scripts/validate-macos-dmg.mjs",
     "resign:macos:artifact": "node scripts/resign-macos-artifact.mjs",
     "prove:package:macos": "node scripts/prove-macos-package.mjs",

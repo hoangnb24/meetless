@@ -32,6 +32,7 @@ final class MeetlessTranscriptionCapability {
   private let transcribe: (Data, String, NativeRequestCancellation) throws -> OpenAIResult
   private let leaseIssued: (() -> Void)?
   private let capturePermissions: MeetlessCapturePermissionAccess
+  private let premium: MeetlessPremiumPurchaseAccess
   private let acceptQueue = DispatchQueue(label: "com.meetless.transcription-capability.accept", qos: .userInitiated)
   private let requestQueue = DispatchQueue(label: "com.meetless.transcription-capability.request", qos: .userInitiated, attributes: .concurrent)
   private let lifecycleLock = NSLock()
@@ -48,7 +49,8 @@ final class MeetlessTranscriptionCapability {
       try OpenAITranscriber(apiKey: apiKey).transcribe(audio: audio, cancellation: cancellation)
     },
     leaseIssued: (() -> Void)? = nil,
-    capturePermissions: MeetlessCapturePermissionAccess = MeetlessCapturePermissions()
+    capturePermissions: MeetlessCapturePermissionAccess = MeetlessCapturePermissions(),
+    premium: MeetlessPremiumPurchaseAccess = MeetlessRevenueCatPurchaseAccess()
   ) {
     self.socketPath = socketPath
     self.stagingDirectory = URL(fileURLWithPath: stagingDirectory).standardizedFileURL.path
@@ -57,6 +59,7 @@ final class MeetlessTranscriptionCapability {
     self.transcribe = transcribe
     self.leaseIssued = leaseIssued
     self.capturePermissions = capturePermissions
+    self.premium = premium
   }
 
   func start() throws {
@@ -180,6 +183,26 @@ final class MeetlessTranscriptionCapability {
       writeCapturePermissionResponse(client, requestId: requestId, result: result)
       return
     }
+    if operation == "premiumStatus" || operation == "premiumPurchase" || operation == "premiumRestore" {
+      let result = runtimeAuthorization.withValidLease(lease) { () -> (String, MeetlessPremiumAccessResult) in
+        if operation == "premiumStatus" { return ("status", premium.status()) }
+        if operation == "premiumRestore" {
+          let restored = premium.restore()
+          return (restored.outcome, restored.access)
+        }
+        guard let packageId = request["packageId"] as? String, packageId == "monthly" || packageId == "annual" else {
+          return ("failed", .unavailable("store_unavailable"))
+        }
+        let purchased = premium.purchase(packageId: packageId)
+        return (purchased.outcome, purchased.access)
+      }
+      guard let result else {
+        writePremiumResponse(client, requestId: requestId, ok: false, outcome: "failed", access: .unavailable("store_unavailable"))
+        return
+      }
+      writePremiumResponse(client, requestId: requestId, ok: true, outcome: result.0, access: result.1)
+      return
+    }
     guard operation == "transcribe",
           let audioPath = request["audioPath"] as? String,
           let audioByteLength = (request["audioByteLength"] as? NSNumber)?.int64Value,
@@ -244,6 +267,38 @@ final class MeetlessTranscriptionCapability {
       "systemAudio": result.systemAudio.rawValue,
       "settingsOpened": result.settingsOpened,
       "settingsNavigation": result.settingsNavigation,
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: response) else { return }
+    writeAll(descriptor, data: data + Data([10]))
+  }
+
+  private func writePremiumResponse(
+    _ descriptor: Int32,
+    requestId: String,
+    ok: Bool,
+    outcome: String,
+    access: MeetlessPremiumAccessResult
+  ) {
+    let packages: [[String: Any]] = access.packages.map { package in
+      [
+        "packageId": package.packageId,
+        "productId": package.productId,
+        "localizedPrice": package.localizedPrice,
+        "trialEligible": package.trialEligible,
+      ]
+    }
+    let response: [String: Any] = [
+      "version": 1,
+      "requestId": requestId,
+      "ok": ok,
+      "type": "premium.access",
+      "outcome": outcome,
+      "access": [
+        "entitlement": meetlessPremiumEntitlement,
+        "status": access.status,
+        "packages": packages,
+        "reason": access.reason.map { $0 as Any } ?? NSNull(),
+      ],
     ]
     guard let data = try? JSONSerialization.data(withJSONObject: response) else { return }
     writeAll(descriptor, data: data + Data([10]))

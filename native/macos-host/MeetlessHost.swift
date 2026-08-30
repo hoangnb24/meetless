@@ -745,6 +745,14 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
   }
 }
 
+public func runMeetlessHostApplication() {
+  let application = NSApplication.shared
+  let delegate = HostDelegate()
+  application.setActivationPolicy(.accessory)
+  application.delegate = delegate
+  application.run()
+}
+
 final class RuntimeAuthorizationState {
   private let lock = NSLock()
   private var runtimePID: pid_t?
@@ -800,9 +808,18 @@ final class RuntimeAuthorizationState {
 
   func withValidLease<T>(_ lease: RuntimeAuthorizationLease, _ action: () -> T) -> T? {
     lock.lock()
-    defer { lock.unlock() }
-    guard isValidLocked(lease) else { return nil }
-    return action()
+    guard isValidLocked(lease) else {
+      lock.unlock()
+      return nil
+    }
+    lock.unlock()
+
+    let result = action()
+
+    lock.lock()
+    let remainsValid = isValidLocked(lease)
+    lock.unlock()
+    return remainsValid ? result : nil
   }
 
   func beginExecution(_ lease: RuntimeAuthorizationLease) -> RuntimeAuthorizationExecution? {

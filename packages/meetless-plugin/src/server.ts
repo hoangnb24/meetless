@@ -24,6 +24,7 @@ import {
 } from "./chat-service.js";
 import { MeetingLifecycleCoordinator, type MeetingWorkKind } from "./meeting-lifecycle-coordinator.js";
 import { listRecordingOwnedStagePaths } from "./finalizer.js";
+import { NativePremiumAccessPort, PremiumService, UnavailablePremiumAccessPort } from "./premium-service.js";
 
 let store: MeetingStore | null = null;
 let recordingService: RecordingService | null = null;
@@ -33,6 +34,7 @@ let citationPlaybackService: CitationPlaybackService | null = null;
 let recordingStart: Promise<void> | null = null;
 let runtimeIdentity: { instanceId: string; startedAt: string; uiTest: UiTestIdentity | null } | null = null;
 let chatService: MeetingChatService | null = null;
+let premiumService: PremiumService | null = null;
 const meetingLifecycle = new MeetingLifecycleCoordinator();
 
 export async function deleteMeetingSafely(
@@ -117,10 +119,22 @@ export async function getMeetingChatService(
   chatService ??= new MeetingChatService(
     getMeetingStore(),
     new PaseoMeetingChatAgentPort(paseo, resolveChatExecutionRoot()),
+    () => getPremiumService().requireActive(),
     meetingLifecycle,
   );
   await chatService.initialize();
   return chatService;
+}
+
+export function getPremiumService(): PremiumService {
+  if (premiumService) return premiumService;
+  const configuredSocket = process.env.MEETLESS_TRANSCRIPTION_SOCKET?.trim() ?? "";
+  const socketPath = configuredSocket && path.isAbsolute(configuredSocket) ? path.resolve(configuredSocket) : null;
+  if (!socketPath) {
+    return new PremiumService(new UnavailablePremiumAccessPort(configuredSocket ? "store_unavailable" : "not_configured"));
+  }
+  premiumService ??= new PremiumService(new NativePremiumAccessPort(socketPath));
+  return premiumService;
 }
 
 export async function stopMeetingChatService(): Promise<void> {

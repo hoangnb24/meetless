@@ -37,7 +37,7 @@ describe("meeting chat service", () => {
       await input.recordRetrieved(["segment-1"]);
       return { outcome: "supported", text: "The team chose local-first.", citationSegmentIds: ["segment-1"] };
     });
-    const service = new MeetingChatService(store.port, agent);
+    const service = new MeetingChatService(store.port, agent, activePremium());
 
     const running = await service.ask({
       meetingId: "meeting-1", question: "What did we choose?", provider: "codex", model: "gpt-5",
@@ -54,7 +54,7 @@ describe("meeting chat service", () => {
   test("stores explicit insufficient evidence without answer text or citations", async () => {
     const service = new MeetingChatService(fakeStore().port, fakeAgent(async () => ({
       outcome: "insufficient_evidence", text: null, citationSegmentIds: [],
-    })));
+    })), activePremium());
     await service.ask({ meetingId: "meeting-1", question: "Unknown?", provider: "codex", model: "gpt-5" });
     await vi.waitFor(async () => expect((await service.get("meeting-1"))?.status).toBe("ready"));
     expect((await service.get("meeting-1"))?.messages.at(-1)).toMatchObject({
@@ -66,7 +66,7 @@ describe("meeting chat service", () => {
     ["unretrieved citation", async () => ({ outcome: "supported", text: "bad", citationSegmentIds: ["segment-1"] } as AgentAnswer)],
     ["provider failure", async () => { throw new Error("provider does not support MCP servers"); }],
   ])("turns %s into a retryable operational failure", async (_name, execute) => {
-    const service = new MeetingChatService(fakeStore().port, fakeAgent(execute));
+    const service = new MeetingChatService(fakeStore().port, fakeAgent(execute), activePremium());
     await service.ask({ meetingId: "meeting-1", question: "Question", provider: "pi", model: "model" });
     await vi.waitFor(async () => expect((await service.get("meeting-1"))?.status).toBe("failed"));
     expect((await service.get("meeting-1"))?.failure).toMatchObject({ retryable: true });
@@ -76,7 +76,7 @@ describe("meeting chat service", () => {
     const store = fakeStore();
     const service = new MeetingChatService(store.port, fakeAgent(async () => {
       throw new Error("agentId=paseo-agent-secret workspaceId=paseo-workspace-secret sessionId=paseo-session-secret");
-    }));
+    }), activePremium());
     await service.ask({ meetingId: "meeting-1", question: "Question", provider: "codex", model: "gpt-5" });
     await vi.waitFor(async () => expect((await service.get("meeting-1"))?.status).toBe("failed"));
     expect(JSON.stringify(await service.get("meeting-1"))).not.toMatch(/paseo-agent-secret|paseo-workspace-secret|paseo-session-secret/u);
@@ -94,7 +94,7 @@ describe("meeting chat service", () => {
     });
     const service = new MeetingChatService(store.port, fakeAgent(async () => ({
       outcome: "insufficient_evidence", text: null, citationSegmentIds: [],
-    })));
+    })), activePremium());
     expect((await service.get("meeting-1"))?.status).toBe("failed");
     await service.retry({ meetingId: "meeting-1", provider: "codex", model: "gpt-5" });
     await vi.waitFor(async () => expect((await service.get("meeting-1"))?.status).toBe("ready"));
@@ -116,7 +116,7 @@ describe("meeting chat service", () => {
     const startWithSelection = vi.spyOn(store.port, "startChatQuestionWithSelection");
     const retryWithSelection = vi.spyOn(store.port, "retryChatTurnWithSelection");
     const setSelection = vi.spyOn(store.port, "setChatSelection");
-    const service = new MeetingChatService(store.port, agent);
+    const service = new MeetingChatService(store.port, agent, activePremium());
     const firstSelection: ChatSelection = {
       provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high", featureValues: { fast_mode: true },
     };
@@ -133,6 +133,28 @@ describe("meeting chat service", () => {
     expect(retryWithSelection).toHaveBeenCalledWith("meeting-1", { attemptId: undefined, selection: retrySelection });
     expect(setSelection).not.toHaveBeenCalled();
     expect(agent.validateSelection).toHaveBeenCalledTimes(2);
+  });
+
+  test("fails closed before persisting an Ask when Premium is inactive", async () => {
+    const store = fakeStore();
+    const start = vi.spyOn(store.port, "startChatQuestion");
+    const execute = vi.fn(async () => ({
+      outcome: "insufficient_evidence" as const,
+      text: null,
+      citationSegmentIds: [],
+    }));
+    const service = new MeetingChatService(store.port, fakeAgent(execute), {
+      requireActive: vi.fn(async () => {
+        throw new Error("Ask requires Meetless Premium");
+      }),
+    });
+
+    await expect(service.ask({
+      meetingId: "meeting-1", question: "Question", provider: "codex", model: "gpt-5",
+    })).rejects.toThrow("Ask requires Meetless Premium");
+    expect(start).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(store.thread?.messages).toEqual([]);
   });
 });
 
@@ -285,7 +307,7 @@ describe("Paseo execution adapter", () => {
     expect(JSON.stringify(controls)).not.toContain("approval_policy");
 
     const selection = controls.profiles[0]!.selection;
-    const service = new MeetingChatService(store.port, port);
+    const service = new MeetingChatService(store.port, port, activePremium());
     await expect(service.select(selection)).resolves.toEqual({ version: 1, selection });
     await expect(store.port.getChatSelection()).resolves.toEqual(selection);
     await port.execute({ provider: "codex", model: "gpt-5", selection, messages: [{ role: "user", text: "Question" }], transcript: transcript(), recordRetrieved: async () => undefined });
@@ -451,6 +473,10 @@ function fakeAgent(execute: (input: ChatExecutionInput) => Promise<AgentAnswer>)
     execute,
     close: async () => undefined,
   };
+}
+
+function activePremium() {
+  return { requireActive: vi.fn(async () => undefined) };
 }
 
 function fakeStore() {

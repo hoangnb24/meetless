@@ -53,6 +53,7 @@ if (lockProbe.status !== 75) {
 }
 await writeFile(exclusionPath, `${JSON.stringify({ role: "installer", pid: process.pid, startedAt: new Date().toISOString() })}\n`, { mode: 0o600 });
 const sourceHash = await hostSourceHash();
+const hostArtifact = await requireRevenueCatHostArtifact();
 
 if (await exists(target)) {
   try {
@@ -102,19 +103,7 @@ try {
     runtimeCliPath: path.join(repositoryRoot, "packages/runtime/dist/cli.js"),
     identityPath,
   }, null, 2)}\n`, { mode: 0o644 });
-  await execFileAsync("xcrun", [
-    "swiftc",
-    "-O",
-    "-framework",
-    "AppKit",
-    "-framework",
-    "Security",
-    path.join(repositoryRoot, "native/macos-host/MeetlessHost.swift"),
-    path.join(repositoryRoot, "native/macos-host/TranscriptionCapability.swift"),
-    path.join(repositoryRoot, "native/macos-host/main.swift"),
-    "-o",
-    executable,
-  ]);
+  await cp(hostArtifact, executable);
   await execFileAsync("codesign", [
     "--force",
     "--sign",
@@ -171,13 +160,39 @@ try {
 async function hostSourceHash() {
   const files = [
     "native/macos-host/Info.plist",
+    "native/macos-host/Package.swift",
+    "native/macos-host/Package.resolved",
     "native/macos-host/MeetlessHost.swift",
+    "native/macos-host/RevenueCatCapability.swift",
     "native/macos-host/TranscriptionCapability.swift",
-    "native/macos-host/main.swift",
+    "native/macos-host/host-entry/main.swift",
   ];
   const hash = createHash("sha256");
   for (const file of files) hash.update(await readFile(path.join(repositoryRoot, file)));
   return hash.digest("hex");
+}
+
+async function requireRevenueCatHostArtifact() {
+  const candidate = path.join(repositoryRoot, "native/macos-host/.build/release/MeetlessHost");
+  const inspected = await stat(candidate).catch(() => null);
+  if (!inspected?.isFile()) {
+    throw new Error(
+      `Required SwiftPM RevenueCat-linked host artifact is missing at ${candidate}. ` +
+      "Run npm run build:native before installing the host.",
+    );
+  }
+  const { stdout: fileOutput } = await execFileAsync("file", [candidate]);
+  if (!/Mach-O 64-bit executable arm64/u.test(fileOutput)) {
+    throw new Error(`Required host artifact is not an arm64 Mach-O executable: ${candidate}`);
+  }
+  const { stdout: symbols } = await execFileAsync("nm", ["-gU", candidate], { maxBuffer: 16 * 1024 * 1024 });
+  if (!/\$s10RevenueCat/u.test(symbols)) {
+    throw new Error(
+      `Required host artifact has no linked RevenueCat symbols: ${candidate}. ` +
+      "Refusing to install the #else not_configured fallback.",
+    );
+  }
+  return candidate;
 }
 
 async function exists(candidate) {

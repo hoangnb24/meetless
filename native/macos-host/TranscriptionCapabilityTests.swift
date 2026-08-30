@@ -2,6 +2,7 @@ import Darwin
 import CryptoKit
 import Foundation
 import Security
+@testable import MeetlessHostCore
 
 private var failures = 0
 
@@ -148,6 +149,52 @@ private final class FakeKeychain: MeetlessKeychainAccess {
   }
 }
 
+private final class FakePremiumAccess: MeetlessPremiumPurchaseAccess {
+  var purchasedPackage: String?
+  var restoreCount = 0
+  let inactive = MeetlessPremiumAccessResult(
+    status: "inactive",
+    packages: [MeetlessPremiumPackage(
+      packageId: "monthly",
+      productId: meetlessPremiumMonthlyProduct,
+      localizedPrice: "799.000 ₫",
+      trialEligible: true
+    )],
+    reason: nil
+  )
+  let active = MeetlessPremiumAccessResult(status: "active", packages: [], reason: nil)
+
+  func status() -> MeetlessPremiumAccessResult { inactive }
+  func purchase(packageId: String) -> MeetlessPremiumMutationResult {
+    purchasedPackage = packageId
+    return MeetlessPremiumMutationResult(outcome: "active", access: active)
+  }
+  func restore() -> MeetlessPremiumMutationResult {
+    restoreCount += 1
+    return MeetlessPremiumMutationResult(outcome: "active", access: active)
+  }
+}
+
+private final class BlockingPremiumAccess: MeetlessPremiumPurchaseAccess {
+  let started = DispatchSemaphore(value: 0)
+  let release = DispatchSemaphore(value: 0)
+  let active = MeetlessPremiumAccessResult(status: "active", packages: [], reason: nil)
+
+  func status() -> MeetlessPremiumAccessResult {
+    MeetlessPremiumAccessResult(status: "inactive", packages: [], reason: nil)
+  }
+
+  func purchase(packageId: String) -> MeetlessPremiumMutationResult {
+    started.signal()
+    _ = release.wait(timeout: .now() + .seconds(5))
+    return MeetlessPremiumMutationResult(outcome: "active", access: active)
+  }
+
+  func restore() -> MeetlessPremiumMutationResult {
+    MeetlessPremiumMutationResult(outcome: "failed", access: .unavailable("store_unavailable"))
+  }
+}
+
 private final class FakeUploadSession: MeetlessUploadSession {
   let task = FakeUploadTask()
   var responseCode: Int?
@@ -227,6 +274,102 @@ private func testRealSocketStatusResponse() throws {
   check(response?.contains("\"requestId\":\"real-status\"") == true, "real socket response must preserve request identity")
   check(response?.contains("\"status\":\"configured\"") == true, "real socket status response must be bounded and configured")
   check((response?.utf8.count ?? 4_096) < 1_024, "real socket status response must remain compact")
+}
+
+private func testPremiumSocketBoundary() {
+  let premium = FakePremiumAccess()
+  let capability = MeetlessTranscriptionCapability(
+    socketPath: "/private/tmp/unused-meetless-premium.sock",
+    stagingDirectory: "/private/tmp/unused-meetless-premium-staging",
+    runtimeAuthorization: authorizedRuntimeState(),
+    keychain: FakeKeychain(),
+    premium: premium
+  )
+
+  func request(_ json: String) -> [String: Any]? {
+    var descriptors: [Int32] = [0, 0]
+    check(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0, "Premium request socketpair must open")
+    let data = Data((json + "\n").utf8)
+    data.withUnsafeBytes { buffer in _ = Darwin.write(descriptors[0], buffer.baseAddress, buffer.count) }
+    capability.handle(descriptors[1])
+    let line = readBoundedLine(descriptors[0], maximumBytes: 4_096)
+    close(descriptors[0])
+    guard let response = line?.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: response) as? [String: Any] else { return nil }
+    return object
+  }
+
+  let status = request("{\"version\":1,\"requestId\":\"premium-status\",\"operation\":\"premiumStatus\"}")
+  check(status?["type"] as? String == "premium.access", "Premium status must use the typed native envelope")
+  let statusAccess = status?["access"] as? [String: Any]
+  check(statusAccess?["status"] as? String == "inactive", "Premium status must preserve inactive access")
+  let statusPackages = statusAccess?["packages"] as? [[String: Any]]
+  check(statusPackages?.first?["localizedPrice"] as? String == "799.000 ₫", "Premium status must preserve only store-localized price text")
+
+  let purchase = request("{\"version\":1,\"requestId\":\"premium-purchase\",\"operation\":\"premiumPurchase\",\"packageId\":\"monthly\"}")
+  check(premium.purchasedPackage == "monthly", "Premium purchase must forward only an allowed package identifier")
+  check(purchase?["outcome"] as? String == "active", "Premium purchase must return the normalized mutation outcome")
+  let purchaseAccess = purchase?["access"] as? [String: Any]
+  check(purchaseAccess?["status"] as? String == "active", "Premium purchase must return active entitlement state")
+
+  let restore = request("{\"version\":1,\"requestId\":\"premium-restore\",\"operation\":\"premiumRestore\"}")
+  check(premium.restoreCount == 1, "Premium restore must run only after the explicit restore request")
+  check(restore?["outcome"] as? String == "active", "Premium restore must return the normalized mutation outcome")
+}
+
+private func testPremiumPurchaseOutcomePolicy() {
+  check(
+    meetlessPremiumPurchaseOutcome(succeeded: true, userCancelled: true, accessStatus: "inactive") == "cancelled",
+    "cancelled Premium purchase must stay cancelled and never grant access"
+  )
+  check(
+    meetlessPremiumPurchaseOutcome(succeeded: true, userCancelled: false, accessStatus: "inactive") == "failed",
+    "successful store callback without active entitlement must fail closed"
+  )
+  check(
+    meetlessPremiumPurchaseOutcome(succeeded: true, userCancelled: false, accessStatus: "active") == "active",
+    "only an active entitlement may complete Premium purchase"
+  )
+}
+
+private func testPremiumWaitDoesNotBlockAuthorizationClearOrShutdown() throws {
+  let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("meetless-native-premium-lock-\(UUID().uuidString)")
+  let state = authorizedRuntimeState()
+  let premium = BlockingPremiumAccess()
+  let capability = MeetlessTranscriptionCapability(
+    socketPath: root.appendingPathComponent("unused.sock").path,
+    stagingDirectory: root.appendingPathComponent("staging").path,
+    runtimeAuthorization: state,
+    premium: premium
+  )
+  var descriptors: [Int32] = [0, 0]
+  check(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0, "in-flight Premium socketpair must open")
+  defer { close(descriptors[0]) }
+
+  let serverDescriptor = descriptors[1]
+  DispatchQueue.global().async { capability.handle(serverDescriptor) }
+  let request = Data("{\"requestId\":\"premium-lock\",\"operation\":\"premiumPurchase\",\"packageId\":\"monthly\"}\n".utf8)
+  request.withUnsafeBytes { buffer in _ = Darwin.write(descriptors[0], buffer.baseAddress, buffer.count) }
+  check(premium.started.wait(timeout: .now() + .seconds(1)) == .success, "Premium operation must reach the blocking test seam")
+
+  let clearCompleted = DispatchSemaphore(value: 0)
+  DispatchQueue.global().async {
+    state.clear()
+    clearCompleted.signal()
+  }
+  let shutdownCompleted = DispatchSemaphore(value: 0)
+  DispatchQueue.global().async {
+    capability.stop()
+    shutdownCompleted.signal()
+  }
+  check(clearCompleted.wait(timeout: .now() + .seconds(1)) == .success, "authorization clear must not wait for Premium")
+  check(shutdownCompleted.wait(timeout: .now() + .seconds(1)) == .success, "capability shutdown must not wait for Premium")
+
+  premium.release.signal()
+  _ = clearCompleted.wait(timeout: .now() + .seconds(1))
+  _ = shutdownCompleted.wait(timeout: .now() + .seconds(1))
+  let response = readBoundedLine(descriptors[0], maximumBytes: 4_096)
+  check(response?.contains("\"ok\":false") == true, "revoked in-flight Premium operation must fail closed")
 }
 
 private func statusRequest(socketPath: String, requestId: String) -> Bool {
@@ -620,6 +763,12 @@ private struct TranscriptionCapabilityTests {
     do { try testRealSocketStatusResponse() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: real socket status: \(error)\n".utf8))
+    }
+    testPremiumSocketBoundary()
+    testPremiumPurchaseOutcomePolicy()
+    do { try testPremiumWaitDoesNotBlockAuthorizationClearOrShutdown() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: Premium authorization lock lifecycle: \(error)\n".utf8))
     }
     do { try testConcurrentLifecycleCompletesWithinBound() } catch {
       failures += 1

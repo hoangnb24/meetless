@@ -13,6 +13,9 @@ import {
   MeetingCreateRpc,
   MeetingDeleteRpc,
   MeetingListRpc,
+  MeetingPremiumPurchaseRpc,
+  MeetingPremiumRestoreRpc,
+  MeetingPremiumStatusRpc,
   MeetingTranscriptRpc,
   MeetingTranscriptionConsentRpc,
 } from "@meetless/meeting-contracts";
@@ -54,6 +57,18 @@ export default function contribute(plugin: PluginContext) {
   plugin.handle(MeetingCitationResolveRpc, async ({ meetingId, segmentId }) => {
     const server = await import("./src/server.js");
     return server.getCitationPlaybackService().resolve({ meetingId, segmentId });
+  });
+  plugin.handle(MeetingPremiumStatusRpc, async () => {
+    const server = await import("./src/server.js");
+    return server.getPremiumService().status();
+  });
+  plugin.handle(MeetingPremiumPurchaseRpc, async ({ packageId }) => {
+    const server = await import("./src/server.js");
+    return server.getPremiumService().purchase(packageId);
+  });
+  plugin.handle(MeetingPremiumRestoreRpc, async () => {
+    const server = await import("./src/server.js");
+    return server.getPremiumService().restore();
   });
   plugin.handle(MeetingChatProvidersRpc, async (_input, { paseo }) => {
     const server = await import("./src/server.js");

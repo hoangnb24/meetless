@@ -1,0 +1,33 @@
+{
+  "schema": "MEETLESS_MAC_APP_STORE_CONTRACT v1",
+  "target": "macos-app-store-arm64",
+  "bundleIdentifier": "com.meetless.app",
+  "distribution": "mac-app-store",
+  "electron": {
+    "version": "41.2.0",
+    "platform": "mas",
+    "arch": "arm64",
+    "archiveName": "electron-v41.2.0-mas-arm64.zip"
+  },
+  "state": {
+    "owner": "app-container",
+    "applicationSupportRelativePath": "Meetless",
+    "recordingExportsRelativePath": "Meetless/recordings",
+    "externalExport": "user-selected-security-scoped-destination"
+  },
+  "signing": {
+    "identityKind": "Apple Distribution",
+    "provisioningProfile": "Mac App Store",
+    "applicationGroup": {
+      "source": "build-input",
+      "teamEnvironment": "MEETLESS_APP_STORE_TEAM_ID",
+      "applicationGroupEnvironment": "MEETLESS_APP_STORE_APPLICATION_GROUP",
+      "bundleIdentifier": "com.meetless.app",
+      "defaultTeamId": "63M98WD275",
+      "defaultValue": "63M98WD275.com.meetless.app"
+    },
+    "parentEntitlements": "native/macos-host/MeetlessAppStore.entitlements.plist",
+    "childEntitlements": "native/macos-host/MeetlessAppStoreChild.entitlements.plist",
+    "inAppPurchaseCapability": "App Store Connect"
+  }
+}
