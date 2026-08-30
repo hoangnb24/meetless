@@ -4,7 +4,7 @@ Date: 2026-08-30
 
 ## Status
 
-Active
+Completed
 
 ## Outcome
 
@@ -71,8 +71,8 @@ Out of scope:
 - [x] Complete independent foundation judgment.
 - [x] Record and freeze the overlay/scroll contract at design authority.
 - [x] Dispatch one writer for the atomic consumer migration and invariant proof.
-- [ ] Accept focused and built-artifact proof.
-- [ ] Install and launch the accepted signed package.
+- [x] Accept focused and built-artifact proof.
+- [x] Install and launch the accepted signed package.
 
 ## Decisions
 
@@ -88,6 +88,12 @@ Out of scope:
 - 2026-08-30: `design/DESIGN.md` now owns the exact externally observable chat
   popup and scroll rule. Repository-native surface tests must provide positive
   and negative proof before the implementation is accepted.
+- 2026-08-30 close-out: F-001, F-003, and F-004 were confirmed resolved. The
+  original F-002 false-positive was also resolved because the emitted proof now
+  rejects the reproduced 121px/63px stale-height case. A proposed assertion for
+  exact 420px/402px fixture dimensions was not accepted: those values are an
+  implementation detail, while the durable contract is useful expansion,
+  viewport bounds, and presenter-owned internal scrolling.
 
 ## Validation
 
@@ -141,5 +147,14 @@ Correction evidence observed on 2026-08-30 against base `f269bf0`:
 
 ## Result
 
-Atomic implementation and writer-owned proof are complete. Lead acceptance,
-signed-package verification, install, and launch remain pending.
+Accepted at `facc81070a65e19e020a1a3576e0625e429c4e83`. Lead reran all 65
+meeting-surface tests, the emitted-artifact popup proof at 390px, 877px, and
+1440px, meeting-surface and app typecheck/build, and the app Expo export. The
+Developer-ID package passed deep strict code-signature verification with Team
+ID `63M98WD275`, was installed transactionally at `/Applications/Meetless.app`,
+and launched successfully. Runtime evidence showed bootstrap completion, the
+server listening on `127.0.0.1:16777`, the Meetless plugin loaded, and the
+Electron renderer connected from `127.0.0.1:18082`.
+
+Physical-device native behavior remains unverified; native fallback coverage is
+deterministic composition and style proof.
