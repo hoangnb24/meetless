@@ -37,6 +37,7 @@ import {
   type TranscriptPublication,
   type TranscriptState,
   type TranscriptUsage,
+  type ChatSelection,
   DEFAULT_TRANSCRIPT_MAX_ATTEMPTS,
   CHAT_ATTEMPT_STATUSES,
   CHAT_THREAD_STATUSES,
@@ -469,6 +470,14 @@ const ChatCitationSchema = z.object({
   segmentId: z.string().trim().min(1),
 }).strict();
 
+const ChatSelectionSchema = z.object({
+  provider: z.string().trim().min(1),
+  model: z.string().trim().min(1),
+  modeId: z.string().trim().min(1).nullable().default(null),
+  thinkingOptionId: z.string().trim().min(1).nullable().default(null),
+  featureValues: z.record(z.string().trim().min(1), z.union([z.boolean(), z.string(), z.null()])).default({}),
+}).strict();
+
 const ChatMessageSchema = z.union([
   z.object({
     id: z.string().trim().min(1),
@@ -502,6 +511,9 @@ const ChatAttemptSchema = z.object({
   status: z.enum(CHAT_ATTEMPT_STATUSES),
   provider: z.string().trim().min(1),
   model: z.string().trim().min(1),
+  modeId: z.string().trim().min(1).nullable().default(null),
+  thinkingOptionId: z.string().trim().min(1).nullable().default(null),
+  featureValues: z.record(z.string().trim().min(1), z.union([z.boolean(), z.string(), z.null()])).default({}),
   retrievedSegmentIds: z.array(z.string().trim().min(1)),
   startedAt: z.string().datetime(),
   completedAt: z.string().datetime().nullable(),
@@ -585,6 +597,7 @@ const MeetingStateSchema = z.object({
   transcripts: z.array(TranscriptSchema).optional(),
   cloudConsent: z.object({ status: z.literal("granted"), grantedAt: z.string().datetime() }).strict().optional(),
   chatThreads: z.array(ChatThreadSchema).optional(),
+  chatSelection: ChatSelectionSchema.nullable().optional(),
 }).strict().superRefine((state, context) => {
   const v3Shape = {
     version: 3 as const,
@@ -635,6 +648,7 @@ interface MeetingState {
   transcripts: TranscriptState[];
   cloudConsent: { status: "granted"; grantedAt: string } | null;
   chatThreads: MeetingChatThread[];
+  chatSelection: ChatSelection | null;
 }
 
 const DeletionManifestSchema = z.object({
@@ -769,6 +783,20 @@ export class MeetingStore {
     return state.cloudConsent
       ? { status: "granted", grantedAt: state.cloudConsent.grantedAt }
       : { status: "unknown" };
+  }
+
+  async getChatSelection(): Promise<ChatSelection | null> {
+    await this.mutationTail;
+    const state = await this.readState();
+    return state.chatSelection ? structuredClone(state.chatSelection) : null;
+  }
+
+  setChatSelection(selection: ChatSelection): Promise<ChatSelection> {
+    return this.mutate(async (state) => {
+      const checked = ChatSelectionSchema.parse(selection);
+      state.chatSelection = structuredClone(checked);
+      return structuredClone(state.chatSelection);
+    });
   }
 
   grantTranscriptionConsent(): Promise<{ status: "granted"; grantedAt: string }> {
@@ -938,43 +966,29 @@ export class MeetingStore {
   startChatQuestion(input: {
     meetingId: string;
     question: string;
-    provider: string;
-    model: string;
+    provider?: string;
+    model?: string;
+    selection?: ChatSelection;
+    threadId?: string;
+    userMessageId?: string;
+    attemptId?: string;
+  }): Promise<MeetingChatThread> {
+    return this.mutate(async (state) => this.startChatQuestionInState(state, input));
+  }
+
+  startChatQuestionWithSelection(input: {
+    meetingId: string;
+    question: string;
+    selection: ChatSelection;
     threadId?: string;
     userMessageId?: string;
     attemptId?: string;
   }): Promise<MeetingChatThread> {
     return this.mutate(async (state) => {
-      const meeting = state.meetings.find((candidate) => candidate.id === input.meetingId);
-      if (!meeting || (meeting.status !== "ready" && meeting.status !== "archived")) {
-        throw new Error(`Chat requires a ready meeting: ${input.meetingId}`);
-      }
-      const transcript = state.transcripts.find((candidate) => candidate.meetingId === input.meetingId);
-      if (!transcript || transcript.status !== "ready" || !transcript.publication) {
-        throw new Error(`Chat requires the immutable ready transcript for meeting: ${input.meetingId}`);
-      }
-      await this.assertTranscriptSidecar(transcript);
-      let threadIndex = state.chatThreads.findIndex((candidate) => candidate.meetingId === input.meetingId);
-      if (threadIndex < 0) {
-        const thread = createMeetingChatThread({
-          id: input.threadId ?? this.createId(), meetingId: input.meetingId, now: this.now(),
-        });
-        if (state.chatThreads.some((candidate) => candidate.id === thread.id)) {
-          throw new Error(`Chat thread already exists: ${thread.id}`);
-        }
-        state.chatThreads.push(thread);
-        threadIndex = state.chatThreads.length - 1;
-      }
-      const next = startChatQuestion(state.chatThreads[threadIndex]!, {
-        userMessageId: input.userMessageId ?? this.createId(),
-        attemptId: input.attemptId ?? this.createId(),
-        question: input.question,
-        provider: input.provider,
-        model: input.model,
-        now: this.now(),
-      });
-      state.chatThreads[threadIndex] = next;
-      return structuredClone(next);
+      const selection = ChatSelectionSchema.parse(input.selection);
+      const next = await this.startChatQuestionInState(state, { ...input, selection });
+      state.chatSelection = structuredClone(selection);
+      return next;
     });
   }
 
@@ -1018,14 +1032,22 @@ export class MeetingStore {
 
   retryChatTurn(meetingId: string, input: {
     attemptId?: string;
-    provider: string;
-    model: string;
+    provider?: string;
+    model?: string;
+    selection?: ChatSelection;
   }): Promise<MeetingChatThread> {
-    return this.changeChatThread(meetingId, async (state, thread) => {
-      await this.assertTranscriptSidecar(this.chatTranscript(state, thread));
-      return retryChatAttempt(thread, {
-        attemptId: input.attemptId ?? this.createId(), provider: input.provider, model: input.model, now: this.now(),
-      });
+    return this.mutate(async (state) => this.retryChatTurnInState(state, meetingId, input));
+  }
+
+  retryChatTurnWithSelection(meetingId: string, input: {
+    attemptId?: string;
+    selection: ChatSelection;
+  }): Promise<MeetingChatThread> {
+    return this.mutate(async (state) => {
+      const selection = ChatSelectionSchema.parse(input.selection);
+      const next = await this.retryChatTurnInState(state, meetingId, { ...input, selection });
+      state.chatSelection = structuredClone(selection);
+      return next;
     });
   }
 
@@ -1355,6 +1377,66 @@ export class MeetingStore {
     });
   }
 
+  private async startChatQuestionInState(state: MeetingState, input: {
+    meetingId: string;
+    question: string;
+    provider?: string;
+    model?: string;
+    selection?: ChatSelection;
+    threadId?: string;
+    userMessageId?: string;
+    attemptId?: string;
+  }): Promise<MeetingChatThread> {
+    const meeting = state.meetings.find((candidate) => candidate.id === input.meetingId);
+    if (!meeting || (meeting.status !== "ready" && meeting.status !== "archived")) {
+      throw new Error(`Chat requires a ready meeting: ${input.meetingId}`);
+    }
+    const transcript = state.transcripts.find((candidate) => candidate.meetingId === input.meetingId);
+    if (!transcript || transcript.status !== "ready" || !transcript.publication) {
+      throw new Error(`Chat requires the immutable ready transcript for meeting: ${input.meetingId}`);
+    }
+    await this.assertTranscriptSidecar(transcript);
+    let threadIndex = state.chatThreads.findIndex((candidate) => candidate.meetingId === input.meetingId);
+    if (threadIndex < 0) {
+      const thread = createMeetingChatThread({
+        id: input.threadId ?? this.createId(), meetingId: input.meetingId, now: this.now(),
+      });
+      if (state.chatThreads.some((candidate) => candidate.id === thread.id)) {
+        throw new Error(`Chat thread already exists: ${thread.id}`);
+      }
+      state.chatThreads.push(thread);
+      threadIndex = state.chatThreads.length - 1;
+    }
+    const next = startChatQuestion(state.chatThreads[threadIndex]!, {
+      userMessageId: input.userMessageId ?? this.createId(),
+      attemptId: input.attemptId ?? this.createId(),
+      question: input.question,
+      ...(input.selection ? { selection: input.selection } : { provider: input.provider, model: input.model }),
+      now: this.now(),
+    });
+    state.chatThreads[threadIndex] = next;
+    return structuredClone(next);
+  }
+
+  private async retryChatTurnInState(state: MeetingState, meetingId: string, input: {
+    attemptId?: string;
+    provider?: string;
+    model?: string;
+    selection?: ChatSelection;
+  }): Promise<MeetingChatThread> {
+    const index = state.chatThreads.findIndex((thread) => thread.meetingId === meetingId);
+    if (index < 0) throw new Error(`Chat thread not found for meeting: ${meetingId}`);
+    const thread = state.chatThreads[index]!;
+    await this.assertTranscriptSidecar(this.chatTranscript(state, thread));
+    const next = retryChatAttempt(thread, {
+      attemptId: input.attemptId ?? this.createId(),
+      ...(input.selection ? { selection: input.selection } : { provider: input.provider, model: input.model }),
+      now: this.now(),
+    });
+    state.chatThreads[index] = next;
+    return structuredClone(next);
+  }
+
   private changeChatThread(
     meetingId: string,
     change: (state: MeetingState, thread: MeetingChatThread) => Promise<MeetingChatThread>,
@@ -1540,7 +1622,7 @@ export class MeetingStore {
       contents = await readFile(this.filePath, "utf8");
     } catch (error) {
       if (isErrno(error, "ENOENT")) {
-        const empty = { version: 4 as const, meetings: [], recordings: [], transcripts: [], cloudConsent: null, chatThreads: [] };
+        const empty = { version: 4 as const, meetings: [], recordings: [], transcripts: [], cloudConsent: null, chatThreads: [], chatSelection: null };
         await this.reconcileDeletionManifests(empty);
         return empty;
       }
@@ -1549,7 +1631,7 @@ export class MeetingStore {
     try {
       const decoded: unknown = JSON.parse(contents);
       const v1 = StateV1Schema.safeParse(decoded);
-      if (v1.success) return await this.withDeletionRecovery({ version: 4, meetings: v1.data.meetings, recordings: [], transcripts: [], cloudConsent: null, chatThreads: [] });
+      if (v1.success) return await this.withDeletionRecovery({ version: 4, meetings: v1.data.meetings, recordings: [], transcripts: [], cloudConsent: null, chatThreads: [], chatSelection: null });
       const v2 = MeetingStateV2Schema.safeParse(decoded);
       if (v2.success) return await this.withDeletionRecovery(migrateV2(v2.data));
       const v3 = StateV3Schema.safeParse(decoded);
@@ -1560,6 +1642,7 @@ export class MeetingStore {
         transcripts: v3.data.transcripts ?? [],
         cloudConsent: v3.data.cloudConsent ?? null,
         chatThreads: [],
+        chatSelection: null,
       });
       const parsed = MeetingStateSchema.parse(decoded);
       return await this.withDeletionRecovery({
@@ -1569,6 +1652,7 @@ export class MeetingStore {
         transcripts: parsed.transcripts ?? [],
         cloudConsent: parsed.cloudConsent ?? null,
         chatThreads: parsed.chatThreads ?? [],
+        chatSelection: parsed.chatSelection ?? null,
       });
     } catch (error) {
       throw new MeetingStoreCorruptError(this.filePath, error);
@@ -1835,6 +1919,7 @@ export class MeetingStore {
       ...(state.transcripts.length > 0 ? { transcripts: state.transcripts } : {}),
       ...(state.cloudConsent ? { cloudConsent: state.cloudConsent } : {}),
       ...(state.chatThreads.length > 0 ? { chatThreads: state.chatThreads } : {}),
+      ...(state.chatSelection ? { chatSelection: state.chatSelection } : {}),
     });
     await this.replaceStateBytes(`${JSON.stringify(checked, null, 2)}\n`);
   }
@@ -1847,6 +1932,7 @@ export class MeetingStore {
       ...(state.transcripts.length > 0 ? { transcripts: state.transcripts } : {}),
       ...(state.cloudConsent ? { cloudConsent: state.cloudConsent } : {}),
       ...(state.chatThreads.length > 0 ? { chatThreads: state.chatThreads } : {}),
+      ...(state.chatSelection ? { chatSelection: state.chatSelection } : {}),
     });
     await this.replaceStateBytes(`${JSON.stringify(checked, null, 2)}\n`);
   }
@@ -1952,6 +2038,7 @@ function migrateV2(state: z.infer<typeof MeetingStateV2Schema>): MeetingState {
     transcripts: [],
     cloudConsent: null,
     chatThreads: [],
+    chatSelection: null,
     recordings: state.recordings.map((recording) => {
       const microphoneCount = recording.chunks.filter((chunk) => chunk.source === "microphone").length;
       const systemCount = recording.chunks.length - microphoneCount;

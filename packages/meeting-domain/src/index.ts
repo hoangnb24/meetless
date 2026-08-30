@@ -1130,6 +1130,14 @@ export interface ChatProviderSelection {
   model: string;
 }
 
+export type ChatFeatureValue = boolean | string | null;
+
+export interface ChatSelection extends ChatProviderSelection {
+  modeId: string | null;
+  thinkingOptionId: string | null;
+  featureValues: Record<string, ChatFeatureValue>;
+}
+
 export interface ChatCitation {
   segmentId: string;
 }
@@ -1166,7 +1174,7 @@ export type ChatAssistantMessage =
 
 export type ChatMessage = ChatUserMessage | ChatAssistantMessage;
 
-export interface ChatAttempt extends ChatProviderSelection {
+export interface ChatAttempt extends ChatSelection {
   id: string;
   userMessageId: string;
   status: ChatAttemptStatus;
@@ -1214,11 +1222,64 @@ function chatInstant(value: string, field: string): string {
   return normalized;
 }
 
-function chatProvider(input: ChatProviderSelection): ChatProviderSelection {
+function chatSelection(input: {
+  selection?: ChatSelection;
+  provider?: string;
+  model?: string;
+}): ChatSelection {
+  if (input.selection) {
+    const selection = input.selection;
+    const featureValues: Record<string, ChatFeatureValue> = {};
+    for (const [key, value] of Object.entries(selection.featureValues)) {
+      const featureId = chatText(key, "chat feature id");
+      if (typeof value !== "boolean" && typeof value !== "string" && value !== null) {
+        throw chatViolation(`Chat feature value is malformed: ${featureId}`, "Use only boolean, string, or null feature values.");
+      }
+      featureValues[featureId] = value;
+    }
+    return {
+      provider: chatText(selection.provider, "chat provider"),
+      model: chatText(selection.model, "chat model"),
+      modeId: selection.modeId === null ? null : chatText(selection.modeId, "chat mode id"),
+      thinkingOptionId: selection.thinkingOptionId === null
+        ? null
+        : chatText(selection.thinkingOptionId, "chat thinking option id"),
+      featureValues,
+    };
+  }
+  if (input.provider === undefined || input.model === undefined) {
+    throw chatViolation("A complete chat selection is required", "Provide provider, model, mode, thinking, and feature values.");
+  }
   return {
     provider: chatText(input.provider, "chat provider"),
     model: chatText(input.model, "chat model"),
+    modeId: null,
+    thinkingOptionId: null,
+    featureValues: {},
   };
+}
+
+export function cloneChatSelection(selection: ChatSelection): ChatSelection {
+  return {
+    provider: selection.provider,
+    model: selection.model,
+    modeId: selection.modeId,
+    thinkingOptionId: selection.thinkingOptionId,
+    featureValues: { ...selection.featureValues },
+  };
+}
+
+export function chatSelectionIdentity(selection: ChatSelection): string {
+  const features = Object.entries(selection.featureValues)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => [key, value]);
+  return JSON.stringify([
+    selection.provider,
+    selection.model,
+    selection.modeId,
+    selection.thinkingOptionId,
+    features,
+  ]);
 }
 
 export function createMeetingChatThread(input: {
@@ -1245,8 +1306,9 @@ export function startChatQuestion(
     userMessageId: string;
     attemptId: string;
     question: string;
-    provider: string;
-    model: string;
+    provider?: string;
+    model?: string;
+    selection?: ChatSelection;
     now: string;
   },
 ): MeetingChatThread {
@@ -1271,7 +1333,7 @@ export function startChatQuestion(
     id: attemptId,
     userMessageId: userMessage.id,
     status: "running",
-    ...chatProvider(input),
+    ...chatSelection(input),
     retrievedSegmentIds: [],
     startedAt: now,
     completedAt: null,
@@ -1417,7 +1479,13 @@ export function failChatAttempt(
 
 export function retryChatAttempt(
   thread: MeetingChatThread,
-  input: { attemptId: string; provider: string; model: string; now: string },
+  input: {
+    attemptId: string;
+    provider?: string;
+    model?: string;
+    selection?: ChatSelection;
+    now: string;
+  },
 ): MeetingChatThread {
   if (thread.status !== "failed" || thread.activeAttemptId !== null) {
     throw chatViolation("Only a failed chat turn can be retried", "Wait for the active turn to fail.");
@@ -1435,7 +1503,7 @@ export function retryChatAttempt(
     id: attemptId,
     userMessageId: previous.userMessageId,
     status: "running",
-    ...chatProvider(input),
+    ...chatSelection(input),
     retrievedSegmentIds: [],
     startedAt: now,
     completedAt: null,

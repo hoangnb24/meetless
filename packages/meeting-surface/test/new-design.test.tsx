@@ -1,7 +1,14 @@
 import React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { RecordingStatusWire, TranscriptWire } from "@meetless/meeting-contracts";
+import type {
+  ChatControlsCatalogWire,
+  ChatFeatureDiscoveryWire,
+  ChatProfileWire,
+  ChatSelectionWire,
+  RecordingStatusWire,
+  TranscriptWire,
+} from "@meetless/meeting-contracts";
 import { MeetingListSurface, RecordingStrip, surfaceLayout } from "../src/index.js";
 
 const baseMeeting = {
@@ -41,6 +48,39 @@ const baseTranscript: TranscriptWire = {
   usage: null,
   detectedLanguages: ["en"],
   failureReason: null,
+};
+
+const controlsCatalog: ChatControlsCatalogWire = {
+  providers: [
+    {
+      id: "codex", label: "Codex", status: "ready", error: null, defaultModeId: "worker",
+      modes: [{ id: "worker", label: "Worker" }],
+      models: [{
+        id: "gpt-5", label: "GPT-5", isDefault: true,
+        thinkingOptions: [{ id: "low", label: "Low" }, { id: "high", label: "High" }],
+        defaultThinkingOptionId: "low",
+      }],
+    },
+    {
+      id: "anthropic", label: "Anthropic", status: "ready", error: null, defaultModeId: null,
+      modes: [],
+      models: [{ id: "sonnet", label: "Sonnet", isDefault: true, thinkingOptions: [], defaultThinkingOptionId: null }],
+    },
+  ],
+};
+
+const controlsSelection: ChatSelectionWire = {
+  provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "low", featureValues: { fast_mode: false },
+};
+
+const controlsProfile: ChatProfileWire = {
+  id: "profile-1", name: "Fast review", icon: "✦", color: "blue",
+  selection: { ...controlsSelection, thinkingOptionId: "high", featureValues: { fast_mode: true } },
+};
+
+const controlsFeatures: ChatFeatureDiscoveryWire = {
+  version: 1, selection: controlsSelection, status: "ready", error: null,
+  features: [{ type: "toggle", id: "fast_mode", label: "Fast mode", value: false }],
 };
 
 function renderSurface(props: Record<string, unknown>): ReactTestRenderer {
@@ -260,6 +300,58 @@ describe("new-design composition", () => {
     await act(async () => { renderer.root.findByProps({ testID: "chat-model-anthropic-claude-sonnet" }).props.onPress(); });
     expect(onSelection).toHaveBeenCalledWith("anthropic", "claude-sonnet");
     expect(renderer.root.findByProps({ testID: "chat-provider-options" }).props["aria-hidden"]).toBe(true);
+    renderer.unmount();
+  });
+
+  test("shows profiles before providers, applies profiles immediately, and keeps provider rows browse-only", async () => {
+    const onSelection = vi.fn(async () => undefined);
+    const renderer = renderSurface({
+      layoutTier: "desktop", selectedMeetingId: "m-1", transcript: baseTranscript, consentStatus: "granted",
+      chatCatalog: controlsCatalog, chatProfiles: [controlsProfile], chatSelection: controlsSelection,
+      chatFeatures: controlsFeatures, onChatSelectionBundle: onSelection,
+    });
+    await act(async () => { renderer.root.findByProps({ testID: "chat-model-trigger" }).props.onPress(); });
+    const text = renderer.root.findAllByType("Text").map((node) => node.props.children).join(" ");
+    expect(text.indexOf("Profiles")).toBeLessThan(text.indexOf("Providers"));
+    await act(async () => { renderer.root.findByProps({ testID: "chat-provider-anthropic" }).props.onPress(); });
+    expect(onSelection).not.toHaveBeenCalled();
+    await act(async () => { renderer.root.findByProps({ testID: "chat-model-anthropic-sonnet" }).props.onPress(); });
+    expect(onSelection).toHaveBeenCalledWith({
+      provider: "anthropic", model: "sonnet", modeId: null, thinkingOptionId: null, featureValues: {},
+    });
+    renderer.unmount();
+  });
+
+  test("applies full profile, conditional thinking, and dynamic Fast feature controls", async () => {
+    const onSelection = vi.fn(async () => undefined);
+    const renderer = renderSurface({
+      layoutTier: "phone", selectedMeetingId: "m-1", transcript: baseTranscript, consentStatus: "granted",
+      chatCatalog: controlsCatalog, chatProfiles: [controlsProfile], chatSelection: controlsSelection,
+      chatFeatures: controlsFeatures, onChatSelectionBundle: onSelection,
+    });
+    await act(async () => { renderer.root.findByProps({ testID: "task-tab-ask" }).props.onPress(); });
+    expect(renderer.root.findByProps({ testID: "chat-thinking-trigger" })).toBeTruthy();
+    expect(renderer.root.findByProps({ testID: "chat-fast-toggle" })).toBeTruthy();
+    await act(async () => { renderer.root.findByProps({ testID: "chat-fast-toggle" }).props.onPress(); });
+    expect(onSelection).toHaveBeenCalledWith({ ...controlsSelection, featureValues: { fast_mode: true } });
+    await act(async () => { renderer.root.findByProps({ testID: "chat-model-trigger" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ testID: "chat-profile-profile-1" }).props.onPress(); });
+    expect(onSelection).toHaveBeenLastCalledWith(controlsProfile.selection);
+    expect(renderer.root.findAllByProps({ testID: "chat-model-picker" })).toHaveLength(0);
+    renderer.unmount();
+  });
+
+  test("uses a bottom-sheet dismissal target on phone", async () => {
+    const renderer = renderSurface({
+      layoutTier: "phone", selectedMeetingId: "m-1", transcript: baseTranscript, consentStatus: "granted",
+      chatCatalog: controlsCatalog, chatProfiles: [], chatSelection: controlsSelection,
+      chatFeatures: controlsFeatures, onChatSelectionBundle: vi.fn(),
+    });
+    await act(async () => { renderer.root.findByProps({ testID: "task-tab-ask" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ testID: "chat-model-trigger" }).props.onPress(); });
+    expect(renderer.root.findByProps({ testID: "chat-picker-dismiss" })).toBeTruthy();
+    await act(async () => { renderer.root.findByProps({ testID: "chat-picker-dismiss" }).props.onPress(); });
+    expect(renderer.root.findAllByProps({ testID: "chat-model-picker" })).toHaveLength(0);
     renderer.unmount();
   });
 

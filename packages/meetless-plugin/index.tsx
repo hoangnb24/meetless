@@ -1,9 +1,14 @@
 import type { PluginContext } from "@paseo/plugin";
 import {
   MeetingChatAskRpc,
+  MeetingChatAskV1Rpc,
+  MeetingChatControlsRpc,
+  MeetingChatFeaturesRpc,
   MeetingChatGetRpc,
   MeetingChatProvidersRpc,
   MeetingChatRetryRpc,
+  MeetingChatRetryV1Rpc,
+  MeetingChatSelectionRpc,
   MeetingCitationResolveRpc,
   MeetingCreateRpc,
   MeetingDeleteRpc,
@@ -58,6 +63,21 @@ export default function contribute(plugin: PluginContext) {
       compatibilityCheck: "on_question_start" as const,
     };
   });
+  plugin.handle(MeetingChatControlsRpc, async (_input, { paseo }) => {
+    const server = await import("./src/server.js");
+    chatCleanup = server.stopMeetingChatService;
+    return (await server.getMeetingChatService(paseo)).controls();
+  });
+  plugin.handle(MeetingChatFeaturesRpc, async ({ selection }, { paseo }) => {
+    const server = await import("./src/server.js");
+    chatCleanup = server.stopMeetingChatService;
+    return (await server.getMeetingChatService(paseo)).features(selection);
+  });
+  plugin.handle(MeetingChatSelectionRpc, async ({ selection }, { paseo }) => {
+    const server = await import("./src/server.js");
+    chatCleanup = server.stopMeetingChatService;
+    return (await server.getMeetingChatService(paseo)).select(selection);
+  });
   plugin.handle(MeetingChatGetRpc, async ({ meetingId }, { paseo }) => {
     const server = await import("./src/server.js");
     chatCleanup = server.stopMeetingChatService;
@@ -72,6 +92,16 @@ export default function contribute(plugin: PluginContext) {
     const server = await import("./src/server.js");
     chatCleanup = server.stopMeetingChatService;
     return (await server.getMeetingChatService(paseo)).retry(input);
+  });
+  plugin.handle(MeetingChatAskV1Rpc, async (input, { paseo }) => {
+    const server = await import("./src/server.js");
+    chatCleanup = server.stopMeetingChatService;
+    return (await server.getMeetingChatService(paseo)).askWithSelection(input);
+  });
+  plugin.handle(MeetingChatRetryV1Rpc, async (input, { paseo }) => {
+    const server = await import("./src/server.js");
+    chatCleanup = server.stopMeetingChatService;
+    return (await server.getMeetingChatService(paseo)).retryWithSelection(input);
   });
   plugin.handle(RecordingRuntimeBootstrapRpc, async ({ nonce, deadlineEpochMs }) => {
     const server = await import("./src/server.js");

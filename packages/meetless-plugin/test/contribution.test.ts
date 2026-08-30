@@ -23,9 +23,14 @@ describe("Meetless plugin contribution", () => {
       "meeting.transcription.consent",
       "meeting.citation.resolve",
       "meeting.chat.providers",
+      "meeting.chat.controls.v1",
+      "meeting.chat.features.v1",
+      "meeting.chat.selection.v1",
       "meeting.chat.get",
       "meeting.chat.ask",
       "meeting.chat.retry",
+      "meeting.chat.ask.v1",
+      "meeting.chat.retry.v1",
       "runtime.readiness.bootstrap",
     ]);
     expect(addSurface).not.toHaveBeenCalled();

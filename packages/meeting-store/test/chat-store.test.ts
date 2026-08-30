@@ -257,4 +257,46 @@ describe("durable meeting chat store", () => {
 
     await expect(new MeetingStore({ root }).listChatThreads()).rejects.toBeInstanceOf(MeetingStoreCorruptError);
   });
+
+  test("restarts with the host-global selection and complete attempt snapshots", async () => {
+    const root = await temporaryRoot();
+    const store = new MeetingStore({ root, now: () => "2026-08-20T10:00:00.000Z" });
+    await readyMeeting(store, "meeting-1", "recording-1");
+    const selection = {
+      provider: "codex",
+      model: "gpt-5",
+      modeId: "worker",
+      thinkingOptionId: "high",
+      featureValues: { fast_mode: true, effort: "high" },
+    } as const;
+    await store.startChatQuestionWithSelection({
+      meetingId: "meeting-1", threadId: "thread-1", userMessageId: "user-1", attemptId: "attempt-1",
+      question: "Question", selection,
+    });
+
+    const restarted = new MeetingStore({ root });
+    await expect(restarted.getChatSelection()).resolves.toEqual(selection);
+    await expect(restarted.getChatThread("meeting-1")).resolves.toMatchObject({
+      attempts: [{ provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high", featureValues: selection.featureValues }],
+    });
+
+    await restarted.failChatTurn("meeting-1", "attempt-1", "provider timeout");
+    const retrySelection = {
+      provider: "codex",
+      model: "gpt-5-mini",
+      modeId: "reviewer",
+      thinkingOptionId: "low",
+      featureValues: { fast_mode: false, effort: "low" },
+    } as const;
+    await restarted.retryChatTurnWithSelection("meeting-1", { attemptId: "attempt-2", selection: retrySelection });
+
+    const restartedAgain = new MeetingStore({ root });
+    await expect(restartedAgain.getChatSelection()).resolves.toEqual(retrySelection);
+    await expect(restartedAgain.getChatThread("meeting-1")).resolves.toMatchObject({
+      attempts: [
+        { id: "attempt-1", status: "failed", provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high" },
+        { id: "attempt-2", status: "running", provider: "codex", model: "gpt-5-mini", modeId: "reviewer", thinkingOptionId: "low", featureValues: retrySelection.featureValues },
+      ],
+    });
+  });
 });

@@ -144,4 +144,41 @@ describe("meeting chat policy", () => {
       id: "attempt-1", status: "failed", failureReason: expect.stringMatching(/restart.*retry/i),
     }]);
   });
+
+  test("snapshots the complete selection on the active attempt and on an explicit retry", () => {
+    const selected = startChatQuestion(createMeetingChatThread({ id: "thread-1", meetingId: "meeting-1", now: startedAt }), {
+      userMessageId: "message-user-1",
+      attemptId: "attempt-1",
+      question: "Question",
+      selection: {
+        provider: "codex",
+        model: "gpt-5",
+        modeId: "worker",
+        thinkingOptionId: "high",
+        featureValues: { fast_mode: true, effort: "high" },
+      },
+      now: startedAt,
+    });
+    const failed = failChatAttempt(selected, { attemptId: "attempt-1", reason: "provider timeout", now: finishedAt });
+    const retried = retryChatAttempt(failed, {
+      attemptId: "attempt-2",
+      selection: {
+        provider: "claude",
+        model: "sonnet",
+        modeId: "build",
+        thinkingOptionId: null,
+        featureValues: { fast_mode: false },
+      },
+      now: "2026-08-20T10:00:02.000Z",
+    });
+
+    expect(retried.attempts[0]).toMatchObject({
+      provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high",
+      featureValues: { fast_mode: true, effort: "high" },
+    });
+    expect(retried.attempts[1]).toMatchObject({
+      provider: "claude", model: "sonnet", modeId: "build", thinkingOptionId: null,
+      featureValues: { fast_mode: false },
+    });
+  });
 });

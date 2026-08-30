@@ -5,7 +5,12 @@ import {
   MeetlessFeatureUnavailableError,
   type MeetlessDaemonPort,
 } from "../src/index.js";
-import type { RecordingStatusWire } from "@meetless/meeting-contracts";
+import type {
+  ChatControlsWire,
+  ChatFeatureDiscoveryWire,
+  ChatSelectionWire,
+  RecordingStatusWire,
+} from "@meetless/meeting-contracts";
 
 function daemon(overrides: Partial<MeetlessDaemonPort> = {}): MeetlessDaemonPort {
   return {
@@ -89,6 +94,51 @@ describe("Meetless capability gate", () => {
     })).resolves.toEqual(thread);
     expect(invokePluginRpc.mock.calls.map((call) => call[1])).toEqual([
       "meeting.chat.providers", "meeting.chat.get", "meeting.chat.ask", "meeting.chat.retry",
+    ]);
+  });
+
+  test("routes the complete selection capability without falling back to legacy chat RPCs", async () => {
+    const selection: ChatSelectionWire = {
+      provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high",
+      featureValues: { fast_mode: true },
+    };
+    const controls: ChatControlsWire = {
+      version: 1,
+      catalog: { providers: [] },
+      profiles: [],
+      catalogError: null,
+      lastSelection: selection,
+      lastSelectionState: "available",
+      lastSelectionError: null,
+    };
+    const features: ChatFeatureDiscoveryWire = {
+      version: 1, selection, status: "ready", features: [], error: null,
+    };
+    const thread = {
+      meetingId: "m-1", status: "running" as const,
+      messages: [{ role: "user" as const, text: "Question", createdAt: "2026-08-21T00:00:00.000Z" }],
+      selection: { provider: "codex", model: "gpt-5" }, failure: null,
+    };
+    const invokePluginRpc = vi.fn(async (_id: string, method: string) => {
+      if (method === "meeting.chat.controls.v1") return controls;
+      if (method === "meeting.chat.features.v1") return features;
+      if (method === "meeting.chat.selection.v1") return { version: 1, selection };
+      return thread;
+    });
+    const client = new MeetlessClient(daemon({ invokePluginRpc }));
+    await client.initialize();
+
+    await expect(client.getChatControls()).resolves.toEqual(controls);
+    await expect(client.discoverChatFeatures(selection)).resolves.toEqual(features);
+    await expect(client.applyChatSelection(selection)).resolves.toEqual(selection);
+    await expect(client.askMeetingQuestionWithSelection({ meetingId: "m-1", question: "Question", selection })).resolves.toEqual(thread);
+    await expect(client.retryMeetingQuestionWithSelection({ meetingId: "m-1", selection })).resolves.toEqual(thread);
+    expect(invokePluginRpc.mock.calls.map((call) => call[1])).toEqual([
+      "meeting.chat.controls.v1",
+      "meeting.chat.features.v1",
+      "meeting.chat.selection.v1",
+      "meeting.chat.ask.v1",
+      "meeting.chat.retry.v1",
     ]);
   });
 

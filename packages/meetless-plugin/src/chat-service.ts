@@ -3,8 +3,21 @@ import { mkdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import type { PluginHandlerContext } from "@paseo/plugin";
-import type { MeetingChatThreadWire } from "@meetless/meeting-contracts";
-import type { MeetingChatThread, TranscriptState } from "@meetless/meeting-domain";
+import type {
+  ChatCapabilityErrorWire,
+  ChatControlModelWire,
+  ChatControlProviderWire,
+  ChatControlsCatalogWire,
+  ChatControlsWire,
+  ChatFeatureDiscoveryWire,
+  ChatFeatureWire,
+  ChatModeWire,
+  ChatProfileWire,
+  ChatSelectionWire,
+  ChatThinkingOptionWire,
+  MeetingChatThreadWire,
+} from "@meetless/meeting-contracts";
+import type { ChatSelection, MeetingChatThread, TranscriptState } from "@meetless/meeting-domain";
 import type { MeetingStore } from "@meetless/meeting-store";
 import { z } from "zod";
 import { MeetingLifecycleCoordinator, type MeetingLifecycleLease } from "./meeting-lifecycle-coordinator.js";
@@ -23,8 +36,21 @@ const AgentAnswerSchema = z.discriminatedUnion("outcome", [
 ]);
 
 const CHAT_OPERATIONAL_FAILURE_MESSAGE = "Meeting chat could not complete. Retry is available.";
+const CHAT_CONTROLS_UNAVAILABLE = "Chat controls are unavailable. Update or repair the host provider before continuing.";
+const CHAT_CONTROLS_UPDATE_REQUIRED = "Chat controls need a host update before this selection can run.";
+const CHAT_CONTROLS_REPAIR_REQUIRED = "This chat selection is no longer available. Choose another model or profile.";
 
 export type AgentAnswer = z.infer<typeof AgentAnswerSchema>;
+
+class ChatControlsError extends Error {
+  constructor(
+    readonly kind: ChatCapabilityErrorWire["kind"],
+    message: string,
+  ) {
+    super(message);
+    this.name = "ChatControlsError";
+  }
+}
 
 export interface ChatProviderOption {
   id: string;
@@ -35,6 +61,7 @@ export interface ChatProviderOption {
 export interface ChatExecutionInput {
   provider: string;
   model: string;
+  selection?: ChatSelection;
   messages: Array<{ role: "user" | "assistant"; text: string }>;
   transcript: TranscriptState;
   recordRetrieved(segmentIds: readonly string[]): Promise<void>;
@@ -44,6 +71,9 @@ export interface MeetingChatAgentPort {
   listProviders(): Promise<ChatProviderOption[]>;
   execute(input: ChatExecutionInput): Promise<AgentAnswer>;
   close(): Promise<void>;
+  getControls?(lastSelection: ChatSelection | null): Promise<ChatControlsWire>;
+  discoverFeatures?(selection: ChatSelection): Promise<ChatFeatureDiscoveryWire>;
+  validateSelection?(selection: ChatSelection): Promise<ChatSelection>;
 }
 
 export class MeetingChatService {
@@ -86,6 +116,26 @@ export class MeetingChatService {
     return thread ? toThreadWire(thread) : null;
   }
 
+  async controls(): Promise<ChatControlsWire> {
+    await this.initialize();
+    if (!this.agent.getControls) throw new Error("This host does not support Meetless chat controls; update the host.");
+    return this.agent.getControls(await this.store.getChatSelection());
+  }
+
+  async features(selection: ChatSelection): Promise<ChatFeatureDiscoveryWire> {
+    await this.initialize();
+    if (!this.agent.discoverFeatures) throw new Error("This host does not support Meetless feature discovery; update the host.");
+    return this.agent.discoverFeatures(selection);
+  }
+
+  async select(selection: ChatSelection): Promise<{ version: 1; selection: ChatSelection }> {
+    await this.initialize();
+    if (!this.agent.validateSelection) throw new Error("This host does not support Meetless chat selection; update the host.");
+    const checked = await this.agent.validateSelection(selection);
+    await this.store.setChatSelection(checked);
+    return { version: 1, selection: checked };
+  }
+
   async ask(input: {
     meetingId: string;
     question: string;
@@ -97,7 +147,7 @@ export class MeetingChatService {
     try {
       await this.initialize();
       const thread = await this.store.startChatQuestion(input);
-      this.startExecution(input.meetingId, thread, lease);
+      this.startExecution(input.meetingId, thread, lease, false);
       return toThreadWire(thread);
     } catch (error) {
       lease.release();
@@ -115,7 +165,51 @@ export class MeetingChatService {
     try {
       await this.initialize();
       const thread = await this.store.retryChatTurn(input.meetingId, input);
-      this.startExecution(input.meetingId, thread, lease);
+      this.startExecution(input.meetingId, thread, lease, false);
+      return toThreadWire(thread);
+    } catch (error) {
+      lease.release();
+      throw error;
+    }
+  }
+
+  async askWithSelection(input: {
+    meetingId: string;
+    question: string;
+    selection: ChatSelection;
+  }): Promise<MeetingChatThreadWire> {
+    const lease = this.lifecycle.tryAcquireWork(input.meetingId, "ask");
+    if (!lease) throw new Error("Meeting deletion is in progress");
+    try {
+      await this.initialize();
+      if (!this.agent.validateSelection) throw new Error("This host does not support Meetless chat selection; update the host.");
+      const selection = await this.agent.validateSelection(input.selection);
+      const thread = await this.store.startChatQuestionWithSelection({
+        meetingId: input.meetingId,
+        question: input.question,
+        selection,
+      });
+      this.startExecution(input.meetingId, thread, lease, true);
+      return toThreadWire(thread);
+    } catch (error) {
+      lease.release();
+      throw error;
+    }
+  }
+
+  async retryWithSelection(input: {
+    meetingId: string;
+    attemptId?: string;
+    selection: ChatSelection;
+  }): Promise<MeetingChatThreadWire> {
+    const lease = this.lifecycle.tryAcquireWork(input.meetingId, "ask");
+    if (!lease) throw new Error("Meeting deletion is in progress");
+    try {
+      await this.initialize();
+      if (!this.agent.validateSelection) throw new Error("This host does not support Meetless chat selection; update the host.");
+      const selection = await this.agent.validateSelection(input.selection);
+      const thread = await this.store.retryChatTurnWithSelection(input.meetingId, { attemptId: input.attemptId, selection });
+      this.startExecution(input.meetingId, thread, lease, true);
       return toThreadWire(thread);
     } catch (error) {
       lease.release();
@@ -132,11 +226,16 @@ export class MeetingChatService {
     return this.activeMeetings.has(meetingId);
   }
 
-  private startExecution(meetingId: string, thread: MeetingChatThread, lease: MeetingLifecycleLease): void {
+  private startExecution(
+    meetingId: string,
+    thread: MeetingChatThread,
+    lease: MeetingLifecycleLease,
+    completeSelection: boolean,
+  ): void {
     const attempt = thread.attempts.find((candidate) => candidate.id === thread.activeAttemptId);
     if (!attempt) throw new Error("Running chat thread has no active attempt");
     this.activeMeetings.add(meetingId);
-    const work = this.execute(meetingId, thread, attempt.id).finally(() => {
+    const work = this.execute(meetingId, thread, attempt.id, completeSelection).finally(() => {
       this.active.delete(work);
       this.activeMeetings.delete(meetingId);
       lease.release();
@@ -144,15 +243,22 @@ export class MeetingChatService {
     this.active.add(work);
   }
 
-  private async execute(meetingId: string, thread: MeetingChatThread, attemptId: string): Promise<void> {
+  private async execute(
+    meetingId: string,
+    thread: MeetingChatThread,
+    attemptId: string,
+    completeSelection: boolean,
+  ): Promise<void> {
     try {
       const transcript = await this.store.getTranscriptForMeeting(meetingId);
       if (!transcript || transcript.status !== "ready" || !transcript.publication) {
         throw new Error("Chat execution requires the immutable ready transcript");
       }
+      const attempt = thread.attempts.find((candidate) => candidate.id === attemptId)!;
       const answer = await this.agent.execute({
-        provider: thread.attempts.find((attempt) => attempt.id === attemptId)!.provider,
-        model: thread.attempts.find((attempt) => attempt.id === attemptId)!.model,
+        provider: attempt.provider,
+        model: attempt.model,
+        ...(completeSelection ? { selection: attempt } : {}),
         messages: thread.messages.map((message) => ({
           role: message.role,
           text: message.role === "user"
@@ -202,6 +308,285 @@ export class PaseoMeetingChatAgentPort implements MeetingChatAgentPort {
     private readonly executionRoot: string,
   ) {}
 
+  async getControls(lastSelection: ChatSelection | null): Promise<ChatControlsWire> {
+    let catalog: ChatControlsCatalogWire;
+    let catalogError: ChatCapabilityErrorWire | null = null;
+    try {
+      catalog = await this.controlsCatalog();
+    } catch (error) {
+      catalog = { providers: [] };
+      catalogError = capabilityError(error, "unavailable", CHAT_CONTROLS_UNAVAILABLE);
+    }
+
+    let profiles: ChatProfileWire[] = [];
+    if (!catalogError) {
+      try {
+        profiles = await this.projectProfiles(catalog);
+      } catch (error) {
+        catalogError = capabilityError(error, "update_required", CHAT_CONTROLS_UPDATE_REQUIRED);
+      }
+    }
+
+    let lastSelectionState: ChatControlsWire["lastSelectionState"] = lastSelection ? "unavailable" : "available";
+    let lastSelectionError: ChatCapabilityErrorWire | null = catalogError;
+    if (lastSelection && !catalogError) {
+      try {
+        await this.validateAgainstCatalog(lastSelection, catalog);
+        await this.discoverFeaturesRaw(lastSelection, catalog);
+        lastSelectionState = "available";
+        lastSelectionError = null;
+      } catch (error) {
+        lastSelectionState = error instanceof ChatControlsError && error.kind === "unavailable"
+          ? "unavailable"
+          : "repair_required";
+        lastSelectionError = capabilityError(error, lastSelectionState === "unavailable" ? "unavailable" : "repair_required", CHAT_CONTROLS_REPAIR_REQUIRED);
+      }
+    }
+    return {
+      version: 1,
+      catalog,
+      profiles,
+      catalogError,
+      lastSelection: lastSelection ? cloneSelection(lastSelection) : null,
+      lastSelectionState,
+      lastSelectionError,
+    };
+  }
+
+  async discoverFeatures(selection: ChatSelection): Promise<ChatFeatureDiscoveryWire> {
+    const safeSelection = normalizeSelection(selection);
+    try {
+      const catalog = await this.controlsCatalog();
+      await this.validateAgainstCatalog(safeSelection, catalog);
+      const features = await this.discoverFeaturesRaw(safeSelection, catalog);
+      return { version: 1, selection: safeSelection, status: "ready", features, error: null };
+    } catch (error) {
+      const kind = error instanceof ChatControlsError ? error.kind : "unavailable";
+      return {
+        version: 1,
+        selection: safeSelection,
+        status: kind,
+        features: null,
+        error: capabilityError(error, kind, kind === "repair_required" ? CHAT_CONTROLS_REPAIR_REQUIRED : kind === "update_required" ? CHAT_CONTROLS_UPDATE_REQUIRED : CHAT_CONTROLS_UNAVAILABLE),
+      };
+    }
+  }
+
+  async validateSelection(selection: ChatSelection): Promise<ChatSelection> {
+    const safeSelection = normalizeSelection(selection);
+    const catalog = await this.controlsCatalog();
+    await this.validateAgainstCatalog(safeSelection, catalog);
+    await this.discoverFeaturesRaw(safeSelection, catalog);
+    return safeSelection;
+  }
+
+  private async controlsCatalog(): Promise<ChatControlsCatalogWire> {
+    let snapshot: unknown;
+    try {
+      snapshot = await this.paseo.providers.waitForReady({ cwd: this.executionRoot });
+    } catch (error) {
+      throw new ChatControlsError("unavailable", CHAT_CONTROLS_UNAVAILABLE);
+    }
+    const entries = records(recordOf(snapshot)?.entries);
+    const providers: ChatControlProviderWire[] = [];
+    for (const entry of entries) {
+      const provider = stringField(entry, "provider");
+      if (!provider) continue;
+      const label = stringField(entry, "label") ?? provider;
+      const enabled = entry.enabled !== false;
+      const status = enumField(entry.status, ["ready", "loading", "error", "unavailable"] as const) ?? "unavailable";
+      if (!enabled || status !== "ready") {
+        providers.push({
+          id: provider,
+          label,
+          status: enabled ? status : "unavailable",
+          models: [],
+          modes: [],
+          defaultModeId: null,
+          error: enabled ? redactedProviderError(status) : "Provider is disabled.",
+        });
+        continue;
+      }
+      try {
+        const rawModels = records(entry.models);
+        const models = rawModels.length > 0
+          ? rawModels
+          : await this.listModelsForControls(provider);
+        const rawModes = records(entry.modes);
+        const modes = rawModes.length > 0
+          ? rawModes
+          : await this.listModesForControls(provider);
+        const projectedModels = models
+          .filter((model) => model.isSelectable !== false)
+          .map(projectModel);
+        const projectedModes = modes.map(projectMode);
+        if (projectedModels.length === 0) {
+          providers.push({
+            id: provider,
+            label,
+            status: "unavailable",
+            models: [],
+            modes: projectedModes,
+            defaultModeId: null,
+            error: "No selectable models are available.",
+          });
+          continue;
+        }
+        const configuredDefault = nullableStringField(entry.defaultModeId);
+        const defaultModeId = configuredDefault === null || projectedModes.some((mode) => mode.id === configuredDefault)
+          ? configuredDefault
+          : (() => { throw new ChatControlsError("update_required", CHAT_CONTROLS_UPDATE_REQUIRED); })();
+        providers.push({
+          id: provider,
+          label,
+          status: "ready",
+          models: projectedModels,
+          modes: projectedModes,
+          defaultModeId,
+          error: null,
+        });
+      } catch (error) {
+        providers.push({
+          id: provider,
+          label,
+          status: error instanceof ChatControlsError && error.kind === "update_required" ? "error" : "unavailable",
+          models: [],
+          modes: [],
+          defaultModeId: null,
+          error: error instanceof ChatControlsError && error.kind === "update_required"
+            ? CHAT_CONTROLS_UPDATE_REQUIRED
+            : redactedProviderError("unavailable"),
+        });
+      }
+    }
+    return { providers };
+  }
+
+  private async listModelsForControls(provider: string): Promise<Record<string, unknown>[]> {
+    try {
+      const result: unknown = await this.paseo.providers.listModels(provider, { cwd: this.executionRoot });
+      return records(recordOf(result)?.models);
+    } catch (error) {
+      throw new ChatControlsError("unavailable", CHAT_CONTROLS_UNAVAILABLE);
+    }
+  }
+
+  private async listModesForControls(provider: string): Promise<Record<string, unknown>[]> {
+    const actions = this.paseo.providers as unknown as { listModes?: (provider: string, options?: { cwd?: string }) => Promise<unknown> };
+    if (typeof actions.listModes !== "function") return [];
+    try {
+      const result = await actions.listModes(provider, { cwd: this.executionRoot });
+      return records(recordOf(result)?.modes);
+    } catch (error) {
+      throw new ChatControlsError("unavailable", CHAT_CONTROLS_UNAVAILABLE);
+    }
+  }
+
+  private async projectProfiles(catalog: ChatControlsCatalogWire): Promise<ChatProfileWire[]> {
+    const response: unknown = await this.paseo.config.get();
+    const responseRecord = recordOf(response);
+    const config = recordOf(responseRecord?.config) ?? responseRecord;
+    const rawProfiles = records(config?.agentProfiles);
+    const profiles: ChatProfileWire[] = [];
+    const seen = new Set<string>();
+    for (const raw of rawProfiles) {
+      const id = stringField(raw, "id");
+      const name = stringField(raw, "name");
+      const provider = stringField(raw, "provider");
+      const model = stringField(raw, "model");
+      if (!id || !name || !provider || !model || seen.has(id)) continue;
+      try {
+        const providerEntry = catalog.providers.find((candidate) => candidate.id === provider);
+        const modelEntry = providerEntry?.models.find((candidate) => candidate.id === model);
+        const featureValues = safeFeatureValues(raw.featureValues);
+        if (!featureValues) continue;
+        const modeId = raw.modeId === undefined
+          ? providerEntry?.defaultModeId ?? null
+          : nullableStringField(raw.modeId);
+        const thinkingOptionId = raw.thinkingOptionId === undefined
+          ? modelEntry?.defaultThinkingOptionId ?? null
+          : nullableStringField(raw.thinkingOptionId);
+        const selection = { provider, model, modeId, thinkingOptionId, featureValues };
+        await this.validateAgainstCatalog(selection, catalog);
+        await this.discoverFeaturesRaw(selection, catalog);
+        seen.add(id);
+        profiles.push({
+          id,
+          name,
+          icon: stringField(raw, "icon"),
+          color: stringField(raw, "color"),
+          selection,
+        });
+      } catch {
+        // A stale or malformed profile is not an actionable control. Keep the
+        // current catalog usable and omit only this profile.
+      }
+    }
+    return profiles;
+  }
+
+  private async validateAgainstCatalog(selection: ChatSelection, catalog: ChatControlsCatalogWire): Promise<void> {
+    const provider = catalog.providers.find((candidate) => candidate.id === selection.provider);
+    if (!provider || provider.status !== "ready") {
+      throw new ChatControlsError(provider?.status === "error" ? "update_required" : "unavailable", provider?.error ?? CHAT_CONTROLS_UNAVAILABLE);
+    }
+    const model = provider.models.find((candidate) => candidate.id === selection.model);
+    if (!model) throw new ChatControlsError("repair_required", CHAT_CONTROLS_REPAIR_REQUIRED);
+    if (selection.modeId !== null && !provider.modes.some((mode) => mode.id === selection.modeId)) {
+      throw new ChatControlsError("repair_required", CHAT_CONTROLS_REPAIR_REQUIRED);
+    }
+    if (selection.thinkingOptionId !== null && !model.thinkingOptions.some((option) => option.id === selection.thinkingOptionId)) {
+      throw new ChatControlsError("repair_required", CHAT_CONTROLS_REPAIR_REQUIRED);
+    }
+  }
+
+  private async discoverFeaturesRaw(selection: ChatSelection, catalog: ChatControlsCatalogWire): Promise<ChatFeatureWire[]> {
+    await this.validateAgainstCatalog(selection, catalog);
+    const actions = this.paseo.providers as unknown as {
+      listFeatures?: (draft: Record<string, unknown>, options?: { requestId?: string }) => Promise<unknown>;
+    };
+    if (typeof actions.listFeatures !== "function") {
+      throw new ChatControlsError("update_required", CHAT_CONTROLS_UPDATE_REQUIRED);
+    }
+    let result: unknown;
+    try {
+      result = await actions.listFeatures({
+        provider: `${selection.provider}/${selection.model}`,
+        ...(selection.modeId === null ? {} : { modeId: selection.modeId }),
+        ...(selection.thinkingOptionId === null ? {} : { thinkingOptionId: selection.thinkingOptionId }),
+        featureValues: selection.featureValues,
+      }, { requestId: `meetless-features-${Date.now()}` });
+    } catch (error) {
+      throw new ChatControlsError("unavailable", CHAT_CONTROLS_UNAVAILABLE);
+    }
+    const resultRecord = recordOf(result);
+    if (!resultRecord) throw new ChatControlsError("update_required", CHAT_CONTROLS_UPDATE_REQUIRED);
+    if (resultRecord.error !== undefined && resultRecord.error !== null && typeof resultRecord.error !== "string") {
+      throw new ChatControlsError("update_required", CHAT_CONTROLS_UPDATE_REQUIRED);
+    }
+    if (typeof resultRecord.error === "string" && resultRecord.error.trim()) {
+      throw new ChatControlsError("unavailable", CHAT_CONTROLS_UNAVAILABLE);
+    }
+    if (!Array.isArray(resultRecord.features)) {
+      throw new ChatControlsError("update_required", CHAT_CONTROLS_UPDATE_REQUIRED);
+    }
+    const rawFeatures: Record<string, unknown>[] = [];
+    for (const feature of resultRecord.features) {
+      const record = recordOf(feature);
+      if (!record) throw new ChatControlsError("update_required", CHAT_CONTROLS_UPDATE_REQUIRED);
+      rawFeatures.push(record);
+    }
+    try {
+      const featureIds = new Set(rawFeatures.map((feature) => stringField(feature, "id")).filter((id): id is string => id !== null));
+      const unknownFeature = Object.keys(selection.featureValues).find((id) => !featureIds.has(id));
+      if (unknownFeature) throw new ChatControlsError("repair_required", CHAT_CONTROLS_REPAIR_REQUIRED);
+      return rawFeatures.map((feature) => projectFeature(feature, selection.featureValues));
+    } catch (error) {
+      if (error instanceof ChatControlsError) throw error;
+      throw new ChatControlsError("update_required", CHAT_CONTROLS_UPDATE_REQUIRED);
+    }
+  }
+
   async listProviders(): Promise<ChatProviderOption[]> {
     const snapshot = await this.paseo.providers.waitForReady({ cwd: this.executionRoot });
     const entries = snapshot.entries ?? [];
@@ -224,18 +609,30 @@ export class PaseoMeetingChatAgentPort implements MeetingChatAgentPort {
   }
 
   async execute(input: ChatExecutionInput): Promise<AgentAnswer> {
+    const selection = input.selection
+      ? await this.validateSelection(input.selection)
+      : {
+          provider: input.provider,
+          model: input.model,
+          modeId: null,
+          thinkingOptionId: null,
+          featureValues: {},
+        };
     await mkdir(this.executionRoot, { recursive: true, mode: 0o700 });
     this.workspace ??= await this.paseo.workspaces.open(this.executionRoot);
     const resource = await startTranscriptMcp(input);
     this.resources.add(resource);
     let agent: Awaited<ReturnType<typeof this.workspace.agents.create>> | null = null;
     try {
-      const provider = input.model.startsWith(`${input.provider}/`)
-        ? input.model
-        : `${input.provider}/${input.model}`;
+      const provider = selection.model.startsWith(`${selection.provider}/`)
+        ? selection.model
+        : `${selection.provider}/${selection.model}`;
       agent = await this.workspace.agents.create({
         config: {
           provider,
+          ...(selection.modeId === null ? {} : { modeId: selection.modeId }),
+          ...(selection.thinkingOptionId === null ? {} : { thinkingOptionId: selection.thinkingOptionId }),
+          featureValues: { ...selection.featureValues },
           systemPrompt: SYSTEM_PROMPT,
           mcpServers: { meeting: { type: "http", url: resource.url } },
           toolPolicy: {
@@ -244,7 +641,7 @@ export class PaseoMeetingChatAgentPort implements MeetingChatAgentPort {
               { kind: "mcp", server: "meeting", tool: "get_meeting_segments" },
             ],
           },
-          ...(input.provider === "codex" ? {
+          ...(selection.provider === "codex" ? {
             options: {
               approval_policy: "never",
               sandbox_mode: "read-only",
@@ -290,6 +687,146 @@ export class PaseoMeetingChatAgentPort implements MeetingChatAgentPort {
       this.workspace = null;
     }
   }
+}
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function records(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.map(recordOf).filter((entry): entry is Record<string, unknown> => entry !== null) : [];
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+function nullableStringField(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !value.trim()) throw new ChatControlsError("update_required", CHAT_CONTROLS_UPDATE_REQUIRED);
+  return value.trim();
+}
+
+function enumField<const T extends readonly string[]>(value: unknown, values: T): T[number] | null {
+  return typeof value === "string" && (values as readonly string[]).includes(value) ? value as T[number] : null;
+}
+
+function projectMode(mode: Record<string, unknown>): ChatModeWire {
+  const id = stringField(mode, "id");
+  const label = stringField(mode, "label");
+  if (!id || !label) throw new ChatControlsError("update_required", CHAT_CONTROLS_UPDATE_REQUIRED);
+  return { id, label };
+}
+
+function projectThinkingOption(option: Record<string, unknown>): ChatThinkingOptionWire {
+  const id = stringField(option, "id");
+  const label = stringField(option, "label");
+  if (!id || !label) throw new ChatControlsError("update_required", CHAT_CONTROLS_UPDATE_REQUIRED);
+  return { id, label };
+}
+
+function projectModel(model: Record<string, unknown>): ChatControlModelWire {
+  const id = stringField(model, "id");
+  const label = stringField(model, "label");
+  if (!id || !label) throw new ChatControlsError("update_required", CHAT_CONTROLS_UPDATE_REQUIRED);
+  const thinkingOptions = records(model.thinkingOptions).map(projectThinkingOption);
+  const configuredDefault = nullableStringField(model.defaultThinkingOptionId);
+  const defaultThinkingOptionId = configuredDefault === null || thinkingOptions.some((option) => option.id === configuredDefault)
+    ? configuredDefault
+    : (() => { throw new ChatControlsError("update_required", CHAT_CONTROLS_UPDATE_REQUIRED); })();
+  return {
+    id,
+    label,
+    isDefault: model.isDefault === true,
+    thinkingOptions,
+    defaultThinkingOptionId,
+  };
+}
+
+function safeFeatureValues(value: unknown): Record<string, boolean | string | null> | null {
+  const source = recordOf(value);
+  if (!source && value !== undefined) return null;
+  const result: Record<string, boolean | string | null> = {};
+  for (const [key, featureValue] of Object.entries(source ?? {})) {
+    const id = key.trim();
+    if (!id || (typeof featureValue !== "boolean" && typeof featureValue !== "string" && featureValue !== null)) return null;
+    result[id] = featureValue;
+  }
+  return result;
+}
+
+function projectFeature(
+  feature: Record<string, unknown>,
+  selectedValues: Record<string, boolean | string | null>,
+): ChatFeatureWire {
+  const id = stringField(feature, "id");
+  const label = stringField(feature, "label");
+  if (!id || !label) throw new Error("Malformed feature");
+  const base = {
+    id,
+    label,
+    ...(typeof feature.description === "string" ? { description: feature.description } : {}),
+    ...(typeof feature.tooltip === "string" ? { tooltip: feature.tooltip } : {}),
+    ...(typeof feature.icon === "string" && feature.icon.trim() ? { icon: feature.icon.trim() } : {}),
+  };
+  if (feature.type === "toggle" && typeof feature.value === "boolean") {
+    if (Object.hasOwn(selectedValues, id) && typeof selectedValues[id] !== "boolean") {
+      throw new ChatControlsError("repair_required", CHAT_CONTROLS_REPAIR_REQUIRED);
+    }
+    return { ...base, type: "toggle", value: Object.hasOwn(selectedValues, id) ? selectedValues[id] as boolean : feature.value };
+  }
+  if (feature.type === "select" && (typeof feature.value === "string" || feature.value === null)) {
+    const options = records(feature.options).map(projectThinkingOption);
+    const selected = Object.hasOwn(selectedValues, id) ? selectedValues[id] : feature.value;
+    if (selected !== null && typeof selected !== "string") throw new Error("Malformed select feature value");
+    if (selected !== null && !options.some((option) => option.id === selected)) throw new Error("Unknown select feature value");
+    return { ...base, type: "select", value: selected, options };
+  }
+  throw new Error("Malformed feature");
+}
+
+function normalizeSelection(selection: ChatSelection): ChatSelection {
+  const provider = typeof selection.provider === "string" ? selection.provider.trim() : "";
+  const model = typeof selection.model === "string" ? selection.model.trim() : "";
+  const modeId = selection.modeId === null ? null : typeof selection.modeId === "string" ? selection.modeId.trim() : "";
+  const thinkingOptionId = selection.thinkingOptionId === null
+    ? null
+    : typeof selection.thinkingOptionId === "string" ? selection.thinkingOptionId.trim() : "";
+  const featureValues = safeFeatureValues(selection.featureValues);
+  if (!provider || !model || modeId === "" || thinkingOptionId === "" || !featureValues) {
+    throw new ChatControlsError("repair_required", CHAT_CONTROLS_REPAIR_REQUIRED);
+  }
+  return { provider, model, modeId, thinkingOptionId, featureValues };
+}
+
+function cloneSelection(selection: ChatSelection): ChatSelection {
+  return {
+    provider: selection.provider,
+    model: selection.model,
+    modeId: selection.modeId,
+    thinkingOptionId: selection.thinkingOptionId,
+    featureValues: { ...selection.featureValues },
+  };
+}
+
+function capabilityError(
+  error: unknown,
+  fallbackKind: ChatCapabilityErrorWire["kind"],
+  fallbackMessage: string,
+): ChatCapabilityErrorWire {
+  if (error instanceof ChatControlsError) return { kind: error.kind, message: error.message };
+  return { kind: fallbackKind, message: fallbackMessage };
+}
+
+function redactedProviderError(status: string): string {
+  return status === "error"
+    ? "Provider needs an update or repair before it can be used."
+    : "Provider is unavailable on this host.";
 }
 
 export function toThreadWire(thread: MeetingChatThread): MeetingChatThreadWire {

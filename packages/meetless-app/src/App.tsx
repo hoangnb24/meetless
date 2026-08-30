@@ -8,7 +8,15 @@ import {
   type CompanionProfile,
   type MeetlessClient,
 } from "@meetless/client";
-import type { ChatProviderWire, MeetingChatThreadWire, MeetingWire } from "@meetless/meeting-contracts";
+import {
+  chatSelectionIdentity,
+  type ChatControlsWire,
+  type ChatFeatureDiscoveryWire,
+  type ChatProviderWire,
+  type ChatSelectionWire,
+  type MeetingChatThreadWire,
+  type MeetingWire,
+} from "@meetless/meeting-contracts";
 import type { CitationWire, TranscriptWire, TranscriptionProviderStatusWire } from "@meetless/meeting-contracts";
 import { MeetingListSurface, RecordingStrip, type CitationEvidenceState, type LayoutTier } from "@meetless/meeting-surface";
 import { resolveAppMode, resolveDaemonUrl, supportsDesktopRecording } from "./runtime";
@@ -21,23 +29,6 @@ interface ActiveConnection {
   client: MeetlessClient;
   epoch: number;
   close?(): Promise<void>;
-}
-
-function resolveChatSelection(
-  providers: ChatProviderWire[],
-  savedSelection: MeetingChatThreadWire["selection"],
-): { provider: string | null; model: string | null } {
-  const savedProvider = savedSelection
-    ? providers.find((candidate) => candidate.id === savedSelection.provider)
-    : undefined;
-  const savedModel = savedProvider?.models.find((candidate) => candidate.id === savedSelection?.model);
-  if (savedProvider && savedModel) return { provider: savedProvider.id, model: savedModel.id };
-
-  const firstProvider = providers[0];
-  if (!firstProvider) return { provider: null, model: null };
-  const firstModel = firstProvider.models.find((candidate) => candidate.isDefault) ?? firstProvider.models[0];
-  if (!firstModel) return { provider: null, model: null };
-  return { provider: firstProvider.id, model: firstModel.id };
 }
 
 export function App() {
@@ -68,18 +59,20 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [consentStatus, setConsentStatus] = useState<"unknown" | "granted">("unknown");
   const [providerStatus, setProviderStatus] = useState<TranscriptionProviderStatusWire["status"] | undefined>();
-  const [chatProviders, setChatProviders] = useState<ChatProviderWire[]>([]);
+  const [chatControls, setChatControls] = useState<ChatControlsWire | null>(null);
+  const [chatSelection, setChatSelection] = useState<ChatSelectionWire | null>(null);
+  const [chatFeatures, setChatFeatures] = useState<ChatFeatureDiscoveryWire | null>(null);
+  const [chatFeaturesLoading, setChatFeaturesLoading] = useState(false);
   const [chatThread, setChatThread] = useState<MeetingChatThreadWire | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
-  const [chatProvider, setChatProvider] = useState<string | null>(null);
-  const [chatModel, setChatModel] = useState<string | null>(null);
   const [citationEvidence, setCitationEvidence] = useState<CitationEvidenceState | null>(null);
   const [deleteConfirmationMeetingId, setDeleteConfirmationMeetingId] = useState<string | null>(null);
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const playback = useRef<CitationPlaybackHandle | null>(null);
   const selectionVersion = useRef(0);
+  const chatSelectionRequest = useRef(0);
   const citationSequence = useRef(0);
   const selectedMeetingIdRef = useRef<string | null>(null);
   const deletePendingRef = useRef(false);
@@ -141,6 +134,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     if (deletePendingRef.current) return;
     const active = connection.current;
     if (!active) throw new Error("Meetless host is not connected yet");
+    const controlsSelectionRequest = chatSelectionRequest.current;
     const version = selectionVersion.current + 1;
     selectionVersion.current = version;
     citationSequence.current += 1;
@@ -154,12 +148,10 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setTranscriptError(null);
     setConsentStatus("unknown");
     setProviderStatus(undefined);
-    setChatProviders([]);
+    setChatControls(null);
     setChatThread(null);
     setChatLoading(false);
     setChatError(null);
-    setChatProvider(null);
-    setChatModel(null);
     try {
       const result = await active.client.getMeetingTranscript(meetingId);
       if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
@@ -171,20 +163,24 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
       if (result.transcript?.status === "ready") {
         setChatLoading(true);
         try {
-          const [providerResult, thread] = await Promise.all([
-            active.client.listChatProviders(),
-            active.client.getMeetingChat(meetingId),
-          ]);
+          const threadPromise = active.client.getMeetingChat(meetingId);
+          const controlsCapability = typeof active.client.getChatControls === "function";
+          const controlsPromise = controlsCapability
+            ? active.client.getChatControls()
+            : active.client.listChatProviders().then((providerResult) => legacyChatControls(providerResult.providers, null));
+          const [controls, thread] = await Promise.all([controlsPromise, threadPromise]);
           if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
-          const selection = resolveChatSelection(providerResult.providers, thread?.selection ?? null);
-          setChatProviders(providerResult.providers);
+          setChatControls(controls);
+          if (chatSelectionRequest.current === controlsSelectionRequest) {
+            setChatSelection(controlsCapability
+              ? controls.lastSelection
+              : resolveLegacySelection(legacyProvidersFromControls(controls.catalog), thread?.selection ?? null));
+          }
           setChatThread(thread);
-          setChatProvider(selection.provider);
-          setChatModel(selection.model);
-          setChatError(null);
+          setChatError(controlsCapability ? chatControlsErrorMessage(controls) : null);
         } catch (chatReason) {
           if (isCurrentConnection(active) && selectionVersion.current === version && selectedMeetingIdRef.current === meetingId) {
-            setChatError(chatReason instanceof Error ? chatReason.message : String(chatReason));
+            setChatError("Chat controls are unavailable. Update or repair the host.");
           }
         } finally {
           if (isCurrentConnection(active) && selectionVersion.current === version && selectedMeetingIdRef.current === meetingId) {
@@ -212,12 +208,10 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setTranscriptError(null);
     setConsentStatus("unknown");
     setProviderStatus(undefined);
-    setChatProviders([]);
+    setChatControls(null);
     setChatThread(null);
     setChatLoading(false);
     setChatError(null);
-    setChatProvider(null);
-    setChatModel(null);
   }, []);
 
   const requestDeleteMeeting = useCallback((meetingId: string) => {
@@ -268,26 +262,39 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     }
   }, [closeTranscript, deleteConfirmationMeetingId, deletePending, isCurrentConnection]);
 
-  const selectChatModel = useCallback((provider: string, model: string) => {
-    const currentProvider = chatProviders.find((candidate) => candidate.id === provider);
-    if (!currentProvider?.models.some((candidate) => candidate.id === model)) return;
-    setChatProvider(provider);
-    setChatModel(model);
+  const selectChatSelection = useCallback(async (selection: ChatSelectionWire) => {
+    const previous = chatSelection;
+    const request = chatSelectionRequest.current + 1;
+    chatSelectionRequest.current = request;
     setChatError(null);
-  }, [chatProviders]);
+    setChatSelection(selection);
+    const active = connection.current;
+    if (!active || typeof active.client.applyChatSelection !== "function") return;
+    try {
+      const applied = await active.client.applyChatSelection(selection);
+      if (isCurrentConnection(active) && chatSelectionRequest.current === request) setChatSelection(applied);
+    } catch (reason) {
+      if (isCurrentConnection(active) && chatSelectionRequest.current === request) {
+        setChatSelection(previous);
+        setChatError("This chat selection is no longer available. Choose another model or profile.");
+      }
+    }
+  }, [chatSelection, isCurrentConnection]);
 
   const askQuestion = useCallback(async (question: string) => {
     const active = connection.current;
     const meetingId = selectedMeetingIdRef.current;
-    if (!active || !meetingId || !chatProvider || !chatModel) {
-      throw new Error("Select an available chat provider and model first");
+    if (!active || !meetingId || !chatSelection) {
+      throw new Error("Select an available chat model first");
     }
     setChatLoading(true);
     setChatError(null);
     try {
-      const thread = await active.client.askMeetingQuestion({
-        meetingId, question, provider: chatProvider, model: chatModel,
-      });
+      const thread = typeof active.client.askMeetingQuestionWithSelection === "function"
+        ? await active.client.askMeetingQuestionWithSelection({ meetingId, question, selection: chatSelection })
+        : await active.client.askMeetingQuestion({
+            meetingId, question, provider: chatSelection.provider, model: chatSelection.model,
+          });
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) setChatThread(thread);
     } catch (reason) {
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) {
@@ -296,18 +303,20 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     } finally {
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) setChatLoading(false);
     }
-  }, [chatModel, chatProvider, isCurrentConnection]);
+  }, [chatSelection, isCurrentConnection]);
 
   const retryQuestion = useCallback(async () => {
     const active = connection.current;
     const meetingId = selectedMeetingIdRef.current;
-    if (!active || !meetingId || !chatProvider || !chatModel) return;
+    if (!active || !meetingId || !chatSelection) return;
     setChatLoading(true);
     setChatError(null);
     try {
-      const thread = await active.client.retryMeetingQuestion({
-        meetingId, provider: chatProvider, model: chatModel,
-      });
+      const thread = typeof active.client.retryMeetingQuestionWithSelection === "function"
+        ? await active.client.retryMeetingQuestionWithSelection({ meetingId, selection: chatSelection })
+        : await active.client.retryMeetingQuestion({
+            meetingId, provider: chatSelection.provider, model: chatSelection.model,
+          });
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) setChatThread(thread);
     } catch (reason) {
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) {
@@ -316,7 +325,40 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     } finally {
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) setChatLoading(false);
     }
-  }, [chatModel, chatProvider, isCurrentConnection]);
+  }, [chatSelection, isCurrentConnection]);
+
+  useEffect(() => {
+    const active = connection.current;
+    if (!active || !chatSelection || typeof active.client.discoverChatFeatures !== "function") {
+      setChatFeatures(null);
+      setChatFeaturesLoading(false);
+      return;
+    }
+    const epoch = active.epoch;
+    const identity = chatSelectionIdentity(chatSelection);
+    let cancelled = false;
+    setChatFeaturesLoading(true);
+    void active.client.discoverChatFeatures(chatSelection).then((result) => {
+      if (
+        cancelled ||
+        !isCurrentConnection(active) ||
+        connectionEpoch.current !== epoch ||
+        !connection.current ||
+        !chatSelection ||
+        chatSelectionIdentity(chatSelection) !== identity ||
+        chatSelectionIdentity(result.selection) !== identity
+      ) return;
+      setChatFeatures(result);
+      setChatFeaturesLoading(false);
+      if (result.status !== "ready") setChatError(result.error?.message ?? "Chat features are unavailable. Update or repair the host.");
+    }).catch(() => {
+      if (cancelled || !isCurrentConnection(active) || connectionEpoch.current !== epoch) return;
+      setChatFeatures(null);
+      setChatFeaturesLoading(false);
+      setChatError("Chat features are unavailable. Update or repair the host.");
+    });
+    return () => { cancelled = true; };
+  }, [chatSelection, isCurrentConnection]);
 
   useEffect(() => {
     if (chatThread?.status !== "running" || !selectedMeetingId) return;
@@ -468,8 +510,32 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
           return;
         }
         const active = installConnection(connected.client, connected.close);
+        const controlsSelectionEpoch = selectionVersion.current;
+        const controlsSelectionRequest = chatSelectionRequest.current;
         await refresh();
         if (cancelled || !isCurrentConnection(active)) return;
+        if (typeof active.client.getChatControls === "function") {
+          try {
+            const controls = await active.client.getChatControls();
+            if (isCurrentConnection(active)) setChatControls(controls);
+            if (
+              isCurrentConnection(active)
+              && selectionVersion.current === controlsSelectionEpoch
+              && chatSelectionRequest.current === controlsSelectionRequest
+            ) {
+              setChatSelection(controls.lastSelection);
+              setChatError(chatControlsErrorMessage(controls));
+            }
+          } catch {
+            if (
+              isCurrentConnection(active)
+              && selectionVersion.current === controlsSelectionEpoch
+              && chatSelectionRequest.current === controlsSelectionRequest
+            ) {
+              setChatError("Chat controls are unavailable. Update or repair the host.");
+            }
+          }
+        }
         setStatus("Host online");
         setHostConnectionStatus("online");
       })
@@ -520,30 +586,29 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         })}`);
       }
       setError(null);
+      setChatControls(restored.chatControls);
+      setChatSelection(restored.chatSelection);
+      const restoredChatError = chatControlsErrorMessage(restored.chatControls);
       if (restored.detail) {
         setTranscript(restored.detail.transcript);
         setTranscriptLoading(false);
         setTranscriptError(null);
         setConsentStatus(restored.detail.consent.status);
         setProviderStatus(restored.detail.provider.status);
-        setChatProviders(restored.chatProviders);
-        setChatThread(restored.chatThread);
-        setChatProvider(restored.chatProvider);
-        setChatModel(restored.chatModel);
+        setChatFeatures(null);
+        setChatThread(restored.chatThread ?? null);
         setChatLoading(false);
-        setChatError(null);
+        setChatError(restoredChatError);
       } else if (!selected) {
         setTranscript(null);
         setTranscriptLoading(false);
         setTranscriptError(null);
         setConsentStatus("unknown");
         setProviderStatus(undefined);
-        setChatProviders([]);
+        setChatFeatures(null);
         setChatThread(null);
-        setChatProvider(null);
-        setChatModel(null);
         setChatLoading(false);
-        setChatError(null);
+        setChatError(restoredChatError);
       }
     });
     companionSession.current = session;
@@ -676,13 +741,19 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         onRetryTranscription={interactive && consentStatus === "granted" ? grantConsent : undefined}
         onCitation={interactive ? playCitation : undefined}
         citationEvidence={citationEvidence}
-        chatProviders={chatProviders}
+        chatCatalog={chatControls?.catalog}
+        chatCatalogError={chatControls?.catalogError ?? null}
+        chatProfiles={chatControls?.profiles}
+        chatSelection={chatSelection}
+        chatFeatures={chatFeatures}
+        chatFeaturesLoading={chatFeaturesLoading}
+        chatProviders={legacyProvidersFromControls(chatControls?.catalog)}
+        chatProvider={chatSelection?.provider ?? null}
+        chatModel={chatSelection?.model ?? null}
         chatThread={chatThread}
         chatLoading={chatLoading}
         chatError={chatError}
-        chatProvider={chatProvider}
-        chatModel={chatModel}
-        onChatSelection={selectChatModel}
+        onChatSelectionBundle={selectChatSelection}
         onAskQuestion={interactive ? askQuestion : undefined}
         onRetryQuestion={interactive ? retryQuestion : undefined}
         onChangeHost={mode === "companion" ? changeCompanionHost : undefined}
@@ -700,10 +771,24 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
 
 export async function loadCompanionRestoration(client: MeetlessClient, selectedMeetingId: string | null) {
   const meetings = await client.listMeetings();
+  if (typeof client.getChatControls === "function") {
+    const controls = await client.getChatControls();
+    if (!selectedMeetingId) {
+      return { meetings, detail: null, chatControls: controls, chatSelection: controls.lastSelection };
+    }
+    const detail = await client.getMeetingTranscript(selectedMeetingId);
+    if (detail.transcript?.status !== "ready") {
+      return { meetings, detail, chatControls: controls, chatSelection: controls.lastSelection };
+    }
+    const chatThread = await client.getMeetingChat(selectedMeetingId);
+    return { meetings, detail, chatControls: controls, chatSelection: controls.lastSelection, chatThread };
+  }
   if (!selectedMeetingId) {
     return {
       meetings,
       detail: null,
+      chatControls: legacyChatControls([], null),
+      chatSelection: null,
       chatProviders: [] as ChatProviderWire[],
       chatThread: null as MeetingChatThreadWire | null,
       chatProvider: null as string | null,
@@ -715,6 +800,8 @@ export async function loadCompanionRestoration(client: MeetlessClient, selectedM
     return {
       meetings,
       detail,
+      chatControls: legacyChatControls([], null),
+      chatSelection: null,
       chatProviders: [] as ChatProviderWire[],
       chatThread: null as MeetingChatThreadWire | null,
       chatProvider: null as string | null,
@@ -725,15 +812,83 @@ export async function loadCompanionRestoration(client: MeetlessClient, selectedM
     client.listChatProviders(),
     client.getMeetingChat(selectedMeetingId),
   ]);
-  const selection = resolveChatSelection(providerResult.providers, chatThread?.selection ?? null);
+  const selection = resolveLegacySelection(providerResult.providers, chatThread?.selection ?? null);
   return {
     meetings,
     detail,
+    chatControls: legacyChatControls(providerResult.providers, chatThread?.selection ?? null),
+    chatSelection: selection,
     chatProviders: providerResult.providers,
     chatThread,
-    chatProvider: selection.provider,
-    chatModel: selection.model,
+    chatProvider: selection?.provider ?? null,
+    chatModel: selection?.model ?? null,
   };
+}
+
+function legacySelection(selection: MeetingChatThreadWire["selection"]): ChatSelectionWire | null {
+  return selection ? {
+    provider: selection.provider,
+    model: selection.model,
+    modeId: null,
+    thinkingOptionId: null,
+    featureValues: {},
+  } : null;
+}
+
+function resolveLegacySelection(providers: ChatProviderWire[], savedSelection: MeetingChatThreadWire["selection"]): ChatSelectionWire | null {
+  const savedProvider = savedSelection ? providers.find((provider) => provider.id === savedSelection.provider) : undefined;
+  const savedModel = savedProvider?.models.find((model) => model.id === savedSelection?.model);
+  if (savedProvider && savedModel) return legacySelection({ provider: savedProvider.id, model: savedModel.id });
+  const provider = providers[0];
+  if (!provider) return null;
+  const model = provider.models.find((candidate) => candidate.isDefault) ?? provider.models[0];
+  return model ? legacySelection({ provider: provider.id, model: model.id }) : null;
+}
+
+function legacyProvidersFromControls(catalog: ChatControlsWire["catalog"] | undefined): ChatProviderWire[] {
+  return (catalog?.providers ?? [])
+    .filter((provider) => provider.status === "ready" && provider.models.length > 0)
+    .map((provider) => ({
+      id: provider.id,
+      label: provider.label,
+      models: provider.models.map((model) => ({ id: model.id, label: model.label, isDefault: model.isDefault })),
+    }));
+}
+
+function legacyChatControls(providers: ChatProviderWire[], selection: MeetingChatThreadWire["selection"]): ChatControlsWire {
+  return {
+    version: 1,
+    catalog: {
+      providers: providers.map((provider) => ({
+        id: provider.id,
+        label: provider.label,
+        status: "ready" as const,
+        models: provider.models.map((model) => ({
+          id: model.id,
+          label: model.label,
+          isDefault: model.isDefault,
+          thinkingOptions: [],
+          defaultThinkingOptionId: null,
+        })),
+        modes: [],
+        defaultModeId: null,
+        error: null,
+      })),
+    },
+    profiles: [],
+    catalogError: null,
+    lastSelection: legacySelection(selection),
+    lastSelectionState: "available",
+    lastSelectionError: null,
+  };
+}
+
+function chatControlsErrorMessage(controls: ChatControlsWire): string | null {
+  if (controls.catalogError) return controls.catalogError.message;
+  if (controls.lastSelectionState !== "available") {
+    return controls.lastSelectionError?.message ?? "This chat selection is no longer available. Choose another model or profile.";
+  }
+  return null;
 }
 
 const styles = StyleSheet.create({ safeArea: { backgroundColor: "#111316", flex: 1 } });

@@ -2,9 +2,14 @@ import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { callPluginRpc } from "@paseo/plugin/host";
 import {
   MeetingChatAskRpc,
+  MeetingChatAskV1Rpc,
+  MeetingChatControlsRpc,
+  MeetingChatFeaturesRpc,
   MeetingChatGetRpc,
   MeetingChatProvidersRpc,
   MeetingChatRetryRpc,
+  MeetingChatRetryV1Rpc,
+  MeetingChatSelectionRpc,
   MeetingCreateRpc,
   MeetingDeleteRpc,
   MeetingCitationResolveRpc,
@@ -15,6 +20,9 @@ import {
   type TranscriptWire,
   type CitationWire,
   type ChatProviderWire,
+  type ChatControlsWire,
+  type ChatFeatureDiscoveryWire,
+  type ChatSelectionWire,
   type MeetingChatThreadWire,
   type MeetingDeleteResultWire,
   type TranscriptionProviderStatusWire,
@@ -328,6 +336,34 @@ export class MeetlessClient {
     );
   }
 
+  async getChatControls(): Promise<ChatControlsWire> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingChatControlsRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      {},
+    );
+  }
+
+  async discoverChatFeatures(selection: ChatSelectionWire): Promise<ChatFeatureDiscoveryWire> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingChatFeaturesRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      { selection },
+    );
+  }
+
+  async applyChatSelection(selection: ChatSelectionWire): Promise<ChatSelectionWire> {
+    this.requireReady();
+    const output = await callPluginRpc(
+      MeetingChatSelectionRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      { selection },
+    );
+    return output.selection;
+  }
+
   async getMeetingChat(meetingId: string): Promise<MeetingChatThreadWire | null> {
     this.requireReady();
     const output = await callPluginRpc(
@@ -360,6 +396,32 @@ export class MeetlessClient {
     this.requireReady();
     return callPluginRpc(
       MeetingChatRetryRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      input,
+    );
+  }
+
+  async askMeetingQuestionWithSelection(input: {
+    meetingId: string;
+    question: string;
+    selection: ChatSelectionWire;
+  }): Promise<MeetingChatThreadWire> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingChatAskV1Rpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      input,
+    );
+  }
+
+  async retryMeetingQuestionWithSelection(input: {
+    meetingId: string;
+    attemptId?: string;
+    selection: ChatSelectionWire;
+  }): Promise<MeetingChatThreadWire> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingChatRetryV1Rpc,
       (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
       input,
     );

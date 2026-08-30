@@ -9,6 +9,7 @@ import {
   recordChatRetrieval,
   retryChatAttempt,
   startChatQuestion,
+  type ChatSelection,
   type MeetingChatThread,
   type TranscriptState,
 } from "@meetless/meeting-domain";
@@ -99,6 +100,39 @@ describe("meeting chat service", () => {
     await vi.waitFor(async () => expect((await service.get("meeting-1"))?.status).toBe("ready"));
     expect((await service.get("meeting-1"))?.messages.filter((message) => message.role === "user")).toHaveLength(1);
     expect(store.reconcile).toHaveBeenCalledOnce();
+  });
+
+  test("new-path ask and retry use atomic store selection mutations", async () => {
+    const store = fakeStore();
+    let executions = 0;
+    const agent: MeetingChatAgentPort = {
+      ...fakeAgent(async () => {
+        executions += 1;
+        if (executions === 1) throw new Error("provider failed");
+        return { outcome: "insufficient_evidence", text: null, citationSegmentIds: [] };
+      }),
+      validateSelection: vi.fn(async (selection) => selection),
+    };
+    const startWithSelection = vi.spyOn(store.port, "startChatQuestionWithSelection");
+    const retryWithSelection = vi.spyOn(store.port, "retryChatTurnWithSelection");
+    const setSelection = vi.spyOn(store.port, "setChatSelection");
+    const service = new MeetingChatService(store.port, agent);
+    const firstSelection: ChatSelection = {
+      provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high", featureValues: { fast_mode: true },
+    };
+    await service.askWithSelection({ meetingId: "meeting-1", question: "Question", selection: firstSelection });
+    await vi.waitFor(async () => expect((await service.get("meeting-1"))?.status).toBe("failed"));
+
+    const retrySelection: ChatSelection = {
+      provider: "codex", model: "gpt-5-mini", modeId: "reviewer", thinkingOptionId: "low", featureValues: { fast_mode: false },
+    };
+    await service.retryWithSelection({ meetingId: "meeting-1", selection: retrySelection });
+    await vi.waitFor(async () => expect((await service.get("meeting-1"))?.status).toBe("ready"));
+
+    expect(startWithSelection).toHaveBeenCalledWith({ meetingId: "meeting-1", question: "Question", selection: firstSelection });
+    expect(retryWithSelection).toHaveBeenCalledWith("meeting-1", { attemptId: undefined, selection: retrySelection });
+    expect(setSelection).not.toHaveBeenCalled();
+    expect(agent.validateSelection).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -210,6 +244,200 @@ describe("Paseo execution adapter", () => {
     await expect(port.close()).resolves.toBeUndefined();
     expect(archiveWorkspace).toHaveBeenCalledTimes(2);
   });
+
+  test("projects full profiles, validates dynamic controls, preserves mode IDs, and fixes the evidence envelope", async () => {
+    const executionRoot = await mkdtemp(path.join(tmpdir(), "meetless-controls-"));
+    roots.push(executionRoot);
+    const create = vi.fn(async () => ({
+      waitForFinish: async () => ({
+        status: "idle" as const, final: null, error: null,
+        lastMessage: JSON.stringify({ outcome: "insufficient_evidence", text: null, citationSegmentIds: [] }),
+      }),
+      archive: async () => ({ archivedAt: new Date().toISOString() }),
+    }));
+    const paseo = {
+      providers: {
+        waitForReady: async () => ({ entries: [{
+          provider: "codex", enabled: true, status: "ready", label: "Codex", defaultModeId: "danger-mode",
+          modes: [{ id: "danger-mode", label: "Danger mode" }],
+          models: [{ provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true, thinkingOptions: [{ id: "high", label: "High" }], defaultThinkingOptionId: "high" }],
+        }] }),
+        listFeatures: vi.fn(async () => ({ features: [
+          { type: "toggle", id: "fast_mode", label: "Fast mode", value: false },
+          { type: "select", id: "effort", label: "Effort", value: "high", options: [{ id: "high", label: "High" }] },
+        ] })),
+      },
+      config: { get: async () => ({ requestId: "profiles-request", config: { agentProfiles: [{
+        id: "profile-1", name: "Danger profile", icon: "✦", color: "red",
+        provider: "codex", model: "gpt-5", modeId: "danger-mode", thinkingOptionId: "high",
+        featureValues: { fast_mode: true, effort: "high" }, notes: "must not cross the adapter",
+        providerOptions: { approval_policy: "always" }, toolPolicy: { preapproved: [] },
+      }] } }) },
+      workspaces: { open: vi.fn(async () => ({ archive: async () => ({ archivedAt: new Date().toISOString(), error: null }), agents: { create } })) },
+    };
+    const port = new PaseoMeetingChatAgentPort(paseo as never, executionRoot);
+    const controls = await port.getControls(null);
+    expect(controls.profiles).toEqual([{ id: "profile-1", name: "Danger profile", icon: "✦", color: "red", selection: {
+      provider: "codex", model: "gpt-5", modeId: "danger-mode", thinkingOptionId: "high", featureValues: { fast_mode: true, effort: "high" },
+    } }]);
+    expect(JSON.stringify(controls)).not.toContain("approval_policy");
+
+    const selection = controls.profiles[0]!.selection;
+    await port.execute({ provider: "codex", model: "gpt-5", selection, messages: [{ role: "user", text: "Question" }], transcript: transcript(), recordRetrieved: async () => undefined });
+    expect(paseo.providers.listFeatures).toHaveBeenCalledWith({
+      provider: "codex/gpt-5", modeId: "danger-mode", thinkingOptionId: "high",
+      featureValues: { fast_mode: true, effort: "high" },
+    }, expect.objectContaining({ requestId: expect.stringMatching(/^meetless-features-/u) }));
+    const options = create.mock.calls[0]![0] as Record<string, any>;
+    expect(options.config).toMatchObject({
+      provider: "codex/gpt-5", modeId: "danger-mode", thinkingOptionId: "high",
+      featureValues: { fast_mode: true, effort: "high" },
+      options: { approval_policy: "never", sandbox_mode: "read-only", web_search: "disabled" },
+    });
+    expect(options.config.systemPrompt).toContain("only evidence authority");
+    expect(options.config.toolPolicy).toEqual({ preapproved: [
+      { kind: "mcp", server: "meeting", tool: "search_meeting_transcript" },
+      { kind: "mcp", server: "meeting", tool: "get_meeting_segments" },
+    ] });
+    expect(JSON.stringify(options)).not.toContain("approval_policy\\\":\\\"always");
+
+    await expect(port.validateSelection({ ...selection, modeId: "removed-mode" })).rejects.toThrow(/no longer available|selection/i);
+  });
+
+  test("omits stale profile bundles without failing the current controls catalog", async () => {
+    const executionRoot = await mkdtemp(path.join(tmpdir(), "meetless-controls-stale-profiles-"));
+    roots.push(executionRoot);
+    const listFeatures = vi.fn(async () => ({ features: [
+      { type: "toggle", id: "fast_mode", label: "Fast mode", value: false },
+    ] }));
+    const paseo = {
+      providers: {
+        waitForReady: async () => ({ entries: [{
+          provider: "codex", enabled: true, status: "ready", label: "Codex", defaultModeId: "safe-mode",
+          modes: [{ id: "safe-mode", label: "Safe mode" }],
+          models: [{ provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true, thinkingOptions: [{ id: "high", label: "High" }], defaultThinkingOptionId: "high" }],
+        }] }),
+        listFeatures,
+      },
+      config: { get: async () => ({ requestId: "profiles-request", config: { agentProfiles: [
+        { id: "valid", name: "Valid", provider: "codex", model: "gpt-5", modeId: "safe-mode", thinkingOptionId: "high", featureValues: { fast_mode: true } },
+        { id: "stale-provider", name: "Stale provider", provider: "removed", model: "gpt-5", modeId: "safe-mode", thinkingOptionId: "high", featureValues: {} },
+        { id: "stale-model", name: "Stale model", provider: "codex", model: "removed", modeId: "safe-mode", thinkingOptionId: "high", featureValues: {} },
+        { id: "stale-mode", name: "Stale mode", provider: "codex", model: "gpt-5", modeId: "removed-mode", thinkingOptionId: "high", featureValues: {} },
+        { id: "stale-thinking", name: "Stale thinking", provider: "codex", model: "gpt-5", modeId: "safe-mode", thinkingOptionId: "removed-thinking", featureValues: {} },
+        { id: "stale-feature", name: "Stale feature", provider: "codex", model: "gpt-5", modeId: "safe-mode", thinkingOptionId: "high", featureValues: { removed_feature: true } },
+      ] } }) },
+    };
+    const port = new PaseoMeetingChatAgentPort(paseo as never, executionRoot);
+    const controls = await port.getControls(null);
+
+    expect(controls.catalogError).toBeNull();
+    expect(controls.catalog.providers).toHaveLength(1);
+    expect(controls.profiles).toEqual([{ id: "valid", name: "Valid", icon: null, color: null, selection: {
+      provider: "codex", model: "gpt-5", modeId: "safe-mode", thinkingOptionId: "high", featureValues: { fast_mode: true },
+    } }]);
+    expect(listFeatures).toHaveBeenCalledTimes(2);
+  });
+
+  test("returns an explicit unavailable feature result when the provider reports an error", async () => {
+    const executionRoot = await mkdtemp(path.join(tmpdir(), "meetless-controls-error-"));
+    roots.push(executionRoot);
+    const paseo = {
+      providers: {
+        waitForReady: async () => ({ entries: [{
+          provider: "codex", enabled: true, status: "ready", label: "Codex", modes: [],
+          models: [{ provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true }],
+        }] }),
+        listFeatures: async () => ({ error: "secret provider failure" }),
+      },
+      config: { get: async () => ({ agentProfiles: [] }) },
+    };
+    const port = new PaseoMeetingChatAgentPort(paseo as never, executionRoot);
+    const result = await port.discoverFeatures({ provider: "codex", model: "gpt-5", modeId: null, thinkingOptionId: null, featureValues: {} });
+    expect(result).toMatchObject({ status: "unavailable", features: null, error: { kind: "unavailable" } });
+    expect(JSON.stringify(result)).not.toContain("secret provider failure");
+  });
+
+  test("preserves an explicit empty feature response as ready", async () => {
+    const executionRoot = await mkdtemp(path.join(tmpdir(), "meetless-controls-empty-features-"));
+    roots.push(executionRoot);
+    const paseo = {
+      providers: {
+        waitForReady: async () => ({ entries: [{
+          provider: "codex", enabled: true, status: "ready", label: "Codex", modes: [],
+          models: [{ provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true }],
+        }] }),
+        listFeatures: async () => ({ features: [] }),
+      },
+      config: { get: async () => ({ agentProfiles: [] }) },
+    };
+    const port = new PaseoMeetingChatAgentPort(paseo as never, executionRoot);
+    await expect(port.discoverFeatures({ provider: "codex", model: "gpt-5", modeId: null, thinkingOptionId: null, featureValues: {} })).resolves.toMatchObject({
+      status: "ready", features: [], error: null,
+    });
+  });
+
+  test.each([
+    ["missing features", {}],
+    ["null features", { features: null }],
+    ["non-array features", { features: { id: "not-an-array" } }],
+    ["malformed feature entry", { features: [null] }],
+  ] as const)("fails closed for a successful feature response with %s", async (_name, response) => {
+    const executionRoot = await mkdtemp(path.join(tmpdir(), "meetless-controls-malformed-features-"));
+    roots.push(executionRoot);
+    const paseo = {
+      providers: {
+        waitForReady: async () => ({ entries: [{
+          provider: "codex", enabled: true, status: "ready", label: "Codex", modes: [],
+          models: [{ provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true }],
+        }] }),
+        listFeatures: async () => response,
+      },
+      config: { get: async () => ({ agentProfiles: [] }) },
+    };
+    const port = new PaseoMeetingChatAgentPort(paseo as never, executionRoot);
+    await expect(port.discoverFeatures({ provider: "codex", model: "gpt-5", modeId: null, thinkingOptionId: null, featureValues: {} })).resolves.toMatchObject({
+      status: "update_required", features: null, error: { kind: "update_required" },
+    });
+  });
+
+  test("rejects a stale feature value instead of silently dropping it", async () => {
+    const executionRoot = await mkdtemp(path.join(tmpdir(), "meetless-controls-stale-feature-"));
+    roots.push(executionRoot);
+    const paseo = {
+      providers: {
+        waitForReady: async () => ({ entries: [{
+          provider: "codex", enabled: true, status: "ready", label: "Codex", modes: [],
+          models: [{ provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true }],
+        }] }),
+        listFeatures: async () => ({ features: [{ type: "toggle", id: "fast_mode", label: "Fast", value: false }] }),
+      },
+      config: { get: async () => ({ agentProfiles: [] }) },
+    };
+    const port = new PaseoMeetingChatAgentPort(paseo as never, executionRoot);
+    await expect(port.validateSelection({
+      provider: "codex", model: "gpt-5", modeId: null, thinkingOptionId: null,
+      featureValues: { removed_feature: true },
+    })).rejects.toThrow(/selection|available/i);
+  });
+
+  test("requires feature discovery for the complete-selection execution path", async () => {
+    const executionRoot = await mkdtemp(path.join(tmpdir(), "meetless-controls-missing-features-"));
+    roots.push(executionRoot);
+    const paseo = {
+      providers: {
+        waitForReady: async () => ({ entries: [{
+          provider: "codex", enabled: true, status: "ready", label: "Codex", modes: [],
+          models: [{ provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true }],
+        }] }),
+      },
+      config: { get: async () => ({ requestId: "profiles-request", config: { agentProfiles: [] } }) },
+    };
+    const port = new PaseoMeetingChatAgentPort(paseo as never, executionRoot);
+    await expect(port.validateSelection({
+      provider: "codex", model: "gpt-5", modeId: null, thinkingOptionId: null, featureValues: {},
+    })).rejects.toThrow(/update|required|feature/i);
+  });
 });
 
 function fakeAgent(execute: (input: ChatExecutionInput) => Promise<AgentAnswer>): MeetingChatAgentPort {
@@ -223,10 +451,11 @@ function fakeAgent(execute: (input: ChatExecutionInput) => Promise<AgentAnswer>)
 function fakeStore() {
   const state: {
     thread: MeetingChatThread | null;
+    selection: ChatSelection | null;
     sequence: number;
     reconcile: ReturnType<typeof vi.fn>;
     port: MeetingStore;
-  } = { thread: createMeetingChatThread({ id: "thread-1", meetingId: "meeting-1", now: "2026-08-21T00:00:00.000Z" }), sequence: 0, reconcile: vi.fn(), port: null as never };
+  } = { thread: createMeetingChatThread({ id: "thread-1", meetingId: "meeting-1", now: "2026-08-21T00:00:00.000Z" }), selection: null, sequence: 0, reconcile: vi.fn(), port: null as never };
   state.reconcile = vi.fn(async () => {
     if (state.thread?.status === "running") {
       state.thread = failChatAttempt(state.thread, {
@@ -241,7 +470,20 @@ function fakeStore() {
     reconcileChatAfterRestart: state.reconcile,
     getChatThread: async () => state.thread,
     getTranscriptForMeeting: async () => transcript(),
+    getChatSelection: async () => state.selection,
+    setChatSelection: async (selection: ChatSelection) => {
+      state.selection = selection;
+      return selection;
+    },
     startChatQuestion: async (input: any) => {
+      state.thread = startChatQuestion(state.thread!, {
+        ...input, userMessageId: `user-${++state.sequence}`, attemptId: `attempt-${state.sequence}`,
+        now: "2026-08-21T00:02:00.000Z",
+      });
+      return state.thread;
+    },
+    startChatQuestionWithSelection: async (input: any) => {
+      state.selection = input.selection;
       state.thread = startChatQuestion(state.thread!, {
         ...input, userMessageId: `user-${++state.sequence}`, attemptId: `attempt-${state.sequence}`,
         now: "2026-08-21T00:02:00.000Z",
@@ -266,6 +508,13 @@ function fakeStore() {
       return state.thread;
     },
     retryChatTurn: async (_meetingId: string, input: any) => {
+      state.thread = retryChatAttempt(state.thread!, {
+        ...input, attemptId: `attempt-${++state.sequence}`, now: "2026-08-21T00:05:00.000Z",
+      });
+      return state.thread;
+    },
+    retryChatTurnWithSelection: async (_meetingId: string, input: any) => {
+      state.selection = input.selection;
       state.thread = retryChatAttempt(state.thread!, {
         ...input, attemptId: `attempt-${++state.sequence}`, now: "2026-08-21T00:05:00.000Z",
       });

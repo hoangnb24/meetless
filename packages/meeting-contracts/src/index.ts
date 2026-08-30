@@ -155,6 +155,158 @@ export const ChatProviderWireSchema = z.object({
 
 export type ChatProviderWire = z.infer<typeof ChatProviderWireSchema>;
 
+const ChatFeatureValueSchema = z.union([z.boolean(), z.string(), z.null()]);
+
+export const ChatSelectionWireSchema = z.object({
+  provider: z.string().trim().min(1),
+  model: z.string().trim().min(1),
+  modeId: z.string().trim().min(1).nullable(),
+  thinkingOptionId: z.string().trim().min(1).nullable(),
+  featureValues: z.record(z.string().trim().min(1), ChatFeatureValueSchema),
+}).strict();
+
+export type ChatSelectionWire = z.infer<typeof ChatSelectionWireSchema>;
+
+export function chatSelectionIdentity(selection: ChatSelectionWire): string {
+  const features = Object.entries(selection.featureValues)
+    .sort(([left], [right]) => left.localeCompare(right));
+  return JSON.stringify([
+    selection.provider,
+    selection.model,
+    selection.modeId,
+    selection.thinkingOptionId,
+    features,
+  ]);
+}
+
+export const ChatThinkingOptionWireSchema = z.object({
+  id: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+}).strict();
+
+export type ChatThinkingOptionWire = z.infer<typeof ChatThinkingOptionWireSchema>;
+
+export const ChatModeWireSchema = z.object({
+  id: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+}).strict();
+
+export type ChatModeWire = z.infer<typeof ChatModeWireSchema>;
+
+export const ChatControlModelWireSchema = z.object({
+  id: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+  isDefault: z.boolean(),
+  thinkingOptions: z.array(ChatThinkingOptionWireSchema),
+  defaultThinkingOptionId: z.string().trim().min(1).nullable(),
+}).strict();
+
+export type ChatControlModelWire = z.infer<typeof ChatControlModelWireSchema>;
+
+export const ChatControlProviderWireSchema = z.object({
+  id: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+  status: z.enum(["ready", "loading", "error", "unavailable"]),
+  models: z.array(ChatControlModelWireSchema),
+  modes: z.array(ChatModeWireSchema),
+  defaultModeId: z.string().trim().min(1).nullable(),
+  error: z.string().trim().min(1).nullable(),
+}).strict();
+
+export type ChatControlProviderWire = z.infer<typeof ChatControlProviderWireSchema>;
+
+export const ChatControlsCatalogWireSchema = z.object({
+  providers: z.array(ChatControlProviderWireSchema),
+}).strict();
+
+export type ChatControlsCatalogWire = z.infer<typeof ChatControlsCatalogWireSchema>;
+
+export const ChatProfileWireSchema = z.object({
+  id: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  icon: z.string().trim().min(1).nullable(),
+  color: z.string().trim().min(1).nullable(),
+  selection: ChatSelectionWireSchema,
+}).strict();
+
+export type ChatProfileWire = z.infer<typeof ChatProfileWireSchema>;
+
+export const ChatCapabilityErrorWireSchema = z.object({
+  kind: z.enum(["unavailable", "update_required", "repair_required"]),
+  message: z.string().trim().min(1),
+}).strict();
+
+export type ChatCapabilityErrorWire = z.infer<typeof ChatCapabilityErrorWireSchema>;
+
+export const ChatControlsWireSchema = z.object({
+  version: z.literal(1),
+  catalog: ChatControlsCatalogWireSchema,
+  profiles: z.array(ChatProfileWireSchema),
+  catalogError: ChatCapabilityErrorWireSchema.nullable(),
+  lastSelection: ChatSelectionWireSchema.nullable(),
+  lastSelectionState: z.enum(["available", "unavailable", "repair_required"]),
+  lastSelectionError: ChatCapabilityErrorWireSchema.nullable(),
+}).strict();
+
+export type ChatControlsWire = z.infer<typeof ChatControlsWireSchema>;
+
+const ChatFeatureBaseWireSchema = z.object({
+  id: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+  description: z.string().optional(),
+  tooltip: z.string().optional(),
+  icon: z.string().trim().min(1).optional(),
+});
+
+export const ChatFeatureWireSchema = z.discriminatedUnion("type", [
+  ChatFeatureBaseWireSchema.extend({
+    type: z.literal("toggle"),
+    value: z.boolean(),
+  }).strict(),
+  ChatFeatureBaseWireSchema.extend({
+    type: z.literal("select"),
+    value: z.string().nullable(),
+    options: z.array(ChatThinkingOptionWireSchema),
+  }).strict(),
+]);
+
+export type ChatFeatureWire = z.infer<typeof ChatFeatureWireSchema>;
+
+export const ChatFeatureDiscoveryWireSchema = z.object({
+  version: z.literal(1),
+  selection: ChatSelectionWireSchema,
+  status: z.enum(["ready", "unavailable", "update_required", "repair_required"]),
+  features: z.array(ChatFeatureWireSchema).nullable(),
+  error: ChatCapabilityErrorWireSchema.nullable(),
+}).strict().superRefine((result, context) => {
+  if (result.status === "ready" && (result.features === null || result.error !== null)) {
+    context.addIssue({ code: "custom", path: ["features"], message: "Ready feature discovery requires features and no error" });
+  }
+  if (result.status !== "ready" && (result.features !== null || result.error === null)) {
+    context.addIssue({ code: "custom", path: ["error"], message: "Unavailable feature discovery requires a redacted error and no feature list" });
+  }
+});
+
+export type ChatFeatureDiscoveryWire = z.infer<typeof ChatFeatureDiscoveryWireSchema>;
+
+export const MeetingChatControlsRpc = defineRpc({
+  name: "meeting.chat.controls.v1",
+  input: z.object({}).strict(),
+  output: ChatControlsWireSchema,
+});
+
+export const MeetingChatFeaturesRpc = defineRpc({
+  name: "meeting.chat.features.v1",
+  input: z.object({ selection: ChatSelectionWireSchema }).strict(),
+  output: ChatFeatureDiscoveryWireSchema,
+});
+
+export const MeetingChatSelectionRpc = defineRpc({
+  name: "meeting.chat.selection.v1",
+  input: z.object({ selection: ChatSelectionWireSchema }).strict(),
+  output: z.object({ version: z.literal(1), selection: ChatSelectionWireSchema }).strict(),
+});
+
 const ChatUserMessageWireSchema = z.object({
   role: z.literal("user"),
   text: z.string().trim().min(1),
@@ -232,6 +384,26 @@ export const MeetingChatAskRpc = defineRpc({
 export const MeetingChatRetryRpc = defineRpc({
   name: "meeting.chat.retry",
   input: ChatQuestionInputSchema,
+  output: MeetingChatThreadWireSchema,
+});
+
+export const MeetingChatAskV1Rpc = defineRpc({
+  name: "meeting.chat.ask.v1",
+  input: z.object({
+    meetingId: z.string().trim().min(1),
+    question: z.string().trim().min(1).max(4_000),
+    selection: ChatSelectionWireSchema,
+  }).strict(),
+  output: MeetingChatThreadWireSchema,
+});
+
+export const MeetingChatRetryV1Rpc = defineRpc({
+  name: "meeting.chat.retry.v1",
+  input: z.object({
+    meetingId: z.string().trim().min(1),
+    attemptId: z.string().trim().min(1).optional(),
+    selection: ChatSelectionWireSchema,
+  }).strict(),
   output: MeetingChatThreadWireSchema,
 });
 

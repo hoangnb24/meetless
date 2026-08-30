@@ -12,7 +12,14 @@ import {
   type ViewStyle,
 } from "react-native";
 import type {
+  ChatCapabilityErrorWire,
+  ChatControlModelWire,
+  ChatControlProviderWire,
+  ChatControlsCatalogWire,
+  ChatFeatureDiscoveryWire,
+  ChatProfileWire,
   ChatProviderWire,
+  ChatSelectionWire,
   CitationWire,
   MeetingChatThreadWire,
   MeetingWire,
@@ -252,6 +259,13 @@ export interface MeetingListSurfaceProps {
   onRetryTranscription?(): Promise<void>;
   onCitation?(citation: Pick<CitationWire, "meetingId" | "segmentId">): void | Promise<void>;
   citationEvidence?: CitationEvidenceState | null;
+  chatCatalog?: ChatControlsCatalogWire;
+  chatCatalogError?: ChatCapabilityErrorWire | null;
+  chatProfiles?: ChatProfileWire[];
+  chatSelection?: ChatSelectionWire | null;
+  chatFeatures?: ChatFeatureDiscoveryWire | null;
+  chatFeaturesLoading?: boolean;
+  onChatSelectionBundle?(selection: ChatSelectionWire): void | Promise<void>;
   chatProviders?: ChatProviderWire[];
   chatThread?: MeetingChatThreadWire | null;
   chatLoading?: boolean;
@@ -296,6 +310,13 @@ export function MeetingListSurface({
   onRetryTranscription,
   onCitation,
   citationEvidence = null,
+  chatCatalog,
+  chatCatalogError = null,
+  chatProfiles = [],
+  chatSelection = null,
+  chatFeatures = null,
+  chatFeaturesLoading = false,
+  onChatSelectionBundle,
   chatProviders = [],
   chatThread = null,
   chatLoading = false,
@@ -371,6 +392,13 @@ export function MeetingListSurface({
       onBack={onBack}
       onCitation={interactive ? onCitation : undefined}
       citationEvidence={citationEvidence}
+      chatCatalog={chatCatalog}
+      chatCatalogError={chatCatalogError}
+      chatProfiles={chatProfiles}
+      chatSelection={chatSelection}
+      chatFeatures={chatFeatures}
+      chatFeaturesLoading={chatFeaturesLoading}
+      onChatSelectionBundle={onChatSelectionBundle}
       onGrantTranscriptionConsent={onGrantTranscriptionConsent}
       onRetryTranscription={onRetryTranscription}
       pending={pending}
@@ -747,6 +775,13 @@ interface MeetingDetailProps {
   onBack?: () => void;
   onCitation?: (citation: Pick<CitationWire, "meetingId" | "segmentId">) => void | Promise<void>;
   citationEvidence: CitationEvidenceState | null;
+  chatCatalog?: ChatControlsCatalogWire;
+  chatCatalogError: ChatCapabilityErrorWire | null;
+  chatProfiles: ChatProfileWire[];
+  chatSelection: ChatSelectionWire | null;
+  chatFeatures: ChatFeatureDiscoveryWire | null;
+  chatFeaturesLoading: boolean;
+  onChatSelectionBundle?: (selection: ChatSelectionWire) => void | Promise<void>;
   onGrantTranscriptionConsent?: () => Promise<void>;
   onRetryTranscription?: () => Promise<void>;
   pending: boolean;
@@ -784,6 +819,13 @@ function MeetingDetail(props: MeetingDetailProps) {
     onBack,
     onCitation,
     citationEvidence,
+    chatCatalog,
+    chatCatalogError,
+    chatProfiles,
+    chatSelection,
+    chatFeatures,
+    chatFeaturesLoading,
+    onChatSelectionBundle,
     onGrantTranscriptionConsent,
     onRetryTranscription,
     pending,
@@ -898,6 +940,13 @@ function MeetingDetail(props: MeetingDetailProps) {
             layoutTier={layoutTier}
             interactive={interactive}
             transcript={transcript}
+            chatCatalog={chatCatalog}
+            chatCatalogError={chatCatalogError}
+            chatProfiles={chatProfiles}
+            chatSelection={chatSelection}
+            chatFeatures={chatFeatures}
+            chatFeaturesLoading={chatFeaturesLoading}
+            onChatSelectionBundle={onChatSelectionBundle}
             chatProviders={chatProviders}
             chatThread={chatThread}
             chatLoading={chatLoading}
@@ -1096,6 +1145,13 @@ function AskPane({
   layoutTier,
   interactive,
   transcript,
+  chatCatalog,
+  chatCatalogError,
+  chatProfiles,
+  chatSelection,
+  chatFeatures,
+  chatFeaturesLoading,
+  onChatSelectionBundle,
   chatProviders,
   chatThread,
   chatLoading,
@@ -1112,6 +1168,13 @@ function AskPane({
   layoutTier: LayoutTier;
   interactive: boolean;
   transcript: TranscriptWire | null;
+  chatCatalog?: ChatControlsCatalogWire;
+  chatCatalogError: ChatCapabilityErrorWire | null;
+  chatProfiles: ChatProfileWire[];
+  chatSelection: ChatSelectionWire | null;
+  chatFeatures: ChatFeatureDiscoveryWire | null;
+  chatFeaturesLoading: boolean;
+  onChatSelectionBundle?: (selection: ChatSelectionWire) => void | Promise<void>;
   chatProviders: ChatProviderWire[];
   chatThread: MeetingChatThreadWire | null;
   chatLoading: boolean;
@@ -1129,18 +1192,26 @@ function AskPane({
     <View style={[styles.pane, layoutTier === "desktop" && styles.askPane]} testID={testID}>
       <View style={styles.paneHead}>
         <View style={styles.askHeading}><Text style={styles.paneTitle}>Ask</Text><Text style={styles.askScope}>This meeting only</Text></View>
-        <ProviderPicker
+        {!chatCatalog ? <ProviderPicker
           interactive={interactive}
           model={chatModel}
           onSelection={onChatSelection}
           provider={chatProvider}
           providers={chatProviders}
-        />
+        /> : null}
       </View>
       <MeetingChatPanel
         interactive={interactive}
+        layoutTier={layoutTier}
         loading={chatLoading}
         model={chatModel}
+        chatCatalog={chatCatalog}
+        chatCatalogError={chatCatalogError}
+        chatProfiles={chatProfiles}
+        chatSelection={chatSelection}
+        chatFeatures={chatFeatures}
+        chatFeaturesLoading={chatFeaturesLoading}
+        onChatSelection={onChatSelectionBundle}
         onAsk={onAskQuestion}
         onCitation={onCitation}
         onRetry={onRetryQuestion}
@@ -1251,10 +1322,371 @@ function ProviderPicker({
   );
 }
 
+function ChatControls({
+  catalog,
+  catalogError,
+  features,
+  featuresLoading,
+  interactive,
+  layoutTier,
+  onSelection,
+  profiles,
+  selection,
+}: {
+  catalog: ChatControlsCatalogWire;
+  catalogError: ChatCapabilityErrorWire | null;
+  features: ChatFeatureDiscoveryWire | null;
+  featuresLoading: boolean;
+  interactive: boolean;
+  layoutTier: LayoutTier;
+  onSelection?: (selection: ChatSelectionWire) => void | Promise<void>;
+  profiles: ChatProfileWire[];
+  selection: ChatSelectionWire | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<"root" | "provider">("root");
+  const [providerId, setProviderId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [thinkingOpen, setThinkingOpen] = useState(false);
+  const [featureId, setFeatureId] = useState<string | null>(null);
+  const pickerRef = useRef<View | null>(null);
+  const selectedProvider = selection ? catalog.providers.find((candidate) => candidate.id === selection.provider) ?? null : null;
+  const selectedModel = selectedProvider?.models.find((candidate) => candidate.id === selection?.model) ?? null;
+  const currentThinking = selectedModel?.thinkingOptions.find((candidate) => candidate.id === selection?.thinkingOptionId) ?? null;
+  const fastFeature = features?.status === "ready"
+    ? features.features?.find((feature) => /fast/u.test(`${feature.id} ${feature.label}`)) ?? null
+    : null;
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const visibleProfiles = profiles.filter((profile) => {
+    if (!normalizedQuery) return true;
+    return `${profile.name} ${profile.id} ${profile.selection.provider} ${profile.selection.model}`.toLocaleLowerCase().includes(normalizedQuery);
+  });
+  const visibleProviders = catalog.providers.filter((provider) => {
+    if (!normalizedQuery) return true;
+    return `${provider.label} ${provider.id} ${provider.models.map((model) => `${model.label} ${model.id}`).join(" ")}`.toLocaleLowerCase().includes(normalizedQuery);
+  });
+
+  const focusTrigger = useCallback(() => {
+    const node = pickerRef.current as unknown as { querySelector?: (selector: string) => { focus?: () => void } | null } | null;
+    node?.querySelector?.("button")?.focus?.();
+  }, []);
+  const close = useCallback(() => {
+    setOpen(false);
+    setView("root");
+    setProviderId(null);
+    setQuery("");
+    setThinkingOpen(false);
+    setFeatureId(null);
+    focusTrigger();
+  }, [focusTrigger]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (typeof document === "undefined") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const node = pickerRef.current as unknown as { contains?: (target: EventTarget | null) => boolean } | null;
+      if (!node?.contains?.(event.target)) close();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, [close, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (view === "provider" && !catalog.providers.some((provider) => provider.id === providerId)) {
+      setView("root");
+      setProviderId(null);
+    }
+  }, [catalog.providers, open, providerId, view]);
+
+  const apply = useCallback(async (next: ChatSelectionWire) => {
+    await onSelection?.(next);
+    close();
+  }, [close, onSelection]);
+
+  const applyModel = useCallback((provider: ChatControlProviderWire, model: ChatControlModelWire) => {
+    const next: ChatSelectionWire = {
+      provider: provider.id,
+      model: model.id,
+      modeId: provider.defaultModeId,
+      thinkingOptionId: model.defaultThinkingOptionId,
+      featureValues: {},
+    };
+    void apply(next);
+  }, [apply]);
+
+  const applyThinking = useCallback((thinkingOptionId: string | null) => {
+    if (!selection) return;
+    void apply({ ...cloneSurfaceSelection(selection), thinkingOptionId });
+  }, [apply, selection]);
+
+  const toggleFeature = useCallback((feature: NonNullable<ChatFeatureDiscoveryWire["features"]>[number]) => {
+    if (!selection || feature.type !== "toggle") return;
+    void apply({
+      ...cloneSurfaceSelection(selection),
+      featureValues: { ...selection.featureValues, [feature.id]: !feature.value },
+    });
+  }, [apply, selection]);
+
+  const chooseFeature = useCallback((feature: NonNullable<ChatFeatureDiscoveryWire["features"]>[number], value: string | null) => {
+    if (!selection || feature.type !== "select") return;
+    void apply({
+      ...cloneSurfaceSelection(selection),
+      featureValues: { ...selection.featureValues, [feature.id]: value },
+    });
+  }, [apply, selection]);
+
+  const pickerProvider = providerId ? catalog.providers.find((provider) => provider.id === providerId) ?? null : null;
+  const modelLabel = selectedProvider && selectedModel
+    ? selectedModel.label
+    : selection
+      ? "Model unavailable"
+      : "Choose model";
+  const modelTriggerDisabled = !interactive || Boolean(catalogError);
+  const availableFeatures = features?.status === "ready" ? features.features ?? [] : [];
+  return (
+    <View style={styles.chatControls} testID="chat-controls">
+      <View style={styles.chatControlsRow}>
+        <View ref={pickerRef} style={styles.chatModelControl}>
+          <FocusPressable
+            accessibilityLabel={`Model: ${modelLabel}`}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: modelTriggerDisabled, expanded: open }}
+            aria-expanded={open}
+            disabled={modelTriggerDisabled}
+            onPress={() => { setOpen((current) => !current); setThinkingOpen(false); setFeatureId(null); }}
+            style={[styles.chatModelPill, layoutTier === "phone" && styles.chatPhoneTarget, !selectedModel && styles.chatModelPillUnavailable]}
+            testID="chat-model-trigger"
+          >
+            <Text style={styles.chatModelPillText} numberOfLines={1}>{modelLabel}</Text>
+            <Text style={styles.providerChevron} accessibilityElementsHidden>⌄</Text>
+          </FocusPressable>
+          {open ? (
+            <>
+              {layoutTier === "phone" ? (
+                <FocusPressable
+                  accessibilityLabel="Close model picker"
+                  accessibilityRole="button"
+                  onPress={close}
+                  style={styles.chatPickerBackdrop}
+                  testID="chat-picker-dismiss"
+                />
+              ) : null}
+              <View style={[styles.chatPicker, layoutTier === "phone" && styles.chatPickerPhone]} testID="chat-model-picker" accessibilityViewIsModal>
+              <View style={styles.chatPickerHeader}>
+                {view === "provider" ? (
+                  <FocusPressable accessibilityLabel="Back to model providers" accessibilityRole="button" onPress={() => { setView("root"); setProviderId(null); }} style={[styles.chatPickerBack, layoutTier === "phone" && styles.chatPhoneTargetSquare]} testID="chat-picker-back">
+                    <Text style={styles.chatPickerBackText}>‹</Text>
+                  </FocusPressable>
+                ) : null}
+                <FocusTextInput
+                  accessibilityLabel="Search all models"
+                  autoFocus
+                  autoCorrect={false}
+                  onChangeText={setQuery}
+                  placeholder="Search all models"
+                  placeholderTextColor={colors.muted}
+                  style={[styles.chatPickerSearch, layoutTier === "phone" && styles.chatPhoneTarget]}
+                  testID="chat-model-search"
+                  value={query}
+                />
+              </View>
+              {view === "root" ? (
+                <ScrollView style={styles.chatPickerScroll} keyboardShouldPersistTaps="handled">
+                  {visibleProfiles.length > 0 ? <Text style={styles.chatPickerSection}>Profiles</Text> : null}
+                  {visibleProfiles.map((profile) => {
+                    const selected = Boolean(selection && sameSurfaceSelection(selection, profile.selection));
+                    return (
+                      <FocusPressable
+                        key={profile.id}
+                        accessibilityLabel={`Profile ${profile.name}`}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        aria-selected={selected}
+                        onPress={() => void apply(profile.selection)}
+                        style={[styles.chatPickerOption, selected && styles.chatPickerOptionSelected]}
+                        testID={`chat-profile-${profile.id}`}
+                      >
+                        <View style={styles.chatPickerOptionCopy}>
+                          <Text style={styles.chatPickerOptionTitle}>{profile.icon ? `${profile.icon} ` : ""}{profile.name}</Text>
+                          <Text style={styles.chatPickerOptionMeta}>{profile.selection.model}</Text>
+                        </View>
+                        {selected ? <Text style={styles.chatPickerCheck}>✓</Text> : null}
+                      </FocusPressable>
+                    );
+                  })}
+                  <Text style={styles.chatPickerSection}>Providers</Text>
+                  {visibleProviders.map((provider) => (
+                    <FocusPressable
+                      key={provider.id}
+                      accessibilityLabel={`Browse ${provider.label} models`}
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: provider.status !== "ready", expanded: providerId === provider.id }}
+                      disabled={provider.status !== "ready"}
+                      onPress={() => { setProviderId(provider.id); setView("provider"); setQuery(""); }}
+                      style={styles.chatPickerOption}
+                      testID={`chat-provider-${provider.id}`}
+                    >
+                      <View style={styles.chatPickerOptionCopy}>
+                        <Text style={styles.chatPickerOptionTitle}>{provider.label}</Text>
+                        <Text style={styles.chatPickerOptionMeta}>{provider.status === "ready" ? `${provider.models.length} models` : provider.error ?? "Unavailable"}</Text>
+                      </View>
+                      <Text style={styles.providerChevron} accessibilityElementsHidden>›</Text>
+                    </FocusPressable>
+                  ))}
+                  {!visibleProfiles.length && !visibleProviders.length ? <Text style={styles.chatPickerEmpty}>No matching models.</Text> : null}
+                  {catalogError ? <Text style={styles.chatPickerError}>{catalogError.message}</Text> : null}
+                </ScrollView>
+              ) : (
+                <ScrollView style={styles.chatPickerScroll} keyboardShouldPersistTaps="handled">
+                  <Text style={styles.chatPickerSection}>{pickerProvider?.label ?? "Provider"}</Text>
+                  {pickerProvider?.models.filter((model) => !normalizedQuery || `${model.label} ${model.id}`.toLocaleLowerCase().includes(normalizedQuery)).map((model) => {
+                    const selected = selection?.provider === pickerProvider.id && selection.model === model.id;
+                    return (
+                      <FocusPressable
+                        key={model.id}
+                        accessibilityLabel={`${pickerProvider.label}, ${model.label}`}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        aria-selected={selected}
+                        onPress={() => applyModel(pickerProvider, model)}
+                        style={[styles.chatPickerOption, selected && styles.chatPickerOptionSelected]}
+                        testID={`chat-model-${pickerProvider.id}-${model.id}`}
+                      >
+                        <View style={styles.chatPickerOptionCopy}>
+                          <Text style={styles.chatPickerOptionTitle}>{model.label}</Text>
+                          <Text style={styles.chatPickerOptionMeta}>{model.id}</Text>
+                        </View>
+                        {selected ? <Text style={styles.chatPickerCheck}>✓</Text> : null}
+                      </FocusPressable>
+                    );
+                  })}
+                </ScrollView>
+              )}
+              </View>
+            </>
+          ) : null}
+        </View>
+        {selectedModel && selectedModel.thinkingOptions.length > 0 ? (
+          <View style={styles.chatThinkingControl}>
+            <FocusPressable
+              accessibilityLabel={`Thinking: ${currentThinking?.label ?? "Choose"}`}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !interactive || !selection, expanded: thinkingOpen }}
+              aria-expanded={thinkingOpen}
+              disabled={!interactive || !selection}
+              onPress={() => { setThinkingOpen((current) => !current); setOpen(false); setFeatureId(null); }}
+              style={[styles.chatSecondaryPill, layoutTier === "phone" && styles.chatPhoneTarget]}
+              testID="chat-thinking-trigger"
+            >
+              <Text style={styles.chatSecondaryPillText} numberOfLines={1}>{currentThinking?.label ?? "Thinking"}</Text>
+              <Text style={styles.providerChevron} accessibilityElementsHidden>⌄</Text>
+            </FocusPressable>
+            {thinkingOpen ? <View style={styles.chatMiniMenu} testID="chat-thinking-menu">
+              {selectedModel.thinkingOptions.map((option) => (
+                <FocusPressable
+                  key={option.id}
+                  accessibilityLabel={`Thinking ${option.label}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: selection?.thinkingOptionId === option.id }}
+                  onPress={() => applyThinking(option.id)}
+                  style={styles.chatMiniOption}
+                  testID={`chat-thinking-${option.id}`}
+                >
+                  <Text style={styles.chatPickerOptionText}>{option.label}</Text>
+                </FocusPressable>
+              ))}
+            </View> : null}
+          </View>
+        ) : null}
+        {fastFeature?.type === "toggle" ? (
+          <FocusPressable
+            accessibilityLabel={`Fast ${fastFeature.value ? "on" : "off"}`}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !interactive || !selection, selected: fastFeature.value }}
+            aria-pressed={fastFeature.value}
+            disabled={!interactive || !selection}
+            onPress={() => toggleFeature(fastFeature)}
+            style={[styles.chatSecondaryPill, layoutTier === "phone" && styles.chatPhoneTarget, fastFeature.value && styles.chatSecondaryPillSelected]}
+            testID="chat-fast-toggle"
+          >
+            <Text style={styles.chatSecondaryPillText}>Fast</Text>
+          </FocusPressable>
+        ) : null}
+        {availableFeatures.filter((feature) => feature !== fastFeature).map((feature) => feature.type === "toggle" ? (
+          <FocusPressable
+            key={feature.id}
+            accessibilityLabel={`${feature.label} ${feature.value ? "on" : "off"}`}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !interactive || !selection, selected: feature.value }}
+            disabled={!interactive || !selection}
+            onPress={() => toggleFeature(feature)}
+            style={[styles.chatSecondaryPill, layoutTier === "phone" && styles.chatPhoneTarget, feature.value && styles.chatSecondaryPillSelected]}
+            testID={`chat-feature-toggle-${feature.id}`}
+          >
+            <Text style={styles.chatSecondaryPillText}>{feature.label}</Text>
+          </FocusPressable>
+        ) : (
+          <View key={feature.id} style={styles.chatFeatureSelectControl}>
+            <FocusPressable
+              accessibilityLabel={`${feature.label}: ${feature.value ?? "Choose"}`}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !interactive || !selection, expanded: featureId === feature.id }}
+              disabled={!interactive || !selection}
+              onPress={() => { setFeatureId((current) => current === feature.id ? null : feature.id); setOpen(false); setThinkingOpen(false); }}
+              style={[styles.chatSecondaryPill, layoutTier === "phone" && styles.chatPhoneTarget]}
+              testID={`chat-feature-select-${feature.id}`}
+            >
+              <Text style={styles.chatSecondaryPillText}>{feature.label}</Text>
+            </FocusPressable>
+            {featureId === feature.id ? <View style={styles.chatMiniMenu}>
+              {feature.options.map((option) => (
+                <FocusPressable key={option.id} accessibilityLabel={`${feature.label} ${option.label}`} accessibilityRole="button" onPress={() => chooseFeature(feature, option.id)} style={styles.chatMiniOption} testID={`chat-feature-${feature.id}-${option.id}`}>
+                  <Text style={styles.chatPickerOptionText}>{option.label}</Text>
+                </FocusPressable>
+              ))}
+            </View> : null}
+          </View>
+        ))}
+        {featuresLoading ? <Text style={styles.chatFeatureLoading}>Checking features…</Text> : null}
+      </View>
+      {features?.status !== "ready" && features?.error ? <Text style={styles.chatFeatureError} testID="chat-feature-error">{features.error.message}</Text> : null}
+    </View>
+  );
+}
+
+function cloneSurfaceSelection(selection: ChatSelectionWire): ChatSelectionWire {
+  return { ...selection, featureValues: { ...selection.featureValues } };
+}
+
+function sameSurfaceSelection(left: ChatSelectionWire, right: ChatSelectionWire): boolean {
+  return left.provider === right.provider && left.model === right.model && left.modeId === right.modeId &&
+    left.thinkingOptionId === right.thinkingOptionId &&
+    JSON.stringify(Object.entries(left.featureValues).sort()) === JSON.stringify(Object.entries(right.featureValues).sort());
+}
+
 function MeetingChatPanel({
   error,
   loading,
   model,
+  layoutTier,
+  chatCatalog,
+  chatCatalogError,
+  chatProfiles,
+  chatSelection,
+  chatFeatures,
+  chatFeaturesLoading,
+  onChatSelection: onChatSelectionBundle,
   onAsk,
   onCitation,
   onRetry,
@@ -1268,6 +1700,14 @@ function MeetingChatPanel({
   error: string | null;
   loading: boolean;
   model: string | null;
+  layoutTier: LayoutTier;
+  chatCatalog?: ChatControlsCatalogWire;
+  chatCatalogError: ChatCapabilityErrorWire | null;
+  chatProfiles: ChatProfileWire[];
+  chatSelection: ChatSelectionWire | null;
+  chatFeatures: ChatFeatureDiscoveryWire | null;
+  chatFeaturesLoading: boolean;
+  onChatSelection?: (selection: ChatSelectionWire) => void | Promise<void>;
   onAsk?: (question: string) => Promise<void>;
   onCitation?: (citation: Pick<CitationWire, "meetingId" | "segmentId">) => void | Promise<void>;
   onRetry?: () => Promise<void>;
@@ -1308,7 +1748,7 @@ function MeetingChatPanel({
         {thread?.failure ? (
           <View style={styles.chatFailure} testID="chat-failure" accessibilityLiveRegion="polite">
             <Text style={styles.failureText}>Ask could not complete. Your question is kept.</Text>
-            <FocusPressable accessibilityLabel="Retry question" accessibilityRole="button" accessibilityState={{ disabled: !interactive || running || !provider || !model || !onRetry }} disabled={!interactive || running || !provider || !model || !onRetry} onPress={() => void onRetry?.()} style={styles.secondaryButtonSmall} testID="chat-retry"><Text style={styles.secondaryButtonText}>Retry question</Text></FocusPressable>
+            <FocusPressable accessibilityLabel="Retry question" accessibilityRole="button" accessibilityState={{ disabled: !interactive || running || (!chatCatalog ? !provider || !model : !chatSelection) || !onRetry }} disabled={!interactive || running || (!chatCatalog ? !provider || !model : !chatSelection) || !onRetry} onPress={() => void onRetry?.()} style={styles.secondaryButtonSmall} testID="chat-retry"><Text style={styles.secondaryButtonText}>Retry question</Text></FocusPressable>
           </View>
         ) : null}
         {error ? <Text style={styles.failureText} accessibilityLiveRegion="polite" testID="chat-error">Ask could not complete. Retry is available.</Text> : null}
@@ -1317,27 +1757,40 @@ function MeetingChatPanel({
         {!hasTranscript ? <Text style={styles.askEmpty}>Ask opens when the transcript is ready.</Text> : null}
       </ScrollView>
       <View style={styles.chatComposer}>
-        <FocusTextInput
-          accessibilityLabel="Ask this meeting"
-          editable={interactive && !running && Boolean(onAsk) && hasTranscript && Boolean(provider) && Boolean(model)}
-          onChangeText={setQuestion}
-          placeholder="Ask about this meeting…"
-          placeholderTextColor={colors.muted}
-          style={styles.chatInput}
-          testID="chat-question-input"
-          value={question}
-        />
-        <FocusPressable
-          accessibilityLabel="Ask this meeting"
-          accessibilityRole="button"
-          accessibilityState={{ disabled: !interactive || running || !question.trim() || !provider || !model || !onAsk || !hasTranscript }}
-          disabled={!interactive || running || !question.trim() || !provider || !model || !onAsk || !hasTranscript}
-          onPress={() => void submit()}
-          style={styles.primaryButton}
-          testID="chat-ask"
-        >
-          <Text style={styles.buttonText}>Ask</Text>
-        </FocusPressable>
+        {chatCatalog ? <ChatControls
+          catalog={chatCatalog}
+          catalogError={chatCatalogError}
+          features={chatFeatures}
+          featuresLoading={chatFeaturesLoading}
+          interactive={interactive}
+          layoutTier={layoutTier}
+          onSelection={onChatSelectionBundle}
+          profiles={chatProfiles}
+          selection={chatSelection}
+        /> : null}
+        <View style={styles.chatComposerRow}>
+          <FocusTextInput
+            accessibilityLabel="Ask this meeting"
+            editable={interactive && !running && Boolean(onAsk) && hasTranscript && (chatCatalog ? Boolean(chatSelection) : Boolean(provider) && Boolean(model))}
+            onChangeText={setQuestion}
+            placeholder="Ask about this meeting…"
+            placeholderTextColor={colors.muted}
+            style={styles.chatInput}
+            testID="chat-question-input"
+            value={question}
+          />
+          <FocusPressable
+            accessibilityLabel="Ask this meeting"
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !interactive || running || !question.trim() || (!chatCatalog ? !provider || !model : !chatSelection) || !onAsk || !hasTranscript }}
+            disabled={!interactive || running || !question.trim() || (!chatCatalog ? !provider || !model : !chatSelection) || !onAsk || !hasTranscript}
+            onPress={() => void submit()}
+            style={[styles.primaryButton, layoutTier === "phone" && styles.chatPhonePrimaryButton]}
+            testID="chat-ask"
+          >
+            <Text style={styles.buttonText}>Ask</Text>
+          </FocusPressable>
+        </View>
       </View>
     </View>
   );
@@ -1737,8 +2190,45 @@ const styles = StyleSheet.create({
   chatProgress: { color: colors.foreground, fontSize: 13.5, paddingVertical: 6 },
   chatFailure: { gap: 8, padding: 12, borderColor: "rgba(220,38,38,0.35)", borderWidth: 1, borderRadius: 8, backgroundColor: "rgba(220,38,38,0.08)" },
   askEmpty: { color: colors.muted, fontSize: 13.5, paddingVertical: 16 },
-  chatComposer: { flexShrink: 0, flexDirection: "row", alignItems: "flex-end", gap: 8, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16, borderTopColor: colors.borderSoft, borderTopWidth: 1 },
+  chatComposer: { flexShrink: 0, gap: 8, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16, borderTopColor: colors.borderSoft, borderTopWidth: 1, zIndex: 20, overflow: "visible" },
+  chatComposerRow: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
   chatInput: { flex: 1, minWidth: 0, minHeight: 44, paddingHorizontal: 12, paddingVertical: 10, borderColor: colors.border, borderWidth: 1, borderRadius: 6, backgroundColor: "rgba(255,255,255,0.035)", color: colors.foreground, fontSize: 13.5 },
+  chatControls: { position: "relative", zIndex: 40, gap: 5, overflow: "visible" },
+  chatControlsRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, minHeight: 32 },
+  chatModelControl: { position: "relative", zIndex: 50, maxWidth: "62%", overflow: "visible" },
+  chatModelPill: { minHeight: 32, maxWidth: "100%", flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, borderColor: colors.border, borderWidth: 1, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.05)" },
+  chatPhoneTarget: { minHeight: 44 },
+  chatPhoneTargetSquare: { width: 44, height: 44 },
+  chatModelPillUnavailable: { borderColor: "rgba(234,179,8,0.45)" },
+  chatModelPillText: { color: colors.foreground, fontSize: 12.5, fontWeight: "500", flexShrink: 1 },
+  chatThinkingControl: { position: "relative", zIndex: 70 },
+  chatSecondaryPill: { minHeight: 32, maxWidth: 180, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 9, borderColor: colors.borderSoft, borderWidth: 1, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.025)" },
+  chatSecondaryPillSelected: { borderColor: "rgba(130,143,255,0.5)", backgroundColor: "rgba(94,106,210,0.16)" },
+  chatSecondaryPillText: { color: colors.secondary, fontSize: 11.5, flexShrink: 1 },
+  chatPicker: { position: "absolute", top: 38, right: 0, width: 300, maxHeight: 420, gap: 8, padding: 8, borderColor: colors.border, borderWidth: 1, borderRadius: 10, backgroundColor: colors.surface, zIndex: 100, elevation: 20, shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 18, shadowOffset: { width: 0, height: 8 } },
+  chatPickerPhone: { position: "fixed", top: "auto", right: 8, bottom: 8, left: 8, width: "auto", maxHeight: "78vh", borderRadius: 14, padding: 12 } as unknown as ViewStyle,
+  chatPickerBackdrop: { position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.42)", zIndex: 90 } as unknown as ViewStyle,
+  chatPickerHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  chatPickerBack: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 6 },
+  chatPickerBackText: { color: colors.secondary, fontSize: 22 },
+  chatPickerSearch: { flex: 1, minHeight: 40, paddingHorizontal: 10, borderColor: colors.border, borderWidth: 1, borderRadius: 6, backgroundColor: "rgba(255,255,255,0.035)", color: colors.foreground, fontSize: 13 },
+  chatPickerScroll: { flexGrow: 0, maxHeight: 340 },
+  chatPickerSection: { color: colors.muted, fontFamily: mono, fontSize: 10.5, letterSpacing: 0.8, textTransform: "uppercase", paddingHorizontal: 8, paddingTop: 8, paddingBottom: 5 },
+  chatPickerOption: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 9, paddingVertical: 7, borderRadius: 6 },
+  chatPickerOptionSelected: { backgroundColor: "rgba(94,106,210,0.16)" },
+  chatPickerOptionCopy: { flex: 1, minWidth: 0, gap: 2 },
+  chatPickerOptionTitle: { color: colors.secondary, fontSize: 12.5, flexShrink: 1 },
+  chatPickerOptionMeta: { color: colors.muted, fontFamily: mono, fontSize: 10.5, flexShrink: 1 },
+  chatPickerOptionText: { color: colors.secondary, fontSize: 12.5 },
+  chatPickerCheck: { color: colors.accentHover, fontSize: 14 },
+  chatPickerEmpty: { color: colors.muted, fontSize: 12.5, padding: 12 },
+  chatPickerError: { color: colors.dangerText, fontSize: 12, lineHeight: 17, padding: 8 },
+  chatMiniMenu: { position: "absolute", top: 36, right: 0, minWidth: 150, gap: 2, padding: 5, borderColor: colors.border, borderWidth: 1, borderRadius: 8, backgroundColor: colors.surface, zIndex: 110, elevation: 18 },
+  chatMiniOption: { minHeight: 44, justifyContent: "center", paddingHorizontal: 10, borderRadius: 5 },
+  chatPhonePrimaryButton: { minHeight: 44 },
+  chatFeatureSelectControl: { position: "relative", zIndex: 60 },
+  chatFeatureLoading: { color: colors.muted, fontFamily: mono, fontSize: 10.5, paddingHorizontal: 4 },
+  chatFeatureError: { color: colors.dangerText, fontSize: 11.5, lineHeight: 17 },
   evidence: { gap: 8, padding: 12, borderColor: "rgba(94,106,210,0.4)", borderWidth: 1, borderRadius: 8, backgroundColor: "rgba(94,106,210,0.08)" },
   evidenceHeading: { color: colors.accentHover, fontFamily: mono, fontSize: 10.5, letterSpacing: 0.5, textTransform: "uppercase" },
   evidenceRange: { color: colors.secondary, fontFamily: mono, fontSize: 11.5 },

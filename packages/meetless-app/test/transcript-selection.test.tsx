@@ -291,6 +291,179 @@ describe("transcript meeting selection ordering", () => {
     expect(surface().props.chatProviders).toEqual(providerInventory());
   });
 
+  test("rehydrates one host-global complete selection across meetings and snapshots it for ask", async () => {
+    const selection = {
+      provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high",
+      featureValues: { fast_mode: true },
+    };
+    const controls = {
+      version: 1 as const,
+      catalog: { providers: [] }, profiles: [], catalogError: null,
+      lastSelection: selection, lastSelectionState: "available" as const, lastSelectionError: null,
+    };
+    const getMeetingChat = vi.fn(async (meetingId: string) => ({ ...chatResponse(), meetingId }));
+    const askMeetingQuestionWithSelection = vi.fn(async ({ meetingId, selection: asked }: { meetingId: string; selection: typeof selection }) => ({
+      ...chatResponse(), meetingId, status: "running" as const, selection: { provider: asked.provider, model: asked.model },
+    }));
+    const client = {
+      listMeetings: async () => [meeting("m-1"), meeting("m-2")],
+      getChatControls: vi.fn(async () => controls),
+      getMeetingTranscript: async (meetingId: string) => transcriptResponse(meetingId, `segment-${meetingId}`, "current citation"),
+      getMeetingChat,
+      discoverChatFeatures: async (asked: typeof selection) => ({ version: 1 as const, selection: asked, status: "ready" as const, features: [], error: null }),
+      askMeetingQuestionWithSelection,
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await vi.waitFor(() => expect(surface().props.chatSelection).toEqual(selection));
+    await vi.waitFor(() => expect(surface().props.chatFeatures?.selection).toEqual(selection));
+
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    expect(surface().props.chatSelection).toEqual(selection);
+    expect(surface().props.chatFeatures?.selection).toEqual(selection);
+    await act(async () => { await surface().props.onAskQuestion("What did we decide?"); });
+    expect(askMeetingQuestionWithSelection).toHaveBeenCalledWith({
+      meetingId: "m-1", question: "What did we decide?", selection,
+    });
+
+    await act(async () => { await surface().props.onOpenTranscript("m-2"); });
+    expect(surface().props.chatSelection).toEqual(selection);
+    await act(async () => { await surface().props.onAskQuestion("What did we decide next?"); });
+    expect(askMeetingQuestionWithSelection).toHaveBeenLastCalledWith({
+      meetingId: "m-2", question: "What did we decide next?", selection,
+    });
+  });
+
+  test("does not let a delayed initial controls response overwrite a newer local selection", async () => {
+    const initialSelection = {
+      provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high", featureValues: { fast_mode: false },
+    };
+    const localSelection = {
+      provider: "codex", model: "gpt-5-mini", modeId: "reviewer", thinkingOptionId: "low", featureValues: { fast_mode: true },
+    };
+    const controls = deferred<{
+      version: 1;
+      catalog: { providers: [] };
+      profiles: [];
+      catalogError: null;
+      lastSelection: typeof initialSelection;
+      lastSelectionState: "available";
+      lastSelectionError: null;
+    }>();
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getChatControls: vi.fn(() => controls.promise),
+      getMeetingTranscript: async () => transcriptResponse("m-1", "segment-m-1", "current citation"),
+      getMeetingChat: async () => chatResponse(),
+      discoverChatFeatures: vi.fn(async (selection: typeof localSelection) => featureResponse(selection)),
+      applyChatSelection: vi.fn(async (selection: typeof localSelection) => selection),
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(client.getChatControls).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+
+    await act(async () => { await surface().props.onChatSelectionBundle(localSelection); });
+    expect(surface().props.chatSelection).toEqual(localSelection);
+
+    await act(async () => {
+      controls.resolve({
+        version: 1, catalog: { providers: [] }, profiles: [], catalogError: null,
+        lastSelection: initialSelection, lastSelectionState: "available", lastSelectionError: null,
+      });
+      await Promise.resolve();
+    });
+    expect(surface().props.chatSelection).toEqual(localSelection);
+  });
+
+  test("does not let delayed meeting controls overwrite a selection made before switching meetings", async () => {
+    const initialSelection = {
+      provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high", featureValues: { fast_mode: false },
+    };
+    const localSelection = {
+      provider: "codex", model: "gpt-5-mini", modeId: "reviewer", thinkingOptionId: "low", featureValues: { fast_mode: true },
+    };
+    const controls = {
+      version: 1 as const,
+      catalog: { providers: [] }, profiles: [], catalogError: null,
+      lastSelection: initialSelection, lastSelectionState: "available" as const, lastSelectionError: null,
+    };
+    const delayedControls = deferred<typeof controls>();
+    const getChatControls = vi.fn()
+      .mockResolvedValueOnce(controls)
+      .mockResolvedValueOnce(controls)
+      .mockImplementationOnce(() => delayedControls.promise);
+    const client = {
+      listMeetings: async () => [meeting("m-1"), meeting("m-2")],
+      getChatControls,
+      getMeetingTranscript: async (meetingId: string) => transcriptResponse(meetingId, `segment-${meetingId}`, "current citation"),
+      getMeetingChat: async (meetingId: string) => ({ ...chatResponse(), meetingId }),
+      discoverChatFeatures: vi.fn(async (selection: typeof localSelection) => featureResponse(selection)),
+      applyChatSelection: vi.fn(async (selection: typeof localSelection) => selection),
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(getChatControls).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    let opening!: Promise<void>;
+    await act(async () => {
+      opening = surface().props.onOpenTranscript("m-2");
+      await vi.waitFor(() => expect(getChatControls).toHaveBeenCalledTimes(3));
+    });
+    await act(async () => { await surface().props.onChatSelectionBundle(localSelection); });
+    expect(surface().props.chatSelection).toEqual(localSelection);
+    await act(async () => {
+      delayedControls.resolve(controls);
+      await opening;
+    });
+    expect(surface().props.chatSelection).toEqual(localSelection);
+  });
+
+  test("discards late feature discovery after a complete selection changes", async () => {
+    const firstSelection = {
+      provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high", featureValues: {},
+    };
+    const secondSelection = { ...firstSelection, model: "gpt-5-mini" };
+    const controls = {
+      version: 1 as const,
+      catalog: { providers: [] }, profiles: [], catalogError: null,
+      lastSelection: firstSelection, lastSelectionState: "available" as const, lastSelectionError: null,
+    };
+    const first = deferred<ReturnType<typeof featureResponse>>();
+    const second = deferred<ReturnType<typeof featureResponse>>();
+    const discoverChatFeatures = vi.fn((selection: typeof firstSelection) =>
+      selection.model === firstSelection.model ? first.promise : second.promise);
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getChatControls: async () => controls,
+      getMeetingTranscript: async () => transcriptResponse("m-1", "segment-m-1", "current citation"),
+      getMeetingChat: async () => chatResponse(),
+      discoverChatFeatures,
+      applyChatSelection: vi.fn(async (selection: typeof firstSelection) => selection),
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(discoverChatFeatures).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+
+    await act(async () => { await surface().props.onChatSelectionBundle(secondSelection); });
+    await vi.waitFor(() => expect(discoverChatFeatures).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      second.resolve(featureResponse(secondSelection));
+      await Promise.resolve();
+    });
+    expect(surface().props.chatFeatures.selection).toEqual(secondSelection);
+    await act(async () => {
+      first.resolve(featureResponse(firstSelection));
+      await Promise.resolve();
+    });
+    expect(surface().props.chatFeatures.selection).toEqual(secondSelection);
+  });
+
   test("late same-meeting citation success stops its stale handle and cannot replace the latest playback", async () => {
     const firstPlayback = deferred<{ stop(): void }>();
     const secondPlayback = deferred<{ stop(): void }>();
@@ -454,6 +627,16 @@ function chatResponse(selection: { provider: string; model: string } = { provide
     selection,
     failure: null,
   };
+}
+
+function featureResponse(selection: {
+  provider: string;
+  model: string;
+  modeId: string | null;
+  thinkingOptionId: string | null;
+  featureValues: Record<string, boolean | string | null>;
+}) {
+  return { version: 1 as const, selection, status: "ready" as const, features: [], error: null };
 }
 
 function deferred<T>() {
