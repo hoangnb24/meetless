@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { MeetingStore } from "@meetless/meeting-store";
 import { RecordingService, RecordingStartRollbackError } from "../src/recording-service.js";
 import { RecordingInventoryReconciler } from "../src/inventory.js";
+import { managedTimelineStagingDirectory } from "../src/finalizer.js";
 import { resolveFixtureExportNow } from "../src/server.js";
 import { MeetingLifecycleCoordinator } from "../src/meeting-lifecycle-coordinator.js";
 
@@ -47,7 +48,14 @@ describe("daemon recording service", () => {
     const owned = path.join(config.exportRoot, ".meetless-recording-stage-00000000-0000-4000-8000-000000000000.mp3.stage");
     const unrelated = path.join(config.exportRoot, ".meetless-other-recording-00000000-0000-4000-8000-000000000000.mp3.stage");
     const deceptive = path.join(config.exportRoot, ".meetless-recording-stage-not-a-uuid.mp3.stage");
-    await Promise.all([writeFile(owned, "owned"), writeFile(unrelated, "other"), writeFile(deceptive, "deceptive")]);
+    const privateRoot = managedTimelineStagingDirectory(config.storeRoot, "recording-stage");
+    const privateOwned = path.join(privateRoot, ".meetless-recording-stage-00000000-0000-4000-8000-000000000001-microphone.wav.stage");
+    const privateUnrelated = path.join(privateRoot, ".meetless-other-recording-00000000-0000-4000-8000-000000000002-system.wav.stage");
+    await mkdir(privateRoot, { recursive: true });
+    await Promise.all([
+      writeFile(owned, "owned"), writeFile(unrelated, "other"), writeFile(deceptive, "deceptive"),
+      writeFile(privateOwned, "private-owned"), writeFile(privateUnrelated, "private-other"),
+    ]);
 
     const service = new RecordingService(config, store); services.add(service);
     await service.initialize();
@@ -55,6 +63,8 @@ describe("daemon recording service", () => {
     await expect(access(owned)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(unrelated)).resolves.toBeUndefined();
     await expect(access(deceptive)).resolves.toBeUndefined();
+    await expect(access(privateOwned)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(privateUnrelated)).resolves.toBeUndefined();
   });
 
   test("startup does not enumerate exports for failed recordings", async () => {

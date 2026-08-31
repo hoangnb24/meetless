@@ -18,6 +18,7 @@ import {
   ManagedTimelineArtifactStore,
   type ManagedCanonicalTimeline,
 } from "../src/managed-transcription.js";
+import { RecordingService } from "../src/recording-service.js";
 
 const START = Date.parse("2026-08-31T00:00:00.000Z");
 const credential: ManagedUploadCredential = {
@@ -312,6 +313,83 @@ describe("pre-external managed upload seam", () => {
     expect(deletion).toMatchObject({ outcome: "deleted" });
     await expect(stat(deletionArtifact)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await new MeetingStore({ root: storeRoot }).list()).toEqual([]);
+  });
+
+  test("running-runtime deletion owns and removes an expired meeting artifact without a sweep", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-artifact-expiry-delete-"));
+    roots.push(root);
+    let now = START;
+    const storeRoot = path.join(root, "store");
+    const exportRoot = path.join(root, "exports");
+    const meetingId = "meeting-expired-owner";
+    const recordingId = "recording-expired-owner";
+    const artifactRoot = path.join(storeRoot, "managed-artifacts");
+    const sourcePath = path.join(root, "expired-source.wav");
+    const bytes = wavBytes(16_000);
+    await writeFile(sourcePath, bytes, { mode: 0o600 });
+    const owner = new ManagedTimelineArtifactStore(artifactRoot, { now: () => now });
+    await owner.accept({
+      path: sourcePath,
+      recordingId,
+      audioId: `recording:${recordingId}`,
+      manifestSha256: sha256Text("expired-owner-manifest"),
+      identity: identityOf(bytes),
+      startMs: 0,
+      endMs: 1_000,
+      cleanup: async () => undefined,
+    }, { meetingId });
+    await rm(sourcePath);
+    now += MANAGED_TEMPORARY_DATA_TTL_MS + 1;
+
+    const store = new MeetingStore({
+      root: storeRoot,
+      approvedExportRoots: [exportRoot],
+      now: () => new Date(now).toISOString(),
+    });
+    await store.create({ id: meetingId, title: "Expired artifact" });
+    await store.startRecording({ id: recordingId, meetingId });
+    await store.prepareInventoryRecovery(recordingId, "closed");
+    await store.markInventoryScanning(recordingId);
+    const inventoryPath = path.join(storeRoot, "sessions", recordingId, "inventory.ndjson");
+    await mkdir(path.dirname(inventoryPath), { recursive: true, mode: 0o700 });
+    await writeFile(inventoryPath, "{}\n", { mode: 0o600 });
+    await store.publishInventory(recordingId, {
+      storageKey: path.relative(storeRoot, inventoryPath),
+      digest: "a".repeat(64),
+      chunkCount: 1,
+      microphoneCount: 1,
+      systemCount: 0,
+      publishedAt: new Date(now).toISOString(),
+    });
+    await mkdir(exportRoot, { recursive: true });
+    const outputPath = path.join(exportRoot, "expired-owner.mp3");
+    const output = Buffer.from("ID3-expired-owner");
+    await writeFile(outputPath, output, { mode: 0o600 });
+    const outputIdentity = identityOf(output);
+    await store.beginFinalization(recordingId, {
+      openChunksDurablyClosed: true,
+      chunkSetDigest: "a".repeat(64),
+      destination: outputPath,
+      expectedIdentity: outputIdentity,
+    });
+    await store.markRecordingSaved(recordingId, { destination: outputPath, identity: outputIdentity, readable: true });
+
+    const runtime = new RecordingService({
+      storeRoot,
+      helperPath: "/unused/helper",
+      ffmpeg: "/unused/ffmpeg",
+      ffprobe: "/unused/ffprobe",
+      exportRoot,
+      fixture: true,
+      managedTimelineConsumer: owner,
+    }, store);
+    const owned = await runtime.ownedManagedArtifactPaths(meetingId);
+    expect(owned).toEqual([{ recordingId, path: owner.artifactDirectory(recordingId) }]);
+
+    const deletion = await store.deleteMeeting(meetingId, { managedArtifactPaths: owned });
+    expect(deletion).toMatchObject({ outcome: "deleted" });
+    await expect(stat(owner.artifactDirectory(recordingId))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await store.list()).toEqual([]);
   });
 });
 

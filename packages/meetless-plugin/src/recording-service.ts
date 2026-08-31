@@ -29,6 +29,7 @@ export interface RecordingServiceConfig {
   ffprobe: string;
   exportRoot: string;
   fixture: boolean;
+  observeCommand?(executable: string, arguments_: readonly string[]): void;
   helperArguments?: string[];
   helperStartTimeoutMs?: number;
   exportNow?: () => Date;
@@ -67,6 +68,7 @@ export class RecordingService {
     this.store = store ?? new MeetingStore({ root: config.storeRoot });
     this.finalizer = new Mp3Finalizer({
       ffmpeg: config.ffmpeg, ffprobe: config.ffprobe, exportRoot: config.exportRoot, storeRoot: config.storeRoot,
+      observeCommand: config.observeCommand,
     });
     this.inventory = new RecordingInventoryReconciler(config.storeRoot, this.store);
     this.failFinalizationOnce = config.failFinalizationOnce === true;
@@ -194,7 +196,10 @@ export class RecordingService {
       recording,
       ownsStage: await requiresFinalizerStageEnumeration(recording, this.config.storeRoot),
     })))).filter((entry) => entry.ownsStage).map((entry) => entry.recording.id);
-    return this.finalizer.ownedStagePaths(recordingIds);
+    // MeetingStore accepts export stages through its approved export roots.
+    // Private managed stages live below its per-recording artifact directory,
+    // which the store already includes in its deletion manifest.
+    return this.finalizer.ownedExportStagePaths(recordingIds);
   }
 
   async ownedManagedArtifactPaths(meetingId: string): Promise<Array<{ recordingId: string; path: string }>> {

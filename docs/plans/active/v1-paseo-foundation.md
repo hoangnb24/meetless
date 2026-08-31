@@ -2,14 +2,14 @@
 
 ## Current State
 
-- `plan_revision`: `v12`
+- `plan_revision`: `v13`
 - `current_frontier`: `MANAGED-TRANSCRIPTION-PRE-EXTERNAL-SEAM-R2-CONVERGENCE`
-- `state`: `LOCAL_CONVERGENCE_REQUIRED`
+- `state`: `LOCAL_CONVERGENCE_CANDIDATE_READY`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: R2 candidate `966b9abd78481db001e912cc2e60d895c00bef37` is rejected for the bounded CPF-002/CPF-007 convergence below. Managed-transcription foundation R1 remains accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`
-- `pending_ruling`: none for the bounded local R2 correction; owner selection of job duration/size limits, Convex project/region, and external configuration remains deferred
+- `candidate`: R2 candidate `966b9abd78481db001e912cc2e60d895c00bef37` remains rejected; the bounded CPF-002/CPF-007 convergence candidate is prepared from exact base `360e01675d46f0b9207358b1e84eddff814a7273`. Managed-transcription foundation R1 remains accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`
+- `pending_ruling`: Lead closeout of the bounded local R2 convergence candidate; owner selection of job duration/size limits, Convex project/region, and external configuration remains deferred
 - `blocked_by`: R2 is not externally blocked. Real regional latency, upload/action limits, provider credentials, App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication still require external targets or owner-gated mutation
-- `next_action`: the same SERIAL writer applies the bounded CPF-002/CPF-007 convergence; no third broad review and no Convex dependency, project, credential, provider call, or external mutation
+- `next_action`: Lead inspects the immutable bounded CPF-002/CPF-007 convergence candidate; no third broad review and no Convex dependency, project, credential, provider call, or external mutation
 
 ## Ownership And Authority
 
@@ -469,6 +469,40 @@ private audio/source staging out of `exportRoot`, preserve MP3 atomic
 publication, update stage enumeration/recovery/deletion accordingly, and prove
 expired-artifact deletion while running. No third broad review is authorized;
 Lead will inspect and run direct regressions on the convergence candidate.
+
+### R2 Convergence Candidate Disposition (2026-08-31; pending Lead closeout)
+
+The bounded convergence candidate is prepared from exact base
+`360e01675d46f0b9207358b1e84eddff814a7273`; the immutable candidate commit is
+reported in the peer handoff. No authority file or MeetingStore production
+implementation changed.
+
+- `CPF-002`: `Mp3Finalizer` keeps only the MP3 stage/publication in
+  `exportRoot`. Source timelines and the managed canonical WAV use a
+  deterministic per-recording staging directory below the MeetingStore-owned
+  private artifact root. Persisted stage recovery, rebuild, enumeration, and
+  startup cleanup cover the private root; the existing MeetingStore deletion
+  manifest removes that root with the recording.
+- `CPF-007`: running-runtime artifact enumeration retains meeting-owned paths
+  after their 24-hour expiry. The direct regression obtains the path through
+  `RecordingService.ownedManagedArtifactPaths`, deletes the meeting without a
+  startup sweep, and observes the private artifact removed.
+- `CPF-001`, `CPF-003`, `CPF-005`, and `CPF-006-LOCAL` remain unchanged and
+  covered by the focused R1 regression set.
+
+Observed convergence proof, pending Lead closeout:
+
+- The focused R1 set passed 9 files and 107 tests, including finalizer path
+  assertions, all four publication/saved/handoff/cleanup restart failpoints,
+  private-stage startup enumeration, and expired-artifact runtime deletion.
+- Meeting domain/store regressions passed 6 files and 67 tests. The broader
+  plugin suite passed 17 files and 124 tests in the full-access environment.
+- `npm run typecheck`, `npm run build:meetless`, and `git diff --check` passed.
+- The frozen authority digest remained
+  `79159e03961957296f0f110996c71e0fdde7790760b1dd63fcd40ebbab3637ae`.
+- No Convex/provider credentials or calls, native capture launch,
+  StoreKit/RevenueCat mutation, signing, upload, publication, or external
+  state change was attempted. This proof makes no production latency claim.
 
 ### Risks And Recovery
 

@@ -60,13 +60,20 @@ export class Mp3Finalizer {
   constructor(readonly config: FinalizerConfig) {}
 
   async ownedStagePaths(recordingIds: readonly string[]): Promise<Array<{ recordingId: string; path: string }>> {
+    const exportStages = await this.ownedExportStagePaths(recordingIds);
+    const privateStages = (await Promise.all(recordingIds.map((recordingId) =>
+      listRecordingOwnedStagePaths(managedTimelineStagingDirectory(this.config.storeRoot, recordingId), [recordingId])))).flat();
+    return [...exportStages, ...privateStages];
+  }
+
+  async ownedExportStagePaths(recordingIds: readonly string[]): Promise<Array<{ recordingId: string; path: string }>> {
     return listRecordingOwnedStagePaths(this.config.exportRoot, recordingIds);
   }
 
   async sweepOwnedStages(recordingIds: readonly string[]): Promise<void> {
     for (const stage of await this.ownedStagePaths(recordingIds)) {
       await rm(stage.path, { force: true });
-      await syncDirectory(this.config.exportRoot);
+      await syncDirectory(path.dirname(stage.path)).catch(() => undefined);
     }
   }
 
@@ -76,10 +83,10 @@ export class Mp3Finalizer {
   ): Promise<ManagedTimelineArtifact | null> {
     const stagePath = path.resolve(reference.stagePath);
     if (
-      path.dirname(stagePath) !== path.resolve(this.config.exportRoot) ||
+      path.dirname(stagePath) !== managedTimelineStagingDirectory(this.config.storeRoot, recordingId) ||
       !isManagedTimelineStageName(path.basename(stagePath), recordingId)
     ) {
-      throw new Error("Persisted managed timeline stage is not owned by the recording export root");
+      throw new Error("Persisted managed timeline stage is not owned by the private managed staging root");
     }
     try {
       const identity = await fileIdentity(stagePath);
@@ -102,6 +109,7 @@ export class Mp3Finalizer {
         if (cleaned) return;
         cleaned = true;
         await rm(stagePath, { force: true });
+        await syncDirectory(path.dirname(stagePath)).catch(() => undefined);
       },
     };
   }
@@ -136,6 +144,8 @@ export class Mp3Finalizer {
   }> {
     if (inventory.chunkCount === 0) throw new Error("Cannot finalize without committed chunks");
     await mkdir(this.config.exportRoot, { recursive: true, mode: 0o700 });
+    const managedStagingDirectory = managedTimelineStagingDirectory(this.config.storeRoot, recordingId);
+    await mkdir(managedStagingDirectory, { recursive: true, mode: 0o700 });
     const stagePath = path.join(this.config.exportRoot, `.meetless-${recordingId}-${randomUUID()}.mp3.stage`);
     const timelineToken = randomUUID();
     let managedTimelinePath: string | null = null;
@@ -144,7 +154,7 @@ export class Mp3Finalizer {
       const staged = await this.stageSourceTimelines(recordingId, inventory, timelineToken);
       timelines = staged.timelines;
       if (timelines.length === 0) throw new Error("Cannot finalize without validated source timelines");
-      managedTimelinePath = path.join(this.config.exportRoot, `.meetless-${recordingId}-${randomUUID()}.managed.wav.stage`);
+      managedTimelinePath = path.join(managedStagingDirectory, `.meetless-${recordingId}-${randomUUID()}.managed.wav.stage`);
       const audioMaps = timelines.length === 2 ? ["[mix-mp3]", "[mix-wav]"] : ["0:a", "0:a"];
       const args = ["-hide_banner", "-nostdin", "-loglevel", "error", "-y"];
       for (const timeline of timelines) args.push("-i", timeline.path);
@@ -180,6 +190,7 @@ export class Mp3Finalizer {
             if (cleaned) return;
             cleaned = true;
             await rm(managedTimelinePath!, { force: true });
+            await syncDirectory(path.dirname(managedTimelinePath!)).catch(() => undefined);
           },
         },
       };
@@ -200,6 +211,8 @@ export class Mp3Finalizer {
     timelines: Array<{ path: string; source: string; frameCount: number; identity: OutputIdentity }>;
     manifestSha256: string;
   }> {
+    const managedStagingDirectory = managedTimelineStagingDirectory(this.config.storeRoot, recordingId);
+    await mkdir(managedStagingDirectory, { recursive: true, mode: 0o700 });
     const states = new Map<string, { path: string; handle: Awaited<ReturnType<typeof open>>; endFrame: number }>();
     const chunks: CommittedRecordingChunk[] = [];
     try {
@@ -210,7 +223,7 @@ export class Mp3Finalizer {
         }
         let state = states.get(chunk.source);
         if (!state) {
-          const timelinePath = path.join(this.config.exportRoot, `.meetless-${recordingId}-${token}-${chunk.source}.wav.stage`);
+          const timelinePath = path.join(managedStagingDirectory, `.meetless-${recordingId}-${token}-${chunk.source}.wav.stage`);
           const handle = await open(timelinePath, "wx", 0o600);
           await handle.write(Buffer.alloc(44), 0, 44, 0);
           state = { path: timelinePath, handle, endFrame: 0 };
@@ -372,6 +385,20 @@ export class Mp3Finalizer {
     }
     return { path: candidate };
   }
+}
+
+/**
+ * Private per-recording staging for source timelines and the managed WAV.
+ * Keeping it below the MeetingStore-owned artifact directory lets the
+ * existing deletion manifest remove abandoned stages with their recording.
+ */
+export function managedTimelineStagingDirectory(storeRoot: string, recordingId: string): string {
+  return path.join(
+    path.resolve(storeRoot),
+    "managed-artifacts",
+    createHash("sha256").update(recordingId).digest("hex"),
+    "staging",
+  );
 }
 
 export async function listRecordingOwnedStagePaths(

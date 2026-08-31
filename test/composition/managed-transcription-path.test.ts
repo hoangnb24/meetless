@@ -12,6 +12,7 @@ import {
   ManagedTimelineArtifactStore,
   ManagedTranscriptionService,
 } from "../../packages/meetless-plugin/src/managed-transcription.js";
+import { managedTimelineStagingDirectory } from "../../packages/meetless-plugin/src/finalizer.js";
 import { MeetingLifecycleCoordinator } from "../../packages/meetless-plugin/src/meeting-lifecycle-coordinator.js";
 import { RecordingService, type RecordingFinalizationCheckpoint } from "../../packages/meetless-plugin/src/recording-service.js";
 import { FileManagedUploadPort, type ManagedUploadCredential } from "../../packages/meetless-plugin/src/managed-upload.js";
@@ -31,15 +32,19 @@ describe("managed transcription composition", () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-composition-"));
     roots.push(root);
     const lifecycle = new MeetingLifecycleCoordinator();
-    const artifacts = new ManagedTimelineArtifactStore(path.join(root, "managed-artifacts"));
+    const observedFinalizerCommands: string[][] = [];
+    const storeRoot = path.join(root, "store");
+    const exportRoot = path.join(root, "Documents", "meetings");
+    const artifacts = new ManagedTimelineArtifactStore(path.join(storeRoot, "managed-artifacts"));
     const config = {
-      storeRoot: path.join(root, "store"),
+      storeRoot,
       helperPath: path.resolve("native/macos-capture/.build/release/meetless-capture"),
       ffmpeg: "/opt/homebrew/bin/ffmpeg",
       ffprobe: "/opt/homebrew/bin/ffprobe",
-      exportRoot: path.join(root, "Documents", "meetings"),
+      exportRoot,
       fixture: true,
       exportNow: () => new Date("2026-08-31T12:00:00.000Z"),
+      observeCommand: (_executable: string, arguments_: readonly string[]) => observedFinalizerCommands.push([...arguments_]),
       managedTimelineConsumer: artifacts,
     };
     const recordingService = new RecordingService(config, undefined, lifecycle);
@@ -58,6 +63,14 @@ describe("managed transcription composition", () => {
     const saved = await recordingService.execute({ version: 1, requestId: "stop", command: "stop" });
     expect(saved).toMatchObject({ status: "saved", recordingId, chunks: [] });
     expect((await readdir(sessionDirectory)).filter((name) => name.endsWith(".wav"))).toEqual([]);
+    const stagedWavPaths = observedFinalizerCommands.flatMap((arguments_) =>
+      arguments_.filter((argument) => argument.endsWith(".wav.stage")));
+    expect(stagedWavPaths.length).toBeGreaterThan(0);
+    expect(stagedWavPaths.every((candidate) => isPathInside(config.storeRoot, candidate))).toBe(true);
+    expect(stagedWavPaths.every((candidate) =>
+      isPathInside(path.join(config.storeRoot, "managed-artifacts"), candidate))).toBe(true);
+    expect(stagedWavPaths.every((candidate) => !isPathInside(config.exportRoot, candidate))).toBe(true);
+    expect((await readdir(config.exportRoot)).every((name) => name.endsWith(".mp3"))).toBe(true);
     const savedRecording = (await recordingService.store.listRecordings()).find((recording) => recording.id === recordingId)!;
     const outputPath = savedRecording.savedOutput!.destination;
     const outputBytes = await readFile(outputPath);
@@ -122,7 +135,7 @@ describe("managed transcription composition", () => {
       provider,
       {
         lifecycle,
-        timelineArtifacts: new ManagedTimelineArtifactStore(path.join(root, "managed-artifacts")),
+        timelineArtifacts: new ManagedTimelineArtifactStore(path.join(config.storeRoot, "managed-artifacts")),
         managedUpload: new FileManagedUploadPort(path.join(root, "managed-upload"), uploadAuthenticator, {
           partSize: 1_024, now: () => START,
         }),
@@ -194,7 +207,9 @@ describe("managed transcription composition", () => {
     const saved = await restarted.status();
     expect(saved).toMatchObject({ status: "saved", recordingId, chunks: [] });
     expect((await readdir(sessionDirectory)).filter((name) => name.endsWith(".wav"))).toEqual([]);
-    expect((await readdir(config.exportRoot)).filter((name) => name.endsWith(".managed.wav.stage"))).toEqual([]);
+    expect((await readdir(config.exportRoot)).filter((name) => name.endsWith(".wav.stage"))).toEqual([]);
+    expect((await existingNames(managedTimelineStagingDirectory(config.storeRoot, recordingId)))
+      .filter((name) => name.endsWith(".wav.stage"))).toEqual([]);
 
     const policy = new ManagedTranscriptionPolicy({ now: () => START });
     const lineage = policy.seedVerifiedSubscriptionLineage({
@@ -233,4 +248,17 @@ async function waitFor(condition: () => Promise<boolean>, timeoutMs = 8_000): Pr
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error("Timed out waiting for recording fixture state");
+}
+
+function isPathInside(parent: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+async function existingNames(directory: string): Promise<string[]> {
+  try { return await readdir(directory); }
+  catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    throw error;
+  }
 }

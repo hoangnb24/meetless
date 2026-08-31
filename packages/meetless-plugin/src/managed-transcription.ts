@@ -404,18 +404,16 @@ export class ManagedTimelineArtifactStore implements ManagedTimelineArtifactSour
     const current = await this.readMetadata(metadataPath);
     const meetingId = context.meetingId.trim();
     if (!meetingId) throw new Error("Managed artifact handoff requires its owning meeting");
-    const next = metadataFrom(artifact, meetingId, this.now());
+    const now = this.now();
+    const next = metadataFrom(artifact, meetingId, now);
+    const expired = current !== null && current.expiresAt <= now;
     if (current && !sameMetadataIdentity(current, next)) {
       throw new Error(`Managed artifact handoff changed for ${artifact.recordingId}`);
     }
     await mkdir(recordingDirectory, { recursive: true, mode: 0o700 });
-    if (current && current.expiresAt <= this.now()) {
-      await this.remove(artifact.recordingId);
-      await mkdir(recordingDirectory, { recursive: true, mode: 0o700 });
-    }
     await this.ensureCopied(artifact.path, artifactPath, artifact.identity);
-    if (!current || current.expiresAt <= this.now()) {
-      await writeMetadata(metadataPath, metadataFrom(artifact, meetingId, this.now()));
+    if (!current || expired) {
+      await writeMetadata(metadataPath, next);
     }
   }
 
@@ -466,7 +464,9 @@ export class ManagedTimelineArtifactStore implements ManagedTimelineArtifactSour
     for (const name of names) {
       if (!/^[a-f0-9]{64}$/u.test(name) || (allowed && ![...allowed].some((id) => artifactKey(id) === name))) continue;
       const metadata = await this.readMetadata(path.join(this.directory, name, "metadata.json"));
-      if (metadata?.meetingId === meetingId && metadata.expiresAt > this.now()) {
+      // Runtime deletion must own the path even after TTL. Expiry controls
+      // transcription eligibility and startup sweeping, not meeting ownership.
+      if (metadata?.meetingId === meetingId) {
         owned.push({ recordingId: metadata.recordingId, path: path.join(this.directory, name) });
       }
     }
