@@ -31,7 +31,8 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 ## Active Plans
 
 - [Meetless V1 release readiness](active/v1-paseo-foundation.md)
-  — residual M7, paused M7-F29, and TCC R3 candidate acceptance.
+  — managed-transcription fake-backed foundation proof, residual Mac App Store
+  gates, paused M7-F29, and TCC R3 candidate acceptance.
 
 ## Completed Harness Improvements
 

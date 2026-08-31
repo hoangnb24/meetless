@@ -2,14 +2,14 @@
 
 ## Current State
 
-- `plan_revision`: `v4`
-- `current_frontier`: `MANAGED-TRANSCRIPTION-FOUNDATION-CONTRACT`
-- `state`: `BLOCKED_PENDING_PRODUCT_CONTRACTS`
-- `depends_on`: owner decisions for quota periods, device lifecycle, duration authority, temporary-data lifecycle, and entitlement-expiry behavior; durable product/ADR authority reconciliation follows those decisions
+- `plan_revision`: `v5`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-FAKE-BACKED-FOUNDATION`
+- `state`: `READY_FOR_BOUNDED_IMPLEMENTATION`
+- `depends_on`: the accepted managed-transcription policy in product authority and ADR0005; proof must precede production backend, UI, provider-credential, or external-store work
 - `candidate`: no implementation candidate; MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` is accepted reusable evidence only
-- `pending_ruling`: the five explicit owner/authority gates in the managed-transcription frontier
-- `blocked_by`: unresolved product contracts and stale product/ADR authority; external App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication gates remain separately open
-- `next_action`: decide the pending contracts, update durable product/ADR authority, then authorize the bounded fake-backed foundation proof; no implementation is authorized by this plan update
+- `pending_ruling`: technical acceptance of a future bounded fake-backed foundation candidate
+- `blocked_by`: no product-contract blocker remains; external App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication gates remain separately open
+- `next_action`: implement and verify the bounded fake-backed foundation proof; do not begin production backend rollout, provider credential use, UI reconciliation, signing, upload, or publication in that frontier
 
 ## Ownership And Authority
 
@@ -41,10 +41,10 @@ submission, and launch-evidence frontier.
 - `SHIPATON-MAS-REVENUECAT` supersedes the direct-DMG distribution frontier but
   does not erase its historical proof. It owns sandbox packaging, purchase
   mechanics, App Store Connect readiness, submission, and launch evidence.
-- `MANAGED-TRANSCRIPTION-FOUNDATION-CONTRACT` owns the product and architecture
-  decisions required before managed-transcription implementation. It does not
-  authorize a backend, client, native, provider, quota, identity, upload, or UI
-  implementation.
+- `MANAGED-TRANSCRIPTION-FAKE-BACKED-FOUNDATION` owns one bounded vertical proof
+  of the accepted identity, device, quota, duration, job, cleanup, expiry, and
+  local-publication contracts. It does not authorize production provider
+  credentials, production backend rollout, external store mutation, or final UI.
 - `M7-F29-NOTARIZE-STAPLE-VERIFY` remains paused under its separate owner hold;
   no notarization, stapling, upload, publication, or credential inspection is
   authorized by this reconciliation.
@@ -71,12 +71,12 @@ submission, and launch-evidence frontier.
 - [ADR0004 — recording host and capture permission boundary](../../decisions/0004-recording-host-and-capture-permission-boundary.md)
   owns the recording host/helper and microphone/system-audio permission boundary.
 - [ADR0005 — Mac App Store and RevenueCat](../../decisions/0005-mac-app-store-and-revenuecat.md)
-  remains authority for store distribution, sandbox, product identifiers, and
-  purchase mechanics. Its Ask Premium gate is stale and must be amended after
-  the pending contracts are decided and before implementation.
+  owns store distribution, sandbox, product identifiers, purchase mechanics,
+  and managed-transcription account, quota, duration, lifecycle, and expiry
+  contracts.
 - [Premium product policy](../../product/monetization.md) owns user-visible free,
-  paid, trial, purchase, restore, and unavailable-service behavior. Its current
-  Ask gate is stale and is not implementation authority for this frontier.
+  paid, trial, quota, device, purchase, restore, expiry, and temporary-data
+  behavior.
 - [macOS artifact validation](../../specs/macos-artifact-validation.md) owns
   candidate, package, sign, re-sign, and validation stages.
 
@@ -128,10 +128,10 @@ owner of verified subscription lineage, device credentials, atomic quota
 ledger, managed jobs, and temporary uploads. It does not replace local
 `MeetingStore` ownership of transcripts, citations, and meeting evidence.
 
-The initial managed allowance is a backend-configured 50 hours (180,000
-seconds) per month. It is provisional economic policy, not a hard-coded client
-default or marketing commitment. A reduction must not silently change an
-already-started quota period; exact period semantics remain pending below.
+The managed allowance is a backend-configured 50 hours (180,000 seconds) in
+each subscription-anchored monthly period, without rollover. The seven-day
+trial receives five hours (18,000 seconds). Each period snapshots its assigned
+limit, so a later reduction cannot change an already-started period.
 
 `TranscriptionProvider` remains the execution abstraction. Provider/engine
 selection may change independently from payment mode; entitlement, admission,
@@ -167,8 +167,11 @@ quota reservation, and charging stay outside provider implementations.
     and validated by `npm run validate:macos:app-store`; positive and negative
     contract proofs passed on 2026-08-31. The Team ID/application-group input is
     build-scoped and contains no credential.
-- [ ] Decide and promote the managed-transcription product contracts into
+- [x] Decide and promote the managed-transcription product contracts into
   durable product/ADR authority.
+  - Owner accepted quota, trial, device, restore, server duration, temporary
+    data, job lease, expiry, refund/revocation, and free Ask/BYOK behavior on
+    2026-08-31.
 - [ ] Complete the bounded fake-backed foundation proof defined below.
 - [ ] Reconcile the executable Ask gate and Premium UI only after product
   authority is updated and implementation is explicitly authorized.
@@ -191,9 +194,9 @@ quota reservation, and charging stay outside provider implementations.
   transaction exchange, refresh credentials, and device private-key material
   remain trusted-native-host and Keychain scoped; the renderer sees typed state
   only.
-- Restore Purchases must be able to bind a new installation to the existing
-  verified subscription and shared quota account. Device-count and revocation
-  UX are pending authority decisions.
+- Restore Purchases binds a new installation to the existing verified
+  subscription and shared quota account without resetting quota or automatically
+  revoking another Mac. At most three Macs may remain enrolled.
 - Short-lived access credentials authorize managed backend requests. A
   longer-lived, rotatable device/refresh credential remains in Keychain.
 - macOS prepares bounded AVFoundation audio chunks before upload. Backend engine
@@ -201,38 +204,31 @@ quota reservation, and charging stay outside provider implementations.
   free BYOK path.
 - Audio and provider output are temporary backend data. The durable transcript
   remains local unless separately authorized.
-- Family Sharing remains disabled for V1 unless quota semantics are explicitly
-  decided in a later owner decision.
+- Family Sharing remains disabled for V1.
 
-### Pending Owner And Authority Gates
+### Accepted Owner Contract (2026-08-31)
 
-No value is inferred for these policies. All must be decided and promoted into
-durable authority before implementation:
+- Monthly and annual products receive 180,000 seconds in each
+  subscription-anchored monthly period without rollover; the seven-day trial
+  receives 18,000 seconds. Restore and product changes do not reset a period,
+  and limit changes apply only to the next period.
+- One verified subscription account may enroll three Macs. Restore binds a new
+  Mac to the same account and quota without automatically revoking an old Mac.
+- The server derives billable duration from validated sample count on one 16
+  kHz mono PCM WAV timeline; client and provider duration claims are not
+  authority, and overlapping microphone/system sources are not double charged.
+- Temporary audio, orphan uploads, provider results, and transcripts in transit
+  have a 24-hour TTL. Jobs have a six-hour lease, and acknowledged local
+  publication triggers earlier result deletion.
+- A validly admitted job may finish after natural expiry within its lease;
+  verified grace remains active, while refund or revocation stops work when
+  observed. Ask and BYOK remain free; only managed transcription requires
+  Premium.
 
-1. **Quota-period semantics:** period boundaries for monthly and annual
-   products; trial allowance; grace/billing-retry access; refund/revocation;
-   product changes; rounding; and when a new configured allowance takes effect.
-2. **Device lifecycle:** allowed device count, enrollment/re-enrollment,
-   revocation and recovery UX, and whether restoring on a new installation
-   affects existing device credentials.
-3. **Duration authority:** the server-verifiable source of billable duration
-   without trusting client-declared duration and without requiring server-side
-   ffmpeg in V1.
-4. **Temporary-data lifecycle:** TTLs and deletion/acknowledgement behavior for
-   chunks, orphan uploads, provider results, transcripts in transit, failed or
-   cancelled jobs, and abandoned clients.
-5. **Entitlement expiry during work:** admission and completion behavior when
-   entitlement expires, is refunded/revoked, or changes while upload or
-   transcription is in flight.
+### Foundation Proof Acceptance Boundary
 
-Product monetization authority and ADR0005 must be reconciled after these
-decisions. Until then, this plan records direction and entry criteria but grants
-no implementation authority.
-
-### Future Foundation Proof Entry Criteria
-
-The first implementation frontier, once separately authorized, is one bounded
-fake-backed vertical proof. It must demonstrate:
+The authorized next implementation frontier is one bounded fake-backed
+vertical proof. It must demonstrate:
 
 1. a verified subscription lineage enrolls a device key; App User ID-only or a
    client-selected subscriber ID fails authorization; restore binds a second
@@ -250,8 +246,9 @@ fake-backed vertical proof. It must demonstrate:
    target-market latency is measured against available regions, and action
    retry/concurrency behavior is explicit rather than assumed.
 
-These are future validation and implementation entry criteria. None is
-completed by this docs-only reconciliation.
+These criteria authorize only the bounded fake-backed proof. None is completed
+by this authority reconciliation, and production backend/provider credentials,
+external store changes, and final UI remain outside its scope.
 
 ### Accepted Reusable R1 Structural Evidence (2026-08-31)
 
@@ -344,13 +341,19 @@ quota, backend, upload, or cleanup contracts.
   `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` is closed structural evidence;
   its Ask gate is superseded. The current frontier is docs/foundation contract
   work, and implementation remains blocked on the five owner/authority gates.
-- This reconciliation changes no product authority, ADR, implementation,
-  executable contract, package, external service, credential, or store state.
+- 2026-08-31 `PLAN_RECONCILIATION v5`: the owner accepted all five managed-
+  transcription contracts. Product policy and ADR0005 now own the free Ask/BYOK,
+  quota/trial, three-Mac restore, sample-count duration, 24-hour TTL, six-hour
+  lease, natural-expiry completion, and refund/revocation behavior. The next
+  frontier is the bounded fake-backed foundation proof.
+- This v5 reconciliation changes product and ADR authority plus this plan. It
+  changes no implementation, executable contract, package, external service,
+  credential, or store state.
 
 ## Validation
 
-This docs-only reconciliation requires plan consistency checks only: whitespace
-validation, stale Ask-gate search within active-plan authority, active-plan
-index consistency, and confirmation that product, ADR, and implementation paths
-are unchanged in this turn. It does not self-accept TCC, managed-transcription
-implementation, or any external release stage.
+This docs-only authority reconciliation requires consistency checks only:
+whitespace validation, stale Ask-gate search across current authority, active-
+plan index consistency, and confirmation that implementation paths are unchanged
+in this turn. It does not self-accept TCC, the fake-backed proof, production
+managed transcription, or any external release stage.

@@ -1,6 +1,6 @@
 # 0005 Distribute Meetless Through The Mac App Store With RevenueCat
 
-Date: 2026-08-30
+Date: 2026-08-30; amended 2026-08-31
 
 ## Status
 
@@ -30,9 +30,10 @@ Review remain external evidence; a local build cannot claim either.
 
 ### Premium policy
 
-Recording, transcription, meeting reading, and citation playback remain free.
-Meeting-scoped Ask is available only while the RevenueCat entitlement
-`premium` is active. The app offers:
+Recording, meeting reading, meeting-scoped Ask, citation playback, and
+user-supplied-provider/API-key transcription remain free. Only
+Meetless-managed transcription, using a publisher credential that remains
+backend-only, requires the RevenueCat entitlement `premium`. The app offers:
 
 - `com.meetless.app.premium.monthly` at the intended US price of `$9.99`;
 - `com.meetless.app.premium.annual` at the intended US price of `$79.99`; and
@@ -41,7 +42,59 @@ Meeting-scoped Ask is available only while the RevenueCat entitlement
 Storefront prices and localized presentation come from StoreKit/RevenueCat,
 not hard-coded UI strings. The default RevenueCat offering contains monthly
 and annual packages. The app supports purchase and restore. A missing,
-unconfigured, or unreachable purchase service never grants Premium.
+unconfigured, or unreachable purchase service never grants Premium, but also
+does not disable Ask, local meeting evidence, or user-supplied transcription.
+
+### Managed-transcription account and quota
+
+The backend derives one billing and quota account from server-verified App
+Store subscription lineage. RevenueCat App User ID, renderer entitlement state,
+and a client-selected subscriber ID are lookup data, not authorization proof.
+The account may enroll at most three Macs. Each installation proves possession
+of a distinct revocable device key held by the trusted native host in Keychain.
+Restore on a new Mac binds that device to the existing account and shared quota;
+it does not reset quota or automatically revoke another Mac. V1 backend
+enrollment is macOS-host only, and Family Sharing is disabled.
+
+Monthly and annual products receive 180,000 seconds in each
+subscription-anchored monthly period; annual allowance is released one monthly
+period at a time and unused allowance does not roll over. The seven-day trial
+receives 18,000 seconds. Product changes and restore do not reset a current
+period. Each period snapshots its configured limit, so a later reduction cannot
+change an already-started period.
+
+Admission atomically reserves quota. Settlement is idempotent for the stable
+subscriber, audio, and chunk identities: duplicate requests, retries, and
+recovery after a crash produce at most one ledger charge. Usage is rounded up
+to a whole second. Failed or cancelled work releases its reservation unless the
+provider already completed the transcription; a completed result remains
+recoverable and settles once even when the client disconnects.
+
+### Duration, temporary data, and expiry
+
+Billable duration comes from one canonical 16 kHz, mono, 16-bit PCM WAV
+timeline. The backend validates the WAV structure and derives duration from
+sample count; it rejects a conflicting client duration and does not trust
+provider-reported usage. Microphone and system audio contribute to one meeting
+timeline and are not charged as two overlapping durations.
+
+Managed audio chunks, orphan uploads, provider output, and transcripts in
+transit have a maximum 24-hour TTL. A job lease lasts at most six hours. Audio
+is deleted after provider completion once the temporary result is recoverable;
+the result is deleted when the Mac acknowledges durable local publication or at
+TTL, whichever comes first. Cancellation schedules immediate deletion, failed
+jobs may retain input only within the TTL for retry, and cleanup must recover
+orphans after interruption. Audio and transcript contents, credentials,
+receipts, and raw transactions are forbidden from ordinary logs. Durable
+transcripts, citations, and meeting evidence remain owned by local
+`MeetingStore`.
+
+A job admitted while entitlement and quota are valid may complete within its
+lease after natural entitlement expiry. An App Store-verified grace period is
+treated as active. A refund or revocation stops in-flight managed work when
+observed and prevents new work. A completed result may still be retrieved
+within its TTL; starting or restarting work after the lease requires active
+Premium and a new valid admission.
 
 ### Runtime and data boundary
 
@@ -65,8 +118,9 @@ secret keys are forbidden from the bundle and repository.
 - Package layout, entitlements, helper inheritance, writable paths, network
   access, TCC attribution, and child-process behavior require fresh sandbox
   validation.
-- Ask requires an observable Premium gate and recovery path; recording and
-  evidence access cannot be held hostage by purchase-service availability.
+- Managed transcription requires an observable Premium/quota gate and recovery
+  path; Ask, BYOK transcription, recording, and evidence access cannot be held
+  hostage by purchase-service availability.
 - App Store Connect must own the subscription group, products, trial, pricing,
   agreements, tax/banking state, privacy metadata, screenshots, and review
   submission.
@@ -77,12 +131,15 @@ secret keys are forbidden from the bundle and repository.
 
 The minimum proof is:
 
-1. policy tests proving free features remain available and Ask fails closed
-   without `premium`;
+1. policy tests proving Ask and BYOK remain free while managed transcription
+   fails closed without entitlement, quota, or an enrolled device;
 2. native adapter tests for offerings, active entitlement, purchase, restore,
    cancellation, and unavailable service;
-3. a sandbox-signed package validation proving the exact App Sandbox entitlement
+3. a fake-backed vertical proof for verified subscription lineage, three-device
+   enrollment/revocation, monthly and trial quota, duration validation,
+   idempotent settlement, expiry, and 24-hour cleanup;
+4. a sandbox-signed package validation proving the exact App Sandbox entitlement
    closure and In-App Purchase capability/configuration;
-4. an Apple sandbox purchase and restore on the packaged app;
-5. App Store Connect upload/build processing evidence; and
-6. App Review submission and eventual store URL as separate external evidence.
+5. an Apple sandbox purchase and restore on the packaged app;
+6. App Store Connect upload/build processing evidence; and
+7. App Review submission and eventual store URL as separate external evidence.
