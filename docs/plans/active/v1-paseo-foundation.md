@@ -2,14 +2,14 @@
 
 ## Current State
 
-- `plan_revision`: `v9`
-- `current_frontier`: `MANAGED-TRANSCRIPTION-CONVEX-INTEGRATION-GATE`
-- `state`: `OWNER_EXTERNAL_GATE`
+- `plan_revision`: `v10`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-PRE-EXTERNAL-SEAM-R2`
+- `state`: `LOCAL_CORRECTION_READY`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`. MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` remains accepted reusable evidence only
-- `pending_ruling`: owner selection/provisioning of a Convex project and deployment region, plus authorization before any external project, credential, provider, or store mutation
-- `blocked_by`: no Convex project/configuration exists in the repository; real regional latency, upload/action limits, provider credentials, App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication require external targets or owner-gated mutation
-- `next_action`: prepare the production integration brief without external mutation; execute the real Convex/AVFoundation gate only after the owner supplies the deployment target and authorizes external configuration
+- `pending_ruling`: none for the bounded local R2 correction; owner selection of job duration/size limits, Convex project/region, and external configuration remains deferred
+- `blocked_by`: R2 is not externally blocked. Real regional latency, upload/action limits, provider credentials, App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication still require external targets or owner-gated mutation
+- `next_action`: one SERIAL writer implements the frozen local CPF correction set below; no Convex dependency, project, credential, provider call, or external mutation
 
 ## Ownership And Authority
 
@@ -357,6 +357,51 @@ Convergence architectural decisions:
   evidence that admission can occur before persistence/execution.
 - [ ] No RevenueCat project, App Store profile, signing, upload, sandbox
   purchase, App Review, or public listing evidence exists in this correction.
+
+### Production Integration Preflight Verdict (2026-08-31)
+
+Two independent read-only preflights inspected accepted base `03d4249` without
+repository or external mutation. Lead keeps Convex-first conditionally: Convex
+is credible as the transactional control plane and temporary object store, but
+not as an assumed arbitrary-length synchronous audio processor. Hosted region,
+real upload/action/provider behavior, and target-market latency remain external
+gates.
+
+Frozen local correction findings:
+
+- `CPF-001`: add a separate host-authenticated managed-upload port with bounded
+  streaming/parts, idempotent completion, cancellation, and status recovery.
+  It must not alter or reuse the direct/BYOK `TranscriptionProvider` contract.
+- `CPF-002`: move managed canonical audio and metadata into private app-owned
+  state. Only the durable user-visible MP3 may use the export destination.
+- `CPF-003`: make finalizer-to-managed-owner transfer recoverable before source
+  cleanup, including publication/saved/handoff/cleanup crash boundaries.
+- `CPF-005`: use deterministic recording-bound timeline identity; caller input
+  cannot create a second admission for the same recording.
+- `CPF-007`: give local artifacts meeting ownership, creation/expiry state, the
+  accepted 24-hour TTL, startup/orphan sweep, and meeting-deletion cleanup.
+- `CPF-006-LOCAL`: persist a local pending/transcribing barrier before remote
+  submission, recover it after restart, and reacquire the shared lifecycle lease
+  for publication. Remote cancellation/provider semantics remain external.
+
+`CPF-004` is not authorized as a guessed product limit. The owner must later
+choose a maximum managed-job duration/size after long-duration RSS, disk, and
+upload measurements. Native anchor-buffer policy and production provider limits
+remain outside R2.
+
+`PARALLEL_CHECK v1`: `SERIAL`. The ready corrections share finalizer,
+RecordingService, private artifact ownership, MeetingStore deletion lifecycle,
+runtime composition, and integration proof. Contract digest remains
+`79159e03961957296f0f110996c71e0fdde7790760b1dd63fcd40ebbab3637ae`.
+
+R2 acceptance requires a fake transport with a canonical WAV larger than 25 MB
+without full-file adapter buffering; duplicate part/completion recovery;
+cancel/revoke and restart behavior; failpoints around finalization handoff;
+success/failure/expiry/deletion cleanup; durable deletion refusal while managed
+work is pending; unchanged Ask/BYOK behavior; focused proof, typecheck, build,
+and unchanged authority digest. R2 does not install Convex, wire production,
+choose a region or job limit, launch capture, use credentials, or mutate an
+external service.
 
 ### Risks And Recovery
 
