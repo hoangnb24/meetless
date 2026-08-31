@@ -1,24 +1,24 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   ManagedTranscriptionPolicy,
-  parseCanonicalPcmWav,
   type ManagedDeviceCredential,
   type ManagedJob,
   type ManagedProviderResult,
   type ManagedTimelineEvidence,
 } from "@meetless/managed-transcription-foundation";
 import {
-  planTranscriptRanges,
-  type CommittedRecordingChunk,
   type OutputIdentity,
   type RecordingSession,
   type TranscriptState,
 } from "@meetless/meeting-domain";
 import type { MeetingStore } from "@meetless/meeting-store";
-import { fileIdentity } from "./finalizer.js";
-import { readInventory, resolveStorePath } from "./inventory.js";
+import {
+  fileIdentity,
+  type ManagedTimelineArtifact,
+  type ManagedTimelineArtifactConsumer,
+} from "./finalizer.js";
 import { MeetingLifecycleCoordinator } from "./meeting-lifecycle-coordinator.js";
 import type { TranscriptionProvider } from "./transcription-provider.js";
 import { TranscriptionProviderError } from "./transcription-provider.js";
@@ -43,6 +43,10 @@ export interface ManagedCanonicalTimeline {
   cleanup(): Promise<void>;
 }
 
+export interface ManagedTimelineArtifactSource {
+  get(recordingId: string): Promise<ManagedTimelineArtifact | null>;
+}
+
 export interface ManagedTimelinePreparer {
   prepare(recording: RecordingSession, audioId?: string): Promise<ManagedCanonicalTimeline>;
 }
@@ -51,6 +55,8 @@ export interface ManagedTranscriptionServiceOptions {
   /** Must be the coordinator shared by recording, Ask, and deletion. */
   readonly lifecycle: MeetingLifecycleCoordinator;
   readonly timelinePreparer?: ManagedTimelinePreparer;
+  /** Receives the artifact handed off by RecordingService before chunk cleanup. */
+  readonly timelineArtifacts?: ManagedTimelineArtifactSource;
   readonly afterProviderSuccess?: (job: ManagedJob) => void | Promise<void>;
 }
 
@@ -62,8 +68,9 @@ export interface ManagedTranscriptionResult {
 /**
  * Edge adapter for the fake-backed managed policy. It verifies the durable MP3
  * identity, prepares one canonical timeline from the validated recording
- * inventory, calls the existing provider abstraction, and publishes only via
- * MeetingStore. The shared lifecycle lease spans provider and publication.
+ * finalizer-owned canonical timeline, calls the existing provider abstraction,
+ * and publishes only via MeetingStore. The shared lifecycle lease spans
+ * provider and publication.
  */
 export class ManagedTranscriptionService {
   private readonly timelinePreparer: ManagedTimelinePreparer;
@@ -74,7 +81,11 @@ export class ManagedTranscriptionService {
     private readonly provider: TranscriptionProvider,
     private readonly options: ManagedTranscriptionServiceOptions,
   ) {
-    this.timelinePreparer = options.timelinePreparer ?? new RecordingManagedTimelinePreparer(path.dirname(store.filePath));
+    if (!options.timelinePreparer && !options.timelineArtifacts) {
+      throw new Error("Managed transcription requires the canonical timeline handoff from recording finalization");
+    }
+    this.timelinePreparer = options.timelinePreparer
+      ?? new HandedOffTimelinePreparer(options.timelineArtifacts!);
   }
 
   async transcribe(input: ManagedTranscriptionInput): Promise<ManagedTranscriptionResult> {
@@ -102,6 +113,7 @@ export class ManagedTranscriptionService {
     }
 
     const timeline = await this.timelinePreparer.prepare(recording, input.audioId);
+    let retainTimeline = false;
     try {
       if (timeline.recordingId !== recording.id) {
         throw new Error("Managed canonical timeline is bound to a different recording");
@@ -112,6 +124,9 @@ export class ManagedTranscriptionService {
       }
       if (path.resolve(timeline.path) === path.resolve(savedOutput.destination)) {
         throw new Error("Managed canonical timeline must be temporary; durable saved output remains MP3");
+      }
+      if (timeline.startMs !== 0) {
+        throw new Error("Managed canonical timeline must cover the recording from zero");
       }
       const preparedIdentity = await fileIdentity(timeline.path);
       if (!sameIdentity(preparedIdentity, timeline.identity)) {
@@ -137,6 +152,7 @@ export class ManagedTranscriptionService {
         wav,
         claimedDurationSeconds: input.claimedDurationSeconds,
       });
+      retainTimeline = true;
       let job = reservation.job;
       if (job.status === "failed") job = this.policy.retryJob(job.jobId);
       if (job.status === "reserved") {
@@ -153,12 +169,21 @@ export class ManagedTranscriptionService {
         }
         this.policy.startProvider(job.jobId, job.admissionId);
         try {
-          const range = planTranscriptRanges({
+          const rangeDurationMs = timeline.endMs - timeline.startMs;
+          const transcript = await this.store.ensureTranscript({
+            meetingId: recording.meetingId,
             recordingId: recording.id,
-            audioSha256: savedOutput.sha256,
-            durationMs: timeline.endMs - timeline.startMs,
-            rangeMs: timeline.endMs - timeline.startMs,
-          })[0];
+            audio: { ...savedOutput, durationMs: rangeDurationMs },
+            rangeMs: rangeDurationMs,
+          });
+          if (
+            transcript.ranges.length !== 1 ||
+            transcript.ranges[0]?.startMs !== 0 ||
+            transcript.ranges[0]?.endMs !== rangeDurationMs
+          ) {
+            throw new Error("Managed provider result requires one full-timeline transcript range");
+          }
+          const range = transcript.ranges[0];
           if (!range) throw new Error("Managed audio produced no transcript range");
           const result = await this.provider.transcribe({
             recordingId: recording.id,
@@ -171,6 +196,7 @@ export class ManagedTranscriptionService {
             detectedLanguages: result.detectedLanguages,
           };
           job = this.policy.recordProviderSuccess(job.jobId, job.admissionId, providerResult);
+          retainTimeline = true;
         } catch (error) {
           if (this.policy.job(job.jobId).status === "running") this.policy.failJob(job.jobId, "provider failed");
           if (error instanceof TranscriptionProviderError) throw error;
@@ -190,10 +216,14 @@ export class ManagedTranscriptionService {
         timeline.endMs - timeline.startMs,
         job.providerResult,
       );
+      if (transcript.status !== "ready") {
+        throw new Error("Managed transcript remains pending; provider result was retained for recovery");
+      }
       job = this.policy.acknowledgePublication(job.jobId);
+      retainTimeline = false;
       return { job, transcript };
     } finally {
-      await timeline.cleanup().catch(() => undefined);
+      if (!retainTimeline) await timeline.cleanup().catch(() => undefined);
     }
   }
 
@@ -208,8 +238,16 @@ export class ManagedTranscriptionService {
       meetingId,
       recordingId,
       audio: { ...audio, durationMs },
+      rangeMs: durationMs,
     });
     if (transcript.status === "ready") return transcript;
+    if (
+      transcript.ranges.length !== 1 ||
+      transcript.ranges[0]?.startMs !== 0 ||
+      transcript.ranges[0]?.endMs !== durationMs
+    ) {
+      throw new Error("Managed transcript must contain one full-timeline range before publication");
+    }
 
     const reconciled = await this.store.reconcileTranscriptPublications([meetingId]);
     transcript = reconciled.find((candidate) => candidate.recordingId === recordingId)
@@ -240,110 +278,142 @@ export class ManagedTranscriptionService {
   }
 }
 
-/**
- * Prepares the managed billing timeline from the real MeetingStore inventory
- * shape. Source chunks are verified by SHA-256 and mixed into one timeline;
- * the saved MP3 remains the durable recording output and is never parsed as WAV.
- */
-export class RecordingManagedTimelinePreparer implements ManagedTimelinePreparer {
-  constructor(private readonly storeRoot: string) {}
+class HandedOffTimelinePreparer implements ManagedTimelinePreparer {
+  constructor(private readonly source: ManagedTimelineArtifactSource) {}
 
-  async prepare(recording: RecordingSession, audioId = `recording:${recording.id}`): Promise<ManagedCanonicalTimeline> {
-    const pointer = recording.inventory.pointer;
-    if (recording.status !== "saved" || !recording.savedOutput || recording.inventory.state !== "complete" || !pointer) {
-      throw new Error(`Managed timeline requires a saved recording with complete inventory: ${recording.id}`);
+  async prepare(recording: RecordingSession, audioId?: string): Promise<ManagedCanonicalTimeline> {
+    if (recording.status !== "saved" || !recording.savedOutput) {
+      throw new Error(`Managed timeline requires a saved recording: ${recording.id}`);
     }
-    const chunks: PreparedChunk[] = [];
-    for await (const chunk of readInventory(this.storeRoot, pointer)) {
-      chunks.push(await this.readVerifiedChunk(chunk));
-    }
-    if (chunks.length === 0) throw new Error(`Managed timeline inventory is empty: ${recording.id}`);
-    const manifest = JSON.stringify({
-      version: 1,
-      recordingId: recording.id,
-      chunks: chunks.map(({ chunk }) => ({
-        id: chunk.id,
-        source: chunk.source,
-        storageKey: chunk.storageKey,
-        byteLength: chunk.byteLength,
-        sha256: chunk.sha256,
-        logicalStartMs: chunk.logicalStartMs,
-        durationMs: chunk.durationMs,
-        sampleRate: chunk.sampleRate,
-        channels: chunk.channels,
-        format: chunk.format,
-      })),
-    });
-    const manifestSha256 = sha256(Buffer.from(manifest));
-    const endFrame = Math.max(...chunks.map((chunk) => chunk.startFrame + chunk.frameCount));
-    if (!Number.isSafeInteger(endFrame) || endFrame <= 0) throw new Error(`Managed timeline frame extent is invalid: ${recording.id}`);
-    const mixed = Buffer.alloc(endFrame * 2);
-    for (const chunk of chunks) {
-      for (let index = 0; index < chunk.frameCount; index += 1) {
-        const target = (chunk.startFrame + index) * 2;
-        const sample = chunk.payload.readInt16LE(index * 2);
-        const current = mixed.readInt16LE(target);
-        mixed.writeInt16LE(clampPcm16(current + sample), target);
-      }
-    }
-    const bytes = Buffer.concat([wavHeader(endFrame), mixed]);
-    const directory = path.join(this.storeRoot, "managed-transcription-timelines");
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    const timelinePath = path.join(directory, `${recording.id}-${randomUUID()}.wav`);
-    await writeFile(timelinePath, bytes, { flag: "wx", mode: 0o600 });
-    const identity = identityOf(bytes);
-    const canonical = parseCanonicalPcmWav(bytes);
-    let cleaned = false;
-    return {
-      path: timelinePath,
-      recordingId: recording.id,
-      audioId: audioId.trim(),
-      manifestSha256,
-      identity,
-      startMs: 0,
-      endMs: canonical.durationMs,
-      cleanup: async () => {
-        if (cleaned) return;
-        cleaned = true;
-        await rm(timelinePath, { force: true });
-      },
-    };
-  }
-
-  private async readVerifiedChunk(chunk: CommittedRecordingChunk): Promise<PreparedChunk> {
-    if (chunk.sampleRate !== 16_000 || chunk.channels !== 1 || chunk.format !== "wav") {
-      throw new Error(`Managed timeline requires validated 16 kHz mono WAV chunks: ${chunk.id}`);
-    }
-    const chunkPath = resolveStorePath(this.storeRoot, chunk.storageKey);
-    const verifiedIdentity = await fileIdentity(chunkPath);
-    if (!sameIdentity(verifiedIdentity, chunk)) throw new Error(`Managed chunk identity changed: ${chunk.id}`);
-    const bytes = await readFile(chunkPath);
-    const identity = identityOf(bytes);
-    if (!sameIdentity(identity, verifiedIdentity)) throw new Error(`Managed chunk changed while being read: ${chunk.id}`);
-    const canonical = parseCanonicalPcmWav(bytes);
-    const timeline = chunkFramePosition(chunk.id);
-    if (timeline.frameCount !== canonical.sampleCount || timeline.sampleRate !== canonical.sampleRate || timeline.channels !== canonical.channels) {
-      throw new Error(`Managed chunk timeline metadata changed: ${chunk.id}`);
-    }
-    const expectedStartMs = Math.floor(timeline.startFrame * 1_000 / timeline.sampleRate);
-    const expectedDurationMs = Math.max(1, Math.floor(timeline.frameCount * 1_000 / timeline.sampleRate));
-    if (chunk.logicalStartMs !== expectedStartMs || chunk.durationMs !== expectedDurationMs) {
-      throw new Error(`Managed chunk duration metadata changed: ${chunk.id}`);
+    const artifact = await this.source.get(recording.id);
+    if (!artifact) {
+      throw new Error(`Managed canonical timeline was not handed off before source cleanup: ${recording.id}`);
     }
     return {
-      chunk,
-      payload: pcmPayload(bytes),
-      startFrame: timeline.startFrame,
-      frameCount: timeline.frameCount,
+      ...artifact,
+      audioId: audioId?.trim() || `recording:${recording.id}`,
     };
   }
 }
 
-interface PreparedChunk {
-  readonly chunk: CommittedRecordingChunk;
-  readonly payload: Buffer;
-  readonly startFrame: number;
-  readonly frameCount: number;
+/**
+ * Fake durable owner for the finalizer handoff. The metadata sidecar lets a
+ * new managed adapter instance rehydrate the temporary artifact without
+ * making MeetingStore a second transcript or artifact owner.
+ */
+export class ManagedTimelineArtifactStore implements ManagedTimelineArtifactSource, ManagedTimelineArtifactConsumer {
+  constructor(private readonly directory: string) {}
+
+  async accept(artifact: ManagedTimelineArtifact): Promise<void> {
+    if (!path.isAbsolute(artifact.path)) throw new Error("Managed artifact path must be absolute");
+    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    const metadataPath = this.metadataPath(artifact.recordingId);
+    const current = await this.readMetadata(metadataPath);
+    const next = metadataFrom(artifact);
+    if (current) {
+      if (JSON.stringify(current) !== JSON.stringify(next)) {
+        throw new Error(`Managed artifact handoff changed for ${artifact.recordingId}`);
+      }
+      return;
+    }
+    const temporary = `${metadataPath}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, `${JSON.stringify(next)}\n`, { flag: "wx", mode: 0o600 });
+      await rename(temporary, metadataPath);
+    } catch (error) {
+      await rm(temporary, { force: true }).catch(() => undefined);
+      const raced = await this.readMetadata(metadataPath);
+      if (!raced || JSON.stringify(raced) !== JSON.stringify(next)) throw error;
+    }
+  }
+
+  async get(recordingId: string): Promise<ManagedTimelineArtifact | null> {
+    const metadataPath = this.metadataPath(recordingId);
+    const metadata = await this.readMetadata(metadataPath);
+    if (!metadata) return null;
+    let cleaned = false;
+    return {
+      path: metadata.path,
+      recordingId: metadata.recordingId,
+      manifestSha256: metadata.manifestSha256,
+      identity: { byteLength: metadata.byteLength, sha256: metadata.sha256 },
+      startMs: metadata.startMs,
+      endMs: metadata.endMs,
+      cleanup: async () => {
+        if (cleaned) return;
+        cleaned = true;
+        await Promise.all([
+          rm(metadata.path, { force: true }),
+          rm(metadataPath, { force: true }),
+        ]);
+      },
+    };
+  }
+
+  private metadataPath(recordingId: string): string {
+    const key = createHash("sha256").update(recordingId).digest("hex");
+    return path.join(this.directory, `${key}.json`);
+  }
+
+  private async readMetadata(metadataPath: string): Promise<ManagedArtifactMetadata | null> {
+    let text: string;
+    try {
+      text = await readFile(metadataPath, "utf8");
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+      throw error;
+    }
+    const parsed: unknown = JSON.parse(text);
+    return checkedMetadata(parsed, metadataPath);
+  }
+}
+
+interface ManagedArtifactMetadata {
+  readonly version: 1;
+  readonly path: string;
+  readonly recordingId: string;
+  readonly manifestSha256: string;
+  readonly byteLength: number;
+  readonly sha256: string;
+  readonly startMs: number;
+  readonly endMs: number;
+}
+
+function metadataFrom(artifact: ManagedTimelineArtifact): ManagedArtifactMetadata {
+  return {
+    version: 1,
+    path: artifact.path,
+    recordingId: artifact.recordingId,
+    manifestSha256: artifact.manifestSha256,
+    byteLength: artifact.identity.byteLength,
+    sha256: artifact.identity.sha256,
+    startMs: artifact.startMs,
+    endMs: artifact.endMs,
+  };
+}
+
+function checkedMetadata(value: unknown, metadataPath: string): ManagedArtifactMetadata {
+  if (!value || typeof value !== "object") throw new Error(`Managed artifact metadata is invalid: ${metadataPath}`);
+  const candidate = value as Partial<ManagedArtifactMetadata>;
+  const byteLength = candidate.byteLength;
+  const startMs = candidate.startMs;
+  const endMs = candidate.endMs;
+  if (typeof byteLength !== "number" || !Number.isSafeInteger(byteLength) || byteLength <= 0) {
+    throw new Error(`Managed artifact metadata is invalid: ${metadataPath}`);
+  }
+  if (typeof startMs !== "number" || !Number.isSafeInteger(startMs) || startMs < 0) {
+    throw new Error(`Managed artifact metadata is invalid: ${metadataPath}`);
+  }
+  if (typeof endMs !== "number" || !Number.isSafeInteger(endMs) || endMs <= startMs) {
+    throw new Error(`Managed artifact metadata is invalid: ${metadataPath}`);
+  }
+  if (
+    candidate.version !== 1 || typeof candidate.path !== "string" || !path.isAbsolute(candidate.path) ||
+    typeof candidate.recordingId !== "string" || !candidate.recordingId ||
+    typeof candidate.manifestSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(candidate.manifestSha256) ||
+    typeof candidate.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(candidate.sha256)
+  ) throw new Error(`Managed artifact metadata is invalid: ${metadataPath}`);
+  return candidate as ManagedArtifactMetadata;
 }
 
 function identityOf(bytes: Uint8Array): OutputIdentity {
@@ -356,64 +426,4 @@ function sameIdentity(left: OutputIdentity, right: OutputIdentity): boolean {
 
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
-}
-
-function chunkFramePosition(id: string): { startFrame: number; frameCount: number; sampleRate: number; channels: number } {
-  const match = /^chunk--(?:microphone|system)--\d{6}--(\d{12})--(\d{12})--(\d+)--(\d+)$/u.exec(id);
-  if (!match) throw new Error(`Managed chunk has invalid timeline identity: ${id}`);
-  const values = match.slice(1).map(Number);
-  const startFrame = values[0]!;
-  const frameCount = values[1]!;
-  const sampleRate = values[2]!;
-  const channels = values[3]!;
-  if (![startFrame, frameCount, sampleRate, channels].every(Number.isSafeInteger) || frameCount <= 0 || sampleRate <= 0 || channels <= 0) {
-    throw new Error(`Managed chunk timeline identity is invalid: ${id}`);
-  }
-  return { startFrame, frameCount, sampleRate, channels };
-}
-
-function pcmPayload(bytes: Uint8Array): Buffer {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let offset = 12;
-  let payload: { start: number; end: number } | null = null;
-  while (offset < bytes.byteLength) {
-    if (offset + 8 > bytes.byteLength) throw new Error("Managed timeline has a truncated PCM chunk");
-    const size = view.getUint32(offset + 4, true);
-    const start = offset + 8;
-    const end = start + size;
-    if (end > bytes.byteLength) throw new Error("Managed timeline has a truncated PCM payload");
-    if (ascii(bytes, offset, 4) === "data") {
-      if (payload) throw new Error("Managed timeline contains multiple PCM data chunks");
-      payload = { start, end };
-    }
-    offset = end + (size % 2);
-  }
-  if (offset !== bytes.byteLength || !payload) throw new Error("Managed timeline has no complete PCM payload");
-  return Buffer.from(bytes.subarray(payload.start, payload.end));
-}
-
-function ascii(bytes: Uint8Array, offset: number, length: number): string {
-  return String.fromCharCode(...bytes.subarray(offset, offset + length));
-}
-
-function wavHeader(frameCount: number): Buffer {
-  const dataBytes = frameCount * 2;
-  const header = Buffer.alloc(44);
-  header.write("RIFF", 0);
-  header.writeUInt32LE(36 + dataBytes, 4);
-  header.write("WAVEfmt ", 8);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(1, 22);
-  header.writeUInt32LE(16_000, 24);
-  header.writeUInt32LE(32_000, 28);
-  header.writeUInt16LE(2, 32);
-  header.writeUInt16LE(16, 34);
-  header.write("data", 36);
-  header.writeUInt32LE(dataBytes, 40);
-  return header;
-}
-
-function clampPcm16(value: number): number {
-  return Math.max(-32_768, Math.min(32_767, value));
 }

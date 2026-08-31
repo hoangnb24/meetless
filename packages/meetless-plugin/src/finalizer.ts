@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { access, link, mkdir, open, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, link, mkdir, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { parseCanonicalPcmWav } from "@meetless/managed-transcription-foundation";
 import type { CommittedRecordingChunk, OutputIdentity, RecordingInventoryPointer } from "@meetless/meeting-domain";
 import { readInventory, resolveStorePath } from "./inventory.js";
 
@@ -15,6 +16,25 @@ export interface FinalizerConfig {
   exportRoot: string;
   storeRoot: string;
   observeCommand?(executable: string, arguments_: readonly string[]): void;
+}
+
+/**
+ * A temporary managed timeline created during recording finalization. The
+ * finalizer owns its creation; the managed adapter owns cleanup after local
+ * publication once a consumer accepts the handoff.
+ */
+export interface ManagedTimelineArtifact {
+  readonly path: string;
+  readonly recordingId: string;
+  readonly manifestSha256: string;
+  readonly identity: OutputIdentity;
+  readonly startMs: number;
+  readonly endMs: number;
+  cleanup(): Promise<void>;
+}
+
+export interface ManagedTimelineArtifactConsumer {
+  accept(artifact: ManagedTimelineArtifact): Promise<void>;
 }
 
 export class Mp3Finalizer {
@@ -35,31 +55,60 @@ export class Mp3Finalizer {
     stagePath: string;
     identity: OutputIdentity;
     timelineEvidence: Array<OutputIdentity & { source: string; frameCount: number }>;
+    managedTimeline: ManagedTimelineArtifact;
   }> {
     if (inventory.chunkCount === 0) throw new Error("Cannot finalize without committed chunks");
     await mkdir(this.config.exportRoot, { recursive: true, mode: 0o700 });
     const stagePath = path.join(this.config.exportRoot, `.meetless-${recordingId}-${randomUUID()}.mp3.stage`);
     const timelineToken = randomUUID();
-    const timelines = await this.stageSourceTimelines(recordingId, inventory, timelineToken);
-    const args = ["-hide_banner", "-nostdin", "-loglevel", "error", "-y"];
-    for (const timeline of timelines) args.push("-i", timeline.path);
-    if (timelines.length === 2) {
-      args.push("-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest:normalize=0[mix]", "-map", "[mix]");
-    } else {
-      args.push("-map", "0:a");
-    }
-    args.push("-ar", "16000", "-ac", "1", "-codec:a", "libmp3lame", "-q:a", "2", "-f", "mp3", stagePath);
+    let managedTimelinePath: string | null = null;
+    let timelines: Array<{ path: string; source: string; frameCount: number; identity: OutputIdentity }> = [];
     try {
+      const staged = await this.stageSourceTimelines(recordingId, inventory, timelineToken);
+      timelines = staged.timelines;
+      if (timelines.length === 0) throw new Error("Cannot finalize without validated source timelines");
+      managedTimelinePath = path.join(this.config.exportRoot, `.meetless-${recordingId}-${randomUUID()}.managed.wav.stage`);
+      const audioMaps = timelines.length === 2 ? ["[mix-mp3]", "[mix-wav]"] : ["0:a", "0:a"];
+      const args = ["-hide_banner", "-nostdin", "-loglevel", "error", "-y"];
+      for (const timeline of timelines) args.push("-i", timeline.path);
+      if (timelines.length === 2) {
+        args.push("-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest:normalize=0[mix];[mix]asplit=2[mix-mp3][mix-wav]");
+      }
+      args.push(
+        "-map", audioMaps[0]!, "-ar", "16000", "-ac", "1", "-codec:a", "libmp3lame", "-q:a", "2", "-f", "mp3", stagePath,
+        "-map", audioMaps[1]!, "-ar", "16000", "-ac", "1", "-codec:a", "pcm_s16le", "-f", "wav", managedTimelinePath,
+      );
       this.config.observeCommand?.(this.config.ffmpeg, args);
       await execFileAsync(this.config.ffmpeg, args, { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
       const verification = await this.verify(stagePath);
+      const managedBytes = await readFile(managedTimelinePath);
+      const canonical = parseCanonicalPcmWav(managedBytes);
+      const managedIdentity = await fileIdentity(managedTimelinePath);
+      if (canonical.sampleCount !== Math.max(...timelines.map((timeline) => timeline.frameCount))) {
+        throw new Error("Managed canonical timeline duration does not match validated source extent");
+      }
+      let cleaned = false;
       return {
         stagePath,
         identity: verification.identity,
         timelineEvidence: timelines.map(({ source, frameCount, identity }) => ({ source, frameCount, ...identity })),
+        managedTimeline: {
+          path: managedTimelinePath,
+          recordingId,
+          manifestSha256: staged.manifestSha256,
+          identity: managedIdentity,
+          startMs: 0,
+          endMs: canonical.durationMs,
+          cleanup: async () => {
+            if (cleaned) return;
+            cleaned = true;
+            await rm(managedTimelinePath!, { force: true });
+          },
+        },
       };
     } catch (error) {
       await rm(stagePath, { force: true }).catch(() => undefined);
+      if (managedTimelinePath) await rm(managedTimelinePath, { force: true }).catch(() => undefined);
       throw error;
     } finally {
       await Promise.all(timelines.map((timeline) => rm(timeline.path, { force: true }).catch(() => undefined)));
@@ -70,10 +119,15 @@ export class Mp3Finalizer {
     recordingId: string,
     inventory: RecordingInventoryPointer,
     token: string,
-  ): Promise<Array<{ path: string; source: string; frameCount: number; identity: OutputIdentity }>> {
+  ): Promise<{
+    timelines: Array<{ path: string; source: string; frameCount: number; identity: OutputIdentity }>;
+    manifestSha256: string;
+  }> {
     const states = new Map<string, { path: string; handle: Awaited<ReturnType<typeof open>>; endFrame: number }>();
+    const chunks: CommittedRecordingChunk[] = [];
     try {
       for await (const chunk of readInventory(this.config.storeRoot, inventory)) {
+        chunks.push(chunk);
         if (chunk.sampleRate !== 16_000 || chunk.channels !== 1 || chunk.format !== "wav") {
           throw new Error(`Finalizer requires validated 16 kHz mono PCM WAV: ${chunk.id}`);
         }
@@ -94,12 +148,15 @@ export class Mp3Finalizer {
         await state.handle.write(wavHeader(state.endFrame), 0, 44, 0);
         await state.handle.sync();
       }
-      return Promise.all([...states.entries()].map(async ([source, state]) => ({
-        path: state.path,
-        source,
-        frameCount: state.endFrame,
-        identity: await fileIdentity(state.path),
-      })));
+      return {
+        timelines: await Promise.all([...states.entries()].map(async ([source, state]) => ({
+          path: state.path,
+          source,
+          frameCount: state.endFrame,
+          identity: await fileIdentity(state.path),
+        }))),
+        manifestSha256: manifestSha256(recordingId, chunks),
+      };
     } catch (error) {
       await Promise.all([...states.values()].map((state) => rm(state.path, { force: true }).catch(() => undefined)));
       throw error;
@@ -266,7 +323,7 @@ export async function listRecordingOwnedStagePaths(
 export function isRecordingOwnedStageName(name: string, recordingId: string): boolean {
   const escaped = recordingId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   return new RegExp(
-    `^\\.meetless-${escaped}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-(?:microphone|system)\\.wav|\\.mp3)\\.stage$`,
+    `^\\.meetless-${escaped}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-(?:microphone|system)\\.wav|\\.(?:managed\\.wav|mp3))\\.stage$`,
     "u",
   ).test(name);
 }
@@ -341,6 +398,26 @@ function wavHeader(frameCount: number): Buffer {
   header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34); header.write("data", 36);
   header.writeUInt32LE(dataBytes, 40);
   return header;
+}
+
+function manifestSha256(recordingId: string, chunks: readonly CommittedRecordingChunk[]): string {
+  const manifest = JSON.stringify({
+    version: 1,
+    recordingId,
+    chunks: chunks.map((chunk) => ({
+      id: chunk.id,
+      source: chunk.source,
+      storageKey: chunk.storageKey,
+      byteLength: chunk.byteLength,
+      sha256: chunk.sha256,
+      logicalStartMs: chunk.logicalStartMs,
+      durationMs: chunk.durationMs,
+      sampleRate: chunk.sampleRate,
+      channels: chunk.channels,
+      format: chunk.format,
+    })),
+  });
+  return createHash("sha256").update(manifest).digest("hex");
 }
 
 export function exportBaseName(now: Date): string {

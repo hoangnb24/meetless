@@ -688,6 +688,9 @@ export class ManagedTranscriptionPolicy {
         throw new DurationClaimMismatchError(claimed, canonical.durationSeconds);
       }
     }
+    if (timeline.endMs - timeline.startMs !== canonical.durationMs) {
+      throw new ManagedTimelineIdentityError("Canonical timeline window does not match PCM sample duration");
+    }
     const idempotencyKey = `${lineage.accountId}\u0000${timeline.recordingId}\u0000${timeline.audioId}\u0000${chunkId}`;
     const timelineKey = `${lineage.accountId}\u0000${timeline.recordingId}\u0000${timeline.audioId}`;
     const fingerprint = timelineFingerprint(timeline);

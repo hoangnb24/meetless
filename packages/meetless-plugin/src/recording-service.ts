@@ -4,7 +4,12 @@ import { MeetingStore } from "@meetless/meeting-store";
 import { recordingElapsedMs, type RecordingSession } from "@meetless/meeting-domain";
 import type { RecordingControlRequest, RecordingStatusWire } from "@meetless/meeting-contracts";
 import { CaptureHelper } from "./capture-helper.js";
-import { fileIdentity, Mp3Finalizer } from "./finalizer.js";
+import {
+  fileIdentity,
+  Mp3Finalizer,
+  type ManagedTimelineArtifact,
+  type ManagedTimelineArtifactConsumer,
+} from "./finalizer.js";
 import { readInventory, RecordingInventoryReconciler, resolveStorePath, ZeroValidMediaError } from "./inventory.js";
 import type { CollisionEvidence } from "./readiness-protocol.js";
 import type { TranscriptionService } from "./transcription-service.js";
@@ -24,6 +29,7 @@ export interface RecordingServiceConfig {
   failFinalizationOnce?: boolean;
   authorizeProductionStart?: () => Promise<void>;
   transcription?: TranscriptionService;
+  managedTimelineConsumer?: ManagedTimelineArtifactConsumer;
 }
 
 export class RecordingService {
@@ -353,10 +359,11 @@ export class RecordingService {
     const staged = await this.finalizer.stage(recording.id, recording.inventory.pointer);
     if (!sameIdentity(staged.identity, recording.finalization.publishIntent.expectedIdentity)) {
       await rm(staged.stagePath, { force: true });
+      await staged.managedTimeline.cleanup();
       await this.interruptAndAssess(recording.id, "retry output identity changed");
       throw new Error("Retry output identity changed; original chunks were preserved");
     }
-    await this.publishOutput(recording.id, staged.stagePath);
+    await this.publishOutput(recording.id, staged.stagePath, staged.managedTimeline);
   }
 
   private async stageBeginAndPublish(recording: RecordingSession, preparedDestination?: string): Promise<void> {
@@ -365,25 +372,36 @@ export class RecordingService {
     }
     const staged = await this.finalizer.stage(recording.id, recording.inventory.pointer);
     const destination = preparedDestination ?? await this.finalizer.nextDestination(this.config.exportNow?.() ?? new Date());
-    await this.store.beginFinalization(recording.id, {
-      openChunksDurablyClosed: true,
-      chunkSetDigest: recording.inventory.pointer.digest,
-      destination,
-      expectedIdentity: staged.identity,
-    });
+    try {
+      await this.store.beginFinalization(recording.id, {
+        openChunksDurablyClosed: true,
+        chunkSetDigest: recording.inventory.pointer.digest,
+        destination,
+        expectedIdentity: staged.identity,
+      });
+    } catch (error) {
+      await rm(staged.stagePath, { force: true }).catch(() => undefined);
+      await staged.managedTimeline.cleanup().catch(() => undefined);
+      throw error;
+    }
     if (this.preparedCollision?.recordingId === recording.id) {
       this.preparedCollision = null;
     }
     if (this.failFinalizationOnce) {
       this.failFinalizationOnce = false;
       await rm(staged.stagePath, { force: true });
+      await staged.managedTimeline.cleanup();
       await this.interruptAndAssess(recording.id, "injected finalization interruption");
       throw new Error("Injected finalization interruption; retry without re-recording");
     }
-    await this.publishOutput(recording.id, staged.stagePath);
+    await this.publishOutput(recording.id, staged.stagePath, staged.managedTimeline);
   }
 
-  private async publishOutput(recordingId: string, stagePath: string): Promise<void> {
+  private async publishOutput(
+    recordingId: string,
+    stagePath: string,
+    managedTimeline: ManagedTimelineArtifact,
+  ): Promise<void> {
     for (let attempt = 1; attempt < 10_000; attempt += 1) {
       let recording = await this.findRecording(recordingId);
       const intent = recording.finalization?.publishIntent;
@@ -400,38 +418,47 @@ export class RecordingService {
         });
         if (reconciliation.action === "adopt") {
           await rm(stagePath, { force: true });
-          await this.finishSaved(reconciliation.recording);
+          await this.finishSaved(reconciliation.recording, managedTimeline);
           return;
         }
         continue;
       }
       recording = await this.findRecording(recordingId);
-      await this.finishSaved(recording);
+      await this.finishSaved(recording, managedTimeline);
       return;
     }
     throw new Error("Exhausted collision-safe recording destinations");
   }
 
-  private async finishSaved(recording: RecordingSession): Promise<void> {
+  private async finishSaved(recording: RecordingSession, managedTimeline?: ManagedTimelineArtifact): Promise<void> {
     const intent = recording.finalization!.publishIntent;
     const verified = await this.finalizer.verify(intent.destination);
     if (!sameIdentity(verified.identity, intent.expectedIdentity)) throw new Error("Published MP3 identity changed");
     const saved = await this.store.markRecordingSaved(recording.id, {
       destination: intent.destination, identity: verified.identity, readable: true,
     });
-    this.releaseRecordingWork(recording.id);
-    const cleanupInventory = await this.store.cleanupEligibleInventory(recording.id, {
-      destination: intent.destination, identity: verified.identity, readable: true,
-    });
-    const chunks = cleanupInventory.pointer
-      ? readInventory(this.config.storeRoot, cleanupInventory.pointer)
-      : arrayChunks(cleanupInventory.legacyChunks);
-    for await (const chunk of chunks) {
-      await rm(resolveStorePath(this.config.storeRoot, chunk.storageKey), { force: true }).catch((error) => {
-        process.stderr.write(`[meetless-recording] saved chunk cleanup deferred: ${describe(error)}\n`);
+    let handedOff = false;
+    try {
+      if (managedTimeline && this.config.managedTimelineConsumer) {
+        await this.config.managedTimelineConsumer.accept(managedTimeline);
+        handedOff = true;
+      }
+      const cleanupInventory = await this.store.cleanupEligibleInventory(recording.id, {
+        destination: intent.destination, identity: verified.identity, readable: true,
       });
+      const chunks = cleanupInventory.pointer
+        ? readInventory(this.config.storeRoot, cleanupInventory.pointer)
+        : arrayChunks(cleanupInventory.legacyChunks);
+      for await (const chunk of chunks) {
+        await rm(resolveStorePath(this.config.storeRoot, chunk.storageKey), { force: true }).catch((error) => {
+          process.stderr.write(`[meetless-recording] saved chunk cleanup deferred: ${describe(error)}\n`);
+        });
+      }
+      this.config.transcription?.schedule(saved);
+    } finally {
+      if (!handedOff) await managedTimeline?.cleanup().catch(() => undefined);
+      this.releaseRecordingWork(recording.id);
     }
-    this.config.transcription?.schedule(saved);
   }
 
   private async recoverRecording(recording: RecordingSession): Promise<void> {

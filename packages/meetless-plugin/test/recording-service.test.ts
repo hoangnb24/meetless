@@ -431,6 +431,7 @@ describe("daemon recording service", () => {
     expect(saved).toMatchObject({ status: "saved", outputPath: path.join(config.exportRoot, "12-17-08-26-2.mp3") });
     expect(await readFile(collision, "utf8")).toBe("existing recording bytes");
     expect((await readdir(path.join(config.storeRoot, "sessions", saved.recordingId!))).filter((name) => name.endsWith(".wav"))).toEqual([]);
+    expect((await readdir(config.exportRoot)).filter((name) => name.includes(".managed.wav.stage"))).toEqual([]);
   }, 30_000);
 
   test("retries finalization from the immutable chunk set without recording again", async () => {

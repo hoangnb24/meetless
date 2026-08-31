@@ -2,14 +2,14 @@
 
 ## Current State
 
-- `plan_revision`: `v7`
-- `current_frontier`: `MANAGED-TRANSCRIPTION-FAKE-BACKED-FOUNDATION-R1-CORRECTION`
+- `plan_revision`: `v8`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-FOUNDATION-R1-CONVERGENCE`
 - `state`: `FOUNDATION_PROOF_CORRECTION_PENDING`
 - `depends_on`: the accepted managed-transcription policy in product authority and ADR0005; proof must precede production backend, UI, provider-credential, or external-store work
-- `candidate`: predecessor `51ee0cd61bae184d9936e2105294465f8de16108` was rejected by Lead; the correction candidate is implemented from that correction base and remains pending Lead closeout. MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` remains accepted reusable evidence only
-- `pending_ruling`: Lead closeout of `MANAGED-TRANSCRIPTION-FAKE-BACKED-FOUNDATION-R1-CORRECTION`
+- `candidate`: predecessor `51ee0cd61bae184d9936e2105294465f8de16108` and its correction were rejected by Lead; the convergence correction candidate is prepared from `ee55af2179d00bac7856f178f0b87f5b4fee9f19` and remains pending Lead closeout. MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` remains accepted reusable evidence only
+- `pending_ruling`: Lead closeout of `MANAGED-TRANSCRIPTION-FOUNDATION-R1-CONVERGENCE`
 - `blocked_by`: no product-contract blocker remains; external App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication gates remain separately open
-- `next_action`: Lead closeout of the correction candidate; real Convex/AVFoundation latency, production backend rollout, provider credential use, final UI, signing, upload, and publication remain separate gates
+- `next_action`: Lead closeout of the convergence correction candidate; real Convex/AVFoundation latency, production backend rollout, provider credential use, final UI, signing, upload, and publication remain separate gates
 
 ## Ownership And Authority
 
@@ -172,7 +172,7 @@ quota reservation, and charging stay outside provider implementations.
   - Owner accepted quota, trial, device, restore, server duration, temporary
     data, job lease, expiry, refund/revocation, and free Ask/BYOK behavior on
     2026-08-31.
-- [ ] Close the bounded fake-backed foundation proof defined below. The original R1 candidate was rejected; the correction candidate has locally observed evidence recorded below and is pending Lead closeout.
+- [ ] Close the bounded fake-backed foundation proof defined below. The original R1 candidate and first correction were rejected; the convergence correction has locally observed evidence recorded below and is pending Lead closeout.
 - [x] Reconcile the executable Ask gate so Ask is free; Premium UI remains
   deferred because final UI work is outside this frontier.
 - [ ] Apply the profile-backed App Sandbox entitlement and In-App Purchase configuration.
@@ -264,26 +264,38 @@ for the frozen MTF-001 through MTF-008 finding set. Its proof claims are
 historical context only and are not acceptance evidence. The correction
 candidate below supersedes this disposition and remains pending Lead closeout.
 
-### R1 Correction Batch Disposition (2026-08-31; pending Lead closeout)
+### R1 Correction Batch Disposition (2026-08-31; superseded by convergence)
 
-The correction candidate is built from `51ee0cd61bae184d9936e2105294465f8de16108`
-and preserves original base `64cf07d71bf82c798f8c3db417ada7d3c14ad7b5`. Local
-tests observe the following code/test evidence; this plan does not mark any of
-it accepted until Lead closes the correction frontier:
+Lead rejected correction candidate `51ee0cd61bae184d9936e2105294465f8de16108`
+for the frozen MTF-001 through MTF-008 finding set. Its proof claims remain
+historical context only. The convergence correction below preserves the six
+closed findings and addresses the two remaining blockers; this plan does not
+mark any candidate accepted until Lead closes the active frontier.
+
+### R1 Convergence Correction Disposition (2026-08-31; pending Lead closeout)
+
+The convergence correction candidate is prepared from
+`ee55af2179d00bac7856f178f0b87f5b4fee9f19` and preserves original base
+`64cf07d71bf82c798f8c3db417ada7d3c14ad7b5`. Local tests observe the following
+code/test evidence; Lead closeout remains pending:
 
 - `MTF-001`: `ManagedTranscriptionPolicy.reserve` reconciles expired leases
   before identity lookup; `reAdmit` requires active/grace entitlement, current
-  quota, and creates a new admission/lease. Policy test covers stale-admission
-  rejection, fresh completion, and one ledger charge.
+  quota, and creates a new admission/lease. The policy test covers stale
+  admission rejection, fresh completion, and one ledger charge.
 - `MTF-002`: `ManagedTimelineEvidence`, SHA-256 edge identities, immutable
   recording/audio keys, manifest/content conflict checks, and overlapping-window
-  rejection live in the policy and `RecordingManagedTimelinePreparer`. Policy
-  tests cover false rebinding, identical bytes across distinct recordings, and
-  overlapping microphone/system timelines; adapter tests cover tampered MP3 and
-  inventory bytes.
-- `MTF-003`: `ManagedTranscriptionService.publishResult` reconciles MeetingStore
-  publications and publishes a pending transcript whose ranges are all already
-  checkpointed. The adapter test proves no provider re-call.
+  rejection remain in the policy. Policy tests cover false rebinding, identical
+  bytes across distinct recordings, overlapping microphone/system timelines,
+  and a false PCM timeline window; adapter tests cover tampered MP3 and the
+  no-handoff-after-source-cleanup boundary.
+- `MTF-003`: `ManagedTranscriptionService` creates one MeetingStore range with
+  `rangeMs` equal to the canonical timeline duration and rejects any non-full
+  range. `publishResult` reconciles durable MeetingStore state, publishes all
+  checkpoints, and acknowledges the managed result only after `ready`. The
+  adapter test uses a 496,000-sample (31-second) timeline, injects a crash after
+  provider completion, rehydrates a new policy/service/store boundary, and
+  proves one provider call, one full range, one charge, and a local citation.
 - `MTF-004`: the managed service requires and holds the existing shared
   `MeetingLifecycleCoordinator` transcription lease through provider, settle,
   and MeetingStore publication. The blocked-provider test proves deletion is
@@ -291,38 +303,41 @@ it accepted until Lead closes the correction frontier:
 - `MTF-005`: provider status errors and non-configured status fail the job and
   release quota before provider execution; the adapter test proves the failed
   state and zero reservation.
-- `MTF-006`: `RecordingManagedTimelinePreparer` validates the real inventory
-  chunk shape, mixes overlapping source chunks into a temporary canonical
-  16 kHz mono PCM WAV, and leaves the durable MeetingStore output as MP3. The
-  adapter and composition tests prove the edge mapping and cleanup.
+- `MTF-006`: `Mp3Finalizer.stage` reuses validated source-timeline staging and
+  writes the temporary canonical 16 kHz mono PCM WAV alongside the durable MP3
+  in one finalization step. `RecordingService.finishSaved` hands it to the
+  narrow managed-artifact consumer before `cleanupEligibleInventory`; without
+  a consumer the finalizer-owned artifact is cleaned locally. The real
+  RecordingService composition test proves source chunks are gone after save,
+  the handoff artifact remains consumable, and managed publication consumes it
+  and publishes citations through MeetingStore.
 - `MTF-007`: `ManagedAllowanceConfiguration` is snapshotted into each period;
   later configuration affects only periods created afterward. The policy test
   proves reduction, next-period allowance, and exhaustion.
-- `MTF-008`: `ManagedTranscriptionPolicy.snapshot` and `fromSnapshot` provide
-  the fake durable-state/rehydration boundary. The adapter crash test rebuilds
-  a new policy/service after provider completion, publishes locally without a
-  provider re-call, and proves one charge; the policy test repeats settlement.
+- `MTF-008`: `ManagedTranscriptionPolicy.snapshot`/`fromSnapshot` and the
+  `ManagedTimelineArtifactStore` sidecar provide fake durable state and
+  rehydration boundaries. The crash test creates new policy, artifact-store,
+  service, and MeetingStore instances after provider completion; settlement,
+  local publication, provider non-recall, and exactly one ledger charge are
+  observed.
 
-The correction candidate makes no Convex latency, regional placement,
-production action retry, provider-credential, external purchase mutation,
-signing, upload, or publication claim.
+Convergence architectural decisions:
 
-Correction candidate architectural decisions:
-
-- `packages/managed-transcription-foundation` is the one policy owner for
+- `packages/managed-transcription-foundation` remains the one policy owner for
   verified lineage, revocable device credentials, snapshotted quota periods,
-  reservation/settlement, jobs, admissions, and temporary artifacts. Its fake
-  snapshot boundary uses ordinary data only; it has no Node, storage,
+  reservation/settlement, jobs, admissions, and provider temporary state. Its
+  snapshot boundary uses ordinary data only and has no Node, storage,
   transport, UI, RevenueCat, Convex, StoreKit, or provider dependency.
-- `packages/meetless-plugin/src/managed-transcription.ts` is an edge adapter:
-  it verifies saved MP3 and inventory/chunk identities, prepares the temporary
-  canonical timeline, calls the existing `TranscriptionProvider`, and publishes
-  only through `MeetingStore`. Provider completion is recorded before the
-  injected crash point; settlement and local publication are independently
-  recoverable after snapshot rehydration.
-- Ask no longer receives a Premium gate; managed transcription remains the only
-  Premium/quota path. The final Premium UI and production runtime wiring remain
-  outside this correction frontier.
+- `packages/meetless-plugin/src/finalizer.ts` owns creation of the temporary
+  canonical timeline while validated chunks exist. The artifact is handed to a
+  narrow consumer before source cleanup; the managed adapter consumes and
+  cleans it after local publication. No post-cleanup inventory reconstruction
+  or durable MP3-as-WAV parsing remains on the default path.
+- `packages/meetless-plugin/src/managed-transcription.ts` verifies the saved
+  MP3 and handed-off artifact at the edge, calls the existing
+  `TranscriptionProvider`, and publishes only through `MeetingStore`. Ask and
+  BYOK remain free; final Premium UI and production runtime wiring remain
+  outside this frontier.
 
 ### Accepted Reusable R1 Structural Evidence (2026-08-31)
 
@@ -396,7 +411,7 @@ Observed predecessor R1 validation on 2026-08-31 (historical, not acceptance evi
 - No real AVFoundation/Convex latency, production backend, credentials,
   StoreKit/RevenueCat mutation, signing, upload, or publication was attempted.
 
-Observed correction validation on 2026-08-31:
+Observed first-correction validation on 2026-08-31 (historical, superseded):
 
 - `npm run typecheck` passed, including Paseo type builds and the Meetless app
   typecheck; `npm run build:meetless` passed.
@@ -419,6 +434,30 @@ Observed correction validation on 2026-08-31:
   original base `64cf07d71bf82c798f8c3db417ada7d3c14ad7b5`; their frozen
   combined SHA-256 remains
   `79159e03961957296f0f110996c71e0fdde7790760b1dd63fcd40ebbab3637ae`.
+- No real AVFoundation/Convex latency, production backend, credentials,
+  StoreKit/RevenueCat mutation, signing, upload, or publication was attempted.
+
+Observed convergence-correction validation on 2026-08-31:
+
+- `npm run typecheck` passed, including Paseo type builds and the Meetless app
+  typecheck; `npm run build:meetless` passed.
+- Focused convergence command
+  `npx vitest run --config vitest.config.ts packages/managed-transcription-foundation/test/policy.test.ts packages/meetless-plugin/test/managed-transcription.test.ts packages/meetless-plugin/test/inventory.test.ts packages/meetless-plugin/test/recording-service.test.ts test/composition/managed-transcription-path.test.ts packages/meeting-domain/test/transcript.test.ts packages/meeting-store/test/store.test.ts packages/meetless-plugin/test/meeting-lifecycle-coordinator.test.ts --maxWorkers=1`
+  passed (8 files, 94 tests). This includes the 31-second provider-result
+  crash/retry and the real RecordingService finalizer handoff composition.
+- The policy/adapter/composition subset after the final boundary checks passed
+  (3 files, 16 tests).
+- Affected domain/store command
+  `npx vitest run --config vitest.config.ts packages/meeting-domain/test packages/meeting-store/test --maxWorkers=1`
+  passed (6 files, 66 tests). Affected plugin/lifecycle command
+  `npx vitest run --config vitest.config.ts packages/meetless-plugin/test --maxWorkers=1`
+  passed (16 files, 116 tests).
+- `npm test` completed the native/Paseo/build pretest successfully and ran 71
+  files: 66 passed and 5 failed, with 716 passing and 5 failed tests out of
+  721. The failed files were the M6 transport timeout, two suites blocked by
+  missing `@expo/vector-icons/build/createIconSet`, one macOS artifact-resign
+  diagnostic assertion, and three macOS package-signature diagnostic
+  assertions. The convergence tests were included in the passing result.
 - No real AVFoundation/Convex latency, production backend, credentials,
   StoreKit/RevenueCat mutation, signing, upload, or publication was attempted.
 
@@ -469,6 +508,15 @@ Observed correction validation on 2026-08-31:
   inventory shape, period-snapshotted allowance, and snapshot rehydration. The
   locally observed proof is recorded above and remains pending Lead closeout;
   authority files and external state remain unchanged.
+- 2026-08-31 `FOUNDATION_PROOF R1-CONVERGENCE`: Lead's closeout left MTF-003
+  and MTF-006 open. The convergence candidate is based on `ee55af2`, preserves
+  the six closed findings, creates one full-duration MeetingStore range with
+  acknowledgement only after local publication, and moves canonical WAV
+  creation into finalization before source-chunk cleanup. A fake durable
+  artifact sidecar and fresh-instance crash proof cover provider-result
+  recovery; the real RecordingService composition covers pre-cleanup handoff
+  and post-cleanup publication. Locally observed proof remains pending Lead
+  closeout; authority files and external state remain unchanged.
 
 ## Validation
 

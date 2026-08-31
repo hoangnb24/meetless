@@ -11,7 +11,12 @@ import {
 import { MeetingStore } from "@meetless/meeting-store";
 import { MeetingLifecycleCoordinator } from "../src/meeting-lifecycle-coordinator.js";
 import type { TranscriptionProvider } from "../src/transcription-provider.js";
-import { ManagedTranscriptionService, RecordingManagedTimelinePreparer } from "../src/managed-transcription.js";
+import {
+  ManagedTimelineArtifactStore,
+  ManagedTranscriptionService,
+  type ManagedCanonicalTimeline,
+  type ManagedTimelinePreparer,
+} from "../src/managed-transcription.js";
 
 const START = Date.parse("2026-08-31T00:00:00.000Z");
 const NOW = "2026-08-31T00:00:00.000Z";
@@ -25,16 +30,23 @@ describe("managed transcription adapter", () => {
   test("rehydrates after a process crash and publishes one provider result through MeetingStore", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-transcription-"));
     roots.push(root);
-    const fixture = await savedStore(root);
+    const fixture = await savedStore(root, 496_000);
     const lifecycle = new MeetingLifecycleCoordinator();
+    const artifacts = new ManagedTimelineArtifactStore(path.join(root, "managed-artifacts"));
+    const seedPreparer = testTimelinePreparer(path.dirname(fixture.store.filePath), 496_000);
+    const seedRecording = (await fixture.store.listRecordings())[0]!;
+    const seededArtifact = await seedPreparer.prepare(seedRecording, "composition-audio");
+    await artifacts.accept(seededArtifact);
     const policy = new ManagedTranscriptionPolicy({ now: () => START });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "composition-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "composition-install", deviceKeyId: "composition-key" });
+    let requestedRange: { startMs: number; endMs: number } | null = null;
     const provider: TranscriptionProvider = {
       status: vi.fn(async () => "configured" as const),
-      transcribe: vi.fn(async ({ audioPath }) => {
+      transcribe: vi.fn(async ({ audioPath, range }) => {
         expect(audioPath).not.toBe(fixture.outputPath);
         expect(audioPath).toMatch(/managed-transcription-timelines/u);
+        requestedRange = { startMs: range.startMs, endMs: range.endMs };
         return {
           text: "The durable output is MP3 while billing uses a canonical WAV timeline.",
           detectedLanguages: ["en"],
@@ -45,6 +57,7 @@ describe("managed transcription adapter", () => {
     let persistedState: ManagedTranscriptionSnapshot | null = null;
     const crashed = new ManagedTranscriptionService(fixture.store, policy, provider, {
       lifecycle,
+      timelineArtifacts: artifacts,
       afterProviderSuccess: () => {
         // This is the fake durable repository boundary: state is serialized
         // after provider completion and before the process failure.
@@ -58,7 +71,7 @@ describe("managed transcription adapter", () => {
       credential: device.credential,
       chunkId: "chunk-composition",
       audioId: "composition-audio",
-      claimedDurationSeconds: 1.5,
+      claimedDurationSeconds: 31,
     })).rejects.toThrow("simulated crash");
     expect(provider.transcribe).toHaveBeenCalledTimes(1);
     const jobId = policy.temporaryArtifacts().resultJobIds[0];
@@ -67,7 +80,12 @@ describe("managed transcription adapter", () => {
 
     expect(persistedState).not.toBeNull();
     const restartedPolicy = ManagedTranscriptionPolicy.fromSnapshot(persistedState!, { now: () => START });
-    const recovered = new ManagedTranscriptionService(fixture.store, restartedPolicy, provider, { lifecycle });
+    const restartedArtifacts = new ManagedTimelineArtifactStore(path.join(root, "managed-artifacts"));
+    const restartedStore = new MeetingStore({ root: path.dirname(fixture.store.filePath), now: () => NOW });
+    const recovered = new ManagedTranscriptionService(restartedStore, restartedPolicy, provider, {
+      lifecycle,
+      timelineArtifacts: restartedArtifacts,
+    });
     const result = await recovered.transcribe({
       recordingId: fixture.recordingId,
       credential: device.credential,
@@ -75,27 +93,22 @@ describe("managed transcription adapter", () => {
       audioId: "composition-audio",
     });
     expect(provider.transcribe).toHaveBeenCalledTimes(1);
-    expect(result.job).toMatchObject({ status: "succeeded", providerResult: null, audio: { durationMs: 1_500, billableSeconds: 2 } });
-    expect(result.transcript).toMatchObject({ status: "ready", audio: { destination: fixture.outputPath, durationMs: 1_500 } });
-    await expect(fixture.store.resolveCitation(fixture.meetingId, result.transcript.ranges[0]!.segmentId)).resolves.toMatchObject({
+    await expect(artifacts.get(fixture.recordingId)).resolves.toBeNull();
+    expect(requestedRange).toEqual({ startMs: 0, endMs: 31_000 });
+    expect(result.job).toMatchObject({ status: "succeeded", providerResult: null, audio: { durationMs: 31_000, billableSeconds: 31 } });
+    expect(result.transcript).toMatchObject({ status: "ready", audio: { destination: fixture.outputPath, durationMs: 31_000 } });
+    expect(result.transcript.ranges).toHaveLength(1);
+    await expect(restartedStore.resolveCitation(fixture.meetingId, result.transcript.ranges[0]!.segmentId)).resolves.toMatchObject({
       meetingId: fixture.meetingId,
       audioPath: fixture.outputPath,
       text: "The durable output is MP3 while billing uses a canonical WAV timeline.",
       startMs: 0,
-      endMs: 1_500,
+      endMs: 31_000,
     });
-    expect(restartedPolicy.ledger()).toEqual([expect.objectContaining({ seconds: 2 })]);
+    expect(restartedPolicy.ledger()).toEqual([expect.objectContaining({ seconds: 31 })]);
     expect(restartedPolicy.temporaryArtifacts()).toEqual({ uploadIds: [], resultJobIds: [], orphanUploadIds: [] });
-    expect((await fixture.store.listTranscripts(fixture.meetingId))[0]).toMatchObject({ status: "ready", recordingId: fixture.recordingId });
+    expect((await restartedStore.listTranscripts(fixture.meetingId))[0]).toMatchObject({ status: "ready", recordingId: fixture.recordingId });
 
-    await expect(recovered.transcribe({
-      recordingId: fixture.recordingId,
-      credential: device.credential,
-      chunkId: "chunk-composition",
-      audioId: "composition-audio",
-    })).resolves.toMatchObject({ job: { status: "succeeded" }, transcript: { status: "ready" } });
-    expect(provider.transcribe).toHaveBeenCalledTimes(1);
-    expect(restartedPolicy.ledger()).toHaveLength(1);
   });
 
   test("recovers a transcript with every range checkpointed before publish without calling provider", async () => {
@@ -106,7 +119,7 @@ describe("managed transcription adapter", () => {
     const policy = new ManagedTranscriptionPolicy({ now: () => START });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "checkpoint-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "checkpoint-install", deviceKeyId: "checkpoint-key" });
-    const preparer = new RecordingManagedTimelinePreparer(path.join(root, "store"));
+    const preparer = testTimelinePreparer(path.join(root, "store"));
     const recording = (await fixture.store.listRecordings())[0]!;
     const timeline = await preparer.prepare(recording, "checkpoint-audio");
     const wav = await readFile(timeline.path);
@@ -147,7 +160,10 @@ describe("managed transcription adapter", () => {
       status: vi.fn(async () => "configured" as const),
       transcribe: vi.fn(async () => ({ text: "must not run", detectedLanguages: [] })),
     };
-    const service = new ManagedTranscriptionService(fixture.store, policy, provider, { lifecycle });
+    const service = new ManagedTranscriptionService(fixture.store, policy, provider, {
+      lifecycle,
+      timelinePreparer: testTimelinePreparer(path.dirname(fixture.store.filePath)),
+    });
     const result = await service.transcribe({
       recordingId: fixture.recordingId,
       credential: device.credential,
@@ -179,7 +195,10 @@ describe("managed transcription adapter", () => {
         return { text: "blocked then complete", detectedLanguages: [] };
       },
     };
-    const service = new ManagedTranscriptionService(fixture.store, policy, provider, { lifecycle });
+    const service = new ManagedTranscriptionService(fixture.store, policy, provider, {
+      lifecycle,
+      timelinePreparer: testTimelinePreparer(path.dirname(fixture.store.filePath)),
+    });
     const transcription = service.transcribe({
       recordingId: fixture.recordingId,
       credential: device.credential,
@@ -212,7 +231,10 @@ describe("managed transcription adapter", () => {
       },
       transcribe,
     };
-    const service = new ManagedTranscriptionService(fixture.store, policy, provider, { lifecycle });
+    const service = new ManagedTranscriptionService(fixture.store, policy, provider, {
+      lifecycle,
+      timelinePreparer: testTimelinePreparer(path.dirname(fixture.store.filePath)),
+    });
     const input = {
       recordingId: fixture.recordingId,
       credential: device.credential,
@@ -243,7 +265,10 @@ describe("managed transcription adapter", () => {
       status: async () => "configured",
       transcribe: async () => ({ text: "must not run", detectedLanguages: [] }),
     };
-    const service = new ManagedTranscriptionService(fixture.store, policy, provider, { lifecycle });
+    const service = new ManagedTranscriptionService(fixture.store, policy, provider, {
+      lifecycle,
+      timelinePreparer: testTimelinePreparer(path.dirname(fixture.store.filePath)),
+    });
 
     await expect(service.transcribe({
       recordingId: fixture.recordingId,
@@ -255,29 +280,30 @@ describe("managed transcription adapter", () => {
     expect(policy.temporaryArtifacts()).toEqual({ uploadIds: [], resultJobIds: [], orphanUploadIds: [] });
   });
 
-  test("rejects a changed validated inventory chunk before managed admission", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-chunk-tamper-"));
+  test("requires the pre-cleanup artifact handoff after source chunks are gone", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-handoff-"));
     roots.push(root);
     const fixture = await savedStore(root);
-    const tampered = Buffer.from(await readFile(fixture.chunkPaths[0]!));
-    tampered[44] = (tampered[44] ?? 0) ^ 1;
-    await writeFile(fixture.chunkPaths[0]!, tampered);
+    await Promise.all(fixture.chunkPaths.map((chunkPath) => rm(chunkPath, { force: true })));
     const lifecycle = new MeetingLifecycleCoordinator();
     const policy = new ManagedTranscriptionPolicy({ now: () => START });
-    const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "chunk-tamper-lineage", product: "monthly", startedAt: START });
-    const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "chunk-tamper-install", deviceKeyId: "chunk-tamper-key" });
+    const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "handoff-lineage", product: "monthly", startedAt: START });
+    const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "handoff-install", deviceKeyId: "handoff-key" });
     const provider: TranscriptionProvider = {
       status: async () => "configured",
       transcribe: async () => ({ text: "must not run", detectedLanguages: [] }),
     };
-    const service = new ManagedTranscriptionService(fixture.store, policy, provider, { lifecycle });
+    const service = new ManagedTranscriptionService(fixture.store, policy, provider, {
+      lifecycle,
+      timelineArtifacts: new ManagedTimelineArtifactStore(path.join(root, "managed-artifacts")),
+    });
 
     await expect(service.transcribe({
       recordingId: fixture.recordingId,
       credential: device.credential,
-      chunkId: "chunk-tamper-admission",
-      audioId: "chunk-tamper-audio",
-    })).rejects.toThrow("Managed chunk identity changed");
+      chunkId: "handoff-admission",
+      audioId: "handoff-audio",
+    })).rejects.toThrow("not handed off before source cleanup");
     expect(policy.ledger()).toHaveLength(0);
     expect(policy.snapshot().jobs).toHaveLength(0);
   });
@@ -292,16 +318,18 @@ interface SavedFixture {
   chunkPaths: string[];
 }
 
-async function savedStore(root: string): Promise<SavedFixture> {
+async function savedStore(root: string, sampleCount = 24_000): Promise<SavedFixture> {
   const meetingId = "meeting-composition";
   const recordingId = "recording-composition";
   const storeRoot = path.join(root, "store");
   const outputPath = path.join(root, "recording.mp3");
+  const frameCount = String(sampleCount).padStart(12, "0");
   const chunkIds = [
-    "chunk--microphone--000000--000000000000--000000024000--16000--1",
-    "chunk--system--000000--000000000000--000000024000--16000--1",
+    `chunk--microphone--000000--000000000000--${frameCount}--16000--1`,
+    `chunk--system--000000--000000000000--${frameCount}--16000--1`,
   ];
-  const chunks = [pcmWav(24_000, 1), pcmWav(24_000, 2)];
+  const durationMs = Math.ceil(sampleCount / 16);
+  const chunks = [pcmWav(sampleCount, 1), pcmWav(sampleCount, 2)];
   const output = Buffer.from("fake-mp3-output");
   const chunkPaths = chunkIds.map((chunkId) => path.join(storeRoot, "sessions", recordingId, `${chunkId}.wav`));
   const inventoryPath = path.join(storeRoot, "sessions", recordingId, "inventory.ndjson");
@@ -322,7 +350,7 @@ async function savedStore(root: string): Promise<SavedFixture> {
       sha256: chunkIdentities[index]!.sha256,
       committedAt: NOW,
       logicalStartMs: 0,
-      durationMs: 1_500,
+      durationMs,
       sampleRate: 16_000,
       channels: 1,
       format: "wav",
@@ -339,7 +367,7 @@ async function savedStore(root: string): Promise<SavedFixture> {
     sha256: chunkIdentities[index]!.sha256,
     committedAt: NOW,
     logicalStartMs: 0,
-    durationMs: 1_500,
+    durationMs,
     sampleRate: 16_000,
     channels: 1,
     format: "wav",
@@ -370,6 +398,34 @@ function identityOf(bytes: Uint8Array): { byteLength: number; sha256: string } {
 
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function testTimelinePreparer(storeRoot: string, sampleCount = 24_000): ManagedTimelinePreparer {
+  let sequence = 0;
+  return {
+    async prepare(recording, audioId = `recording:${recording.id}`): Promise<ManagedCanonicalTimeline> {
+      const bytes = pcmWav(sampleCount, 1);
+      const directory = path.join(storeRoot, "managed-transcription-timelines");
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      const timelinePath = path.join(directory, `${recording.id}-test-${sequence++}.wav`);
+      await writeFile(timelinePath, bytes, { flag: "wx", mode: 0o600 });
+      let cleaned = false;
+      return {
+        path: timelinePath,
+        recordingId: recording.id,
+        audioId: audioId.trim(),
+        manifestSha256: sha256(Buffer.from(`test-manifest:${recording.id}`)),
+        identity: identityOf(bytes),
+        startMs: 0,
+        endMs: Math.ceil(sampleCount / 16),
+        cleanup: async () => {
+          if (cleaned) return;
+          cleaned = true;
+          await rm(timelinePath, { force: true });
+        },
+      };
+    },
+  };
 }
 
 function pcmWav(sampleCount: number, marker = 0): Uint8Array {

@@ -11,6 +11,7 @@ import {
   MANAGED_MONTHLY_ALLOWANCE_SECONDS,
   MANAGED_TEMPORARY_DATA_TTL_MS,
   MANAGED_TRIAL_ALLOWANCE_SECONDS,
+  ManagedTimelineIdentityError,
   ManagedTranscriptionPolicy,
   QuotaExceededError,
   transcriptionAccess,
@@ -97,6 +98,11 @@ describe("managed-transcription policy", () => {
       ...input(device.credential, "recording-duration", "audio-duration", "chunk-duration", canonical),
       claimedDurationSeconds: 2,
     })).toThrow(DurationClaimMismatchError);
+    const falseTimeline = input(device.credential, "recording-duration", "audio-window", "chunk-window", canonical);
+    expect(() => policy.reserve({
+      ...falseTimeline,
+      timeline: { ...falseTimeline.timeline, endMs: falseTimeline.timeline.endMs + 1 },
+    })).toThrow(ManagedTimelineIdentityError);
     const reservation = policy.reserve({
       ...input(device.credential, "recording-duration", "audio-duration", "chunk-duration", canonical),
       claimedDurationSeconds: 1.5,
