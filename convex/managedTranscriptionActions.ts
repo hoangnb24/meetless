@@ -130,13 +130,17 @@ export const runProvider = action({
       // A failed action is not an exactly-once signal. Release the reservation
       // in a mutation when the admission is still current; a provider success
       // already committed by completeProvider remains idempotently terminal.
-      await ctx.runMutation(anyApi.managedTranscription.failProvider, {
-        jobId: args.jobId,
-        tokenIdentifier,
-        admissionId,
-        executionToken,
-        reason: error instanceof Error ? error.message : "managed provider action failed",
-      }).catch(() => undefined);
+      // A rejected claim has no winner token and must not let a sibling clean
+      // up the admitting device's reserved job.
+      if (executionToken !== null) {
+        await ctx.runMutation(anyApi.managedTranscription.failProvider, {
+          jobId: args.jobId,
+          tokenIdentifier,
+          admissionId,
+          executionToken,
+          reason: error instanceof Error ? error.message : "managed provider action failed",
+        }).catch(() => undefined);
+      }
       throw error;
     }
   },

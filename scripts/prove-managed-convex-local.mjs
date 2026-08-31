@@ -324,6 +324,38 @@ async function main() {
   const identityManifest = onePartManifest(`recording-identity-${runId}`);
   await expectReject(() => invoke("mutation", "managedTranscription:beginUpload", { manifest: identityManifest.manifest }, anonymousToken), "verified");
 
+  const isolated = onePartManifest(`recording-device-isolation-${runId}`, sampleRate, 8);
+  const isolatedUpload = await uploadAndRegister(primaryToken, isolated.manifest, isolated.bytes);
+  const isolatedJob = await invoke("action", "managedTranscriptionActions:sealUpload", { sessionId: isolatedUpload.session.sessionId }, primaryToken);
+  const isolatedBefore = await Promise.all([
+    invoke("query", "managedTranscription:jobStatus", { jobId: isolatedJob._id }, siblingToken),
+    invoke("query", "managedTranscription:readLocalCanaryQuota", { accountId }),
+  ]);
+  await expectReject(
+    () => invoke("action", "managedTranscriptionActions:runProvider", { jobId: isolatedJob._id }, siblingToken),
+    "enrolled device",
+  );
+  const isolatedAfterSibling = await Promise.all([
+    invoke("query", "managedTranscription:jobStatus", { jobId: isolatedJob._id }, siblingToken),
+    invoke("query", "managedTranscription:readLocalCanaryQuota", { accountId }),
+  ]);
+  if (
+    isolatedBefore[0].status !== "reserved" || isolatedAfterSibling[0].status !== "reserved" ||
+    isolatedAfterSibling[0].admissionId !== isolatedBefore[0].admissionId ||
+    isolatedAfterSibling[1].reservedSeconds !== isolatedBefore[1].reservedSeconds ||
+    isolatedAfterSibling[1].usedSeconds !== isolatedBefore[1].usedSeconds
+  ) throw new Error("Sibling provider failure attempt changed the primary device admission or reservation");
+  await invoke("action", "managedTranscriptionActions:runProvider", { jobId: isolatedJob._id }, primaryToken);
+  const isolatedSettled = await invoke("query", "managedTranscription:jobStatus", { jobId: isolatedJob._id }, primaryToken);
+  const isolatedQuota = await invoke("query", "managedTranscription:readLocalCanaryQuota", { accountId });
+  if (
+    isolatedSettled.status !== "succeeded" || isolatedSettled.providerInvocationCount !== 1 ||
+    isolatedQuota.reservedSeconds !== 0 || isolatedQuota.usedSeconds !== isolatedBefore[1].usedSeconds + 1
+  ) {
+    throw new Error("The admitting device did not recover and settle the isolated provider job exactly once");
+  }
+  await invoke("action", "managedTranscriptionActions:acknowledge", { jobId: isolatedJob._id }, primaryToken);
+
   const mainRecording = `recording-main-${runId}`;
   const main = onePartManifest(mainRecording, sampleRate * 31, 7);
   const [firstBegin, secondBegin] = await Promise.all([
@@ -476,6 +508,7 @@ async function main() {
     logicalTimelineSeconds: main.manifest.durationMs / 1_000,
     noCapLogicalTimelineSeconds: noCap.durationMs / 1_000,
     restartRecovered: true,
+    siblingDeviceIsolation: true,
     cleanup: "account state cleared",
   }));
 }

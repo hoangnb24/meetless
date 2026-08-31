@@ -545,6 +545,9 @@ export const failProvider = internalMutation({
     const { principal } = await principalForTokenWithAccount(ctx, args.tokenIdentifier);
     const job = await ctx.db.get(args.jobId);
     if (!job || job.accountId !== principal.accountId) throw new Error(`Managed provider failure is not account-owned (${AUTHORITY})`);
+    if ((job.status === "reserved" || job.status === "running") && job.deviceId !== principal.deviceId) {
+      throw new Error(`Managed provider failure requires the enrolled device that admitted the job (${AUTHORITY})`);
+    }
     if (job.admissionId !== args.admissionId) return job;
     if (job.status === "failed") return publicJob(job);
     if (job.status === "provider_completed" || job.status === "succeeded") return job;
