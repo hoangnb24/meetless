@@ -2,14 +2,15 @@
 
 ## Current State
 
-- `plan_revision`: `v14`
-- `current_frontier`: `MANAGED-TRANSCRIPTION-CONVEX-INTEGRATION-GATE`
-- `state`: `OWNER_EXTERNAL_GATE`
+- `plan_revision`: `v15`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-CONVEX-LOCAL-FIRST-IMPLEMENTATION`
+- `state`: `LOCAL_IMPLEMENTATION_READY`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; predecessor `966b9abd78481db001e912cc2e60d895c00bef37` remains rejected. Managed-transcription foundation R1 remains accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`
-- `pending_ruling`: owner selection of maximum managed-job duration/size, Convex project/plan/permanent region and data residency, production provider contract, and authorization before external configuration or credential use
-- `blocked_by`: real regional latency, upload/action limits, provider behavior, App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication require external targets or owner-gated mutation
-- `next_action`: after owner rulings, run the real Convex/AVFoundation upload/action/provider canary and measure latency, contention, recovery, and cleanup; no external mutation is authorized by local R2 acceptance
+- `authority_contract_sha256`: `87625cb59c10e399767e34a2ecfd2bd92bf7e3a7598673fec267479dfdd7860e`
+- `pending_ruling`: none for the local implementation; production Convex deployment/region, credentials, and provider access remain deferred owner/external gates
+- `blocked_by`: no local implementation blocker; production Convex deployment/region, credentials, and provider calls remain owner/external gates. MAS/RevenueCat release work below is a separate frontier
+- `next_action`: implement and test the region-neutral local Convex boundary, including generated upload URL/storage-ID flow and logical-job idempotency; defer only production deployment, region, credentials, and provider access
 
 ## Ownership And Authority
 
@@ -112,7 +113,7 @@ archived ledger; it may resume only after the owner supplies a validated
 M7-F29 is no longer on the selected release path. Do not resume notarization or
 stapling for Shipaton; retain it only as direct-DMG history.
 
-## Live Frontier: MANAGED-TRANSCRIPTION-FOUNDATION-CONTRACT
+## Accepted Foundation: MANAGED-TRANSCRIPTION-FOUNDATION-CONTRACT
 
 ### Outcome
 
@@ -123,10 +124,11 @@ transcription providers/API keys free. RevenueCat Premium gates only
 Meetless-managed transcription, where the publisher's provider credential
 remains backend-only.
 
-Convex-first is the intended V1 backend direction. It will be evaluated as the
-owner of verified subscription lineage, device credentials, atomic quota
-ledger, managed jobs, and temporary uploads. It does not replace local
-`MeetingStore` ownership of transcripts, citations, and meeting evidence.
+Convex-first is the accepted V1 backend direction. The local-first Convex
+implementation frontier below may define the owner of verified subscription
+lineage, device credentials, atomic quota ledger, managed jobs, and temporary
+uploads against a local deployment. It does not replace local `MeetingStore`
+ownership of transcripts, citations, and meeting evidence.
 
 The managed allowance is a backend-configured 50 hours (180,000 seconds) in
 each subscription-anchored monthly period, without rollover. The seven-day
@@ -145,8 +147,8 @@ quota reservation, and charging stay outside provider implementations.
   - Ask, existing transcripts, citations, provider/model controls, and BYOK are
     free.
   - Premium gates only Meetless-managed transcription.
-  - Convex-first is the intended V1 direction, pending the foundation proof and
-    contracts below.
+  - Convex-first is the accepted V1 direction; the local-first implementation
+    frontier is recorded below.
 - [x] Preserve the former Ask Premium implementation as historical candidate
   evidence only. Its product gate is superseded and must not be treated as
   current policy or copied into the managed-transcription path.
@@ -173,6 +175,14 @@ quota reservation, and charging stay outside provider implementations.
     data, job lease, expiry, refund/revocation, and free Ask/BYOK behavior on
     2026-08-31.
 - [x] Close the bounded fake-backed foundation proof defined below. Lead accepted convergence candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88` after independent artifact inspection, focused composition proof, typecheck, build, and frozen-authority verification.
+- [x] Freeze the local-first Convex implementation contract in product and ADR
+  authority on 2026-08-31: explicit user action gates upload; ordered
+  ten-minute transport/provider chunks remain one logical billing timeline; the
+  manifest and server-derived PCM duration are authoritative; V1 has no
+  diarization or user-facing 60-minute cap.
+- [ ] Implement and test the region-neutral local Convex boundary using
+  generated upload URLs/storage IDs; production deployment, region,
+  credentials, and provider access remain deferred gates.
 - [x] Reconcile the executable Ask gate so Ask is free; Premium UI remains
   deferred because final UI work is outside this frontier.
 - [ ] Apply the profile-backed App Sandbox entitlement and In-App Purchase configuration.
@@ -199,9 +209,17 @@ quota reservation, and charging stay outside provider implementations.
   revoking another Mac. At most three Macs may remain enrolled.
 - Short-lived access credentials authorize managed backend requests. A
   longer-lived, rotatable device/refresh credential remains in Keychain.
-- macOS prepares bounded AVFoundation audio chunks before upload. Backend engine
-  adapters may change without changing the client-facing managed provider or
-  free BYOK path.
+- Recording and canonical timeline preparation remain local and have no cloud
+  duration cap. Only an explicit user action to transcribe with Meetless starts
+  cloud preparation/upload; saving or completing a recording never uploads it.
+  The single canonical timeline is then physically segmented into ordered
+  upload/provider chunks of at most 10 minutes, with a shorter final chunk
+  allowed. Recording-internal capture chunks, upload/provider chunks, and the
+  logical billing timeline remain distinct, and physical chunks do not create
+  multiple jobs or charges.
+- The local Convex upload boundary uses generated upload URLs and storage IDs
+  for bounded chunks rather than HTTP action bodies. Backend engine adapters may
+  change without changing the client-facing managed provider or free BYOK path.
 - Audio and provider output are temporary backend data. The durable transcript
   remains local unless separately authorized.
 - Family Sharing remains disabled for V1.
@@ -217,6 +235,20 @@ quota reservation, and charging stay outside provider implementations.
 - The server derives billable duration from validated sample count on one 16
   kHz mono PCM WAV timeline; client and provider duration claims are not
   authority, and overlapping microphone/system sources are not double charged.
+- Cloud preparation/upload starts only after an explicit managed-transcription
+  action. The server validates an immutable manifest with contiguous sample
+  offsets/counts and rejects missing, duplicate, overlapping, or otherwise
+  non-contiguous parts. It derives duration from accepted PCM16 sample counts
+  and reserves/settles once for the logical job; retries and recovery cannot
+  double-charge it.
+- The physical upload/provider chunks are ordered and at most 10 minutes each;
+  they are not separate timelines or billable jobs. V1 managed transcription
+  does not provide diarization, and no user-facing 60-minute job cap is
+  authorized. Any later safety ceiling requires new owner authority.
+- The local-first Convex implementation is region-neutral and may proceed
+  against a local deployment. US East versus EU West is deferred until before
+  cloud production deployment; production deployment, region, credentials, and
+  provider calls remain owner/external gates.
 - Temporary audio, orphan uploads, provider results, and transcripts in transit
   have a 24-hour TTL. Jobs have a six-hour lease, and acknowledged local
   publication triggers earlier result deletion.
@@ -227,8 +259,8 @@ quota reservation, and charging stay outside provider implementations.
 
 ### Foundation Proof Acceptance Boundary
 
-The authorized next implementation frontier is one bounded fake-backed
-vertical proof. It must demonstrate:
+The accepted foundation was one bounded fake-backed vertical proof. It
+demonstrated:
 
 1. a verified subscription lineage enrolls a device key; App User ID-only or a
    client-selected subscriber ID fails authorization; restore binds a second
@@ -245,17 +277,19 @@ vertical proof. It must demonstrate:
 5. provider completion, settlement ambiguity, checkpoint recovery, and
    publication are reconciled through the existing local transcript/citation
    lifecycle while the shared meeting lifecycle lease protects deletion;
-   BYOK bypasses Premium/quota and Ask remains free; and
-6. [future integration gate] real AVFoundation chunks satisfy the selected
-   Convex upload/action limits, target-market latency is measured against
-   available regions, and action retry/concurrency behavior is explicit rather
-   than assumed.
+   BYOK bypasses Premium/quota and Ask remains free.
 
-The first five criteria authorize and define the bounded fake-backed proof. The
-future integration gate is not executable in R1 because no production Convex
-deployment or selected upload/region contract exists. Production
-backend/provider credentials, external store changes, and final UI remain
-outside this scope.
+The next authorized local implementation criterion is:
+
+6. the region-neutral Convex boundary uses generated upload URLs and storage
+   IDs for ordered physical chunks while preserving one logical billing
+   timeline; provider execution remains replaceable and local `MeetingStore`
+   remains the durable transcript owner.
+
+The first five criteria define the accepted fake-backed foundation. Criterion
+six is now authorized as local implementation; production Convex deployment,
+region selection, credentials, provider calls, external store changes, and
+final UI remain outside this repository-only frontier.
 
 ### R1 Fake-Backed Proof Disposition (2026-08-31; superseded)
 
@@ -361,10 +395,12 @@ Convergence architectural decisions:
 ### Production Integration Preflight Verdict (2026-08-31)
 
 Two independent read-only preflights inspected accepted base `03d4249` without
-repository or external mutation. Lead keeps Convex-first conditionally: Convex
-is credible as the transactional control plane and temporary object store, but
-not as an assumed arbitrary-length synchronous audio processor. Hosted region,
-real upload/action/provider behavior, and target-market latency remain external
+repository or external mutation. Lead keeps Convex-first as the accepted
+direction: Convex is credible as the transactional control plane and temporary
+object store, but not as an assumed arbitrary-length synchronous audio
+processor. A region-neutral local deployment is now authorized for the next
+implementation frontier. Hosted production region, credentials/provider
+access, real provider behavior, and target-market latency remain external
 gates.
 
 Frozen local correction findings:
@@ -384,10 +420,13 @@ Frozen local correction findings:
   submission, recover it after restart, and reacquire the shared lifecycle lease
   for publication. Remote cancellation/provider semantics remain external.
 
-`CPF-004` is not authorized as a guessed product limit. The owner must later
-choose a maximum managed-job duration/size after long-duration RSS, disk, and
-upload measurements. Native anchor-buffer policy and production provider limits
-remain outside R2.
+`CPF-004` was not authorized as a guessed product limit in R2. The owner has
+now explicitly rejected a user-facing 60-minute cap and permits local recording
+and canonical preparation without a cloud duration cap. The local Convex seam
+uses ordered physical upload/provider chunks of at most 10 minutes behind one
+logical billing timeline. Any later operational safety ceiling still requires
+new owner authority; native anchor-buffer policy and production provider limits
+remain outside this frontier.
 
 `PARALLEL_CHECK v1`: `SERIAL`. The ready corrections share finalizer,
 RecordingService, private artifact ownership, MeetingStore deletion lifecycle,
@@ -446,7 +485,7 @@ Observed R2 proof, pending Lead closeout:
 - `npx vitest run --config vitest.config.ts packages/meetless-plugin/test --maxWorkers=1` ran 17 files and 123 tests: 15 files/118 tests passed; the 5 failures were the pre-existing sandbox-denied localhost/Unix-socket listener tests in `chat-service.test.ts` and `control-server.test.ts` (`listen EPERM`). No R2-owned plugin test failed.
 - `npm run typecheck` passed; `npm run build:meetless` passed; `git diff --check` remains required after this plan entry.
 - The composition proof traverses real fixture `RecordingService` finalization and source-chunk cleanup, fake private artifact handoff, fake upload receipt completion, an injected post-provider-success crash, fresh policy/upload/store instances, one provider call, and MeetingStore citation publication. It does not claim real Convex latency or production provider behavior.
-- No Convex package/config/project, production credential, provider call, native capture launch, StoreKit/RevenueCat mutation, signing, upload, publication, or external state change was attempted. Authority files remain frozen at combined digest `79159e03961957296f0f110996c71e0fdde7790760b1dd63fcd40ebbab3637ae`.
+- No Convex package/config/project, production credential, provider call, native capture launch, StoreKit/RevenueCat mutation, signing, upload, publication, or external state change was attempted. The R2 candidate was validated against the then-frozen authority digest `79159e03961957296f0f110996c71e0fdde7790760b1dd63fcd40ebbab3637ae`; this revision records the amended digest above.
 
 ### R2 Convergence Ruling (2026-08-31)
 
@@ -498,8 +537,9 @@ Observed convergence proof and Lead acceptance:
 - Meeting domain/store regressions passed 6 files and 67 tests. The broader
   plugin suite passed 17 files and 124 tests in the full-access environment.
 - `npm run typecheck`, `npm run build:meetless`, and `git diff --check` passed.
-- The frozen authority digest remained
-  `79159e03961957296f0f110996c71e0fdde7790760b1dd63fcd40ebbab3637ae`.
+- The convergence candidate was validated against the then-frozen authority
+  digest `79159e03961957296f0f110996c71e0fdde7790760b1dd63fcd40ebbab3637ae`;
+  this revision records the amended digest above.
 - No Convex/provider credentials or calls, native capture launch,
   StoreKit/RevenueCat mutation, signing, upload, publication, or external
   state change was attempted. This proof makes no production latency claim.
@@ -507,6 +547,43 @@ Observed convergence proof and Lead acceptance:
   the private staging/deletion corrections, reran the 9-file/107-test focused
   proof, typecheck, build, diff check, and frozen authority digest. The only
   remaining work is owner-gated production integration and release evidence.
+
+### Live Frontier: MANAGED-TRANSCRIPTION-CONVEX-LOCAL-FIRST-IMPLEMENTATION
+
+Plan revision `v15` freezes the accepted managed-transcription behavior and
+authorizes repository implementation against a region-neutral local Convex
+deployment. This is no longer waiting on a product duration/size decision. The
+implementation must preserve the accepted policy owner, shared lifecycle
+lease, temporary-data rules, and local `MeetingStore` transcript/citation
+ownership.
+
+The frozen implementation contract is:
+
+- Recording and canonical timeline preparation remain local and have no cloud
+  duration cap. Completing or saving a recording never uploads it; cloud
+  preparation/upload starts only after an explicit user action to transcribe
+  with Meetless.
+- After that action, one canonical 16 kHz mono PCM16 logical timeline is
+  physically segmented into ordered upload/provider chunks of at most 10
+  minutes, with a shorter final chunk allowed. Recording-internal capture
+  chunks and upload/provider chunks are distinct, and the latter do not create
+  multiple billable timelines or managed jobs.
+- The server validates an immutable manifest with contiguous sample
+  offsets/counts, rejects missing, duplicate, overlapping, or non-contiguous
+  parts, derives duration from accepted PCM sample counts, and reserves/settles
+  once for the logical job. Retry and recovery paths are idempotent and cannot
+  double-charge.
+- V1 managed transcription has no diarization and no user-facing 60-minute
+  job cap. Any later operational safety ceiling requires new owner authority.
+- The Convex seam uses generated upload URLs and storage IDs for bounded chunks;
+  audio bytes do not pass through HTTP action bodies. Provider execution remains
+  replaceable, and Ask/BYOK remain free.
+
+The local implementation may proceed now against a local Convex deployment.
+Only production Convex deployment, production region selection (US East versus
+EU West), credentials, and provider access/calls remain owner/external gates.
+This plan revision claims no Convex deployment, provider behavior, production
+latency, or external mutation.
 
 ### Risks And Recovery
 
@@ -517,8 +594,10 @@ Observed convergence proof and Lead acceptance:
   build-scoped; never persist private keys or issuer secrets in the repository.
 - Convex currently offers no APAC hosted region; upload latency and regional
   data placement must be measured before selecting a production deployment.
-  Region choice, upload/action limits, nonautomatic action retries, workflow
-  result persistence, and concurrency must be explicit in the foundation proof.
+  The local implementation is region-neutral; production platform limits,
+  action retries, workflow result persistence, and concurrency must be measured
+  before external deployment. No user-facing duration cap is implied by those
+  operational measurements.
 - Convex mutations can own atomic admission and ledger transitions, but neither
   Convex nor the provider call is assumed exactly-once. Stable idempotency,
   reservation/settlement, ambiguous outcomes, and cleanup are application
@@ -534,6 +613,11 @@ Observed convergence proof and Lead acceptance:
 
 - Foundation R1: the fake-backed identity, quota, idempotency, duration,
   cleanup, local-publication, and free-path proof above.
+- Current local Convex frontier: prove generated upload URL/storage-ID
+  transfer, ordered at-most-10-minute physical chunks behind one logical job,
+  immutable manifest validation, and retry/idempotency against a local
+  deployment. This docs revision authorizes that work but does not claim a
+  deployment or production behavior.
 - Focused R1: free Ask/BYOK policy, managed transcription admission, and
   existing meeting-store publication proof. Purchase adapter, renderer
   boundary, and sandbox entitlement tests remain separate reusable evidence.
@@ -676,6 +760,17 @@ Observed convergence-correction validation on 2026-08-31:
   deployment target, so no external project, credential, provider, or store
   mutation is authorized or attempted. Internal briefing may proceed; real
   regional latency and upload/action-limit proof waits on the owner gate.
+- 2026-08-31 `PLAN_RECONCILIATION v15`: the owner froze the local-first Convex
+  implementation contract. Local recording/canonical preparation has no cloud
+  duration cap and upload starts only after explicit managed-transcription
+  action; ordered physical upload/provider chunks are at most 10 minutes behind
+  one logical billing timeline; immutable manifests and server-derived PCM
+  duration govern idempotent reservation/settlement; V1 has no diarization or
+  user-facing 60-minute cap. The combined authority digest is now
+  `87625cb59c10e399767e34a2ecfd2bd92bf7e3a7598673fec267479dfdd7860e`.
+  Region-neutral local Convex implementation is authorized; only production
+  deployment/region, credentials, and provider access/calls remain deferred
+  owner/external gates.
 
 ## Validation
 
@@ -685,3 +780,7 @@ publication composition path; it does not
 prove real Convex latency, regional placement, AVFoundation upload limits,
 production backend behavior, provider credentials, external purchase mutation,
 signing, App Review, or publication.
+
+This v15 docs revision records the implementation authority and does not claim
+that a Convex project, deployment, provider call, production latency, or
+external mutation exists.

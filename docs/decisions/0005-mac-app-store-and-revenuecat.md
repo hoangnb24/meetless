@@ -78,6 +78,24 @@ sample count; it rejects a conflicting client duration and does not trust
 provider-reported usage. Microphone and system audio contribute to one meeting
 timeline and are not charged as two overlapping durations.
 
+Recording and canonical timeline preparation may remain entirely local, with no
+cloud duration cap in V1. Cloud preparation and upload begin only after an
+explicit user action to transcribe with Meetless; recording completion or save
+does not trigger an automatic upload. After that action, the single canonical
+16 kHz mono PCM16 timeline is physically segmented into ordered
+upload/provider chunks of at most 10 minutes, with a shorter final chunk
+allowed. Capture chunks created by recording are separate from these transport
+or provider chunks, and neither creates another recording, logical billing
+timeline, or managed job.
+
+The server validates an immutable manifest with contiguous sample offsets and
+counts, rejecting missing, duplicate, overlapping, or otherwise non-contiguous
+parts. Duration comes from accepted PCM sample counts. Reservation and
+settlement occur once for the logical job, and retry/recovery handling is
+idempotent so the logical job cannot be charged twice. V1 managed
+transcription does not provide diarization and has no user-facing 60-minute
+job cap. Any later safety ceiling requires new owner authority.
+
 Managed audio chunks, orphan uploads, provider output, and transcripts in
 transit have a maximum 24-hour TTL. A job lease lasts at most six hours. Audio
 is deleted after provider completion once the temporary result is recoverable;
@@ -95,6 +113,16 @@ treated as active. A refund or revocation stops in-flight managed work when
 observed and prevents new work. A completed result may still be retrieved
 within its TTL; starting or restarting work after the lease requires active
 Premium and a new valid admission.
+
+### Convex implementation boundary
+
+The local-first Convex implementation is region-neutral and may proceed
+against a local deployment. Bounded audio chunks use Convex-generated upload
+URLs and the resulting storage IDs; audio bytes do not travel through HTTP
+action bodies. Provider execution remains replaceable, and this boundary does
+not change the free Ask or user-supplied/BYOK paths. US East versus EU West is
+deferred until before cloud production deployment. Production region,
+deployment, credentials, and provider calls remain owner/external gates.
 
 ### Runtime and data boundary
 

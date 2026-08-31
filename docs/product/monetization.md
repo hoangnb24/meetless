@@ -14,6 +14,27 @@ managed transcription is unavailable, and offers the appropriate purchase,
 restore, or quota-status path. Ask and user-supplied transcription remain
 available.
 
+## Managed transcription preparation
+
+Recording and canonical timeline preparation may remain entirely local; V1 does
+not impose a cloud duration cap on that work. Cloud preparation and upload
+begin only after the user explicitly chooses Meetless-managed transcription for
+the recording. Completing or saving a recording never uploads it automatically.
+
+After that action, the one logical canonical timeline is physically segmented
+into ordered upload/provider chunks of at most 10 minutes; the final chunk may
+be shorter. Recording-internal capture chunks, these upload/provider chunks,
+and the single logical billing timeline are distinct concepts. Physical
+segmentation does not create multiple billable timelines or managed jobs.
+
+The backend accepts an immutable manifest for that logical timeline and
+rejects missing, duplicate, or overlapping parts and non-contiguous sample
+offsets or counts. It derives duration from accepted 16 kHz mono PCM16 sample
+counts, reserves and settles quota once for the logical job, and makes retries
+and recovery idempotent so they cannot double-charge. V1 managed transcription
+does not provide diarization. There is no user-facing 60-minute managed-job
+cap in V1; any later safety ceiling requires new owner authority.
+
 ## Offer
 
 - Monthly subscription: intended US price `$9.99`.
