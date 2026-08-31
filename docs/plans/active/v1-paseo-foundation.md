@@ -2,14 +2,14 @@
 
 ## Current State
 
-- `plan_revision`: `v11`
-- `current_frontier`: `MANAGED-TRANSCRIPTION-PRE-EXTERNAL-SEAM-R2`
-- `state`: `LOCAL_CORRECTION_CANDIDATE_PENDING_LEAD`
+- `plan_revision`: `v12`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-PRE-EXTERNAL-SEAM-R2-CONVERGENCE`
+- `state`: `LOCAL_CONVERGENCE_REQUIRED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`. MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` remains accepted reusable evidence only
+- `candidate`: R2 candidate `966b9abd78481db001e912cc2e60d895c00bef37` is rejected for the bounded CPF-002/CPF-007 convergence below. Managed-transcription foundation R1 remains accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`
 - `pending_ruling`: none for the bounded local R2 correction; owner selection of job duration/size limits, Convex project/region, and external configuration remains deferred
 - `blocked_by`: R2 is not externally blocked. Real regional latency, upload/action limits, provider credentials, App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication still require external targets or owner-gated mutation
-- `next_action`: Lead closeout of the one immutable repository-only R2 candidate; no Convex dependency, project, credential, provider call, or external mutation
+- `next_action`: the same SERIAL writer applies the bounded CPF-002/CPF-007 convergence; no third broad review and no Convex dependency, project, credential, provider call, or external mutation
 
 ## Ownership And Authority
 
@@ -447,6 +447,28 @@ Observed R2 proof, pending Lead closeout:
 - `npm run typecheck` passed; `npm run build:meetless` passed; `git diff --check` remains required after this plan entry.
 - The composition proof traverses real fixture `RecordingService` finalization and source-chunk cleanup, fake private artifact handoff, fake upload receipt completion, an injected post-provider-success crash, fresh policy/upload/store instances, one provider call, and MeetingStore citation publication. It does not claim real Convex latency or production provider behavior.
 - No Convex package/config/project, production credential, provider call, native capture launch, StoreKit/RevenueCat mutation, signing, upload, publication, or external state change was attempted. Authority files remain frozen at combined digest `79159e03961957296f0f110996c71e0fdde7790760b1dd63fcd40ebbab3637ae`.
+
+### R2 Convergence Ruling (2026-08-31)
+
+Lead rejects candidate `966b9abd78481db001e912cc2e60d895c00bef37`
+after bounded FAST closeout. The reviewer recommended acceptance, but the
+artifact inspection leaves two accepted-contract gaps:
+
+- `CPF-002` remains open because finalizer source timelines and
+  `.managed.wav.stage` are still written under `exportRoot`. The frozen finding
+  allows only the user-visible MP3 in the export destination; transient private
+  managed audio must use an app-owned staging root before and during handoff.
+- `CPF-007` requires a direct deletion regression correction: while the runtime
+  is active, `ownedArtifactPaths` excludes expired meeting-owned artifacts, so
+  meeting deletion can leave them until a later startup sweep. Deletion must
+  own and remove the path regardless of whether TTL has just elapsed.
+
+`PLAN_RECONCILIATION v12`: one bounded convergence is authorized on top of
+`966b9abd`. Keep CPF-001, CPF-003, CPF-005, and CPF-006-LOCAL closed. Move only
+private audio/source staging out of `exportRoot`, preserve MP3 atomic
+publication, update stage enumeration/recovery/deletion accordingly, and prove
+expired-artifact deletion while running. No third broad review is authorized;
+Lead will inspect and run direct regressions on the convergence candidate.
 
 ### Risks And Recovery
 
