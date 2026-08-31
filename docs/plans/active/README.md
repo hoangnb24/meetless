@@ -6,7 +6,5 @@ the plan to `../completed/` only after the result is verified.
 
 ## Current Plans
 
-- [Meetless V1 release readiness](v1-paseo-foundation.md) — residual M7,
-  paused M7-F29, and TCC R3 candidate acceptance.
-- [Meeting library and chat controls](meeting-library-chat-controls.md) — stale
-  failed-Recording owner acceptance only.
+- [Meetless V1 release readiness](v1-paseo-foundation.md) — managed-transcription
+  foundation contracts, residual Mac App Store gates, paused M7-F29, and TCC R3.

@@ -2,21 +2,23 @@
 
 ## Current State
 
-- `plan_revision`: `v3`
-- `current_frontier`: `SHIPATON-MAS-PREMIUM-CORRECTION-R1`
-- `state`: `STRUCTURAL_CORRECTION_READY_FOR_LEAD_ACCEPTANCE`
-- `depends_on`: Apple Developer/App Store Connect and RevenueCat project access for external stages
-- `candidate`: correction is based on original `main@5743c7f4283e4000a3798ac7f2a275d241e79dcc`; immutable candidate commit is recorded in the peer handoff
-- `pending_ruling`: Lead acceptance of the structural correction; external MAS/RevenueCat stages remain open
-- `blocked_by`: missing App Store provisioning profile, RevenueCat project configuration, and external store gates; M7-F29 remains separately owner-held
-- `next_action`: Lead review of the immutable correction candidate, followed by separately authorized external MAS/RevenueCat work
+- `plan_revision`: `v4`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-FOUNDATION-CONTRACT`
+- `state`: `BLOCKED_PENDING_PRODUCT_CONTRACTS`
+- `depends_on`: owner decisions for quota periods, device lifecycle, duration authority, temporary-data lifecycle, and entitlement-expiry behavior; durable product/ADR authority reconciliation follows those decisions
+- `candidate`: no implementation candidate; MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` is accepted reusable evidence only
+- `pending_ruling`: the five explicit owner/authority gates in the managed-transcription frontier
+- `blocked_by`: unresolved product contracts and stale product/ADR authority; external App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication gates remain separately open
+- `next_action`: decide the pending contracts, update durable product/ADR authority, then authorize the bounded fake-backed foundation proof; no implementation is authorized by this plan update
 
 ## Ownership And Authority
 
-Date: 2026-08-30
+Date: 2026-08-30; reconciled 2026-08-31
 
-- Owner: `v1-paseo-foundation` owns residual M7, paused `M7-F29-NOTARIZE-STAPLE-VERIFY`, and TCC R3.
-- Owned scope: residual M7 release gates; paused M7-F29; TCC R3 candidate acceptance.
+- Owner: `v1-paseo-foundation` owns the managed-transcription foundation contract,
+  residual M7, paused `M7-F29-NOTARIZE-STAPLE-VERIFY`, and TCC R3.
+- Owned scope: managed-transcription authority and entry criteria; residual M7
+  release gates; paused M7-F29; TCC R3 candidate acceptance.
 - Authority: ADR0001, ADR0003, ADR0004, ADR0005, product monetization policy, and the macOS artifact-validation specification where its non-DMG mechanics still apply.
 
 ## Outcome
@@ -27,15 +29,22 @@ history is completed evidence; this plan tracks only the live frontiers listed
 in `Current State`.
 
 The owner changed the release path on 2026-08-30 from direct DMG to the Mac App
-Store for RevenueCat Shipaton 2026. This plan also owns the store sandbox,
-RevenueCat Premium, App Store Connect submission, and launch-evidence frontier.
+Store for RevenueCat Shipaton 2026. On 2026-08-31 the owner also replaced the
+initial Premium gate: Ask and user-supplied transcription remain free; Premium
+funds Meetless-managed transcription. This plan owns that foundation contract,
+the store sandbox, RevenueCat purchase integration, App Store Connect
+submission, and launch-evidence frontier.
 
 ## Ownership And Boundaries
 
 - Residual M7 owns the remaining release, legal, target, and distribution gates.
 - `SHIPATON-MAS-REVENUECAT` supersedes the direct-DMG distribution frontier but
   does not erase its historical proof. It owns sandbox packaging, purchase
-  policy, App Store Connect readiness, submission, and launch evidence.
+  mechanics, App Store Connect readiness, submission, and launch evidence.
+- `MANAGED-TRANSCRIPTION-FOUNDATION-CONTRACT` owns the product and architecture
+  decisions required before managed-transcription implementation. It does not
+  authorize a backend, client, native, provider, quota, identity, upload, or UI
+  implementation.
 - `M7-F29-NOTARIZE-STAPLE-VERIFY` remains paused under its separate owner hold;
   no notarization, stapling, upload, publication, or credential inspection is
   authorized by this reconciliation.
@@ -43,10 +52,11 @@ RevenueCat Premium, App Store Connect submission, and launch-evidence frontier.
   Its implementation candidate preserves the accepted permission and rollback
   behavior while adding renderer intent binding and recoverable app/surface
   failure handling.
-- The R1 correction changes host artifact ownership/linking, authorization-state
-  lock lifetime, MAS entitlement validation, and Premium chat composition. It
-  does not change the immutable M3 evidence manifest or claim any external store
-  stage complete.
+- The accepted R1 correction changed host artifact ownership/linking,
+  authorization-state lock lifetime, MAS entitlement validation, and the former
+  Premium chat composition. Its build, sandbox, native purchase, and runtime
+  boundary proof is reusable structural evidence. Its Ask gate is superseded
+  product behavior and is not authority for the managed-transcription gate.
 
 ## Stable Authority
 
@@ -61,9 +71,12 @@ RevenueCat Premium, App Store Connect submission, and launch-evidence frontier.
 - [ADR0004 — recording host and capture permission boundary](../../decisions/0004-recording-host-and-capture-permission-boundary.md)
   owns the recording host/helper and microphone/system-audio permission boundary.
 - [ADR0005 — Mac App Store and RevenueCat](../../decisions/0005-mac-app-store-and-revenuecat.md)
-  owns the store distribution, sandbox, product identifiers, and Premium gate.
+  remains authority for store distribution, sandbox, product identifiers, and
+  purchase mechanics. Its Ask Premium gate is stale and must be amended after
+  the pending contracts are decided and before implementation.
 - [Premium product policy](../../product/monetization.md) owns user-visible free,
-  paid, trial, purchase, restore, and unavailable-service behavior.
+  paid, trial, purchase, restore, and unavailable-service behavior. Its current
+  Ask gate is stale and is not implementation authority for this frontier.
 - [macOS artifact validation](../../specs/macos-artifact-validation.md) owns
   candidate, package, sign, re-sign, and validation stages.
 
@@ -99,24 +112,44 @@ archived ledger; it may resume only after the owner supplies a validated
 M7-F29 is no longer on the selected release path. Do not resume notarization or
 stapling for Shipaton; retain it only as direct-DMG history.
 
-## Live Frontier: SHIPATON-MAS-REVENUECAT
+## Live Frontier: MANAGED-TRANSCRIPTION-FOUNDATION-CONTRACT
 
 ### Outcome
 
-Publish Meetless's first public version through the Mac App Store during the
-Shipaton window, with RevenueCat-backed monthly and annual subscriptions that
-unlock meeting-scoped Ask, then retain judge-usable launch evidence.
+Define the authority and smallest credible proof for Meetless-managed
+transcription before implementation. The accepted direction keeps Ask,
+existing transcripts, citations, provider/model controls, and user-supplied
+transcription providers/API keys free. RevenueCat Premium gates only
+Meetless-managed transcription, where the publisher's provider credential
+remains backend-only.
+
+Convex-first is the intended V1 backend direction. It will be evaluated as the
+owner of verified subscription lineage, device credentials, atomic quota
+ledger, managed jobs, and temporary uploads. It does not replace local
+`MeetingStore` ownership of transcripts, citations, and meeting evidence.
+
+The initial managed allowance is a backend-configured 50 hours (180,000
+seconds) per month. It is provisional economic policy, not a hard-coded client
+default or marketing commitment. A reduction must not silently change an
+already-started quota period; exact period semantics remain pending below.
+
+`TranscriptionProvider` remains the execution abstraction. Provider/engine
+selection may change independently from payment mode; entitlement, admission,
+quota reservation, and charging stay outside provider implementations.
 
 ### Progress
 
 - [x] Select Mac App Store distribution and supersede direct DMG.
-- [x] Define free features, `premium`, products, trial, and target US prices.
-- [x] Add executable premium policy and UI proof.
-  - Server enforcement and typed RPC/client boundary landed on 2026-08-30.
-  - Proof: focused typechecks passed and 45 contract/client/plugin tests passed,
-    including denial before chat persistence or agent execution.
-  - Renderer proof: localized package prices, eligible-trial copy, purchase,
-    restore, dismissal, and draft preservation passed in the surface suite.
+- [x] Accept the replacement product direction at Lead review boundary:
+  `ACCEPT_WITH_REQUIRED_DECISIONS` on 2026-08-31.
+  - Ask, existing transcripts, citations, provider/model controls, and BYOK are
+    free.
+  - Premium gates only Meetless-managed transcription.
+  - Convex-first is the intended V1 direction, pending the foundation proof and
+    contracts below.
+- [x] Preserve the former Ask Premium implementation as historical candidate
+  evidence only. Its product gate is superseded and must not be treated as
+  current policy or copied into the managed-transcription path.
 - [x] Add the native RevenueCat/StoreKit adapter and authenticated renderer boundary.
   - RevenueCat 5.87.1 is pinned by SwiftPM and the real SDK target links.
   - `npm run build:native` now produces and checks the SwiftPM-owned
@@ -134,6 +167,11 @@ unlock meeting-scoped Ask, then retain judge-usable launch evidence.
     and validated by `npm run validate:macos:app-store`; positive and negative
     contract proofs passed on 2026-08-31. The Team ID/application-group input is
     build-scoped and contains no credential.
+- [ ] Decide and promote the managed-transcription product contracts into
+  durable product/ADR authority.
+- [ ] Complete the bounded fake-backed foundation proof defined below.
+- [ ] Reconcile the executable Ask gate and Premium UI only after product
+  authority is updated and implementation is explicitly authorized.
 - [ ] Apply the profile-backed App Sandbox entitlement and In-App Purchase configuration.
 - [ ] Replace unrestricted writable paths with container/export-safe behavior.
 - [ ] Produce and validate a sandbox development build.
@@ -144,7 +182,78 @@ unlock meeting-scoped Ask, then retain judge-usable launch evidence.
 - [ ] Upload the exact build, wait for processing, and submit it to App Review.
 - [ ] Record the public Mac App Store URL after approval.
 
-### R1 Structural Correction Proof (2026-08-31)
+### Accepted Direction And Dependency Boundaries
+
+- The backend derives the stable billing/quota account from server-verified App
+  Store subscription lineage. RevenueCat App User ID, client entitlement state,
+  and client-selected subscriber IDs are lookup data, not authorization proof.
+- Each installation receives revocable device credentials. Enrollment, StoreKit
+  transaction exchange, refresh credentials, and device private-key material
+  remain trusted-native-host and Keychain scoped; the renderer sees typed state
+  only.
+- Restore Purchases must be able to bind a new installation to the existing
+  verified subscription and shared quota account. Device-count and revocation
+  UX are pending authority decisions.
+- Short-lived access credentials authorize managed backend requests. A
+  longer-lived, rotatable device/refresh credential remains in Keychain.
+- macOS prepares bounded AVFoundation audio chunks before upload. Backend engine
+  adapters may change without changing the client-facing managed provider or
+  free BYOK path.
+- Audio and provider output are temporary backend data. The durable transcript
+  remains local unless separately authorized.
+- Family Sharing remains disabled for V1 unless quota semantics are explicitly
+  decided in a later owner decision.
+
+### Pending Owner And Authority Gates
+
+No value is inferred for these policies. All must be decided and promoted into
+durable authority before implementation:
+
+1. **Quota-period semantics:** period boundaries for monthly and annual
+   products; trial allowance; grace/billing-retry access; refund/revocation;
+   product changes; rounding; and when a new configured allowance takes effect.
+2. **Device lifecycle:** allowed device count, enrollment/re-enrollment,
+   revocation and recovery UX, and whether restoring on a new installation
+   affects existing device credentials.
+3. **Duration authority:** the server-verifiable source of billable duration
+   without trusting client-declared duration and without requiring server-side
+   ffmpeg in V1.
+4. **Temporary-data lifecycle:** TTLs and deletion/acknowledgement behavior for
+   chunks, orphan uploads, provider results, transcripts in transit, failed or
+   cancelled jobs, and abandoned clients.
+5. **Entitlement expiry during work:** admission and completion behavior when
+   entitlement expires, is refunded/revoked, or changes while upload or
+   transcription is in flight.
+
+Product monetization authority and ADR0005 must be reconciled after these
+decisions. Until then, this plan records direction and entry criteria but grants
+no implementation authority.
+
+### Future Foundation Proof Entry Criteria
+
+The first implementation frontier, once separately authorized, is one bounded
+fake-backed vertical proof. It must demonstrate:
+
+1. a verified subscription lineage enrolls a device key; App User ID-only or a
+   client-selected subscriber ID fails authorization; restore binds a second
+   installation to the same quota account; and a credential can be revoked;
+2. one managed audio job uses stable subscriber/audio/chunk idempotency, atomic
+   quota reservation and settlement, injected duplicate requests and crashes,
+   and exactly one ledger charge for the same audio;
+3. the chosen duration authority rejects a false client duration;
+4. temporary uploads/results are cleaned after success, failure, cancellation,
+   expiry, and orphan recovery without persisting a transcript as durable
+   backend meeting data;
+5. the managed result publishes through the existing local transcript/citation
+   lifecycle, while BYOK bypasses Premium/quota and Ask remains free; and
+6. real AVFoundation chunks satisfy the selected Convex upload/action limits,
+   target-market latency is measured against available regions, and action
+   retry/concurrency behavior is explicit rather than assumed.
+
+These are future validation and implementation entry criteria. None is
+completed by this docs-only reconciliation.
+
+### Accepted Reusable R1 Structural Evidence (2026-08-31)
 
 - [x] SwiftPM is the single host build owner. `MeetlessHost` is built through
   the pinned RevenueCat 5.87.1 dependency, and build/install/package workflows
@@ -155,9 +264,10 @@ unlock meeting-scoped Ask, then retain judge-usable launch evidence.
 - [x] The MAS contract requires the parent application-group entitlement and the
   inherited child sandbox closure, with explicit build-time Team ID/application-
   group inputs and deterministic positive/negative validation.
-- [x] Provider/control discovery does not construct the Premium transport;
-  Ask and retry paths gate before persistence/execution and fail closed when
-  Premium is unavailable.
+- [x] Provider/control discovery does not construct the Premium transport. The
+  former Ask/retry Premium gate was proven on the candidate, but that behavior
+  is now superseded and is retained only as evidence that admission can occur
+  before persistence/execution.
 - [ ] No RevenueCat project, App Store profile, signing, upload, sandbox
   purchase, App Review, or public listing evidence exists in this correction.
 
@@ -168,6 +278,14 @@ unlock meeting-scoped Ask, then retain judge-usable launch evidence.
   a distinct MAS target; do not weaken existing validation to make MAS pass.
 - Store and RevenueCat credentials are external. Keep public SDK configuration
   build-scoped; never persist private keys or issuer secrets in the repository.
+- Convex currently offers no APAC hosted region; upload latency and regional
+  data placement must be measured before selecting a production deployment.
+  Region choice, upload/action limits, nonautomatic action retries, workflow
+  result persistence, and concurrency must be explicit in the foundation proof.
+- Convex mutations can own atomic admission and ledger transitions, but neither
+  Convex nor the provider call is assumed exactly-once. Stable idempotency,
+  reservation/settlement, ambiguous outcomes, and cleanup are application
+  contracts.
 - The local keychain has Apple Development and Apple Distribution identities,
   but the installed profiles inspected on 2026-08-30 are iOS-only and none
   matches macOS `com.meetless.app`; a Mac App Store profile must be created and
@@ -177,12 +295,17 @@ unlock meeting-scoped Ask, then retain judge-usable launch evidence.
 
 ### Validation
 
-- Focused: Premium policy, purchase adapter, renderer boundary, and sandbox entitlement tests.
-- Integration: packaged sandbox app with StoreKit/RevenueCat sandbox purchase and restore.
+- Foundation, once authorized: the fake-backed identity, quota, idempotency,
+  duration, cleanup, local-publication, and free-path proof above.
+- Focused, after authority reconciliation: free Ask/BYOK policy, managed
+  transcription admission, purchase adapter, renderer boundary, and sandbox
+  entitlement tests.
+- Integration: packaged sandbox app with StoreKit/RevenueCat sandbox purchase,
+  restore-to-new-installation, device enrollment, and managed transcription.
 - Repository: typecheck, focused tests, build, and a MAS-specific package validator.
 - External: App Store Connect processing, App Review submission, and public listing.
 
-R1 repository validation observed on 2026-08-31 includes `npm run typecheck`,
+Historical R1 structural validation observed on 2026-08-31 includes `npm run typecheck`,
 the targeted Premium/MAS/composition Vitest run (18 files, 117 tests),
 `npm run build:native`, SwiftPM host/test builds, and positive/negative MAS
 validator runs. The broader `npm run test:focused` run remains non-green only
@@ -191,7 +314,9 @@ three signing-fixture diagnostic expectations, one artifact-resign diagnostic
 expectation, and one readiness startup deadline timeout. These are reported in
 the peer handoff and are not reclassified as R1 proof. The broader composition
 suite also has its existing Expo module failure and an M6 transport fixture
-timeout; the focused R1 chat composition proof passes independently.
+timeout; the focused R1 chat composition proof passed independently. None of
+that evidence proves the new managed-transcription product gate, identity,
+quota, backend, upload, or cleanup contracts.
 
 ## Completed Evidence
 
@@ -214,10 +339,18 @@ timeout; the focused R1 chat composition proof passes independently.
   is introduced. Harness doctor remains installation-only.
 - `test/evidence/m3/20260819T153402Z-live/manifest.json` is immutable historical
   evidence and remains byte-identical.
+- 2026-08-31 `PLAN_RECONCILIATION v4`: Lead accepted the managed-transcription
+  direction with required decisions. The MAS/RevenueCat candidate
+  `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` is closed structural evidence;
+  its Ask gate is superseded. The current frontier is docs/foundation contract
+  work, and implementation remains blocked on the five owner/authority gates.
+- This reconciliation changes no product authority, ADR, implementation,
+  executable contract, package, external service, credential, or store state.
 
 ## Validation
 
-The reconciliation validation and exact changed-file list are recorded in the
-peer handoff for frontier `MEETLESS-HARNESS-AUTHORITY-CORRECTION`. The live
-candidate remains pending Lead rebind and ruling; this plan does not self-accept
-TCC or release work.
+This docs-only reconciliation requires plan consistency checks only: whitespace
+validation, stale Ask-gate search within active-plan authority, active-plan
+index consistency, and confirmation that product, ADR, and implementation paths
+are unchanged in this turn. It does not self-accept TCC, managed-transcription
+implementation, or any external release stage.

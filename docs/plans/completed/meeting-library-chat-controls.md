@@ -2,18 +2,18 @@
 
 ## Current State
 
-- `plan_revision`: `v1`
-- `current_frontier`: `STALE-RECORDING-DELETE-OWNER-ACCEPTANCE`
-- `state`: `BLOCKED_OWNER_VALIDATION`
-- `depends_on`: owner validation of the already-committed stale failed-Recording deletion correction
-- `candidate`: committed stale failed-Recording deletion correction; installed behavior remains owner-unaccepted
-- `pending_ruling`: owner UI acceptance of the stale failed-Recording deletion behavior
-- `blocked_by`: owner UI acceptance; automated checks must not delete or mutate real meeting data
-- `next_action`: await owner acceptance, preserving committed chat/design behavior and all other boundaries
+- `plan_revision`: `v2`
+- `current_frontier`: `NONE`
+- `state`: `COMPLETE_OWNER_ACCEPTED`
+- `depends_on`: none
+- `candidate`: committed stale failed-Recording deletion correction, accepted by the owner in the installed UI on 2026-08-31
+- `pending_ruling`: none
+- `blocked_by`: none
+- `next_action`: none; retain this plan as completed evidence and do not reopen implementation scope
 
 ## Ownership And Authority
 
-Date: 2026-08-30
+Date: 2026-08-30; completed 2026-08-31
 
 - Owner: `meeting-library-chat-controls` owns only stale failed-Recording owner acceptance.
 - Owned scope: owner validation of deletion for a stale failed Recording row.
@@ -21,25 +21,25 @@ Date: 2026-08-30
 
 ## Outcome
 
-Keep the stale failed-Recording deletion acceptance visible as one small active
-frontier. The scrollbar, provider/model controls, meeting implementation,
-package/media transaction, and release-startup work are completed evidence or
-separate authority; they are not reopened here.
+Close the stale failed-Recording deletion acceptance after the owner's installed
+UI observation. The scrollbar, provider/model controls, meeting implementation,
+package/media transaction, and release-startup work remain completed evidence
+or separate authority; they are not reopened here.
 
-## Live Frontier
+## Completed Frontier
 
 A persisted `Recording` label is not proof that capture is active. The committed
 correction allows the Delete action to reach the existing store/lifecycle safety
 gate when runtime state is absent or belongs to another meeting. A genuinely
 active, interrupted, recoverable, finalizing, pending/transcribing, or running
 Ask operation remains protected; refused deletion must remain visible to the
-user. The correction was covered by the focused App proof and the installed
-owner-retest build, but owner acceptance of the stale row is still missing.
+user. The correction was covered by focused App proof and an installed
+owner-retest build. On 2026-08-31 the owner confirmed that the stale failed
+`Recording` meeting was successfully deleted in the UI. That observation
+satisfies the plan's sole remaining acceptance condition.
 
-The owner validation must use a disposable or already-authorized test meeting
-and report the visible confirmation, deletion result, and refusal behavior. No
-automated validation may delete, reset, or mutate the owner's real Meeting,
-recording, export, or chat state.
+No automated validation deleted, reset, or mutated the owner's real meeting,
+recording, export, or chat state during closeout.
 
 ## Stable Product Authority
 
@@ -47,7 +47,7 @@ recording, export, or chat state.
   the user-visible delete flow and active-recording protection.
 - [Recording](../../product/recording.md) owns recording lifecycle and local
   preservation expectations.
-- The [completed implementation history](../completed/meeting-library-chat-controls-implementation-history.md)
+- The [completed implementation history](meeting-library-chat-controls-implementation-history.md)
   preserves the accepted chat/design implementation, deletion policy, focused
   proof, owner-retest evidence, and the stale-Recording diagnosis. It is not a
   live authority source.
@@ -69,15 +69,21 @@ recording, export, or chat state.
 - Base snapshot: clean `main@3ab08d4f45699ee1dee49b75c6b0caf40086bdae`.
 - The former 614-line active implementation ledger moved to completed evidence;
   its implementation and validation records remain inspectable.
-- No product behavior is changed by this correction. The active plan retains
-  only the stale-delete owner decision and its safety boundary.
+- No product behavior is changed by this closeout. Before completion, the active
+  plan retained only the stale-delete owner decision and its safety boundary.
 - 2026-08-30 `PLAN_RECONCILIATION v1`: new owner runtime evidence reopened only
   chat overlay/scroll presentation under `chat-overlay-scroll-foundation.md`.
   This plan remains unchanged in purpose and owns only stale-delete acceptance;
   selection policy, deletion, runtime, and signing scopes do not overlap.
+- 2026-08-31 owner acceptance: the stale failed-`Recording` meeting was
+  successfully deleted through the installed UI. No implementation scope was
+  reopened and the remaining frontier is closed.
 
 ## Validation
 
-The reconciliation validation and exact changed-file list are recorded in the
-peer handoff for frontier `MEETLESS-HARNESS-AUTHORITY-CORRECTION`. This frontier
-remains blocked on owner validation and is not accepted by automated proof.
+The implementation and focused automated proof remain recorded in the completed
+history and peer handoff for frontier
+`MEETLESS-HARNESS-AUTHORITY-CORRECTION`. Final acceptance is the owner's
+2026-08-31 UI observation that the stale failed-`Recording` meeting deleted
+successfully. This closeout changes no product behavior and runs no destructive
+automation against real meeting data.

@@ -30,8 +30,6 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 
 ## Active Plans
 
-- [Meeting library and chat controls](active/meeting-library-chat-controls.md)
-  — stale failed-Recording owner acceptance only.
 - [Meetless V1 release readiness](active/v1-paseo-foundation.md)
   — residual M7, paused M7-F29, and TCC R3 candidate acceptance.
 
@@ -51,3 +49,5 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
   reconciliation.
 - [Meeting library and chat implementation history](completed/meeting-library-chat-controls-implementation-history.md)
   — absorbed implementation, deletion, chat/design, and owner-retest evidence.
+- [Meeting library and chat owner acceptance](completed/meeting-library-chat-controls.md)
+  — final installed-UI acceptance for stale failed-Recording deletion.
