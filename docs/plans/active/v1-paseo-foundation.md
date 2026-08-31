@@ -2,15 +2,15 @@
 
 ## Current State
 
-- `plan_revision`: `v17`
-- `current_frontier`: `MANAGED-TRANSCRIPTION-CONVEX-R3-DEVICE-CONVERGENCE`
-- `state`: `LOCAL_IMPLEMENTATION_CANDIDATE_PENDING_LEAD`
+- `plan_revision`: `v18`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-CONVEX-PRODUCTION-DEPLOYMENT-GATE`
+- `state`: `OWNER_EXTERNAL_GATE`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; predecessor `966b9abd78481db001e912cc2e60d895c00bef37` remains rejected. Managed-transcription foundation R1 remains accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`. Lead rejected R3 candidate `0a82b39f758e8c2ec19e831ca1c8c1b75529763d` and its lifecycle correction candidate `522faa0b1d1e78e54f0e7d0fc813fc0a0706ab01`; this device-isolation batch is the bounded convergence candidate.
+- `candidate`: local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`; the Convex local-first R3 convergence is accepted at `f93b705561eb6118c9ccbe7d0f9ae146db4f5df8`. Rejected predecessors `966b9abd78481db001e912cc2e60d895c00bef37`, `0a82b39f758e8c2ec19e831ca1c8c1b75529763d`, and `522faa0b1d1e78e54f0e7d0fc813fc0a0706ab01` remain history only.
 - `authority_contract_sha256`: `87625cb59c10e399767e34a2ecfd2bd92bf7e3a7598673fec267479dfdd7860e`
-- `pending_ruling`: Lead closeout of the bounded MTC-R3-006 sibling failure-path convergence; production deployment/region, credentials, and provider access remain deferred owner/external gates
-- `blocked_by`: no local implementation blocker; production Convex deployment/region, credentials, and provider calls remain owner/external gates. MAS/RevenueCat release work below is a separate frontier
-- `next_action`: Lead inspect the immutable device-convergence candidate; defer only production deployment, region, credentials, and provider access
+- `pending_ruling`: owner selection of the existing Convex Pro project/deployment region and authorization/material for production lineage authentication, credentials, and provider access
+- `blocked_by`: local implementation is accepted; hosted deployment, US East versus EU West, production auth/lineage, credentials, provider calls, and hosted measurements require owner/external inputs. MAS/RevenueCat release work below is a separate frontier
+- `next_action`: when the owner supplies the Convex target and region, deploy first to the authorized non-production/preview target, run hosted upload/provider/recovery/cleanup measurements, and promote only after observed acceptance
 
 ## Ownership And Authority
 
@@ -847,9 +847,10 @@ Enforcement and limits:
 
 Lead rejected candidate `0a82b39f758e8c2ec19e831ca1c8c1b75529763d`; its
 evidence is retained here as predecessor history. The bounded correction below
-is pending Lead closeout.
+was rejected at closeout for the residual `MTC-R3-006` sibling failure path;
+the accepted convergence is recorded afterward.
 
-### R3 correction candidate: durable lifecycle convergence (pending Lead closeout)
+### R3 lifecycle correction (rejected at closeout)
 
 Lead rejected candidate `0a82b39f758e8c2ec19e831ca1c8c1b75529763d` at the
 correction base with accepted findings `MTC-R3-001`, `MTC-R3-002`,
@@ -910,7 +911,7 @@ context; its exact residual and current convergence candidate are recorded
 below. The frozen combined authority digest remains
 `87625cb59c10e399767e34a2ecfd2bd92bf7e3a7598673fec267479dfdd7860e`.
 
-### R3 device convergence candidate (pending Lead closeout)
+### R3 device convergence (accepted)
 
 Lead's closeout of candidate `522faa0b1d1e78e54f0e7d0fc813fc0a0706ab01`
 closed `MTC-R3-001`, `MTC-R3-002`, `MTC-R3-003`, `MTC-R3-005`,
@@ -940,19 +941,27 @@ Observed mechanical proof on 2026-08-31:
   43 tests; `npm run typecheck`, `npm run build:meetless`, and `git diff --check`
   passed. The frozen authority digest remained unchanged.
 
-The convergence candidate remains pending Lead acceptance. This evidence is
-local only and does not claim hosted Convex, production authentication,
-provider credentials, provider network execution, or external mutation.
+Lead accepted convergence candidate
+`f93b705561eb6118c9ccbe7d0f9ae146db4f5df8` on 2026-08-31 after verifying
+its exact parent and four-path delta. Lead personally reran
+`npm run proof:managed-convex-local`; the anonymous local proof passed with
+`siblingDeviceIsolation: true`, one provider invocation, preserved OCC and
+restart recovery, and owned-state cleanup. The direct managed
+policy/upload/transcription/composition suite passed 4 files and 32 tests;
+`npm run typecheck`, `npm run build:meetless`, `git diff --check`, and the
+frozen authority digest also passed. This acceptance is local only and does
+not claim hosted Convex, production authentication, provider credentials,
+provider network execution, or external mutation.
 
 ## Validation
 
-Acceptance validation is the command evidence recorded above. The pending
-correction candidate locally exercises the fake policy and one real local MeetingStore
+Acceptance validation is the command evidence recorded above. The accepted
+convergence candidate locally exercises the fake policy and one real local MeetingStore
 publication composition path; it does not
 prove real Convex latency, regional placement, AVFoundation upload limits,
 production backend behavior, provider credentials, external purchase mutation,
 signing, App Review, or publication.
 
-This v17 docs revision records the implementation authority and does not claim
+This v18 docs revision records local implementation acceptance and does not claim
 that a Convex project, deployment, provider call, production latency, or
 external mutation exists.
