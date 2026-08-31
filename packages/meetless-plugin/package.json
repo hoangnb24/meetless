@@ -15,6 +15,7 @@
     "test": "vitest run test"
   },
   "dependencies": {
+    "@meetless/managed-transcription-foundation": "0.1.0",
     "@meetless/meeting-contracts": "0.1.0",
     "@meetless/meeting-domain": "0.1.0",
     "@meetless/meeting-store": "0.1.0",

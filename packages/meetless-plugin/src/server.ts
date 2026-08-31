@@ -119,7 +119,6 @@ export async function getMeetingChatService(
   chatService ??= new MeetingChatService(
     getMeetingStore(),
     new PaseoMeetingChatAgentPort(paseo, resolveChatExecutionRoot()),
-    () => getPremiumService().requireActive(),
     meetingLifecycle,
   );
   await chatService.initialize();

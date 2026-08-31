@@ -2,14 +2,14 @@
 
 ## Current State
 
-- `plan_revision`: `v5`
-- `current_frontier`: `MANAGED-TRANSCRIPTION-FAKE-BACKED-FOUNDATION`
-- `state`: `READY_FOR_BOUNDED_IMPLEMENTATION`
+- `plan_revision`: `v6`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-FAKE-BACKED-FOUNDATION-R1`
+- `state`: `FOUNDATION_PROOF_COMPLETE`
 - `depends_on`: the accepted managed-transcription policy in product authority and ADR0005; proof must precede production backend, UI, provider-credential, or external-store work
-- `candidate`: no implementation candidate; MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` is accepted reusable evidence only
-- `pending_ruling`: technical acceptance of a future bounded fake-backed foundation candidate
+- `candidate`: fake-backed implementation candidate is recorded in the R1 handoff; MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` remains accepted reusable evidence only
+- `pending_ruling`: Lead acceptance of the bounded fake-backed R1 candidate
 - `blocked_by`: no product-contract blocker remains; external App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication gates remain separately open
-- `next_action`: implement and verify the bounded fake-backed foundation proof; do not begin production backend rollout, provider credential use, UI reconciliation, signing, upload, or publication in that frontier
+- `next_action`: Lead acceptance of the R1 candidate; real Convex/AVFoundation latency, production backend rollout, provider credential use, final UI, signing, upload, and publication remain separate gates
 
 ## Ownership And Authority
 
@@ -172,9 +172,9 @@ quota reservation, and charging stay outside provider implementations.
   - Owner accepted quota, trial, device, restore, server duration, temporary
     data, job lease, expiry, refund/revocation, and free Ask/BYOK behavior on
     2026-08-31.
-- [ ] Complete the bounded fake-backed foundation proof defined below.
-- [ ] Reconcile the executable Ask gate and Premium UI only after product
-  authority is updated and implementation is explicitly authorized.
+- [x] Complete the bounded fake-backed foundation proof defined below.
+- [x] Reconcile the executable Ask gate so Ask is free; Premium UI remains
+  deferred because final UI work is outside this frontier.
 - [ ] Apply the profile-backed App Sandbox entitlement and In-App Purchase configuration.
 - [ ] Replace unrestricted writable paths with container/export-safe behavior.
 - [ ] Produce and validate a sandbox development build.
@@ -242,13 +242,40 @@ vertical proof. It must demonstrate:
    backend meeting data;
 5. the managed result publishes through the existing local transcript/citation
    lifecycle, while BYOK bypasses Premium/quota and Ask remains free; and
-6. real AVFoundation chunks satisfy the selected Convex upload/action limits,
-   target-market latency is measured against available regions, and action
-   retry/concurrency behavior is explicit rather than assumed.
+6. [future integration gate] real AVFoundation chunks satisfy the selected
+   Convex upload/action limits, target-market latency is measured against
+   available regions, and action retry/concurrency behavior is explicit rather
+   than assumed.
 
-These criteria authorize only the bounded fake-backed proof. None is completed
-by this authority reconciliation, and production backend/provider credentials,
-external store changes, and final UI remain outside its scope.
+The first five criteria authorize and define the bounded fake-backed proof. The
+future integration gate is not executable in R1 because no production Convex
+deployment or selected upload/region contract exists. Production
+backend/provider credentials, external store changes, and final UI remain
+outside this scope.
+
+### R1 Fake-Backed Proof Disposition (2026-08-31)
+
+The R1 candidate closes the fake-backed identity, device, quota, duration, job,
+cleanup, expiry, local-publication, Ask, and BYOK proof. The real AVFoundation
+chunk-size/upload-limit and target-region latency measurement in criterion 6
+requires a selected production Convex deployment and remains unattempted. This
+plan records no Convex latency, regional placement, production action retry, or
+provider-credential claim for R1.
+
+Architectural decisions recorded by the candidate:
+
+- `packages/managed-transcription-foundation` is the one in-memory policy owner
+  for verified lineage, revocable device credentials, quota periods,
+  reservation/settlement, jobs, and temporary artifacts. It has no Node,
+  storage, transport, UI, RevenueCat, Convex, StoreKit, or provider dependency.
+- `packages/meetless-plugin/src/managed-transcription.ts` is an edge adapter:
+  it verifies saved-file identity, calls the existing `TranscriptionProvider`,
+  and publishes only through `MeetingStore`. Provider completion is recorded
+  before the injected crash point; settlement and local publication are
+  independently recoverable.
+- Ask no longer receives a Premium gate; managed transcription remains the only
+  Premium/quota path. The final Premium UI and production runtime wiring remain
+  outside R1.
 
 ### Accepted Reusable R1 Structural Evidence (2026-08-31)
 
@@ -263,8 +290,8 @@ external store changes, and final UI remain outside its scope.
   group inputs and deterministic positive/negative validation.
 - [x] Provider/control discovery does not construct the Premium transport. The
   former Ask/retry Premium gate was proven on the candidate, but that behavior
-  is now superseded and is retained only as evidence that admission can occur
-  before persistence/execution.
+  is now superseded by the free Ask path and is retained only as historical
+  evidence that admission can occur before persistence/execution.
 - [ ] No RevenueCat project, App Store profile, signing, upload, sandbox
   purchase, App Review, or public listing evidence exists in this correction.
 
@@ -292,28 +319,35 @@ external store changes, and final UI remain outside its scope.
 
 ### Validation
 
-- Foundation, once authorized: the fake-backed identity, quota, idempotency,
-  duration, cleanup, local-publication, and free-path proof above.
-- Focused, after authority reconciliation: free Ask/BYOK policy, managed
-  transcription admission, purchase adapter, renderer boundary, and sandbox
-  entitlement tests.
+- Foundation R1: the fake-backed identity, quota, idempotency, duration,
+  cleanup, local-publication, and free-path proof above.
+- Focused R1: free Ask/BYOK policy, managed transcription admission, and
+  existing meeting-store publication proof. Purchase adapter, renderer
+  boundary, and sandbox entitlement tests remain separate reusable evidence.
 - Integration: packaged sandbox app with StoreKit/RevenueCat sandbox purchase,
   restore-to-new-installation, device enrollment, and managed transcription.
 - Repository: typecheck, focused tests, build, and a MAS-specific package validator.
 - External: App Store Connect processing, App Review submission, and public listing.
 
-Historical R1 structural validation observed on 2026-08-31 includes `npm run typecheck`,
-the targeted Premium/MAS/composition Vitest run (18 files, 117 tests),
-`npm run build:native`, SwiftPM host/test builds, and positive/negative MAS
-validator runs. The broader `npm run test:focused` run remains non-green only
-in baseline areas outside this correction: missing Expo vector-icons module,
-three signing-fixture diagnostic expectations, one artifact-resign diagnostic
-expectation, and one readiness startup deadline timeout. These are reported in
-the peer handoff and are not reclassified as R1 proof. The broader composition
-suite also has its existing Expo module failure and an M6 transport fixture
-timeout; the focused R1 chat composition proof passed independently. None of
-that evidence proves the new managed-transcription product gate, identity,
-quota, backend, upload, or cleanup contracts.
+Observed R1 validation on 2026-08-31:
+
+- `npm run typecheck` passed; `npm run build:meetless` passed.
+- `npm run test --workspace=@meetless/managed-transcription-foundation` passed
+  (1 file, 7 tests).
+- `npx vitest run --config vitest.config.ts packages/managed-transcription-foundation/test/policy.test.ts packages/meetless-plugin/test/managed-transcription.test.ts packages/meetless-plugin/test/chat-service.test.ts test/composition/managed-transcription-path.test.ts test/composition/chat-path.test.ts` passed (5 files, 32 tests).
+- `npx vitest run --config vitest.config.ts packages/meeting-domain/test packages/meeting-store/test --maxWorkers=1` passed (6 files, 66 tests).
+- `npx vitest run --config vitest.config.ts packages/meetless-plugin/test --maxWorkers=1` passed (16 files, 112 tests).
+- `npx vitest run --config vitest.config.ts packages/managed-transcription-foundation/test/policy.test.ts packages/meetless-plugin/test/managed-transcription.test.ts test/composition/managed-transcription-path.test.ts` passed (3 files, 10 tests).
+- `npm run test:composition` ran 5 files and reported 3 passed, with the
+  pre-existing M6 transport timeout (120 seconds) and missing
+  `@expo/vector-icons/build/createIconSet` module. It is not R1 proof.
+- `npm test` completed its native/Paseo/build pretest and ran 71 files with
+  65 passing and 6 baseline failures (715 tests, 709 passing): the same M6
+  transport timeout and Expo module failure, three retained macOS signing
+  diagnostic expectations, and one readiness deadline fixture. The new R1
+  tests were included in the passing result.
+- No real AVFoundation/Convex latency, production backend, credentials,
+  StoreKit/RevenueCat mutation, signing, upload, or publication was attempted.
 
 ## Completed Evidence
 
@@ -349,11 +383,16 @@ quota, backend, upload, or cleanup contracts.
 - This v5 reconciliation changes product and ADR authority plus this plan. It
   changes no implementation, executable contract, package, external service,
   credential, or store state.
+- 2026-08-31 `FOUNDATION_PROOF R1`: the fake-backed policy owner, MeetingStore
+  publication adapter, Ask-free service path, focused executable proof, and
+  honest broader-suite limits were added from original base `64cf07d`. The
+  authority files remain frozen and no production service or external state was
+  changed.
 
 ## Validation
 
-This docs-only authority reconciliation requires consistency checks only:
-whitespace validation, stale Ask-gate search across current authority, active-
-plan index consistency, and confirmation that implementation paths are unchanged
-in this turn. It does not self-accept TCC, the fake-backed proof, production
-managed transcription, or any external release stage.
+R1 validation is the command evidence recorded above. The candidate proves the
+fake policy and one real local publication composition path; it does not prove
+real Convex latency, regional placement, AVFoundation upload limits, production
+backend behavior, provider credentials, external purchase mutation, signing,
+App Review, or publication.

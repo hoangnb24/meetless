@@ -1,5 +1,4 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -9,17 +8,11 @@ import { MeetingStore } from "@meetless/meeting-store";
 import contribute from "../../packages/meetless-plugin/index.js";
 
 let root: string | null = null;
-let premiumServer: Server | null = null;
 afterEach(async () => {
-  if (premiumServer) {
-    await new Promise<void>((resolve) => premiumServer!.close(() => resolve()));
-    premiumServer = null;
-  }
   if (root) await rm(root, { recursive: true, force: true });
   root = null;
   delete process.env.MEETLESS_RUNTIME_ROOT;
   delete process.env.MEETLESS_STORE_ROOT;
-  delete process.env.MEETLESS_TRANSCRIPTION_SOCKET;
 });
 
 describe("Meetless chat plugin/client composition", () => {
@@ -86,7 +79,6 @@ describe("Meetless chat plugin/client composition", () => {
       version: 1,
       catalog: { providers: [{ id: "codex", status: "ready" }] },
     });
-    await startPremiumFixture(root);
     const running = await client.askMeetingQuestion({
       meetingId: "meeting-1", question: "What is not in the meeting?", provider: "codex", model: "gpt-5",
     });
@@ -109,39 +101,6 @@ describe("Meetless chat plugin/client composition", () => {
     expect(archiveWorkspace).toHaveBeenCalledTimes(2);
   });
 });
-
-async function startPremiumFixture(runtimeRoot: string): Promise<void> {
-  const socketPath = path.join(runtimeRoot, "premium.sock");
-  premiumServer = createServer((socket) => {
-    let buffer = "";
-    socket.setEncoding("utf8");
-    socket.on("data", (chunk: string) => {
-      buffer += chunk;
-      const newline = buffer.indexOf("\n");
-      if (newline < 0) return;
-      const request = JSON.parse(buffer.slice(0, newline)) as { requestId: string; operation: string };
-      const access = {
-        entitlement: "premium",
-        status: "active",
-        packages: [],
-        reason: null,
-      };
-      socket.end(`${JSON.stringify({
-        version: 1,
-        requestId: request.requestId,
-        ok: true,
-        type: "premium.access",
-        outcome: request.operation === "premiumStatus" ? "status" : "active",
-        access,
-      })}\n`);
-    });
-  });
-  await new Promise<void>((resolve, reject) => {
-    premiumServer!.once("error", reject);
-    premiumServer!.listen(socketPath, resolve);
-  });
-  process.env.MEETLESS_TRANSCRIPTION_SOCKET = socketPath;
-}
 
 async function readyMeeting(store: MeetingStore): Promise<void> {
   const now = "2026-08-21T00:00:00.000Z";

@@ -4,6 +4,7 @@
     { "path": "packages/meeting-domain" },
     { "path": "packages/meeting-contracts" },
     { "path": "packages/meeting-store" },
+    { "path": "packages/managed-transcription-foundation" },
     { "path": "packages/meeting-surface" },
     { "path": "packages/meetless-client" },
     { "path": "packages/meetless-plugin" },

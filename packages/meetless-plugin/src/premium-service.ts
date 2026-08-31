@@ -11,7 +11,7 @@ import { z } from "zod";
 export const PREMIUM_ENTITLEMENT = "premium" as const;
 export const PREMIUM_MONTHLY_PRODUCT = "com.meetless.app.premium.monthly" as const;
 export const PREMIUM_ANNUAL_PRODUCT = "com.meetless.app.premium.annual" as const;
-export const PREMIUM_REQUIRED_MESSAGE = "Ask requires Meetless Premium. Open the paywall or restore purchases.";
+export const PREMIUM_REQUIRED_MESSAGE = "Managed transcription requires Meetless Premium. Open the paywall or restore purchases.";
 
 const NativePremiumResponseSchema = z.object({
   version: z.literal(1),

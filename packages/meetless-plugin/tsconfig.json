@@ -9,6 +9,7 @@
   "include": ["index.tsx", "src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["test"],
   "references": [
+    { "path": "../managed-transcription-foundation" },
     { "path": "../meeting-contracts" },
     { "path": "../meeting-domain" },
     { "path": "../meeting-store" }
