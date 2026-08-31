@@ -2,14 +2,15 @@ import { internalMutation, internalQuery, mutation, query } from "./_generated/s
 import { anyApi } from "convex/server";
 import { v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { requirePrincipal } from "./managedAuth";
+export { requirePrincipal } from "./managedAuth";
+import { assertNonProductionFixture, readManagedRuntimeConfig } from "./managedConfig";
 import {
   AUTHORITY,
   LEASE_MS,
   MAX_DEVICES,
-  MONTHLY_SECONDS,
   SAMPLE_RATE,
   TEMPORARY_TTL_MS,
-  TRIAL_SECONDS,
   type JobState,
   type TimelineManifest,
   normalizeManifest,
@@ -48,38 +49,6 @@ const providerResultValidator = v.object({
 });
 
 type PrincipalContext = QueryCtx | MutationCtx;
-
-/**
- * Public functions derive the account from Convex auth plus a server-created
- * verified principal. No App User ID, client entitlement, or caller account
- * assertion is accepted at this boundary.
- */
-export async function requirePrincipal(ctx: PrincipalContext) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity?.tokenIdentifier) {
-    throw new Error(`Managed Convex request requires host-authenticated server identity (${AUTHORITY})`);
-  }
-  const principal = await ctx.db
-    .query("managedPrincipals")
-    .withIndex("by_token_identifier", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
-    .unique();
-  if (!principal || !principal.lineageVerified || principal.revokedAt !== null) {
-    throw new Error(`Managed Convex identity is not backed by verified subscription lineage and device key (${AUTHORITY})`);
-  }
-  const device = await ctx.db
-    .query("managedDevices")
-    .withIndex("by_account_device", (q) => q.eq("accountId", principal.accountId).eq("deviceId", principal.deviceId))
-    .unique();
-  if (!device || device.keyId !== principal.keyId || device.revokedAt !== null) {
-    throw new Error(`Managed Convex device credential is revoked or not server verified (${AUTHORITY})`);
-  }
-  const account = await ctx.db
-    .query("managedAccounts")
-    .withIndex("by_account", (q) => q.eq("accountId", principal.accountId))
-    .unique();
-  if (!account) throw new Error(`Managed Convex quota account is missing (${AUTHORITY})`);
-  return { identity, principal, device, account };
-}
 
 export const beginUpload = mutation({
   args: { manifest: manifestValidator },
@@ -700,15 +669,20 @@ export const expiredUploads = internalQuery({
     .take(Math.min(100, Math.max(1, args.limit ?? 50))),
 });
 
-export const setNextPeriodLimit = internalMutation({
-  args: { accountId: v.string(), limitSeconds: v.number() },
+export const setLocalCanaryNextPeriodAllowance = internalMutation({
+  args: { accountId: v.string(), limitSeconds: v.number(), allowanceSource: v.string() },
   returns: v.any(),
   handler: async (ctx, args) => {
+    const config = readManagedRuntimeConfig();
+    assertNonProductionFixture(config, "local canary allowance mutation");
+    if (config.mode === "production" || args.allowanceSource !== config.allowanceSource) {
+      throw new Error(`Local canary allowance changes require the explicitly labeled deployment allowance source (${AUTHORITY})`);
+    }
     if (!Number.isSafeInteger(args.limitSeconds) || args.limitSeconds <= 0) throw new Error(`Managed allowance must be a positive whole-second value (${AUTHORITY})`);
     const account = await ctx.db.query("managedAccounts").withIndex("by_account", (q) => q.eq("accountId", args.accountId)).unique();
     if (!account) throw new Error(`Managed quota account is missing (${AUTHORITY})`);
-    await ctx.db.patch(account._id, { nextPeriodLimitSeconds: args.limitSeconds });
-    return { accountId: args.accountId, limitSeconds: args.limitSeconds };
+    await ctx.db.patch(account._id, { nextPeriodLimitSeconds: args.limitSeconds, allowanceSource: args.allowanceSource });
+    return { accountId: args.accountId, limitSeconds: args.limitSeconds, allowanceSource: args.allowanceSource };
   },
 });
 
@@ -719,6 +693,7 @@ export const setEntitlement = internalMutation({
   },
   returns: v.any(),
   handler: async (ctx, args) => {
+    assertNonProductionFixture(readManagedRuntimeConfig(), "fixture entitlement mutation");
     const principals = await ctx.db.query("managedPrincipals").withIndex("by_account_device", (q) => q.eq("accountId", args.accountId)).collect();
     await Promise.all(principals.map((principal) => ctx.db.patch(principal._id, { entitlement: args.entitlement })));
     if (args.entitlement === "refunded" || args.entitlement === "revoked") {
@@ -738,6 +713,7 @@ export const setNaturalExpiry = internalMutation({
   args: { accountId: v.string(), naturalExpiryAt: v.union(v.number(), v.null()) },
   returns: v.any(),
   handler: async (ctx, args) => {
+    assertNonProductionFixture(readManagedRuntimeConfig(), "fixture natural-expiry mutation");
     const principals = await ctx.db
       .query("managedPrincipals")
       .withIndex("by_account_device", (q) => q.eq("accountId", args.accountId))
@@ -752,6 +728,7 @@ export const setCurrentPeriodEnd = internalMutation({
   args: { accountId: v.string(), endAt: v.number() },
   returns: v.any(),
   handler: async (ctx, args) => {
+    assertNonProductionFixture(readManagedRuntimeConfig(), "local period mutation");
     const account = await ctx.db.query("managedAccounts").withIndex("by_account", (q) => q.eq("accountId", args.accountId)).unique();
     if (!account || args.endAt <= account.currentPeriodStartAt) throw new Error(`Managed period end is invalid (${AUTHORITY})`);
     await ctx.db.patch(account._id, { currentPeriodEndAt: args.endAt });
@@ -763,6 +740,7 @@ export const prepareNextCanaryPeriod = internalMutation({
   args: { accountId: v.string(), durationMs: v.number() },
   returns: v.any(),
   handler: async (ctx, args) => {
+    assertNonProductionFixture(readManagedRuntimeConfig(), "local period preparation");
     if (!Number.isSafeInteger(args.durationMs) || args.durationMs <= 0) throw new Error(`Managed test period duration is invalid (${AUTHORITY})`);
     const account = await ctx.db.query("managedAccounts").withIndex("by_account", (q) => q.eq("accountId", args.accountId)).unique();
     if (!account) throw new Error(`Managed quota account is missing (${AUTHORITY})`);
@@ -798,6 +776,7 @@ export const readLocalCanaryQuota = internalQuery({
       currentPeriodStartAt: account.currentPeriodStartAt,
       currentPeriodEndAt: account.currentPeriodEndAt,
       nextPeriodLimitSeconds: account.nextPeriodLimitSeconds,
+      allowanceSource: account.allowanceSource,
       limitSeconds: period.limitSeconds,
       usedSeconds: period.usedSeconds,
       reservedSeconds: period.reservedSeconds,
@@ -838,6 +817,7 @@ export const clearLocalCanary = internalMutation({
   args: { accountId: v.string() },
   returns: v.any(),
   handler: async (ctx, args) => {
+    assertNonProductionFixture(readManagedRuntimeConfig(), "local canary cleanup");
     const uploads = await ctx.db.query("managedUploads").withIndex("by_account", (q) => q.eq("accountId", args.accountId)).collect();
     let storageObjects = 0;
     for (const upload of uploads) {
@@ -857,6 +837,17 @@ export const clearLocalCanary = internalMutation({
     }
     const periods = await ctx.db.query("managedPeriods").withIndex("by_account", (q) => q.eq("accountId", args.accountId)).collect();
     for (const period of periods) await ctx.db.delete(period._id);
+    const lineages = await ctx.db.query("managedLineages").withIndex("by_account", (q) => q.eq("accountId", args.accountId)).collect();
+    for (const lineage of lineages) {
+      const events = await ctx.db.query("managedRevenueCatEvents").withIndex("by_lineage", (q) => q.eq("lineageKey", lineage.lineageKey)).collect();
+      for (const event of events) await ctx.db.delete(event._id);
+      await ctx.db.delete(lineage._id);
+    }
+    const devicesForCleanup = await ctx.db.query("managedDevices").withIndex("by_account", (q) => q.eq("accountId", args.accountId)).collect();
+    for (const device of devicesForCleanup) {
+      const challenges = await ctx.db.query("managedDeviceChallenges").withIndex("by_device_key", (q) => q.eq("deviceId", device.deviceId).eq("keyId", device.keyId)).collect();
+      for (const challenge of challenges) await ctx.db.delete(challenge._id);
+    }
     const principals = await ctx.db.query("managedPrincipals").withIndex("by_account_device", (q) => q.eq("accountId", args.accountId)).collect();
     for (const principal of principals) await ctx.db.delete(principal._id);
     const devices = await ctx.db.query("managedDevices").withIndex("by_account", (q) => q.eq("accountId", args.accountId)).collect();
@@ -864,62 +855,6 @@ export const clearLocalCanary = internalMutation({
     const account = await ctx.db.query("managedAccounts").withIndex("by_account", (q) => q.eq("accountId", args.accountId)).unique();
     if (account) await ctx.db.delete(account._id);
     return { accountId: args.accountId, uploads: uploads.length, jobs: jobs.length, storageObjects };
-  },
-});
-
-/**
- * Internal-only seed for an anonymous deployment canary. It is not part of
- * the public API and takes no caller-selected entitlement or quota. Production
- * verified-lineage adapters must replace this test seed.
- */
-export const seedLocalCanary = internalMutation({
-  args: { tokenIdentifier: v.string(), accountId: v.optional(v.string()), deviceId: v.optional(v.string()) },
-  returns: v.any(),
-  handler: async (ctx, args) => {
-    const tokenIdentifier = args.tokenIdentifier.trim();
-    if (!tokenIdentifier) throw new Error(`Local canary identity must be seeded by an internal test command (${AUTHORITY})`);
-    const accountId = args.accountId?.trim() || `local-canary:${tokenIdentifier}`;
-    const existing = await ctx.db.query("managedPrincipals").withIndex("by_token_identifier", (q) => q.eq("tokenIdentifier", tokenIdentifier)).unique();
-    if (existing) return { accountId: existing.accountId, deviceId: existing.deviceId, keyId: existing.keyId };
-    const now = Date.now();
-    const periodLength = 30 * 24 * 60 * 60 * 1_000;
-    const deviceId = args.deviceId?.trim() || `local-device:${tokenIdentifier}`;
-    const keyId = `local-key:${tokenIdentifier}`;
-    const existingAccount = await ctx.db.query("managedAccounts").withIndex("by_account", (q) => q.eq("accountId", accountId)).unique();
-    if (!existingAccount) {
-      await ctx.db.insert("managedAccounts", {
-        accountId,
-        currentPeriodStartAt: now,
-        currentPeriodEndAt: now + periodLength,
-        nextPeriodLimitSeconds: MONTHLY_SECONDS,
-        maxDevices: MAX_DEVICES,
-      });
-      await ctx.db.insert("managedPeriods", {
-        accountId,
-        product: "monthly",
-        startAt: now,
-        endAt: now + periodLength,
-        limitSeconds: MONTHLY_SECONDS,
-        usedSeconds: 0,
-        reservedSeconds: 0,
-      });
-    }
-    const enrolled = await ctx.db.query("managedDevices").withIndex("by_account", (q) => q.eq("accountId", accountId)).collect();
-    if (enrolled.length >= MAX_DEVICES) throw new Error(`Managed account has reached its three-device enrollment limit (${AUTHORITY})`);
-    await ctx.db.insert("managedDevices", { accountId, deviceId, keyId, enrolledAt: now, revokedAt: null });
-    await ctx.db.insert("managedPrincipals", {
-      tokenIdentifier,
-      accountId,
-      deviceId,
-      keyId,
-      lineageVerified: true,
-      entitlement: "active",
-      revokedAt: null,
-      naturalExpiryAt: null,
-      enrolledAt: now,
-    });
-    await ctx.scheduler.runAfter(5 * 60 * 1_000, anyApi.managedTranscriptionActions.reconcileManagedState, {});
-    return { accountId, deviceId, keyId, trialSeconds: TRIAL_SECONDS };
   },
 });
 
@@ -933,7 +868,7 @@ async function principalForToken(ctx: PrincipalContext, tokenIdentifier: string)
     .query("managedDevices")
     .withIndex("by_account_device", (q) => q.eq("accountId", principal.accountId).eq("deviceId", principal.deviceId))
     .unique();
-  if (!device || device.keyId !== principal.keyId || device.revokedAt !== null) throw new Error(`Internal managed device credential is revoked or not current (${AUTHORITY})`);
+  if (!device || device.keyId !== principal.keyId || device.keyVersion !== principal.keyVersion || device.revokedAt !== null) throw new Error(`Internal managed device credential is revoked or not current (${AUTHORITY})`);
   return principal;
 }
 

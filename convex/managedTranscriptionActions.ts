@@ -12,6 +12,7 @@ import {
   partsDigestPayload,
   type TimelineManifest,
 } from "./shared";
+import { readManagedRuntimeConfig } from "./managedConfig";
 
 export const sealUpload = action({
   args: { sessionId: v.id("managedUploads") },
@@ -74,6 +75,10 @@ export const runProvider = action({
   args: { jobId: v.id("managedJobs") },
   returns: v.any(),
   handler: async (ctx, args) => {
+    const config = readManagedRuntimeConfig();
+    if (config.providerMode !== "fake") {
+      throw new Error("Managed provider mode is not the explicitly configured local fake; no provider call is permitted in this candidate");
+    }
     const tokenIdentifier = await requireActionIdentity(ctx);
     const data = await ctx.runQuery(anyApi.managedTranscription.readJobForAction, {
       jobId: args.jobId,

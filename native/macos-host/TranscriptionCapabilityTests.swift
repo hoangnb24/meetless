@@ -149,6 +149,46 @@ private final class FakeKeychain: MeetlessKeychainAccess {
   }
 }
 
+/** Nonpersistent test key: this deliberately never touches the user's Keychain. */
+private final class FakeManagedAuth: MeetlessManagedAuthAccess {
+  private let privateKey = P256.Signing.PrivateKey()
+  private lazy var value: MeetlessManagedDeviceIdentity = {
+    let publicKey = privateKey.publicKey.rawRepresentation
+    let digest = SHA256.hash(data: publicKey).map { String(format: "%02x", $0) }.joined()
+    return MeetlessManagedDeviceIdentity(
+      deviceId: "fixture-device",
+      keyId: "managed-p256-v1-\(digest.prefix(16))",
+      publicKey: encodeBase64Url(publicKey)
+    )
+  }()
+
+  func identity() throws -> MeetlessManagedDeviceIdentity { value }
+
+  func sign(challenge: Data) throws -> (identity: MeetlessManagedDeviceIdentity, signature: String) {
+    let signature = try privateKey.signature(for: challenge)
+    return (value, encodeBase64Url(signature.rawRepresentation))
+  }
+}
+
+private func testManagedAuthUsesOnlyPublicIdentityAndNonpersistentTestKeys() throws {
+  let access = FakeManagedAuth()
+  let identity = try access.identity()
+  let signed = try access.sign(challenge: Data("challenge-bytes".utf8))
+  check(identity.deviceId == "fixture-device", "managed auth identity must expose a stable device ID")
+  check(identity.publicKey.count > 60 && !identity.publicKey.contains("PRIVATE"), "managed auth identity must expose only the public key")
+  guard let publicBytes = decodeBase64Url(identity.publicKey), let signatureBytes = decodeBase64Url(signed.signature) else {
+    check(false, "managed auth fixture identity and signature must be base64url")
+    return
+  }
+  do {
+    let publicKey = try P256.Signing.PublicKey(rawRepresentation: publicBytes)
+    let signature = try P256.Signing.ECDSASignature(rawRepresentation: signatureBytes)
+    check(publicKey.isValidSignature(signature, for: Data("challenge-bytes".utf8)), "managed auth signature must prove the challenge bytes")
+  } catch {
+    check(false, "managed auth fixture key must be a valid P-256 key")
+  }
+}
+
 private final class FakePremiumAccess: MeetlessPremiumPurchaseAccess {
   var purchasedPackage: String?
   var restoreCount = 0
@@ -793,6 +833,10 @@ private struct TranscriptionCapabilityTests {
       FileHandle.standardError.write(Data("FAIL: staged path setup: \(error)\n".utf8))
     }
     testKeychainStatusDoesNotRequestData()
+    do { try testManagedAuthUsesOnlyPublicIdentityAndNonpersistentTestKeys() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: managed auth key boundary: \(error)\n".utf8))
+    }
     testMultipartFields()
     testHostEnvironmentFiltering()
     testCaptureSettingsFallbackPolicy()

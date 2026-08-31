@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   ManagedTranscriptionPolicy,
+  MANAGED_TRIAL_ALLOWANCE_SECONDS,
   type ManagedTranscriptionSnapshot,
   type ManagedTimelineEvidence,
 } from "@meetless/managed-transcription-foundation";
@@ -24,6 +25,7 @@ import {
 
 const START = Date.parse("2026-08-31T00:00:00.000Z");
 const NOW = "2026-08-31T00:00:00.000Z";
+const TEST_ALLOWANCE = { monthlySeconds: 10_000, trialSeconds: MANAGED_TRIAL_ALLOWANCE_SECONDS } as const;
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -41,7 +43,7 @@ describe("managed transcription adapter", () => {
     const seedRecording = (await fixture.store.listRecordings())[0]!;
     const seededArtifact = await seedPreparer.prepare(seedRecording, "composition-audio");
     await artifacts.accept(seededArtifact, { meetingId: fixture.meetingId });
-    const policy = new ManagedTranscriptionPolicy({ now: () => START });
+    const policy = new ManagedTranscriptionPolicy({ now: () => START, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "composition-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "composition-install", deviceKeyId: "composition-key" });
     let requestedRange: { startMs: number; endMs: number } | null = null;
@@ -120,7 +122,7 @@ describe("managed transcription adapter", () => {
     roots.push(root);
     const fixture = await savedStore(root);
     const lifecycle = new MeetingLifecycleCoordinator();
-    const policy = new ManagedTranscriptionPolicy({ now: () => START });
+    const policy = new ManagedTranscriptionPolicy({ now: () => START, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "checkpoint-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "checkpoint-install", deviceKeyId: "checkpoint-key" });
     const preparer = testTimelinePreparer(path.join(root, "store"));
@@ -184,7 +186,7 @@ describe("managed transcription adapter", () => {
     roots.push(root);
     const fixture = await savedStore(root);
     const lifecycle = new MeetingLifecycleCoordinator();
-    const policy = new ManagedTranscriptionPolicy({ now: () => START });
+    const policy = new ManagedTranscriptionPolicy({ now: () => START, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "lifecycle-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "lifecycle-install", deviceKeyId: "lifecycle-key" });
     let started!: () => void;
@@ -223,7 +225,7 @@ describe("managed transcription adapter", () => {
     roots.push(root);
     const fixture = await savedStore(root);
     const lifecycle = new MeetingLifecycleCoordinator();
-    const policy = new ManagedTranscriptionPolicy({ now: () => START });
+    const policy = new ManagedTranscriptionPolicy({ now: () => START, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "status-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "status-install", deviceKeyId: "status-key" });
     let statusAttempts = 0;
@@ -273,7 +275,7 @@ describe("managed transcription adapter", () => {
       { authenticate: async () => ({ accountId: "upload-account", deviceId: uploadCredential.deviceId }) },
       { partSize: 1_024, now: () => START },
     );
-    const policy = new ManagedTranscriptionPolicy({ now: () => START });
+    const policy = new ManagedTranscriptionPolicy({ now: () => START, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "upload-adapter-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "upload-adapter-install", deviceKeyId: "upload-adapter-key" });
     const provider: TranscriptionProvider = {
@@ -315,7 +317,7 @@ describe("managed transcription adapter", () => {
       { authenticate: async () => ({ accountId: "failure-account", deviceId: uploadCredential.deviceId }) },
       { partSize: 1_024, now: () => START },
     );
-    const policy = new ManagedTranscriptionPolicy({ now: () => START });
+    const policy = new ManagedTranscriptionPolicy({ now: () => START, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "upload-failure-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "upload-failure-install", deviceKeyId: "upload-failure-key" });
     const service = new ManagedTranscriptionService(fixture.store, policy, {
@@ -344,7 +346,7 @@ describe("managed transcription adapter", () => {
     const fixture = await savedStore(root);
     await writeFile(fixture.outputPath, Buffer.from("tampered-mp3-output"));
     const lifecycle = new MeetingLifecycleCoordinator();
-    const policy = new ManagedTranscriptionPolicy({ now: () => START });
+    const policy = new ManagedTranscriptionPolicy({ now: () => START, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "tamper-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "tamper-install", deviceKeyId: "tamper-key" });
     const provider: TranscriptionProvider = {
@@ -372,7 +374,7 @@ describe("managed transcription adapter", () => {
     const fixture = await savedStore(root);
     await Promise.all(fixture.chunkPaths.map((chunkPath) => rm(chunkPath, { force: true })));
     const lifecycle = new MeetingLifecycleCoordinator();
-    const policy = new ManagedTranscriptionPolicy({ now: () => START });
+    const policy = new ManagedTranscriptionPolicy({ now: () => START, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "handoff-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "handoff-install", deviceKeyId: "handoff-key" });
     const provider: TranscriptionProvider = {

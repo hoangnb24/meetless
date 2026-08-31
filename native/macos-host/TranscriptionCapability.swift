@@ -29,6 +29,7 @@ final class MeetlessTranscriptionCapability {
   private let stagingDirectory: String
   private let runtimeAuthorization: RuntimeAuthorizationState
   private let keychain: MeetlessKeychainAccess
+  private let managedAuth: MeetlessManagedAuthAccess
   private let transcribe: (Data, String, NativeRequestCancellation) throws -> OpenAIResult
   private let leaseIssued: (() -> Void)?
   private let capturePermissions: MeetlessCapturePermissionAccess
@@ -50,7 +51,8 @@ final class MeetlessTranscriptionCapability {
     },
     leaseIssued: (() -> Void)? = nil,
     capturePermissions: MeetlessCapturePermissionAccess = MeetlessCapturePermissions(),
-    premium: MeetlessPremiumPurchaseAccess = MeetlessRevenueCatPurchaseAccess()
+    premium: MeetlessPremiumPurchaseAccess = MeetlessRevenueCatPurchaseAccess(),
+    managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability()
   ) {
     self.socketPath = socketPath
     self.stagingDirectory = URL(fileURLWithPath: stagingDirectory).standardizedFileURL.path
@@ -60,6 +62,7 @@ final class MeetlessTranscriptionCapability {
     self.leaseIssued = leaseIssued
     self.capturePermissions = capturePermissions
     self.premium = premium
+    self.managedAuth = managedAuth
   }
 
   func start() throws {
@@ -158,6 +161,27 @@ final class MeetlessTranscriptionCapability {
     }
     guard runtimeAuthorization.withValidLease(lease, {}) != nil else {
       writeResponse(client, requestId: requestId, ok: false, status: "invalid", text: nil, languages: nil, usage: nil)
+      return
+    }
+
+    if operation == "managedAuthIdentity" {
+      guard let identity = runtimeAuthorization.withValidLease(lease, { try? managedAuth.identity() }) ?? nil else {
+        writeManagedAuthFailure(client, requestId: requestId, type: "managed.auth.identity")
+        return
+      }
+      writeManagedAuthResponse(client, requestId: requestId, identity: identity, signature: nil)
+      return
+    }
+    if operation == "managedAuthSignChallenge" {
+      guard let encoded = request["challenge"] as? String,
+            let challenge = decodeBase64Url(encoded),
+            !challenge.isEmpty,
+            challenge.count <= 4_096,
+            let signed = (runtimeAuthorization.withValidLease(lease, { try? managedAuth.sign(challenge: challenge) }) ?? nil) else {
+        writeManagedAuthFailure(client, requestId: requestId, type: "managed.auth.challenge")
+        return
+      }
+      writeManagedAuthResponse(client, requestId: requestId, identity: signed.identity, signature: signed.signature)
       return
     }
 
@@ -267,6 +291,38 @@ final class MeetlessTranscriptionCapability {
       "systemAudio": result.systemAudio.rawValue,
       "settingsOpened": result.settingsOpened,
       "settingsNavigation": result.settingsNavigation,
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: response) else { return }
+    writeAll(descriptor, data: data + Data([10]))
+  }
+
+  private func writeManagedAuthResponse(
+    _ descriptor: Int32,
+    requestId: String,
+    identity: MeetlessManagedDeviceIdentity,
+    signature: String?
+  ) {
+    var response: [String: Any] = [
+      "version": 1,
+      "requestId": requestId,
+      "ok": true,
+      "type": signature == nil ? "managed.auth.identity" : "managed.auth.challenge",
+      "deviceId": identity.deviceId,
+      "keyId": identity.keyId,
+      "publicKey": identity.publicKey,
+    ]
+    if let signature { response["signature"] = signature }
+    guard let data = try? JSONSerialization.data(withJSONObject: response) else { return }
+    writeAll(descriptor, data: data + Data([10]))
+  }
+
+  private func writeManagedAuthFailure(_ descriptor: Int32, requestId: String, type: String) {
+    let response: [String: Any] = [
+      "version": 1,
+      "requestId": requestId,
+      "ok": false,
+      "type": type,
+      "error": "managed authentication unavailable",
     ]
     guard let data = try? JSONSerialization.data(withJSONObject: response) else { return }
     writeAll(descriptor, data: data + Data([10]))

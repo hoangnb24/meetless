@@ -23,7 +23,7 @@ let package = Package(
         "host-entry",
         "TranscriptionCapabilityTests.swift",
       ],
-      sources: ["MeetlessHost.swift", "RevenueCatCapability.swift", "TranscriptionCapability.swift"],
+      sources: ["MeetlessHost.swift", "RevenueCatCapability.swift", "TranscriptionCapability.swift", "ManagedAuthCapability.swift"],
       swiftSettings: [.unsafeFlags(["-enable-testing"])]
     ),
     .executableTarget(
@@ -44,6 +44,7 @@ let package = Package(
         "MeetlessHost.swift",
         "RevenueCatCapability.swift",
         "TranscriptionCapability.swift",
+        "ManagedAuthCapability.swift",
         "Package.swift",
         "Package.resolved",
       ],

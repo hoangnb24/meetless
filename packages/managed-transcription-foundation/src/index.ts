@@ -1,6 +1,5 @@
 const MONO_PCM_WAV_AUTHORITY = "docs/product/monetization.md; docs/decisions/0005-mac-app-store-and-revenuecat.md";
 
-export const MANAGED_MONTHLY_ALLOWANCE_SECONDS = 180_000;
 export const MANAGED_TRIAL_ALLOWANCE_SECONDS = 18_000;
 export const MANAGED_TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1_000;
 export const MANAGED_JOB_LEASE_MS = 6 * 60 * 60 * 1_000;
@@ -509,9 +508,13 @@ export class ManagedTranscriptionPolicy {
 
   constructor(options: ManagedTranscriptionPolicyOptions = {}) {
     this.now = options.now ?? (() => Date.now());
+    const monthlySeconds = options.allowance?.monthlySeconds ?? options.snapshot?.allowance.monthlySeconds;
+    if (monthlySeconds === undefined) {
+      throw new ManagedTranscriptionError("Managed monthly allowance requires explicit deployment/test configuration; no production fallback exists");
+    }
     this.allowance = checkedAllowance({
-      monthlySeconds: options.allowance?.monthlySeconds ?? MANAGED_MONTHLY_ALLOWANCE_SECONDS,
-      trialSeconds: options.allowance?.trialSeconds ?? MANAGED_TRIAL_ALLOWANCE_SECONDS,
+      monthlySeconds,
+      trialSeconds: options.allowance?.trialSeconds ?? options.snapshot?.allowance.trialSeconds ?? MANAGED_TRIAL_ALLOWANCE_SECONDS,
     });
     this.createDeviceId = options.createDeviceId ?? (() => `managed-device-${++this.deviceSequence}`);
     this.createJobId = options.createJobId ?? (() => `managed-job-${++this.jobSequence}`);
@@ -1310,6 +1313,9 @@ function requireProduct(product: ManagedSubscriptionProduct): ManagedSubscriptio
 }
 
 function checkedAllowance(input: ManagedAllowanceConfiguration): ManagedAllowanceConfiguration {
+  if (input.trialSeconds !== MANAGED_TRIAL_ALLOWANCE_SECONDS) {
+    throw new ManagedTranscriptionError(`Managed trial allowance is fixed at ${MANAGED_TRIAL_ALLOWANCE_SECONDS} seconds`);
+  }
   return {
     monthlySeconds: checkedPositiveInteger(input.monthlySeconds, "monthly allowance"),
     trialSeconds: checkedPositiveInteger(input.trialSeconds, "trial allowance"),

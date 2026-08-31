@@ -24,8 +24,24 @@ import {
 } from "./chat-service.js";
 import { MeetingLifecycleCoordinator, type MeetingWorkKind } from "./meeting-lifecycle-coordinator.js";
 import { listRecordingOwnedStagePaths } from "./finalizer.js";
-import { listManagedArtifactPaths, ManagedTimelineArtifactStore } from "./managed-transcription.js";
+import {
+  ConvexManagedTranscriptionService,
+  listManagedArtifactPaths,
+  ManagedTimelineArtifactStore,
+  type ConvexManagedTranscriptionResult,
+} from "./managed-transcription.js";
 import { NativePremiumAccessPort, PremiumService, UnavailablePremiumAccessPort } from "./premium-service.js";
+import {
+  ConvexManagedCredentialSource,
+  UnixSocketManagedAuthTransport,
+  type ManagedAppleVerificationMaterial,
+} from "./managed-auth.js";
+import {
+  ConvexHttpManagedFunctionClient,
+  ConvexManagedUploadPort,
+  FileManagedConvexUploadJournal,
+  type ManagedConvexCredential,
+} from "./managed-upload.js";
 
 let store: MeetingStore | null = null;
 let recordingService: RecordingService | null = null;
@@ -296,6 +312,40 @@ export function recordingRuntimeIdentity(): { instanceId: string; startedAt: str
   return runtimeIdentity;
 }
 
+/**
+ * Trusted native composition seam. No renderer RPC calls this factory; a
+ * future explicit Premium command supplies Apple material or refreshes the
+ * enrolled key before invoking the managed service.
+ */
+export function getManagedConvexCredentialSource(): ConvexManagedCredentialSource {
+  const convexUrl = requiredEnv("MEETLESS_CONVEX_URL");
+  const socket = requiredAbsolute("MEETLESS_TRANSCRIPTION_SOCKET");
+  return new ConvexManagedCredentialSource(
+    new ConvexHttpManagedFunctionClient(convexUrl),
+    new UnixSocketManagedAuthTransport(socket),
+  );
+}
+
+export async function transcribeManagedRecording(input: {
+  recordingId: string;
+  appleVerification?: ManagedAppleVerificationMaterial;
+  credential?: ManagedConvexCredential;
+}): Promise<ConvexManagedTranscriptionResult> {
+  const source = getManagedConvexCredentialSource();
+  const credential = input.credential
+    ?? (input.appleVerification ? await source.enroll(input.appleVerification) : await source.refresh());
+  const storeRoot = requiredAbsolute("MEETLESS_STORE_ROOT");
+  const convexUrl = requiredEnv("MEETLESS_CONVEX_URL");
+  const upload = new ConvexManagedUploadPort(new ConvexHttpManagedFunctionClient(convexUrl), {
+    journal: new FileManagedConvexUploadJournal(path.join(storeRoot, "managed-convex-upload-journal")),
+  });
+  return new ConvexManagedTranscriptionService(getMeetingStore(), {
+    lifecycle: meetingLifecycle,
+    timelineArtifacts: new ManagedTimelineArtifactStore(path.join(storeRoot, "managed-artifacts")),
+    managedUpload: upload,
+  }).transcribe({ recordingId: input.recordingId, credential });
+}
+
 async function readControlledUiTestIdentity(): Promise<UiTestIdentity | null> {
   if (process.env.MEETLESS_UI_TEST_MODE !== "1") return null;
   const markerPath = process.env.MEETLESS_UI_TEST_MARKER?.trim();
@@ -330,6 +380,12 @@ function requiredAbsolute(name: string): string {
   const value = process.env[name]?.trim();
   if (!value || !path.isAbsolute(value)) throw new Error(`${name} must be an absolute path fixed by the Meetless launcher`);
   return path.resolve(value);
+}
+
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} must be configured for the explicit managed Convex command`);
+  return value;
 }
 
 function assertBootstrapDeadline(deadlineEpochMs: number): void {

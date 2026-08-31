@@ -8,7 +8,6 @@ import {
   MalformedPcmWavError,
   MANAGED_JOB_LEASE_MS,
   MANAGED_MAX_DEVICES,
-  MANAGED_MONTHLY_ALLOWANCE_SECONDS,
   MANAGED_TEMPORARY_DATA_TTL_MS,
   MANAGED_TRIAL_ALLOWANCE_SECONDS,
   ManagedTimelineIdentityError,
@@ -19,6 +18,7 @@ import {
 } from "../src/index.js";
 
 const START = Date.parse("2026-08-31T00:00:00.000Z");
+const TEST_ALLOWANCE = { monthlySeconds: 10_000, trialSeconds: MANAGED_TRIAL_ALLOWANCE_SECONDS } as const;
 
 class FakeClock {
   private value: number;
@@ -37,7 +37,7 @@ class FakeClock {
 describe("managed-transcription policy", () => {
   test("requires verified lineage, shares restore quota, caps Macs, and revokes credentials", () => {
     const clock = new FakeClock();
-    const policy = new ManagedTranscriptionPolicy({ now: clock.now });
+    const policy = new ManagedTranscriptionPolicy({ now: clock.now, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({
       lineageKey: "store-original-transaction-1",
       product: "monthly",
@@ -89,7 +89,7 @@ describe("managed-transcription policy", () => {
   test("derives canonical duration from PCM samples and rejects malformed or false claims", () => {
     const canonical = pcmWav(24_000);
     const clock = new FakeClock();
-    const policy = new ManagedTranscriptionPolicy({ now: clock.now });
+    const policy = new ManagedTranscriptionPolicy({ now: clock.now, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "duration-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "duration-install", deviceKeyId: "duration-key" });
 
@@ -121,7 +121,7 @@ describe("managed-transcription policy", () => {
 
   test("binds immutable SHA-256 timeline identity without conflating recordings or overlapping sources", () => {
     const clock = new FakeClock();
-    const policy = new ManagedTranscriptionPolicy({ now: clock.now });
+    const policy = new ManagedTranscriptionPolicy({ now: clock.now, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "identity-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "identity-install", deviceKeyId: "identity-key" });
     const wav = pcmWav(32_000);
@@ -148,7 +148,7 @@ describe("managed-transcription policy", () => {
 
   test("re-admits expired identity only with active quota and a fresh lease, then settles once", () => {
     const clock = new FakeClock();
-    const policy = new ManagedTranscriptionPolicy({ now: clock.now });
+    const policy = new ManagedTranscriptionPolicy({ now: clock.now, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "lease-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "lease-install", deviceKeyId: "lease-key" });
     const jobInput = input(device.credential, "recording-lease", "lease-audio", "lease-chunk", pcmWav(16_000));
@@ -176,7 +176,7 @@ describe("managed-transcription policy", () => {
     const unavailableClock = new FakeClock();
     const unavailablePolicy = new ManagedTranscriptionPolicy({
       now: unavailableClock.now,
-      allowance: { monthlySeconds: 1, trialSeconds: 1 },
+      allowance: { monthlySeconds: 1, trialSeconds: MANAGED_TRIAL_ALLOWANCE_SECONDS },
     });
     const unavailableLineage = unavailablePolicy.seedVerifiedSubscriptionLineage({
       lineageKey: "expired-entitlement-lineage",
@@ -199,7 +199,7 @@ describe("managed-transcription policy", () => {
     const quotaClock = new FakeClock();
     const quotaPolicy = new ManagedTranscriptionPolicy({
       now: quotaClock.now,
-      allowance: { monthlySeconds: 1, trialSeconds: 1 },
+      allowance: { monthlySeconds: 1, trialSeconds: MANAGED_TRIAL_ALLOWANCE_SECONDS },
     });
     const quotaLineage = quotaPolicy.seedVerifiedSubscriptionLineage({ lineageKey: "expired-quota-lineage", product: "monthly", startedAt: START });
     const quotaDevice = quotaPolicy.enrollDevice({ verifiedLineageToken: quotaLineage.token, installationId: "expired-quota-install", deviceKeyId: "expired-quota-key" });
@@ -214,7 +214,7 @@ describe("managed-transcription policy", () => {
 
   test("releases or cleans success, failure, cancel, lease expiry, and orphan temporary data", () => {
     const clock = new FakeClock();
-    const policy = new ManagedTranscriptionPolicy({ now: clock.now });
+    const policy = new ManagedTranscriptionPolicy({ now: clock.now, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "cleanup-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "cleanup-install", deviceKeyId: "cleanup-key" });
     const reserve = (suffix: string) => policy.reserve(input(device.credential, `recording-${suffix}`, `audio-${suffix}`, `chunk-${suffix}`, pcmWav(16_000, suffix.charCodeAt(0)))).job;
@@ -257,7 +257,7 @@ describe("managed-transcription policy", () => {
 
   test("allows admitted work through natural expiry but stops work after refund or revocation", () => {
     const clock = new FakeClock();
-    const policy = new ManagedTranscriptionPolicy({ now: clock.now });
+    const policy = new ManagedTranscriptionPolicy({ now: clock.now, allowance: TEST_ALLOWANCE });
     const natural = policy.seedVerifiedSubscriptionLineage({
       lineageKey: "natural-expiry-lineage",
       product: "monthly",
@@ -293,7 +293,7 @@ describe("managed-transcription policy", () => {
 
   test("snapshots and rehydrates provider-completed state for exactly-once settlement", () => {
     const clock = new FakeClock();
-    const policy = new ManagedTranscriptionPolicy({ now: clock.now });
+    const policy = new ManagedTranscriptionPolicy({ now: clock.now, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "snapshot-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "snapshot-install", deviceKeyId: "snapshot-key" });
     const jobInput = input(device.credential, "recording-snapshot", "snapshot-audio", "snapshot-chunk", pcmWav(16_000));
@@ -314,7 +314,7 @@ describe("managed-transcription policy", () => {
     const clock = new FakeClock();
     const policy = new ManagedTranscriptionPolicy({
       now: clock.now,
-      allowance: { monthlySeconds: 2, trialSeconds: 1 },
+      allowance: { monthlySeconds: 2, trialSeconds: MANAGED_TRIAL_ALLOWANCE_SECONDS },
     });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "allowance-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "allowance-install", deviceKeyId: "allowance-key" });
@@ -324,7 +324,7 @@ describe("managed-transcription policy", () => {
     expect(() => policy.reserve(input(device.credential, "recording-allowance-2", "allowance-audio-2", "allowance-chunk-2", pcmWav(16_000, 2)))).toThrow(QuotaExceededError);
     policy.cancelJob(first.job.jobId);
 
-    policy.setAllowanceConfiguration({ monthlySeconds: 1, trialSeconds: 1 });
+    policy.setAllowanceConfiguration({ monthlySeconds: 1, trialSeconds: MANAGED_TRIAL_ALLOWANCE_SECONDS });
     expect(policy.accountSnapshot(device.credential).period).toMatchObject({ limitSeconds: 2 });
     clock.advance(before.period.endAt - clock.now());
     expect(policy.accountSnapshot(device.credential).period).toMatchObject({ limitSeconds: 1, usedSeconds: 0, reservedSeconds: 0 });
@@ -337,7 +337,6 @@ describe("managed-transcription policy", () => {
     expect(transcriptionAccess("ask")).toEqual({ allowed: true, requiresPremium: false, chargesManagedQuota: false });
     expect(transcriptionAccess("byok")).toEqual({ allowed: true, requiresPremium: false, chargesManagedQuota: false });
     expect(transcriptionAccess("managed")).toEqual({ allowed: false, requiresPremium: true, chargesManagedQuota: true });
-    expect(MANAGED_MONTHLY_ALLOWANCE_SECONDS).toBe(180_000);
     expect(MANAGED_TRIAL_ALLOWANCE_SECONDS).toBe(18_000);
   });
 });

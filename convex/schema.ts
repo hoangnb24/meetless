@@ -28,6 +28,7 @@ export default defineSchema({
     accountId: v.string(),
     deviceId: v.string(),
     keyId: v.string(),
+    keyVersion: v.string(),
     lineageVerified: v.boolean(),
     entitlement: v.union(
       v.literal("active"),
@@ -47,19 +48,79 @@ export default defineSchema({
     accountId: v.string(),
     deviceId: v.string(),
     keyId: v.string(),
+    keyVersion: v.string(),
+    publicKey: v.string(),
     enrolledAt: v.number(),
     revokedAt: v.union(v.number(), v.null()),
   })
     .index("by_account", ["accountId"])
-    .index("by_account_device", ["accountId", "deviceId"]),
+    .index("by_account_device", ["accountId", "deviceId"])
+    .index("by_device_key", ["deviceId", "keyId"]),
 
   managedAccounts: defineTable({
     accountId: v.string(),
     currentPeriodStartAt: v.number(),
     currentPeriodEndAt: v.number(),
     nextPeriodLimitSeconds: v.number(),
+    allowanceSource: v.string(),
     maxDevices: v.number(),
   }).index("by_account", ["accountId"]),
+
+  /** Apple/App Store Server API is the authority for this normalized lineage projection. */
+  managedLineages: defineTable({
+    lineageKey: v.string(),
+    accountId: v.string(),
+    appId: v.string(),
+    bundleId: v.string(),
+    productId: v.string(),
+    product: v.union(v.literal("monthly"), v.literal("annual"), v.literal("trial")),
+    environment: v.union(v.literal("SANDBOX"), v.literal("PRODUCTION")),
+    periodType: v.union(v.literal("normal"), v.literal("trial")),
+    startedAt: v.number(),
+    expiresAt: v.number(),
+    currentState: v.union(
+      v.literal("active"),
+      v.literal("grace"),
+      v.literal("expired"),
+      v.literal("refunded"),
+      v.literal("revoked"),
+    ),
+    verifiedAt: v.number(),
+    adapter: v.union(v.literal("fixture"), v.literal("app-store-server-api")),
+  })
+    .index("by_lineage", ["lineageKey"])
+    .index("by_account", ["accountId"]),
+
+  /** One-use, short-lived possession challenges; the nonce is never reused. */
+  managedDeviceChallenges: defineTable({
+    challengeId: v.string(),
+    purpose: v.union(v.literal("enrollment"), v.literal("refresh")),
+    deviceId: v.string(),
+    keyId: v.string(),
+    keyVersion: v.string(),
+    publicKey: v.string(),
+    nonce: v.string(),
+    issuedAt: v.number(),
+    expiresAt: v.number(),
+    consumedAt: v.union(v.number(), v.null()),
+  })
+    .index("by_challenge", ["challengeId"])
+    .index("by_device_key", ["deviceId", "keyId"]),
+
+  /** Safe webhook receipt projection. Raw RevenueCat payloads are not stored. */
+  managedRevenueCatEvents: defineTable({
+    eventId: v.string(),
+    lineageKey: v.string(),
+    appId: v.string(),
+    productId: v.string(),
+    environment: v.union(v.literal("SANDBOX"), v.literal("PRODUCTION")),
+    eventType: v.string(),
+    eventTimestampMs: v.number(),
+    receivedAt: v.number(),
+    processedAt: v.union(v.number(), v.null()),
+  })
+    .index("by_event", ["eventId"])
+    .index("by_lineage", ["lineageKey"]),
 
   /** Period rows snapshot the allowance; changing nextPeriodLimit is not retroactive. */
   managedPeriods: defineTable({

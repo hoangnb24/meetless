@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   ManagedTranscriptionPolicy,
+  MANAGED_TRIAL_ALLOWANCE_SECONDS,
   parseCanonicalPcmWav,
   type ManagedTranscriptionSnapshot,
 } from "@meetless/managed-transcription-foundation";
@@ -27,6 +28,8 @@ import {
 } from "../../packages/meetless-plugin/src/managed-upload.js";
 import type { ManagedLogicalTimelineManifest } from "@meetless/managed-transcription-foundation";
 import type { TranscriptionProvider } from "../../packages/meetless-plugin/src/transcription-provider.js";
+
+const TEST_ALLOWANCE = { monthlySeconds: 10_000, trialSeconds: MANAGED_TRIAL_ALLOWANCE_SECONDS } as const;
 
 const START = Date.parse("2026-08-31T00:00:00.000Z");
 const roots: string[] = [];
@@ -91,7 +94,7 @@ describe("managed transcription composition", () => {
     const handedOffBytes = await readFile(handedOffPath);
     expect(parseCanonicalPcmWav(handedOffBytes)).toMatchObject({ sampleRate: 16_000, channels: 1 });
 
-    const lineagePolicy = new ManagedTranscriptionPolicy({ now: () => START });
+    const lineagePolicy = new ManagedTranscriptionPolicy({ now: () => START, allowance: TEST_ALLOWANCE });
     const lineage = lineagePolicy.seedVerifiedSubscriptionLineage({
       lineageKey: "real-composition-lineage", product: "monthly", startedAt: START,
     });
@@ -401,7 +404,7 @@ describe("managed transcription composition", () => {
     expect((await existingNames(managedTimelineStagingDirectory(config.storeRoot, recordingId)))
       .filter((name) => name.endsWith(".wav.stage"))).toEqual([]);
 
-    const policy = new ManagedTranscriptionPolicy({ now: () => START });
+    const policy = new ManagedTranscriptionPolicy({ now: () => START, allowance: TEST_ALLOWANCE });
     const lineage = policy.seedVerifiedSubscriptionLineage({
       lineageKey: `restart-${checkpoint}`, product: "monthly", startedAt: START,
     });
