@@ -17,6 +17,10 @@ import {
   type ManagedCanonicalTimeline,
   type ManagedTimelinePreparer,
 } from "../src/managed-transcription.js";
+import {
+  FileManagedUploadPort,
+  type ManagedUploadCredential,
+} from "../src/managed-upload.js";
 
 const START = Date.parse("2026-08-31T00:00:00.000Z");
 const NOW = "2026-08-31T00:00:00.000Z";
@@ -36,7 +40,7 @@ describe("managed transcription adapter", () => {
     const seedPreparer = testTimelinePreparer(path.dirname(fixture.store.filePath), 496_000);
     const seedRecording = (await fixture.store.listRecordings())[0]!;
     const seededArtifact = await seedPreparer.prepare(seedRecording, "composition-audio");
-    await artifacts.accept(seededArtifact);
+    await artifacts.accept(seededArtifact, { meetingId: fixture.meetingId });
     const policy = new ManagedTranscriptionPolicy({ now: () => START });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "composition-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "composition-install", deviceKeyId: "composition-key" });
@@ -45,7 +49,7 @@ describe("managed transcription adapter", () => {
       status: vi.fn(async () => "configured" as const),
       transcribe: vi.fn(async ({ audioPath, range }) => {
         expect(audioPath).not.toBe(fixture.outputPath);
-        expect(audioPath).toMatch(/managed-transcription-timelines/u);
+        expect(audioPath).toMatch(/managed-artifacts/u);
         requestedRange = { startMs: range.startMs, endMs: range.endMs };
         return {
           text: "The durable output is MP3 while billing uses a canonical WAV timeline.",
@@ -121,7 +125,7 @@ describe("managed transcription adapter", () => {
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "checkpoint-install", deviceKeyId: "checkpoint-key" });
     const preparer = testTimelinePreparer(path.join(root, "store"));
     const recording = (await fixture.store.listRecordings())[0]!;
-    const timeline = await preparer.prepare(recording, "checkpoint-audio");
+    const timeline = await preparer.prepare(recording);
     const wav = await readFile(timeline.path);
     const jobInput = {
       credential: device.credential,
@@ -250,6 +254,88 @@ describe("managed transcription adapter", () => {
     expect(policy.accountSnapshot(device.credential).period).toMatchObject({ reservedSeconds: 0, usedSeconds: 0 });
     expect(policy.snapshot().jobs[0]).toMatchObject({ status: "failed", failureReason: "provider unavailable" });
     expect(transcribe).not.toHaveBeenCalled();
+  });
+
+  test("uses the host-authenticated bounded upload seam and cleans its receipt after local publication", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-upload-adapter-"));
+    roots.push(root);
+    const fixture = await savedStore(root);
+    const lifecycle = new MeetingLifecycleCoordinator();
+    const artifacts = new ManagedTimelineArtifactStore(path.join(root, "managed-artifacts"));
+    const recording = (await fixture.store.listRecordings())[0]!;
+    const timeline = await testTimelinePreparer(path.dirname(fixture.store.filePath)).prepare(recording);
+    await artifacts.accept(timeline, { meetingId: fixture.meetingId });
+    const uploadCredential: ManagedUploadCredential = {
+      deviceId: "upload-device", keyId: "upload-key", hostProof: "host-proof",
+    };
+    const upload = new FileManagedUploadPort(
+      path.join(root, "upload-state"),
+      { authenticate: async () => ({ accountId: "upload-account", deviceId: uploadCredential.deviceId }) },
+      { partSize: 1_024, now: () => START },
+    );
+    const policy = new ManagedTranscriptionPolicy({ now: () => START });
+    const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "upload-adapter-lineage", product: "monthly", startedAt: START });
+    const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "upload-adapter-install", deviceKeyId: "upload-adapter-key" });
+    const provider: TranscriptionProvider = {
+      status: vi.fn(async () => "configured" as const),
+      transcribe: vi.fn(async () => ({ text: "uploaded and published", detectedLanguages: ["en"], usage: null })),
+    };
+    const service = new ManagedTranscriptionService(fixture.store, policy, provider, {
+      lifecycle,
+      timelineArtifacts: artifacts,
+      managedUpload: upload,
+      managedUploadCredential: uploadCredential,
+    });
+
+    const result = await service.transcribe({
+      recordingId: fixture.recordingId,
+      credential: device.credential,
+      audioId: "caller-override-is-ignored",
+      chunkId: "upload-adapter-chunk",
+    });
+    expect(result.job.audio.audioId).toBe(`recording:${fixture.recordingId}`);
+    expect(provider.transcribe).toHaveBeenCalledOnce();
+    expect(result.transcript.status).toBe("ready");
+    expect(JSON.parse(await readFile(path.join(root, "upload-state", "sessions.json"), "utf8"))).toEqual({ version: 1, sessions: [] });
+    await expect(artifacts.get(fixture.recordingId)).resolves.toBeNull();
+  });
+
+  test("releases the managed upload receipt when provider execution fails after upload", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-upload-failure-"));
+    roots.push(root);
+    const fixture = await savedStore(root);
+    const lifecycle = new MeetingLifecycleCoordinator();
+    const artifacts = new ManagedTimelineArtifactStore(path.join(root, "managed-artifacts"));
+    const recording = (await fixture.store.listRecordings())[0]!;
+    const timeline = await testTimelinePreparer(path.dirname(fixture.store.filePath)).prepare(recording);
+    await artifacts.accept(timeline, { meetingId: fixture.meetingId });
+    const uploadCredential: ManagedUploadCredential = { deviceId: "failure-device", keyId: "failure-key", hostProof: "proof" };
+    const upload = new FileManagedUploadPort(
+      path.join(root, "upload-state"),
+      { authenticate: async () => ({ accountId: "failure-account", deviceId: uploadCredential.deviceId }) },
+      { partSize: 1_024, now: () => START },
+    );
+    const policy = new ManagedTranscriptionPolicy({ now: () => START });
+    const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "upload-failure-lineage", product: "monthly", startedAt: START });
+    const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "upload-failure-install", deviceKeyId: "upload-failure-key" });
+    const service = new ManagedTranscriptionService(fixture.store, policy, {
+      status: async () => "configured",
+      transcribe: async () => { throw new Error("fake provider failed after upload"); },
+    }, {
+      lifecycle,
+      timelineArtifacts: artifacts,
+      managedUpload: upload,
+      managedUploadCredential: uploadCredential,
+    });
+
+    await expect(service.transcribe({
+      recordingId: fixture.recordingId,
+      credential: device.credential,
+      chunkId: "upload-failure-chunk",
+    })).rejects.toThrow("Managed transcription provider failed");
+    expect(policy.accountSnapshot(device.credential).period).toMatchObject({ reservedSeconds: 0, usedSeconds: 0 });
+    expect((await fixture.store.listTranscripts(fixture.meetingId))[0]).toMatchObject({ status: "failed" });
+    expect(JSON.parse(await readFile(path.join(root, "upload-state", "sessions.json"), "utf8"))).toEqual({ version: 1, sessions: [] });
   });
 
   test("rejects a tampered durable MP3 before reserving managed quota", async () => {
@@ -403,7 +489,7 @@ function sha256(bytes: Uint8Array): string {
 function testTimelinePreparer(storeRoot: string, sampleCount = 24_000): ManagedTimelinePreparer {
   let sequence = 0;
   return {
-    async prepare(recording, audioId = `recording:${recording.id}`): Promise<ManagedCanonicalTimeline> {
+    async prepare(recording): Promise<ManagedCanonicalTimeline> {
       const bytes = pcmWav(sampleCount, 1);
       const directory = path.join(storeRoot, "managed-transcription-timelines");
       await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -413,7 +499,7 @@ function testTimelinePreparer(storeRoot: string, sampleCount = 24_000): ManagedT
       return {
         path: timelinePath,
         recordingId: recording.id,
-        audioId: audioId.trim(),
+        audioId: `recording:${recording.id}`,
         manifestSha256: sha256(Buffer.from(`test-manifest:${recording.id}`)),
         identity: identityOf(bytes),
         startMs: 0,

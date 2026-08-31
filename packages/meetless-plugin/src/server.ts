@@ -24,6 +24,7 @@ import {
 } from "./chat-service.js";
 import { MeetingLifecycleCoordinator, type MeetingWorkKind } from "./meeting-lifecycle-coordinator.js";
 import { listRecordingOwnedStagePaths } from "./finalizer.js";
+import { listManagedArtifactPaths, ManagedTimelineArtifactStore } from "./managed-transcription.js";
 import { NativePremiumAccessPort, PremiumService, UnavailablePremiumAccessPort } from "./premium-service.js";
 
 let store: MeetingStore | null = null;
@@ -64,7 +65,8 @@ export function deleteMeeting(meetingId: string): Promise<MeetingDeleteStoreResu
         );
       }
       const recordingStagePaths = await recordingService.ownedStagePaths(meetingId);
-      return await meetingStore.deleteMeeting(meetingId, { recordingStagePaths });
+      const managedArtifactPaths = await recordingService.ownedManagedArtifactPaths(meetingId);
+      return await meetingStore.deleteMeeting(meetingId, { recordingStagePaths, managedArtifactPaths });
     } finally {
       acquisition.lease.release();
     }
@@ -87,7 +89,8 @@ export async function deleteMeetingBeforeRecordingBootstrap(
     );
   }))).filter((recordingId): recordingId is string => recordingId !== null);
   const recordingStagePaths = await listRecordingOwnedStagePaths(exportRoot, recordingIds);
-  return meetingStore.deleteMeeting(meetingId, { recordingStagePaths });
+  const managedArtifactPaths = await listManagedArtifactPaths(path.join(storeRoot, "managed-artifacts"), recordingIds);
+  return meetingStore.deleteMeeting(meetingId, { recordingStagePaths, managedArtifactPaths });
 }
 
 function deletionReason(active: MeetingWorkKind[]): "active_capture" | "finalization" | "transcription" | "ask" {
@@ -187,6 +190,7 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
     throw new Error("Production transcription requires the signed MeetlessHost native capability socket");
   }
   const fixtureExportNow = resolveFixtureExportNow(fixture, fixedStamp);
+  const managedArtifacts = new ManagedTimelineArtifactStore(path.join(storeRoot, "managed-artifacts"));
   const transcriptionMode = uiTest?.transcriptionMode ?? "native";
   const provider: TranscriptionProvider | null = transcriptionMode === "fake"
     ? new DeterministicFixtureTranscriptionProvider()
@@ -220,6 +224,7 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
       await assertCapturePermissionsReady();
     },
     transcription: transcript,
+    managedTimelineConsumer: managedArtifacts,
   }, getMeetingStore(), meetingLifecycle);
   const identity = {
     instanceId: randomUUID(),

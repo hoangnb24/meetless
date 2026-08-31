@@ -20,6 +20,7 @@ import {
   RECORDING_SOURCES,
   RECORDING_STATUSES,
   RECORDING_INVENTORY_STATES,
+  markManagedTimelineHandoff,
   resumeRecording,
   retryFinalization,
   startRecording,
@@ -56,6 +57,7 @@ import {
   type OutputIdentity,
   type RecordingSession,
   type RecordingInventoryPointer,
+  type ManagedTimelineStage,
 } from "@meetless/meeting-domain";
 import { z } from "zod";
 
@@ -307,6 +309,18 @@ const RecordingSchema = z.object({
       expectedIdentity: OutputIdentitySchema,
       createdAt: z.string().datetime(),
     }).strict(),
+    managedTimeline: z.object({
+      stagePath: z.string().trim().min(1),
+      manifestSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+      identity: OutputIdentitySchema,
+      startMs: z.number().int().nonnegative(),
+      endMs: z.number().int().positive(),
+      handoff: z.enum(["pending", "accepted", "discarded"]),
+    }).strict().superRefine((timeline, context) => {
+      if (timeline.endMs <= timeline.startMs) {
+        context.addIssue({ code: "custom", path: ["endMs"], message: "Managed timeline stage must be non-empty" });
+      }
+    }).nullable().default(null),
   }).strict().nullable(),
   savedOutput: z.object({
     destination: z.string().trim().min(1), byteLength: z.number().int().positive(),
@@ -656,7 +670,7 @@ const DeletionManifestSchema = z.object({
   operationId: z.string().uuid(),
   meetingId: z.string().trim().min(1),
   entries: z.array(z.object({
-    kind: z.enum(["session", "output", "transcript", "stage"]),
+    kind: z.enum(["session", "output", "transcript", "stage", "managed-artifact"]),
     ownerId: z.string().trim().min(1),
     approvedRoot: z.string().trim().min(1),
     original: z.string().trim().min(1),
@@ -711,6 +725,7 @@ export interface MeetingDeletionIo {
 
 export interface MeetingDeleteInput {
   recordingStagePaths?: ReadonlyArray<{ recordingId: string; path: string }>;
+  managedArtifactPaths?: ReadonlyArray<{ recordingId: string; path: string }>;
 }
 
 class MeetingStateReplacementError extends Error {
@@ -1098,6 +1113,10 @@ export class MeetingStore {
       if (recordings.some((recording) => recording.status === "finalizing")) {
         return { meetingId, outcome: "refused" as const, reason: "finalization" as const };
       }
+      if (recordings.some((recording) => recording.status === "saved" &&
+        recording.finalization?.managedTimeline?.handoff === "pending")) {
+        return { meetingId, outcome: "refused" as const, reason: "finalization" as const };
+      }
       if (state.transcripts.some((transcript) => transcript.meetingId === meetingId &&
         (transcript.status === "pending" || transcript.status === "transcribing"))) {
         return { meetingId, outcome: "refused" as const, reason: "transcription" as const };
@@ -1285,6 +1304,7 @@ export class MeetingStore {
       chunkSetDigest: string;
       destination: string;
       expectedIdentity: OutputIdentity;
+      managedTimeline?: Omit<ManagedTimelineStage, "handoff">;
     },
   ): Promise<RecordingSession> {
     return this.mutate(async (state) => {
@@ -1312,6 +1332,24 @@ export class MeetingStore {
   retryFinalization(id: string): Promise<RecordingSession> {
     return this.changeRecording(id, (recording) =>
       retryFinalization(recording, { now: this.now() }),
+    );
+  }
+
+  retryFinalizationWithManagedTimeline(
+    id: string,
+    managedTimeline: Omit<ManagedTimelineStage, "handoff">,
+  ): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) =>
+      retryFinalization(recording, { now: this.now(), managedTimeline }),
+    );
+  }
+
+  markManagedTimelineHandoff(
+    id: string,
+    status: "accepted" | "discarded",
+  ): Promise<RecordingSession> {
+    return this.changeRecording(id, (recording) =>
+      markManagedTimelineHandoff(recording, { now: this.now(), status }),
     );
   }
 
@@ -1672,6 +1710,13 @@ export class MeetingStore {
         kind: "session", ownerId: recording.id, approvedRoot: this.root,
         original: path.join(this.root, "sessions", recording.id),
       });
+      // Managed timeline artifacts have one deterministic private root under
+      // the MeetingStore root. Include the path even when the caller did not
+      // enumerate it so direct store deletion cannot strand private audio.
+      entries.push({
+        kind: "managed-artifact", ownerId: recording.id, approvedRoot: this.root,
+        original: managedArtifactPath(this.root, recording.id),
+      });
       for (const output of [recording.savedOutput?.destination, recording.finalization?.publishIntent.destination]) {
         if (!output) continue;
         entries.push({
@@ -1699,6 +1744,16 @@ export class MeetingStore {
         throw new Error(`Stage path is not an exact recording-owned .stage file: ${stage.path}`);
       }
       entries.push({ kind: "stage", ownerId: stage.recordingId, approvedRoot, original });
+    }
+    for (const artifact of input.managedArtifactPaths ?? []) {
+      if (!recordingIds.has(artifact.recordingId)) {
+        throw new Error(`Managed artifact path is not owned by meeting ${meetingId}: ${artifact.recordingId}`);
+      }
+      const original = path.resolve(artifact.path);
+      if (original !== managedArtifactPath(this.root, artifact.recordingId)) {
+        throw new Error(`Managed artifact path is not the exact recording-owned private directory: ${artifact.path}`);
+      }
+      entries.push({ kind: "managed-artifact", ownerId: artifact.recordingId, approvedRoot: this.root, original });
     }
     const unique = deduplicateDeletionEntries(entries);
     this.assertNoSharedDeletionPaths(state, meetingId, unique);
@@ -1790,7 +1845,7 @@ export class MeetingStore {
       if (path.resolve(entry.original) !== entry.original || path.resolve(entry.approvedRoot) !== entry.approvedRoot) {
         throw new Error("Deletion manifest paths must be normalized");
       }
-      const approvedRoots = entry.kind === "session" || entry.kind === "transcript"
+      const approvedRoots = entry.kind === "session" || entry.kind === "transcript" || entry.kind === "managed-artifact"
         ? [this.root]
         : [this.root, ...this.approvedExportRoots];
       if (!approvedRoots.includes(entry.approvedRoot)) throw new Error("Deletion manifest root is not approved");
@@ -1816,7 +1871,10 @@ export class MeetingStore {
         if (isErrno(error, "ENOENT")) continue;
         throw error;
       }
-      await this.deletionIo.rm(entry.quarantine, { recursive: entry.kind === "session", force: true });
+      await this.deletionIo.rm(entry.quarantine, {
+        recursive: entry.kind === "session" || entry.kind === "managed-artifact",
+        force: true,
+      });
       await this.deletionIo.syncDirectory(path.dirname(entry.quarantine));
     }
     await this.removeDeletionManifest(manifestPath);
@@ -1844,7 +1902,8 @@ export class MeetingStore {
     }
     if ((entry.kind === "session" && entry.original !== path.join(this.root, "sessions", entry.ownerId)) ||
       (entry.kind === "transcript" && entry.original !== path.join(this.root, "transcripts", `${entry.ownerId}.json`)) ||
-      (entry.kind === "stage" && !isExactRecordingStageName(path.basename(entry.original), entry.ownerId))) {
+      (entry.kind === "stage" && !isExactRecordingStageName(path.basename(entry.original), entry.ownerId)) ||
+      (entry.kind === "managed-artifact" && entry.original !== managedArtifactPath(this.root, entry.ownerId))) {
       throw new Error(`Deletion path does not match exact meeting ownership: ${entry.original}`);
     }
     const rootReal = await realpath(entry.approvedRoot);
@@ -1856,7 +1915,7 @@ export class MeetingStore {
     try {
       const info = await lstat(candidatePath);
       if (info.isSymbolicLink()) throw new Error(`Deletion target cannot be a symlink: ${candidatePath}`);
-      if (entry.kind === "session" ? !info.isDirectory() : !info.isFile()) {
+      if ((entry.kind === "session" || entry.kind === "managed-artifact") ? !info.isDirectory() : !info.isFile()) {
         throw new Error(`Deletion target has an invalid file type: ${candidatePath}`);
       }
     } catch (error) {
@@ -1873,6 +1932,7 @@ export class MeetingStore {
     for (const recording of state.recordings.filter((candidate) => candidate.meetingId !== meetingId)) {
       const paths = [
         path.join(this.root, "sessions", recording.id),
+        managedArtifactPath(this.root, recording.id),
         recording.savedOutput?.destination,
         recording.finalization?.publishIntent.destination,
       ].filter((candidate): candidate is string => Boolean(candidate)).map((candidate) => path.resolve(candidate));
@@ -1893,7 +1953,7 @@ export class MeetingStore {
     const transcriptIds = new Set(state.transcripts
       .filter((transcript) => transcript.meetingId === manifest.meetingId).map((transcript) => transcript.id));
     for (const entry of manifest.entries) {
-      if ((entry.kind === "session" || entry.kind === "output" || entry.kind === "stage") && !recordingIds.has(entry.ownerId)) {
+      if ((entry.kind === "session" || entry.kind === "output" || entry.kind === "stage" || entry.kind === "managed-artifact") && !recordingIds.has(entry.ownerId)) {
         throw new Error(`Deletion manifest entry is not owned by meeting ${manifest.meetingId}`);
       }
       if (entry.kind === "transcript" && !transcriptIds.has(entry.ownerId)) {
@@ -1906,6 +1966,9 @@ export class MeetingStore {
         if (!exactOutputs.includes(entry.original)) {
           throw new Error(`Deletion manifest output is not exactly owned by recording ${entry.ownerId}`);
         }
+      }
+      if (entry.kind === "managed-artifact" && entry.original !== managedArtifactPath(this.root, entry.ownerId)) {
+        throw new Error(`Deletion manifest managed artifact is not exactly owned by recording ${entry.ownerId}`);
       }
     }
     this.assertNoSharedDeletionPaths(state, manifest.meetingId, manifest.entries);
@@ -1972,6 +2035,11 @@ function isPathInside(parent: string, candidate: string): boolean {
   return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
+function managedArtifactPath(root: string, recordingId: string): string {
+  const key = createHash("sha256").update(recordingId).digest("hex");
+  return path.join(root, "managed-artifacts", key);
+}
+
 function deduplicateDeletionEntries(
   entries: ReadonlyArray<Omit<DeletionManifest["entries"][number], "quarantine">>,
 ): Array<Omit<DeletionManifest["entries"][number], "quarantine">> {
@@ -1993,7 +2061,7 @@ function manifestIntegrity(manifest: Omit<DeletionManifest, "integritySha256">):
 function isExactRecordingStageName(name: string, recordingId: string): boolean {
   const escaped = recordingId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   return new RegExp(
-    `^\\.meetless-${escaped}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-(?:microphone|system)\\.wav|\\.mp3)\\.stage$`,
+    `^\\.meetless-${escaped}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-(?:microphone|system)\\.wav|\\.(?:managed\\.wav|mp3))\\.stage$`,
     "u",
   ).test(name);
 }
@@ -2063,6 +2131,7 @@ function migrateV2(state: z.infer<typeof MeetingStateV2Schema>): MeetingState {
           chunkSetDigest: recording.finalization.chunkSetDigest,
           chunkCount: recording.finalization.chunkIds.length,
           publishIntent: recording.finalization.publishIntent,
+          managedTimeline: null,
         } : null,
       };
     }),

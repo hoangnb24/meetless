@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, open as fsOpen, readFile, readdir, rename as fsRename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -557,6 +558,15 @@ describe("meeting store", () => {
     const stagePath = path.join(root, "exports", ".meetless-r-delete-00000000-0000-4000-8000-000000000000.mp3.stage");
     await writeFile(stagePath, "stage");
     owned.push(stagePath);
+    const managedStagePath = path.join(root, "exports", ".meetless-r-delete-00000000-0000-4000-8000-000000000001.managed.wav.stage");
+    await writeFile(managedStagePath, "managed stage");
+    owned.push(managedStagePath);
+    const managedArtifactPath = path.join(
+      root, "managed-artifacts", createHash("sha256").update("r-delete").digest("hex"),
+    );
+    await mkdir(managedArtifactPath, { recursive: true });
+    await writeFile(path.join(managedArtifactPath, "timeline.wav"), "managed private timeline");
+    owned.push(managedArtifactPath);
     await store.create({ id: "m-keep", title: "Keep this meeting" });
     const cleanup = vi.spyOn(
       store as unknown as { finishDeletionManifest(manifestPath: string, manifest: unknown): Promise<void> },
@@ -564,7 +574,10 @@ describe("meeting store", () => {
     ).mockRejectedValueOnce(new Error("injected post-commit cleanup failure"));
 
     await expect(store.deleteMeeting("m-delete", {
-      recordingStagePaths: [{ recordingId: "r-delete", path: stagePath }],
+      recordingStagePaths: [
+        { recordingId: "r-delete", path: stagePath },
+        { recordingId: "r-delete", path: managedStagePath },
+      ],
     })).resolves.toEqual({
       meetingId: "m-delete", outcome: "deleted", reason: null,
     });
@@ -699,6 +712,40 @@ describe("meeting store", () => {
       meetingId: "m-asking", outcome: "refused", reason: "ask",
     });
     expect((await store.list()).map((meeting) => meeting.id)).toEqual(["m-transcribing", "m-asking"]);
+  });
+
+  test("refuses deletion while a saved managed timeline handoff is pending, including after restart", async () => {
+    const root = await temporaryRoot();
+    const now = "2026-08-29T10:00:00.000Z";
+    const store = new MeetingStore({ root, now: () => now });
+    await store.create({ id: "m-managed-pending", title: "Managed pending" });
+    await store.startRecording({ id: "r-managed-pending", meetingId: "m-managed-pending" });
+    await store.commitChunk("r-managed-pending", {
+      id: "r-managed-pending-chunk", source: "microphone", storageKey: "sessions/r-managed-pending/chunk.wav",
+      byteLength: 1, sha256: "chunk", committedAt: now, logicalStartMs: 0, durationMs: 1_000,
+      sampleRate: 16_000, channels: 1, format: "wav",
+    });
+    await completeInventory(store, "r-managed-pending", "managed-pending-inventory");
+    const outputPath = path.join(root, "exports", "r-managed-pending.mp3");
+    await store.beginFinalization("r-managed-pending", {
+      openChunksDurablyClosed: true, chunkSetDigest: "managed-pending-inventory", destination: outputPath,
+      expectedIdentity: { byteLength: 1, sha256: "output" },
+      managedTimeline: {
+        stagePath: path.join(root, "exports", ".meetless-r-managed-pending-00000000-0000-4000-8000-000000000000.managed.wav.stage"),
+        manifestSha256: "a".repeat(64), identity: { byteLength: 1, sha256: "managed" }, startMs: 0, endMs: 1_000,
+      },
+    });
+    await store.markRecordingSaved("r-managed-pending", {
+      destination: outputPath, identity: { byteLength: 1, sha256: "output" }, readable: true,
+    });
+
+    await expect(store.deleteMeeting("m-managed-pending")).resolves.toEqual({
+      meetingId: "m-managed-pending", outcome: "refused", reason: "finalization",
+    });
+    const restarted = new MeetingStore({ root, now: () => now });
+    await expect(restarted.deleteMeeting("m-managed-pending")).resolves.toEqual({
+      meetingId: "m-managed-pending", outcome: "refused", reason: "finalization",
+    });
   });
 
   test("refuses deletion while recording recovery is durable", async () => {

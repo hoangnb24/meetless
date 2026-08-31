@@ -130,10 +130,29 @@ export interface SavedRecordingOutput extends OutputIdentity {
   savedAt: string;
 }
 
+export const MANAGED_TIMELINE_HANDOFF_STATUSES = ["pending", "accepted", "discarded"] as const;
+export type ManagedTimelineHandoffStatus = (typeof MANAGED_TIMELINE_HANDOFF_STATUSES)[number];
+
+/**
+ * Durable recovery evidence for the temporary canonical timeline created by
+ * the finalizer. The path is a finalizer stage path, not durable meeting data;
+ * the handoff status tells startup whether it must retry or only finish source
+ * cleanup.
+ */
+export interface ManagedTimelineStage {
+  stagePath: string;
+  manifestSha256: string;
+  identity: OutputIdentity;
+  startMs: number;
+  endMs: number;
+  handoff: ManagedTimelineHandoffStatus;
+}
+
 export interface RecordingFinalization {
   chunkSetDigest: string;
   chunkCount: number;
   publishIntent: PublishIntent;
+  managedTimeline: ManagedTimelineStage | null;
 }
 
 export interface RecordingInterruption {
@@ -510,6 +529,7 @@ export function beginFinalization(
     chunkSetDigest: string;
     destination: string;
     expectedIdentity: OutputIdentity;
+    managedTimeline?: Omit<ManagedTimelineStage, "handoff">;
   },
 ): RecordingSession {
   if (session.status !== "recording" && session.status !== "recoverable") {
@@ -544,6 +564,9 @@ export function beginFinalization(
   }
   const now = requireInstant(input.now, "now");
   const identity = checkOutputIdentity(input.expectedIdentity);
+  const managedTimeline = input.managedTimeline
+    ? checkedManagedTimelineStage({ ...input.managedTimeline, handoff: "pending" })
+    : null;
   return {
     ...updated(session, now),
     status: "finalizing",
@@ -557,13 +580,14 @@ export function beginFinalization(
         expectedIdentity: identity,
         createdAt: now,
       },
+      managedTimeline,
     },
   };
 }
 
 export function retryFinalization(
   session: RecordingSession,
-  input: { now: string },
+  input: { now: string; managedTimeline?: Omit<ManagedTimelineStage, "handoff"> },
 ): RecordingSession {
   if ((session.status !== "recoverable" && session.status !== "finalizing") || !session.finalization) {
     throw recordingViolation("Finalization retry requires an existing immutable intent", "Begin finalization once first.");
@@ -580,7 +604,41 @@ export function retryFinalization(
   return {
     ...next,
     status: "finalizing",
-    finalization: session.finalization,
+    finalization: {
+      ...session.finalization,
+      managedTimeline: input.managedTimeline
+        ? checkedManagedTimelineStage({ ...input.managedTimeline, handoff: "pending" })
+        : session.finalization.managedTimeline,
+    },
+  };
+}
+
+export function markManagedTimelineHandoff(
+  session: RecordingSession,
+  input: { now: string; status: Exclude<ManagedTimelineHandoffStatus, "pending"> },
+): RecordingSession {
+  const finalization = session.finalization;
+  if (!finalization?.managedTimeline) return session;
+  if (session.status !== "finalizing" && session.status !== "saved") {
+    throw recordingViolation(
+      "Managed timeline handoff can change only while finalization or saved cleanup is recoverable",
+      "Resume the recording finalization lifecycle before changing its handoff state.",
+    );
+  }
+  const current = finalization.managedTimeline.handoff;
+  if (current === input.status) return session;
+  if (current !== "pending") {
+    throw recordingViolation(
+      `Managed timeline handoff cannot change from ${current} to ${input.status}`,
+      "Keep the durable handoff outcome immutable and retry the remaining cleanup.",
+    );
+  }
+  return {
+    ...updated(session, input.now),
+    finalization: {
+      ...finalization,
+      managedTimeline: { ...finalization.managedTimeline, handoff: input.status },
+    },
   };
 }
 
@@ -685,6 +743,32 @@ function checkOutputIdentity(identity: OutputIdentity): OutputIdentity {
     throw recordingViolation("Output identity requires a positive byte length", "Verify a readable non-empty MP3.");
   }
   return { byteLength: identity.byteLength, sha256: requireRecordingText(identity.sha256, "output sha256") };
+}
+
+function checkedManagedTimelineStage(stage: ManagedTimelineStage): ManagedTimelineStage {
+  const startMs = stage.startMs;
+  const endMs = stage.endMs;
+  if (!Number.isSafeInteger(startMs) || startMs < 0 || !Number.isSafeInteger(endMs) || endMs <= startMs) {
+    throw recordingViolation(
+      "Managed timeline stage must cover a non-empty non-negative interval",
+      "Persist the finalizer's verified canonical timeline bounds.",
+    );
+  }
+  const manifestSha256 = stage.manifestSha256.trim();
+  if (!/^[a-f0-9]{64}$/u.test(manifestSha256)) {
+    throw recordingViolation(
+      "Managed timeline stage requires a SHA-256 manifest identity",
+      "Persist the finalizer's collision-resistant inventory manifest identity.",
+    );
+  }
+  return {
+    stagePath: requireRecordingText(stage.stagePath, "managed timeline stage path"),
+    manifestSha256,
+    identity: checkOutputIdentity(stage.identity),
+    startMs,
+    endMs,
+    handoff: stage.handoff,
+  };
 }
 
 function sameIdentity(left: OutputIdentity, right: OutputIdentity): boolean {

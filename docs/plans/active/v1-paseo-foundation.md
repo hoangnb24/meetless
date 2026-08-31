@@ -2,14 +2,14 @@
 
 ## Current State
 
-- `plan_revision`: `v10`
+- `plan_revision`: `v11`
 - `current_frontier`: `MANAGED-TRANSCRIPTION-PRE-EXTERNAL-SEAM-R2`
-- `state`: `LOCAL_CORRECTION_READY`
+- `state`: `LOCAL_CORRECTION_CANDIDATE_PENDING_LEAD`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`. MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` remains accepted reusable evidence only
 - `pending_ruling`: none for the bounded local R2 correction; owner selection of job duration/size limits, Convex project/region, and external configuration remains deferred
 - `blocked_by`: R2 is not externally blocked. Real regional latency, upload/action limits, provider credentials, App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication still require external targets or owner-gated mutation
-- `next_action`: one SERIAL writer implements the frozen local CPF correction set below; no Convex dependency, project, credential, provider call, or external mutation
+- `next_action`: Lead closeout of the one immutable repository-only R2 candidate; no Convex dependency, project, credential, provider call, or external mutation
 
 ## Ownership And Authority
 
@@ -402,6 +402,51 @@ work is pending; unchanged Ask/BYOK behavior; focused proof, typecheck, build,
 and unchanged authority digest. R2 does not install Convex, wire production,
 choose a region or job limit, launch capture, use credentials, or mutate an
 external service.
+
+### R2 Pre-External Seam Candidate Disposition (2026-08-31; pending Lead closeout)
+
+The repository-only R2 candidate is prepared from exact base
+`66353f59038afba3407a7f61c280d91b0b3e612b`. Its final immutable commit and
+complete changed-path manifest are reported in the peer handoff; this section
+records the implementation and personally observed proof without treating it
+as Lead acceptance.
+
+- `CPF-001`: `FileManagedUploadPort` and `FileManagedUploadRepository` define
+  a host-authenticated, provider-independent upload seam. Sessions and parts
+  are ordinary private temporary state, parts are streamed into bounded files,
+  duplicate/conflicting parts and completion are idempotent/explicit, and a
+  fresh instance rehydrates status and receipts. The large proof streams a
+  26,400,044-byte canonical WAV (>25 MiB) in 256 KiB parts.
+- `CPF-002`: `ManagedTimelineArtifactStore` copies the finalizer-owned
+  canonical WAV into a private per-recording directory with metadata and a
+  24-hour expiry. The durable export remains the MP3; the managed artifact is
+  consumed and removed after local publication.
+- `CPF-003`: `RecordingService` persists the managed stage reference and
+  handoff state through publication, saved, handoff, and source-cleanup
+  boundaries. A fresh service rebuilds a missing managed stage from the frozen
+  validated inventory before source cleanup, while an accepted handoff resumes
+  without reassembling or re-calling the provider.
+- `CPF-005`: finalizer evidence and the upload manifest use
+  `recording:${recordingId}` as the canonical timeline identity; caller audio
+  labels are ignored by the managed adapter and rejected by the upload edge.
+- `CPF-007`: artifact metadata records recording/meeting ownership, creation,
+  exact expiry, and the accepted 24-hour TTL. Startup sweeps remove expired,
+  malformed, corrupt, and orphaned private artifacts; MeetingStore includes
+  the deterministic private artifact path in its deletion manifest and refuses
+  a saved recording while its handoff remains pending.
+- `CPF-006-LOCAL`: `ensureManagedTranscript` persists the local pending barrier
+  before provider submission. The shared lifecycle lease spans provider work
+  and is reacquired for publication; MeetingStore remains the sole durable
+  transcript/citation owner. Ask/BYOK code paths are unchanged.
+
+Observed R2 proof, pending Lead closeout:
+
+- `npx vitest run --config vitest.config.ts packages/managed-transcription-foundation/test/policy.test.ts packages/meetless-plugin/test/managed-upload.test.ts packages/meetless-plugin/test/managed-transcription.test.ts packages/meetless-plugin/test/inventory.test.ts packages/meetless-plugin/test/recording-service.test.ts test/composition/managed-transcription-path.test.ts packages/meeting-domain/test/transcript.test.ts packages/meeting-store/test/store.test.ts packages/meetless-plugin/test/meeting-lifecycle-coordinator.test.ts --maxWorkers=1` passed 9 files and 106 tests. This includes the >25 MiB stream, malformed/false WAV rejection, upload session restart, duplicate/completion/cancel cleanup, real finalizer handoff failpoints, provider-status release, durable deletion barrier, shared lifecycle lease, and provider-result publication recovery.
+- `npx vitest run --config vitest.config.ts packages/meeting-domain/test packages/meeting-store/test --maxWorkers=1` passed 6 files and 67 tests.
+- `npx vitest run --config vitest.config.ts packages/meetless-plugin/test --maxWorkers=1` ran 17 files and 123 tests: 15 files/118 tests passed; the 5 failures were the pre-existing sandbox-denied localhost/Unix-socket listener tests in `chat-service.test.ts` and `control-server.test.ts` (`listen EPERM`). No R2-owned plugin test failed.
+- `npm run typecheck` passed; `npm run build:meetless` passed; `git diff --check` remains required after this plan entry.
+- The composition proof traverses real fixture `RecordingService` finalization and source-chunk cleanup, fake private artifact handoff, fake upload receipt completion, an injected post-provider-success crash, fresh policy/upload/store instances, one provider call, and MeetingStore citation publication. It does not claim real Convex latency or production provider behavior.
+- No Convex package/config/project, production credential, provider call, native capture launch, StoreKit/RevenueCat mutation, signing, upload, publication, or external state change was attempted. Authority files remain frozen at combined digest `79159e03961957296f0f110996c71e0fdde7790760b1dd63fcd40ebbab3637ae`.
 
 ### Risks And Recovery
 

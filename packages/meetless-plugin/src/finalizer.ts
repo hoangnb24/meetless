@@ -5,7 +5,12 @@ import { access, link, mkdir, open, readFile, readdir, rm, stat, writeFile } fro
 import path from "node:path";
 import { promisify } from "node:util";
 import { parseCanonicalPcmWav } from "@meetless/managed-transcription-foundation";
-import type { CommittedRecordingChunk, OutputIdentity, RecordingInventoryPointer } from "@meetless/meeting-domain";
+import type {
+  CommittedRecordingChunk,
+  ManagedTimelineStage,
+  OutputIdentity,
+  RecordingInventoryPointer,
+} from "@meetless/meeting-domain";
 import { readInventory, resolveStorePath } from "./inventory.js";
 
 const execFileAsync = promisify(execFile);
@@ -33,8 +38,22 @@ export interface ManagedTimelineArtifact {
   cleanup(): Promise<void>;
 }
 
+export interface ManagedTimelineHandoffContext {
+  readonly meetingId: string;
+}
+
 export interface ManagedTimelineArtifactConsumer {
-  accept(artifact: ManagedTimelineArtifact): Promise<void>;
+  accept(artifact: ManagedTimelineArtifact, context: ManagedTimelineHandoffContext): Promise<void>;
+}
+
+export interface ManagedTimelineArtifactOwner extends ManagedTimelineArtifactConsumer {
+  get?(recordingId: string): Promise<ManagedTimelineArtifact | null>;
+  sweep?(input: {
+    recordings: readonly Pick<import("@meetless/meeting-domain").RecordingSession, "id" | "meetingId">[];
+    meetingIds: readonly string[];
+    now?: number;
+  }): Promise<number>;
+  ownedArtifactPaths?(meetingId: string, recordingIds?: readonly string[]): Promise<Array<{ recordingId: string; path: string }>>;
 }
 
 export class Mp3Finalizer {
@@ -49,6 +68,64 @@ export class Mp3Finalizer {
       await rm(stage.path, { force: true });
       await syncDirectory(this.config.exportRoot);
     }
+  }
+
+  async recoverManagedTimeline(
+    recordingId: string,
+    reference: ManagedTimelineStage,
+  ): Promise<ManagedTimelineArtifact | null> {
+    const stagePath = path.resolve(reference.stagePath);
+    if (
+      path.dirname(stagePath) !== path.resolve(this.config.exportRoot) ||
+      !isManagedTimelineStageName(path.basename(stagePath), recordingId)
+    ) {
+      throw new Error("Persisted managed timeline stage is not owned by the recording export root");
+    }
+    try {
+      const identity = await fileIdentity(stagePath);
+      if (!sameOutputIdentity(identity, reference.identity)) {
+        throw new Error("Persisted managed timeline stage identity changed");
+      }
+    } catch (error) {
+      if (isErrno(error, "ENOENT")) return null;
+      throw error;
+    }
+    let cleaned = false;
+    return {
+      path: stagePath,
+      recordingId,
+      manifestSha256: reference.manifestSha256,
+      identity: { ...reference.identity },
+      startMs: reference.startMs,
+      endMs: reference.endMs,
+      cleanup: async () => {
+        if (cleaned) return;
+        cleaned = true;
+        await rm(stagePath, { force: true });
+      },
+    };
+  }
+
+  /**
+   * Rebuild only the managed handoff when publication already succeeded but a
+   * process died before the persisted stage could be consumed. The validated
+   * inventory is still the source of truth; the MP3 stage is discarded.
+   */
+  async rebuildManagedTimeline(
+    recordingId: string,
+    inventory: RecordingInventoryPointer,
+    expectedOutput: OutputIdentity,
+  ): Promise<ManagedTimelineArtifact> {
+    const staged = await this.stage(recordingId, inventory);
+    if (!sameOutputIdentity(staged.identity, expectedOutput)) {
+      await rm(staged.stagePath, { force: true });
+      await staged.managedTimeline.cleanup();
+      await syncDirectory(this.config.exportRoot);
+      throw new Error("Rebuilt managed timeline changed the immutable saved MP3 identity");
+    }
+    await rm(staged.stagePath, { force: true });
+    await syncDirectory(this.config.exportRoot);
+    return staged.managedTimeline;
   }
 
   async stage(recordingId: string, inventory: RecordingInventoryPointer): Promise<{
@@ -328,8 +405,32 @@ export function isRecordingOwnedStageName(name: string, recordingId: string): bo
   ).test(name);
 }
 
+export function isManagedTimelineStageName(name: string, recordingId: string): boolean {
+  const escaped = recordingId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(
+    `^\\.meetless-${escaped}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.managed\\.wav\\.stage$`,
+    "u",
+  ).test(name);
+}
+
+export function managedTimelineStageReference(
+  artifact: ManagedTimelineArtifact,
+): Omit<ManagedTimelineStage, "handoff"> {
+  return {
+    stagePath: artifact.path,
+    manifestSha256: artifact.manifestSha256,
+    identity: { ...artifact.identity },
+    startMs: artifact.startMs,
+    endMs: artifact.endMs,
+  };
+}
+
 function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === code;
+}
+
+function sameOutputIdentity(left: OutputIdentity, right: OutputIdentity): boolean {
+  return left.byteLength === right.byteLength && left.sha256 === right.sha256;
 }
 
 function chunkStartFrame(id: string): number {

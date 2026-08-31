@@ -7,13 +7,20 @@ import { CaptureHelper } from "./capture-helper.js";
 import {
   fileIdentity,
   Mp3Finalizer,
+  managedTimelineStageReference,
   type ManagedTimelineArtifact,
-  type ManagedTimelineArtifactConsumer,
+  type ManagedTimelineArtifactOwner,
 } from "./finalizer.js";
 import { readInventory, RecordingInventoryReconciler, resolveStorePath, ZeroValidMediaError } from "./inventory.js";
 import type { CollisionEvidence } from "./readiness-protocol.js";
 import type { TranscriptionService } from "./transcription-service.js";
 import { MeetingLifecycleCoordinator, type MeetingLifecycleLease } from "./meeting-lifecycle-coordinator.js";
+
+export type RecordingFinalizationCheckpoint =
+  | "after-publication"
+  | "after-saved"
+  | "after-handoff"
+  | "after-cleanup";
 
 export interface RecordingServiceConfig {
   storeRoot: string;
@@ -29,7 +36,12 @@ export interface RecordingServiceConfig {
   failFinalizationOnce?: boolean;
   authorizeProductionStart?: () => Promise<void>;
   transcription?: TranscriptionService;
-  managedTimelineConsumer?: ManagedTimelineArtifactConsumer;
+  managedTimelineConsumer?: ManagedTimelineArtifactOwner;
+  /** Test-only crash boundary for the durable finalization handoff sequence. */
+  finalizationCheckpoint?: (
+    point: RecordingFinalizationCheckpoint,
+    recordingId: string,
+  ) => void | Promise<void>;
 }
 
 export class RecordingService {
@@ -68,15 +80,16 @@ export class RecordingService {
   async initialize(): Promise<void> {
     await mkdir(path.join(this.config.storeRoot, "sessions"), { recursive: true, mode: 0o700 });
     const recordings = await this.store.listRecordings();
+    const meetings = await this.store.list();
+    await this.config.managedTimelineConsumer?.sweep?.({
+      recordings: recordings.map((recording) => ({ id: recording.id, meetingId: recording.meetingId })),
+      meetingIds: meetings.map((meeting) => meeting.id),
+    });
     for (const recording of recordings) {
-      if (["recording", "interrupted", "recoverable", "finalizing"].includes(recording.status)) {
-        if (!this.registerRecordingWork(recording)) throw new Error("Meeting deletion is in progress");
+      if (this.needsStartupWork(recording) && !this.registerRecordingWork(recording)) {
+        throw new Error("Meeting deletion is in progress");
       }
     }
-    const startupStageOwners = recordings
-      .filter((recording) => ["recording", "interrupted", "recoverable", "finalizing"].includes(recording.status))
-      .map((recording) => recording.id);
-    await this.finalizer.sweepOwnedStages(startupStageOwners);
     for (const recording of recordings) {
       if (recording.status === "recording" || recording.status === "interrupted") {
         await this.store.prepareInventoryRecovery(recording.id, "daemon restarted while capture was active");
@@ -84,6 +97,16 @@ export class RecordingService {
         await this.recoverRecording(recording);
       }
     }
+    for (const recording of await this.store.listRecordings()) {
+      if (recording.status === "saved" && recording.finalization?.managedTimeline &&
+        recording.finalization.managedTimeline.handoff !== "discarded") {
+        await this.finishSaved(recording);
+      }
+    }
+    const startupStageOwners = (await this.store.listRecordings())
+      .filter((recording) => this.canSweepFinalizerStages(recording))
+      .map((recording) => recording.id);
+    await this.finalizer.sweepOwnedStages(startupStageOwners);
     await this.emitStatus();
     await this.config.transcription?.initialize();
     const startupRecoveryIds = (await this.store.listRecordings())
@@ -172,6 +195,15 @@ export class RecordingService {
       ownsStage: await requiresFinalizerStageEnumeration(recording, this.config.storeRoot),
     })))).filter((entry) => entry.ownsStage).map((entry) => entry.recording.id);
     return this.finalizer.ownedStagePaths(recordingIds);
+  }
+
+  async ownedManagedArtifactPaths(meetingId: string): Promise<Array<{ recordingId: string; path: string }>> {
+    const owner = this.config.managedTimelineConsumer;
+    if (!owner?.ownedArtifactPaths) return [];
+    const recordingIds = (await this.store.listRecordings())
+      .filter((recording) => recording.meetingId === meetingId)
+      .map((recording) => recording.id);
+    return owner.ownedArtifactPaths(meetingId, recordingIds);
   }
 
   prepareCollisionEvidence(runtimeInstanceId: string, now = this.config.exportNow?.() ?? new Date()): Promise<CollisionEvidence> {
@@ -355,13 +387,19 @@ export class RecordingService {
       await this.stageBeginAndPublish(recording);
       return;
     }
-    await this.store.retryFinalization(recording.id);
     const staged = await this.finalizer.stage(recording.id, recording.inventory.pointer);
     if (!sameIdentity(staged.identity, recording.finalization.publishIntent.expectedIdentity)) {
       await rm(staged.stagePath, { force: true });
       await staged.managedTimeline.cleanup();
       await this.interruptAndAssess(recording.id, "retry output identity changed");
       throw new Error("Retry output identity changed; original chunks were preserved");
+    }
+    try {
+      await this.store.retryFinalizationWithManagedTimeline(recording.id, managedTimelineStageReference(staged.managedTimeline));
+    } catch (error) {
+      await rm(staged.stagePath, { force: true }).catch(() => undefined);
+      await staged.managedTimeline.cleanup().catch(() => undefined);
+      throw error;
     }
     await this.publishOutput(recording.id, staged.stagePath, staged.managedTimeline);
   }
@@ -378,6 +416,7 @@ export class RecordingService {
         chunkSetDigest: recording.inventory.pointer.digest,
         destination,
         expectedIdentity: staged.identity,
+        managedTimeline: managedTimelineStageReference(staged.managedTimeline),
       });
     } catch (error) {
       await rm(staged.stagePath, { force: true }).catch(() => undefined);
@@ -418,11 +457,13 @@ export class RecordingService {
         });
         if (reconciliation.action === "adopt") {
           await rm(stagePath, { force: true });
+          await this.finalizationCheckpoint("after-publication", recordingId);
           await this.finishSaved(reconciliation.recording, managedTimeline);
           return;
         }
         continue;
       }
+      await this.finalizationCheckpoint("after-publication", recordingId);
       recording = await this.findRecording(recordingId);
       await this.finishSaved(recording, managedTimeline);
       return;
@@ -434,14 +475,55 @@ export class RecordingService {
     const intent = recording.finalization!.publishIntent;
     const verified = await this.finalizer.verify(intent.destination);
     if (!sameIdentity(verified.identity, intent.expectedIdentity)) throw new Error("Published MP3 identity changed");
-    const saved = await this.store.markRecordingSaved(recording.id, {
-      destination: intent.destination, identity: verified.identity, readable: true,
-    });
-    let handedOff = false;
+    let saved = recording.status === "finalizing"
+      ? await this.store.markRecordingSaved(recording.id, {
+        destination: intent.destination, identity: verified.identity, readable: true,
+      })
+      : recording;
+    if (saved.status !== "saved" || !saved.savedOutput) throw new Error("Managed finalization did not reach saved state");
+    if (recording.status === "finalizing") await this.finalizationCheckpoint("after-saved", recording.id);
+    const managedState = saved.finalization?.managedTimeline;
+    let stage = managedTimeline;
+    let handoff: "accepted" | "discarded" | "pending" | null = managedState?.handoff ?? null;
+    let handoffChanged = false;
     try {
-      if (managedTimeline && this.config.managedTimelineConsumer) {
-        await this.config.managedTimelineConsumer.accept(managedTimeline);
-        handedOff = true;
+      if (managedState?.handoff === "pending") {
+        if (!stage && this.config.managedTimelineConsumer?.get) {
+          const existing = await this.config.managedTimelineConsumer.get(recording.id);
+          if (existing) {
+            handoff = "accepted";
+            await this.store.markManagedTimelineHandoff(recording.id, "accepted");
+            handoffChanged = true;
+          }
+        }
+        if (handoff === "pending" && this.config.managedTimelineConsumer && !stage) {
+          stage = await this.finalizer.recoverManagedTimeline(recording.id, managedState) ?? undefined;
+          if (!stage && saved.inventory.pointer) {
+            stage = await this.finalizer.rebuildManagedTimeline(
+              recording.id,
+              saved.inventory.pointer,
+              intent.expectedIdentity,
+            );
+          }
+        }
+        if (handoff === "pending" && this.config.managedTimelineConsumer && stage) {
+          await this.config.managedTimelineConsumer.accept(stage, { meetingId: recording.meetingId });
+          await this.store.markManagedTimelineHandoff(recording.id, "accepted");
+          handoff = "accepted";
+          handoffChanged = true;
+        } else if (handoff === "pending" && !this.config.managedTimelineConsumer) {
+          await this.store.markManagedTimelineHandoff(recording.id, "discarded");
+          handoff = "discarded";
+          handoffChanged = true;
+        } else if (handoff === "pending") {
+          throw new Error("Managed timeline handoff is missing its finalizer stage and private artifact");
+        }
+      }
+      if (handoffChanged) await this.finalizationCheckpoint("after-handoff", recording.id);
+      if (handoff === "accepted" || handoff === "discarded") {
+        await stage?.cleanup().catch((error) => {
+          throw new Error("Managed finalizer stage cleanup is pending", { cause: error });
+        });
       }
       const cleanupInventory = await this.store.cleanupEligibleInventory(recording.id, {
         destination: intent.destination, identity: verified.identity, readable: true,
@@ -454,24 +536,36 @@ export class RecordingService {
           process.stderr.write(`[meetless-recording] saved chunk cleanup deferred: ${describe(error)}\n`);
         });
       }
+      await this.finalizationCheckpoint("after-cleanup", recording.id);
       this.config.transcription?.schedule(saved);
     } finally {
-      if (!handedOff) await managedTimeline?.cleanup().catch(() => undefined);
       this.releaseRecordingWork(recording.id);
     }
   }
 
   private async recoverRecording(recording: RecordingSession): Promise<void> {
-    let current = await this.findRecording(recording.id);
+    const current = await this.findRecording(recording.id);
     if (current.status === "finalizing" && current.finalization) {
       const destination = current.finalization.publishIntent.destination;
+      const managedTimeline = current.finalization.managedTimeline?.handoff === "pending"
+        ? await this.finalizer.recoverManagedTimeline(recording.id, current.finalization.managedTimeline)
+        : null;
       try {
         const verified = await this.finalizer.verify(destination);
         const reconciliation = await this.store.reconcilePublish(current.id, {
           existingOutput: verified.identity, existingOutputReadable: true,
         });
-        if (reconciliation.action === "adopt") await this.finishSaved(reconciliation.recording);
-      } catch {
+        if (reconciliation.action === "adopt") {
+          await this.finishSaved(reconciliation.recording, managedTimeline ?? undefined);
+        } else {
+          // The MP3 stage name is intentionally not durable. If the process
+          // died before publication, preserve the source inventory and let
+          // the normal recovery/retry path rebuild both temporary stages.
+          await this.interruptAndAssess(current.id, "daemon restarted before MP3 publication");
+        }
+      } catch (error) {
+        const latest = await this.findRecording(current.id);
+        if (latest.status !== "finalizing") throw error;
         await this.interruptAndAssess(current.id, "daemon restarted during finalization");
       }
     }
@@ -591,9 +685,27 @@ export class RecordingService {
     return true;
   }
 
+  private needsStartupWork(recording: RecordingSession): boolean {
+    return ["recording", "interrupted", "recoverable", "finalizing"].includes(recording.status) ||
+      (recording.status === "saved" && recording.finalization?.managedTimeline?.handoff !== undefined &&
+        recording.finalization.managedTimeline.handoff !== "discarded");
+  }
+
+  private canSweepFinalizerStages(recording: RecordingSession): boolean {
+    if (["recording", "interrupted", "recoverable"].includes(recording.status)) return true;
+    return recording.status === "saved" && recording.finalization?.managedTimeline?.handoff !== "pending";
+  }
+
   private releaseRecordingWork(recordingId: string): void {
     this.recordingLeases.get(recordingId)?.release();
     this.recordingLeases.delete(recordingId);
+  }
+
+  private async finalizationCheckpoint(
+    point: RecordingFinalizationCheckpoint,
+    recordingId: string,
+  ): Promise<void> {
+    await this.config.finalizationCheckpoint?.(point, recordingId);
   }
 
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -617,6 +729,7 @@ export class RecordingService {
 
 async function requiresFinalizerStageEnumeration(recording: RecordingSession, storeRoot: string): Promise<boolean> {
   if (["recording", "interrupted", "recoverable", "finalizing"].includes(recording.status)) return true;
+  if (recording.status === "saved" && recording.finalization?.managedTimeline) return true;
   if (recording.status !== "failed") return false;
   return lstat(path.join(storeRoot, "sessions", recording.id)).then(
     (state) => state.isDirectory() && !state.isSymbolicLink(),
