@@ -1,6 +1,7 @@
 export const AUTHORITY = "docs/product/monetization.md; docs/decisions/0005-mac-app-store-and-revenuecat.md";
 export const SAMPLE_RATE = 16_000;
 export const MAX_PART_SAMPLES = 9_600_000;
+export const MAX_PART_BYTES = 44 + MAX_PART_SAMPLES * 2;
 export const MONTHLY_SECONDS = 180_000;
 export const TRIAL_SECONDS = 18_000;
 export const MAX_DEVICES = 3;

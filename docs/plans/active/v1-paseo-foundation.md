@@ -2,15 +2,15 @@
 
 ## Current State
 
-- `plan_revision`: `v15`
-- `current_frontier`: `MANAGED-TRANSCRIPTION-CONVEX-LOCAL-FIRST-IMPLEMENTATION`
+- `plan_revision`: `v16`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-CONVEX-LOCAL-FIRST-R3-CORRECTION`
 - `state`: `LOCAL_IMPLEMENTATION_CANDIDATE_PENDING_LEAD`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; predecessor `966b9abd78481db001e912cc2e60d895c00bef37` remains rejected. Managed-transcription foundation R1 remains accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`. The R3 local Convex candidate is committed and pending Lead closeout.
+- `candidate`: local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; predecessor `966b9abd78481db001e912cc2e60d895c00bef37` remains rejected. Managed-transcription foundation R1 remains accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`. Lead rejected R3 candidate `0a82b39f758e8c2ec19e831ca1c8c1b75529763d` at correction base; this batch is the bounded correction candidate.
 - `authority_contract_sha256`: `87625cb59c10e399767e34a2ecfd2bd92bf7e3a7598673fec267479dfdd7860e`
-- `pending_ruling`: Lead closeout of the local Convex candidate; production deployment/region, credentials, and provider access remain deferred owner/external gates
+- `pending_ruling`: Lead closeout of the seven-finding R3 correction; production deployment/region, credentials, and provider access remain deferred owner/external gates
 - `blocked_by`: no local implementation blocker; production Convex deployment/region, credentials, and provider calls remain owner/external gates. MAS/RevenueCat release work below is a separate frontier
-- `next_action`: Lead inspect the immutable local Convex candidate; defer only production deployment, region, credentials, and provider access
+- `next_action`: Lead inspect the immutable R3 correction candidate; defer only production deployment, region, credentials, and provider access
 
 ## Ownership And Authority
 
@@ -180,9 +180,9 @@ quota reservation, and charging stay outside provider implementations.
   ten-minute transport/provider chunks remain one logical billing timeline; the
   manifest and server-derived PCM duration are authoritative; V1 has no
   diarization or user-facing 60-minute cap.
-- [ ] Implement and test the region-neutral local Convex boundary using
-  generated upload URLs/storage IDs; production deployment, region,
-  credentials, and provider access remain deferred gates.
+- [ ] Close the region-neutral local Convex boundary correction using generated
+  upload URLs/storage IDs; production deployment, region, credentials, and
+  provider access remain deferred gates.
 - [x] Reconcile the executable Ask gate so Ask is free; Premium UI remains
   deferred because final UI work is outside this frontier.
 - [ ] Apply the profile-backed App Sandbox entitlement and In-App Purchase configuration.
@@ -772,7 +772,7 @@ Observed convergence-correction validation on 2026-08-31:
   deployment/region, credentials, and provider access/calls remain deferred
   owner/external gates.
 
-### R3 local Convex implementation candidate (pending Lead closeout)
+### R3 local Convex implementation predecessor (rejected by Lead)
 
 Observed on 2026-08-31 against the R3 implementation frontier. This is local
 evidence only; it does not claim hosted Convex, production authentication,
@@ -845,17 +845,79 @@ Enforcement and limits:
   contract; this remains an owner/provider cleanup gate. No product duration
   or size cap was added.
 
-The R3 candidate remains pending Lead closeout.
+Lead rejected candidate `0a82b39f758e8c2ec19e831ca1c8c1b75529763d`; its
+evidence is retained here as predecessor history. The bounded correction below
+is pending Lead closeout.
+
+### R3 correction candidate: durable lifecycle convergence (pending Lead closeout)
+
+Lead rejected candidate `0a82b39f758e8c2ec19e831ca1c8c1b75529763d` at the
+correction base with accepted findings `MTC-R3-001`, `MTC-R3-002`,
+`MTC-R3-003`, `MTC-R3-005`, `MTC-R3-006`, `MTC-R3-007`, and `MTC-R3-008`.
+`MTC-R3-004` was not accepted as a defect: the Lead ruling requires proving
+Convex indexed read-then-insert behavior through concurrent local calls, and
+requires reopening if that proof contradicts OCC/serializability. This
+correction candidate preserves the ruling and records evidence pending Lead
+closeout; it does not claim production behavior.
+
+The correction adds identity-only recovery after natural expiry, current
+entitlement checks only for new admission, durable cancellation generations,
+execution tokens and attempts, atomic provider-result settlement with the
+one-charge ledger transition, bounded indexed lease/TTL reconciliation, and
+current-device validation on every action-to-internal path. Device revoke
+stops in-flight work while account-owned terminal results remain recoverable by
+an enrolled sibling. A ready MeetingStore transcript is checked before the
+private timeline is prepared, so a fresh service retry does not require a
+deleted artifact.
+
+Observed mechanical proof on 2026-08-31:
+
+- `npm run proof:managed-convex-local` passed against an anonymous
+  local Convex deployment. The script started and stopped the local process,
+  seeded only internal test principals, used generated upload URLs/storage IDs,
+  ran concurrent begin and same-part registration, and cleared its account
+  state. Its exact result was:
+  `{"frontier":"MANAGED-TRANSCRIPTION-CONVEX-LOCAL-FIRST-R3-CORRECTION","result":"passed","anonymousLocalConvex":true,"concurrentBeginAndPartOCC":true,"providerInvocations":1,"logicalTimelineSeconds":31,"noCapLogicalTimelineSeconds":4200,"restartRecovered":true,"cleanup":"account state cleared"}`.
+- That proof covered natural-expiry claim/complete/settle/retrieve/ack,
+  duplicate settlement and acknowledgement, process restart, cancellation
+  staleness, lease expiry and fresh admission, next-period allowance
+  snapshotting, post-TTL non-settlement, device revoke with sibling recovery,
+  same-audio immutable binding, distinct-recording identical bytes, the
+  over-sixty-minute no-cap manifest, and an oversized stored Blob rejected by
+  `Blob.size` before materialization. It also proved the accepted MTC-R3-004
+  OCC premise locally; no lock table was added.
+- The composition regression passed through real fixture
+  `RecordingService` finalization, private canonical-artifact handoff before
+  source cleanup, Convex-shaped publication through MeetingStore, artifact
+  cleanup, and a fresh-service retry after the private artifact was gone. The
+  retry issued only the recording job-status query.
+- `npx vitest run --config vitest.config.ts packages/meetless-plugin/test
+  --maxWorkers=1` passed 17 files and 127 tests; the affected domain/store
+  command passed 6 files and 67 tests; the managed policy/upload/transcription,
+  lifecycle, Ask/BYOK, domain/store, and managed composition command passed
+  14 files and 163 tests.
+- `npm run typecheck`, `npm run build:meetless`, and `git diff --check` passed.
+  A broader command that included every composition file reported only the
+  pre-existing `m6-transport-path.test.ts` 120-second timeout and the existing
+  Expo icon module-resolution failure in `meeting-path.test.ts`; those files
+  are outside this correction's managed path.
+- The local proof uses a deterministic provider fake with one full-timeline
+  range and no diarization. It does not claim hosted Convex, cloud provider
+  execution, or production auth/lineage.
+
+The correction candidate remains pending Lead closeout. The frozen combined
+authority digest remains
+`87625cb59c10e399767e34a2ecfd2bd92bf7e3a7598673fec267479dfdd7860e`.
 
 ## Validation
 
-Acceptance validation is the command evidence recorded above. The accepted
-candidate locally exercises the fake policy and one real local MeetingStore
+Acceptance validation is the command evidence recorded above. The pending
+correction candidate locally exercises the fake policy and one real local MeetingStore
 publication composition path; it does not
 prove real Convex latency, regional placement, AVFoundation upload limits,
 production backend behavior, provider credentials, external purchase mutation,
 signing, App Review, or publication.
 
-This v15 docs revision records the implementation authority and does not claim
+This v16 docs revision records the implementation authority and does not claim
 that a Convex project, deployment, provider call, production latency, or
 external mutation exists.

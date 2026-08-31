@@ -6,6 +6,7 @@ import { anyApi } from "convex/server";
 import { v } from "convex/values";
 import {
   AUTHORITY,
+  MAX_PART_BYTES,
   canonicalWavHeader,
   parseCanonicalPart,
   partsDigestPayload,
@@ -22,7 +23,7 @@ export const sealUpload = action({
       tokenIdentifier,
     });
     const manifest = uploadToManifest(data.upload);
-    if (data.job && (data.job.status === "provider_completed" || data.job.status === "succeeded")) return data.job;
+    if (data.job && (data.job.status === "provider_completed" || data.job.status === "succeeded")) return publicJob(data.job);
     const parts = [...data.parts].sort((left, right) => left.partNumber - right.partNumber);
     if (parts.length !== manifest.parts.length || parts.some((part, index) => part.partNumber !== index + 1)) {
       throw new Error(`Managed seal requires every physical part exactly once and in order (${AUTHORITY})`);
@@ -38,6 +39,7 @@ export const sealUpload = action({
       }
       const blob = await ctx.storage.get(stored.storageId);
       if (!blob) throw new Error(`Managed storage object is missing for part ${stored.partNumber} (${AUTHORITY})`);
+      if (blob.size > MAX_PART_BYTES) throw new Error(`Managed storage Blob exceeds the accepted physical WAV part bound before materialization (${AUTHORITY})`);
       const bytes = new Uint8Array(await blob.arrayBuffer());
       if (bytes.byteLength !== stored.byteLength) throw new Error(`Managed stored part ${stored.partNumber} byte length does not match the manifest (${AUTHORITY})`);
       const partHash = createHash("sha256").update(bytes).digest("hex");
@@ -62,6 +64,7 @@ export const sealUpload = action({
       byteLength,
       durationMs: manifest.durationMs,
       partsManifestSha256,
+      cancelGeneration: data.upload.cancelGeneration ?? 0,
     });
   },
 });
@@ -76,16 +79,25 @@ export const runProvider = action({
       jobId: args.jobId,
       tokenIdentifier,
     });
-    if (data.job.status === "provider_completed" || data.job.status === "succeeded") return data.job;
+    if (data.job.status === "provider_completed" || data.job.status === "succeeded") return publicJob(data.job);
     let admissionId = data.job.admissionId;
+    let executionToken: string | null = null;
     try {
       const claimed = await ctx.runMutation(anyApi.managedTranscription.claimProvider, {
         jobId: args.jobId,
         tokenIdentifier,
         admissionId,
       });
-      admissionId = claimed.admissionId;
-      if (claimed.status === "provider_completed" || claimed.status === "succeeded") return claimed;
+      admissionId = claimed.job.admissionId;
+      if (!claimed.won) return publicJob(claimed.job);
+      executionToken = claimed.job.executionToken;
+      if (!executionToken) throw new Error(`Managed provider winner did not receive an execution token (${AUTHORITY})`);
+      await ctx.runMutation(anyApi.managedTranscription.recordProviderInvocation, {
+        jobId: args.jobId,
+        tokenIdentifier,
+        admissionId,
+        executionToken,
+      });
       // Read each storage object in manifest order. This is the provider
       // execution seam: a real backend action can replace this block without
       // changing admission, quota, manifest, or local publication state.
@@ -94,22 +106,24 @@ export const runProvider = action({
       for (const part of parts) {
         const blob = await ctx.storage.get(part.storageId);
         if (!blob) throw new Error(`Managed provider input disappeared before execution (${AUTHORITY})`);
+        if (blob.size > MAX_PART_BYTES) throw new Error(`Managed provider input Blob exceeds the accepted physical WAV part bound (${AUTHORITY})`);
         const parsed = parseCanonicalPart(new Uint8Array(await blob.arrayBuffer()));
         if (part.sampleOffset !== sampleOffset || parsed.sampleCount !== part.sampleCount) {
           throw new Error(`Managed provider received non-contiguous physical chunks (${AUTHORITY})`);
         }
         sampleOffset += part.sampleCount;
       }
-      const text = `Managed local provider transcript for ${claimed.recordingId}`;
+      const text = `Managed local provider transcript for ${claimed.job.recordingId}`;
       const result = {
         text,
-        ranges: [{ startMs: 0, endMs: claimed.durationMs, text }],
+        ranges: [{ startMs: 0, endMs: claimed.job.durationMs, text }],
         detectedLanguages: [],
       };
       return await ctx.runMutation(anyApi.managedTranscription.completeProvider, {
         jobId: args.jobId,
         tokenIdentifier,
-        admissionId: claimed.admissionId,
+        admissionId: claimed.job.admissionId,
+        executionToken,
         result,
       });
     } catch (error) {
@@ -120,6 +134,7 @@ export const runProvider = action({
         jobId: args.jobId,
         tokenIdentifier,
         admissionId,
+        executionToken,
         reason: error instanceof Error ? error.message : "managed provider action failed",
       }).catch(() => undefined);
       throw error;
@@ -157,6 +172,7 @@ export const cleanupUpload = internalAction({
   args: { uploadId: v.id("managedUploads") },
   returns: v.any(),
   handler: async (ctx, args) => {
+    await ctx.runMutation(anyApi.managedTranscription.reconcileManagedState, { limit: 100 });
     const data = await ctx.runQuery(anyApi.managedTranscription.readUploadForCleanup, { uploadId: args.uploadId });
     if (!data) return false;
     if (data.upload.state !== "cancelled" && data.upload.state !== "cleaned" && data.upload.expiresAt > Date.now()) return false;
@@ -166,13 +182,28 @@ export const cleanupUpload = internalAction({
   },
 });
 
+/** Scheduled reconciliation is intentionally at-least-once and delegates all
+ * state transitions to an idempotent mutation. */
+export const reconcileManagedState = internalAction({
+  args: { accountId: v.optional(v.string()), now: v.optional(v.number()), limit: v.optional(v.number()) },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    await ctx.scheduler.runAfter(5 * 60 * 1_000, anyApi.managedTranscriptionActions.reconcileManagedState, {});
+    return await ctx.runMutation(anyApi.managedTranscription.reconcileManagedState, {
+      accountId: args.accountId,
+      now: args.now,
+      limit: args.limit,
+    });
+  },
+});
+
 export const reconcileExpired = action({
   args: {},
   returns: v.any(),
   handler: async (ctx) => {
     const tokenIdentifier = await requireActionIdentity(ctx);
     const identity = await ctx.runQuery(anyApi.managedTranscription.identityAccount, { tokenIdentifier });
-    const uploads = await ctx.runQuery(anyApi.managedTranscription.expiredUploads, { accountId: identity.accountId });
+    const uploads = await ctx.runQuery(anyApi.managedTranscription.expiredUploads, { accountId: identity.accountId, limit: 50 });
     for (const upload of uploads) {
       await ctx.runAction(anyApi.managedTranscriptionActions.cleanupUpload, { uploadId: upload._id });
     }
@@ -198,6 +229,12 @@ function uploadToManifest(upload: any): TimelineManifest {
     partsManifestSha256: upload.partsManifestSha256,
     parts: upload.parts,
   };
+}
+
+function publicJob(job: any): any {
+  if (!job) return job;
+  const { executionToken: _executionToken, ...safe } = job;
+  return safe;
 }
 
 function sameDescriptor(left: { partNumber: number; sampleOffset: number; sampleCount: number; byteLength: number; sha256: string }, right: { partNumber: number; sampleOffset: number; sampleCount: number; byteLength: number; sha256: string }): boolean {

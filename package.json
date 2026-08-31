@@ -64,7 +64,8 @@
     "proof:m4": "npm run build:meetless && node scripts/prove-post-m3.mjs --provider fake --m4",
     "test:m4-proof": "vitest run --config vitest.config.ts test/m4-proof-validation.test.ts",
     "proof:m5": "npm run build:meetless && node scripts/prove-post-m3.mjs --provider fake --m5",
-    "test:m5-proof": "vitest run --config vitest.config.ts test/m5-proof-validation.test.ts"
+    "test:m5-proof": "vitest run --config vitest.config.ts test/m5-proof-validation.test.ts",
+    "proof:managed-convex-local": "node scripts/prove-managed-convex-local.mjs"
   },
   "devDependencies": {
     "@clack/core": "1.1.0",

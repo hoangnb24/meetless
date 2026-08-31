@@ -413,6 +413,18 @@ export class ConvexManagedTranscriptionService {
       const savedOutput = recording.savedOutput;
       const savedIdentity = await fileIdentity(savedOutput.destination);
       if (!sameIdentity(savedIdentity, savedOutput)) throw new Error("Managed durable saved MP3 identity does not match MeetingStore");
+      const readyTranscript = (await this.store.listTranscripts(recording.meetingId))
+        .find((candidate) => candidate.recordingId === recording.id && candidate.status === "ready");
+      if (readyTranscript) {
+        const readyJob = await this.options.managedUpload.jobStatusForRecording({
+          credential: input.credential,
+          recordingId: recording.id,
+        });
+        if (!readyJob || readyJob.status !== "succeeded") {
+          throw new Error("Managed MeetingStore publication is ready but its account-owned job is not recoverable");
+        }
+        return { job: readyJob, transcript: readyTranscript };
+      }
       const timeline = await this.timelinePreparer.prepare(recording);
       try {
         validateManagedConvexTimeline(timeline, recording.id, savedOutput.destination);

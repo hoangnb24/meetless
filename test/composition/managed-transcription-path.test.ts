@@ -263,6 +263,7 @@ describe("managed transcription composition", () => {
       query: vi.fn(async (name, args) => {
         convexCalls.push({ kind: "query", name, args });
         if (name.endsWith(":status")) return session;
+        if (name.endsWith(":jobStatusByRecording")) return job;
         if (name.endsWith(":jobStatus")) return job;
         throw new Error(`unexpected composition query ${name}`);
       }),
@@ -335,6 +336,21 @@ describe("managed transcription composition", () => {
     expect(session.state).toBe("cleaned");
     await expect(artifacts.get(recordingId)).resolves.toBeNull();
     expect(await readdir(path.join(config.storeRoot, "managed-artifacts"))).toEqual([]);
+
+    const callsBeforeFreshRetry = convexCalls.length;
+    const freshManaged = new ConvexManagedTranscriptionService(recordingService.store, {
+      lifecycle,
+      timelineArtifacts: artifacts,
+      managedUpload,
+    });
+    const freshRetry = await freshManaged.transcribe({
+      recordingId,
+      credential: { authToken: "host-issued-composition-token" },
+    });
+    expect(freshRetry.job).toMatchObject({ status: "succeeded", recordingId });
+    expect(freshRetry.transcript).toMatchObject({ status: "ready", recordingId });
+    expect(convexCalls.slice(callsBeforeFreshRetry).every((call) => call.kind === "query" && call.name.endsWith(":jobStatusByRecording"))).toBe(true);
+    await expect(artifacts.get(recordingId)).resolves.toBeNull();
   }, 30_000);
 
   test.each([

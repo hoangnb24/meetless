@@ -1044,6 +1044,7 @@ export interface ManagedConvexUploadFunctionNames {
   readonly runProvider: string;
   readonly settle: string;
   readonly jobStatus: string;
+  readonly jobStatusForRecording: string;
   readonly acknowledge: string;
 }
 
@@ -1057,6 +1058,7 @@ const DEFAULT_CONVEX_FUNCTIONS: ManagedConvexUploadFunctionNames = {
   runProvider: "managedTranscriptionActions:runProvider",
   settle: "managedTranscription:settleJob",
   jobStatus: "managedTranscription:jobStatus",
+  jobStatusForRecording: "managedTranscription:jobStatusByRecording",
   acknowledge: "managedTranscriptionActions:acknowledge",
 };
 
@@ -1204,6 +1206,15 @@ export class ConvexManagedUploadPort {
   }): Promise<ManagedConvexJob> {
     this.authenticate(input.credential);
     return parseConvexJob(await this.client.query(this.functions.jobStatus, { jobId: input.jobId }));
+  }
+
+  async jobStatusForRecording(input: {
+    credential: ManagedConvexCredential;
+    recordingId: string;
+  }): Promise<ManagedConvexJob | null> {
+    this.authenticate(input.credential);
+    const result = await this.client.query(this.functions.jobStatusForRecording, { recordingId: input.recordingId });
+    return result === null ? null : parseConvexJob(result);
   }
 
   async acknowledge(input: {

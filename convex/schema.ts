@@ -37,6 +37,7 @@ export default defineSchema({
       v.literal("revoked"),
     ),
     revokedAt: v.union(v.number(), v.null()),
+    naturalExpiryAt: v.optional(v.union(v.number(), v.null())),
     enrolledAt: v.number(),
   })
     .index("by_token_identifier", ["tokenIdentifier"])
@@ -90,11 +91,13 @@ export default defineSchema({
     state: v.union(v.literal("uploading"), v.literal("sealed"), v.literal("cancelled"), v.literal("cleaned")),
     createdAt: v.number(),
     expiresAt: v.number(),
+    cancelGeneration: v.optional(v.number()),
     jobId: v.union(v.id("managedJobs"), v.null()),
     acknowledgedAt: v.union(v.number(), v.null()),
   })
     .index("by_upload_key", ["accountId", "uploadKey"])
     .index("by_timeline", ["accountId", "recordingId", "audioId"])
+    .index("by_account", ["accountId"])
     .index("by_expiry", ["expiresAt"]),
 
   managedUploadParts: defineTable({
@@ -139,6 +142,9 @@ export default defineSchema({
     createdAt: v.number(),
     leaseExpiresAt: v.number(),
     expiresAt: v.number(),
+    executionToken: v.optional(v.union(v.string(), v.null())),
+    executionAttempt: v.optional(v.number()),
+    providerInvocationCount: v.optional(v.number()),
     providerCompletedAt: v.union(v.number(), v.null()),
     settledAt: v.union(v.number(), v.null()),
     failureReason: v.union(v.string(), v.null()),
@@ -148,7 +154,9 @@ export default defineSchema({
   })
     .index("by_timeline", ["accountId", "timelineKey"])
     .index("by_upload", ["uploadId"])
-    .index("by_expiry", ["expiresAt"]),
+    .index("by_expiry", ["expiresAt"])
+    .index("by_lease", ["leaseExpiresAt"])
+    .index("by_account_recording", ["accountId", "recordingId"]),
 
   managedCharges: defineTable({
     jobId: v.id("managedJobs"),
