@@ -2,14 +2,14 @@
 
 ## Current State
 
-- `plan_revision`: `v8`
-- `current_frontier`: `MANAGED-TRANSCRIPTION-FOUNDATION-R1-CONVERGENCE`
-- `state`: `FOUNDATION_PROOF_CORRECTION_PENDING`
-- `depends_on`: the accepted managed-transcription policy in product authority and ADR0005; proof must precede production backend, UI, provider-credential, or external-store work
-- `candidate`: predecessor `51ee0cd61bae184d9936e2105294465f8de16108` and its correction were rejected by Lead; the convergence correction candidate is prepared from `ee55af2179d00bac7856f178f0b87f5b4fee9f19` and remains pending Lead closeout. MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` remains accepted reusable evidence only
-- `pending_ruling`: Lead closeout of `MANAGED-TRANSCRIPTION-FOUNDATION-R1-CONVERGENCE`
-- `blocked_by`: no product-contract blocker remains; external App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication gates remain separately open
-- `next_action`: Lead closeout of the convergence correction candidate; real Convex/AVFoundation latency, production backend rollout, provider credential use, final UI, signing, upload, and publication remain separate gates
+- `plan_revision`: `v9`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-CONVEX-INTEGRATION-GATE`
+- `state`: `OWNER_EXTERNAL_GATE`
+- `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
+- `candidate`: managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`. MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` remains accepted reusable evidence only
+- `pending_ruling`: owner selection/provisioning of a Convex project and deployment region, plus authorization before any external project, credential, provider, or store mutation
+- `blocked_by`: no Convex project/configuration exists in the repository; real regional latency, upload/action limits, provider credentials, App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication require external targets or owner-gated mutation
+- `next_action`: prepare the production integration brief without external mutation; execute the real Convex/AVFoundation gate only after the owner supplies the deployment target and authorizes external configuration
 
 ## Ownership And Authority
 
@@ -172,7 +172,7 @@ quota reservation, and charging stay outside provider implementations.
   - Owner accepted quota, trial, device, restore, server duration, temporary
     data, job lease, expiry, refund/revocation, and free Ask/BYOK behavior on
     2026-08-31.
-- [ ] Close the bounded fake-backed foundation proof defined below. The original R1 candidate and first correction were rejected; the convergence correction has locally observed evidence recorded below and is pending Lead closeout.
+- [x] Close the bounded fake-backed foundation proof defined below. Lead accepted convergence candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88` after independent artifact inspection, focused composition proof, typecheck, build, and frozen-authority verification.
 - [x] Reconcile the executable Ask gate so Ask is free; Premium UI remains
   deferred because final UI work is outside this frontier.
 - [ ] Apply the profile-backed App Sandbox entitlement and In-App Purchase configuration.
@@ -261,23 +261,24 @@ outside this scope.
 
 Lead rejected predecessor candidate `51ee0cd61bae184d9936e2105294465f8de16108`
 for the frozen MTF-001 through MTF-008 finding set. Its proof claims are
-historical context only and are not acceptance evidence. The correction
-candidate below supersedes this disposition and remains pending Lead closeout.
+historical context only and are not acceptance evidence. The accepted
+convergence candidate below supersedes this disposition.
 
 ### R1 Correction Batch Disposition (2026-08-31; superseded by convergence)
 
 Lead rejected correction candidate `51ee0cd61bae184d9936e2105294465f8de16108`
 for the frozen MTF-001 through MTF-008 finding set. Its proof claims remain
 historical context only. The convergence correction below preserves the six
-closed findings and addresses the two remaining blockers; this plan does not
-mark any candidate accepted until Lead closes the active frontier.
+closed findings and addresses the two remaining blockers; Lead acceptance is
+recorded below.
 
-### R1 Convergence Correction Disposition (2026-08-31; pending Lead closeout)
+### R1 Convergence Correction Disposition (2026-08-31; accepted)
 
-The convergence correction candidate is prepared from
+The accepted convergence correction candidate is
+`cdc42fd44b8644b259a37876646cfd3f00aefa88`, prepared from
 `ee55af2179d00bac7856f178f0b87f5b4fee9f19` and preserves original base
-`64cf07d71bf82c798f8c3db417ada7d3c14ad7b5`. Local tests observe the following
-code/test evidence; Lead closeout remains pending:
+`64cf07d71bf82c798f8c3db417ada7d3c14ad7b5`. Lead acceptance observed the
+following code/test evidence:
 
 - `MTF-001`: `ManagedTranscriptionPolicy.reserve` reconciles expired leases
   before identity lookup; `reAdmit` requires active/grace entitlement, current
@@ -515,14 +516,22 @@ Observed convergence-correction validation on 2026-08-31:
   creation into finalization before source-chunk cleanup. A fake durable
   artifact sidecar and fresh-instance crash proof cover provider-result
   recovery; the real RecordingService composition covers pre-cleanup handoff
-  and post-cleanup publication. Locally observed proof remains pending Lead
-  closeout; authority files and external state remain unchanged.
+  and post-cleanup publication. Lead accepted candidate `cdc42fd4` after
+  independently rerunning the 8-file/94-test focused proof, typecheck,
+  `build:meetless`, `git diff --check`, and the frozen authority digest. Authority
+  files and external state remain unchanged.
+- 2026-08-31 `PLAN_RECONCILIATION v9`: the bounded fake-backed foundation is
+  closed. The next frontier is the production Convex/AVFoundation integration
+  gate. Repository inspection found no Convex project, configuration, or
+  deployment target, so no external project, credential, provider, or store
+  mutation is authorized or attempted. Internal briefing may proceed; real
+  regional latency and upload/action-limit proof waits on the owner gate.
 
 ## Validation
 
-Correction validation is the command evidence recorded above. The correction
+Acceptance validation is the command evidence recorded above. The accepted
 candidate locally exercises the fake policy and one real local MeetingStore
-publication composition path; it remains pending Lead closeout and does not
+publication composition path; it does not
 prove real Convex latency, regional placement, AVFoundation upload limits,
 production backend behavior, provider credentials, external purchase mutation,
 signing, App Review, or publication.
