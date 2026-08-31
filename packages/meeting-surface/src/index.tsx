@@ -571,15 +571,9 @@ export function MeetingListSurface({
   chatError = null,
   chatProvider = null,
   chatModel = null,
-  premiumAccess = null,
-  premiumPending = false,
-  premiumError = null,
   onChatSelection,
   onAskQuestion,
   onRetryQuestion,
-  onRefreshPremium,
-  onPurchasePremium,
-  onRestorePremium,
   onChangeHost,
   deleteConfirmationMeetingId = null,
   deletePending = false,
@@ -668,15 +662,9 @@ export function MeetingListSurface({
       chatError={chatError}
       chatProvider={chatProvider}
       chatModel={chatModel}
-      premiumAccess={premiumAccess}
-      premiumPending={premiumPending}
-      premiumError={premiumError}
       onChatSelection={onChatSelection}
       onAskQuestion={interactive ? onAskQuestion : undefined}
       onRetryQuestion={interactive ? onRetryQuestion : undefined}
-      onRefreshPremium={interactive ? onRefreshPremium : undefined}
-      onPurchasePremium={interactive ? onPurchasePremium : undefined}
-      onRestorePremium={interactive ? onRestorePremium : undefined}
       hostConnectionStatus={hostConnectionStatus}
       interactive={interactive}
       onRetryConnection={onRetryConnection}
@@ -1057,15 +1045,9 @@ interface MeetingDetailProps {
   chatError: string | null;
   chatProvider: string | null;
   chatModel: string | null;
-  premiumAccess: PremiumAccessWire | null;
-  premiumPending: boolean;
-  premiumError: string | null;
   onChatSelection?: (provider: string, model: string) => void;
   onAskQuestion?: (question: string) => Promise<void>;
   onRetryQuestion?: () => Promise<void>;
-  onRefreshPremium?: () => Promise<void>;
-  onPurchasePremium?: (packageId: "monthly" | "annual") => Promise<void>;
-  onRestorePremium?: () => Promise<void>;
   hostConnectionStatus: "online" | "connecting" | "reconnecting" | "offline" | "revalidating";
   interactive: boolean;
   onRetryConnection?: () => Promise<void> | void;
@@ -1107,15 +1089,9 @@ function MeetingDetail(props: MeetingDetailProps) {
     chatError,
     chatProvider,
     chatModel,
-    premiumAccess,
-    premiumPending,
-    premiumError,
     onChatSelection,
     onAskQuestion,
     onRetryQuestion,
-    onRefreshPremium,
-    onPurchasePremium,
-    onRestorePremium,
     hostConnectionStatus,
     interactive,
     onRetryConnection,
@@ -1225,15 +1201,9 @@ function MeetingDetail(props: MeetingDetailProps) {
             chatError={chatError}
             chatProvider={chatProvider}
             chatModel={chatModel}
-            premiumAccess={premiumAccess}
-            premiumPending={premiumPending}
-            premiumError={premiumError}
             onChatSelection={onChatSelection}
             onAskQuestion={onAskQuestion}
             onRetryQuestion={onRetryQuestion}
-            onRefreshPremium={onRefreshPremium}
-            onPurchasePremium={onPurchasePremium}
-            onRestorePremium={onRestorePremium}
             onCitation={onCitation}
             citationEvidence={layoutTier === "desktop" || task === "ask" ? citationEvidence : null}
             testID="ask-pane"
@@ -1436,15 +1406,9 @@ function AskPane({
   chatError,
   chatProvider,
   chatModel,
-  premiumAccess,
-  premiumPending,
-  premiumError,
   onChatSelection,
   onAskQuestion,
   onRetryQuestion,
-  onRefreshPremium,
-  onPurchasePremium,
-  onRestorePremium,
   onCitation,
   citationEvidence,
   testID,
@@ -1465,15 +1429,9 @@ function AskPane({
   chatError: string | null;
   chatProvider: string | null;
   chatModel: string | null;
-  premiumAccess: PremiumAccessWire | null;
-  premiumPending: boolean;
-  premiumError: string | null;
   onChatSelection?: (provider: string, model: string) => void;
   onAskQuestion?: (question: string) => Promise<void>;
   onRetryQuestion?: () => Promise<void>;
-  onRefreshPremium?: () => Promise<void>;
-  onPurchasePremium?: (packageId: "monthly" | "annual") => Promise<void>;
-  onRestorePremium?: () => Promise<void>;
   onCitation?: (citation: Pick<CitationWire, "meetingId" | "segmentId">) => void | Promise<void>;
   citationEvidence: CitationEvidenceState | null;
   testID: string;
@@ -1508,12 +1466,6 @@ function AskPane({
         onRetry={onRetryQuestion}
         provider={chatProvider}
         providers={chatProviders}
-        premiumAccess={premiumAccess}
-        premiumPending={premiumPending}
-        premiumError={premiumError}
-        onRefreshPremium={onRefreshPremium}
-        onPurchasePremium={onPurchasePremium}
-        onRestorePremium={onRestorePremium}
         thread={chatThread}
         transcript={transcript}
         error={chatError}
@@ -1981,12 +1933,6 @@ function MeetingChatPanel({
   onRetry,
   provider,
   providers,
-  premiumAccess,
-  premiumPending,
-  premiumError,
-  onRefreshPremium,
-  onPurchasePremium,
-  onRestorePremium,
   thread,
   transcript,
   interactive,
@@ -2008,12 +1954,6 @@ function MeetingChatPanel({
   onRetry?: () => Promise<void>;
   provider: string | null;
   providers: ChatProviderWire[];
-  premiumAccess: PremiumAccessWire | null;
-  premiumPending: boolean;
-  premiumError: string | null;
-  onRefreshPremium?: () => Promise<void>;
-  onPurchasePremium?: (packageId: "monthly" | "annual") => Promise<void>;
-  onRestorePremium?: () => Promise<void>;
   thread: MeetingChatThreadWire | null;
   transcript: TranscriptWire | null;
   interactive: boolean;
@@ -2021,24 +1961,15 @@ function MeetingChatPanel({
 }) {
   const [question, setQuestion] = useState("");
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
-  const [paywallOpen, setPaywallOpen] = useState(false);
   const running = thread?.status === "running" || loading;
   const hasTranscript = transcript?.status === "ready";
-  const premiumActive = premiumAccess?.status === "active";
   const hasPendingMessage = pendingQuestion !== null && (thread?.messages.some((message) => message.role === "user" && message.text === pendingQuestion) ?? false);
   useEffect(() => {
     if (hasPendingMessage) setPendingQuestion(null);
   }, [hasPendingMessage]);
-  useEffect(() => {
-    if (premiumActive) setPaywallOpen(false);
-  }, [premiumActive]);
   const submit = async () => {
     const normalized = question.trim();
     if (!normalized || !onAsk) return;
-    if (!premiumActive) {
-      setPaywallOpen(true);
-      return;
-    }
     setPendingQuestion(normalized);
     try {
       await onAsk(normalized);
@@ -2063,28 +1994,18 @@ function MeetingChatPanel({
           <View style={styles.chatFailure} testID="chat-failure" accessibilityLiveRegion="polite">
             <Text style={styles.failureText}>Ask could not complete. Your question is kept.</Text>
             <FocusPressable
-              accessibilityLabel={premiumActive ? "Retry question" : "Unlock Ask to retry"}
+              accessibilityLabel="Retry question"
               accessibilityRole="button"
-              accessibilityState={{ disabled: !interactive || running || (!chatCatalog ? !provider || !model : !chatSelection) || (premiumActive && !onRetry) }}
-              disabled={!interactive || running || (!chatCatalog ? !provider || !model : !chatSelection) || (premiumActive && !onRetry)}
-              onPress={() => premiumActive ? void onRetry?.() : setPaywallOpen(true)}
+              accessibilityState={{ disabled: !interactive || running || (!chatCatalog ? !provider || !model : !chatSelection) || !onRetry }}
+              disabled={!interactive || running || (!chatCatalog ? !provider || !model : !chatSelection) || !onRetry}
+              onPress={() => void onRetry?.()}
               style={styles.secondaryButtonSmall}
               testID="chat-retry"
-            ><Text style={styles.secondaryButtonText}>{premiumActive ? "Retry question" : "Unlock Ask to retry"}</Text></FocusPressable>
+            ><Text style={styles.secondaryButtonText}>Retry question</Text></FocusPressable>
           </View>
         ) : null}
         {error ? <Text style={styles.failureText} accessibilityLiveRegion="polite" testID="chat-error">Ask could not complete. Retry is available.</Text> : null}
         {citationEvidence ? <CitationEvidenceCard evidence={citationEvidence} interactive={interactive} onPlay={onCitation} /> : null}
-        {paywallOpen ? <PremiumPaywall
-          access={premiumAccess}
-          error={premiumError}
-          interactive={interactive}
-          onClose={() => setPaywallOpen(false)}
-          onPurchase={onPurchasePremium}
-          onRefresh={onRefreshPremium}
-          onRestore={onRestorePremium}
-          pending={premiumPending}
-        /> : null}
         {!thread?.messages.length && !running && hasTranscript ? <Text style={styles.askEmpty}>Ask a question about this meeting.</Text> : null}
         {!hasTranscript ? <Text style={styles.askEmpty}>Ask opens when the transcript is ready.</Text> : null}
       </ScrollView>
@@ -2120,66 +2041,9 @@ function MeetingChatPanel({
             style={[styles.primaryButton, layoutTier === "phone" && styles.chatPhonePrimaryButton]}
             testID="chat-ask"
           >
-            <Text style={styles.buttonText}>{premiumActive ? "Ask" : "Unlock Ask"}</Text>
+            <Text style={styles.buttonText}>Ask</Text>
           </FocusPressable>
         </View>
-      </View>
-    </View>
-  );
-}
-
-function PremiumPaywall({
-  access,
-  error,
-  interactive,
-  onClose,
-  onPurchase,
-  onRefresh,
-  onRestore,
-  pending,
-}: {
-  access: PremiumAccessWire | null;
-  error: string | null;
-  interactive: boolean;
-  onClose(): void;
-  onPurchase?: (packageId: "monthly" | "annual") => Promise<void>;
-  onRefresh?: () => Promise<void>;
-  onRestore?: () => Promise<void>;
-  pending: boolean;
-}) {
-  const unavailable = !access || access.status === "unavailable";
-  return (
-    <View style={styles.premiumPaywall} testID="premium-paywall">
-      <View style={styles.premiumHeading}>
-        <View style={styles.premiumHeadingCopy}>
-          <Text style={styles.premiumTitle}>Meetless Premium</Text>
-          <Text style={styles.premiumText}>Ask uses this meeting’s transcript and cited evidence. Recording, transcripts, and citation playback stay free.</Text>
-        </View>
-        <FocusPressable accessibilityLabel="Close Premium plans" accessibilityRole="button" disabled={pending} onPress={onClose} style={styles.premiumClose} testID="premium-close"><Text style={styles.secondaryButtonText}>Close</Text></FocusPressable>
-      </View>
-      {unavailable ? <Text style={styles.premiumUnavailable} testID="premium-unavailable">Purchases are unavailable right now. Your free features still work.</Text> : null}
-      <View style={styles.premiumPackages}>
-        {(access?.packages ?? []).map((item) => (
-          <FocusPressable
-            key={item.packageId}
-            accessibilityLabel={`Choose ${item.packageId} Premium`}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: !interactive || pending || !onPurchase }}
-            disabled={!interactive || pending || !onPurchase}
-            onPress={() => void onPurchase?.(item.packageId)}
-            style={styles.premiumPackage}
-            testID={`premium-purchase-${item.packageId}`}
-          >
-            <Text style={styles.premiumPackageName}>{item.packageId === "monthly" ? "Monthly" : "Annual"}</Text>
-            <Text style={styles.premiumPackagePrice}>{item.localizedPrice}</Text>
-            {item.trialEligible ? <Text style={styles.premiumTrial}>Includes a 7-day free trial</Text> : null}
-          </FocusPressable>
-        ))}
-      </View>
-      {error ? <Text accessibilityRole="alert" style={styles.failureText} testID="premium-error">{error}</Text> : null}
-      <View style={styles.premiumActions}>
-        {unavailable ? <FocusPressable accessibilityLabel="Retry Premium plans" accessibilityRole="button" disabled={!interactive || pending || !onRefresh} onPress={() => void onRefresh?.()} style={styles.ghostButton} testID="premium-refresh"><Text style={styles.ghostButtonText}>Retry plans</Text></FocusPressable> : null}
-        <FocusPressable accessibilityLabel="Restore Premium purchases" accessibilityRole="button" disabled={!interactive || pending || !onRestore} onPress={() => void onRestore?.()} style={styles.ghostButton} testID="premium-restore"><Text style={styles.ghostButtonText}>{pending ? "Checking…" : "Restore purchases"}</Text></FocusPressable>
       </View>
     </View>
   );
@@ -2577,19 +2441,6 @@ const styles = StyleSheet.create({
   chatCitationText: { color: colors.accentHover, fontFamily: mono, fontSize: 11 },
   chatProgress: { color: colors.foreground, fontSize: 13.5, paddingVertical: 6 },
   chatFailure: { gap: 8, padding: 12, borderColor: "rgba(220,38,38,0.35)", borderWidth: 1, borderRadius: 8, backgroundColor: "rgba(220,38,38,0.08)" },
-  premiumPaywall: { gap: 12, padding: 14, borderColor: "rgba(130,143,255,0.4)", borderWidth: 1, borderRadius: 10, backgroundColor: "rgba(94,106,210,0.1)" },
-  premiumHeading: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
-  premiumHeadingCopy: { flex: 1, minWidth: 0, gap: 5 },
-  premiumTitle: { color: colors.foreground, fontSize: 15, fontWeight: "600" },
-  premiumText: { color: colors.secondary, fontSize: 12.5, lineHeight: 18 },
-  premiumClose: { minHeight: 32, justifyContent: "center", paddingHorizontal: 8 },
-  premiumUnavailable: { color: colors.warning, fontSize: 12.5, lineHeight: 18 },
-  premiumPackages: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  premiumPackage: { flexGrow: 1, minWidth: 132, gap: 3, padding: 10, borderColor: colors.border, borderWidth: 1, borderRadius: 8, backgroundColor: "rgba(255,255,255,0.04)" },
-  premiumPackageName: { color: colors.foreground, fontSize: 12.5, fontWeight: "600" },
-  premiumPackagePrice: { color: colors.accentHover, fontSize: 14, fontWeight: "600" },
-  premiumTrial: { color: colors.secondary, fontSize: 11.5 },
-  premiumActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   askEmpty: { color: colors.muted, fontSize: 13.5, paddingVertical: 16 },
   chatComposer: { flexShrink: 0, gap: 8, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16, borderTopColor: colors.borderSoft, borderTopWidth: 1, zIndex: 20, overflow: "visible" },
   chatComposerRow: { flexDirection: "row", alignItems: "flex-end", gap: 8 },

@@ -19,13 +19,6 @@ beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
-const activePremium = {
-  entitlement: "premium" as const,
-  status: "active" as const,
-  packages: [],
-  reason: null,
-};
-
 describe("global recording strip", () => {
   test("clears desktop recording controls below the Electron titlebar hit-test region", async () => {
     const oldStripStyle = { minHeight: 64, paddingVertical: 9 };
@@ -427,7 +420,7 @@ describe("companion meeting surface", () => {
           selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
           chatProviders={[{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }]}
           chatProvider="codex" chatModel="gpt-5"
-          premiumAccess={activePremium}
+          premiumAccess={{ entitlement: "premium", status: "unavailable", packages: [], reason: "store_unavailable" }}
           chatThread={{
             meetingId: "m-1", status: "failed",
             messages: [
@@ -444,6 +437,9 @@ describe("companion meeting surface", () => {
     expect(renderer!.root.findByProps({ testID: "meeting-chat" })).toBeTruthy();
     expect(renderer!.root.findAllByType("Text").some((node) =>
       node.props.children === "The meeting does not contain enough evidence.")).toBe(true);
+    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === "Retry question")).toBe(true);
+    expect(renderer!.root.findAllByType("Text").some((node) => typeof node.props.children === "string" && node.props.children.includes("Unlock"))).toBe(false);
+    expect(renderer!.root.findAllByProps({ testID: "premium-paywall" })).toHaveLength(0);
     await act(async () => { renderer!.root.findByProps({ testID: "chat-retry" }).props.onPress(); });
     expect(onRetry).toHaveBeenCalledOnce();
     renderer!.unmount();
@@ -471,7 +467,6 @@ describe("companion meeting surface", () => {
           chatSelection={selection}
           chatFeatures={{ version: 1, selection, status: "ready", features: [], error: null }}
           chatProvider="codex" chatModel="gpt-5" onAskQuestion={onAsk} onCitation={onCitation}
-          premiumAccess={activePremium}
           chatThread={{
             meetingId: "m-1", status: "ready",
             messages: [{ role: "assistant", outcome: "supported", text: "Decision", citations: [{ meetingId: "m-1", segmentId: "segment-1" }], createdAt: "2026-08-21T00:00:01.000Z" }],
@@ -494,10 +489,12 @@ describe("companion meeting surface", () => {
     renderer!.unmount();
   });
 
-  test("keeps the Ask draft and opens store-localized Premium plans before model execution", async () => {
+  test.each([
+    ["inactive", { entitlement: "premium", status: "inactive", packages: [], reason: null }],
+    ["unavailable", { entitlement: "premium", status: "unavailable", packages: [], reason: "store_unavailable" }],
+    ["missing", null],
+  ] as const)("keeps Ask free with %s Premium state", async (_state, premiumAccess) => {
     const onAsk = vi.fn(async () => undefined);
-    const onPurchase = vi.fn(async () => undefined);
-    const onRestore = vi.fn(async () => undefined);
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
@@ -507,33 +504,22 @@ describe("companion meeting surface", () => {
           selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
           chatProviders={[{ id: "codex", label: "Codex", models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }] }]}
           chatProvider="codex" chatModel="gpt-5" onAskQuestion={onAsk}
-          premiumAccess={{
-            entitlement: "premium", status: "inactive", reason: null,
-            packages: [{
-              packageId: "annual", productId: "com.meetless.app.premium.annual",
-              localizedPrice: "799.000 ₫", trialEligible: true,
-            }],
-          }}
-          onPurchasePremium={onPurchase}
-          onRestorePremium={onRestore}
+          premiumAccess={premiumAccess}
         />,
       );
     });
 
-    await act(async () => { renderer!.root.findByProps({ testID: "chat-question-input" }).props.onChangeText(" What changed? "); });
+    const input = renderer!.root.findByProps({ testID: "chat-question-input" });
+    const ask = renderer!.root.findByProps({ testID: "chat-ask" });
+    await act(async () => { input.props.onChangeText(" What changed? "); });
+    expect(ask.props.disabled).toBe(false);
+    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === "Ask")).toBe(true);
+    expect(renderer!.root.findAllByType("Text").some((node) => typeof node.props.children === "string" && node.props.children.includes("Unlock"))).toBe(false);
     await act(async () => { renderer!.root.findByProps({ testID: "chat-ask" }).props.onPress(); });
-    expect(onAsk).not.toHaveBeenCalled();
-    expect(renderer!.root.findByProps({ testID: "chat-question-input" }).props.value).toBe(" What changed? ");
-    expect(renderer!.root.findByProps({ testID: "premium-paywall" })).toBeTruthy();
-    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === "799.000 ₫")).toBe(true);
-    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === "Includes a 7-day free trial")).toBe(true);
-    await act(async () => { renderer!.root.findByProps({ testID: "premium-purchase-annual" }).props.onPress(); });
-    expect(onPurchase).toHaveBeenCalledWith("annual");
-    await act(async () => { renderer!.root.findByProps({ testID: "premium-restore" }).props.onPress(); });
-    expect(onRestore).toHaveBeenCalledOnce();
-    await act(async () => { renderer!.root.findByProps({ testID: "premium-close" }).props.onPress(); });
+    expect(onAsk).toHaveBeenCalledOnce();
+    expect(onAsk).toHaveBeenCalledWith("What changed?");
+    expect(renderer!.root.findByProps({ testID: "chat-question-input" }).props.value).toBe("");
     expect(renderer!.root.findAllByProps({ testID: "premium-paywall" })).toHaveLength(0);
-    expect(renderer!.root.findByProps({ testID: "chat-question-input" }).props.value).toBe(" What changed? ");
     renderer!.unmount();
   });
 });

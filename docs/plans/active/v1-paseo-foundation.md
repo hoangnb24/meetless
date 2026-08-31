@@ -873,6 +873,22 @@ Observed convergence-correction validation on 2026-08-31:
   credentials, webhook, sandbox purchase/restore, availability, deployment,
   review, and publication remain open. The current combined authority digest is
   `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`.
+- 2026-08-31 `ASK-FREE-UI-CORRECTION-R1`: from exact base
+  `2e4a4b2099dc668429fc8d2dee1f2fb46928b1b4`, the meeting-surface Ask path was
+  corrected to ignore inactive, unavailable, and missing Premium state. Ask
+  now invokes its normalized question and clears the successful draft;
+  recoverable retry remains `Retry question`; the action checks remain
+  transcript-ready, provider/model or catalog selection, interactive, running,
+  and callback availability. The Ask-only paywall, `Unlock Ask` labels, and
+  Premium state/effect were removed. The public surface Premium props remain
+  accepted for the existing managed-transcription host wiring but are no
+  longer forwarded into Ask. Changed paths are exactly
+  `packages/meeting-surface/src/index.tsx`,
+  `packages/meeting-surface/test/surface.test.tsx`, and this plan. Observed
+  proof: the focused surface suite passed 1 file and 30 tests;
+  `npm run typecheck`, `npm run build:meetless`, and `git diff --check` passed;
+  a scoped search found no `Unlock Ask` or `premiumActive` in the source/test
+  paths. No hosted-dev frontier, authority digest, or external state changed.
 
 ### R3 local Convex implementation predecessor (rejected by Lead)
 
