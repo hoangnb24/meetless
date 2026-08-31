@@ -45,6 +45,42 @@ and annual packages. The app supports purchase and restore. A missing,
 unconfigured, or unreachable purchase service never grants Premium, but also
 does not disable Ask, local meeting evidence, or user-supplied transcription.
 
+### Observed catalog state (2026-08-31)
+
+The following catalog objects were observed in the owner-selected Apple and
+RevenueCat configurations. These observations do not prove credentials,
+sandbox purchase or restore, webhook delivery, production deployment,
+availability, review, or publication.
+
+Apple:
+
+- App ID `6807070739`, bundle ID `com.meetless.app`.
+- Subscription group `22348334`.
+- Monthly Apple ID `6807071303`, product
+  `com.meetless.app.premium.monthly`, US price `$9.99`.
+- Annual Apple ID `6807073268`, product
+  `com.meetless.app.premium.annual`, US price `$79.99`.
+- Both products have seven-day offers observed from 2026-08-31 through `No End
+  Date`; Family Sharing is off.
+- The quota-number-neutral descriptions are: monthly, `Monthly plan with
+  managed transcription allowance`; annual, `Annual plan with monthly managed
+  transcription quota`.
+
+RevenueCat:
+
+- Project `proj0d7b4465` (`Meetless`).
+- App `appe0ef526253`, type `app_store`, bundle ID `com.meetless.app`.
+- Products `prod18ec63f975` (monthly) and `prod381da0b787` (annual).
+- Entitlement `entl69875a0345`, lookup `premium`, contains both products.
+- Current/default offering `ofrng235b5d5086`, with packages
+  `pkge846368fb40` (`$rc_monthly`) and `pkgeb835b3ed04` (`$rc_annual`).
+- No Apple credentials, webhook, or RevenueCat secret was configured. The
+  owner-selected `Productivity` category was not persisted because the
+  available MCP/API surface exposes no category field; this is a non-runtime
+  metadata gap, not completed configuration.
+- `app_store` is the accepted RevenueCat type for a new post-2020 universal
+  Apple macOS app; legacy `mac_app_store` is not required.
+
 ### Managed-transcription account and quota
 
 The backend derives one billing and quota account from server-verified App
@@ -56,12 +92,16 @@ Restore on a new Mac binds that device to the existing account and shared quota;
 it does not reset quota or automatically revoke another Mac. V1 backend
 enrollment is macOS-host only, and Family Sharing is disabled.
 
-Monthly and annual products receive 180,000 seconds in each
-subscription-anchored monthly period; annual allowance is released one monthly
-period at a time and unused allowance does not roll over. The seven-day trial
-receives 18,000 seconds. Product changes and restore do not reset a current
-period. Each period snapshots its configured limit, so a later reduction cannot
-change an already-started period.
+Monthly and annual products receive one backend-configured allowance in each
+subscription-anchored monthly period. The subscriber allowance amount is not
+finalized. Production must fail closed and remain undeployable without an
+explicit configured subscriber allowance. A non-production hosted canary may
+use an explicitly labeled test allowance, never product authority. Annual
+allowance is released one monthly period at a time and unused allowance does
+not roll over. The seven-day trial receives 18,000 seconds total during the
+seven-day trial. Product changes and restore do not reset a current period.
+Each period snapshots its configured limit, so a later reduction cannot change
+an already-started period.
 
 Admission atomically reserves quota. Settlement is idempotent for the stable
 subscriber, audio, and chunk identities: duplicate requests, retries, and

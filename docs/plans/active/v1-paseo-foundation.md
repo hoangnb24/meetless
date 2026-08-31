@@ -2,15 +2,16 @@
 
 ## Current State
 
-- `plan_revision`: `v18`
-- `current_frontier`: `MANAGED-TRANSCRIPTION-CONVEX-PRODUCTION-DEPLOYMENT-GATE`
+- `plan_revision`: `v19`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-CONVEX-HOSTED-DEV-INTEGRATION`
 - `state`: `OWNER_EXTERNAL_GATE`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`; the Convex local-first R3 convergence is accepted at `f93b705561eb6118c9ccbe7d0f9ae146db4f5df8`. Rejected predecessors `966b9abd78481db001e912cc2e60d895c00bef37`, `0a82b39f758e8c2ec19e831ca1c8c1b75529763d`, and `522faa0b1d1e78e54f0e7d0fc813fc0a0706ab01` remain history only.
-- `authority_contract_sha256`: `87625cb59c10e399767e34a2ecfd2bd92bf7e3a7598673fec267479dfdd7860e`
-- `pending_ruling`: owner selection of the existing Convex Pro project/deployment region and authorization/material for production lineage authentication, credentials, and provider access
-- `blocked_by`: local implementation is accepted; hosted deployment, US East versus EU West, production auth/lineage, credentials, provider calls, and hosted measurements require owner/external inputs. MAS/RevenueCat release work below is a separate frontier
-- `next_action`: when the owner supplies the Convex target and region, deploy first to the authorized non-production/preview target, run hosted upload/provider/recovery/cleanup measurements, and promote only after observed acceptance
+- `authority_contract_sha256`: `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`
+- `Convex target`: owner-selected/observed project `Meetless`, existing dev deployment `frugal-mandrill-646`, region `US East (N. Virginia)`; production deployment does not exist
+- `pending_ruling`: explicit production subscriber allowance amount remains open; production lineage authentication, credentials, provider access, and external purchase integration also remain owner/external gates
+- `blocked_by`: local implementation is accepted and the authorized dev target is known; production allowance, production deployment, credentials, webhook/secret configuration, provider spend/calls, sandbox purchase/restore, availability, review, and publication require owner/external inputs
+- `next_action`: advance the configuration seam and hosted-dev auth/webhook/provider integration against authorized Convex dev when credentials and real provider spend are supplied; keep production undeployable without an explicit subscriber allowance and do not choose its amount
 
 ## Ownership And Authority
 
@@ -32,9 +33,11 @@ in `Current State`.
 The owner changed the release path on 2026-08-30 from direct DMG to the Mac App
 Store for RevenueCat Shipaton 2026. On 2026-08-31 the owner also replaced the
 initial Premium gate: Ask and user-supplied transcription remain free; Premium
-funds Meetless-managed transcription. This plan owns that foundation contract,
-the store sandbox, RevenueCat purchase integration, App Store Connect
-submission, and launch-evidence frontier.
+funds Meetless-managed transcription. The owner clarified that the trial
+remains seven days with a five-hour total allowance, while the subscriber
+monthly allowance amount remains intentionally unfinalized. This plan owns
+that foundation contract, the store sandbox, RevenueCat purchase integration,
+App Store Connect submission, and launch-evidence frontier.
 
 ## Ownership And Boundaries
 
@@ -130,10 +133,14 @@ lineage, device credentials, atomic quota ledger, managed jobs, and temporary
 uploads against a local deployment. It does not replace local `MeetingStore`
 ownership of transcripts, citations, and meeting evidence.
 
-The managed allowance is a backend-configured 50 hours (180,000 seconds) in
-each subscription-anchored monthly period, without rollover. The seven-day
-trial receives five hours (18,000 seconds). Each period snapshots its assigned
-limit, so a later reduction cannot change an already-started period.
+The managed subscriber allowance is one backend-configured allowance in each
+subscription-anchored monthly period, without rollover; its amount is not
+finalized. Production must fail closed and remain undeployable without an
+explicit configured subscriber allowance. A non-production hosted canary may
+use an explicitly labeled test allowance, never product authority. The
+seven-day trial receives five hours (18,000 seconds) total during the trial.
+Each period snapshots its assigned configured limit, so a later reduction
+cannot change an already-started period.
 
 `TranscriptionProvider` remains the execution abstraction. Provider/engine
 selection may change independently from payment mode; entitlement, admission,
@@ -171,29 +178,75 @@ quota reservation, and charging stay outside provider implementations.
     build-scoped and contains no credential.
 - [x] Decide and promote the managed-transcription product contracts into
   durable product/ADR authority.
-  - Owner accepted quota, trial, device, restore, server duration, temporary
-    data, job lease, expiry, refund/revocation, and free Ask/BYOK behavior on
-    2026-08-31.
+  - Owner accepted trial, device, restore, server duration, temporary data,
+    job lease, expiry, refund/revocation, and free Ask/BYOK behavior on
+    2026-08-31. Subscriber monthly allowance behavior is authoritative, but
+    its amount remains intentionally unfinalized.
 - [x] Close the bounded fake-backed foundation proof defined below. Lead accepted convergence candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88` after independent artifact inspection, focused composition proof, typecheck, build, and frozen-authority verification.
 - [x] Freeze the local-first Convex implementation contract in product and ADR
   authority on 2026-08-31: explicit user action gates upload; ordered
   ten-minute transport/provider chunks remain one logical billing timeline; the
   manifest and server-derived PCM duration are authoritative; V1 has no
   diarization or user-facing 60-minute cap.
-- [ ] Close the region-neutral local Convex boundary correction using generated
-  upload URLs/storage IDs; production deployment, region, credentials, and
-  provider access remain deferred gates.
+- [x] Close the region-neutral local Convex boundary correction using generated
+  upload URLs/storage IDs; production deployment, credentials, and provider
+  access remain deferred gates.
 - [x] Reconcile the executable Ask gate so Ask is free; Premium UI remains
   deferred because final UI work is outside this frontier.
 - [ ] Apply the profile-backed App Sandbox entitlement and In-App Purchase configuration.
 - [ ] Replace unrestricted writable paths with container/export-safe behavior.
 - [ ] Produce and validate a sandbox development build.
-- [ ] Configure RevenueCat project, entitlement, offering, and products.
-- [ ] Configure App Store Connect app, subscription group, products, prices, trial, and agreements.
+- [x] Record the observed Apple catalog app, subscription group, products,
+  prices, seven-day offers, quota-neutral descriptions, and Family Sharing-off
+  state; availability and release evidence remain open.
+- [x] Record the observed RevenueCat project, `app_store` app, products,
+  `premium` entitlement, default offering, and monthly/annual packages.
+- [ ] Configure Apple credentials and prove sandbox purchase and restore.
+- [ ] Configure and verify the RevenueCat webhook and secret.
+- [ ] Confirm Apple availability/eligibility and complete App Store Connect
+  agreements and release metadata.
+- [ ] Configure the production subscriber allowance; until an explicit value
+  exists, production remains undeployable. Do not select that value in this
+  frontier.
 - [ ] Prove sandbox purchase, cancellation, restore, and offline/free behavior.
 - [ ] Capture icon, screenshot, demo, privacy, review, and launch evidence.
 - [ ] Upload the exact build, wait for processing, and submit it to App Review.
 - [ ] Record the public Mac App Store URL after approval.
+
+### Observed Apple And RevenueCat Catalog State (2026-08-31)
+
+The catalog objects below are observed configuration state, not proof of
+credentials, sandbox purchase or restore, webhook delivery, production
+deployment, availability, review, or publication.
+
+Apple:
+
+- App ID `6807070739`, bundle ID `com.meetless.app`.
+- Subscription group `22348334`.
+- Monthly Apple ID `6807071303`, product
+  `com.meetless.app.premium.monthly`, US price `$9.99`.
+- Annual Apple ID `6807073268`, product
+  `com.meetless.app.premium.annual`, US price `$79.99`.
+- Both products have seven-day offers observed from 2026-08-31 through `No End
+  Date`; Family Sharing is off.
+- Apple descriptions are quota-number-neutral: monthly, `Monthly plan with
+  managed transcription allowance`; annual, `Annual plan with monthly managed
+  transcription quota`.
+
+RevenueCat:
+
+- Project `proj0d7b4465` (`Meetless`).
+- App `appe0ef526253`, type `app_store`, bundle ID `com.meetless.app`.
+- Products `prod18ec63f975` (monthly) and `prod381da0b787` (annual).
+- Entitlement `entl69875a0345`, lookup `premium`, contains both products.
+- Current/default offering `ofrng235b5d5086`, with packages
+  `pkge846368fb40` (`$rc_monthly`) and `pkgeb835b3ed04` (`$rc_annual`).
+- No Apple credentials, webhook, or RevenueCat secret was configured. The
+  owner-selected `Productivity` category was not persisted because the
+  available MCP/API surface exposes no category field; this is a non-runtime
+  metadata gap, not completed configuration.
+- `app_store` is the accepted RevenueCat type for a new post-2020 universal
+  Apple macOS app; legacy `mac_app_store` is not required.
 
 ### Accepted Direction And Dependency Boundaries
 
@@ -226,10 +279,14 @@ quota reservation, and charging stay outside provider implementations.
 
 ### Accepted Owner Contract (2026-08-31)
 
-- Monthly and annual products receive 180,000 seconds in each
-  subscription-anchored monthly period without rollover; the seven-day trial
-  receives 18,000 seconds. Restore and product changes do not reset a period,
-  and limit changes apply only to the next period.
+- Monthly and annual products receive one backend-configured allowance in each
+  subscription-anchored monthly period without rollover; its amount is not
+  finalized. Production must fail closed and remain undeployable without an
+  explicit configured subscriber allowance. A non-production hosted canary may
+  use an explicitly labeled test allowance, never product authority. The
+  seven-day trial receives 18,000 seconds total during the seven-day trial.
+  Restore and product changes do not reset a period, and limit changes apply
+  only to the next period.
 - One verified subscription account may enroll three Macs. Restore binds a new
   Mac to the same account and quota without automatically revoking an old Mac.
 - The server derives billable duration from validated sample count on one 16
@@ -548,7 +605,7 @@ Observed convergence proof and Lead acceptance:
   proof, typecheck, build, diff check, and frozen authority digest. The only
   remaining work is owner-gated production integration and release evidence.
 
-### Live Frontier: MANAGED-TRANSCRIPTION-CONVEX-LOCAL-FIRST-IMPLEMENTATION
+### Completed Frontier: MANAGED-TRANSCRIPTION-CONVEX-LOCAL-FIRST-IMPLEMENTATION
 
 Plan revision `v15` freezes the accepted managed-transcription behavior and
 authorizes repository implementation against a region-neutral local Convex
@@ -579,11 +636,42 @@ The frozen implementation contract is:
   audio bytes do not pass through HTTP action bodies. Provider execution remains
   replaceable, and Ask/BYOK remain free.
 
-The local implementation may proceed now against a local Convex deployment.
-Only production Convex deployment, production region selection (US East versus
-EU West), credentials, and provider access/calls remain owner/external gates.
-This plan revision claims no Convex deployment, provider behavior, production
-latency, or external mutation.
+The local implementation was accepted at `f93b705561eb6118c9ccbe7d0f9ae146db4f5df8`.
+The observed Convex development target is recorded in `Current State`; no
+production deployment, production allowance, provider behavior, production
+latency, or external mutation is claimed here.
+
+### Live Frontier: MANAGED-TRANSCRIPTION-CONVEX-HOSTED-DEV-INTEGRATION
+
+This frontier advances the accepted local seam toward the owner-selected
+Convex development target without selecting a production subscriber
+allowance. It may proceed locally and against authorized Convex dev for the
+configuration seam, authenticated development wiring, webhook handling, and
+provider integration. External credentials and real provider spend remain
+gated, and a hosted canary allowance must be explicitly labeled as test-only.
+
+The frontier must preserve these boundaries:
+
+- The subscriber allowance is configuration, not a newly chosen product
+  number. Production fails closed and remains undeployable until an explicit
+  subscriber allowance is configured; the seven-day trial remains five hours
+  (`18,000` seconds) total.
+- Each subscription-anchored monthly period snapshots its configured limit;
+  unused allowance does not roll over, and later configuration changes apply
+  only to later periods.
+- Authenticated development requests continue to use server-verified
+  subscription lineage and device credentials. RevenueCat lookup state and
+  client-selected subscriber IDs do not become authorization proof.
+- Generated Convex upload URLs and storage IDs carry bounded physical chunks;
+  the immutable manifest, server-derived PCM duration, one logical billing
+  timeline, idempotent settlement, temporary-data TTL, job lease, and local
+  `MeetingStore` publication boundary remain unchanged.
+
+The next credible proof is a hosted-dev canary with explicit test labeling:
+authentication and webhook receipt, catalog-to-entitlement mapping, upload
+and recovery behavior, provider invocation only when authorized, and cleanup.
+It must not claim production allowance, production deployment, or provider
+spend until those owner gates are supplied and observed.
 
 ### Risks And Recovery
 
@@ -613,11 +701,14 @@ latency, or external mutation.
 
 - Foundation R1: the fake-backed identity, quota, idempotency, duration,
   cleanup, local-publication, and free-path proof above.
-- Current local Convex frontier: prove generated upload URL/storage-ID
-  transfer, ordered at-most-10-minute physical chunks behind one logical job,
-  immutable manifest validation, and retry/idempotency against a local
-  deployment. This docs revision authorizes that work but does not claim a
-  deployment or production behavior.
+- Completed local Convex frontier: generated upload URL/storage-ID transfer,
+  ordered at-most-10-minute physical chunks behind one logical job, immutable
+  manifest validation, and retry/idempotency against a local deployment. This
+  evidence does not claim hosted production behavior.
+- Current hosted-dev frontier: add the configuration seam and authenticated
+  development auth/webhook/provider integration against the owner-selected
+  Convex dev target. External credentials and real provider spend remain
+  gated; do not select the production subscriber allowance.
 - Focused R1: free Ask/BYOK policy, managed transcription admission, and
   existing meeting-store publication proof. Purchase adapter, renderer
   boundary, and sandbox entitlement tests remain separate reusable evidence.
@@ -771,6 +862,17 @@ Observed convergence-correction validation on 2026-08-31:
   Region-neutral local Convex implementation is authorized; only production
   deployment/region, credentials, and provider access/calls remain deferred
   owner/external gates.
+- 2026-08-31 `PLAN_RECONCILIATION v19`: the owner clarified that the seven-day
+  trial remains five hours (`18,000` seconds) total, while reopening the
+  subscriber monthly allowance amount. Product and ADR authority now describe
+  that allowance as backend-configured with no selected production number;
+  production fails closed and remains undeployable without an explicit value.
+  The owner-selected/observed Convex target is project `Meetless`, dev
+  deployment `frugal-mandrill-646`, US East (N. Virginia), with no production
+  deployment. Apple and RevenueCat catalog observations are recorded above;
+  credentials, webhook, sandbox purchase/restore, availability, deployment,
+  review, and publication remain open. The current combined authority digest is
+  `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`.
 
 ### R3 local Convex implementation predecessor (rejected by Lead)
 
@@ -908,8 +1010,9 @@ Observed mechanical proof on 2026-08-31:
 
 The seven-finding lifecycle correction evidence remains retained as closeout
 context; its exact residual and current convergence candidate are recorded
-below. The frozen combined authority digest remains
-`87625cb59c10e399767e34a2ecfd2bd92bf7e3a7598673fec267479dfdd7860e`.
+below. The prior local implementation authority digest was
+`87625cb59c10e399767e34a2ecfd2bd92bf7e3a7598673fec267479dfdd7860e`; the
+current reconciled digest is recorded in `Current State` and the v19 record.
 
 ### R3 device convergence (accepted)
 
@@ -962,6 +1065,7 @@ prove real Convex latency, regional placement, AVFoundation upload limits,
 production backend behavior, provider credentials, external purchase mutation,
 signing, App Review, or publication.
 
-This v18 docs revision records local implementation acceptance and does not claim
-that a Convex project, deployment, provider call, production latency, or
-external mutation exists.
+This v19 docs revision records local implementation acceptance and observed
+development/catalog state; it does not claim production allowance, production
+deployment, provider call, production latency, external credentials, sandbox
+purchase/restore, review, publication, or other external mutation.

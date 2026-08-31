@@ -41,12 +41,17 @@ cap in V1; any later safety ceiling requires new owner authority.
 - Annual subscription: intended US price `$79.99`.
 - Introductory trial: seven days with five hours of managed transcription.
 
-Monthly and annual subscribers receive 50 hours of managed transcription in
-each subscription-anchored monthly quota period. Annual subscribers receive a
-new 50-hour allowance each month rather than the full annual allowance at once.
-Unused allowance does not roll over. Changing products or restoring a purchase
-does not reset the current quota period. A configured allowance change applies
-only to the next period; an already-started period keeps its assigned limit.
+Monthly and annual subscribers receive one backend-configured managed-
+transcription allowance in each subscription-anchored monthly quota period.
+The subscriber allowance amount is not finalized by this policy. Production
+must fail closed and remain undeployable unless an explicit subscriber
+allowance is configured. A non-production hosted canary may use an explicitly
+labeled test allowance; that test value is never product authority. Annual
+subscribers receive a new configured allowance each month rather than the full
+annual allowance at once. Unused allowance does not roll over. Changing
+products or restoring a purchase does not reset the current quota period. A
+configured allowance change applies only to the next period; an already-
+started period keeps its snapshotted limit.
 
 Managed usage is charged in whole seconds from server-verified audio duration.
 Retries of the same audio do not charge twice. A failed or cancelled job is not
