@@ -1,15 +1,26 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { MANAGED_TEMPORARY_DATA_TTL_MS } from "@meetless/managed-transcription-foundation";
+import {
+  MANAGED_MAX_UPLOAD_PART_SAMPLES,
+  MANAGED_SAMPLE_RATE,
+  MANAGED_TEMPORARY_DATA_TTL_MS,
+  validateManagedLogicalTimelineManifest,
+} from "@meetless/managed-transcription-foundation";
 import { MeetingStore } from "@meetless/meeting-store";
 import {
+  ConvexManagedUploadPort,
+  FileManagedConvexUploadJournal,
   FileManagedUploadPort,
   ManagedUploadAuthenticationError,
   ManagedUploadConflictError,
   ManagedUploadStateError,
+  type ManagedConvexFunctionClient,
+  type ManagedConvexJob,
+  type ManagedConvexUploadSession,
+  buildManagedLogicalTimelineManifest,
   inspectCanonicalPcmWavStream,
   type ManagedUploadCredential,
   type ManagedUploadManifest,
@@ -33,6 +44,211 @@ afterEach(async () => {
 });
 
 describe("pre-external managed upload seam", () => {
+  test("segments a large canonical timeline through generated upload URLs and resumes an immutable logical job", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-convex-upload-"));
+    roots.push(root);
+    const sourcePath = path.join(root, "canonical.wav");
+    const sampleCount = 13_200_001;
+    await writeSparseCanonicalWav(sourcePath, sampleCount);
+    const manifest = await buildManagedLogicalTimelineManifest({
+      recordingId: "recording-convex-large",
+      manifestSha256: sha256Text("convex-large-manifest"),
+      sourcePath,
+    });
+    expect(manifest.sampleCount).toBe(sampleCount);
+    expect(manifest.parts).toHaveLength(2);
+    expect(manifest.parts[0]!.sampleCount).toBe(MANAGED_MAX_UPLOAD_PART_SAMPLES);
+    expect(manifest.parts[1]!.sampleCount).toBe(sampleCount - MANAGED_MAX_UPLOAD_PART_SAMPLES);
+    expect(manifest.durationMs).toBe(Math.ceil(sampleCount / MANAGED_SAMPLE_RATE * 1_000));
+
+    const calls: Array<{ kind: "mutation" | "query" | "action"; name: string; args: Record<string, unknown> }> = [];
+    const posted: Array<{ url: string; byteLength: number }> = [];
+    const authTokens: string[] = [];
+    let nextUploadUrlPart = 1;
+    let failNextRegister = true;
+    let session: ManagedConvexUploadSession = {
+      sessionId: "upload-convex-large",
+      accountId: "account-convex",
+      deviceId: "device-convex",
+      state: "uploading",
+      createdAt: START,
+      expiresAt: START + MANAGED_TEMPORARY_DATA_TTL_MS,
+      receivedPartNumbers: [],
+      completedAt: null,
+      jobId: null,
+    };
+    let job: ManagedConvexJob = {
+      _id: "job-convex-large",
+      uploadId: session.sessionId,
+      recordingId: manifest.recordingId,
+      audioId: manifest.audioId,
+      admissionId: "admission-convex-large",
+      admissionNumber: 1,
+      status: "reserved",
+      durationMs: manifest.durationMs,
+      sampleCount: manifest.sampleCount,
+      billableSeconds: Math.ceil(manifest.sampleCount / MANAGED_SAMPLE_RATE),
+      providerResult: null,
+    };
+    const client: ManagedConvexFunctionClient = {
+      setAuth: (token) => authTokens.push(token),
+      mutation: vi.fn(async (name, args) => {
+        calls.push({ kind: "mutation", name, args });
+        if (name.endsWith(":beginUpload")) return session;
+        if (name.endsWith(":generateUploadUrl")) return `https://convex.local/upload/${nextUploadUrlPart++}`;
+        if (name.endsWith(":registerPart")) {
+          const partNumber = args.partNumber as number;
+          if (failNextRegister) {
+            failNextRegister = false;
+            throw new Error("simulated process loss after Convex storage POST");
+          }
+          session = { ...session, receivedPartNumbers: [...new Set([...session.receivedPartNumbers, partNumber])].sort((a, b) => a - b) };
+          return { outcome: "stored", partNumber, storageId: args.storageId };
+        }
+        if (name.endsWith(":settleJob")) {
+          job = { ...job, status: "succeeded", providerResult: job.providerResult };
+          return job;
+        }
+        throw new Error(`unexpected mutation ${name}`);
+      }),
+      query: vi.fn(async (name, args) => {
+        calls.push({ kind: "query", name, args });
+        if (name.endsWith(":status")) return session;
+        if (name.endsWith(":jobStatus")) return job;
+        throw new Error(`unexpected query ${name}`);
+      }),
+      action: vi.fn(async (name, args) => {
+        calls.push({ kind: "action", name, args });
+        if (name.endsWith(":sealUpload")) {
+          session = { ...session, state: "sealed", jobId: job._id };
+          return job;
+        }
+        if (name.endsWith(":runProvider")) {
+          const text = "local provider result";
+          job = {
+            ...job,
+            status: "provider_completed",
+            providerResult: { text, ranges: [{ startMs: 0, endMs: manifest.durationMs, text }], detectedLanguages: [] },
+          };
+          return job;
+        }
+        if (name.endsWith(":acknowledge")) {
+          session = { ...session, state: "cleaned" };
+          return true;
+        }
+        throw new Error(`unexpected action ${name}`);
+      }),
+    };
+    const journalDirectory = path.join(root, "convex-journal");
+    const port = new ConvexManagedUploadPort(client, {
+      journal: new FileManagedConvexUploadJournal(journalDirectory),
+      fetch: async (url, init) => {
+        const bytes = await new Response(init?.body as BodyInit).arrayBuffer();
+        posted.push({ url: String(url), byteLength: bytes.byteLength });
+        return new Response(JSON.stringify({ storageId: `storage-convex-${posted.length}` }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    const convexCredential = { authToken: "host-issued-convex-token" };
+
+    await expect(port.uploadCanonicalTimelineFromPath({
+      credential: convexCredential,
+      manifest,
+      sourcePath,
+    })).rejects.toThrow("process loss after Convex storage POST");
+    await expect(new FileManagedConvexUploadJournal(journalDirectory).pending(session.sessionId))
+      .resolves.toMatchObject([{ partNumber: 1, storageId: "storage-convex-1" }]);
+
+    const restarted = new ConvexManagedUploadPort(client, {
+      journal: new FileManagedConvexUploadJournal(journalDirectory),
+      fetch: async (url, init) => {
+        const bytes = await new Response(init?.body as BodyInit).arrayBuffer();
+        posted.push({ url: String(url), byteLength: bytes.byteLength });
+        return new Response(JSON.stringify({ storageId: `storage-convex-${posted.length}` }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    const first = await restarted.uploadCanonicalTimelineFromPath({
+      credential: convexCredential,
+      manifest,
+      sourcePath,
+    });
+    expect(first.session).toMatchObject({ state: "sealed", receivedPartNumbers: [1, 2], jobId: job._id });
+    expect(posted.map((part) => part.byteLength)).toEqual(manifest.parts.map((part) => part.byteLength));
+    expect(authTokens.length).toBeGreaterThan(0);
+    expect(authTokens.every((token) => token === convexCredential.authToken)).toBe(true);
+
+    const postedCount = posted.length;
+    const resumed = await restarted.uploadCanonicalTimelineFromPath({
+      credential: convexCredential,
+      manifest,
+      sourcePath,
+    });
+    expect(resumed.session).toMatchObject({ state: "sealed", receivedPartNumbers: [1, 2], jobId: job._id });
+    expect(posted).toHaveLength(postedCount);
+    const completed = await restarted.settle({ credential: convexCredential, jobId: job._id });
+    expect(completed.status).toBe("succeeded");
+    await expect(restarted.acknowledge({ credential: convexCredential, jobId: job._id })).resolves.toBe(true);
+    expect(session.state).toBe("cleaned");
+    expect(calls.every(({ args }) => !containsAudioBytes(args))).toBe(true);
+    expect(calls.every(({ args }) => !Object.values(args).includes(sourcePath))).toBe(true);
+  }, 30_000);
+
+  test("accepts a logical manifest longer than 60 minutes without treating physical parts as separate jobs", () => {
+    const sampleCount = MANAGED_MAX_UPLOAD_PART_SAMPLES * 7;
+    const parts = Array.from({ length: 7 }, (_, index) => ({
+      partNumber: index + 1,
+      sampleOffset: index * MANAGED_MAX_UPLOAD_PART_SAMPLES,
+      sampleCount: MANAGED_MAX_UPLOAD_PART_SAMPLES,
+      byteLength: 44 + MANAGED_MAX_UPLOAD_PART_SAMPLES * 2,
+      sha256: `${String(index + 1).repeat(64 / String(index + 1).length)}`,
+    }));
+    const manifest = validateManagedLogicalTimelineManifest({
+      recordingId: "recording-over-hour",
+      audioId: "recording:recording-over-hour",
+      manifestSha256: sha256Text("over-hour-manifest"),
+      contentSha256: sha256Text("over-hour-content"),
+      byteLength: 44 + sampleCount * 2,
+      durationMs: Math.ceil(sampleCount / MANAGED_SAMPLE_RATE * 1_000),
+      sampleCount,
+      partsManifestSha256: sha256Text("over-hour-parts"),
+      parts,
+    });
+    expect(manifest.sampleCount / MANAGED_SAMPLE_RATE / 60).toBeGreaterThan(60);
+    expect(manifest.parts).toHaveLength(7);
+  });
+
+  test("rejects over-bound, gapped, and overlapping physical parts at the policy edge", () => {
+    const base = {
+      recordingId: "recording-part-boundary",
+      audioId: "recording:recording-part-boundary",
+      manifestSha256: sha256Text("part-boundary-manifest"),
+      contentSha256: sha256Text("part-boundary-content"),
+      byteLength: 48,
+      durationMs: 1,
+      sampleCount: 2,
+      partsManifestSha256: sha256Text("part-boundary-parts"),
+      parts: [
+        { partNumber: 1, sampleOffset: 0, sampleCount: 1, byteLength: 46, sha256: "a".repeat(64) },
+        { partNumber: 2, sampleOffset: 1, sampleCount: 1, byteLength: 46, sha256: "b".repeat(64) },
+      ],
+    };
+    expect(() => validateManagedLogicalTimelineManifest({ ...base, parts: [
+      { ...base.parts[0]!, sampleCount: MANAGED_MAX_UPLOAD_PART_SAMPLES + 1, byteLength: 44 + (MANAGED_MAX_UPLOAD_PART_SAMPLES + 1) * 2 },
+    ], sampleCount: MANAGED_MAX_UPLOAD_PART_SAMPLES + 1, byteLength: 44 + (MANAGED_MAX_UPLOAD_PART_SAMPLES + 1) * 2,
+      durationMs: Math.ceil((MANAGED_MAX_UPLOAD_PART_SAMPLES + 1) / MANAGED_SAMPLE_RATE * 1_000) })).toThrow(/ten-minute/);
+    expect(() => validateManagedLogicalTimelineManifest({ ...base, parts: [
+      base.parts[0]!, { ...base.parts[1]!, sampleOffset: 2 },
+    ] })).toThrow(/contiguous/);
+    expect(() => validateManagedLogicalTimelineManifest({ ...base, parts: [
+      base.parts[0]!, { ...base.parts[1]!, sampleOffset: 0 },
+    ] })).toThrow(/contiguous/);
+  });
+
   test("streams a canonical WAV larger than 25 MB, recovers duplicate parts/completion after restart, and acknowledges once", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-upload-large-"));
     roots.push(root);
@@ -467,4 +683,23 @@ function sha256Text(value: string): string {
 
 async function* oneChunk(bytes: Uint8Array): AsyncIterable<Uint8Array> {
   yield bytes;
+}
+
+async function writeSparseCanonicalWav(filePath: string, sampleCount: number): Promise<void> {
+  const handle = await open(filePath, "w", 0o600);
+  try {
+    await handle.write(wavHeader(sampleCount), 0, 44, 0);
+    await handle.truncate(44 + sampleCount * 2);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+function containsAudioBytes(value: unknown, seen = new Set<unknown>()): boolean {
+  if (value instanceof Uint8Array || value instanceof ArrayBuffer) return true;
+  if (typeof value !== "object" || value === null || seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) return value.some((item) => containsAudioBytes(item, seen));
+  return Object.values(value).some((item) => containsAudioBytes(item, seen));
 }

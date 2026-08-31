@@ -4,13 +4,13 @@
 
 - `plan_revision`: `v15`
 - `current_frontier`: `MANAGED-TRANSCRIPTION-CONVEX-LOCAL-FIRST-IMPLEMENTATION`
-- `state`: `LOCAL_IMPLEMENTATION_READY`
+- `state`: `LOCAL_IMPLEMENTATION_CANDIDATE_PENDING_LEAD`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; predecessor `966b9abd78481db001e912cc2e60d895c00bef37` remains rejected. Managed-transcription foundation R1 remains accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`
+- `candidate`: local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; predecessor `966b9abd78481db001e912cc2e60d895c00bef37` remains rejected. Managed-transcription foundation R1 remains accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`. The R3 local Convex candidate is committed and pending Lead closeout.
 - `authority_contract_sha256`: `87625cb59c10e399767e34a2ecfd2bd92bf7e3a7598673fec267479dfdd7860e`
-- `pending_ruling`: none for the local implementation; production Convex deployment/region, credentials, and provider access remain deferred owner/external gates
+- `pending_ruling`: Lead closeout of the local Convex candidate; production deployment/region, credentials, and provider access remain deferred owner/external gates
 - `blocked_by`: no local implementation blocker; production Convex deployment/region, credentials, and provider calls remain owner/external gates. MAS/RevenueCat release work below is a separate frontier
-- `next_action`: implement and test the region-neutral local Convex boundary, including generated upload URL/storage-ID flow and logical-job idempotency; defer only production deployment, region, credentials, and provider access
+- `next_action`: Lead inspect the immutable local Convex candidate; defer only production deployment, region, credentials, and provider access
 
 ## Ownership And Authority
 
@@ -771,6 +771,81 @@ Observed convergence-correction validation on 2026-08-31:
   Region-neutral local Convex implementation is authorized; only production
   deployment/region, credentials, and provider access/calls remain deferred
   owner/external gates.
+
+### R3 local Convex implementation candidate (pending Lead closeout)
+
+Observed on 2026-08-31 against the R3 implementation frontier. This is local
+evidence only; it does not claim hosted Convex, production authentication,
+provider execution, or acceptance by Lead.
+
+- `convex/schema.ts` and the two Convex modules define server-owned temporary
+  upload metadata, immutable sample-offset parts, one logical admission and
+  quota ledger transition, six-hour lease, 24-hour expiry, idempotent seal /
+  settlement / acknowledgement, and an internal-only local canary seed. The
+  server checks each stored part's actual canonical WAV header, sample count,
+  byte length, and digest before admission. Provider execution is a
+  provider-neutral local action with one full-timeline range and no diarization.
+- The pure foundation manifest validator remains Convex-free. The desktop
+  adapter uses a required durable local POST/register journal, streams each
+  normalized 44-byte-header PCM part through a generated upload URL, sends no
+  audio bytes in function arguments, and resumes registered storage IDs after
+  a process restart. FFmpeg metadata chunks are located at the edge; the
+  logical manifest identity is canonical header plus PCM samples.
+- Recording finalization remains the only creator of the private managed WAV.
+  Save/finalize performs no Convex call. The explicit managed service persists
+  the MeetingStore pending transcript barrier before remote admission, holds
+  the shared lifecycle lease through publication, publishes to MeetingStore,
+  then acknowledges remote temporary data and removes the private artifact.
+
+Observed commands and results:
+
+- `npx convex dev --once --typecheck enable --codegen enable` passed against
+  anonymous local deployment `http://127.0.0.1:3210`; generated Convex types
+  and local function preparation completed without a cloud account.
+- `npx convex run internal.managedTranscription.seedLocalCanary
+  '{"tokenIdentifier":"r3-final-canary"}'` passed. The seed is an internal
+  test-only verified-lineage fixture, not production authorization.
+- The anonymous local HTTP canary passed generated upload URL, direct storage
+  POST, duplicate part registration, seal, ordered fake provider completion,
+  duplicate settlement, duplicate acknowledgement, and cleanup. Observed
+  result: `sealedStatus=reserved`, `providerStatus=provider_completed`,
+  `providerRanges=1`, `settledStatus=succeeded`,
+  `duplicateSettledStatus=succeeded`, `cleanedState=cleaned`, and zero
+  remaining part records.
+- The same local backend logged actionable failures for an over-bound part
+  (`Managed physical part exceeds the accepted ten-minute sample bound`) and
+  an incomplete manifest (`Managed seal requires every physical part exactly
+  once and in order`), each naming the frozen authority files.
+- `npx vitest run --config vitest.config.ts packages/managed-transcription-foundation/test/policy.test.ts packages/meetless-plugin/test/managed-upload.test.ts packages/meetless-plugin/test/managed-transcription.test.ts packages/meetless-plugin/test/recording-service.test.ts packages/meetless-plugin/test/meeting-lifecycle-coordinator.test.ts test/composition/managed-transcription-path.test.ts packages/meeting-domain/test/transcript.test.ts packages/meeting-store/test/store.test.ts --maxWorkers=1` passed: 8 files, 103 tests.
+- `npx vitest run --config vitest.config.ts packages/meeting-domain/test packages/meeting-store/test --maxWorkers=1` passed: 6 files, 67 tests. `npx vitest run --config vitest.config.ts packages/meetless-plugin/test --maxWorkers=1` passed: 17 files, 127 tests.
+- `npm run typecheck` passed, including Paseo type builds, Meetless project
+  references, and the app typecheck. `npm run build:meetless` passed.
+  `git diff --check` passed.
+- The composition proof observes no Convex calls during real fixture
+  RecordingService save/finalization, no WAV stage under exportRoot, only MP3
+  output there, source-chunk cleanup, private artifact consumption, one local
+  MeetingStore citation, and post-publication cleanup. The adapter proof uses
+  a sparse 13,200,001-sample source and a synthetic seven-part logical
+  manifest longer than 60 minutes without a user-facing duration cap.
+
+Enforcement and limits:
+
+- Local validation: the commands above are the repository-native evidence
+  owners and passed. Optional hooks: no configured `core.hooksPath`; only
+  stock sample hooks are present. CI: no checked-in `.github` workflow invoking
+  these commands was found. Branch protection: unverified.
+- The local Convex slice has no hosted region, production deployment,
+  verified Apple lineage adapter, production credentials, or real provider
+  action. US East/EU West selection, production limits/latency, provider
+  cancellation, and external deployment remain owner gates. The internal
+  canary seed must not be exposed as a production endpoint.
+- The journal closes the returned-storage-ID/register ambiguity. A transport
+  failure before a generated upload response is received cannot be reconciled
+  by this repository without an external storage-listing/garbage-collection
+  contract; this remains an owner/provider cleanup gate. No product duration
+  or size cap was added.
+
+The R3 candidate remains pending Lead closeout.
 
 ## Validation
 

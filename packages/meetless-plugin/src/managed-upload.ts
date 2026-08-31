@@ -2,7 +2,16 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, open, readdir, readFile, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import { MANAGED_TEMPORARY_DATA_TTL_MS } from "@meetless/managed-transcription-foundation";
+import { Readable } from "node:stream";
+import { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
+import {
+  MANAGED_MAX_UPLOAD_PART_SAMPLES,
+  MANAGED_SAMPLE_RATE,
+  MANAGED_TEMPORARY_DATA_TTL_MS,
+  validateManagedLogicalTimelineManifest,
+  type ManagedLogicalTimelineManifest,
+} from "@meetless/managed-transcription-foundation";
 import type { OutputIdentity } from "@meetless/meeting-domain";
 import { z } from "zod";
 
@@ -828,4 +837,684 @@ async function syncDirectory(directory: string): Promise<void> {
 
 function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === code;
+}
+
+/**
+ * Auth for the Convex adapter is the host-issued access token itself. It is
+ * installed on the client and is never sent as a mutation/action argument.
+ * The server derives account and device ownership from this identity.
+ */
+export interface ManagedConvexCredential {
+  readonly authToken: string;
+}
+
+export interface ManagedConvexFunctionClient {
+  setAuth?(token: string): void;
+  mutation(functionName: string, args: Record<string, unknown>): Promise<unknown>;
+  query(functionName: string, args: Record<string, unknown>): Promise<unknown>;
+  action(functionName: string, args: Record<string, unknown>): Promise<unknown>;
+}
+
+export interface ManagedConvexPendingPart {
+  readonly sessionId: string;
+  readonly partNumber: number;
+  readonly sampleOffset: number;
+  readonly sampleCount: number;
+  readonly byteLength: number;
+  readonly sha256: string;
+  readonly storageId: string;
+}
+
+export interface ManagedConvexUploadJournal {
+  pending(sessionId: string): Promise<readonly ManagedConvexPendingPart[]>;
+  record(part: ManagedConvexPendingPart): Promise<void>;
+  remove(sessionId: string, partNumber: number): Promise<void>;
+  clear(sessionId: string): Promise<void>;
+}
+
+const PendingConvexPartSchema = z.object({
+  sessionId: z.string().min(1),
+  partNumber: z.number().int().positive(),
+  sampleOffset: z.number().int().nonnegative(),
+  sampleCount: z.number().int().positive(),
+  byteLength: z.number().int().positive(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  storageId: z.string().min(1),
+}).strict();
+
+const PendingConvexSnapshotSchema = z.object({
+  version: z.literal(1),
+  parts: z.array(PendingConvexPartSchema),
+}).strict();
+
+type PendingConvexSnapshot = z.infer<typeof PendingConvexSnapshotSchema>;
+
+/**
+ * Durable client receipt for the POST/register ambiguity. It contains no
+ * audio bytes: a restarted adapter can register a storage ID that was already
+ * returned by Convex without uploading the bounded part again.
+ */
+export class FileManagedConvexUploadJournal implements ManagedConvexUploadJournal {
+  private readonly statePath: string;
+  private initialized: Promise<void> | null = null;
+  private mutationTail: Promise<void> = Promise.resolve();
+
+  constructor(readonly directory: string) {
+    this.directory = path.resolve(directory);
+    this.statePath = path.join(this.directory, "pending-parts.json");
+  }
+
+  pending(sessionId: string): Promise<readonly ManagedConvexPendingPart[]> {
+    return this.read(async () => (await this.loadSnapshot()).parts
+      .filter((part) => part.sessionId === sessionId)
+      .map((part) => ({ ...part })));
+  }
+
+  record(part: ManagedConvexPendingPart): Promise<void> {
+    return this.mutate(async () => {
+      const checked = PendingConvexPartSchema.parse(part);
+      const snapshot = await this.loadSnapshot();
+      const existing = snapshot.parts.find((candidate) =>
+        candidate.sessionId === checked.sessionId && candidate.partNumber === checked.partNumber);
+      if (existing) {
+        if (JSON.stringify(existing) !== JSON.stringify(checked)) {
+          throw new ManagedUploadConflictError("Managed Convex upload journal rebound a part to a different storage identity");
+        }
+        return;
+      }
+      snapshot.parts.push(checked);
+      await this.saveSnapshot(snapshot);
+    });
+  }
+
+  remove(sessionId: string, partNumber: number): Promise<void> {
+    return this.mutate(async () => {
+      const snapshot = await this.loadSnapshot();
+      const next = snapshot.parts.filter((part) => part.sessionId !== sessionId || part.partNumber !== partNumber);
+      if (next.length !== snapshot.parts.length) await this.saveSnapshot({ version: 1, parts: next });
+    });
+  }
+
+  clear(sessionId: string): Promise<void> {
+    return this.mutate(async () => {
+      const snapshot = await this.loadSnapshot();
+      const next = snapshot.parts.filter((part) => part.sessionId !== sessionId);
+      if (next.length !== snapshot.parts.length) await this.saveSnapshot({ version: 1, parts: next });
+    });
+  }
+
+  private async initialize(): Promise<void> {
+    this.initialized ??= mkdir(this.directory, { recursive: true, mode: 0o700 }).then(() => undefined);
+    await this.initialized;
+  }
+
+  private async loadSnapshot(): Promise<PendingConvexSnapshot> {
+    await this.initialize();
+    try {
+      return PendingConvexSnapshotSchema.parse(JSON.parse(await readFile(this.statePath, "utf8")));
+    } catch (error) {
+      if (isErrno(error, "ENOENT")) return { version: 1, parts: [] };
+      if (error instanceof z.ZodError || error instanceof SyntaxError) {
+        throw new ManagedUploadError(`Managed Convex upload journal is invalid at ${this.statePath}`);
+      }
+      throw error;
+    }
+  }
+
+  private async saveSnapshot(snapshot: PendingConvexSnapshot): Promise<void> {
+    const checked = PendingConvexSnapshotSchema.parse(snapshot);
+    await this.initialize();
+    const temporaryPath = path.join(this.directory, `.pending-parts.${process.pid}.${randomUUID()}.tmp`);
+    let created = false;
+    try {
+      const handle = await open(temporaryPath, "wx", 0o600);
+      created = true;
+      try {
+        await handle.writeFile(`${JSON.stringify(checked, null, 2)}\n`, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await rename(temporaryPath, this.statePath);
+      created = false;
+      await syncDirectory(this.directory);
+    } finally {
+      if (created) await rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
+  }
+
+  private async mutate<T>(operation: () => Promise<T>): Promise<T> {
+    await this.initialize();
+    const next = this.mutationTail.then(operation);
+    this.mutationTail = next.then(() => undefined, () => undefined);
+    return next;
+  }
+
+  private async read<T>(operation: () => Promise<T>): Promise<T> {
+    await this.initialize();
+    await this.mutationTail;
+    return operation();
+  }
+}
+
+export interface ManagedConvexJob {
+  readonly _id: string;
+  readonly uploadId: string;
+  readonly recordingId: string;
+  readonly audioId: string;
+  readonly admissionId: string;
+  readonly admissionNumber: number;
+  readonly status: string;
+  readonly durationMs: number;
+  readonly sampleCount: number;
+  readonly billableSeconds: number;
+  readonly providerResult: {
+    readonly text: string;
+    readonly ranges: readonly { startMs: number; endMs: number; text: string }[];
+    readonly detectedLanguages: readonly string[];
+  } | null;
+  readonly [key: string]: unknown;
+}
+
+export interface ManagedConvexUploadSession {
+  readonly sessionId: string;
+  readonly accountId: string;
+  readonly deviceId: string;
+  readonly state: string;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly receivedPartNumbers: readonly number[];
+  readonly completedAt: number | null;
+  readonly jobId: string | null;
+}
+
+export interface ManagedConvexUploadResult {
+  readonly session: ManagedConvexUploadSession;
+  readonly job: ManagedConvexJob;
+  readonly manifest: ManagedLogicalTimelineManifest;
+}
+
+export interface ManagedConvexUploadFunctionNames {
+  readonly begin: string;
+  readonly generateUploadUrl: string;
+  readonly registerPart: string;
+  readonly status: string;
+  readonly cancel: string;
+  readonly seal: string;
+  readonly runProvider: string;
+  readonly settle: string;
+  readonly jobStatus: string;
+  readonly acknowledge: string;
+}
+
+const DEFAULT_CONVEX_FUNCTIONS: ManagedConvexUploadFunctionNames = {
+  begin: "managedTranscription:beginUpload",
+  generateUploadUrl: "managedTranscription:generateUploadUrl",
+  registerPart: "managedTranscription:registerPart",
+  status: "managedTranscription:status",
+  cancel: "managedTranscription:cancelUpload",
+  seal: "managedTranscriptionActions:sealUpload",
+  runProvider: "managedTranscriptionActions:runProvider",
+  settle: "managedTranscription:settleJob",
+  jobStatus: "managedTranscription:jobStatus",
+  acknowledge: "managedTranscriptionActions:acknowledge",
+};
+
+/**
+ * Region-neutral desktop adapter for the Convex generated-upload-url flow.
+ * Convex owns the session/job state; this adapter owns only bounded local
+ * reads and direct POSTs to the generated storage URL.
+ */
+export class ConvexManagedUploadPort {
+  private readonly functions: ManagedConvexUploadFunctionNames;
+  private readonly post: typeof fetch;
+
+  constructor(
+    private readonly client: ManagedConvexFunctionClient,
+    options: {
+      journal: ManagedConvexUploadJournal;
+      functions?: Partial<ManagedConvexUploadFunctionNames>;
+      fetch?: typeof fetch;
+    },
+  ) {
+    if (!options.journal) throw new ManagedUploadError("Managed Convex upload requires a durable POST/register journal");
+    this.functions = { ...DEFAULT_CONVEX_FUNCTIONS, ...options.functions };
+    this.post = options.fetch ?? globalThis.fetch;
+    this.journal = options.journal;
+  }
+
+  private readonly journal: ManagedConvexUploadJournal;
+
+  async begin(input: {
+    credential: ManagedConvexCredential;
+    manifest: ManagedLogicalTimelineManifest;
+  }): Promise<ManagedConvexUploadSession> {
+    this.authenticate(input.credential);
+    const manifest = validateManagedLogicalTimelineManifest(input.manifest);
+    return parseConvexSession(await this.client.mutation(this.functions.begin, { manifest }));
+  }
+
+  async status(input: {
+    credential: ManagedConvexCredential;
+    sessionId: string;
+  }): Promise<ManagedConvexUploadSession> {
+    this.authenticate(input.credential);
+    return parseConvexSession(await this.client.query(this.functions.status, { sessionId: input.sessionId }));
+  }
+
+  async cancel(input: {
+    credential: ManagedConvexCredential;
+    sessionId: string;
+  }): Promise<ManagedConvexUploadSession> {
+    this.authenticate(input.credential);
+    const session = parseConvexSession(await this.client.mutation(this.functions.cancel, { sessionId: input.sessionId }));
+    await this.journal.clear(session.sessionId);
+    return session;
+  }
+
+  async uploadCanonicalTimelineFromPath(input: {
+    credential: ManagedConvexCredential;
+    manifest: ManagedLogicalTimelineManifest;
+    sourcePath: string;
+  }): Promise<ManagedConvexUploadResult> {
+    const manifest = validateManagedLogicalTimelineManifest(input.manifest);
+    let session = await this.begin({ credential: input.credential, manifest });
+    if (session.state === "cancelled") throw new ManagedUploadStateError("Managed Convex upload is cancelled");
+    if (session.state === "cleaned") {
+      await this.journal.clear(session.sessionId);
+      if (!session.jobId) throw new ManagedUploadStateError("Managed Convex upload temporary state was cleaned before admission");
+      return {
+        session,
+        job: await this.jobStatus({ credential: input.credential, jobId: session.jobId }),
+        manifest,
+      };
+    }
+    if (session.state === "uploading") {
+      await this.recoverPendingParts(input.credential, session, manifest);
+      session = await this.status({ credential: input.credential, sessionId: session.sessionId });
+      const received = new Set(session.receivedPartNumbers);
+      for (const part of manifest.parts) {
+        if (received.has(part.partNumber)) continue;
+        const uploadUrl = await this.generatedUploadUrl(input.credential, session.sessionId);
+        const storageId = await this.postBoundedPart(uploadUrl, canonicalPartChunks(input.sourcePath, part.sampleOffset, part.sampleCount));
+        await this.journal.record({
+          sessionId: session.sessionId,
+          partNumber: part.partNumber,
+          sampleOffset: part.sampleOffset,
+          sampleCount: part.sampleCount,
+          byteLength: part.byteLength,
+          sha256: part.sha256,
+          storageId,
+        });
+        await this.registerPart(input.credential, session.sessionId, part, storageId);
+        await this.journal.remove(session.sessionId, part.partNumber);
+      }
+      session = await this.status({ credential: input.credential, sessionId: session.sessionId });
+    }
+    if (session.state !== "uploading" && session.state !== "sealed") {
+      throw new ManagedUploadStateError(`Managed Convex upload is ${session.state} before seal`);
+    }
+    const job = parseConvexJob(await this.client.action(this.functions.seal, { sessionId: session.sessionId }));
+    // The seal action owns the uploading -> sealed transition. Re-read the
+    // session so a caller that persists this receipt never mistakes an
+    // admitted upload for an upload that is still accepting parts.
+    session = await this.status({ credential: input.credential, sessionId: session.sessionId });
+    return { session, job, manifest };
+  }
+
+  private async recoverPendingParts(
+    credential: ManagedConvexCredential,
+    session: ManagedConvexUploadSession,
+    manifest: ManagedLogicalTimelineManifest,
+  ): Promise<void> {
+    for (const pending of await this.journal.pending(session.sessionId)) {
+      const expected = manifest.parts[pending.partNumber - 1];
+      if (!expected || expected.partNumber !== pending.partNumber || expected.sampleOffset !== pending.sampleOffset ||
+        expected.sampleCount !== pending.sampleCount || expected.byteLength !== pending.byteLength || expected.sha256 !== pending.sha256) {
+        throw new ManagedUploadConflictError(`Managed Convex upload journal part ${pending.partNumber} does not match its immutable manifest`);
+      }
+      if (session.receivedPartNumbers.includes(pending.partNumber)) {
+        await this.journal.remove(session.sessionId, pending.partNumber);
+        continue;
+      }
+      await this.registerPart(credential, session.sessionId, expected, pending.storageId);
+      await this.journal.remove(session.sessionId, pending.partNumber);
+    }
+  }
+
+  async runProvider(input: {
+    credential: ManagedConvexCredential;
+    jobId: string;
+  }): Promise<ManagedConvexJob> {
+    this.authenticate(input.credential);
+    return parseConvexJob(await this.client.action(this.functions.runProvider, { jobId: input.jobId }));
+  }
+
+  async settle(input: {
+    credential: ManagedConvexCredential;
+    jobId: string;
+  }): Promise<ManagedConvexJob> {
+    this.authenticate(input.credential);
+    return parseConvexJob(await this.client.mutation(this.functions.settle, { jobId: input.jobId }));
+  }
+
+  async jobStatus(input: {
+    credential: ManagedConvexCredential;
+    jobId: string;
+  }): Promise<ManagedConvexJob> {
+    this.authenticate(input.credential);
+    return parseConvexJob(await this.client.query(this.functions.jobStatus, { jobId: input.jobId }));
+  }
+
+  async acknowledge(input: {
+    credential: ManagedConvexCredential;
+    jobId: string;
+  }): Promise<boolean> {
+    this.authenticate(input.credential);
+    const result = await this.client.action(this.functions.acknowledge, { jobId: input.jobId });
+    if (result !== true) throw new ManagedUploadStateError("Managed Convex acknowledgement did not complete");
+    return true;
+  }
+
+  private async generatedUploadUrl(credential: ManagedConvexCredential, sessionId: string): Promise<string> {
+    this.authenticate(credential);
+    const value = await this.client.mutation(this.functions.generateUploadUrl, { sessionId });
+    if (typeof value !== "string" || value.length === 0) throw new ManagedUploadError("Convex did not return a generated upload URL");
+    return value;
+  }
+
+  private async registerPart(
+    credential: ManagedConvexCredential,
+    sessionId: string,
+    part: ManagedLogicalTimelineManifest["parts"][number],
+    storageId: string,
+  ): Promise<void> {
+    this.authenticate(credential);
+    await this.client.mutation(this.functions.registerPart, {
+      sessionId,
+      partNumber: part.partNumber,
+      sampleOffset: part.sampleOffset,
+      sampleCount: part.sampleCount,
+      byteLength: part.byteLength,
+      sha256: part.sha256,
+      storageId,
+    });
+  }
+
+  private async postBoundedPart(url: string, source: AsyncIterable<Uint8Array>): Promise<string> {
+    const readable = Readable.from(source);
+    const response = await this.post(url, {
+      method: "POST",
+      body: Readable.toWeb(readable) as unknown as BodyInit,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+    if (!response.ok) throw new ManagedUploadError(`Convex generated upload URL rejected a part (${response.status})`);
+    const payload: unknown = await response.json();
+    const storageId = isRecord(payload) ? payload.storageId : undefined;
+    if (typeof storageId !== "string" || storageId.length === 0) throw new ManagedUploadError("Convex upload response did not contain a storage ID");
+    return storageId;
+  }
+
+  private authenticate(credential: ManagedConvexCredential): void {
+    if (!credential || typeof credential.authToken !== "string" || credential.authToken.trim().length === 0) {
+      throw new ManagedUploadAuthenticationError("Managed Convex upload requires a host-issued access token; client subscriber identity is not accepted");
+    }
+    this.client.setAuth?.(credential.authToken);
+  }
+}
+
+/**
+ * Optional concrete client for desktop/runtime composition. Generated
+ * function names remain in the adapter, while the Convex SDK stays outside
+ * policy and MeetingStore.
+ */
+export class ConvexHttpManagedFunctionClient implements ManagedConvexFunctionClient {
+  private readonly client: ConvexHttpClient;
+
+  constructor(address: string, options: { authToken?: string } = {}) {
+    this.client = new ConvexHttpClient(address, { logger: false });
+    if (options.authToken) this.client.setAuth(options.authToken);
+  }
+
+  setAuth(token: string): void { this.client.setAuth(token); }
+
+  mutation(functionName: string, args: Record<string, unknown>): Promise<unknown> {
+    return this.client.mutation(makeFunctionReference<"mutation", Record<string, unknown>>(functionName), args as never);
+  }
+
+  query(functionName: string, args: Record<string, unknown>): Promise<unknown> {
+    return this.client.query(makeFunctionReference<"query", Record<string, unknown>>(functionName), args as never);
+  }
+
+  action(functionName: string, args: Record<string, unknown>): Promise<unknown> {
+    return this.client.action(makeFunctionReference<"action", Record<string, unknown>>(functionName), args as never);
+  }
+}
+
+function parseConvexSession(value: unknown): ManagedConvexUploadSession {
+  if (!isRecord(value) || typeof value.sessionId !== "string" || typeof value.accountId !== "string" || typeof value.deviceId !== "string" || typeof value.state !== "string" || typeof value.createdAt !== "number" || typeof value.expiresAt !== "number" || !Array.isArray(value.receivedPartNumbers) || !value.receivedPartNumbers.every((part) => typeof part === "number") || (value.completedAt !== null && typeof value.completedAt !== "number") || (value.jobId !== null && typeof value.jobId !== "string")) {
+    throw new ManagedUploadError("Convex managed upload session response is invalid");
+  }
+  return {
+    sessionId: value.sessionId,
+    accountId: value.accountId,
+    deviceId: value.deviceId,
+    state: value.state,
+    createdAt: value.createdAt,
+    expiresAt: value.expiresAt,
+    receivedPartNumbers: [...value.receivedPartNumbers],
+    completedAt: value.completedAt,
+    jobId: value.jobId,
+  };
+}
+
+function parseConvexJob(value: unknown): ManagedConvexJob {
+  if (!isRecord(value) || typeof value._id !== "string" || typeof value.uploadId !== "string" || typeof value.recordingId !== "string" || typeof value.audioId !== "string" || typeof value.admissionId !== "string" || typeof value.admissionNumber !== "number" || typeof value.status !== "string" || typeof value.durationMs !== "number" || typeof value.sampleCount !== "number" || typeof value.billableSeconds !== "number" || (value.providerResult !== null && !isRecord(value.providerResult))) {
+    throw new ManagedUploadError("Convex managed job response is invalid");
+  }
+  return value as unknown as ManagedConvexJob;
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null;
+}
+
+export async function buildManagedLogicalTimelineManifest(input: {
+  recordingId: string;
+  manifestSha256: string;
+  sourcePath: string;
+}): Promise<ManagedLogicalTimelineManifest> {
+  const inspected = await inspectCanonicalPcmWavFile(input.sourcePath);
+  const parts: Array<ManagedLogicalTimelineManifest["parts"][number]> = [];
+  for (let offset = 0; offset < inspected.sampleCount;) {
+    const sampleCount = Math.min(MANAGED_MAX_UPLOAD_PART_SAMPLES, inspected.sampleCount - offset);
+    const identity = await identityOfStream(canonicalPartChunks(input.sourcePath, offset, sampleCount));
+    parts.push({
+      partNumber: parts.length + 1,
+      sampleOffset: offset,
+      sampleCount,
+      byteLength: identity.byteLength,
+      sha256: identity.sha256,
+    });
+    offset += sampleCount;
+  }
+  const partsManifestSha256 = sha256Text(JSON.stringify({
+    version: 1,
+    recordingId: input.recordingId,
+    audioId: `recording:${input.recordingId}`,
+    sampleCount: inspected.sampleCount,
+    parts,
+  }));
+  return validateManagedLogicalTimelineManifest({
+    recordingId: input.recordingId,
+    audioId: `recording:${input.recordingId}`,
+    manifestSha256: input.manifestSha256,
+    contentSha256: inspected.contentSha256,
+    byteLength: inspected.byteLength,
+    durationMs: inspected.durationMs,
+    sampleCount: inspected.sampleCount,
+    partsManifestSha256,
+    parts,
+  });
+}
+
+async function identityOfStream(source: AsyncIterable<Uint8Array>): Promise<OutputIdentity> {
+  const hash = createHash("sha256");
+  let byteLength = 0;
+  for await (const chunk of source) {
+    if (!(chunk instanceof Uint8Array)) throw new ManagedUploadError("Managed canonical part source yielded a non-byte value");
+    hash.update(chunk);
+    byteLength += chunk.byteLength;
+  }
+  return { byteLength, sha256: hash.digest("hex") };
+}
+
+interface CanonicalWavFileLayout {
+  readonly sampleCount: number;
+  readonly durationMs: number;
+  readonly byteLength: number;
+  readonly contentSha256: string;
+  readonly dataOffset: number;
+  readonly dataByteLength: number;
+}
+
+/**
+ * FFmpeg may add a metadata chunk before `data`. The durable recording is
+ * still a valid canonical PCM WAV, but transport parts deliberately normalize
+ * to a 44-byte header plus the validated PCM samples. This pass reads only
+ * chunk headers and hashes PCM incrementally.
+ */
+async function inspectCanonicalPcmWavFile(filePath: string): Promise<CanonicalWavFileLayout> {
+  const handle = await open(filePath, "r");
+  try {
+    const file = await handle.stat();
+    const riff = await readFileRange(handle, 12, 0, "Managed canonical WAV header is incomplete");
+    if (ascii(riff, 0, 4) !== "RIFF" || ascii(riff, 8, 4) !== "WAVE") {
+      throw new ManagedUploadConflictError("Managed canonical timeline requires a RIFF/WAVE container");
+    }
+    const containerEnd = 8 + riff.readUInt32LE(4);
+    if (containerEnd !== file.size || containerEnd < 44) {
+      throw new ManagedUploadConflictError("Managed canonical WAV container length is inconsistent");
+    }
+    let offset = 12;
+    let format: { audioFormat: number; channels: number; sampleRate: number; byteRate: number; blockAlign: number; bitsPerSample: number } | null = null;
+    let dataOffset: number | null = null;
+    let dataByteLength: number | null = null;
+    while (offset < containerEnd) {
+      if (offset + 8 > containerEnd) throw new ManagedUploadConflictError("Managed canonical WAV chunk header is truncated");
+      const chunk = await readFileRange(handle, 8, offset, "Managed canonical WAV chunk header is truncated");
+      const kind = ascii(chunk, 0, 4);
+      const size = chunk.readUInt32LE(4);
+      const payloadEnd = offset + 8 + size;
+      const paddedEnd = payloadEnd + (size % 2);
+      if (payloadEnd > containerEnd || paddedEnd > containerEnd) {
+        throw new ManagedUploadConflictError(`Managed canonical WAV ${kind} chunk exceeds its RIFF container`);
+      }
+      if (kind === "fmt ") {
+        if (format || size < 16) throw new ManagedUploadConflictError("Managed canonical WAV has an invalid fmt chunk");
+        const fmt = await readFileRange(handle, 16, offset + 8, "Managed canonical WAV fmt metadata is incomplete");
+        format = {
+          audioFormat: fmt.readUInt16LE(0), channels: fmt.readUInt16LE(2), sampleRate: fmt.readUInt32LE(4),
+          byteRate: fmt.readUInt32LE(8), blockAlign: fmt.readUInt16LE(12), bitsPerSample: fmt.readUInt16LE(14),
+        };
+      } else if (kind === "data") {
+        if (dataOffset !== null) throw new ManagedUploadConflictError("Managed canonical WAV contains more than one PCM data timeline");
+        dataOffset = offset + 8;
+        dataByteLength = size;
+      }
+      offset = paddedEnd;
+    }
+    if (offset !== containerEnd || !format || dataOffset === null || dataByteLength === null) {
+      throw new ManagedUploadConflictError("Managed canonical WAV requires one fmt and one data chunk");
+    }
+    if (
+      format.audioFormat !== 1 || format.channels !== 1 || format.sampleRate !== MANAGED_SAMPLE_RATE ||
+      format.byteRate !== MANAGED_SAMPLE_RATE * 2 || format.blockAlign !== 2 || format.bitsPerSample !== 16
+    ) throw new ManagedUploadConflictError("Managed canonical WAV must be 16 kHz, mono, 16-bit PCM");
+    if (dataByteLength <= 0 || dataByteLength % 2 !== 0) {
+      throw new ManagedUploadConflictError("Managed canonical WAV data does not contain complete PCM samples");
+    }
+    const sampleCount = dataByteLength / 2;
+    const hash = createHash("sha256");
+    hash.update(canonicalWavHeader(sampleCount));
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let remaining = dataByteLength;
+    let position = dataOffset;
+    while (remaining > 0) {
+      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, remaining), position);
+      if (bytesRead === 0) throw new ManagedUploadConflictError("Managed canonical WAV PCM data is truncated");
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+      remaining -= bytesRead;
+    }
+    const final = await handle.stat();
+    if (!sameStableFile(file, final)) throw new ManagedUploadConflictError("Managed canonical WAV changed while its PCM identity was derived");
+    return {
+      sampleCount,
+      durationMs: Math.max(1, Math.ceil(sampleCount / MANAGED_SAMPLE_RATE * 1_000)),
+      byteLength: 44 + dataByteLength,
+      contentSha256: hash.digest("hex"),
+      dataOffset,
+      dataByteLength,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function* canonicalPartChunks(filePath: string, sampleOffset: number, sampleCount: number): AsyncIterable<Uint8Array> {
+  if (!Number.isSafeInteger(sampleOffset) || sampleOffset < 0 || !Number.isSafeInteger(sampleCount) || sampleCount <= 0 || sampleCount > MANAGED_MAX_UPLOAD_PART_SAMPLES) {
+    throw new ManagedUploadConflictError("Managed canonical part boundaries are invalid");
+  }
+  const handle = await open(filePath, "r");
+  try {
+    const initial = await handle.stat();
+    const layout = await inspectCanonicalPcmWavFile(filePath);
+    if (sampleOffset + sampleCount > layout.sampleCount) {
+      throw new ManagedUploadConflictError("Managed canonical part exceeds the validated PCM timeline");
+    }
+    yield canonicalWavHeader(sampleCount);
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let remaining = sampleCount * 2;
+    let position = layout.dataOffset + sampleOffset * 2;
+    while (remaining > 0) {
+      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, remaining), position);
+      if (bytesRead === 0) throw new ManagedUploadConflictError("Managed canonical WAV became truncated while segmenting");
+      yield buffer.subarray(0, bytesRead);
+      position += bytesRead;
+      remaining -= bytesRead;
+    }
+    const final = await handle.stat();
+    if (!sameStableFile(initial, final)) throw new ManagedUploadConflictError("Managed canonical WAV changed while a transport part was read");
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readFileRange(
+  handle: Awaited<ReturnType<typeof open>>,
+  length: number,
+  position: number,
+  message: string,
+): Promise<Buffer> {
+  const buffer = Buffer.allocUnsafe(length);
+  const { bytesRead } = await handle.read(buffer, 0, length, position);
+  if (bytesRead !== length) throw new ManagedUploadConflictError(message);
+  return buffer;
+}
+
+function canonicalWavHeader(sampleCount: number): Buffer {
+  const dataBytes = sampleCount * 2;
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0); header.writeUInt32LE(36 + dataBytes, 4); header.write("WAVEfmt ", 8);
+  header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(MANAGED_SAMPLE_RATE, 24); header.writeUInt32LE(MANAGED_SAMPLE_RATE * 2, 28);
+  header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34); header.write("data", 36);
+  header.writeUInt32LE(dataBytes, 40);
+  return header;
+}
+
+function sameStableFile(left: Awaited<ReturnType<typeof stat>>, right: Awaited<ReturnType<typeof stat>>): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.size === right.size &&
+    left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
 }

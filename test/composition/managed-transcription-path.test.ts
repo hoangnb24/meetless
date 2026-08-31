@@ -10,12 +10,22 @@ import {
 import { MeetingStore } from "@meetless/meeting-store";
 import {
   ManagedTimelineArtifactStore,
+  ConvexManagedTranscriptionService,
   ManagedTranscriptionService,
 } from "../../packages/meetless-plugin/src/managed-transcription.js";
 import { managedTimelineStagingDirectory } from "../../packages/meetless-plugin/src/finalizer.js";
 import { MeetingLifecycleCoordinator } from "../../packages/meetless-plugin/src/meeting-lifecycle-coordinator.js";
 import { RecordingService, type RecordingFinalizationCheckpoint } from "../../packages/meetless-plugin/src/recording-service.js";
-import { FileManagedUploadPort, type ManagedUploadCredential } from "../../packages/meetless-plugin/src/managed-upload.js";
+import {
+  ConvexManagedUploadPort,
+  FileManagedConvexUploadJournal,
+  FileManagedUploadPort,
+  type ManagedConvexFunctionClient,
+  type ManagedConvexJob,
+  type ManagedConvexUploadSession,
+  type ManagedUploadCredential,
+} from "../../packages/meetless-plugin/src/managed-upload.js";
+import type { ManagedLogicalTimelineManifest } from "@meetless/managed-transcription-foundation";
 import type { TranscriptionProvider } from "../../packages/meetless-plugin/src/transcription-provider.js";
 
 const START = Date.parse("2026-08-31T00:00:00.000Z");
@@ -163,6 +173,170 @@ describe("managed transcription composition", () => {
     expect(JSON.parse(await readFile(path.join(root, "managed-upload", "sessions.json")))).toEqual({ version: 1, sessions: [] });
   }, 30_000);
 
+  test("keeps finalization local until explicit Convex intent, then publishes the private timeline result through MeetingStore", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-convex-composition-"));
+    roots.push(root);
+    const lifecycle = new MeetingLifecycleCoordinator();
+    const observedFinalizerCommands: string[][] = [];
+    const storeRoot = path.join(root, "store");
+    const exportRoot = path.join(root, "Documents", "meetings");
+    const artifacts = new ManagedTimelineArtifactStore(path.join(storeRoot, "managed-artifacts"));
+    const config = {
+      storeRoot,
+      helperPath: path.resolve("native/macos-capture/.build/release/meetless-capture"),
+      ffmpeg: "/opt/homebrew/bin/ffmpeg",
+      ffprobe: "/opt/homebrew/bin/ffprobe",
+      exportRoot,
+      fixture: true,
+      exportNow: () => new Date("2026-08-31T12:00:00.000Z"),
+      observeCommand: (_executable: string, arguments_: readonly string[]) => observedFinalizerCommands.push([...arguments_]),
+      managedTimelineConsumer: artifacts,
+    };
+    const recordingService = new RecordingService(config, undefined, lifecycle);
+    services.push(recordingService);
+    await recordingService.initialize();
+    await recordingService.execute({ version: 1, requestId: "start", command: "start", title: "Convex composition" });
+    await waitFor(async () => (await recordingService.status()).chunks.length >= 2);
+    const recordingId = (await recordingService.status()).recordingId!;
+    const sessionDirectory = path.join(config.storeRoot, "sessions", recordingId);
+    const convexCalls: Array<{ kind: "mutation" | "query" | "action"; name: string; args: Record<string, unknown> }> = [];
+    const postedPartLengths: number[] = [];
+    const authTokens: string[] = [];
+    let uploadPartNumber = 1;
+    let manifest: ManagedLogicalTimelineManifest | null = null;
+    let session: ManagedConvexUploadSession = {
+      sessionId: "composition-upload",
+      accountId: "composition-account",
+      deviceId: "composition-device",
+      state: "uploading",
+      createdAt: START,
+      expiresAt: START + 24 * 60 * 60 * 1_000,
+      receivedPartNumbers: [],
+      completedAt: null,
+      jobId: null,
+    };
+    let job: ManagedConvexJob = {
+      _id: "composition-job",
+      uploadId: session.sessionId,
+      recordingId,
+      audioId: `recording:${recordingId}`,
+      admissionId: "composition-admission",
+      admissionNumber: 1,
+      status: "reserved",
+      durationMs: 0,
+      sampleCount: 0,
+      billableSeconds: 0,
+      providerResult: null,
+    };
+    const client: ManagedConvexFunctionClient = {
+      setAuth: (token) => authTokens.push(token),
+      mutation: vi.fn(async (name, args) => {
+        convexCalls.push({ kind: "mutation", name, args });
+        if (name.endsWith(":beginUpload")) {
+          manifest = args.manifest as ManagedLogicalTimelineManifest;
+          job = {
+            ...job,
+            recordingId: manifest.recordingId,
+            audioId: manifest.audioId,
+            durationMs: manifest.durationMs,
+            sampleCount: manifest.sampleCount,
+            billableSeconds: Math.ceil(manifest.sampleCount / 16_000),
+          };
+          return session;
+        }
+        if (name.endsWith(":generateUploadUrl")) return `https://convex.local/composition/${uploadPartNumber}`;
+        if (name.endsWith(":registerPart")) {
+          const partNumber = args.partNumber as number;
+          session = {
+            ...session,
+            receivedPartNumbers: [...new Set([...session.receivedPartNumbers, partNumber])].sort((left, right) => left - right),
+          };
+          uploadPartNumber += 1;
+          return { outcome: "stored", partNumber, storageId: `composition-storage-${partNumber}` };
+        }
+        if (name.endsWith(":settleJob")) {
+          job = { ...job, status: "succeeded" };
+          return job;
+        }
+        throw new Error(`unexpected composition mutation ${name}`);
+      }),
+      query: vi.fn(async (name, args) => {
+        convexCalls.push({ kind: "query", name, args });
+        if (name.endsWith(":status")) return session;
+        if (name.endsWith(":jobStatus")) return job;
+        throw new Error(`unexpected composition query ${name}`);
+      }),
+      action: vi.fn(async (name, args) => {
+        convexCalls.push({ kind: "action", name, args });
+        if (name.endsWith(":sealUpload")) {
+          session = { ...session, state: "sealed", jobId: job._id };
+          return job;
+        }
+        if (name.endsWith(":runProvider")) {
+          const text = "Convex local provider publication";
+          job = {
+            ...job,
+            status: "provider_completed",
+            providerResult: { text, ranges: [{ startMs: 0, endMs: job.durationMs, text }], detectedLanguages: [] },
+          };
+          return job;
+        }
+        if (name.endsWith(":acknowledge")) {
+          session = { ...session, state: "cleaned" };
+          return true;
+        }
+        throw new Error(`unexpected composition action ${name}`);
+      }),
+    };
+    const managedUpload = new ConvexManagedUploadPort(client, {
+      journal: new FileManagedConvexUploadJournal(path.join(root, "convex-journal")),
+      fetch: async (url, init) => {
+        expect(init?.method).toBe("POST");
+        const bytes = await new Response(init?.body as BodyInit).arrayBuffer();
+        postedPartLengths.push(bytes.byteLength);
+        return new Response(JSON.stringify({ storageId: `composition-storage-${postedPartLengths.length}` }), { status: 200 });
+      },
+    });
+
+    const saved = await recordingService.execute({ version: 1, requestId: "stop", command: "stop" });
+    expect(saved).toMatchObject({ status: "saved", recordingId, chunks: [] });
+    expect(convexCalls).toEqual([]);
+    expect((await readdir(sessionDirectory)).filter((name) => name.endsWith(".wav"))).toEqual([]);
+    expect((await readdir(exportRoot)).every((name) => name.endsWith(".mp3"))).toBe(true);
+    const stagedWavPaths = observedFinalizerCommands.flatMap((arguments_) =>
+      arguments_.filter((argument) => argument.endsWith(".wav.stage")));
+    expect(stagedWavPaths.length).toBeGreaterThan(0);
+    expect(stagedWavPaths.every((candidate) => isPathInside(config.storeRoot, candidate))).toBe(true);
+    expect(stagedWavPaths.every((candidate) => !isPathInside(config.exportRoot, candidate))).toBe(true);
+    await expect(artifacts.get(recordingId)).resolves.not.toBeNull();
+
+    const managed = new ConvexManagedTranscriptionService(recordingService.store, {
+      lifecycle,
+      timelineArtifacts: artifacts,
+      managedUpload,
+    });
+    const result = await managed.transcribe({
+      recordingId,
+      credential: { authToken: "host-issued-composition-token" },
+    });
+    expect(result.job).toMatchObject({ status: "succeeded", recordingId, audioId: `recording:${recordingId}` });
+    expect(result.transcript).toMatchObject({ status: "ready", recordingId });
+    expect(result.transcript.ranges).toHaveLength(1);
+    await expect(recordingService.store.resolveCitation(saved.meetingId!, result.transcript.ranges[0]!.segmentId)).resolves.toMatchObject({
+      audioPath: expect.stringMatching(/\.mp3$/u),
+      text: "Convex local provider publication",
+    });
+    expect(manifest).not.toBeNull();
+    expect(postedPartLengths).toEqual(manifest!.parts.map((part) => part.byteLength));
+    expect(authTokens).toEqual(expect.arrayContaining(["host-issued-composition-token"]));
+    expect(convexCalls.some((call) => call.name.endsWith(":beginUpload"))).toBe(true);
+    expect(convexCalls.every(({ args }) => !containsAudioBytes(args))).toBe(true);
+    expect(convexCalls.every(({ args }) => !containsValue(args, path.join(config.exportRoot, "")))).toBe(true);
+    expect(session.state).toBe("cleaned");
+    await expect(artifacts.get(recordingId)).resolves.toBeNull();
+    expect(await readdir(path.join(config.storeRoot, "managed-artifacts"))).toEqual([]);
+  }, 30_000);
+
   test.each([
     "after-publication",
     "after-saved",
@@ -261,4 +435,20 @@ async function existingNames(directory: string): Promise<string[]> {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
     throw error;
   }
+}
+
+function containsAudioBytes(value: unknown, seen = new Set<unknown>()): boolean {
+  if (value instanceof Uint8Array || value instanceof ArrayBuffer) return true;
+  if (typeof value !== "object" || value === null || seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) return value.some((item) => containsAudioBytes(item, seen));
+  return Object.values(value).some((item) => containsAudioBytes(item, seen));
+}
+
+function containsValue(value: unknown, target: string, seen = new Set<unknown>()): boolean {
+  if (typeof value === "string") return value.includes(target);
+  if (typeof value !== "object" || value === null || seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) return value.some((item) => containsValue(item, target, seen));
+  return Object.values(value).some((item) => containsValue(item, target, seen));
 }

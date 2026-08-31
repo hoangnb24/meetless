@@ -27,11 +27,15 @@ import { MeetingLifecycleCoordinator } from "./meeting-lifecycle-coordinator.js"
 import type { TranscriptionProvider } from "./transcription-provider.js";
 import { TranscriptionProviderError } from "./transcription-provider.js";
 import type {
+  ManagedConvexJob,
+  ConvexManagedUploadPort,
+  ManagedConvexCredential,
   ManagedUploadCredential,
   ManagedUploadManifest,
   ManagedUploadPort,
   ManagedUploadReceipt,
 } from "./managed-upload.js";
+import { buildManagedLogicalTimelineManifest } from "./managed-upload.js";
 
 export interface ManagedTranscriptionInput {
   readonly recordingId: string;
@@ -357,6 +361,172 @@ export class ManagedTranscriptionService {
     }
     return transcript;
   }
+}
+
+export interface ConvexManagedTranscriptionInput {
+  readonly recordingId: string;
+  readonly credential: ManagedConvexCredential;
+}
+
+export interface ConvexManagedTranscriptionServiceOptions {
+  /** The shared in-process lease also used by recording, Ask, and deletion. */
+  readonly lifecycle: MeetingLifecycleCoordinator;
+  readonly timelinePreparer?: ManagedTimelinePreparer;
+  readonly timelineArtifacts?: ManagedTimelineArtifactSource;
+  readonly managedUpload: ConvexManagedUploadPort;
+}
+
+export interface ConvexManagedTranscriptionResult {
+  readonly job: ManagedConvexJob;
+  readonly transcript: TranscriptState;
+}
+
+/**
+ * Explicit desktop command for the local-first Convex slice. Recording
+ * finalization never constructs this service or calls it; the caller invokes
+ * `transcribe` only after the user chooses Meetless-managed transcription.
+ * The canonical WAV is inspected and segmented one bounded part at a time.
+ */
+export class ConvexManagedTranscriptionService {
+  private readonly timelinePreparer: ManagedTimelinePreparer;
+
+  constructor(
+    private readonly store: MeetingStore,
+    private readonly options: ConvexManagedTranscriptionServiceOptions,
+  ) {
+    if (!options.timelinePreparer && !options.timelineArtifacts) {
+      throw new Error("Convex managed transcription requires the finalizer-owned canonical timeline");
+    }
+    this.timelinePreparer = options.timelinePreparer
+      ?? new HandedOffTimelinePreparer(options.timelineArtifacts!);
+  }
+
+  async transcribe(input: ConvexManagedTranscriptionInput): Promise<ConvexManagedTranscriptionResult> {
+    const recording = (await this.store.listRecordings()).find((candidate) => candidate.id === input.recordingId);
+    if (!recording || recording.status !== "saved" || !recording.savedOutput) {
+      throw new Error(`Managed Convex transcription requires saved recording ${input.recordingId}`);
+    }
+    const executionLease = this.options.lifecycle.tryAcquireWork(recording.meetingId, "transcription");
+    if (!executionLease) throw new Error("Meeting deletion is in progress");
+    let retainTimeline = false;
+    try {
+      const savedOutput = recording.savedOutput;
+      const savedIdentity = await fileIdentity(savedOutput.destination);
+      if (!sameIdentity(savedIdentity, savedOutput)) throw new Error("Managed durable saved MP3 identity does not match MeetingStore");
+      const timeline = await this.timelinePreparer.prepare(recording);
+      try {
+        validateManagedConvexTimeline(timeline, recording.id, savedOutput.destination);
+        const manifest = await buildManagedLogicalTimelineManifest({
+          recordingId: recording.id,
+          manifestSha256: timeline.manifestSha256,
+          sourcePath: timeline.path,
+        });
+        const durationMs = manifest.durationMs;
+        // This is the local durable deletion barrier. It is persisted before
+        // the first Convex mutation or generated upload URL is requested.
+        let transcript = await ensureManagedTranscriptState(this.store, recording, durationMs);
+        retainTimeline = true;
+        let remote = await this.options.managedUpload.uploadCanonicalTimelineFromPath({
+          credential: input.credential,
+          manifest,
+          sourcePath: timeline.path,
+        });
+        let job = remote.job;
+        if (job.status === "reserved" || job.status === "running") {
+          job = await this.options.managedUpload.runProvider({ credential: input.credential, jobId: job._id });
+        }
+        if (job.status === "provider_completed") {
+          job = await this.options.managedUpload.settle({ credential: input.credential, jobId: job._id });
+        }
+        if (job.status !== "succeeded") {
+          throw new Error(`Managed Convex job ${job._id} is ${job.status}`);
+        }
+        transcript = await publishConvexManagedResult(
+          this.store,
+          recording.meetingId,
+          recording.id,
+          durationMs,
+          job,
+          transcript,
+        );
+        if (transcript.status !== "ready") throw new Error("Managed transcript remains pending after provider result");
+        await this.options.managedUpload.acknowledge({ credential: input.credential, jobId: job._id });
+        await timeline.cleanup();
+        retainTimeline = false;
+        return { job, transcript };
+      } finally {
+        if (!retainTimeline) await timeline.cleanup().catch(() => undefined);
+      }
+    } finally {
+      executionLease.release();
+    }
+  }
+}
+
+async function ensureManagedTranscriptState(
+  store: MeetingStore,
+  recording: RecordingSession,
+  durationMs: number,
+): Promise<TranscriptState> {
+  let transcript = await store.ensureTranscript({
+    meetingId: recording.meetingId,
+    recordingId: recording.id,
+    audio: { ...recording.savedOutput!, durationMs },
+    rangeMs: durationMs,
+  });
+  if (transcript.status === "failed") {
+    if (!canRetryTranscript(transcript)) throw new Error("Managed transcript retry bound has been reached");
+    transcript = await store.retryTranscript(transcript.id);
+  }
+  return transcript;
+}
+
+async function publishConvexManagedResult(
+  store: MeetingStore,
+  meetingId: string,
+  recordingId: string,
+  durationMs: number,
+  job: ManagedConvexJob,
+  current: TranscriptState,
+): Promise<TranscriptState> {
+  let transcript = current;
+  if (transcript.status === "ready") return transcript;
+  const result = job.providerResult;
+  if (!result || result.ranges.length !== 1 || result.ranges[0]?.startMs !== 0 || result.ranges[0]?.endMs !== durationMs) {
+    throw new Error("Managed Convex provider result must cover one full timeline without diarization");
+  }
+  transcript = await store.reconcileTranscriptPublications([meetingId]).then(async (meetings) =>
+    meetings.find((candidate) => candidate.recordingId === recordingId) ?? await store.getTranscript(transcript.id) ?? transcript,
+  );
+  if (transcript.status === "ready") return transcript;
+  if (transcript.status === "failed") {
+    if (!canRetryTranscript(transcript)) throw new Error("Managed transcript is permanently failed");
+    transcript = await store.retryTranscript(transcript.id);
+  }
+  if (transcript.status !== "pending") throw new Error("Managed transcript is not ready for publication");
+  if (transcript.checkpoints.length === transcript.ranges.length) return store.publishTranscript(transcript.id);
+  const next = await store.beginTranscriptRequest(transcript.id);
+  if (!next) throw new Error("Managed transcript has no pending range");
+  transcript = await store.checkpointTranscriptRange(transcript.id, {
+    range: next.range,
+    attempts: next.attempt,
+    text: result.text,
+    usage: null,
+    detectedLanguages: result.detectedLanguages,
+  });
+  if (transcript.checkpoints.length === transcript.ranges.length) transcript = await store.publishTranscript(transcript.id);
+  return transcript;
+}
+
+function validateManagedConvexTimeline(
+  timeline: ManagedCanonicalTimeline,
+  recordingId: string,
+  savedOutputPath: string,
+): void {
+  if (timeline.recordingId !== recordingId) throw new Error("Managed canonical timeline is bound to a different recording");
+  if (timeline.audioId !== `recording:${recordingId}`) throw new Error("Managed canonical timeline identity must be recording-bound");
+  if (path.resolve(timeline.path) === path.resolve(savedOutputPath)) throw new Error("Managed canonical timeline must be temporary; saved output remains MP3");
+  if (timeline.startMs !== 0) throw new Error("Managed canonical timeline must start at zero");
 }
 
 class HandedOffTimelinePreparer implements ManagedTimelinePreparer {

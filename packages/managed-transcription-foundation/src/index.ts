@@ -9,6 +9,96 @@ export const MANAGED_MAX_DEVICES = 3;
 export const MANAGED_SAMPLE_RATE = 16_000;
 export const MANAGED_CHANNELS = 1;
 export const MANAGED_BITS_PER_SAMPLE = 16;
+/** Ten-minute physical transport/provider bound; it is not a job or quota bound. */
+export const MANAGED_MAX_UPLOAD_PART_SAMPLES = MANAGED_SAMPLE_RATE * 10 * 60;
+
+export interface ManagedUploadPartDescriptor {
+  readonly partNumber: number;
+  readonly sampleOffset: number;
+  readonly sampleCount: number;
+  readonly byteLength: number;
+  readonly sha256: string;
+}
+
+/**
+ * The immutable edge manifest used by the local Convex adapter. Parts are
+ * canonical WAVs containing adjacent slices of one logical PCM timeline.
+ * This data-only contract is intentionally independent of Convex and storage.
+ */
+export interface ManagedLogicalTimelineManifest {
+  readonly recordingId: string;
+  readonly audioId: string;
+  readonly manifestSha256: string;
+  readonly contentSha256: string;
+  readonly byteLength: number;
+  readonly durationMs: number;
+  readonly sampleCount: number;
+  readonly partsManifestSha256: string;
+  readonly parts: readonly ManagedUploadPartDescriptor[];
+}
+
+export function validateManagedLogicalTimelineManifest(
+  input: ManagedLogicalTimelineManifest,
+): ManagedLogicalTimelineManifest {
+  const recordingId = requireManifestText(input.recordingId, "recording id");
+  const audioId = requireManifestText(input.audioId, "audio id");
+  if (audioId !== `recording:${recordingId}`) {
+    throw new ManagedTimelineIdentityError("Managed upload audio identity must be bound to its recording");
+  }
+  for (const [field, value] of [
+    ["manifest SHA-256", input.manifestSha256],
+    ["content SHA-256", input.contentSha256],
+    ["parts manifest SHA-256", input.partsManifestSha256],
+  ] as const) {
+    if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) {
+      throw new ManagedTimelineIdentityError(`Managed upload ${field} must be a lowercase SHA-256 identity`);
+    }
+  }
+  if (!Number.isSafeInteger(input.sampleCount) || input.sampleCount <= 0) {
+    throw new ManagedTimelineIdentityError("Managed upload sample count must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(input.byteLength) || input.byteLength !== 44 + input.sampleCount * 2) {
+    throw new ManagedTimelineIdentityError("Managed upload byte length must match the canonical PCM sample count");
+  }
+  const durationMs = Math.max(1, Math.ceil(input.sampleCount / MANAGED_SAMPLE_RATE * 1_000));
+  if (!Number.isSafeInteger(input.durationMs) || input.durationMs !== durationMs) {
+    throw new ManagedTimelineIdentityError("Managed upload duration must be derived from canonical PCM samples");
+  }
+  if (!Array.isArray(input.parts) || input.parts.length === 0) {
+    throw new ManagedTimelineIdentityError("Managed upload requires at least one physical part");
+  }
+  let expectedOffset = 0;
+  for (const [index, part] of input.parts.entries()) {
+    if (!Number.isSafeInteger(part.partNumber) || part.partNumber !== index + 1) {
+      throw new ManagedTimelineIdentityError("Managed upload parts must be numbered contiguously from one");
+    }
+    if (!Number.isSafeInteger(part.sampleOffset) || part.sampleOffset !== expectedOffset) {
+      throw new ManagedTimelineIdentityError("Managed upload parts must have contiguous sample offsets");
+    }
+    if (!Number.isSafeInteger(part.sampleCount) || part.sampleCount <= 0 || part.sampleCount > MANAGED_MAX_UPLOAD_PART_SAMPLES) {
+      throw new ManagedTimelineIdentityError("Managed upload parts must not exceed the ten-minute sample bound");
+    }
+    if (!Number.isSafeInteger(part.byteLength) || part.byteLength !== 44 + part.sampleCount * 2) {
+      throw new ManagedTimelineIdentityError("Managed upload part byte length must match its sample count");
+    }
+    if (typeof part.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(part.sha256)) {
+      throw new ManagedTimelineIdentityError("Managed upload part must carry a lowercase SHA-256 identity");
+    }
+    expectedOffset += part.sampleCount;
+  }
+  if (expectedOffset !== input.sampleCount) {
+    throw new ManagedTimelineIdentityError("Managed upload parts must cover the logical timeline exactly once");
+  }
+  return {
+    ...input,
+    recordingId,
+    audioId,
+    manifestSha256: input.manifestSha256,
+    contentSha256: input.contentSha256,
+    partsManifestSha256: input.partsManifestSha256,
+    parts: input.parts.map((part) => ({ ...part })),
+  };
+}
 
 export const MANAGED_TRANSCRIPTION_MODES = ["managed", "ask", "byok"] as const;
 export type ManagedTranscriptionMode = (typeof MANAGED_TRANSCRIPTION_MODES)[number];
@@ -1304,6 +1394,13 @@ function requireText(value: unknown, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new ManagedTranscriptionError(`${field} must not be empty`);
   return normalized;
+}
+
+function requireManifestText(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new ManagedTimelineIdentityError(`Managed upload ${field} must be a non-empty string`);
+  }
+  return value.trim();
 }
 
 function requireInstant(value: number, field: string): number {

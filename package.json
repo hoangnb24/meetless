@@ -73,6 +73,7 @@
     "@types/node": "^22.18.0",
     "@types/react": "~19.2.0",
     "@types/react-test-renderer": "^19.1.0",
+    "convex": "^1.45.0",
     "playwright": "1.62.1",
     "react": "19.1.0",
     "react-test-renderer": "19.1.0",
