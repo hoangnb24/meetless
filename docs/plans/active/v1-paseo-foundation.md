@@ -2,14 +2,14 @@
 
 ## Current State
 
-- `plan_revision`: `v13`
-- `current_frontier`: `MANAGED-TRANSCRIPTION-PRE-EXTERNAL-SEAM-R2-CONVERGENCE`
-- `state`: `LOCAL_CONVERGENCE_CANDIDATE_READY`
+- `plan_revision`: `v14`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-CONVEX-INTEGRATION-GATE`
+- `state`: `OWNER_EXTERNAL_GATE`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: R2 candidate `966b9abd78481db001e912cc2e60d895c00bef37` remains rejected; the bounded CPF-002/CPF-007 convergence candidate is prepared from exact base `360e01675d46f0b9207358b1e84eddff814a7273`. Managed-transcription foundation R1 remains accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`
-- `pending_ruling`: Lead closeout of the bounded local R2 convergence candidate; owner selection of job duration/size limits, Convex project/region, and external configuration remains deferred
-- `blocked_by`: R2 is not externally blocked. Real regional latency, upload/action limits, provider credentials, App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication still require external targets or owner-gated mutation
-- `next_action`: Lead inspects the immutable bounded CPF-002/CPF-007 convergence candidate; no third broad review and no Convex dependency, project, credential, provider call, or external mutation
+- `candidate`: local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; predecessor `966b9abd78481db001e912cc2e60d895c00bef37` remains rejected. Managed-transcription foundation R1 remains accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`
+- `pending_ruling`: owner selection of maximum managed-job duration/size, Convex project/plan/permanent region and data residency, production provider contract, and authorization before external configuration or credential use
+- `blocked_by`: real regional latency, upload/action limits, provider behavior, App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication require external targets or owner-gated mutation
+- `next_action`: after owner rulings, run the real Convex/AVFoundation upload/action/provider canary and measure latency, contention, recovery, and cleanup; no external mutation is authorized by local R2 acceptance
 
 ## Ownership And Authority
 
@@ -470,12 +470,12 @@ publication, update stage enumeration/recovery/deletion accordingly, and prove
 expired-artifact deletion while running. No third broad review is authorized;
 Lead will inspect and run direct regressions on the convergence candidate.
 
-### R2 Convergence Candidate Disposition (2026-08-31; pending Lead closeout)
+### R2 Convergence Candidate Disposition (2026-08-31; accepted)
 
-The bounded convergence candidate is prepared from exact base
-`360e01675d46f0b9207358b1e84eddff814a7273`; the immutable candidate commit is
-reported in the peer handoff. No authority file or MeetingStore production
-implementation changed.
+Lead accepts bounded convergence candidate
+`7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`, prepared from exact base
+`360e01675d46f0b9207358b1e84eddff814a7273`. No authority file or MeetingStore
+production implementation changed.
 
 - `CPF-002`: `Mp3Finalizer` keeps only the MP3 stage/publication in
   `exportRoot`. Source timelines and the managed canonical WAV use a
@@ -490,7 +490,7 @@ implementation changed.
 - `CPF-001`, `CPF-003`, `CPF-005`, and `CPF-006-LOCAL` remain unchanged and
   covered by the focused R1 regression set.
 
-Observed convergence proof, pending Lead closeout:
+Observed convergence proof and Lead acceptance:
 
 - The focused R1 set passed 9 files and 107 tests, including finalizer path
   assertions, all four publication/saved/handoff/cleanup restart failpoints,
@@ -503,6 +503,10 @@ Observed convergence proof, pending Lead closeout:
 - No Convex/provider credentials or calls, native capture launch,
   StoreKit/RevenueCat mutation, signing, upload, publication, or external
   state change was attempted. This proof makes no production latency claim.
+- Lead independently verified the exact seven-path delta and parent, inspected
+  the private staging/deletion corrections, reran the 9-file/107-test focused
+  proof, typecheck, build, diff check, and frozen authority digest. The only
+  remaining work is owner-gated production integration and release evidence.
 
 ### Risks And Recovery
 
