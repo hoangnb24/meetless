@@ -78,8 +78,13 @@ export interface CanonicalPcmWav {
 }
 
 export interface ManagedAudioIdentity {
+  readonly recordingId: string;
   readonly audioId: string;
+  readonly manifestSha256: string;
+  readonly contentSha256: string;
   readonly byteLength: number;
+  readonly startMs: number;
+  readonly endMs: number;
   readonly sampleCount: number;
   readonly durationSeconds: number;
   readonly durationMs: number;
@@ -93,6 +98,9 @@ export interface ManagedProviderResult {
 
 export interface ManagedJob {
   readonly jobId: string;
+  /** Changes whenever expired/failed work receives a fresh admission. */
+  readonly admissionId: string;
+  readonly admissionNumber: number;
   readonly idempotencyKey: string;
   readonly accountId: string;
   readonly deviceId: string;
@@ -161,9 +169,16 @@ interface PeriodState {
   reservedSeconds: number;
 }
 
-interface JobState extends Omit<ManagedJob, "status" | "providerCompletedAt" | "settledAt" | "failureReason" | "providerResult"> {
-  readonly periodStartAt: number;
-  readonly audioFingerprint: string;
+interface JobState extends Omit<ManagedJob, "admissionId" | "admissionNumber" | "deviceId" | "status" | "createdAt" | "leaseExpiresAt" | "expiresAt" | "providerCompletedAt" | "settledAt" | "failureReason" | "providerResult"> {
+  admissionId: string;
+  admissionNumber: number;
+  deviceId: string;
+  createdAt: number;
+  leaseExpiresAt: number;
+  expiresAt: number;
+  periodStartAt: number;
+  readonly timelineKey: string;
+  readonly timelineFingerprint: string;
   status: ManagedJobStatus;
   providerCompletedAt: number | null;
   settledAt: number | null;
@@ -248,10 +263,17 @@ export class DurationClaimMismatchError extends ManagedTranscriptionError {
 export class IdempotencyConflictError extends ManagedTranscriptionError {
   constructor() {
     super(
-      `Managed transcription reused a subscriber/audio/chunk identity with different audio ` +
-      `(${MONO_PCM_WAV_AUTHORITY}). Use one stable identity for retries.`,
+      `Managed transcription reused a canonical timeline identity with different bytes, manifest, or overlapping source window ` +
+      `(${MONO_PCM_WAV_AUTHORITY}). Reuse the validated meeting timeline for retries.`,
     );
     this.name = "IdempotencyConflictError";
+  }
+}
+
+export class ManagedTimelineIdentityError extends ManagedTranscriptionError {
+  constructor(message: string) {
+    super(`${message} (${MONO_PCM_WAV_AUTHORITY}). Rebuild the canonical timeline at the trusted edge.`);
+    this.name = "ManagedTimelineIdentityError";
   }
 }
 
@@ -266,6 +288,71 @@ export interface ManagedTranscriptionPolicyOptions {
   now?: () => number;
   createDeviceId?: (installationId: string) => string;
   createJobId?: () => string;
+  createAdmissionId?: () => string;
+  allowance?: Partial<ManagedAllowanceConfiguration>;
+  snapshot?: ManagedTranscriptionSnapshot;
+}
+
+export interface ManagedAllowanceConfiguration {
+  readonly monthlySeconds: number;
+  readonly trialSeconds: number;
+}
+
+export interface ManagedTimelineEvidence {
+  /** Recording identity is part of the key: identical bytes from two meetings are distinct. */
+  readonly recordingId: string;
+  /** One canonical meeting timeline, never a microphone/system source identity. */
+  readonly audioId: string;
+  /** SHA-256 of the validated chunk manifest computed at the trusted edge. */
+  readonly manifestSha256: string;
+  /** SHA-256 of the exact canonical WAV bytes computed at the trusted edge. */
+  readonly contentSha256: string;
+  readonly byteLength: number;
+  readonly startMs: number;
+  readonly endMs: number;
+}
+
+export interface ManagedJobSnapshot extends ManagedJob {
+  readonly periodStartAt: number;
+  readonly timelineKey: string;
+  readonly timelineFingerprint: string;
+}
+
+export interface ManagedTranscriptionSnapshot {
+  readonly version: 1;
+  readonly allowance: ManagedAllowanceConfiguration;
+  readonly lineages: ReadonlyArray<{
+    readonly token: string;
+    readonly lineageKey: string;
+    readonly accountId: string;
+    readonly startedAt: number;
+    readonly naturalExpiryAt: number | null;
+    readonly product: ManagedSubscriptionProduct;
+    readonly nextProduct: ManagedSubscriptionProduct | null;
+    readonly entitlementOverride: "active" | "grace" | "refunded" | "revoked";
+    readonly devices: readonly ManagedDevice[];
+    readonly periods: readonly ManagedPeriodSnapshot[];
+  }>;
+  readonly jobs: readonly ManagedJobSnapshot[];
+  readonly uploads: readonly UploadSnapshot[];
+  readonly orphans: readonly OrphanUploadSnapshot[];
+  readonly ledgerCharges: readonly ManagedLedgerCharge[];
+  readonly nextDeviceSequence: number;
+  readonly nextJobSequence: number;
+  readonly nextAdmissionSequence: number;
+}
+
+export interface UploadSnapshot {
+  readonly uploadId: string;
+  readonly jobId: string | null;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+}
+
+export interface OrphanUploadSnapshot {
+  readonly uploadId: string;
+  readonly createdAt: number;
+  readonly expiresAt: number;
 }
 
 export interface SeedVerifiedLineageInput {
@@ -293,8 +380,8 @@ export interface EnrolledDevice {
 
 export interface ReserveManagedJobInput {
   readonly credential: ManagedDeviceCredential;
-  /** Identity of the one canonical meeting timeline, not a microphone/system source. */
-  readonly audioId: string;
+  /** Identity evidence produced after the edge validates the recording manifest and WAV bytes. */
+  readonly timeline: ManagedTimelineEvidence;
   /** Stable upload chunk identity used to make retries idempotent. */
   readonly chunkId: string;
   readonly wav: Uint8Array;
@@ -308,29 +395,186 @@ export interface ManagedPolicyClock {
 /**
  * Fake-backed policy owner for the managed-transcription foundation.
  *
- * This state is intentionally process-local. It models the accepted backend
- * contracts without pretending to be a Convex database or a production
- * provider adapter. External data is converted at `reserve`; all state
- * transitions below use ordinary values and an injected clock.
+ * Fake-backed policy owner for the managed-transcription contract. The policy
+ * owns transitions over ordinary data only. `snapshot()` and the constructor's
+ * `snapshot` option are the fake durable-state boundary used to rehearse a
+ * process restart without claiming a production database or Convex latency.
  */
 export class ManagedTranscriptionPolicy {
   private readonly now: () => number;
   private readonly createDeviceId: (installationId: string) => string;
   private readonly createJobId: () => string;
+  private readonly createAdmissionId: () => string;
+  private allowance: ManagedAllowanceConfiguration;
   private readonly lineages = new Map<string, LineageState>();
   private readonly jobs = new Map<string, JobState>();
   private readonly jobsByIdempotency = new Map<string, JobState>();
-  private readonly jobsByAudioTimeline = new Map<string, JobState>();
+  private readonly jobsByTimeline = new Map<string, JobState>();
   private readonly uploads = new Map<string, UploadState>();
   private readonly orphans = new Map<string, OrphanUploadState>();
   private readonly ledgerCharges: ManagedLedgerCharge[] = [];
   private deviceSequence = 0;
   private jobSequence = 0;
+  private admissionSequence = 0;
 
   constructor(options: ManagedTranscriptionPolicyOptions = {}) {
     this.now = options.now ?? (() => Date.now());
+    this.allowance = checkedAllowance({
+      monthlySeconds: options.allowance?.monthlySeconds ?? MANAGED_MONTHLY_ALLOWANCE_SECONDS,
+      trialSeconds: options.allowance?.trialSeconds ?? MANAGED_TRIAL_ALLOWANCE_SECONDS,
+    });
     this.createDeviceId = options.createDeviceId ?? (() => `managed-device-${++this.deviceSequence}`);
     this.createJobId = options.createJobId ?? (() => `managed-job-${++this.jobSequence}`);
+    this.createAdmissionId = options.createAdmissionId ?? (() => `managed-admission-${++this.admissionSequence}`);
+    if (options.snapshot) this.restoreSnapshot(options.snapshot);
+  }
+
+  static fromSnapshot(
+    snapshot: ManagedTranscriptionSnapshot,
+    options: Omit<ManagedTranscriptionPolicyOptions, "snapshot" | "allowance"> = {},
+  ): ManagedTranscriptionPolicy {
+    return new ManagedTranscriptionPolicy({ ...options, snapshot });
+  }
+
+  setAllowanceConfiguration(input: ManagedAllowanceConfiguration): void {
+    this.allowance = checkedAllowance(input);
+  }
+
+  snapshot(): ManagedTranscriptionSnapshot {
+    return {
+      version: 1,
+      allowance: { ...this.allowance },
+      lineages: [...this.lineages.values()].map((lineage) => ({
+        token: lineage.token,
+        lineageKey: lineage.lineageKey,
+        accountId: lineage.accountId,
+        startedAt: lineage.startedAt,
+        naturalExpiryAt: lineage.naturalExpiryAt,
+        product: lineage.product,
+        nextProduct: lineage.nextProduct,
+        entitlementOverride: lineage.entitlementOverride,
+        devices: [...lineage.devices.values()].map(publicDevice),
+        periods: [...lineage.periods.values()].map(publicPeriod),
+      })),
+      jobs: [...this.jobs.values()].map((job) => ({
+        ...publicJob(job),
+        periodStartAt: job.periodStartAt,
+        timelineKey: job.timelineKey,
+        timelineFingerprint: job.timelineFingerprint,
+      })),
+      uploads: [...this.uploads.values()].map((upload) => ({ ...upload })),
+      orphans: [...this.orphans.values()].map((orphan) => ({ ...orphan })),
+      ledgerCharges: this.ledgerCharges.map((charge) => ({ ...charge })),
+      nextDeviceSequence: this.deviceSequence,
+      nextJobSequence: this.jobSequence,
+      nextAdmissionSequence: this.admissionSequence,
+    };
+  }
+
+  private restoreSnapshot(snapshot: ManagedTranscriptionSnapshot): void {
+    if (!snapshot || snapshot.version !== 1) throw new ManagedTranscriptionError("Managed policy snapshot version is unsupported");
+    this.allowance = checkedAllowance(snapshot.allowance);
+    this.deviceSequence = checkedSequence(snapshot.nextDeviceSequence, "device sequence");
+    this.jobSequence = checkedSequence(snapshot.nextJobSequence, "job sequence");
+    this.admissionSequence = checkedSequence(snapshot.nextAdmissionSequence, "admission sequence");
+
+    for (const saved of snapshot.lineages) {
+      const lineageKey = requireText(saved.lineageKey, "lineage key");
+      if (this.lineages.has(lineageKey)) throw new ManagedTranscriptionError(`Duplicate managed lineage in snapshot: ${lineageKey}`);
+      const token = requireText(saved.token, "lineage token");
+      const devices = new Map<string, ManagedDeviceState>();
+      for (const savedDevice of saved.devices) {
+        const deviceId = requireText(savedDevice.deviceId, "device id");
+        if (devices.has(deviceId)) throw new ManagedTranscriptionError(`Duplicate managed device in snapshot: ${deviceId}`);
+        devices.set(deviceId, { ...savedDevice, token });
+      }
+      const periods = new Map<number, PeriodState>();
+      for (const savedPeriod of saved.periods) {
+        if (periods.has(savedPeriod.startAt)) throw new ManagedTranscriptionError(`Duplicate managed period in snapshot: ${savedPeriod.startAt}`);
+        periods.set(savedPeriod.startAt, {
+          product: requireProduct(savedPeriod.product),
+          startAt: requireInstant(savedPeriod.startAt, "period start"),
+          endAt: requireInstant(savedPeriod.endAt, "period end"),
+          limitSeconds: checkedSeconds(savedPeriod.limitSeconds, "period allowance"),
+          usedSeconds: checkedNonNegativeSeconds(savedPeriod.usedSeconds, "period usage"),
+          reservedSeconds: checkedNonNegativeSeconds(savedPeriod.reservedSeconds, "period reservation"),
+        });
+      }
+      if (periods.size === 0) throw new ManagedTranscriptionError(`Managed lineage has no quota period: ${lineageKey}`);
+      this.lineages.set(lineageKey, {
+        token,
+        lineageKey,
+        accountId: requireText(saved.accountId, "account id"),
+        startedAt: requireInstant(saved.startedAt, "lineage start"),
+        naturalExpiryAt: saved.naturalExpiryAt === null ? null : requireInstant(saved.naturalExpiryAt, "lineage expiry"),
+        product: requireProduct(saved.product),
+        nextProduct: saved.nextProduct === null ? null : requireProduct(saved.nextProduct),
+        entitlementOverride: saved.entitlementOverride,
+        devices,
+        periods,
+      });
+    }
+
+    for (const saved of snapshot.jobs) {
+      const timeline = checkedTimeline(saved.audio, saved.audio.byteLength);
+      const expectedTimelineKey = makeTimelineKey(saved.accountId, timeline);
+      const expectedIdempotencyKey = makeIdempotencyKey(saved.accountId, timeline, saved.chunkId);
+      if (
+        saved.timelineKey !== expectedTimelineKey ||
+        saved.timelineFingerprint !== timelineFingerprint(timeline) ||
+        saved.idempotencyKey !== expectedIdempotencyKey
+      ) {
+        throw new ManagedTranscriptionError(`Managed job identity is inconsistent in snapshot: ${saved.jobId}`);
+      }
+      if (this.jobs.has(saved.jobId) || this.jobsByIdempotency.has(saved.idempotencyKey)) {
+        throw new ManagedTranscriptionError(`Duplicate managed job in snapshot: ${saved.jobId}`);
+      }
+      const job: JobState = {
+        jobId: requireText(saved.jobId, "job id"),
+        admissionId: requireText(saved.admissionId, "admission id"),
+        admissionNumber: checkedSequence(saved.admissionNumber, "admission number"),
+        idempotencyKey: saved.idempotencyKey,
+        accountId: requireText(saved.accountId, "account id"),
+        deviceId: requireText(saved.deviceId, "device id"),
+        audio: {
+          ...timeline,
+          sampleCount: checkedNonNegativeInteger(saved.audio.sampleCount, "sample count"),
+          durationSeconds: saved.audio.durationSeconds,
+          durationMs: checkedPositiveInteger(saved.audio.durationMs, "duration"),
+          billableSeconds: checkedPositiveInteger(saved.audio.billableSeconds, "billable duration"),
+        },
+        chunkId: requireText(saved.chunkId, "chunk id"),
+        status: saved.status,
+        createdAt: requireInstant(saved.createdAt, "job creation"),
+        leaseExpiresAt: requireInstant(saved.leaseExpiresAt, "job lease expiry"),
+        expiresAt: requireInstant(saved.expiresAt, "job TTL expiry"),
+        providerCompletedAt: saved.providerCompletedAt === null ? null : requireInstant(saved.providerCompletedAt, "provider completion"),
+        settledAt: saved.settledAt === null ? null : requireInstant(saved.settledAt, "job settlement"),
+        failureReason: saved.failureReason === null ? null : requireText(saved.failureReason, "failure reason"),
+        providerResult: saved.providerResult === null ? null : {
+          text: requireText(saved.providerResult.text, "provider result text"),
+          detectedLanguages: [...(saved.providerResult.detectedLanguages ?? [])],
+        },
+        periodStartAt: requireInstant(saved.periodStartAt, "job quota period"),
+        timelineKey: saved.timelineKey,
+        timelineFingerprint: saved.timelineFingerprint,
+      };
+      this.jobs.set(job.jobId, job);
+      this.jobsByIdempotency.set(job.idempotencyKey, job);
+      const existingTimeline = this.jobsByTimeline.get(job.timelineKey);
+      if (existingTimeline && existingTimeline.jobId !== job.jobId) {
+        throw new ManagedTranscriptionError(`Duplicate managed timeline in snapshot: ${job.timelineKey}`);
+      }
+      this.jobsByTimeline.set(job.timelineKey, job);
+    }
+    for (const upload of snapshot.uploads) this.uploads.set(requireText(upload.uploadId, "upload id"), { ...upload });
+    for (const orphan of snapshot.orphans) this.orphans.set(requireText(orphan.uploadId, "orphan upload id"), { ...orphan });
+    for (const charge of snapshot.ledgerCharges) {
+      if (this.ledgerCharges.some((existing) => existing.jobId === charge.jobId)) {
+        throw new ManagedTranscriptionError(`Duplicate managed ledger charge in snapshot: ${charge.jobId}`);
+      }
+      this.ledgerCharges.push({ ...charge });
+    }
   }
 
   /**
@@ -352,7 +596,7 @@ export class ManagedTranscriptionPolicy {
     if (naturalExpiryAt !== null && naturalExpiryAt !== undefined && naturalExpiryAt <= startedAt) {
       throw new ManagedTranscriptionError("Verified subscription lineage expiry must follow its start");
     }
-    const initialPeriod = makePeriod(product, startedAt);
+    const initialPeriod = makePeriod(product, startedAt, this.allowance);
     const lineage: LineageState = {
       token,
       lineageKey,
@@ -428,8 +672,14 @@ export class ManagedTranscriptionPolicy {
 
   reserve(input: ReserveManagedJobInput): ManagedReservation {
     const { lineage, device } = this.resolveCredential(input.credential, false);
-    this.advancePeriods(lineage, this.now());
-    const audioId = requireText(input.audioId, "audio id");
+    const now = this.now();
+    this.advancePeriods(lineage, now);
+    // Admission is the recovery boundary: a caller may return after the
+    // previous six-hour lease without first observing the expired state.
+    // Reconcile before idempotency lookup so that the same timeline can only
+    // restart through reAdmit(), with a fresh lease and fresh quota reserve.
+    this.reconcileLeases(now);
+    const timeline = checkedTimeline(input.timeline, input.wav.byteLength);
     const chunkId = requireText(input.chunkId, "chunk id");
     const canonical = parseCanonicalPcmWav(input.wav);
     if (input.claimedDurationSeconds !== undefined) {
@@ -438,17 +688,35 @@ export class ManagedTranscriptionPolicy {
         throw new DurationClaimMismatchError(claimed, canonical.durationSeconds);
       }
     }
-    const idempotencyKey = `${lineage.accountId}\u0000${audioId}\u0000${chunkId}`;
-    const bytesDigest = stableBytesDigest(input.wav);
-    const timelineKey = `${lineage.accountId}\u0000${bytesDigest}`;
-    const fingerprint = `${audioId}\u0000${bytesDigest}`;
+    const idempotencyKey = `${lineage.accountId}\u0000${timeline.recordingId}\u0000${timeline.audioId}\u0000${chunkId}`;
+    const timelineKey = `${lineage.accountId}\u0000${timeline.recordingId}\u0000${timeline.audioId}`;
+    const fingerprint = timelineFingerprint(timeline);
     const existing = this.jobsByIdempotency.get(idempotencyKey);
     if (existing) {
-      if (existing.audioFingerprint !== fingerprint) throw new IdempotencyConflictError();
+      if (existing.timelineFingerprint !== fingerprint) throw new IdempotencyConflictError();
+      if (existing.status === "expired") {
+        return { outcome: "reserved", job: publicJob(this.reAdmit(existing, lineage, device, this.now())) };
+      }
       return { outcome: "duplicate", job: publicJob(existing) };
     }
-    const existingTimeline = this.jobsByAudioTimeline.get(timelineKey);
-    if (existingTimeline) throw new IdempotencyConflictError();
+    const existingTimeline = this.jobsByTimeline.get(timelineKey);
+    if (existingTimeline) {
+      if (existingTimeline.timelineFingerprint !== fingerprint) throw new IdempotencyConflictError();
+      if (existingTimeline.status === "expired") {
+        return { outcome: "reserved", job: publicJob(this.reAdmit(existingTimeline, lineage, device, this.now())) };
+      }
+      return { outcome: "duplicate", job: publicJob(existingTimeline) };
+    }
+    for (const candidate of this.jobs.values()) {
+      if (
+        candidate.accountId === lineage.accountId &&
+        candidate.audio.recordingId === timeline.recordingId &&
+        candidate.timelineKey !== timelineKey &&
+        rangesOverlap(candidate.audio.startMs, candidate.audio.endMs, timeline.startMs, timeline.endMs)
+      ) {
+        throw new IdempotencyConflictError();
+      }
+    }
     const entitlement = this.entitlement(lineage, this.now());
     if (entitlement !== "active" && entitlement !== "grace") {
       throw new ManagedTranscriptionError(
@@ -467,12 +735,19 @@ export class ManagedTranscriptionPolicy {
     const jobId = this.createJobId();
     const job: JobState = {
       jobId,
+      admissionId: this.createAdmissionId(),
+      admissionNumber: 1,
       idempotencyKey,
       accountId: lineage.accountId,
       deviceId: device.deviceId,
       audio: {
-        audioId,
-        byteLength: input.wav.byteLength,
+        recordingId: timeline.recordingId,
+        audioId: timeline.audioId,
+        manifestSha256: timeline.manifestSha256,
+        contentSha256: timeline.contentSha256,
+        byteLength: timeline.byteLength,
+        startMs: timeline.startMs,
+        endMs: timeline.endMs,
         sampleCount: canonical.sampleCount,
         durationSeconds: canonical.durationSeconds,
         durationMs: canonical.durationMs,
@@ -488,24 +763,26 @@ export class ManagedTranscriptionPolicy {
       failureReason: null,
       providerResult: null,
       periodStartAt: period.startAt,
-      audioFingerprint: fingerprint,
+      timelineKey,
+      timelineFingerprint: fingerprint,
     };
     period.reservedSeconds += canonical.billableSeconds;
     this.jobs.set(jobId, job);
     this.jobsByIdempotency.set(idempotencyKey, job);
-    this.jobsByAudioTimeline.set(timelineKey, job);
+    this.jobsByTimeline.set(timelineKey, job);
     this.uploads.set(jobId, {
       uploadId: jobId,
       jobId,
-      createdAt,
+      createdAt: job.createdAt,
       expiresAt: job.expiresAt,
     });
     return { outcome: "reserved", job: publicJob(job) };
   }
 
-  startProvider(jobId: string): ManagedJob {
+  startProvider(jobId: string, admissionId: string): ManagedJob {
     const job = this.requireJob(jobId);
     this.reconcileLeases(this.now());
+    this.requireAdmission(job, admissionId);
     if (job.status === "reserved") {
       job.status = "running";
       return publicJob(job);
@@ -517,9 +794,10 @@ export class ManagedTranscriptionPolicy {
     throw new ManagedJobStateError(`Managed job ${jobId} is ${job.status} and cannot start provider work`);
   }
 
-  recordProviderSuccess(jobId: string, result: ManagedProviderResult): ManagedJob {
+  recordProviderSuccess(jobId: string, admissionId: string, result: ManagedProviderResult): ManagedJob {
     const job = this.requireJob(jobId);
     this.reconcileLeases(this.now());
+    this.requireAdmission(job, admissionId);
     if (job.status === "provider_completed" || job.status === "succeeded") return publicJob(job);
     if (job.status !== "running") throw new ManagedJobStateError(`Managed job ${jobId} is not running`);
     const text = requireText(result.text, "provider result text");
@@ -579,32 +857,10 @@ export class ManagedTranscriptionPolicy {
     if (job.status !== "failed") {
       throw new ManagedJobStateError(`Managed job ${jobId} is ${job.status}; only failed work can retry`);
     }
-    const now = this.now();
-    if (now >= job.expiresAt) throw new ManagedJobStateError(`Managed job ${jobId} exceeded its temporary-data TTL`);
     const lineage = this.lineageForAccount(job.accountId);
-    this.advancePeriods(lineage, now);
-    const entitlement = this.entitlement(lineage, now);
-    if (entitlement !== "active" && entitlement !== "grace") {
-      throw new ManagedJobStateError(`Managed job ${jobId} cannot retry with entitlement ${entitlement}`);
-    }
-    const period = lineage.periods.get(job.periodStartAt);
-    if (!period) throw new ManagedJobStateError(`Managed job ${jobId} lost its reserved quota period`);
-    if (period.limitSeconds - period.usedSeconds - period.reservedSeconds < job.audio.billableSeconds) {
-      throw new QuotaExceededError(
-        job.audio.billableSeconds,
-        Math.max(0, period.limitSeconds - period.usedSeconds - period.reservedSeconds),
-      );
-    }
-    period.reservedSeconds += job.audio.billableSeconds;
-    job.status = "reserved";
-    job.failureReason = null;
-    this.uploads.set(job.jobId, {
-      uploadId: job.jobId,
-      jobId: job.jobId,
-      createdAt: job.createdAt,
-      expiresAt: job.expiresAt,
-    });
-    return publicJob(job);
+    const device = lineage.devices.get(job.deviceId);
+    if (!device || device.revokedAt !== null) throw new DeviceCredentialError();
+    return publicJob(this.reAdmit(job, lineage, device, this.now()));
   }
 
   cancelJob(jobId: string): ManagedJob {
@@ -752,6 +1008,53 @@ export class ManagedTranscriptionPolicy {
     return job;
   }
 
+  private requireAdmission(job: JobState, admissionId: string): void {
+    if (typeof admissionId !== "string" || admissionId.trim() !== job.admissionId) {
+      throw new ManagedJobStateError(`Managed job ${job.jobId} has a stale execution admission`);
+    }
+  }
+
+  private reAdmit(
+    job: JobState,
+    lineage: LineageState,
+    device: ManagedDeviceState,
+    now: number,
+  ): JobState {
+    if (now >= job.expiresAt) {
+      throw new ManagedJobStateError(`Managed job ${job.jobId} exceeded its temporary-data TTL`);
+    }
+    this.advancePeriods(lineage, now);
+    const entitlement = this.entitlement(lineage, now);
+    if (entitlement !== "active" && entitlement !== "grace") {
+      throw new ManagedJobStateError(`Managed job ${job.jobId} cannot receive a fresh admission with entitlement ${entitlement}`);
+    }
+    const period = this.currentPeriod(lineage);
+    const remaining = period.limitSeconds - period.usedSeconds - period.reservedSeconds;
+    if (remaining < job.audio.billableSeconds) {
+      throw new QuotaExceededError(job.audio.billableSeconds, Math.max(0, remaining));
+    }
+    period.reservedSeconds += job.audio.billableSeconds;
+    job.deviceId = device.deviceId;
+    job.admissionId = this.createAdmissionId();
+    job.admissionNumber += 1;
+    job.periodStartAt = period.startAt;
+    job.createdAt = now;
+    job.leaseExpiresAt = now + MANAGED_JOB_LEASE_MS;
+    job.expiresAt = now + MANAGED_TEMPORARY_DATA_TTL_MS;
+    job.status = "reserved";
+    job.providerCompletedAt = null;
+    job.settledAt = null;
+    job.failureReason = null;
+    job.providerResult = null;
+    this.uploads.set(job.jobId, {
+      uploadId: job.jobId,
+      jobId: job.jobId,
+      createdAt: now,
+      expiresAt: job.expiresAt,
+    });
+    return job;
+  }
+
   private lineageForAccount(accountId: string): LineageState {
     const lineage = [...this.lineages.values()].find((candidate) => candidate.accountId === accountId);
     if (!lineage) throw new ManagedJobStateError(`Managed quota account not found: ${accountId}`);
@@ -777,7 +1080,7 @@ export class ManagedTranscriptionPolicy {
     let current = this.currentPeriod(lineage);
     while (now >= current.endAt) {
       const product = lineage.nextProduct ?? current.product;
-      const next = makePeriod(product, current.endAt);
+      const next = makePeriod(product, current.endAt, this.allowance);
       if (lineage.nextProduct !== null) lineage.nextProduct = null;
       lineage.periods.set(next.startAt, next);
       current = next;
@@ -881,12 +1184,16 @@ export function transcriptionAccess(mode: ManagedTranscriptionMode): ManagedAcce
   return { allowed: true, requiresPremium: false, chargesManagedQuota: false };
 }
 
-function makePeriod(product: ManagedSubscriptionProduct, startAt: number): PeriodState {
+function makePeriod(
+  product: ManagedSubscriptionProduct,
+  startAt: number,
+  allowance: ManagedAllowanceConfiguration,
+): PeriodState {
   return {
     product,
     startAt,
     endAt: product === "trial" ? startAt + MANAGED_TRIAL_DURATION_MS : addCalendarMonth(startAt),
-    limitSeconds: product === "trial" ? MANAGED_TRIAL_ALLOWANCE_SECONDS : MANAGED_MONTHLY_ALLOWANCE_SECONDS,
+    limitSeconds: product === "trial" ? allowance.trialSeconds : allowance.monthlySeconds,
     usedSeconds: 0,
     reservedSeconds: 0,
   };
@@ -909,6 +1216,86 @@ function requireProduct(product: ManagedSubscriptionProduct): ManagedSubscriptio
   return product;
 }
 
+function checkedAllowance(input: ManagedAllowanceConfiguration): ManagedAllowanceConfiguration {
+  return {
+    monthlySeconds: checkedPositiveInteger(input.monthlySeconds, "monthly allowance"),
+    trialSeconds: checkedPositiveInteger(input.trialSeconds, "trial allowance"),
+  };
+}
+
+function checkedTimeline(
+  input: ManagedTimelineEvidence | ManagedAudioIdentity,
+  actualByteLength: number,
+): ManagedTimelineEvidence {
+  const timeline = {
+    recordingId: requireText(input.recordingId, "recording id"),
+    audioId: requireText(input.audioId, "audio id"),
+    manifestSha256: requireSha256(input.manifestSha256, "manifest sha256"),
+    contentSha256: requireSha256(input.contentSha256, "content sha256"),
+    byteLength: checkedPositiveInteger(input.byteLength, "canonical WAV byte length"),
+    startMs: checkedNonNegativeInteger(input.startMs, "timeline start"),
+    endMs: checkedPositiveInteger(input.endMs, "timeline end"),
+  };
+  if (timeline.byteLength !== actualByteLength) {
+    throw new ManagedTimelineIdentityError("Canonical timeline byte identity does not match the received WAV");
+  }
+  if (timeline.endMs <= timeline.startMs) {
+    throw new ManagedTimelineIdentityError("Canonical timeline window must be non-empty");
+  }
+  return timeline;
+}
+
+function timelineFingerprint(timeline: ManagedTimelineEvidence): string {
+  return [
+    timeline.manifestSha256,
+    timeline.contentSha256,
+    timeline.byteLength,
+    timeline.startMs,
+    timeline.endMs,
+  ].join("\u0000");
+}
+
+function makeTimelineKey(accountId: string, timeline: ManagedTimelineEvidence): string {
+  return `${accountId}\u0000${timeline.recordingId}\u0000${timeline.audioId}`;
+}
+
+function makeIdempotencyKey(accountId: string, timeline: ManagedTimelineEvidence, chunkId: string): string {
+  return `${accountId}\u0000${timeline.recordingId}\u0000${timeline.audioId}\u0000${chunkId}`;
+}
+
+function rangesOverlap(leftStart: number, leftEnd: number, rightStart: number, rightEnd: number): boolean {
+  return leftStart < rightEnd && rightStart < leftEnd;
+}
+
+function requireSha256(value: unknown, field: string): string {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) {
+    throw new ManagedTimelineIdentityError(`${field} must be a lowercase SHA-256 identity`);
+  }
+  return value;
+}
+
+function checkedPositiveInteger(value: number, field: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new ManagedTranscriptionError(`${field} must be a positive integer`);
+  return value;
+}
+
+function checkedNonNegativeInteger(value: number, field: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) throw new ManagedTranscriptionError(`${field} must be a non-negative integer`);
+  return value;
+}
+
+function checkedSeconds(value: number, field: string): number {
+  return checkedPositiveInteger(value, field);
+}
+
+function checkedNonNegativeSeconds(value: number, field: string): number {
+  return checkedNonNegativeInteger(value, field);
+}
+
+function checkedSequence(value: number, field: string): number {
+  return checkedNonNegativeInteger(value, field);
+}
+
 function requireText(value: unknown, field: string): string {
   if (typeof value !== "string") throw new ManagedTranscriptionError(`${field} must be text`);
   const normalized = value.trim();
@@ -923,21 +1310,6 @@ function requireInstant(value: number, field: string): number {
 
 function ascii(bytes: Uint8Array, offset: number, length: number): string {
   return String.fromCharCode(...bytes.subarray(offset, offset + length));
-}
-
-function stableBytesDigest(bytes: Uint8Array): string {
-  let a = 0x811c9dc5;
-  let b = 0x01000193;
-  let c = 0x9e3779b9;
-  let d = 0x85ebca6b;
-  for (let index = 0; index < bytes.length; index += 1) {
-    const value = bytes[index]!;
-    a = Math.imul(a ^ value, 0x01000193);
-    b = Math.imul(b ^ (value + index), 0x85ebca6b);
-    c = Math.imul(c ^ (value * 31 + index), 0xc2b2ae35);
-    d = Math.imul(d ^ (value * 17 + index * 13), 0x27d4eb2d);
-  }
-  return [a, b, c, d].map((lane) => (lane >>> 0).toString(16).padStart(8, "0")).join("");
 }
 
 function publicDevice(device: ManagedDevice): ManagedDevice {
@@ -959,6 +1331,8 @@ function publicPeriod(period: PeriodState): ManagedPeriodSnapshot {
 function publicJob(job: JobState): ManagedJob {
   return {
     jobId: job.jobId,
+    admissionId: job.admissionId,
+    admissionNumber: job.admissionNumber,
     idempotencyKey: job.idempotencyKey,
     accountId: job.accountId,
     deviceId: job.deviceId,

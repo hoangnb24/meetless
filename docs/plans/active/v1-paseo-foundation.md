@@ -2,14 +2,14 @@
 
 ## Current State
 
-- `plan_revision`: `v6`
-- `current_frontier`: `MANAGED-TRANSCRIPTION-FAKE-BACKED-FOUNDATION-R1`
-- `state`: `FOUNDATION_PROOF_COMPLETE`
+- `plan_revision`: `v7`
+- `current_frontier`: `MANAGED-TRANSCRIPTION-FAKE-BACKED-FOUNDATION-R1-CORRECTION`
+- `state`: `FOUNDATION_PROOF_CORRECTION_PENDING`
 - `depends_on`: the accepted managed-transcription policy in product authority and ADR0005; proof must precede production backend, UI, provider-credential, or external-store work
-- `candidate`: fake-backed implementation candidate is recorded in the R1 handoff; MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` remains accepted reusable evidence only
-- `pending_ruling`: Lead acceptance of the bounded fake-backed R1 candidate
+- `candidate`: predecessor `51ee0cd61bae184d9936e2105294465f8de16108` was rejected by Lead; the correction candidate is implemented from that correction base and remains pending Lead closeout. MAS/RevenueCat structural candidate `9f73a7199a65735219d98c2df0eff8de8a2ddcc9` remains accepted reusable evidence only
+- `pending_ruling`: Lead closeout of `MANAGED-TRANSCRIPTION-FAKE-BACKED-FOUNDATION-R1-CORRECTION`
 - `blocked_by`: no product-contract blocker remains; external App Store profile, RevenueCat configuration, sandbox purchase, upload, review, and publication gates remain separately open
-- `next_action`: Lead acceptance of the R1 candidate; real Convex/AVFoundation latency, production backend rollout, provider credential use, final UI, signing, upload, and publication remain separate gates
+- `next_action`: Lead closeout of the correction candidate; real Convex/AVFoundation latency, production backend rollout, provider credential use, final UI, signing, upload, and publication remain separate gates
 
 ## Ownership And Authority
 
@@ -172,7 +172,7 @@ quota reservation, and charging stay outside provider implementations.
   - Owner accepted quota, trial, device, restore, server duration, temporary
     data, job lease, expiry, refund/revocation, and free Ask/BYOK behavior on
     2026-08-31.
-- [x] Complete the bounded fake-backed foundation proof defined below.
+- [ ] Close the bounded fake-backed foundation proof defined below. The original R1 candidate was rejected; the correction candidate has locally observed evidence recorded below and is pending Lead closeout.
 - [x] Reconcile the executable Ask gate so Ask is free; Premium UI remains
   deferred because final UI work is outside this frontier.
 - [ ] Apply the profile-backed App Sandbox entitlement and In-App Purchase configuration.
@@ -233,15 +233,19 @@ vertical proof. It must demonstrate:
 1. a verified subscription lineage enrolls a device key; App User ID-only or a
    client-selected subscriber ID fails authorization; restore binds a second
    installation to the same quota account; and a credential can be revoked;
-2. one managed audio job uses stable subscriber/audio/chunk idempotency, atomic
-   quota reservation and settlement, injected duplicate requests and crashes,
-   and exactly one ledger charge for the same audio;
+2. one managed job uses an immutable recording/canonical-timeline manifest and
+   collision-resistant content identity: retries are idempotent, distinct
+   recordings with identical bytes remain distinct, overlapping source ranges
+   cannot be charged independently, and post-lease work requires active quota,
+   a fresh admission, and a fresh lease with exactly one settlement;
 3. the chosen duration authority rejects a false client duration;
 4. temporary uploads/results are cleaned after success, failure, cancellation,
    expiry, and orphan recovery without persisting a transcript as durable
    backend meeting data;
-5. the managed result publishes through the existing local transcript/citation
-   lifecycle, while BYOK bypasses Premium/quota and Ask remains free; and
+5. provider completion, settlement ambiguity, checkpoint recovery, and
+   publication are reconciled through the existing local transcript/citation
+   lifecycle while the shared meeting lifecycle lease protects deletion;
+   BYOK bypasses Premium/quota and Ask remains free; and
 6. [future integration gate] real AVFoundation chunks satisfy the selected
    Convex upload/action limits, target-market latency is measured against
    available regions, and action retry/concurrency behavior is explicit rather
@@ -253,29 +257,72 @@ deployment or selected upload/region contract exists. Production
 backend/provider credentials, external store changes, and final UI remain
 outside this scope.
 
-### R1 Fake-Backed Proof Disposition (2026-08-31)
+### R1 Fake-Backed Proof Disposition (2026-08-31; superseded)
 
-The R1 candidate closes the fake-backed identity, device, quota, duration, job,
-cleanup, expiry, local-publication, Ask, and BYOK proof. The real AVFoundation
-chunk-size/upload-limit and target-region latency measurement in criterion 6
-requires a selected production Convex deployment and remains unattempted. This
-plan records no Convex latency, regional placement, production action retry, or
-provider-credential claim for R1.
+Lead rejected predecessor candidate `51ee0cd61bae184d9936e2105294465f8de16108`
+for the frozen MTF-001 through MTF-008 finding set. Its proof claims are
+historical context only and are not acceptance evidence. The correction
+candidate below supersedes this disposition and remains pending Lead closeout.
 
-Architectural decisions recorded by the candidate:
+### R1 Correction Batch Disposition (2026-08-31; pending Lead closeout)
 
-- `packages/managed-transcription-foundation` is the one in-memory policy owner
-  for verified lineage, revocable device credentials, quota periods,
-  reservation/settlement, jobs, and temporary artifacts. It has no Node,
-  storage, transport, UI, RevenueCat, Convex, StoreKit, or provider dependency.
+The correction candidate is built from `51ee0cd61bae184d9936e2105294465f8de16108`
+and preserves original base `64cf07d71bf82c798f8c3db417ada7d3c14ad7b5`. Local
+tests observe the following code/test evidence; this plan does not mark any of
+it accepted until Lead closes the correction frontier:
+
+- `MTF-001`: `ManagedTranscriptionPolicy.reserve` reconciles expired leases
+  before identity lookup; `reAdmit` requires active/grace entitlement, current
+  quota, and creates a new admission/lease. Policy test covers stale-admission
+  rejection, fresh completion, and one ledger charge.
+- `MTF-002`: `ManagedTimelineEvidence`, SHA-256 edge identities, immutable
+  recording/audio keys, manifest/content conflict checks, and overlapping-window
+  rejection live in the policy and `RecordingManagedTimelinePreparer`. Policy
+  tests cover false rebinding, identical bytes across distinct recordings, and
+  overlapping microphone/system timelines; adapter tests cover tampered MP3 and
+  inventory bytes.
+- `MTF-003`: `ManagedTranscriptionService.publishResult` reconciles MeetingStore
+  publications and publishes a pending transcript whose ranges are all already
+  checkpointed. The adapter test proves no provider re-call.
+- `MTF-004`: the managed service requires and holds the existing shared
+  `MeetingLifecycleCoordinator` transcription lease through provider, settle,
+  and MeetingStore publication. The blocked-provider test proves deletion is
+  refused until release.
+- `MTF-005`: provider status errors and non-configured status fail the job and
+  release quota before provider execution; the adapter test proves the failed
+  state and zero reservation.
+- `MTF-006`: `RecordingManagedTimelinePreparer` validates the real inventory
+  chunk shape, mixes overlapping source chunks into a temporary canonical
+  16 kHz mono PCM WAV, and leaves the durable MeetingStore output as MP3. The
+  adapter and composition tests prove the edge mapping and cleanup.
+- `MTF-007`: `ManagedAllowanceConfiguration` is snapshotted into each period;
+  later configuration affects only periods created afterward. The policy test
+  proves reduction, next-period allowance, and exhaustion.
+- `MTF-008`: `ManagedTranscriptionPolicy.snapshot` and `fromSnapshot` provide
+  the fake durable-state/rehydration boundary. The adapter crash test rebuilds
+  a new policy/service after provider completion, publishes locally without a
+  provider re-call, and proves one charge; the policy test repeats settlement.
+
+The correction candidate makes no Convex latency, regional placement,
+production action retry, provider-credential, external purchase mutation,
+signing, upload, or publication claim.
+
+Correction candidate architectural decisions:
+
+- `packages/managed-transcription-foundation` is the one policy owner for
+  verified lineage, revocable device credentials, snapshotted quota periods,
+  reservation/settlement, jobs, admissions, and temporary artifacts. Its fake
+  snapshot boundary uses ordinary data only; it has no Node, storage,
+  transport, UI, RevenueCat, Convex, StoreKit, or provider dependency.
 - `packages/meetless-plugin/src/managed-transcription.ts` is an edge adapter:
-  it verifies saved-file identity, calls the existing `TranscriptionProvider`,
-  and publishes only through `MeetingStore`. Provider completion is recorded
-  before the injected crash point; settlement and local publication are
-  independently recoverable.
+  it verifies saved MP3 and inventory/chunk identities, prepares the temporary
+  canonical timeline, calls the existing `TranscriptionProvider`, and publishes
+  only through `MeetingStore`. Provider completion is recorded before the
+  injected crash point; settlement and local publication are independently
+  recoverable after snapshot rehydration.
 - Ask no longer receives a Premium gate; managed transcription remains the only
   Premium/quota path. The final Premium UI and production runtime wiring remain
-  outside R1.
+  outside this correction frontier.
 
 ### Accepted Reusable R1 Structural Evidence (2026-08-31)
 
@@ -329,7 +376,7 @@ Architectural decisions recorded by the candidate:
 - Repository: typecheck, focused tests, build, and a MAS-specific package validator.
 - External: App Store Connect processing, App Review submission, and public listing.
 
-Observed R1 validation on 2026-08-31:
+Observed predecessor R1 validation on 2026-08-31 (historical, not acceptance evidence):
 
 - `npm run typecheck` passed; `npm run build:meetless` passed.
 - `npm run test --workspace=@meetless/managed-transcription-foundation` passed
@@ -346,6 +393,32 @@ Observed R1 validation on 2026-08-31:
   transport timeout and Expo module failure, three retained macOS signing
   diagnostic expectations, and one readiness deadline fixture. The new R1
   tests were included in the passing result.
+- No real AVFoundation/Convex latency, production backend, credentials,
+  StoreKit/RevenueCat mutation, signing, upload, or publication was attempted.
+
+Observed correction validation on 2026-08-31:
+
+- `npm run typecheck` passed, including Paseo type builds and the Meetless app
+  typecheck; `npm run build:meetless` passed.
+- Focused correction R1 command
+  `npx vitest run --config vitest.config.ts packages/managed-transcription-foundation/test/policy.test.ts packages/meetless-plugin/test/managed-transcription.test.ts packages/meetless-plugin/test/chat-service.test.ts test/composition/managed-transcription-path.test.ts test/composition/chat-path.test.ts`
+  passed (5 files, 38 tests).
+- Affected domain/store command
+  `npx vitest run --config vitest.config.ts packages/meeting-domain/test packages/meeting-store/test --maxWorkers=1`
+  passed (6 files, 66 tests).
+- Affected plugin/lifecycle command
+  `npx vitest run --config vitest.config.ts packages/meetless-plugin/test --maxWorkers=1`
+  passed (16 files, 116 tests).
+- `npm test` completed native/Paseo/build pretest successfully and reported
+  65 passing files and 715 passing tests out of 71 files and 721 tests. The six
+  pre-existing failures were the M6 transport timeout (120 seconds), two
+  missing `@expo/vector-icons/build/createIconSet` imports, three retained
+  macOS signing diagnostic expectations, and one readiness deadline fixture.
+  They are outside the correction scope.
+- `git diff --check` passed. The two authority files remain byte-identical to
+  original base `64cf07d71bf82c798f8c3db417ada7d3c14ad7b5`; their frozen
+  combined SHA-256 remains
+  `79159e03961957296f0f110996c71e0fdde7790760b1dd63fcd40ebbab3637ae`.
 - No real AVFoundation/Convex latency, production backend, credentials,
   StoreKit/RevenueCat mutation, signing, upload, or publication was attempted.
 
@@ -388,11 +461,20 @@ Observed R1 validation on 2026-08-31:
   honest broader-suite limits were added from original base `64cf07d`. The
   authority files remain frozen and no production service or external state was
   changed.
+- 2026-08-31 `FOUNDATION_PROOF R1-CORRECTION`: Lead rejected correction base
+  `51ee0cd61bae184d9936e2105294465f8de16108` for MTF-001 through MTF-008. The
+  correction candidate adds fresh post-lease admission, verified canonical
+  timeline identity, checkpoint-publication recovery, shared lifecycle leasing,
+  provider-status release, explicit temporary WAV preparation over the real
+  inventory shape, period-snapshotted allowance, and snapshot rehydration. The
+  locally observed proof is recorded above and remains pending Lead closeout;
+  authority files and external state remain unchanged.
 
 ## Validation
 
-R1 validation is the command evidence recorded above. The candidate proves the
-fake policy and one real local publication composition path; it does not prove
-real Convex latency, regional placement, AVFoundation upload limits, production
-backend behavior, provider credentials, external purchase mutation, signing,
-App Review, or publication.
+Correction validation is the command evidence recorded above. The correction
+candidate locally exercises the fake policy and one real local MeetingStore
+publication composition path; it remains pending Lead closeout and does not
+prove real Convex latency, regional placement, AVFoundation upload limits,
+production backend behavior, provider credentials, external purchase mutation,
+signing, App Review, or publication.

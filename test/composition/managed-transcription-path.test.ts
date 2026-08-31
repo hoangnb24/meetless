@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { ManagedTranscriptionPolicy } from "@meetless/managed-transcription-foundation";
 import { MeetingStore } from "@meetless/meeting-store";
+import { MeetingLifecycleCoordinator } from "../../packages/meetless-plugin/src/meeting-lifecycle-coordinator.js";
 import { ManagedTranscriptionService } from "../../packages/meetless-plugin/src/managed-transcription.js";
 import type { TranscriptionProvider } from "../../packages/meetless-plugin/src/transcription-provider.js";
 
@@ -17,82 +18,146 @@ afterEach(async () => {
 });
 
 describe("managed transcription composition", () => {
-  test("publishes the managed result through MeetingStore's durable transcript and citation lifecycle", async () => {
+  test("maps validated repository chunks into a temporary canonical WAV while durable output stays MP3", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-composition-"));
     roots.push(root);
-    const audioPath = path.join(root, "managed.wav");
-    const wav = pcmWav(16_000);
-    await writeFile(audioPath, wav);
-    const identity = { byteLength: wav.byteLength, sha256: createHash("sha256").update(wav).digest("hex") };
-    const store = await savedStore(root, audioPath, identity);
+    const fixture = await savedStore(root);
+    const lifecycle = new MeetingLifecycleCoordinator();
     const policy = new ManagedTranscriptionPolicy({ now: () => START });
     const lineage = policy.seedVerifiedSubscriptionLineage({ lineageKey: "composition-proof-lineage", product: "monthly", startedAt: START });
     const device = policy.enrollDevice({ verifiedLineageToken: lineage.token, installationId: "composition-proof-install", deviceKeyId: "composition-proof-key" });
-    const transcribe = vi.fn(async () => ({ text: "A durable managed transcript.", detectedLanguages: ["en"], usage: null }));
+    const transcribe = vi.fn(async ({ audioPath, audioIdentity }: Parameters<NonNullable<TranscriptionProvider["transcribe"]>>[0]) => {
+      expect(audioPath).not.toBe(fixture.outputPath);
+      expect(audioPath).toMatch(/managed-transcription-timelines/u);
+      expect(audioIdentity.sha256).not.toBe(fixture.outputIdentity.sha256);
+      return { text: "A durable managed transcript.", detectedLanguages: ["en"], usage: null };
+    });
     const provider: TranscriptionProvider = {
       status: async () => "configured",
       transcribe,
     };
 
-    const result = await new ManagedTranscriptionService(store, policy, provider).transcribe({
-      recordingId: "recording-composition-proof",
-      audioPath,
+    const result = await new ManagedTranscriptionService(fixture.store, policy, provider, { lifecycle }).transcribe({
+      recordingId: fixture.recordingId,
       credential: device.credential,
-      audioId: identity.sha256,
+      audioId: "composition-audio",
       chunkId: "chunk-composition-proof",
+      claimedDurationSeconds: 1,
     });
 
     expect(result.transcript.status).toBe("ready");
-    expect(await store.resolveCitation("meeting-composition-proof", result.transcript.ranges[0]!.segmentId)).toMatchObject({
+    await expect(fixture.store.resolveCitation(fixture.meetingId, result.transcript.ranges[0]!.segmentId)).resolves.toMatchObject({
       text: "A durable managed transcript.",
-      audioPath,
+      audioPath: fixture.outputPath,
+      audioIdentity: fixture.outputIdentity,
     });
     expect(transcribe).toHaveBeenCalledOnce();
     expect(policy.ledger()).toHaveLength(1);
-    const persisted = JSON.parse(await readFile(store.filePath, "utf8")) as {
-      meetings: Array<{ id: string; status: string }>;
-      transcripts?: Array<{ status: string; meetingId: string }>;
-    };
-    expect(persisted.meetings).toContainEqual({ id: "meeting-composition-proof", status: "ready", createdAt: NOW, updatedAt: NOW, title: "Managed composition proof" });
-    expect(persisted.transcripts).toEqual([expect.objectContaining({ status: "ready", meetingId: "meeting-composition-proof" })]);
+    expect(await readFile(fixture.outputPath)).toEqual(Buffer.from("fake-mp3-output"));
+    expect(await fixture.store.getTranscriptForMeeting(fixture.meetingId)).toMatchObject({
+      status: "ready",
+      audio: { destination: fixture.outputPath, sha256: fixture.outputIdentity.sha256 },
+    });
+    expect(await filesUnder(path.join(root, "store", "managed-transcription-timelines"))).toEqual([]);
   });
 });
 
-async function savedStore(root: string, audioPath: string, identity: { byteLength: number; sha256: string }): Promise<MeetingStore> {
-  const store = new MeetingStore({ root: path.join(root, "store"), now: () => NOW });
-  await store.create({ id: "meeting-composition-proof", title: "Managed composition proof" });
-  await store.startRecording({ id: "recording-composition-proof", meetingId: "meeting-composition-proof" });
-  await store.commitChunk("recording-composition-proof", {
-    id: "source-chunk",
-    source: "microphone",
-    storageKey: "sessions/recording-composition-proof/source.wav",
-    byteLength: identity.byteLength,
-    sha256: identity.sha256,
+interface SavedFixture {
+  store: MeetingStore;
+  meetingId: string;
+  recordingId: string;
+  outputPath: string;
+  outputIdentity: { byteLength: number; sha256: string };
+}
+
+async function savedStore(root: string): Promise<SavedFixture> {
+  const meetingId = "meeting-composition-proof";
+  const recordingId = "recording-composition-proof";
+  const storeRoot = path.join(root, "store");
+  const outputPath = path.join(root, "recording.mp3");
+  const chunkIds = [
+    "chunk--microphone--000000--000000000000--000000016000--16000--1",
+    "chunk--system--000000--000000000000--000000016000--16000--1",
+  ];
+  const chunks = [pcmWav(16_000, 1), pcmWav(16_000, 2)];
+  const output = Buffer.from("fake-mp3-output");
+  const chunkPaths = chunkIds.map((chunkId) => path.join(storeRoot, "sessions", recordingId, `${chunkId}.wav`));
+  const inventoryPath = path.join(storeRoot, "sessions", recordingId, "inventory.ndjson");
+  await mkdir(path.dirname(chunkPaths[0]!), { recursive: true, mode: 0o700 });
+  await Promise.all(chunkPaths.map((chunkPath, index) => writeFile(chunkPath, chunks[index]!, { flag: "w+" })));
+  await writeFile(outputPath, output, { flag: "w+" });
+  const chunkIdentities = chunks.map(identityOf);
+  const outputIdentity = identityOf(output);
+  const store = new MeetingStore({ root: storeRoot, now: () => NOW });
+  await store.create({ id: meetingId, title: "Managed composition proof" });
+  await store.startRecording({ id: recordingId, meetingId });
+  for (const [index, chunkId] of chunkIds.entries()) {
+    await store.commitChunk(recordingId, {
+      id: chunkId,
+      source: index === 0 ? "microphone" : "system",
+      storageKey: path.relative(storeRoot, chunkPaths[index]!),
+      byteLength: chunkIdentities[index]!.byteLength,
+      sha256: chunkIdentities[index]!.sha256,
+      committedAt: NOW,
+      logicalStartMs: 0,
+      durationMs: 1_000,
+      sampleRate: 16_000,
+      channels: 1,
+      format: "wav",
+    });
+  }
+  await store.prepareInventoryRecovery(recordingId, "capture closed");
+  await store.markInventoryScanning(recordingId);
+  const inventoryLines = chunkIds.map((chunkId, index) => ({
+    sortKey: `${index === 0 ? "microphone" : "system"}:${String(0).padStart(16, "0")}:${chunkId}`,
+    id: chunkId,
+    source: index === 0 ? "microphone" : "system",
+    storageKey: path.relative(storeRoot, chunkPaths[index]!),
+    byteLength: chunkIdentities[index]!.byteLength,
+    sha256: chunkIdentities[index]!.sha256,
     committedAt: NOW,
     logicalStartMs: 0,
     durationMs: 1_000,
     sampleRate: 16_000,
     channels: 1,
     format: "wav",
-  });
-  const recovered = await store.prepareInventoryRecovery("recording-composition-proof", "capture closed");
-  await store.markInventoryScanning("recording-composition-proof");
-  await store.publishInventory("recording-composition-proof", {
-    storageKey: "sessions/recording-composition-proof/inventory.ndjson",
-    digest: "composition-proof-inventory",
-    chunkCount: recovered.inventory.knownChunkCount,
+  }));
+  const inventoryBytes = Buffer.from(`${inventoryLines.map((line) => JSON.stringify(line)).join("\n")}\n`);
+  await writeFile(inventoryPath, inventoryBytes, { flag: "w+" });
+  await store.publishInventory(recordingId, {
+    storageKey: path.relative(storeRoot, inventoryPath),
+    digest: sha256(inventoryBytes),
+    chunkCount: 2,
     microphoneCount: 1,
-    systemCount: 0,
+    systemCount: 1,
     publishedAt: NOW,
   });
-  await store.beginFinalization("recording-composition-proof", {
+  await store.beginFinalization(recordingId, {
     openChunksDurablyClosed: true,
-    chunkSetDigest: "composition-proof-inventory",
-    destination: audioPath,
-    expectedIdentity: identity,
+    chunkSetDigest: sha256(inventoryBytes),
+    destination: outputPath,
+    expectedIdentity: outputIdentity,
   });
-  await store.markRecordingSaved("recording-composition-proof", { destination: audioPath, identity, readable: true });
-  return store;
+  await store.markRecordingSaved(recordingId, { destination: outputPath, identity: outputIdentity, readable: true });
+  return { store, meetingId, recordingId, outputPath, outputIdentity };
+}
+
+async function filesUnder(directory: string): Promise<string[]> {
+  try {
+    const { readdir } = await import("node:fs/promises");
+    return readdir(directory);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+function identityOf(bytes: Uint8Array): { byteLength: number; sha256: string } {
+  return { byteLength: bytes.byteLength, sha256: sha256(bytes) };
+}
+
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function pcmWav(sampleCount: number): Uint8Array {
