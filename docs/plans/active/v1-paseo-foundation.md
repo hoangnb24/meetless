@@ -2,16 +2,16 @@
 
 ## Current State
 
-- `plan_revision`: `v31`
+- `plan_revision`: `v33`
 - `current_frontier`: `STOREKIT-REVENUECAT-SANDBOX-PURCHASE-RESTORE-R5-EXTERNAL-CANARY`
-- `state`: `R5_DEV_PREREQUISITES_READY_PENDING_SIGNED_BUILD_AND_REAL_PURCHASE`
+- `state`: `R5_MAS_DEVELOPMENT_PACKAGING_READY_PENDING_ARTIFACT_AND_REAL_PURCHASE`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: repository-only R5 accepted at correction commit `7fd925c470f243a9966041789243373a1ba540cf`, a direct descendant of correction base `1a15170d027f2c8f1c7241a536b80a95df3919cb` and original base `5cd62e56091e604d7b6defe01bca47c22f98ef02`. Accepted predecessors remain history and are not modified.
 - `authority_contract_sha256`: `d32d834f9e4424ebc35e7607e2f53cd69c3bf29975c810bebf8d40672df1f2aa` (previous `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `pending_ruling`: explicit production subscriber allowance amount remains open; production lineage authentication, credentials, provider access, and external purchase integration also remain owner/external gates
 - `blocked_by`: the earlier accidental-codegen cloud uncertainty is reconciled by the owner-authorized read-only audit and accepted hosted-dev deployment. The remaining R5 gates are public RevenueCat SDK-key build configuration, a signed sandbox package, and one real monthly sandbox purchase/restore. Production allowance, provider approval, production deployment, review, and publication remain closed.
-- `next_action`: configure the public RevenueCat SDK key at build time, produce and validate the signed sandbox package, then run the real monthly sandbox purchase/restore canary with the fake transcription provider.
+- `next_action`: run the dedicated MAS development packager with the public RevenueCat SDK key supplied only in the process environment, validate the signed artifact, then run the real monthly sandbox purchase/restore canary with the fake transcription provider.
 
 ## Ownership And Authority
 
@@ -977,6 +977,23 @@ owner confirmation. No other environment value changed. The resulting 14-name
 deployment environment passed the current exact HMAC-only allowlist proof; the
 metadata-only audit still reported zero documents in every managed table and
 zero storage objects.
+
+### R5 Mac App Store development packaging candidate (2026-09-01)
+
+The sandbox purchase package has a dedicated path that does not mutate or
+reinterpret the historical direct-DMG release path. Its package command creates
+an absolute disposable proof root and passes the exact accepted development
+profile and Apple Development identity explicitly; a RevenueCat `appl_` public
+SDK key is supplied only through the build environment and is removed before
+child processes are launched. The packager first creates the existing composed
+app, retains its local composition manifest as provenance, replaces the nested
+runtime with the pinned Electron 41.2.0 `mas-arm64` artifact, injects only the
+public SDK key and team ID into the copied bundle, embeds the selected profile,
+and signs the MAS closure with the checked-in parent/child App Sandbox
+entitlements. The resulting artifact proof verifies the deep signature, exact
+profile bytes/team/device, exact parent/child entitlement closure, thin arm64
+MAS Electron executable, and presence—but never the value—of the public SDK
+key. This repository-only candidate remains pending one real artifact run.
 
 ### Risks And Recovery
 
