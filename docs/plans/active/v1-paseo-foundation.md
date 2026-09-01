@@ -2,16 +2,16 @@
 
 ## Current State
 
-- `plan_revision`: `v22`
-- `current_frontier`: `CONVEX-HOSTED-DEV-R4-DEPLOYMENT-PREP-BLOCKED`
-- `state`: `HOSTED_DEPLOYMENT_PREP_BLOCKED`
+- `plan_revision`: `v23`
+- `current_frontier`: `CONVEX-HOSTED-DEV-R4-CANARY-CONVERGENCE`
+- `state`: `HOSTED_DEV_CANARY_ACCEPTED_PENDING_CLOSEOUT`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`; the Convex local-first R3 convergence is accepted at `f93b705561eb6118c9ccbe7d0f9ae146db4f5df8`. Rejected predecessors `966b9abd78481db001e912cc2e60d895c00bef37`, `0a82b39f758e8c2ec19e831ca1c8c1b75529763d`, and `522faa0b1d1e78e54f0e7d0fc813fc0a0706ab01` remain history only.
+- `candidate`: this frontier's immutable hosted-dev canary convergence commit is pending closeout directly from `ea431f0dbbe38afea5f78e982e5c1125e66f8ca8`; local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`; the Convex local-first R3 convergence is accepted at `f93b705561eb6118c9ccbe7d0f9ae146db4f5df8`. Rejected predecessors `966b9abd78481db001e912cc2e60d895c00bef37`, `0a82b39f758e8c2ec19e831ca1c8c1b75529763d`, and `522faa0b1d1e78e54f0e7d0fc813fc0a0706ab01` remain history only.
 - `authority_contract_sha256`: `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`
-- `Convex target`: owner-selected/observed project `Meetless`, existing dev deployment `frugal-mandrill-646`, region `US East (N. Virginia)`; production deployment does not exist
+- `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `pending_ruling`: explicit production subscriber allowance amount remains open; production lineage authentication, credentials, provider access, and external purchase integration also remain owner/external gates
-- `blocked_by`: the exact hosted-development `POST /api/deploy2/start_push` path returned `408 Request Timeout` before a revision was observed; Convex hosted start-push reliability/support or an owner-approved, evidence-driven network/deploy diagnostic path is required before another attempt. R4 acceptance is not claimed.
-- `next_action`: obtain an owner-approved Convex support/reliability diagnosis and bounded recovery path for the exact dev deployment; do not issue a blind retry, rollback, or cleanup. After that dependency is resolved, rerun the full hosted auth/storage/fake-provider/recovery/MeetingStore canary only with fresh authorization.
+- `blocked_by`: production subscriber allowance, production issuer/key separation, real Apple/App Store Server API verification, RevenueCat production configuration, provider approval, and production deployment remain external gates; the hosted-development R4 canary is no longer blocked by `start_push`.
+- `next_action`: create the immutable candidate from the directly verified base; do not select production or call real Apple, RevenueCat, or provider services.
 
 ## Ownership And Authority
 
@@ -698,24 +698,25 @@ attempts are not acceptance evidence.
 
 ### R4 convergence boundary (2026-09-01)
 
-This candidate closes only the deterministic local implementation boundary and
-is classified `PARTIAL_LOCAL_CONVERGENCE`; it does not claim full R4
-acceptance. The observable change is explicit labeled allowance/configuration,
-device challenge and JWT boundaries, Apple-authoritative lineage projection,
-authenticated RevenueCat inbox/reconciliation policy, explicit fake-provider
-selection, and bounded diagnostic proof tooling. These responsibilities can
-change independently at their config, vendor-adapter, auth, lifecycle, and
-process-boundary seams. Core policy remains framework-free and external data is
-converted to plain data at the edge.
+This candidate closes the hosted-development R4 acceptance boundary, but does
+not claim production readiness. The observable change is explicit labeled
+allowance/configuration, device challenge and JWT boundaries,
+Apple-authoritative lineage projection, authenticated RevenueCat
+inbox/reconciliation policy, explicit fake-provider selection, bounded proof
+tooling, and the complete hosted auth/storage/recovery/publication composition.
+These responsibilities can change independently at their config,
+vendor-adapter, auth, lifecycle, and process-boundary seams. Core policy
+remains framework-free and external data is converted to plain data at the
+edge.
 
 Phase 1 remains the no-network repository gate: syntax/static checks plus
 deterministic pure adapter/function-policy and existing local MeetingStore
-composition tests. The retained hosted canary is explicit opt-in, exact-target,
+composition tests. The hosted canary remains explicit opt-in, exact-target,
 and fail-closed. Its process, URL, child-environment, CLI, deadline, stderr,
-and cleanup guards remain covered locally, but the hosted attempt recorded below
-did not reach function-spec or canary execution. The missing R4 evidence is one
-complete hosted auth/storage/fake-provider/recovery flow with publication through
-the real MeetingStore boundary. R4 remains partial until that flow is observed.
+and cleanup guards remain covered locally. The corrected hosted run below
+observed one complete auth/storage/fake-provider/recovery flow with publication
+through the real MeetingStore boundary; this closes the R4 development
+acceptance class without selecting production configuration.
 
 The local enforcement level is repository-native Phase 1 and focused tests;
 the retained diagnostic prerequisite is an explicit operator/environment gate.
@@ -725,15 +726,12 @@ claimed impossible to bypass; production preflight remains the repository
 native check before that project-owned command. Hosted Convex deployment and
 real Apple/RevenueCat/provider integration are separate external gates.
 
-Observed no-network validation on 2026-09-01 before the hosted attempt: the
-empty-environment Phase-1 command using absolute Node passed all six syntax
-checks and 59 tests; the focused hosted-target/JWKS/diagnostic and local guard
-suites passed 27 tests, `build:meetless` passed, and `git diff --check` passed.
-The hosted attempt is not no-network evidence and is reconciled below. Phase 1
-is partial evidence only; it does not close the hosted backend plus MeetingStore
-gate.
+Observed no-network validation on 2026-09-01 before the corrected hosted run:
+the absolute-Node Phase-1 command passed six files and 63 tests; the focused
+hosted/upload suites passed 24 tests; and `build:meetless` passed. The hosted
+run is separate external evidence and is reconciled below.
 
-### PLAN_RECONCILIATION v1 — hosted development deployment preparation blocked (2026-09-01)
+### PLAN_RECONCILIATION v1 — hosted development deployment preparation blocked (superseded, 2026-09-01)
 
 The owner-approved pivot from the network-denied local backend route to the
 authenticated hosted development deployment is recorded here. The exact target
@@ -770,11 +768,9 @@ job, or MeetingStore publication was created. The 13 retained environment
 names are deliberate dev-only material and must not be treated as production
 configuration.
 
-The recovery path is an owner-approved Convex hosted start-push
-reliability/support diagnosis or another evidence-driven, bounded diagnostic
-route. The prior network-denied local sandbox is not the only next route and is
-superseded by the owner pivot; neither pure local tests nor this failed hosted
-preparation substitutes for the required backend-to-MeetingStore evidence.
+The recovery path recorded here was superseded by the owner-approved plain
+`convex dev` route documented below. The prior network-denied local sandbox is
+not the only next route and remains superseded by the owner pivot.
 
 Remaining production gates are explicit: production subscriber allowance,
 production issuer/key separation, real App Store Server API verification,
@@ -782,6 +778,55 @@ RevenueCat production webhook configuration, provider credential/access and
 spend approval, sandbox purchase/restore, availability and regional latency,
 production deployment, review, and publication. No production allowance is
 selected here; the seven-day trial remains `18,000` seconds.
+
+### PLAN_RECONCILIATION v2 — plain hosted development canary accepted (2026-09-01)
+
+The owner-approved pivot to the existing authenticated development deployment
+supersedes the earlier `start_push` preparation blocker. A normal authenticated
+`node_modules/.bin/convex dev` run locked to project `hoang-bang/meetless`,
+reference `dev/hoang-bang`, deployment `frugal-mandrill-646`, and completed with
+`Convex functions ready!`; no watcher remains. The resulting function spec was
+non-empty with 54 functions and 11 application tables. The public
+`/managed-auth/jwks.json` route returned one public ES256 P-256 key with no
+private component.
+
+The approved 13 `MEETLESS_*` development environment names were the only names
+mutated during the authorized hosted setup; the successful `--canary-only`
+run did not rotate them or deploy. The canary read the current webhook
+authorization and public auth configuration only in memory. No production
+environment, `convex deploy`, `--prod`, real provider, Apple production API,
+RevenueCat dashboard, or customer data was used.
+
+The successful bounded canary observed device challenge/signature enrollment
+and short-lived JWT authentication, Apple fixture lineage admission, a two-part
+canonical upload with a largest part of 9,600,000 samples, one logical
+601,000-ms fake-provider job, settlement and idempotent acknowledgement,
+restart recovery, MeetingStore transcript and citation publication,
+unauthenticated webhook rejection, authenticated RevenueCat SANDBOX receipt,
+duplicate idempotent acknowledgement, asynchronous reconciliation, and
+unique-account cleanup. Cleanup reported one account, lineage, device,
+principal, job, upload, period, charge, and event removed, with zero remaining
+storage objects or upload parts for that run. Deployed functions/schema were
+retained. Earlier failed canary runs emitted cleanup-failure diagnostics; their
+safe output did not expose run identifiers, so any historical residue outside
+the successful run remains an external audit item rather than being broadly
+queried or deleted.
+
+The local implementation fix covered canonical part materialization copying
+reused stream buffers and the canary assertion now reads transcript text from
+MeetingStore checkpoints. The retained wrapper remains exact-target,
+fail-closed, bounded, redacted, and opt-in. The complete hosted development
+evidence closes R4 development acceptance; production allowance, issuer/key
+separation, App Store Server API verification, RevenueCat production setup,
+provider access/spend approval, production deployment, review, and publication
+remain separate gates.
+
+Final no-network closeout validation passed after the successful canary:
+the 12-file focused regression command passed 156 tests; `npm run typecheck`
+passed Paseo, Meetless, and app typechecks; `npm run build:meetless` passed;
+the five affected script syntax checks passed; `git diff --check` passed; and
+the concatenated product/ADR authority files recomputed to
+`4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`.
 
 ### Risks And Recovery
 
@@ -817,10 +862,8 @@ selected here; the seven-day trial remains `18,000` seconds.
   evidence does not claim hosted production behavior.
 - Current hosted-dev frontier: the deterministic configuration/auth/vendor
   adapter and lifecycle policy boundary is locally covered by Phase 1, while
-  the exact hosted deployment preparation is blocked by the recorded
-  `start_push` timeout. The required hosted backend plus MeetingStore
-  end-to-end composition proof remains unobserved. External credentials and
-  real provider spend remain gated; do not select the production subscriber
+  the exact hosted development canary is accepted below. External credentials
+  and real provider spend remain gated; do not select the production subscriber
   allowance.
 - Focused R1: free Ask/BYOK policy, managed transcription admission, and
   existing meeting-store publication proof. Purchase adapter, renderer

@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { webcrypto } from "node:crypto";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   MANAGED_ANNUAL_PRODUCT_ID,
   MANAGED_APPLE_BUNDLE_ID,
@@ -25,10 +26,14 @@ import {
 import { validateManagedConvexDeploymentEnvironment } from "../scripts/validate-managed-convex-deploy.mjs";
 import {
   HOSTED_DEV_TARGET,
+  HOSTED_CANARY_READ_ENVIRONMENT_NAMES,
+  HOSTED_DEV_ENVIRONMENT_NAMES,
   assertHostedCliArguments,
   assertHostedDevTarget,
   assertHostedUrl,
   classifyHostedDiagnostic,
+  formatHostedDotenv,
+  formatHostedDotenvValue,
   formatHostedDiagnostic,
   parseHostedEnvironmentNames,
   parseHostedFunctionSpec,
@@ -36,6 +41,7 @@ import {
   validateHostedEnvironmentNames,
 } from "../scripts/prove-managed-convex-hosted-dev-target.mjs";
 import { buildInlinePublicJwks } from "../convex/auth.config";
+import { assertHostedCanaryInvocation, preserveHostedStageError } from "../scripts/prove-managed-convex-hosted-dev.mjs";
 
 const publicKeyPlaceholder = JSON.stringify({ kty: "EC", crv: "P-256", x: "x", y: "y", kid: "hosted-development-fixture", alg: "ES256", use: "sig" });
 
@@ -82,6 +88,7 @@ describe("hosted-development Convex boundaries", () => {
     expect(() => validateHostedEnvironmentNames([...names, names[0]].join("\n"), names)).toThrow(/allowlist/i);
     expect(() => parseHostedEnvironmentNames(`${names.join("\n")}\nMEETLESS BAD`)).toThrow(/malformed/i);
     expect(() => validateHostedEnvironmentNames(`${names.slice(0, -1).join("\n")}\nUNEXPECTED_NAME`, names)).toThrow(/allowlist/i);
+    expect(HOSTED_DEV_ENVIRONMENT_NAMES).toEqual(names);
   });
 
   test("locks the hosted canary to the exact dev deployment and routes", () => {
@@ -104,9 +111,14 @@ describe("hosted-development Convex boundaries", () => {
     expect(() => assertHostedCliArguments("env-list", ["env", "list", "--deployment", HOSTED_DEV_TARGET.deployment, "--names-only"])).not.toThrow();
     expect(() => assertHostedCliArguments("env-set", ["env", "set", "--deployment", HOSTED_DEV_TARGET.deployment, "--from-file", envPath], envPath)).not.toThrow();
     expect(() => assertHostedCliArguments("env-set", ["env", "set", "--deployment", HOSTED_DEV_TARGET.deployment, "--from-file", envPath, "--force"], envPath)).not.toThrow();
-    expect(() => assertHostedCliArguments("dev", ["dev", "--once", "--typecheck", "enable", "--codegen", "enable", "--tail-logs", "disable", "--env-file", envPath], envPath)).not.toThrow();
     expect(() => assertHostedCliArguments("dev", ["deploy", "--prod"], envPath)).toThrow(/allowlist/i);
-    expect(() => assertHostedCliArguments("dev", ["dev", "--once", "--env-file", envPath], envPath)).toThrow(/allowlist/i);
+    expect(() => assertHostedCliArguments("dev", ["dev"])).not.toThrow();
+    expect(() => assertHostedCliArguments("dev", ["dev", "--once"])).toThrow(/allowlist/i);
+    for (const name of HOSTED_CANARY_READ_ENVIRONMENT_NAMES) {
+      expect(() => assertHostedCliArguments("env-get", ["env", "get", name, "--deployment", HOSTED_DEV_TARGET.deployment], name)).not.toThrow();
+    }
+    expect(() => assertHostedCliArguments("env-get", ["env", "get", "MEETLESS_AUTH_PRIVATE_KEY_PKCS8", "--deployment", HOSTED_DEV_TARGET.deployment], "MEETLESS_AUTH_PRIVATE_KEY_PKCS8")).toThrow(/allowlist/i);
+    expect(() => assertHostedCliArguments("env-get", ["env", "get", "MEETLESS_AUTH_PUBLIC_JWK", "--deployment", "other-deployment"], "MEETLESS_AUTH_PUBLIC_JWK")).toThrow(/allowlist/i);
     expect(() => assertHostedCliArguments("env-list", ["env", "list", "--deployment", "prod", "--names-only"])).toThrow(/allowlist/i);
     expect(() => assertHostedCliArguments("function-spec", ["function-spec", "--deployment", HOSTED_DEV_TARGET.deployment])).not.toThrow();
     expect(() => assertHostedCliArguments("function-spec", ["function-spec", "--deployment", "other-deployment"])).toThrow(/allowlist/i);
@@ -134,6 +146,13 @@ describe("hosted-development Convex boundaries", () => {
     expect(() => buildInlinePublicJwks(publicJwk, "other-kid")).toThrow(/identifier/i);
   });
 
+  test("keeps the auth config environment surface limited to custom JWT inputs", () => {
+    const source = readFileSync(path.resolve("convex/auth.config.ts"), "utf8");
+    expect(source).not.toContain("readManagedRuntimeConfig");
+    expect(source).not.toContain("MEETLESS_REVENUECAT_WEBHOOK_SIGNING_SECRET");
+    expect(source).toContain("MEETLESS_AUTH_PUBLIC_JWK");
+  });
+
   test("classifies and bounds deploy diagnostics without exposing secrets or headers", () => {
     const secret = "fixture-admin-token";
     const raw = `authorization: Bearer ${secret}\nschema push failed\n${"x".repeat(20_000)}`;
@@ -146,6 +165,41 @@ describe("hosted-development Convex boundaries", () => {
     expect(classifyHostedDiagnostic("codegen failed")).toBe("codegen");
     expect(classifyHostedDiagnostic("schema deployment failed")).toBe("deployment");
     expect(classifyHostedDiagnostic("network redirect rejected")).toBe("network");
+  });
+
+  test("preserves the failing stage and redacts its diagnostic", () => {
+    const secret = "Bearer fixture-webhook-token";
+    const error = preserveHostedStageError("jwks-check", new Error(`authorization ${secret} failed`), [secret], 256);
+    expect(error.stage).toBe("jwks-check");
+    expect(error.diagnostic.classification).toBe("authorization");
+    expect(error.diagnostic.stderr).not.toContain(secret);
+    expect(error.diagnostic.stderr).not.toContain("fixture-webhook-token");
+    expect(() => assertHostedCanaryInvocation(["--canary-only"])).not.toThrow();
+    expect(() => assertHostedCanaryInvocation(["--run"])).not.toThrow();
+    expect(() => assertHostedCanaryInvocation(["--deploy"])).toThrow(/opt-in/i);
+  });
+
+  test("formats hosted environment values for an exact dotenv round-trip without logging secrets", async () => {
+    const dotenv = await import("dotenv");
+    const values = {
+      JSON_VALUE: '{"kty":"EC","kid":"fixture"}',
+      PEM_VALUE: "-----BEGIN PRIVATE KEY-----\nfixture\\nline\n-----END PRIVATE KEY-----",
+      QUOTED_VALUE: "both 'single' and \"double\" quotes",
+      BACKSLASH_VALUE: "C:\\fixture\\path\\nliteral",
+      NEWLINE_VALUE: "first\nsecond",
+      SCALAR_VALUE: "hosted-development",
+    };
+    const formatted = formatHostedDotenv(values);
+    const parsed = dotenv.parse(formatted);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(parsed).toEqual(values);
+    expect(formatted).toContain(`JSON_VALUE=${values.JSON_VALUE}`);
+    expect(formatted).not.toContain('JSON_VALUE="{\\"');
+    expect(() => formatHostedDotenvValue("line\rbreak")).toThrow(/control character/i);
+    expect(() => formatHostedDotenv({ "BAD NAME": "value" })).toThrow(/malformed/i);
+    expect(() => formatHostedDotenvValue("'`\"\nvalue")).toThrow(/represented safely/i);
+    expect(logSpy).not.toHaveBeenCalled();
+    logSpy.mockRestore();
   });
 
   test("requires explicit labeled allowance and fails closed for production fakes", () => {

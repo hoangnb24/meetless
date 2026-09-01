@@ -9,6 +9,30 @@ export const HOSTED_DEV_TARGET = Object.freeze({
   siteUrl: "https://frugal-mandrill-646.convex.site",
 });
 
+export const HOSTED_DEV_ENVIRONMENT_NAMES = Object.freeze([
+  "MEETLESS_APPLE_VERIFIER_MODE",
+  "MEETLESS_AUTH_AUDIENCE",
+  "MEETLESS_AUTH_ISSUER",
+  "MEETLESS_AUTH_KEY_ID",
+  "MEETLESS_AUTH_PRIVATE_KEY_PKCS8",
+  "MEETLESS_AUTH_PUBLIC_JWK",
+  "MEETLESS_DEPLOYMENT_MODE",
+  "MEETLESS_MANAGED_ALLOWANCE_SECONDS",
+  "MEETLESS_MANAGED_ALLOWANCE_SOURCE",
+  "MEETLESS_MANAGED_PROVIDER_MODE",
+  "MEETLESS_REVENUECAT_AUTH_MODE",
+  "MEETLESS_REVENUECAT_ENVIRONMENT",
+  "MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER",
+]);
+
+export const HOSTED_CANARY_READ_ENVIRONMENT_NAMES = Object.freeze([
+  "MEETLESS_AUTH_AUDIENCE",
+  "MEETLESS_AUTH_ISSUER",
+  "MEETLESS_AUTH_KEY_ID",
+  "MEETLESS_AUTH_PUBLIC_JWK",
+  "MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER",
+]);
+
 export function parseHostedEnvironmentNames(output) {
   if (typeof output !== "string") throw new Error("hosted environment name listing is not text");
   const names = [];
@@ -28,6 +52,25 @@ export function validateHostedEnvironmentNames(output, expectedNames) {
     throw new Error("hosted environment names do not equal the exact approved allowlist");
   }
   return actual;
+}
+
+export function formatHostedDotenv(values) {
+  if (!values || typeof values !== "object" || Array.isArray(values)) throw new Error("hosted environment values must be an object");
+  return `${Object.entries(values).sort(([left], [right]) => left.localeCompare(right)).map(([name, value]) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) throw new Error("hosted environment value has a malformed name");
+    return `${name}=${formatHostedDotenvValue(value)}`;
+  }).join("\n")}\n`;
+}
+
+export function formatHostedDotenvValue(value) {
+  if (typeof value !== "string") throw new Error("hosted environment values must be strings");
+  if (value.includes("\0") || value.includes("\r")) throw new Error("hosted environment value contains an unsupported control character");
+  const needsQuote = value.length === 0 || value !== value.trim() || value.includes("#") || value.includes("\n") || /^["'`]/u.test(value) || /["'`]$/u.test(value);
+  if (!needsQuote) return value;
+  if (!value.includes("'")) return `'${value}'`;
+  if (!value.includes("`")) return `\`${value}\``;
+  if (!value.includes('"') && !/\\[nr]/u.test(value)) return `"${value.replaceAll("\n", "\\n")}"`;
+  throw new Error("hosted environment value cannot be represented safely in dotenv syntax");
 }
 
 export function parseHostedFunctionSpec(output) {
@@ -80,8 +123,12 @@ export function assertHostedCliArguments(kind, args, envFilePath = null) {
     ? ["env", "list", "--deployment", HOSTED_DEV_TARGET.deployment, "--names-only"]
     : kind === "env-set"
       ? [["env", "set", "--deployment", HOSTED_DEV_TARGET.deployment, "--from-file", envFilePath], ["env", "set", "--deployment", HOSTED_DEV_TARGET.deployment, "--from-file", envFilePath, "--force"]]
+      : kind === "env-get"
+        ? HOSTED_CANARY_READ_ENVIRONMENT_NAMES.includes(envFilePath)
+          ? ["env", "get", envFilePath, "--deployment", HOSTED_DEV_TARGET.deployment]
+          : null
       : kind === "dev"
-        ? ["dev", "--once", "--typecheck", "enable", "--codegen", "enable", "--tail-logs", "disable", "--env-file", envFilePath]
+        ? ["dev"]
         : kind === "function-spec"
           ? ["function-spec", "--deployment", HOSTED_DEV_TARGET.deployment]
         : null;
@@ -113,7 +160,9 @@ export function redactHostedDiagnostic(value, secrets = [], maxBytes = 8 * 1024)
   }
   text = text
     .replace(/-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/gu, "<redacted-private-key>")
-    .replace(/(?:^|\n)[^\n]*(?:authorization|auth[-_ ]?header|bearer|token|secret|password|(?:private|admin|signing|api)[-_ ]?key|receipt|jws|signature|credential|cookie)[^\n]*/giu, (line) => line.startsWith("\n") ? "\n[redacted-sensitive-diagnostic]" : "[redacted-sensitive-diagnostic]")
+    .replace(/(?:^|\n)[ \t]*(?:authorization|proxy-authorization|cookie|set-cookie|x-revenuecat-webhook-signature)\s*:[^\n]*/giu, (line) => line.startsWith("\n") ? "\n[redacted-sensitive-diagnostic]" : "[redacted-sensitive-diagnostic]")
+    .replace(/\b(?:token|secret|password|credential|receipt|jws|signature)\s*[:=]\s*[^\s,;)]+/giu, (match) => `${match.slice(0, match.search(/[:=]/u) + 1)}<redacted>`)
+    .replace(/\b(?:private|admin|signing|api)[-_ ]?key\s*[:=]\s*[^\s,;)]+/giu, (match) => `${match.slice(0, match.search(/[:=]/u) + 1)}<redacted>`)
     .replace(/\bBearer\s+\S+/giu, "Bearer <redacted>")
     .replace(/\b(?:sk|rk|pk)[-_][A-Za-z0-9_-]{8,}\b/gu, "<redacted-token>");
   const bytes = Buffer.from(text, "utf8");

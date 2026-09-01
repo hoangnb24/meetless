@@ -1,28 +1,29 @@
 import type { AuthConfig } from "convex/server";
-import { readManagedRuntimeConfig } from "./managedConfig";
 
 const deploymentMode = typeof process === "undefined" ? undefined : process.env.MEETLESS_DEPLOYMENT_MODE;
 
 let config: AuthConfig;
 try {
-  const runtime = readManagedRuntimeConfig();
-  const jwk = JSON.parse(runtime.authPublicJwk) as Record<string, unknown>;
+  const issuer = requiredAuthEnvironment("MEETLESS_AUTH_ISSUER");
+  const audience = requiredAuthEnvironment("MEETLESS_AUTH_AUDIENCE");
+  const keyId = requiredAuthEnvironment("MEETLESS_AUTH_KEY_ID");
+  const jwk = JSON.parse(requiredAuthEnvironment("MEETLESS_AUTH_PUBLIC_JWK")) as Record<string, unknown>;
   config = {
     providers: [{
       type: "customJwt",
-      issuer: runtime.authIssuer,
-      applicationID: runtime.authAudience,
+      issuer,
+      applicationID: audience,
       algorithm: "ES256",
       // Convex accepts a data-URI JWKS. Keep the diagnostic route separate:
       // auth validation must not depend on a same-deployment HTTP route.
-      jwks: buildInlinePublicJwks(jwk, runtime.authKeyId),
+      jwks: buildInlinePublicJwks(jwk, keyId),
     }],
   };
 } catch (error) {
-  if (deploymentMode === "production") throw error;
-  // Local source checkout and an unconfigured deployment have no auth
-  // provider. Managed functions still fail closed when they read runtime
-  // configuration, while Convex can boot for pure codegen/tests.
+  if (deploymentMode !== undefined) throw error;
+  // An unconfigured source checkout has no auth provider so pure codegen and
+  // local policy tests can boot. Any configured deployment mode must surface
+  // configuration errors instead of silently deploying with no provider.
   config = { providers: [] };
 }
 
@@ -47,4 +48,10 @@ function base64(value: string): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
+}
+
+function requiredAuthEnvironment(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} is required for the configured custom JWT provider`);
+  return value;
 }

@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { createHash, randomBytes, randomUUID, webcrypto } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
 import { decodeJwt, decodeProtectedHeader } from "jose";
 import { MeetingStore } from "@meetless/meeting-store";
 import {
@@ -16,13 +17,17 @@ import {
   ConvexManagedUploadPort,
   FileManagedConvexUploadJournal,
   buildManagedLogicalTimelineManifest,
+  readManagedCanonicalPartBytes,
 } from "../packages/meetless-plugin/dist/src/managed-upload.js";
 import { MeetingLifecycleCoordinator } from "../packages/meetless-plugin/dist/src/meeting-lifecycle-coordinator.js";
 import {
+  HOSTED_CANARY_READ_ENVIRONMENT_NAMES,
   HOSTED_DEV_TARGET,
+  HOSTED_DEV_ENVIRONMENT_NAMES,
   assertHostedCliArguments,
   assertHostedDevTarget,
   assertHostedUrl,
+  formatHostedDotenv,
   formatHostedDiagnostic,
   parseHostedEnvironmentNames,
   parseHostedFunctionSpec,
@@ -32,8 +37,10 @@ import {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXPECTED_NODE_EXECUTABLE = "/Users/tubakhuym/.hermes/node/bin/node";
 const NODE_EXECUTABLE = process.execPath;
+const CONVEX_BIN_PATH = path.join(REPO_ROOT, "node_modules/.bin/convex");
 const CONVEX_CLI_PATH = path.join(REPO_ROOT, "node_modules/convex/bin/main.js");
 const PHASE1_SCRIPT_PATH = path.join(REPO_ROOT, "scripts/prove-managed-convex-phase1.mjs");
+const SELECTOR_ENV_PATH = path.join(REPO_ROOT, ".env.local");
 const JWKS_PATH = "/managed-auth/jwks.json";
 const WEBHOOK_PATH = "/webhooks/revenuecat";
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -43,174 +50,226 @@ const STDERR_RING_BYTES = 8 * 1024;
 const FIXTURE_SAMPLE_COUNT = 9_600_000 + 16_000;
 const LOCAL_OUTPUT_SAMPLE_COUNT = 24_000;
 const FORBIDDEN_INHERITED_ENVIRONMENT = Object.freeze([
-  "CONVEX_DEPLOYMENT",
   "CONVEX_DEPLOY_KEY",
   "CONVEX_DEPLOYMENT_TOKEN",
   "CONVEX_OVERRIDE_ACCESS_TOKEN",
   "CONVEX_PROVISION_HOST",
   "CONVEX_SELF_HOSTED_URL",
   "CONVEX_SELF_HOSTED_ADMIN_KEY",
-  "CONVEX_URL",
-  "CONVEX_SITE_URL",
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "ALL_PROXY",
-  "http_proxy",
-  "https_proxy",
-  "all_proxy",
   "NODE_OPTIONS",
   "NODE_EXTRA_CA_CERTS",
   "SENTRY_DSN",
+  "SENTRY_ENVIRONMENT",
+  "SENTRY_RELEASE",
 ]);
 
-export async function runHostedDevelopmentProof() {
+const TARGET_SELECTOR_VALUES = Object.freeze({
+  CONVEX_DEPLOYMENT: `dev:${HOSTED_DEV_TARGET.deployment}`,
+  CONVEX_URL: HOSTED_DEV_TARGET.cloudUrl,
+  CONVEX_SITE_URL: HOSTED_DEV_TARGET.siteUrl,
+});
+
+export async function runHostedDevelopmentProof({ canaryOnly = false } = {}) {
   assertHostedDevTarget();
-  assertExecutableInputs();
+  await assertExecutableInputs();
   assertSafeParentEnvironment();
+  const selectorSnapshot = await readAndValidateSelectorEnvFile();
   const targetFetch = createTargetFetch();
   const root = await mkdtemp(path.join(os.tmpdir(), "meetless-hosted-dev-"));
   await chmod(root, 0o700);
   let environmentSet = false;
   let canaryAccountCreated = false;
   let canaryCleaned = false;
+  let watcher = null;
+  let canaryCleanup = null;
+  let canaryCleanupAttempted = false;
+  let primaryError = null;
   const mutationJournal = [];
   const secretValues = [];
   try {
+    if (canaryOnly) await runPhase1();
     const initialNames = await readHostedEnvironmentNames();
     const runId = randomUUID();
-    const material = await makeCanaryMaterial(runId);
-    const namesToSet = Object.keys(material.runtimeEnvironment).sort();
-    if (initialNames.length !== 0 && !sameStringArray(initialNames, namesToSet)) {
-      throw new Error("target deployment environment is neither empty nor the exact approved allowlist; no hosted mutation was attempted");
+    let material;
+    let functionSpec;
+    let jwks;
+    if (canaryOnly) {
+      validateHostedEnvironmentNames(initialNames.join("\n"), HOSTED_DEV_ENVIRONMENT_NAMES);
+      const current = await runHostedStage("config", secretValues, () => readCurrentHostedConfiguration());
+      secretValues.push(current.webhookAuthorization);
+      const apple = makeAppleFixture(runId);
+      material = {
+        ...current,
+        apple,
+        lineageKey: `apple-lineage:${sha256Text(apple.originalTransactionId)}`,
+      };
+      functionSpec = await runHostedStage("function-spec-check", secretValues, readHostedFunctionSpec);
+      jwks = await runHostedStage("jwks-check", secretValues, () => readJwks(targetFetch, material.publicJwk));
+    } else {
+      const generated = await makeCanaryMaterial(runId);
+      const namesToSet = HOSTED_DEV_ENVIRONMENT_NAMES;
+      if (!sameStringArray(Object.keys(generated.runtimeEnvironment).sort(), namesToSet)) {
+        throw new Error("hosted canary generated an environment set outside the approved allowlist");
+      }
+      if (initialNames.length !== 0 && !sameStringArray(initialNames, namesToSet)) {
+        throw new Error("target deployment environment is neither empty nor the exact approved allowlist; no hosted mutation was attempted");
+      }
+      material = generated;
+      secretValues.push(material.privateKeyPkcs8, material.webhookAuthorization);
+      const runtimeEnvPath = path.join(root, "managed-runtime.env");
+      await writeEnvFile(runtimeEnvPath, material.runtimeEnvironment);
+
+      await runPhase1();
+
+      for (const name of namesToSet) mutationJournal.push({ name, status: "pending" });
+      try {
+        await runConvexCommand(
+          "env-set",
+          ["env", "set", "--deployment", HOSTED_DEV_TARGET.deployment, "--from-file", runtimeEnvPath, ...(initialNames.length === 0 ? [] : ["--force"])],
+          baseCliEnvironment(),
+          { envFilePath: runtimeEnvPath, secretValues },
+        );
+        environmentSet = true;
+        for (const entry of mutationJournal) entry.status = "success";
+      } catch (error) {
+        for (const entry of mutationJournal) entry.status = "unknown";
+        throw error;
+      }
+
+      await readHostedEnvironmentNames(namesToSet);
+
+      watcher = { child: null };
+      await startPlainDevWatcher(watcher, secretValues, material.runtimeEnvironment);
+      assertSelectorFileUnchanged(selectorSnapshot, await readFile(SELECTOR_ENV_PATH, "utf8"));
+
+      functionSpec = await runHostedStage("function-spec-check", secretValues, readHostedFunctionSpec);
+      assertWatcherAlive(watcher);
+      jwks = await runHostedStage("jwks-check", secretValues, () => readJwks(targetFetch, material.publicJwk));
+      assertWatcherAlive(watcher);
     }
-    secretValues.push(material.privateKeyPkcs8, material.webhookAuthorization);
-    const runtimeEnvPath = path.join(root, "managed-runtime.env");
-    const selectionEnvPath = path.join(root, "convex-selection.env");
-    await writeEnvFile(runtimeEnvPath, material.runtimeEnvironment);
-    await writeFile(selectionEnvPath, `CONVEX_DEPLOYMENT=dev:${HOSTED_DEV_TARGET.deployment}\n`, { mode: 0o600 });
 
-    await runPhase1();
+    const canary = await runHostedStage("canary", secretValues, async () => {
+      const local = await runHostedStage("canary-fixture", secretValues, () => createLocalMeetingFixture(root, runId));
+      const manifest = await runHostedStage("canary-manifest", secretValues, async () => {
+        const value = await buildManagedLogicalTimelineManifest({
+          recordingId: local.recordingId,
+          manifestSha256: local.manifestSha256,
+          sourcePath: local.timelinePath,
+        });
+        if (value.parts.length !== 2 || value.parts.some((part) => part.sampleCount > 9_600_000)) {
+          throw new Error("hosted canary manifest did not produce ordered physical parts within the ten-minute bound");
+        }
+        return value;
+      });
 
-    for (const name of namesToSet) mutationJournal.push({ name, status: "pending" });
-    try {
-      await runConvexCommand(
-        "env-set",
-        ["env", "set", "--deployment", HOSTED_DEV_TARGET.deployment, "--from-file", runtimeEnvPath, ...(initialNames.length === 0 ? [] : ["--force"])],
-        baseCliEnvironment(),
-        { envFilePath: runtimeEnvPath, secretValues },
-      );
-      environmentSet = true;
-      for (const entry of mutationJournal) entry.status = "success";
-    } catch (error) {
-      for (const entry of mutationJournal) entry.status = "unknown";
-      throw error;
-    }
+      const client = new ConvexHttpManagedFunctionClient(HOSTED_DEV_TARGET.cloudUrl, { fetch: targetFetch });
+      const signer = await makeEphemeralDeviceSigner(runId);
+      const credentialSource = new ConvexManagedCredentialSource(client, signer);
+      const credential = await runHostedStage("canary-auth", secretValues, () => credentialSource.enroll(material.apple));
+      assertWatcherAlive(watcher);
+      canaryAccountCreated = true;
+      secretValues.push(credential.authToken);
+      assertJwtBoundary(credential.authToken, material, signer.identityValue);
+      client.setAuth(credential.authToken);
+      canaryCleanup = async () => {
+        if (canaryCleanupAttempted) throw new Error("unique canary cleanup was already attempted");
+        canaryCleanupAttempted = true;
+        return runHostedStage("canary-cleanup", secretValues, async () => {
+          const cleanup = await client.mutation("managedAuth:cleanupFixtureAccount", { lineageKey: material.lineageKey });
+          assertCleanupResult(cleanup);
+          canaryCleaned = true;
+          canaryCleanup = null;
+          return cleanup;
+        });
+      };
 
-    const afterSetNames = await readHostedEnvironmentNames(namesToSet);
+      const webhookEventId = `${runId}-revenuecat`;
+      const webhookBody = Buffer.from(JSON.stringify({
+        api_version: "1.0",
+        event: {
+          id: webhookEventId,
+          app_id: "appe0ef526253",
+          product_id: "com.meetless.app.premium.monthly",
+          environment: "SANDBOX",
+          original_transaction_id: material.apple.originalTransactionId,
+          type: "CANCELLATION",
+          event_timestamp_ms: Date.now(),
+        },
+      }));
+      await runHostedStage("canary-webhook", secretValues, async () => {
+        const preWebhookStatus = await client.query("managedAuth:revenueCatEventStatus", { eventId: webhookEventId });
+        if (preWebhookStatus !== null) throw new Error("authenticated current-device status unexpectedly exposed an unknown webhook event");
+        const rejected = await targetFetch(`${HOSTED_DEV_TARGET.siteUrl}${WEBHOOK_PATH}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: webhookBody,
+        });
+        if (rejected.status !== 401) throw new Error("unauthenticated RevenueCat webhook was not rejected");
+        const accepted = await targetFetch(`${HOSTED_DEV_TARGET.siteUrl}${WEBHOOK_PATH}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: material.webhookAuthorization },
+          body: webhookBody,
+        });
+        const acceptedBody = await readJson(accepted);
+        if (accepted.status !== 200 || acceptedBody?.accepted !== true || acceptedBody?.outcome !== "received") {
+          throw new Error("authenticated RevenueCat webhook was not durably received");
+        }
+        const duplicate = await targetFetch(`${HOSTED_DEV_TARGET.siteUrl}${WEBHOOK_PATH}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: material.webhookAuthorization },
+          body: webhookBody,
+        });
+        const duplicateBody = await readJson(duplicate);
+        if (duplicate.status !== 200 || duplicateBody?.accepted !== true || duplicateBody?.outcome !== "duplicate") {
+          throw new Error("duplicate RevenueCat webhook was not idempotently acknowledged");
+        }
+        await waitForEventProcessed(client, webhookEventId);
+      });
+      assertWatcherAlive(watcher);
 
-    await runConvexCommand(
-      "dev",
-      ["dev", "--once", "--typecheck", "enable", "--codegen", "enable", "--tail-logs", "disable", "--env-file", selectionEnvPath],
-      { ...baseCliEnvironment(), ...material.runtimeEnvironment },
-      { envFilePath: selectionEnvPath, secretValues },
-    );
+      const firstClient = new ConvexHttpManagedFunctionClient(HOSTED_DEV_TARGET.cloudUrl, { fetch: targetFetch });
+      const firstPort = new ConvexManagedUploadPort(firstClient, {
+        journal: new FileManagedConvexUploadJournal(path.join(root, "upload-journal-before-restart")),
+        fetch: targetFetch,
+      });
+      const firstSession = await runHostedStage("canary-upload", secretValues, async () => {
+        const session = await firstPort.begin({ credential, manifest });
+        if (session.receivedPartNumbers.length !== 0 || session.state !== "uploading") {
+          throw new Error("hosted canary upload did not begin in the empty uploading state");
+        }
+        await uploadAndRegisterFirstPart(firstClient, targetFetch, credential, session.sessionId, manifest.parts[0], local.timelinePath);
+        return session;
+      });
 
-    const functionSpec = await readHostedFunctionSpec();
-    const jwks = await readJwks(targetFetch, material.publicJwk);
-    const local = await createLocalMeetingFixture(root, runId);
-    const manifest = await buildManagedLogicalTimelineManifest({
-      recordingId: local.recordingId,
-      manifestSha256: local.manifestSha256,
-      sourcePath: local.timelinePath,
+      const resumedClient = new ConvexHttpManagedFunctionClient(HOSTED_DEV_TARGET.cloudUrl, { fetch: targetFetch });
+      const resumedPort = new ConvexManagedUploadPort(resumedClient, {
+        journal: new FileManagedConvexUploadJournal(path.join(root, "upload-journal-after-restart")),
+        fetch: targetFetch,
+      });
+      const service = new ConvexManagedTranscriptionService(local.store, {
+        lifecycle: new MeetingLifecycleCoordinator(),
+        timelineArtifacts: local.artifacts,
+        managedUpload: resumedPort,
+      });
+      const result = await runHostedStage("canary-recovery", secretValues, () => service.transcribe({ recordingId: local.recordingId, credential }));
+      assertWatcherAlive(watcher);
+      await runHostedStage("canary-publication", secretValues, async () => {
+        await assertPublishedMeetingStoreResult(result, local);
+        const postAckSession = await resumedPort.status({ credential, sessionId: firstSession.sessionId });
+        if (postAckSession.state !== "cleaned" || postAckSession.receivedPartNumbers.length !== 0) {
+          throw new Error("hosted canary acknowledgement did not clean the temporary upload state");
+        }
+        if (await resumedPort.acknowledge({ credential, jobId: result.job._id }) !== true) {
+          throw new Error("hosted canary acknowledgement was not idempotent");
+        }
+      });
+
+      assertWatcherAlive(watcher);
+      const cleanup = await canaryCleanup();
+      assertSelectorFileUnchanged(selectorSnapshot, await readFile(SELECTOR_ENV_PATH, "utf8"));
+      return { manifest, cleanup };
     });
-    if (manifest.parts.length !== 2 || manifest.parts.some((part) => part.sampleCount > 9_600_000)) {
-      throw new Error("hosted canary manifest did not produce ordered physical parts within the ten-minute bound");
-    }
 
-    const client = new ConvexHttpManagedFunctionClient(HOSTED_DEV_TARGET.cloudUrl, { fetch: targetFetch });
-    const signer = await makeEphemeralDeviceSigner(runId);
-    const credentialSource = new ConvexManagedCredentialSource(client, signer);
-    const credential = await credentialSource.enroll(material.apple);
-    canaryAccountCreated = true;
-    secretValues.push(credential.authToken);
-    assertJwtBoundary(credential.authToken, material, signer.identityValue);
-
-    const preWebhookStatus = await client.query("managedAuth:revenueCatEventStatus", { eventId: `${runId}-revenuecat` });
-    if (preWebhookStatus !== null) throw new Error("authenticated current-device status unexpectedly exposed an unknown webhook event");
-
-    const webhookEventId = `${runId}-revenuecat`;
-    const webhookBody = Buffer.from(JSON.stringify({
-      api_version: "1.0",
-      event: {
-        id: webhookEventId,
-        app_id: "appe0ef526253",
-        product_id: "com.meetless.app.premium.monthly",
-        environment: "SANDBOX",
-        original_transaction_id: material.apple.originalTransactionId,
-        type: "CANCELLATION",
-        event_timestamp_ms: Date.now(),
-      },
-    }));
-    const rejected = await targetFetch(`${HOSTED_DEV_TARGET.siteUrl}${WEBHOOK_PATH}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: webhookBody,
-    });
-    if (rejected.status !== 401) throw new Error("unauthenticated RevenueCat webhook was not rejected");
-    const accepted = await targetFetch(`${HOSTED_DEV_TARGET.siteUrl}${WEBHOOK_PATH}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: material.webhookAuthorization },
-      body: webhookBody,
-    });
-    const acceptedBody = await readJson(accepted);
-    if (accepted.status !== 200 || acceptedBody?.accepted !== true || acceptedBody?.outcome !== "received") {
-      throw new Error("authenticated RevenueCat webhook was not durably received");
-    }
-    const duplicate = await targetFetch(`${HOSTED_DEV_TARGET.siteUrl}${WEBHOOK_PATH}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: material.webhookAuthorization },
-      body: webhookBody,
-    });
-    const duplicateBody = await readJson(duplicate);
-    if (duplicate.status !== 200 || duplicateBody?.accepted !== true || duplicateBody?.outcome !== "duplicate") {
-      throw new Error("duplicate RevenueCat webhook was not idempotently acknowledged");
-    }
-    await waitForEventProcessed(client, webhookEventId);
-
-    const firstClient = new ConvexHttpManagedFunctionClient(HOSTED_DEV_TARGET.cloudUrl, { fetch: targetFetch });
-    const firstPort = new ConvexManagedUploadPort(firstClient, {
-      journal: new FileManagedConvexUploadJournal(path.join(root, "upload-journal-before-restart")),
-      fetch: targetFetch,
-    });
-    const firstSession = await firstPort.begin({ credential, manifest });
-    if (firstSession.receivedPartNumbers.length !== 0 || firstSession.state !== "uploading") {
-      throw new Error("hosted canary upload did not begin in the empty uploading state");
-    }
-    await uploadAndRegisterFirstPart(firstClient, targetFetch, credential, firstSession.sessionId, manifest.parts[0], local.timelinePath);
-
-    const resumedClient = new ConvexHttpManagedFunctionClient(HOSTED_DEV_TARGET.cloudUrl, { fetch: targetFetch });
-    const resumedPort = new ConvexManagedUploadPort(resumedClient, {
-      journal: new FileManagedConvexUploadJournal(path.join(root, "upload-journal-after-restart")),
-      fetch: targetFetch,
-    });
-    const service = new ConvexManagedTranscriptionService(local.store, {
-      lifecycle: new MeetingLifecycleCoordinator(),
-      timelineArtifacts: local.artifacts,
-      managedUpload: resumedPort,
-    });
-    const result = await service.transcribe({ recordingId: local.recordingId, credential });
-    await assertPublishedMeetingStoreResult(result, local);
-    const postAckSession = await resumedPort.status({ credential, sessionId: firstSession.sessionId });
-    if (postAckSession.state !== "cleaned" || postAckSession.receivedPartNumbers.length !== 0) {
-      throw new Error("hosted canary acknowledgement did not clean the temporary upload state");
-    }
-    if (await resumedPort.acknowledge({ credential, jobId: result.job._id }) !== true) {
-      throw new Error("hosted canary acknowledgement was not idempotent");
-    }
-
-    const cleanup = await client.mutation("managedAuth:cleanupFixtureAccount", { lineageKey: material.lineageKey });
-    assertCleanupResult(cleanup);
-    canaryCleaned = true;
     console.log(JSON.stringify({
       result: "passed",
       deployment: HOSTED_DEV_TARGET.deployment,
@@ -221,18 +280,55 @@ export async function runHostedDevelopmentProof() {
       jwks: jwks,
       environment: mutationJournal,
       canary: {
-        physicalParts: manifest.parts.length,
-        largestPartSamples: Math.max(...manifest.parts.map((part) => part.sampleCount)),
-        logicalDurationMs: manifest.durationMs,
+        physicalParts: canary.manifest.parts.length,
+        largestPartSamples: Math.max(...canary.manifest.parts.map((part) => part.sampleCount)),
+        logicalDurationMs: canary.manifest.durationMs,
         meetingStorePublished: true,
         restartRecovered: true,
         webhookProcessed: true,
-        cleanup,
+        cleanup: canary.cleanup,
       },
     }));
+  } catch (error) {
+    primaryError = preserveHostedStageError("wrapper", error, secretValues);
+    throw primaryError;
   } finally {
+    let canaryCleanupError = null;
+    if (canaryCleanup && canaryAccountCreated && !canaryCleaned && !canaryCleanupAttempted) {
+      try {
+        await canaryCleanup();
+      } catch {
+        canaryCleanupError = new Error("unique canary cleanup failed");
+      }
+    }
+    let watcherTerminationError = null;
+    if (watcher?.child) {
+      try {
+        await terminateOwnedProcess(watcher.child);
+      } catch {
+        watcherTerminationError = new Error("owned hosted dev watcher cleanup failed");
+      }
+    }
     await rm(root, { recursive: true, force: true });
-    if (environmentSet && !canaryCleaned) {
+    if (canaryCleanupError) {
+      if (primaryError) {
+        primaryError.diagnostic = formatHostedDiagnostic(`${primaryError.diagnostic.stderr}\nunique canary cleanup failed`, secretValues, STDERR_RING_BYTES);
+      } else {
+        canaryCleanupError.stage = "canary-cleanup";
+        canaryCleanupError.diagnostic = formatHostedDiagnostic(canaryCleanupError.message, secretValues, STDERR_RING_BYTES);
+        throw canaryCleanupError;
+      }
+    }
+    if (watcherTerminationError) {
+      if (primaryError) {
+        primaryError.diagnostic = formatHostedDiagnostic(`${primaryError.diagnostic.stderr}\nowned hosted dev watcher cleanup failed`, secretValues, STDERR_RING_BYTES);
+      } else {
+        watcherTerminationError.stage = "dev";
+        watcherTerminationError.diagnostic = formatHostedDiagnostic(watcherTerminationError.message, secretValues, STDERR_RING_BYTES);
+        throw watcherTerminationError;
+      }
+    }
+    if ((environmentSet || canaryAccountCreated) && !canaryCleaned) {
       console.error(JSON.stringify({
         result: "attention_required",
         deployment: HOSTED_DEV_TARGET.deployment,
@@ -245,24 +341,63 @@ export async function runHostedDevelopmentProof() {
 }
 
 export function assertHostedCanaryInvocation(argv = process.argv.slice(2)) {
-  if (argv.length !== 1 || argv[0] !== "--run") {
-    throw new Error("hosted canary is opt-in; invoke it with exactly --run");
+  if (argv.length !== 1 || (argv[0] !== "--run" && argv[0] !== "--canary-only")) {
+    throw new Error("hosted canary is opt-in; invoke it with exactly --run or --canary-only");
   }
+  return argv[0];
 }
 
 async function main() {
-  assertHostedCanaryInvocation();
-  await runHostedDevelopmentProof();
+  const invocation = assertHostedCanaryInvocation();
+  await runHostedDevelopmentProof({ canaryOnly: invocation === "--canary-only" });
 }
 
-function assertExecutableInputs() {
+export function preserveHostedStageError(stage, error, secrets = [], maxBytes = STDERR_RING_BYTES) {
+  const actualStage = typeof error?.stage === "string" && error.stage.length > 0 ? error.stage : stage;
+  const source = typeof error?.diagnostic?.stderr === "string"
+    ? error.diagnostic.stderr
+    : error instanceof Error && error.message
+      ? error.message
+      : "hosted canary stage failed";
+  const diagnostic = formatHostedDiagnostic(source, secrets, maxBytes);
+  const safe = new Error(`hosted canary ${actualStage} failed (${diagnostic.classification})`);
+  safe.stage = actualStage;
+  safe.diagnostic = diagnostic;
+  return safe;
+}
+
+async function runHostedStage(stage, secrets, operation) {
+  stageLog(stage, "start");
+  try {
+    return await operation();
+  } catch (error) {
+    throw preserveHostedStageError(stage, error, secrets);
+  } finally {
+    stageLog(stage, "end");
+  }
+}
+
+async function assertExecutableInputs() {
   if (NODE_EXECUTABLE !== EXPECTED_NODE_EXECUTABLE) throw new Error("hosted canary requires the exact installed absolute Node executable");
+  if (!path.isAbsolute(CONVEX_BIN_PATH) || !CONVEX_BIN_PATH.endsWith("/node_modules/.bin/convex")) throw new Error("hosted canary Convex CLI path is not the exact installed binary");
   if (!path.isAbsolute(CONVEX_CLI_PATH) || !CONVEX_CLI_PATH.endsWith("/node_modules/convex/bin/main.js")) throw new Error("hosted canary Convex CLI path is not the exact installed script");
+  let resolved;
+  try {
+    resolved = await realpath(CONVEX_BIN_PATH);
+  } catch {
+    throw new Error("hosted canary Convex CLI binary is unavailable");
+  }
+  if (resolved !== CONVEX_CLI_PATH) throw new Error("hosted canary Convex CLI binary does not resolve to the exact installed script");
 }
 
 function assertSafeParentEnvironment() {
   for (const name of FORBIDDEN_INHERITED_ENVIRONMENT) {
     if (Object.hasOwn(process.env, name)) throw new Error(`hosted canary refuses inherited control or network environment ${name}`);
+  }
+  for (const [name, expected] of Object.entries(TARGET_SELECTOR_VALUES)) {
+    if (Object.hasOwn(process.env, name) && process.env[name] !== expected) {
+      throw new Error("hosted canary refuses an inherited selector outside the locked dev target");
+    }
   }
 }
 
@@ -275,6 +410,30 @@ function baseCliEnvironment() {
     HOME: home,
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
   };
+}
+
+function normalCliEnvironment(additional = {}) {
+  return { ...process.env, ...additional, DISABLE_BEACON: "1" };
+}
+
+async function readAndValidateSelectorEnvFile() {
+  let contents;
+  try {
+    contents = await readFile(SELECTOR_ENV_PATH, "utf8");
+  } catch {
+    throw new Error("hosted canary requires the existing .env.local selector file");
+  }
+  const parsed = dotenv.parse(contents);
+  const actualNames = Object.keys(parsed).sort();
+  const expectedNames = Object.keys(TARGET_SELECTOR_VALUES).sort();
+  if (!sameStringArray(actualNames, expectedNames) || Object.entries(TARGET_SELECTOR_VALUES).some(([name, value]) => parsed[name] !== value)) {
+    throw new Error("hosted canary .env.local selectors do not match the exact dev target");
+  }
+  return contents;
+}
+
+function assertSelectorFileUnchanged(before, after) {
+  if (before !== after) throw new Error("hosted canary detected an unexpected .env.local edit");
 }
 
 async function runPhase1() {
@@ -293,6 +452,51 @@ async function readHostedEnvironmentNames(expectedNames = null) {
     : validateHostedEnvironmentNames(output.stdout, expectedNames);
 }
 
+async function readCurrentHostedConfiguration() {
+  const values = {};
+  for (const name of HOSTED_CANARY_READ_ENVIRONMENT_NAMES) {
+    const output = await runConvexCommand(
+      "env-get",
+      ["env", "get", name, "--deployment", HOSTED_DEV_TARGET.deployment],
+      baseCliEnvironment(),
+      { envVarName: name },
+    );
+    const value = output.stdout.trimEnd();
+    if (!value || /[\r\n]/u.test(value)) throw new Error(`hosted current ${name} value is missing or multiline`);
+    values[name] = value;
+  }
+  let publicJwk;
+  try {
+    publicJwk = JSON.parse(values.MEETLESS_AUTH_PUBLIC_JWK);
+  } catch {
+    throw new Error("hosted current public JWK is not valid JSON");
+  }
+  if (!publicJwk || typeof publicJwk !== "object" || Array.isArray(publicJwk) || publicJwk.d !== undefined || publicJwk.kty !== "EC" || publicJwk.crv !== "P-256" || publicJwk.alg !== "ES256" || publicJwk.use !== "sig" || typeof publicJwk.x !== "string" || typeof publicJwk.y !== "string" || typeof publicJwk.kid !== "string") {
+    throw new Error("hosted current public JWK is not the configured public ES256 key");
+  }
+  if (values.MEETLESS_AUTH_ISSUER !== `${HOSTED_DEV_TARGET.siteUrl}${JWKS_PATH}`) {
+    throw new Error("hosted current JWT issuer is not the exact dev JWKS identity");
+  }
+  if (values.MEETLESS_AUTH_AUDIENCE !== "meetless-managed-hosted-development") {
+    throw new Error("hosted current JWT audience is not the exact dev audience");
+  }
+  if (values.MEETLESS_AUTH_KEY_ID !== publicJwk.kid) {
+    throw new Error("hosted current JWT key identifier does not match the public JWK");
+  }
+  if (!/^Bearer [A-Za-z0-9_-]+$/u.test(values.MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER)) {
+    throw new Error("hosted current RevenueCat authorization is not a bounded bearer value");
+  }
+  return {
+    publicJwk,
+    webhookAuthorization: values.MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER,
+    runtimeEnvironment: {
+      MEETLESS_AUTH_ISSUER: values.MEETLESS_AUTH_ISSUER,
+      MEETLESS_AUTH_AUDIENCE: values.MEETLESS_AUTH_AUDIENCE,
+      MEETLESS_AUTH_KEY_ID: values.MEETLESS_AUTH_KEY_ID,
+    },
+  };
+}
+
 async function readHostedFunctionSpec() {
   const output = await runConvexCommand(
     "function-spec",
@@ -303,8 +507,117 @@ async function readHostedFunctionSpec() {
   return parseHostedFunctionSpec(output.stdout);
 }
 
-async function runConvexCommand(kind, args, environment, { envFilePath = null, secretValues = [] } = {}) {
-  assertHostedCliArguments(kind, args, envFilePath);
+async function startPlainDevWatcher(holder, secretValues, runtimeEnvironment) {
+  assertHostedCliArguments("dev", ["dev"]);
+  const stage = "dev";
+  stageLog(stage, "start");
+  return new Promise((resolve, reject) => {
+    let child = null;
+    let settled = false;
+    let failureStarted = false;
+    let ready = false;
+    let sawExpectedTarget = false;
+    let sawExpectedCloudUrl = false;
+    let timer = null;
+    let ring = "";
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      stageLog(stage, "end");
+      if (error) reject(error);
+      else resolve(holder);
+    };
+    const fail = (reason) => {
+      if (settled || failureStarted) return;
+      failureStarted = true;
+      const diagnostic = formatHostedDiagnostic(`${reason}\n${ring}`, secretValues, STDERR_RING_BYTES);
+      const error = new Error(`hosted dev watcher failed (${diagnostic.classification})`);
+      error.stage = stage;
+      error.diagnostic = diagnostic;
+      void (async () => {
+        try {
+          if (child) await terminateOwnedProcess(child);
+        } catch {
+          error.diagnostic = formatHostedDiagnostic(`${reason}\nowned watcher termination failed\n${ring}`, secretValues, STDERR_RING_BYTES);
+        }
+        finish(error);
+      })();
+    };
+    const append = (value) => {
+      const text = typeof value === "string" ? value : String(value ?? "");
+      ring += text;
+      const bytes = Buffer.from(ring, "utf8");
+      if (bytes.byteLength > STDERR_RING_BYTES) ring = bytes.subarray(-STDERR_RING_BYTES).toString("utf8");
+      if (/\[(?:Production|Preview)\]/u.test(text)) {
+        fail("unexpected non-development target announcement");
+        return;
+      }
+      if (/\[Development\](?!\s+hoang-bang:meetless:dev\/hoang-bang(?:\s|\())/u.test(text)) {
+        fail("unexpected development target announcement");
+        return;
+      }
+      if (/Would you like|Select a deployment|Choose a deployment|\bprompt\b|Enter .*[:?]/iu.test(text)) {
+        fail("interactive prompt was observed");
+        return;
+      }
+      if (/✖\s+Error|Error fetching|Failed due to|^Error:/imu.test(text)) {
+        fail("hosted dev reported an error before readiness");
+        return;
+      }
+      if (/\[Development\]\s+hoang-bang:meetless:dev\/hoang-bang(?:\s|\()/u.test(text)) sawExpectedTarget = true;
+      if (text.includes(HOSTED_DEV_TARGET.cloudUrl)) sawExpectedCloudUrl = true;
+      if (text.includes("Convex functions ready!")) {
+        if (!sawExpectedTarget || !sawExpectedCloudUrl) {
+          fail("functions became ready without the exact target announcement");
+          return;
+        }
+        ready = true;
+        finish(null);
+      }
+    };
+    try {
+      child = execFile(CONVEX_BIN_PATH, ["dev"], {
+        cwd: REPO_ROOT,
+        env: normalCliEnvironment(runtimeEnvironment),
+        shell: false,
+        detached: true,
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+      }, (error, stdout, stderr) => {
+        append(stdout);
+        append(stderr);
+        if (error) fail(error.signal ? "hosted dev watcher terminated unexpectedly" : "hosted dev watcher exited unsuccessfully");
+      });
+      holder.child = child;
+      if (child.stdout?.on) child.stdout.on("data", append);
+      if (child.stderr?.on) child.stderr.on("data", append);
+      child.once("error", () => fail("hosted dev watcher could not start or reported an error"));
+      child.once("exit", (code, signal) => {
+        if (!ready) {
+          fail(`hosted dev watcher exited before readiness (${signal ? "signal" : "code"})`);
+        } else if (code !== 0 || signal) {
+          holder.exitError = new Error("hosted dev watcher exited during canary");
+        }
+      });
+      timer = setTimeout(() => fail("hosted dev watcher readiness deadline exceeded"), COMMAND_TIMEOUT_MS);
+    } catch {
+      fail("hosted dev watcher could not be spawned");
+    }
+  });
+}
+
+function assertWatcherAlive(holder) {
+  if (holder?.exitError) {
+    const error = new Error("hosted dev watcher exited during canary");
+    error.stage = "dev";
+    error.diagnostic = formatHostedDiagnostic("hosted dev watcher exited during canary", [], STDERR_RING_BYTES);
+    throw error;
+  }
+}
+
+async function runConvexCommand(kind, args, environment, { envFilePath = null, envVarName = null, secretValues = [] } = {}) {
+  assertHostedCliArguments(kind, args, kind === "env-get" ? envVarName : envFilePath);
   if (args.includes("--prod") || args.includes("--deployment prod") || args.includes("--cloud") || args.includes("--local")) {
     throw new Error("hosted canary CLI arguments contain a forbidden production or alternate target");
   }
@@ -461,25 +774,13 @@ async function makeCanaryMaterial(runId) {
   const keyId = `hosted-dev-${runId}`;
   const checkedPublicJwk = { ...publicJwk, kid: keyId, alg: "ES256", use: "sig" };
   const webhookAuthorization = `Bearer ${randomBytes(32).toString("base64url")}`;
-  const originalTransactionId = `hosted-canary-${runId}`;
-  const apple = {
-    adapter: "fixture",
-    bundleId: "com.meetless.app",
-    environment: "SANDBOX",
-    productId: "com.meetless.app.premium.monthly",
-    originalTransactionId,
-    periodType: "normal",
-    startedAtMs: Date.now() - 60_000,
-    expiresAtMs: Date.now() + 86_400_000,
-    currentState: "active",
-  };
-  apple.fixtureProof = sha256Text(JSON.stringify({ version: 1, ...apple }));
+  const apple = makeAppleFixture(runId);
   return {
     privateKeyPkcs8: pem("PRIVATE KEY", privateDer),
     publicJwk: checkedPublicJwk,
     webhookAuthorization,
     apple,
-    lineageKey: `apple-lineage:${sha256Text(originalTransactionId)}`,
+    lineageKey: `apple-lineage:${sha256Text(apple.originalTransactionId)}`,
     runtimeEnvironment: {
       MEETLESS_DEPLOYMENT_MODE: "hosted-development",
       MEETLESS_MANAGED_ALLOWANCE_SECONDS: "18000",
@@ -498,6 +799,24 @@ async function makeCanaryMaterial(runId) {
     keyPair,
     publicKey: encodeBase64Url(rawPublicKey),
   };
+}
+
+function makeAppleFixture(runId) {
+  const originalTransactionId = `hosted-canary-${runId}`;
+  const now = Date.now();
+  const apple = {
+    adapter: "fixture",
+    bundleId: "com.meetless.app",
+    environment: "SANDBOX",
+    productId: "com.meetless.app.premium.monthly",
+    originalTransactionId,
+    periodType: "normal",
+    startedAtMs: now - 60_000,
+    expiresAtMs: now + 86_400_000,
+    currentState: "active",
+  };
+  apple.fixtureProof = sha256Text(JSON.stringify({ version: 1, ...apple }));
+  return apple;
 }
 
 async function makeEphemeralDeviceSigner(runId) {
@@ -542,9 +861,10 @@ async function uploadAndRegisterFirstPart(client, targetFetch, credential, sessi
   const url = await client.mutation("managedTranscription:generateUploadUrl", { sessionId });
   if (typeof url !== "string") throw new Error("hosted Convex upload URL response is invalid");
   assertHostedUrl(url, "cloud");
-  const source = await readFile(timelinePath);
-  const partBytes = source.subarray(0, part.byteLength);
-  const response = await targetFetch(url, { method: "POST", body: partBytes });
+  const partBytes = await readManagedCanonicalPartBytes(timelinePath, part.sampleOffset, part.sampleCount);
+  if (partBytes.byteLength !== part.byteLength) throw new Error("hosted canary canonical first part length differs from its manifest");
+  if (sha256Bytes(partBytes) !== part.sha256) throw new Error("hosted canary canonical first part digest differs from its manifest before upload");
+  const response = await targetFetch(url, { method: "POST", body: new Blob([partBytes], { type: "audio/wav" }) });
   if (!response.ok) throw new Error("hosted Convex storage upload rejected the first physical part");
   const payload = await readJson(response);
   if (!payload || typeof payload.storageId !== "string") throw new Error("hosted Convex storage response did not contain a storage identity");
@@ -565,7 +885,8 @@ async function assertPublishedMeetingStoreResult(result, local) {
   if (result.job.status !== "succeeded" || result.job.sampleCount !== FIXTURE_SAMPLE_COUNT || result.job.durationMs !== 601_000 || result.job.billableSeconds !== 601 || !result.job.providerResult || result.job.providerResult.ranges.length !== 1 || result.job.providerResult.ranges[0].startMs !== 0 || result.job.providerResult.ranges[0].endMs !== 601_000 || result.job.providerResult.text !== expectedText) {
     throw new Error("hosted fake provider did not produce one settled full-timeline job");
   }
-  if (result.transcript.status !== "ready" || result.transcript.recordingId !== local.recordingId || result.transcript.ranges.length !== 1 || result.transcript.ranges[0].text !== expectedText) {
+  const checkpoint = result.transcript.checkpoints[0];
+  if (result.transcript.status !== "ready" || result.transcript.recordingId !== local.recordingId || result.transcript.ranges.length !== 1 || result.transcript.checkpoints.length !== 1 || checkpoint?.range.segmentId !== result.transcript.ranges[0].segmentId || checkpoint.text !== expectedText) {
     throw new Error("hosted Convex result was not published through MeetingStore");
   }
   const citation = await local.store.resolveCitation(local.meetingId, result.transcript.ranges[0].segmentId);
@@ -693,8 +1014,7 @@ function sameStringArray(left, right) {
 }
 
 async function writeEnvFile(filePath, values) {
-  const contents = `${Object.entries(values).map(([name, value]) => `${name}=${JSON.stringify(value)}`).join("\n")}\n`;
-  await writeFile(filePath, contents, { mode: 0o600 });
+  await writeFile(filePath, formatHostedDotenv(values), { mode: 0o600 });
 }
 
 function assertJwtAudience(audience, expected) {

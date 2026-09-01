@@ -22,6 +22,7 @@ import {
   type ManagedConvexUploadSession,
   buildManagedLogicalTimelineManifest,
   inspectCanonicalPcmWavStream,
+  readManagedCanonicalPartBytes,
   type ManagedUploadCredential,
   type ManagedUploadManifest,
 } from "../src/managed-upload.js";
@@ -44,6 +45,21 @@ afterEach(async () => {
 });
 
 describe("pre-external managed upload seam", () => {
+  test("materializes canonical parts without retaining reused source-buffer views", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-canonical-part-"));
+    roots.push(root);
+    const sourcePath = path.join(root, "canonical.wav");
+    await writeFile(sourcePath, wavBytes(16_001));
+    const manifest = await buildManagedLogicalTimelineManifest({
+      recordingId: "recording-canonical-part",
+      manifestSha256: sha256Text("canonical-part-manifest"),
+      sourcePath,
+    });
+    const bytes = await readManagedCanonicalPartBytes(sourcePath, manifest.parts[0]!.sampleOffset, manifest.parts[0]!.sampleCount);
+    expect(bytes.byteLength).toBe(manifest.parts[0]!.byteLength);
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(manifest.parts[0]!.sha256);
+  });
+
   test("segments a large canonical timeline through generated upload URLs and resumes an immutable logical job", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-convex-upload-"));
     roots.push(root);

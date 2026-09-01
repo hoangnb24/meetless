@@ -8,8 +8,16 @@
  * @module
  */
 
+import type * as appleSubscription from "../appleSubscription.js";
+import type * as deviceAuth from "../deviceAuth.js";
+import type * as http from "../http.js";
+import type * as managedAuth from "../managedAuth.js";
+import type * as managedAuthActions from "../managedAuthActions.js";
+import type * as managedAuthValidators from "../managedAuthValidators.js";
+import type * as managedConfig from "../managedConfig.js";
 import type * as managedTranscription from "../managedTranscription.js";
 import type * as managedTranscriptionActions from "../managedTranscriptionActions.js";
+import type * as revenueCatWebhook from "../revenueCatWebhook.js";
 import type * as shared from "../shared.js";
 
 import type {
@@ -19,8 +27,16 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  appleSubscription: typeof appleSubscription;
+  deviceAuth: typeof deviceAuth;
+  http: typeof http;
+  managedAuth: typeof managedAuth;
+  managedAuthActions: typeof managedAuthActions;
+  managedAuthValidators: typeof managedAuthValidators;
+  managedConfig: typeof managedConfig;
   managedTranscription: typeof managedTranscription;
   managedTranscriptionActions: typeof managedTranscriptionActions;
+  revenueCatWebhook: typeof revenueCatWebhook;
   shared: typeof shared;
 }>;
 

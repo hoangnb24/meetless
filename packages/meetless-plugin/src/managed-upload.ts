@@ -1502,6 +1502,17 @@ async function* canonicalPartChunks(filePath: string, sampleOffset: number, samp
   }
 }
 
+/** Materialize one already-validated canonical transport part for restart proofs. */
+export async function readManagedCanonicalPartBytes(
+  filePath: string,
+  sampleOffset: number,
+  sampleCount: number,
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of canonicalPartChunks(filePath, sampleOffset, sampleCount)) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
 async function readFileRange(
   handle: Awaited<ReturnType<typeof open>>,
   length: number,
