@@ -2,16 +2,16 @@
 
 ## Current State
 
-- `plan_revision`: `v28`
-- `current_frontier`: `STOREKIT-REVENUECAT-SANDBOX-PURCHASE-RESTORE-R5-REPOSITORY-CLOSEOUT`
-- `state`: `R5_REPOSITORY_ACCEPTED_EXTERNAL_GATES_CLOSED`
+- `plan_revision`: `v29`
+- `current_frontier`: `STOREKIT-REVENUECAT-SANDBOX-PURCHASE-RESTORE-R5-EXTERNAL-CANARY`
+- `state`: `R5_DEV_PREREQUISITES_DEPLOYED_PENDING_LEGACY_ENV_REMOVAL_AND_REAL_PURCHASE`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: repository-only R5 accepted at correction commit `7fd925c470f243a9966041789243373a1ba540cf`, a direct descendant of correction base `1a15170d027f2c8f1c7241a536b80a95df3919cb` and original base `5cd62e56091e604d7b6defe01bca47c22f98ef02`. Accepted predecessors remain history and are not modified.
 - `authority_contract_sha256`: `d32d834f9e4424ebc35e7607e2f53cd69c3bf29975c810bebf8d40672df1f2aa` (previous `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `pending_ruling`: explicit production subscriber allowance amount remains open; production lineage authentication, credentials, provider access, and external purchase integration also remain owner/external gates
-- `blocked_by`: the accidental Convex codegen incident remains classified `CLOUD_STATE_UNKNOWN`; a separately owner-authorized read-only cloud audit is required before any external phase. Real monthly Apple sandbox purchase/restore, credentials and dashboard configuration, Apple signing/profile/package gates, external webhook delivery, production subscriber allowance, provider approval, and deployment/review/publication remain external gates; no repository blocker remains.
-- `next_action`: keep every external gate closed. If the owner elects to continue, authorize a read-only cloud-state audit separately before any configuration, deployment, webhook, or real sandbox purchase/restore operation.
+- `blocked_by`: the earlier accidental-codegen cloud uncertainty is reconciled by the owner-authorized read-only audit and the accepted hosted-dev deployment below. The remaining R5 gates are removal of the superseded authorization-header environment variable, public RevenueCat SDK-key build configuration, a signed sandbox package, and one real monthly sandbox purchase/restore. Production allowance, provider approval, production deployment, review, and publication remain closed.
+- `next_action`: after explicit owner confirmation for the destructive legacy-environment cleanup, remove only `MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER`; then configure the public SDK key at build time and run the real monthly sandbox purchase/restore canary with the fake transcription provider.
 
 ## Ownership And Authority
 
@@ -926,6 +926,46 @@ CI requirement, or branch-protection rule is changed or verified. A real Apple
 sandbox transaction, Apple/RevenueCat credentials and dashboard setup, signed
 Mac App Store package, external webhook delivery, Convex deployment, and
 production allowance/provider/review/publication remain unmet gates.
+
+### PLAN_RECONCILIATION v9 — R5 hosted-development prerequisites deployed (2026-09-01)
+
+The owner explicitly opened the bounded Apple, RevenueCat, and existing Convex
+development prerequisites while keeping production, real transcription spend,
+and annual purchase testing closed. Apple now has one Mac App Store profile for
+`com.meetless.app`: portal ID `8HJ7CY8645`, UUID
+`51bc0400-219e-405a-8d37-e300afd72c53`, Apple Distribution identity
+`Long Le (63M98WD275)`, expiration 2027-08-25. The profile was downloaded and
+installed in Xcode's user provisioning-profile store; its application and team
+entitlements were parsed locally and matched the accepted bundle/team boundary.
+
+RevenueCat app `appe0ef526253` now reuses the team's existing In-App Purchase
+key `U5B866A76M` and App Store Connect API key `3FPFT7R8L6`; the app page was
+reloaded and both associations plus valid IAP credentials were observed. Webhook
+`whintgr572df9a8f6`, named `Meetless Convex Dev Sandbox`, targets only Meetless,
+only SANDBOX, and only initial purchase, renewal, product change, cancellation,
+billing issue, uncancellation, and expiration. HMAC signing is enabled; its
+one-time secret was transferred directly into the exact Convex development
+deployment without printing or persisting it in the repository.
+
+Convex deployment `frugal-mandrill-646` now also contains the official Apple G2
+and G3 root certificates published by Apple, selects
+`app-store-server-api` verification, and selects RevenueCat `hmac` mode. A plain
+`node_modules/.bin/convex dev` run reached the exact target and reported
+`Convex functions ready!`; the watcher was then stopped. The deployed function
+spec reported 60 entries. The metadata-only hosted-development audit reported
+zero documents across all 11 managed tables and zero storage objects, and an
+unsigned POST to `/webhooks/revenuecat` was rejected with HTTP 401. No provider,
+production deployment, annual purchase, customer record, or storage object was
+created.
+
+The deploy regenerated the committed Convex API declaration for the R5 Node
+Apple verifier and quota-policy modules. The hosted-development exact-name
+allowlist now includes `MEETLESS_APPLE_ROOT_CERTIFICATES_BASE64`; focused tests,
+Convex TypeScript, workspace typecheck, and diff checks passed. The superseded
+`MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER` remains present but unused pending a
+separate destructive-cleanup confirmation. Until it is removed, the deployed
+environment contains one extra historical name and does not satisfy the current
+exact HMAC-only environment-name proof.
 
 ### Risks And Recovery
 

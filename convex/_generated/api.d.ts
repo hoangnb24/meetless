@@ -9,6 +9,7 @@
  */
 
 import type * as appleSubscription from "../appleSubscription.js";
+import type * as appleSubscriptionNode from "../appleSubscriptionNode.js";
 import type * as deviceAuth from "../deviceAuth.js";
 import type * as http from "../http.js";
 import type * as managedAuth from "../managedAuth.js";
@@ -16,6 +17,7 @@ import type * as managedAuthActions from "../managedAuthActions.js";
 import type * as managedAuthValidators from "../managedAuthValidators.js";
 import type * as managedCanaryJanitor from "../managedCanaryJanitor.js";
 import type * as managedConfig from "../managedConfig.js";
+import type * as managedQuotaPolicy from "../managedQuotaPolicy.js";
 import type * as managedTranscription from "../managedTranscription.js";
 import type * as managedTranscriptionActions from "../managedTranscriptionActions.js";
 import type * as revenueCatWebhook from "../revenueCatWebhook.js";
@@ -29,6 +31,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   appleSubscription: typeof appleSubscription;
+  appleSubscriptionNode: typeof appleSubscriptionNode;
   deviceAuth: typeof deviceAuth;
   http: typeof http;
   managedAuth: typeof managedAuth;
@@ -36,6 +39,7 @@ declare const fullApi: ApiFromModules<{
   managedAuthValidators: typeof managedAuthValidators;
   managedCanaryJanitor: typeof managedCanaryJanitor;
   managedConfig: typeof managedConfig;
+  managedQuotaPolicy: typeof managedQuotaPolicy;
   managedTranscription: typeof managedTranscription;
   managedTranscriptionActions: typeof managedTranscriptionActions;
   revenueCatWebhook: typeof revenueCatWebhook;

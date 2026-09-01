@@ -75,6 +75,7 @@ function environment(overrides: Record<string, string> = {}): Record<string, str
 describe("hosted-development Convex boundaries", () => {
   test("parses and validates empty or exact approved environment-name fixtures", () => {
     const names = [
+      "MEETLESS_APPLE_ROOT_CERTIFICATES_BASE64",
       "MEETLESS_APPLE_VERIFIER_MODE",
       "MEETLESS_AUTH_AUDIENCE",
       "MEETLESS_AUTH_ISSUER",
