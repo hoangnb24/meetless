@@ -2,16 +2,16 @@
 
 ## Current State
 
-- `plan_revision`: `v29`
+- `plan_revision`: `v30`
 - `current_frontier`: `STOREKIT-REVENUECAT-SANDBOX-PURCHASE-RESTORE-R5-EXTERNAL-CANARY`
-- `state`: `R5_DEV_PREREQUISITES_DEPLOYED_PENDING_LEGACY_ENV_REMOVAL_AND_REAL_PURCHASE`
+- `state`: `R5_DEV_PREREQUISITES_READY_PENDING_SIGNED_BUILD_AND_REAL_PURCHASE`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: repository-only R5 accepted at correction commit `7fd925c470f243a9966041789243373a1ba540cf`, a direct descendant of correction base `1a15170d027f2c8f1c7241a536b80a95df3919cb` and original base `5cd62e56091e604d7b6defe01bca47c22f98ef02`. Accepted predecessors remain history and are not modified.
 - `authority_contract_sha256`: `d32d834f9e4424ebc35e7607e2f53cd69c3bf29975c810bebf8d40672df1f2aa` (previous `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `pending_ruling`: explicit production subscriber allowance amount remains open; production lineage authentication, credentials, provider access, and external purchase integration also remain owner/external gates
-- `blocked_by`: the earlier accidental-codegen cloud uncertainty is reconciled by the owner-authorized read-only audit and the accepted hosted-dev deployment below. The remaining R5 gates are removal of the superseded authorization-header environment variable, public RevenueCat SDK-key build configuration, a signed sandbox package, and one real monthly sandbox purchase/restore. Production allowance, provider approval, production deployment, review, and publication remain closed.
-- `next_action`: after explicit owner confirmation for the destructive legacy-environment cleanup, remove only `MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER`; then configure the public SDK key at build time and run the real monthly sandbox purchase/restore canary with the fake transcription provider.
+- `blocked_by`: the earlier accidental-codegen cloud uncertainty is reconciled by the owner-authorized read-only audit and accepted hosted-dev deployment. The remaining R5 gates are public RevenueCat SDK-key build configuration, a signed sandbox package, and one real monthly sandbox purchase/restore. Production allowance, provider approval, production deployment, review, and publication remain closed.
+- `next_action`: configure the public RevenueCat SDK key at build time, produce and validate the signed sandbox package, then run the real monthly sandbox purchase/restore canary with the fake transcription provider.
 
 ## Ownership And Authority
 
@@ -962,10 +962,11 @@ The deploy regenerated the committed Convex API declaration for the R5 Node
 Apple verifier and quota-policy modules. The hosted-development exact-name
 allowlist now includes `MEETLESS_APPLE_ROOT_CERTIFICATES_BASE64`; focused tests,
 Convex TypeScript, workspace typecheck, and diff checks passed. The superseded
-`MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER` remains present but unused pending a
-separate destructive-cleanup confirmation. Until it is removed, the deployed
-environment contains one extra historical name and does not satisfy the current
-exact HMAC-only environment-name proof.
+`MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER` was subsequently removed after exact
+owner confirmation. No other environment value changed. The resulting 14-name
+deployment environment passed the current exact HMAC-only allowlist proof; the
+metadata-only audit still reported zero documents in every managed table and
+zero storage objects.
 
 ### Risks And Recovery
 
