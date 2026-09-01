@@ -6,10 +6,8 @@ import {
   assertNonProductionFixture,
   MANAGED_ANNUAL_PRODUCT_ID,
   MANAGED_ENVIRONMENT_VARIABLES,
-  MANAGED_MAX_DEVICES,
   MANAGED_MONTHLY_PRODUCT_ID,
   MANAGED_REVENUECAT_APP_ID,
-  MANAGED_TRIAL_SECONDS,
   readManagedRuntimeConfig,
 } from "./managedConfig";
 import { type AppleSubscriptionState } from "./appleSubscription";
@@ -22,6 +20,7 @@ import {
   verifyP256Signature,
 } from "./deviceAuth";
 import { revenueCatEventValidatorForMutation, verifiedAppleLineageValidatorForMutation } from "./managedAuthValidators";
+import { planManagedDeviceEnrollment, planManagedQuotaEnrollment } from "./managedQuotaPolicy";
 import {
   assertHostedCanaryAccountOwnership,
   HOSTED_CANARY_DEVICE_PREFIX,
@@ -214,26 +213,26 @@ export const consumeEnrollment = internalMutation({
       await ctx.db.patch(existingLineage._id, lineageRecord(verified));
     }
     let account = await ctx.db.query("managedAccounts").withIndex("by_account", (q) => q.eq("accountId", verified.accountId)).unique();
-    if (!account) {
-      const periodLength = verified.product === "trial" ? 7 * 24 * 60 * 60 * 1_000 : verified.product === "annual" ? 365 * 24 * 60 * 60 * 1_000 : 30 * 24 * 60 * 60 * 1_000;
-      const periodEnd = now + periodLength;
-      const allowance = verified.product === "trial" ? MANAGED_TRIAL_SECONDS : config.allowanceSeconds;
+    const existingAccount = account;
+    const existingPeriod = existingAccount
+      ? await ctx.db.query("managedPeriods")
+        .withIndex("by_account_start", (q) => q.eq("accountId", verified.accountId).eq("startAt", existingAccount.currentPeriodStartAt))
+        .unique()
+      : null;
+    if (account && !existingPeriod) throw new Error("Managed quota account has no current period; refuse enrollment rather than resetting usage");
+    const quotaPlan = planManagedQuotaEnrollment(
+      existingAccount && existingPeriod ? { account: existingAccount, period: existingPeriod } : null,
+      verified,
+      config.allowanceSeconds,
+      config.allowanceSource,
+      now,
+    );
+    if (quotaPlan.kind === "create") {
       await ctx.db.insert("managedAccounts", {
-        accountId: verified.accountId,
-        currentPeriodStartAt: now,
-        currentPeriodEndAt: periodEnd,
-        nextPeriodLimitSeconds: config.allowanceSeconds,
-        allowanceSource: verified.product === "trial" ? "product-trial-fixed" : config.allowanceSource,
-        maxDevices: MANAGED_MAX_DEVICES,
+        ...quotaPlan.projection.account,
       });
       await ctx.db.insert("managedPeriods", {
-        accountId: verified.accountId,
-        product: verified.product,
-        startAt: now,
-        endAt: periodEnd,
-        limitSeconds: allowance,
-        usedSeconds: 0,
-        reservedSeconds: 0,
+        ...quotaPlan.projection.period,
       });
       account = await ctx.db.query("managedAccounts").withIndex("by_account", (q) => q.eq("accountId", verified.accountId)).unique();
     }
@@ -243,11 +242,8 @@ export const consumeEnrollment = internalMutation({
     if (currentDevice && (currentDevice.keyId !== args.keyId || currentDevice.publicKey !== args.publicKey)) {
       throw new Error("Managed device identity cannot be rebound to a different key");
     }
-    const restored = currentDevice !== undefined;
-    const activeDevices = accountDevices.filter((device) => device.revokedAt === null);
-    if (!restored && activeDevices.length >= Math.min(account.maxDevices, MANAGED_MAX_DEVICES)) {
-      throw new Error("Managed account has reached its three active-device enrollment limit");
-    }
+    const deviceAdmission = planManagedDeviceEnrollment(accountDevices, args.deviceId, account.maxDevices);
+    const restored = deviceAdmission.restored;
     const device = currentDevice ?? await ctx.db.insert("managedDevices", {
       accountId: verified.accountId,
       deviceId: args.deviceId,

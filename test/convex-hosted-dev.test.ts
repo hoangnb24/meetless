@@ -20,6 +20,7 @@ import {
   verifyP256Signature,
 } from "../convex/deviceAuth";
 import { readManagedRuntimeConfig } from "../convex/managedConfig";
+import { planManagedDeviceEnrollment, planManagedQuotaEnrollment } from "../convex/managedQuotaPolicy";
 import {
   parseRevenueCatWebhook,
   revenueCatHmacHeader,
@@ -318,6 +319,79 @@ describe("hosted-development Convex boundaries", () => {
     const fixtureConfig = readManagedRuntimeConfig(environment());
     await expect(verifySignedAppleTransaction("not-a-jws", fixtureConfig, 2_000)).rejects.toThrow(/App Store Server API verifier/);
     expect(() => readManagedRuntimeConfig(environment({ MEETLESS_APPLE_VERIFIER_MODE: "app-store-server-api" }))).toThrow(/root certificates|APPLE_ROOT_CERTIFICATES/i);
+  });
+
+  test("counts revoked-device reactivation against the three active-device limit", () => {
+    const activeDevices = [
+      { deviceId: "mac-a", revokedAt: null },
+      { deviceId: "mac-b", revokedAt: null },
+      { deviceId: "mac-c", revokedAt: null },
+    ];
+    expect(() => planManagedDeviceEnrollment(
+      [...activeDevices, { deviceId: "mac-revoked", revokedAt: 1_000 }],
+      "mac-revoked",
+      3,
+    )).toThrow(/three active-device enrollment limit.*revoke an active Mac/i);
+    expect(planManagedDeviceEnrollment(
+      [...activeDevices.slice(0, 2), { deviceId: "mac-revoked", revokedAt: 1_000 }],
+      "mac-revoked",
+      3,
+    )).toMatchObject({ restored: true, reactivating: true, activeDeviceCount: 2, activeDeviceLimit: 3 });
+    expect(planManagedDeviceEnrollment(activeDevices, "mac-a", 3)).toMatchObject({ restored: true, reactivating: false, activeDeviceCount: 3 });
+  });
+
+  test.each([
+    ["monthly" as const, 42, 42],
+    ["trial" as const, 42, 18_000],
+  ])("anchors the %s quota period to verified Apple dates and preserves replay usage", (product, allowanceSeconds, expectedLimit) => {
+    const verified = {
+      accountId: `account-${product}`,
+      product,
+      startedAtMs: 1_000,
+      expiresAtMs: product === "trial" ? 8_000 : 31_000,
+    };
+    const delayedEnrollment = planManagedQuotaEnrollment(
+      null,
+      verified,
+      allowanceSeconds,
+      "hosted-development-test",
+      500_000,
+    );
+    expect(delayedEnrollment).toMatchObject({
+      kind: "create",
+      projection: {
+        account: {
+          currentPeriodStartAt: verified.startedAtMs,
+          currentPeriodEndAt: verified.expiresAtMs,
+        },
+        period: {
+          startAt: verified.startedAtMs,
+          endAt: verified.expiresAtMs,
+          limitSeconds: expectedLimit,
+          usedSeconds: 0,
+          reservedSeconds: 0,
+        },
+      },
+    });
+
+    const existing = {
+      account: delayedEnrollment.projection.account,
+      period: { ...delayedEnrollment.projection.period, usedSeconds: 17, reservedSeconds: 3 },
+    };
+    const replay = planManagedQuotaEnrollment(
+      existing,
+      { ...verified, expiresAtMs: verified.expiresAtMs + 10_000 },
+      allowanceSeconds,
+      "hosted-development-test",
+      900_000,
+    );
+    expect(replay).toEqual({ kind: "preserve", projection: existing });
+    expect(replay.projection.period).toMatchObject({
+      startAt: verified.startedAtMs,
+      endAt: verified.expiresAtMs,
+      usedSeconds: 17,
+      reservedSeconds: 3,
+    });
   });
 
   test("authenticates the current RevenueCat raw-body mechanism and filters exact catalog/environment", async () => {

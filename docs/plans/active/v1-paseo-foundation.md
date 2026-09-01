@@ -2,11 +2,11 @@
 
 ## Current State
 
-- `plan_revision`: `v26`
+- `plan_revision`: `v27`
 - `current_frontier`: `STOREKIT-REVENUECAT-SANDBOX-PURCHASE-RESTORE-R5-REPOSITORY`
-- `state`: `R5_REPOSITORY_CANDIDATE_READY`
+- `state`: `R5_CORRECTION_CANDIDATE_READY`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: R5 repository candidate is pending one immutable local commit directly from exact base `5cd62e5`; accepted predecessors remain history and are not modified.
+- `candidate`: R5-001/R5-002 correction candidate is the direct repository descendant of correction base `1a15170d027f2c8f1c7241a536b80a95df3919cb`; the final local commit identity is reported at handoff. Accepted predecessors remain history and are not modified.
 - `authority_contract_sha256`: `d32d834f9e4424ebc35e7607e2f53cd69c3bf29975c810bebf8d40672df1f2aa` (previous `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `pending_ruling`: explicit production subscriber allowance amount remains open; production lineage authentication, credentials, provider access, and external purchase integration also remain owner/external gates
@@ -877,7 +877,7 @@ spend approval, production deployment, sandbox purchase/restore, availability,
 review, and publication. The seven-day trial remains `18,000` seconds and no
 production subscriber allowance is selected here.
 
-### PLAN_RECONCILIATION v6 — R5 repository candidate (2026-09-01)
+### PLAN_RECONCILIATION v7 — R5-001/R5-002 correction candidate (2026-09-01)
 
 Foundation check v1 was sufficient against exact base `5cd62e5`; this repository
 candidate does not intentionally open the external Apple, RevenueCat, Convex,
@@ -891,6 +891,11 @@ App Store Server Library Node boundary, opaque native/plugin transaction handoff
 Apple-derived hashed lineage admission, explicit restore, three-Mac anonymous
 listing/revocation, and HMAC-only RevenueCat webhook verification over
 `timestamp.raw_body` with replay tolerance and idempotent lifecycle signaling.
+The R5-001 correction makes revoked-device reactivation consume an active slot,
+including the three-active-plus-revoked rejection case. The R5-002 correction
+anchors first monthly/trial quota snapshots to verified Apple start/expiry dates
+and preserves existing period usage and reset dates on replay; annual catalog
+history remains intact without adding annual monthly slicing.
 
 The real path accepts only opaque `{ adapter, signedTransaction }` material at
 the action boundary. The Node verifier returns normalized fields only to the
@@ -903,7 +908,7 @@ acceptance gate. The active plan records the authority digest transition from
 `d32d834f9e4424ebc35e7607e2f53cd69c3bf29975c810bebf8d40672df1f2aa` after the
 explicit R5 owner decisions were added to ADR0005.
 
-Repository verification for this candidate is local-only: Convex TypeScript,
+Repository verification for this correction candidate is local-only: Convex TypeScript,
 workspace typecheck, focused policy/adapter/HMAC, contract/client/plugin,
 surface, native boundary, build, syntax, MAS-baseline, and diff checks. No hook,
 CI requirement, or branch-protection rule is changed or verified. A real Apple
