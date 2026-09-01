@@ -2,16 +2,16 @@
 
 ## Current State
 
-- `plan_revision`: `v23`
-- `current_frontier`: `CONVEX-HOSTED-DEV-R4-CANARY-CONVERGENCE`
-- `state`: `HOSTED_DEV_CANARY_ACCEPTED_PENDING_CLOSEOUT`
+- `plan_revision`: `v24`
+- `current_frontier`: `CONVEX-HOSTED-DEV-R4-CANARY-RESIDUE-CONVERGENCE`
+- `state`: `HOSTED_DEV_CANARY_RESIDUE_CORRECTED_PENDING_CLOSEOUT`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: this frontier's immutable hosted-dev canary convergence commit is pending closeout directly from `ea431f0dbbe38afea5f78e982e5c1125e66f8ca8`; local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`; the Convex local-first R3 convergence is accepted at `f93b705561eb6118c9ccbe7d0f9ae146db4f5df8`. Rejected predecessors `966b9abd78481db001e912cc2e60d895c00bef37`, `0a82b39f758e8c2ec19e831ca1c8c1b75529763d`, and `522faa0b1d1e78e54f0e7d0fc813fc0a0706ab01` remain history only.
+- `candidate`: this residue-correction candidate is pending closeout directly from `fb66c40c0f85aa228dbc993b59e742c3e6da275e`; the hosted-dev canary convergence predecessor is immutable at `fb66c40c0f85aa228dbc993b59e742c3e6da275e`, directly from `ea431f0dbbe38afea5f78e982e5c1125e66f8ca8`; local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`; the Convex local-first R3 convergence is accepted at `f93b705561eb6118c9ccbe7d0f9ae146db4f5df8`. Rejected predecessors `966b9abd78481db001e912cc2e60d895c00bef37`, `0a82b39f758e8c2ec19e831ca1c8c1b75529763d`, and `522faa0b1d1e78e54f0e7d0fc813fc0a0706ab01` remain history only.
 - `authority_contract_sha256`: `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `pending_ruling`: explicit production subscriber allowance amount remains open; production lineage authentication, credentials, provider access, and external purchase integration also remain owner/external gates
 - `blocked_by`: production subscriber allowance, production issuer/key separation, real Apple/App Store Server API verification, RevenueCat production configuration, provider approval, and production deployment remain external gates; the hosted-development R4 canary is no longer blocked by `start_push`.
-- `next_action`: create the immutable candidate from the directly verified base; do not select production or call real Apple, RevenueCat, or provider services.
+- `next_action`: complete the no-network closeout gates and create the immutable residue-correction candidate from `fb66c40c0f85aa228dbc993b59e742c3e6da275e`; do not select production or call real Apple, RevenueCat, or provider services.
 
 ## Ownership And Authority
 
@@ -807,10 +807,8 @@ duplicate idempotent acknowledgement, asynchronous reconciliation, and
 unique-account cleanup. Cleanup reported one account, lineage, device,
 principal, job, upload, period, charge, and event removed, with zero remaining
 storage objects or upload parts for that run. Deployed functions/schema were
-retained. Earlier failed canary runs emitted cleanup-failure diagnostics; their
-safe output did not expose run identifiers, so any historical residue outside
-the successful run remains an external audit item rather than being broadly
-queried or deleted.
+retained. This run's cleanup covered only its own account projection; the later
+residue audit and correction are recorded in `PLAN_RECONCILIATION v3` below.
 
 The local implementation fix covered canonical part materialization copying
 reused stream buffers and the canary assertion now reads transcript text from
@@ -827,6 +825,53 @@ passed Paseo, Meetless, and app typechecks; `npm run build:meetless` passed;
 the five affected script syntax checks passed; `git diff --check` passed; and
 the concatenated product/ADR authority files recomputed to
 `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`.
+
+### PLAN_RECONCILIATION v3 — hosted-development canary residue corrected (2026-09-01)
+
+Lead's accepted finding `R4-HOSTED-001` identified four orphaned identity
+clusters from earlier failed canary attempts. The read-only audit observed four
+accounts, challenges, devices, lineages, periods, and principals, with zero
+jobs, charges, RevenueCat events, upload parts, uploads, or storage objects.
+All four device identities had the hosted-canary prefix; no customer data or
+real device identifiers were observed. The prior successful canary had cleaned
+its own account, but its zero-residue statement did not cover these earlier
+clusters and is corrected here.
+
+The smallest correction added a hosted-development-only operator janitor. It
+accepts only a non-empty list of at most four canonical
+`hosted-canary-device-<uuid>` IDs, refuses duplicates and unknown/ambiguous
+devices, proves every device on each selected account is a requested canary
+device, requires one fixture/SANDBOX lineage and one account, then reuses the
+existing complete account cleanup mechanics. It returns only the requested
+device IDs and bounded deletion counts. A separate hosted-development-only
+read query returns canary IDs and a metadata-only count query covers all 11
+managed tables plus `_storage`; neither returns account, lineage, credential,
+receipt, or customer data. Interrupted hosted proof diagnostics now retain a
+safe run ID and device ID so a later operator can submit the exact cleanup set.
+
+After the no-network Phase-1 gate passed, the correction was deployed once to
+the exact `frugal-mandrill-646` development deployment using the plain
+`node_modules/.bin/convex dev` workflow. The watcher reached the exact
+development target and `Convex functions ready!`, then was stopped; no
+environment rotation occurred. A read-only deployment query returned exactly
+the four observed orphan device IDs, and one exact-target CLI/admin mutation
+removed four accounts, devices, lineages, periods, principals, and challenges;
+it removed no jobs, charges, uploads, events, upload parts, or storage objects.
+The subsequent metadata-only state audit reported zero for every managed table
+and `_storage`. No fresh canary was needed because the correction's four-account
+cleanup path was exercised against the observed residue. Functions, schema,
+and the 13 approved dev environment names were retained; no production,
+provider, Apple, RevenueCat dashboard, broad deletion, rollback, or push action
+occurred.
+
+The hosted canary remains opt-in and must report its run ID/device ID on an
+interrupted run; it must not claim global zero residue without running the
+metadata-only all-table audit. Remaining gates are production allowance,
+production issuer/key separation, real App Store Server API verification,
+RevenueCat production webhook configuration, provider credential/access and
+spend approval, production deployment, sandbox purchase/restore, availability,
+review, and publication. The seven-day trial remains `18,000` seconds and no
+production subscriber allowance is selected here.
 
 ### Risks And Recovery
 

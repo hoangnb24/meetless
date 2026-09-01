@@ -42,6 +42,11 @@ import {
 } from "../scripts/prove-managed-convex-hosted-dev-target.mjs";
 import { buildInlinePublicJwks } from "../convex/auth.config";
 import { assertHostedCanaryInvocation, preserveHostedStageError } from "../scripts/prove-managed-convex-hosted-dev.mjs";
+import {
+  assertHostedCanaryAccountOwnership,
+  MAX_HOSTED_CANARY_JANITOR_DEVICES,
+  validateHostedCanaryDeviceIds,
+} from "../convex/managedCanaryJanitor";
 
 const publicKeyPlaceholder = JSON.stringify({ kty: "EC", crv: "P-256", x: "x", y: "y", kid: "hosted-development-fixture", alg: "ES256", use: "sig" });
 
@@ -177,6 +182,36 @@ describe("hosted-development Convex boundaries", () => {
     expect(() => assertHostedCanaryInvocation(["--canary-only"])).not.toThrow();
     expect(() => assertHostedCanaryInvocation(["--run"])).not.toThrow();
     expect(() => assertHostedCanaryInvocation(["--deploy"])).toThrow(/opt-in/i);
+  });
+
+  test("bounds hosted canary janitor IDs and proves complete account ownership", () => {
+    const first = "hosted-canary-device-00000000-0000-4000-8000-000000000001";
+    const second = "hosted-canary-device-00000000-0000-4000-8000-000000000002";
+    expect(validateHostedCanaryDeviceIds([first, second])).toEqual([first, second]);
+    expect(assertHostedCanaryAccountOwnership([first, second], [
+      { accountId: "fixture-account", deviceId: first },
+      { accountId: "fixture-account", deviceId: second },
+    ])).toEqual({ accountId: "fixture-account", deviceIds: [first, second] });
+    expect(() => validateHostedCanaryDeviceIds([first, first])).toThrow(/duplicate/i);
+    expect(() => validateHostedCanaryDeviceIds([])).toThrow(/non-empty/i);
+    expect(() => validateHostedCanaryDeviceIds(["device-real"])).toThrow(/canonical/i);
+    expect(() => validateHostedCanaryDeviceIds(Array.from({ length: MAX_HOSTED_CANARY_JANITOR_DEVICES + 1 }, (_, index) => `hosted-canary-device-00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`))).toThrow(/bounded|limit/i);
+    expect(() => assertHostedCanaryAccountOwnership([first], [
+      { accountId: "fixture-account", deviceId: first },
+      { accountId: "fixture-account", deviceId: second },
+    ])).toThrow(/unrequested|missing/i);
+    expect(() => assertHostedCanaryAccountOwnership([first], [
+      { accountId: "fixture-account", deviceId: first },
+      { accountId: "fixture-account", deviceId: "real-device" },
+    ])).toThrow(/non-canary/i);
+    expect(() => assertHostedCanaryAccountOwnership([first], [
+      { accountId: "fixture-account", deviceId: first },
+      { accountId: "other-account", deviceId: first },
+    ])).toThrow(/ambiguous|duplicate/i);
+    const authSource = readFileSync(path.resolve("convex/managedAuth.ts"), "utf8");
+    expect(authSource).toContain('config.mode !== "hosted-development"');
+    expect(authSource).toContain("deleteFixtureAccount(ctx, target.accountId, target.lineageKey)");
+    expect(authSource).toContain('ctx.db.system.query("_storage")');
   });
 
   test("formats hosted environment values for an exact dotenv round-trip without logging secrets", async () => {

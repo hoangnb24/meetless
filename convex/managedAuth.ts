@@ -26,6 +26,12 @@ import {
   verifyP256Signature,
 } from "./deviceAuth";
 import { appleMaterialValidatorForAction, revenueCatEventValidatorForMutation } from "./managedAuthValidators";
+import {
+  assertHostedCanaryAccountOwnership,
+  HOSTED_CANARY_DEVICE_PREFIX,
+  MAX_HOSTED_CANARY_JANITOR_DEVICES,
+  validateHostedCanaryDeviceIds,
+} from "./managedCanaryJanitor";
 
 type PrincipalContext = QueryCtx | MutationCtx;
 
@@ -369,6 +375,163 @@ export const cleanupFixtureAccount = mutation({
   },
 });
 
+/**
+ * Read-only hosted-development audit of canary device identities. This is
+ * intentionally narrower than a table query so an operator can obtain the
+ * exact cleanup set without exposing account, lineage, or credential data.
+ */
+export const listHostedCanaryDeviceIds = query({
+  args: {},
+  returns: v.array(v.string()),
+  handler: async (ctx) => {
+    const config = readManagedRuntimeConfig();
+    if (config.mode !== "hosted-development") {
+      throw new Error("Hosted canary janitor is available only in hosted-development mode");
+    }
+    const devices = await ctx.db.query("managedDevices").collect();
+    const deviceIds = devices
+      .map((device) => device.deviceId)
+      .filter((deviceId) => deviceId.startsWith(HOSTED_CANARY_DEVICE_PREFIX))
+      .sort();
+    if (deviceIds.length > MAX_HOSTED_CANARY_JANITOR_DEVICES) {
+      throw new Error("Hosted canary janitor found more canary devices than its bounded audit limit");
+    }
+    return deviceIds.length === 0 ? [] : validateHostedCanaryDeviceIds(deviceIds);
+  },
+});
+
+/**
+ * Hosted-development-only operator janitor for explicitly observed failed
+ * canary enrollments. It never scans for deletion candidates and deletes only
+ * complete accounts proven to be represented by the supplied device IDs.
+ */
+export const cleanupHostedCanaryDevices = mutation({
+  args: { deviceIds: v.array(v.string()) },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const config = readManagedRuntimeConfig();
+    if (config.mode !== "hosted-development") {
+      throw new Error("Hosted canary janitor is available only in hosted-development mode");
+    }
+    const requestedDeviceIds = validateHostedCanaryDeviceIds(args.deviceIds);
+    const requestedSet = new Set(requestedDeviceIds);
+    const deviceCandidates = new Map<string, { accountId: string; deviceId: string }>();
+    for (const deviceId of requestedDeviceIds) {
+      const candidates = await ctx.db
+        .query("managedDevices")
+        .withIndex("by_device_key", (q) => q.eq("deviceId", deviceId))
+        .collect();
+      if (candidates.length !== 1 || candidates[0]!.deviceId !== deviceId) {
+        throw new Error("Hosted canary janitor found an unknown or ambiguous device ID");
+      }
+      deviceCandidates.set(deviceId, candidates[0]!);
+    }
+
+    const accountIds = [...new Set([...deviceCandidates.values()].map((device) => device.accountId))];
+    const cleanupTargets: Array<{ accountId: string; lineageKey: string; deviceIds: string[] }> = [];
+    for (const accountId of accountIds) {
+      const accountDevices = await ctx.db
+        .query("managedDevices")
+        .withIndex("by_account", (q) => q.eq("accountId", accountId))
+        .collect();
+      const accountRequestedDeviceIds = accountDevices
+        .map((device) => device.deviceId)
+        .filter((deviceId) => requestedSet.has(deviceId));
+      const ownership = assertHostedCanaryAccountOwnership(accountRequestedDeviceIds, accountDevices);
+      const lineages = await ctx.db
+        .query("managedLineages")
+        .withIndex("by_account", (q) => q.eq("accountId", accountId))
+        .collect();
+      const account = await ctx.db
+        .query("managedAccounts")
+        .withIndex("by_account", (q) => q.eq("accountId", accountId))
+        .unique();
+      if (!account || lineages.length !== 1 || lineages[0]!.adapter !== "fixture" || lineages[0]!.environment !== "SANDBOX") {
+        throw new Error("Hosted canary janitor refuses a missing, mixed, or non-fixture account");
+      }
+      cleanupTargets.push({ accountId: ownership.accountId, lineageKey: lineages[0]!.lineageKey, deviceIds: ownership.deviceIds });
+    }
+    if (cleanupTargets.length !== accountIds.length || cleanupTargets.length === 0) {
+      throw new Error("Hosted canary janitor found ambiguous account ownership");
+    }
+
+    const totals = emptyCleanupTotals();
+    for (const target of cleanupTargets) {
+      const result = await deleteFixtureAccount(ctx, target.accountId, target.lineageKey);
+      addCleanupTotals(totals, result);
+    }
+    return {
+      cleaned: true,
+      deviceIds: requestedDeviceIds,
+      accounts: totals.accounts,
+      lineages: totals.lineages,
+      devices: totals.devices,
+      principals: totals.principals,
+      challenges: totals.challenges,
+      periods: totals.periods,
+      jobs: totals.jobs,
+      charges: totals.charges,
+      uploads: totals.uploads,
+      uploadParts: totals.uploadParts,
+      storageObjects: totals.storageObjects,
+      events: totals.events,
+    };
+  },
+});
+
+/** Safe hosted-development table/storage counts; it returns no documents or identities. */
+export const readHostedCanaryStateCounts = query({
+  args: {},
+  returns: v.object({
+    managedAccounts: v.number(),
+    managedDeviceChallenges: v.number(),
+    managedDevices: v.number(),
+    managedLineages: v.number(),
+    managedPeriods: v.number(),
+    managedPrincipals: v.number(),
+    managedCharges: v.number(),
+    managedJobs: v.number(),
+    managedRevenueCatEvents: v.number(),
+    managedUploadParts: v.number(),
+    managedUploads: v.number(),
+    storage: v.number(),
+  }),
+  handler: async (ctx) => {
+    const config = readManagedRuntimeConfig();
+    if (config.mode !== "hosted-development") {
+      throw new Error("Hosted canary state audit is available only in hosted-development mode");
+    }
+    const [managedAccounts, managedDeviceChallenges, managedDevices, managedLineages, managedPeriods, managedPrincipals, managedCharges, managedJobs, managedRevenueCatEvents, managedUploadParts, managedUploads, storage] = await Promise.all([
+      ctx.db.query("managedAccounts").collect(),
+      ctx.db.query("managedDeviceChallenges").collect(),
+      ctx.db.query("managedDevices").collect(),
+      ctx.db.query("managedLineages").collect(),
+      ctx.db.query("managedPeriods").collect(),
+      ctx.db.query("managedPrincipals").collect(),
+      ctx.db.query("managedCharges").collect(),
+      ctx.db.query("managedJobs").collect(),
+      ctx.db.query("managedRevenueCatEvents").collect(),
+      ctx.db.query("managedUploadParts").collect(),
+      ctx.db.query("managedUploads").collect(),
+      ctx.db.system.query("_storage").collect(),
+    ]);
+    return {
+      managedAccounts: managedAccounts.length,
+      managedDeviceChallenges: managedDeviceChallenges.length,
+      managedDevices: managedDevices.length,
+      managedLineages: managedLineages.length,
+      managedPeriods: managedPeriods.length,
+      managedPrincipals: managedPrincipals.length,
+      managedCharges: managedCharges.length,
+      managedJobs: managedJobs.length,
+      managedRevenueCatEvents: managedRevenueCatEvents.length,
+      managedUploadParts: managedUploadParts.length,
+      managedUploads: managedUploads.length,
+      storage: storage.length,
+    };
+  },
+});
+
 export const markRevenueCatEventProcessed = internalMutation({
   args: { eventId: v.string() },
   returns: v.any(),
@@ -498,6 +661,42 @@ async function deleteFixtureAccount(ctx: MutationCtx, accountId: string, lineage
     accounts: account ? 1 : 0,
     storageObjects,
   };
+}
+
+type CleanupTotals = {
+  uploads: number;
+  uploadParts: number;
+  jobs: number;
+  charges: number;
+  periods: number;
+  events: number;
+  challenges: number;
+  principals: number;
+  devices: number;
+  lineages: number;
+  accounts: number;
+  storageObjects: number;
+};
+
+function emptyCleanupTotals(): CleanupTotals {
+  return {
+    uploads: 0,
+    uploadParts: 0,
+    jobs: 0,
+    charges: 0,
+    periods: 0,
+    events: 0,
+    challenges: 0,
+    principals: 0,
+    devices: 0,
+    lineages: 0,
+    accounts: 0,
+    storageObjects: 0,
+  };
+}
+
+function addCleanupTotals(target: CleanupTotals, result: CleanupTotals): void {
+  for (const key of Object.keys(target) as Array<keyof CleanupTotals>) target[key] += result[key];
 }
 
 async function applyLineageProjection(ctx: MutationCtx, lineage: any): Promise<void> {

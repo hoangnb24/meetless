@@ -14,6 +14,7 @@ import type * as http from "../http.js";
 import type * as managedAuth from "../managedAuth.js";
 import type * as managedAuthActions from "../managedAuthActions.js";
 import type * as managedAuthValidators from "../managedAuthValidators.js";
+import type * as managedCanaryJanitor from "../managedCanaryJanitor.js";
 import type * as managedConfig from "../managedConfig.js";
 import type * as managedTranscription from "../managedTranscription.js";
 import type * as managedTranscriptionActions from "../managedTranscriptionActions.js";
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   managedAuth: typeof managedAuth;
   managedAuthActions: typeof managedAuthActions;
   managedAuthValidators: typeof managedAuthValidators;
+  managedCanaryJanitor: typeof managedCanaryJanitor;
   managedConfig: typeof managedConfig;
   managedTranscription: typeof managedTranscription;
   managedTranscriptionActions: typeof managedTranscriptionActions;

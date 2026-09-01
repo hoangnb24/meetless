@@ -84,12 +84,15 @@ export async function runHostedDevelopmentProof({ canaryOnly = false } = {}) {
   let canaryCleanup = null;
   let canaryCleanupAttempted = false;
   let primaryError = null;
+  let canaryRunId = null;
+  let canaryDeviceId = null;
   const mutationJournal = [];
   const secretValues = [];
   try {
     if (canaryOnly) await runPhase1();
     const initialNames = await readHostedEnvironmentNames();
     const runId = randomUUID();
+    canaryRunId = runId;
     let material;
     let functionSpec;
     let jwks;
@@ -164,6 +167,7 @@ export async function runHostedDevelopmentProof({ canaryOnly = false } = {}) {
 
       const client = new ConvexHttpManagedFunctionClient(HOSTED_DEV_TARGET.cloudUrl, { fetch: targetFetch });
       const signer = await makeEphemeralDeviceSigner(runId);
+      canaryDeviceId = signer.identityValue.deviceId;
       const credentialSource = new ConvexManagedCredentialSource(client, signer);
       const credential = await runHostedStage("canary-auth", secretValues, () => credentialSource.enroll(material.apple));
       assertWatcherAlive(watcher);
@@ -274,6 +278,8 @@ export async function runHostedDevelopmentProof({ canaryOnly = false } = {}) {
       result: "passed",
       deployment: HOSTED_DEV_TARGET.deployment,
       reference: HOSTED_DEV_TARGET.reference,
+      runId: canaryRunId,
+      canaryDeviceId,
       cloudUrl: HOSTED_DEV_TARGET.cloudUrl,
       siteUrl: HOSTED_DEV_TARGET.siteUrl,
       functionSpec,
@@ -291,6 +297,8 @@ export async function runHostedDevelopmentProof({ canaryOnly = false } = {}) {
     }));
   } catch (error) {
     primaryError = preserveHostedStageError("wrapper", error, secretValues);
+    primaryError.runId = canaryRunId;
+    primaryError.canaryDeviceId = canaryDeviceId;
     throw primaryError;
   } finally {
     let canaryCleanupError = null;
@@ -332,8 +340,11 @@ export async function runHostedDevelopmentProof({ canaryOnly = false } = {}) {
       console.error(JSON.stringify({
         result: "attention_required",
         deployment: HOSTED_DEV_TARGET.deployment,
+        runId: canaryRunId,
+        canaryDeviceId,
         environment: mutationJournal,
         canaryResidue: canaryAccountCreated ? "cleanup failed or was not reached" : "not established",
+        operatorCleanup: canaryDeviceId ? "managedAuth:cleanupHostedCanaryDevices with this exact deviceId" : "not established",
         cloudCleanup: "not attempted",
       }));
     }
@@ -1060,7 +1071,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   main().catch((error) => {
     const stage = error?.stage ? ` stage=${error.stage}` : "";
     const diagnostic = error?.diagnostic ?? formatHostedDiagnostic("hosted canary wrapper failure", [], STDERR_RING_BYTES);
-    console.error(JSON.stringify({ result: "attention_required", stage: error?.stage ?? "wrapper", diagnostic }));
+    console.error(JSON.stringify({
+      result: "attention_required",
+      stage: error?.stage ?? "wrapper",
+      ...(typeof error?.runId === "string" ? { runId: error.runId } : {}),
+      ...(typeof error?.canaryDeviceId === "string" ? { canaryDeviceId: error.canaryDeviceId } : {}),
+      diagnostic,
+    }));
     console.error(`[managed-convex-hosted] result:attention_required${stage}; no cloud cleanup was attempted`);
     process.exitCode = 1;
   });
