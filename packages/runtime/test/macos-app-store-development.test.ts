@@ -5,8 +5,10 @@ import {
   parseMacAppStoreDevelopmentArguments,
   R5_APP_STORE_DEVELOPMENT_DEVICE_UDID,
   R5_APP_STORE_DEVELOPMENT_IDENTITY,
+  R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME,
   R5_APP_STORE_DEVELOPMENT_PROFILE_NAME,
   R5_APP_STORE_DEVELOPMENT_PROFILE_UUID,
+  resolveR5DevelopmentProfilePath,
   validateMacAppStoreDevelopmentInfo,
   validateR5DevelopmentElectronFileOutput,
   validateR5DevelopmentElectronInfo,
@@ -23,6 +25,9 @@ function profile() {
       "com.apple.application-identifier": "63M98WD275.com.meetless.app",
       "com.apple.developer.team-identifier": "63M98WD275",
     },
+    ApplicationIdentifierPrefix: ["63M98WD275"],
+    TeamIdentifier: ["63M98WD275"],
+    ExpirationDate: "2027-09-01T15:21:30Z",
     ProvisionedDevices: [R5_APP_STORE_DEVELOPMENT_DEVICE_UDID],
   };
 }
@@ -118,8 +123,18 @@ describe("Mac App Store development package boundary", () => {
       "--proof-root=$(mktemp -d /private/tmp/meetless-mas-development-proof.XXXXXX)",
     );
     expect(packageJson.scripts["package:macos:app-store:development"]).toContain(R5_APP_STORE_DEVELOPMENT_PROFILE_UUID);
+    expect(packageJson.scripts["package:macos:app-store:development"]).toContain(
+      `$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/${R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME}`,
+    );
+    expect(packageJson.scripts["package:macos:app-store:development"]).not.toContain("Library/MobileDevice/Provisioning Profiles");
     expect(packageJson.scripts["package:macos:app-store:development"]).toContain(R5_APP_STORE_DEVELOPMENT_IDENTITY);
     expect(packageJson.scripts["package:macos:app-store:development"]).not.toContain("MEETLESS_REVENUECAT_PUBLIC_SDK_KEY");
+  });
+
+  test("resolves the accepted profile from the current user's Xcode directory", () => {
+    expect(resolveR5DevelopmentProfilePath("/Users/example")).toBe(
+      "/Users/example/Library/Developer/Xcode/UserData/Provisioning Profiles/828a0bac-887f-4e60-9e4b-9da7690178bc.mobileprovision",
+    );
   });
 
   test("binds the exact profile, team, app, and one current Mac", () => {
@@ -128,6 +143,8 @@ describe("Mac App Store development package boundary", () => {
     expect(() => validateR5DevelopmentProfile({ ...profile(), ProvisionsAllDevices: true })).toThrow(/all devices/);
     expect(() => validateR5DevelopmentProfile({ ...profile(), UUID: "other" })).toThrow(/accepted R5 profile/);
     expect(() => validateR5DevelopmentProfile({ ...profile(), ProvisionedDevices: ["other"] })).toThrow(/accepted Mac Studio/);
+    expect(() => validateR5DevelopmentProfile(profile(), { now: new Date("2027-09-01T15:21:30Z") })).toThrow(/expired/);
+    expect(() => validateR5DevelopmentProfile({ ...profile(), ExpirationDate: "not-a-date" })).toThrow(/expired/);
     expect(() => validateR5DevelopmentProfile({
       ...profile(),
       Entitlements: { ...profile().Entitlements, "com.apple.developer.team-identifier": "OTHER" },

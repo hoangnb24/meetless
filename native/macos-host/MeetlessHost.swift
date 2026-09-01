@@ -10,6 +10,9 @@ private let meetlessDeveloperIDRequirement = "identifier \"com.meetless.app\" an
 private let meetlessHostConfigSchema = "MEETLESS_MACOS_HOST_CONFIG v2"
 private let meetlessInstallationContractSchema = "MEETLESS_INSTALLATION_CONTRACT v1"
 private let meetlessPackageSchema = "MEETLESS_MACOS_PACKAGE v2"
+private let meetlessAppStoreContainerSupportRelativePath = "Library/Containers/com.meetless.app/Data/Library/Application Support"
+private let meetlessAppStoreRuntimeRootRelativePath = "\(meetlessAppStoreContainerSupportRelativePath)/Meetless"
+private let meetlessAppStoreRecordingExportsRelativePath = "\(meetlessAppStoreContainerSupportRelativePath)/Meetless/recordings"
 
 struct MeetlessLaunchCoordinator<Configuration> {
   let locationCheck: () throws -> Void
@@ -243,6 +246,26 @@ private func userHomeRelativePath(_ relative: String, label: String) throws -> S
     .path
 }
 
+func meetlessAppStoreContainerSupportRoot(for runtimeRoot: String) -> String? {
+  let marker = "/\(meetlessAppStoreContainerSupportRelativePath)/"
+  guard runtimeRoot.contains(marker), runtimeRoot.hasSuffix("/Meetless") else { return nil }
+  return URL(fileURLWithPath: runtimeRoot).deletingLastPathComponent().standardizedFileURL.path
+}
+
+private func resolvePackagedRuntimeRoot(_ relative: String, label: String) throws -> String {
+  guard relative == meetlessAppStoreRuntimeRootRelativePath else {
+    return try userHomeRelativePath(relative, label: label)
+  }
+  guard let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+    throw hostPreflightError("sandboxed Application Support directory is unavailable for the MAS runtime root")
+  }
+  let supportRoot = applicationSupport.standardizedFileURL
+  guard supportRoot.path.hasSuffix("/\(meetlessAppStoreContainerSupportRelativePath)") else {
+    throw hostPreflightError("MAS runtime root did not resolve through the Meetless app container")
+  }
+  return supportRoot.appendingPathComponent("Meetless").standardizedFileURL.path
+}
+
 private func inspectCodesign(_ arguments: [String], label: String) throws -> String {
   let process = Process()
   process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
@@ -468,7 +491,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       contract.runtime["transcriptionStagingRelativePath"] == transcriptionStagingRelative
     else { throw hostPreflightError("host configuration differs from the installation contract") }
 
-    let runtimeRoot = try userHomeRelativePath(runtimeRootRelative, label: "runtime root")
+    let runtimeRoot = try resolvePackagedRuntimeRoot(runtimeRootRelative, label: "runtime root")
     let identityPath = try containedPath(runtimeRoot, identityRelative, label: "host identity")
     let transcriptionSocket = try containedPath(runtimeRoot, transcriptionSocketRelative, label: "transcription socket")
     let transcriptionStaging = try containedPath(runtimeRoot, transcriptionStagingRelative, label: "transcription staging")
@@ -524,6 +547,11 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       contract.package.hostConfigRelativeToBundle == "Contents/Resources/host-config.json"
     else {
       throw hostPreflightError("packaged marker or installation contract does not match the exact app")
+    }
+    if contract.userSupportRelativePath == meetlessAppStoreRuntimeRootRelativePath {
+      guard contract.recordingExportsRelativePath == meetlessAppStoreRecordingExportsRelativePath else {
+        throw hostPreflightError("MAS installation contract does not keep recording exports inside the app container")
+      }
     }
     let resourceLabels = marker.resources.keys.sorted()
     for label in resourceLabels {
@@ -708,6 +736,9 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     environment["MEETLESS_HOST_IDENTITY_PATH"] = configuration.identityPath
     environment["MEETLESS_TRANSCRIPTION_SOCKET"] = configuration.transcriptionSocket
     environment["MEETLESS_TRANSCRIPTION_STAGING"] = configuration.transcriptionStaging
+    if let containerSupportRoot = meetlessAppStoreContainerSupportRoot(for: configuration.runtimeRoot) {
+      environment["MEETLESS_APP_CONTAINER_SUPPORT_ROOT"] = containerSupportRoot
+    }
     process.environment = environment
     let logs = URL(fileURLWithPath: configuration.runtimeRoot).appendingPathComponent("logs")
     try FileManager.default.createDirectory(

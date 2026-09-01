@@ -37,6 +37,13 @@ const PACKAGED_MANIFEST_SCHEMA = "MEETLESS_MACOS_PACKAGE v2";
 const INSTALLATION_CONTRACT_SCHEMA = "MEETLESS_INSTALLATION_CONTRACT v1";
 const INSTALLATION_CONTRACT_FILENAME = "installation-contract.json";
 const HOST_CONFIG_SCHEMA = "MEETLESS_MACOS_HOST_CONFIG v2";
+const MACOS_APP_STORE_CONTRACT_AUTHORITY = "docs/decisions/0005-mac-app-store-and-revenuecat.md";
+export const MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH =
+  "Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless";
+export const MACOS_APP_STORE_RECORDING_EXPORTS_RELATIVE_PATH =
+  "Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless/recordings";
+const MACOS_APP_STORE_CONTAINER_SUPPORT_RELATIVE_PATH =
+  "Library/Containers/com.meetless.app/Data/Library/Application Support";
 const PACKAGED_MEDIA_CLOSURE_SCHEMA = "MEETLESS_PACKAGED_MEDIA_CLOSURE v1";
 const PACKAGED_MEDIA_CLOSURE_DIRECTORY = "media-tools";
 const PACKAGED_MEDIA_CLOSURE_MANIFEST = "media-tools.snapshot.json";
@@ -52,12 +59,12 @@ const RelativeContractPathSchema = z.string().min(1).refine((value) =>
   "must be a non-empty relative path without traversal",
 );
 
-const InstallationContractSchema = z.object({
+const InstallationContractShape = {
   schema: z.literal(INSTALLATION_CONTRACT_SCHEMA),
   bundleIdentifier: z.literal("com.meetless.app"),
   installPath: z.literal(MEETLESS_INSTALLATION_PATH),
-  userSupportRelativePath: z.literal(MEETLESS_USER_SUPPORT_RELATIVE_PATH),
-  recordingExportsRelativePath: z.literal(MEETLESS_RECORDING_EXPORTS_RELATIVE_PATH),
+  userSupportRelativePath: RelativeContractPathSchema,
+  recordingExportsRelativePath: RelativeContractPathSchema,
   identityRelativePath: RelativeContractPathSchema,
   runtime: z.object({
     paseoHomeRelativePath: RelativeContractPathSchema,
@@ -96,7 +103,20 @@ const InstallationContractSchema = z.object({
     applicationsLinkName: z.literal("Applications"),
     applicationsLinkTarget: z.literal("/Applications"),
   }).strict(),
-}).strict();
+};
+
+const InstallationContractSchema = z.union([
+  z.object({
+    ...InstallationContractShape,
+    userSupportRelativePath: z.literal(MEETLESS_USER_SUPPORT_RELATIVE_PATH),
+    recordingExportsRelativePath: z.literal(MEETLESS_RECORDING_EXPORTS_RELATIVE_PATH),
+  }).strict(),
+  z.object({
+    ...InstallationContractShape,
+    userSupportRelativePath: z.literal(MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH),
+    recordingExportsRelativePath: z.literal(MACOS_APP_STORE_RECORDING_EXPORTS_RELATIVE_PATH),
+  }).strict(),
+]);
 
 const PackagedRuntimeManifestSchema = z.object({
   schema: z.literal(PACKAGED_MANIFEST_SCHEMA),
@@ -284,18 +304,28 @@ export function resolveRuntimeConfig(input: {
   const packageResources = packagedManifest
     ? resolvePackagedRuntimeResources(repositoryRoot, packagedManifest, installationContract)
     : null;
-  const acceptedSupportRoot = resolveUserHomePath(userHome, installationContract.userSupportRelativePath, "user support root");
-  const acceptedRecordingExports = resolveUserHomePath(
-    userHome,
-    installationContract.recordingExportsRelativePath,
-    "recording exports",
-  );
+  const macAppStore = isMacAppStoreInstallationContract(installationContract);
+  const stateRoots = macAppStore
+    ? resolveMacAppStoreStateRoots(userHome, sourceEnvironment, installationContract)
+    : {
+      runtimeRoot: resolveUserHomePath(userHome, installationContract.userSupportRelativePath, "user support root"),
+      recordingExports: resolveUserHomePath(
+        userHome,
+        installationContract.recordingExportsRelativePath,
+        "recording exports",
+      ),
+      containerSupportRoot: null,
+    };
+  const acceptedSupportRoot = stateRoots.runtimeRoot;
+  const acceptedRecordingExports = stateRoots.recordingExports;
   const requestedRuntimeRoot = input.runtimeRoot ?? sourceEnvironment.MEETLESS_RUNTIME_ROOT;
   if (packagedManifest && requestedRuntimeRoot && path.resolve(requestedRuntimeRoot) !== acceptedSupportRoot) {
     throw new Error(
       `Packaged runtime root ${requestedRuntimeRoot} differs from the accepted per-user root ${acceptedSupportRoot}. ` +
-        "Authority: docs/decisions/0002-direct-notarized-macos-dmg.md. " +
-        "Next action: use ~/Library/Application Support/Meetless; do not redirect packaged state to a builder or temporary path.",
+        `Authority: ${macAppStore ? MACOS_APP_STORE_CONTRACT_AUTHORITY : "docs/decisions/0002-direct-notarized-macos-dmg.md"}. ` +
+        `Next action: ${macAppStore
+          ? "use the current Meetless app-container Application Support root; do not redirect MAS state to a builder or user Documents path."
+          : "use ~/Library/Application Support/Meetless; do not redirect packaged state to a builder or temporary path."}`,
     );
   }
   const root = path.resolve(
@@ -327,7 +357,14 @@ export function resolveRuntimeConfig(input: {
     );
   }
   const requestedRecordingExports = sourceEnvironment.MEETLESS_EXPORT_ROOT?.trim();
-  if (packaged && requestedRecordingExports && path.resolve(requestedRecordingExports) !== acceptedRecordingExports) {
+  if (macAppStore && requestedRecordingExports) {
+    throw new Error(
+      `Mac App Store recording exports cannot be redirected to ${requestedRecordingExports}; writable state is app-container owned. ` +
+        `Authority: ${MACOS_APP_STORE_CONTRACT_AUTHORITY}. ` +
+        "Next action: keep the default recording inside the app container and implement the user-selected security-scoped export flow before external export.",
+    );
+  }
+  if (packaged && !macAppStore && requestedRecordingExports && path.resolve(requestedRecordingExports) !== acceptedRecordingExports) {
     throw new Error(
       `Packaged recording exports ${requestedRecordingExports} differs from the accepted per-user path ${acceptedRecordingExports}. ` +
         "Authority: docs/product/recording.md and docs/decisions/0002-direct-notarized-macos-dmg.md. " +
@@ -360,10 +397,11 @@ export function resolveRuntimeConfig(input: {
     recordingSocket: resolveRecordingSocket(
       path.join(root, runtimeLayout.recordingSocketRelativePath),
       acceptedSupportRoot,
+      { allowExternalShortPath: macAppStore },
     ),
     transcriptionSocket: path.join(root, runtimeLayout.transcriptionSocketRelativePath),
     transcriptionStaging: path.join(root, runtimeLayout.transcriptionStagingRelativePath),
-    recordingExports: packaged
+    recordingExports: macAppStore || packaged
       ? acceptedRecordingExports
       : path.resolve(requestedRecordingExports || acceptedRecordingExports),
   };
@@ -406,6 +444,9 @@ export function resolveRuntimeConfig(input: {
       MEETLESS_TRANSCRIPTION_SOCKET: paths.transcriptionSocket,
       MEETLESS_TRANSCRIPTION_STAGING: paths.transcriptionStaging,
       MEETLESS_EXPORT_ROOT: paths.recordingExports,
+      ...(macAppStore && stateRoots.containerSupportRoot
+        ? { MEETLESS_APP_CONTAINER_SUPPORT_ROOT: stateRoots.containerSupportRoot }
+        : {}),
       MEETLESS_FFMPEG: resolveHostTool("MEETLESS_FFMPEG", "ffmpeg", sourceEnvironment, packageResources?.ffmpeg),
       MEETLESS_FFPROBE: resolveHostTool("MEETLESS_FFPROBE", "ffprobe", sourceEnvironment, packageResources?.ffprobe),
     },
@@ -466,6 +507,56 @@ function readPackagedRuntimeManifest(repositoryRoot: string): PackagedRuntimeMan
 function readSourceInstallationContract(repositoryRoot: string): InstallationContract {
   const sourcePath = path.join(repositoryRoot, "scripts", "lib", "macos-package-contract.json");
   return parseInstallationContract(sourcePath, "source");
+}
+
+function isMacAppStoreInstallationContract(contract: InstallationContract): boolean {
+  return contract.userSupportRelativePath === MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH &&
+    contract.recordingExportsRelativePath === MACOS_APP_STORE_RECORDING_EXPORTS_RELATIVE_PATH;
+}
+
+function resolveMacAppStoreStateRoots(
+  userHome: string,
+  environment: NodeJS.ProcessEnv,
+  contract: InstallationContract,
+): { runtimeRoot: string; recordingExports: string; containerSupportRoot: string } {
+  const configuredSupportRoot = environment.MEETLESS_APP_CONTAINER_SUPPORT_ROOT?.trim();
+  const containerSupportRoot = configuredSupportRoot
+    ? resolveConfiguredMacAppStoreSupportRoot(configuredSupportRoot, userHome)
+    : resolveUserHomePath(userHome, MACOS_APP_STORE_CONTAINER_SUPPORT_RELATIVE_PATH, "Mac App Store container support root");
+  const runtimeRoot = resolveUserHomePath(containerSupportRoot, "Meetless", "Mac App Store runtime root");
+  const recordingExports = resolveUserHomePath(
+    containerSupportRoot,
+    "Meetless/recordings",
+    "Mac App Store recording exports",
+  );
+  if (runtimeRoot !== path.resolve(userHome, contract.userSupportRelativePath) && !configuredSupportRoot) {
+    throw new Error(
+      `Mac App Store runtime root ${runtimeRoot} is not the accepted app-container path. ` +
+        `Authority: ${MACOS_APP_STORE_CONTRACT_AUTHORITY}. ` +
+        "Next action: resolve state from the sandboxed app-container Application Support directory.",
+    );
+  }
+  return { runtimeRoot, recordingExports, containerSupportRoot };
+}
+
+function resolveConfiguredMacAppStoreSupportRoot(value: string, userHome: string): string {
+  if (!path.isAbsolute(value)) {
+    throw new Error(
+      `Mac App Store container support root ${value} must be absolute. ` +
+        `Authority: ${MACOS_APP_STORE_CONTRACT_AUTHORITY}. ` +
+        "Next action: pass the sandboxed app-container Application Support directory.",
+    );
+  }
+  const resolved = path.resolve(value);
+  const expected = path.resolve(userHome, MACOS_APP_STORE_CONTAINER_SUPPORT_RELATIVE_PATH);
+  if (resolved !== expected && !resolved.endsWith(`/${MACOS_APP_STORE_CONTAINER_SUPPORT_RELATIVE_PATH}`)) {
+    throw new Error(
+      `Mac App Store container support root ${resolved} differs from the app-container path ${expected}. ` +
+        `Authority: ${MACOS_APP_STORE_CONTRACT_AUTHORITY}. ` +
+        "Next action: use the current Meetless app container; do not redirect writable state to a builder or user Documents path.",
+    );
+  }
+  return resolved;
 }
 
 function readPackagedInstallationContract(
@@ -660,12 +751,16 @@ export function assertIsolated(paths: RuntimePaths, listen: string, userHome = h
   }
 }
 
-function resolveRecordingSocket(recordingSocketPath: string, acceptedSupportRoot: string): string {
+function resolveRecordingSocket(
+  recordingSocketPath: string,
+  acceptedSupportRoot: string,
+  { allowExternalShortPath = false }: { allowExternalShortPath?: boolean } = {},
+): string {
   const inHome = path.resolve(recordingSocketPath);
   if (process.platform !== "darwin" || Buffer.byteLength(inHome) <= DARWIN_UNIX_SOCKET_PATH_BYTES) {
     return inHome;
   }
-  if (path.resolve(path.dirname(path.dirname(inHome))) === path.resolve(acceptedSupportRoot)) {
+  if (!allowExternalShortPath && path.resolve(path.dirname(path.dirname(inHome))) === path.resolve(acceptedSupportRoot)) {
     throw new IsolationViolationError(
       `Meetless recording socket path is too long for the per-user support root: ${inHome}`,
     );

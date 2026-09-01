@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { cp, lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -18,11 +18,21 @@ import {
   validateEntitlementKeys,
   validateMacAppStoreEntitlementClosure,
 } from "./lib/macos-app-store-contract.mjs";
+import {
+  macAppStoreInstallationContractBytes,
+  macAppStoreInstallationContractSha256,
+  macAppStorePackagedHostConfiguration,
+  macAppStorePackagedMarker,
+  validateMacAppStorePackageContract,
+  validateMacAppStorePackagedHostConfiguration,
+  validateMacAppStorePackagedMarker,
+} from "./lib/macos-app-store-package-contract.mjs";
 import { resolveMacOSDmgPaths } from "./lib/macos-dmg-contract.mjs";
 import {
   MACOS_APP_STORE_DEVELOPMENT_AUTHORITY,
   R5_APP_STORE_BUNDLE_ID,
   R5_APP_STORE_DEVELOPMENT_IDENTITY,
+  R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME,
   R5_APP_STORE_TEAM_ID,
   parseMacAppStoreDevelopmentArguments,
   prepareMacAppStoreDevelopmentInfo,
@@ -41,11 +51,15 @@ const publicSdkKey = readBuildScopedPublicSdkKey();
 const packagePaths = resolveMacOSDmgPaths(repositoryRoot, { proofRoot: options.proofRoot });
 const bundlePath = packagePaths.sourceAppPath;
 const contentsPath = path.join(bundlePath, "Contents");
+const packageRoot = path.join(contentsPath, "Resources", "meetless");
 const nestedElectronAppPath = path.join(contentsPath, "Resources", "meetless", "runtime", "electron", "Electron.app");
 const nestedElectronExecutablePath = path.join(nestedElectronAppPath, "Contents", "MacOS", "Electron");
 const nestedElectronRelativePath = path.relative(bundlePath, nestedElectronExecutablePath).split(path.sep).join("/");
 const directManifestPath = path.join(packagePaths.releaseRoot, "composition-manifest.direct.json");
 const masManifestPath = path.join(packagePaths.releaseRoot, "app-store-development-manifest.json");
+const installationContractPath = path.join(packageRoot, "installation-contract.json");
+const packageMarkerPath = path.join(packageRoot, "meetless-package.json");
+const hostConfigPath = path.join(contentsPath, "Resources", "host-config.json");
 const parentEntitlementsPath = path.join(repositoryRoot, "native", "macos-host", "MeetlessAppStore.entitlements.plist");
 const childEntitlementsPath = path.join(repositoryRoot, "native", "macos-host", "MeetlessAppStoreChild.entitlements.plist");
 
@@ -53,19 +67,27 @@ await main();
 
 async function main() {
   assertDarwinArm64();
-  const profile = await readProvisioningProfile(options.provisioningProfile);
-  validateR5DevelopmentProfile(profile);
+  await mkdir(options.proofRoot, { recursive: true, mode: 0o700 });
+  const profileSnapshot = await snapshotProvisioningProfile(options.provisioningProfile);
+  validateR5DevelopmentProfile(profileSnapshot.profile);
   await readSourceEntitlements();
   await requireExactDevelopmentIdentity(options.signingIdentity);
 
   await runComposer();
   const directComposition = await retainDirectCompositionManifest();
+  await applyMacAppStorePackageContract();
   const archivePath = await downloadMasElectron();
   await replaceElectronRuntime(archivePath);
   await injectBuildInputs();
-  await signMasBundle();
+  await assertProfileSnapshotUnchanged(profileSnapshot);
+  await signMasBundle(profileSnapshot.path);
 
-  const evidence = await validateSignedArtifact({ profile, directComposition });
+  const evidence = await validateSignedArtifact({
+    profile: profileSnapshot.profile,
+    profileBytes: profileSnapshot.bytes,
+    profileSnapshot,
+    directComposition,
+  });
   await writeFile(masManifestPath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
   process.stdout.write(`${JSON.stringify({
     status: "candidate",
@@ -97,10 +119,22 @@ function assertDarwinArm64() {
   }
 }
 
-async function readProvisioningProfile(profilePath) {
+async function snapshotProvisioningProfile(profilePath) {
   await requireRegularFile(profilePath, "provisioning profile");
-  const { stdout } = await run("security", ["cms", "-D", "-i", profilePath]);
-  return parsePlistDocument(stdout, "development provisioning profile");
+  if (path.basename(profilePath) !== R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME) {
+    throw developmentError(`provisioning profile filename ${path.basename(profilePath)} is not the accepted R5 profile`);
+  }
+  const bytes = await readFile(profilePath);
+  const snapshotPath = path.join(options.proofRoot, "profile-snapshot.mobileprovision");
+  await writeFile(snapshotPath, bytes, { mode: 0o600 });
+  await chmod(snapshotPath, 0o400);
+  const { stdout } = await run("security", ["cms", "-D", "-i", snapshotPath]);
+  return {
+    path: snapshotPath,
+    bytes,
+    sha256: sha256(bytes),
+    profile: parsePlistDocument(stdout, "development provisioning profile snapshot"),
+  };
 }
 
 async function readSourceEntitlements() {
@@ -153,6 +187,27 @@ async function retainDirectCompositionManifest() {
   };
 }
 
+async function applyMacAppStorePackageContract() {
+  const contractBytes = macAppStoreInstallationContractBytes();
+  const contractSha256 = macAppStoreInstallationContractSha256();
+  const contract = JSON.parse(contractBytes.toString("utf8"));
+  const marker = macAppStorePackagedMarker({ paseoCommit: await gitPaseoCommit() });
+  const hostConfiguration = macAppStorePackagedHostConfiguration({ contractSha256 });
+  validateMacAppStorePackageContract(contract);
+  validateMacAppStorePackagedMarker(marker, { contractSha256 });
+  validateMacAppStorePackagedHostConfiguration(hostConfiguration, { contractSha256 });
+  await writeFile(installationContractPath, contractBytes, { mode: 0o644 });
+  await writeFile(packageMarkerPath, `${JSON.stringify(marker, null, 2)}\n`, { mode: 0o644 });
+  await writeFile(hostConfigPath, `${JSON.stringify(hostConfiguration, null, 2)}\n`, { mode: 0o644 });
+}
+
+async function assertProfileSnapshotUnchanged(snapshot) {
+  const current = await readFile(snapshot.path);
+  if (!current.equals(snapshot.bytes)) {
+    throw developmentError("the immutable provisioning-profile snapshot changed before signing");
+  }
+}
+
 async function downloadMasElectron() {
   const electron = MACOS_APP_STORE_CONTRACT.electron;
   const archivePath = await downloadArtifact({
@@ -196,14 +251,14 @@ async function injectBuildInputs() {
   await writeFile(infoPath, plist.build(prepared), { mode: 0o644 });
 }
 
-async function signMasBundle() {
+async function signMasBundle(provisioningProfilePath) {
   await signAsync({
     app: bundlePath,
     platform: "mas",
     type: "development",
     identity: R5_APP_STORE_DEVELOPMENT_IDENTITY,
     identityValidation: false,
-    provisioningProfile: options.provisioningProfile,
+    provisioningProfile: provisioningProfilePath,
     preAutoEntitlements: false,
     preEmbedProvisioningProfile: true,
     strictVerify: true,
@@ -214,7 +269,9 @@ async function signMasBundle() {
   });
 }
 
-async function validateSignedArtifact({ profile, directComposition }) {
+async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, directComposition }) {
+  const packagedContract = await readPackagedContractFiles();
+  await assertProfileSnapshotUnchanged(profileSnapshot);
   await run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundlePath]);
   const outerSignature = validateR5DevelopmentSignature(
     await readCodesignDisplay(bundlePath),
@@ -233,9 +290,8 @@ async function validateSignedArtifact({ profile, directComposition }) {
   const profilePath = path.join(contentsPath, "embedded.provisionprofile");
   await requireRegularFile(profilePath, "embedded development provisioning profile");
   const embeddedProfileBytes = await readFile(profilePath);
-  const inputProfileBytes = await readFile(options.provisioningProfile);
-  if (sha256(embeddedProfileBytes) !== sha256(inputProfileBytes)) {
-    throw developmentError("embedded development provisioning profile bytes differ from the selected profile");
+  if (!embeddedProfileBytes.equals(profileBytes)) {
+    throw developmentError("embedded development provisioning profile bytes differ from the immutable selected-profile snapshot");
   }
   const embeddedProfile = validateR5DevelopmentProfile(
     parsePlistDocument((await run("security", ["cms", "-D", "-i", profilePath])).stdout, "embedded development provisioning profile"),
@@ -246,6 +302,11 @@ async function validateSignedArtifact({ profile, directComposition }) {
 
   const entries = await enumeratePackageEntries(bundlePath);
   const machoEntries = await inspectPackageMachOEntries(bundlePath, entries, { ownerMode: true });
+  const outerMachOPath = "Contents/MacOS/MeetlessHost";
+  const outerMachOEntry = machoEntries.find((entry) => entry.path === outerMachOPath);
+  if (!outerMachOEntry) throw developmentError("signed package is missing the outer MeetlessHost Mach-O executable");
+  validateMachOEntry(outerMachOEntry, "outer MeetlessHost");
+  await run("codesign", ["--verify", "--strict", "--verbose=2", path.join(bundlePath, outerMachOPath)]);
   const electronEntry = machoEntries.find((entry) => entry.path === nestedElectronRelativePath);
   if (!electronEntry) throw developmentError("signed package is missing the MAS Electron executable");
   validateR5DevelopmentElectronFileOutput(await runFile(nestedElectronExecutablePath));
@@ -260,7 +321,7 @@ async function validateSignedArtifact({ profile, directComposition }) {
   );
 
   const nestedSignatures = [];
-  for (const entry of machoEntries) {
+  for (const entry of machoEntries.filter((candidate) => candidate.path !== outerMachOPath)) {
     const absolute = path.join(bundlePath, entry.path);
     await run("codesign", ["--verify", "--strict", "--verbose=2", absolute]);
     const signature = validateR5DevelopmentSignature(
@@ -270,9 +331,7 @@ async function validateSignedArtifact({ profile, directComposition }) {
     );
     const entitlements = await readCodesignEntitlements(absolute);
     validateEntitlementKeys(entitlements, MACOS_APP_STORE_CHILD_ENTITLEMENTS, entry.path);
-    if (entry.machOArchitecture !== "arm64" || entry.machOSlices?.length !== 1) {
-      throw developmentError(`${entry.path} is not a thin arm64 Mach-O executable`);
-    }
+    validateMachOEntry(entry, entry.path);
     nestedSignatures.push({
       path: entry.path,
       identifier: signature.identifier,
@@ -297,8 +356,11 @@ async function validateSignedArtifact({ profile, directComposition }) {
     provisioningProfile: {
       name: profile.Name,
       uuid: profile.UUID,
-      sha256: sha256(inputProfileBytes),
+      sha256: profileSnapshot.sha256,
       provisionedDevices: [profile.ProvisionedDevices[0]],
+      expirationDate: profile.ExpirationDate instanceof Date
+        ? profile.ExpirationDate.toISOString()
+        : new Date(profile.ExpirationDate).toISOString(),
     },
     signature: {
       verified: true,
@@ -329,6 +391,7 @@ async function validateSignedArtifact({ profile, directComposition }) {
       entryCount: entries.length,
       machoEntryCount: machoEntries.length,
     },
+    packagedContract,
     directComposition,
     externalGates: {
       launch: "not-run",
@@ -336,6 +399,41 @@ async function validateSignedArtifact({ profile, directComposition }) {
       distribution: "not-claimed",
     },
   };
+}
+
+async function readPackagedContractFiles() {
+  const contractBytes = await readFile(installationContractPath);
+  const contract = parseJsonObject(contractBytes, "packaged MAS installation contract");
+  const contractSha256 = sha256(contractBytes);
+  validateMacAppStorePackageContract(contract);
+  const marker = parseJsonObject(await readFile(packageMarkerPath), "packaged MAS marker");
+  validateMacAppStorePackagedMarker(marker, { contractSha256 });
+  const hostConfiguration = parseJsonObject(await readFile(hostConfigPath), "packaged MAS host configuration");
+  validateMacAppStorePackagedHostConfiguration(hostConfiguration, { contractSha256 });
+  return {
+    schema: contract.schema,
+    runtimeRootRelativePath: contract.userSupportRelativePath,
+    recordingExportsRelativePath: contract.recordingExportsRelativePath,
+    contractSha256,
+    markerTarget: marker.target,
+    hostRuntimeRootRelativePath: hostConfiguration.runtimeRootRelativeToUserHome,
+  };
+}
+
+function validateMachOEntry(entry, label) {
+  if (entry.machOArchitecture !== "arm64" || entry.machOSlices?.length !== 1) {
+    throw developmentError(`${label} is not a thin arm64 Mach-O executable`);
+  }
+}
+
+function parseJsonObject(bytes, label) {
+  try {
+    const value = JSON.parse(bytes.toString("utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("expected an object");
+    return value;
+  } catch (error) {
+    throw developmentError(`${label} is not valid JSON (${error instanceof Error ? error.message : String(error)})`);
+  }
 }
 
 async function readCodesignDisplay(target) {

@@ -2,16 +2,16 @@
 
 ## Current State
 
-- `plan_revision`: `v33`
-- `current_frontier`: `STOREKIT-REVENUECAT-SANDBOX-PURCHASE-RESTORE-R5-EXTERNAL-CANARY`
-- `state`: `R5_MAS_DEVELOPMENT_PACKAGING_READY_PENDING_ARTIFACT_AND_REAL_PURCHASE`
+- `plan_revision`: `v34`
+- `current_frontier`: `R5-MAS-DEVELOPMENT-PACKAGING-CORRECTION`
+- `state`: `R5_MAS_DEVELOPMENT_PACKAGING_CORRECTION_PENDING_CANDIDATE_ACCEPTANCE`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: repository-only R5 accepted at correction commit `7fd925c470f243a9966041789243373a1ba540cf`, a direct descendant of correction base `1a15170d027f2c8f1c7241a536b80a95df3919cb` and original base `5cd62e56091e604d7b6defe01bca47c22f98ef02`. Accepted predecessors remain history and are not modified.
-- `authority_contract_sha256`: `d32d834f9e4424ebc35e7607e2f53cd69c3bf29975c810bebf8d40672df1f2aa` (previous `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`)
+- `candidate`: no accepted MAS correction candidate yet; this correction is based on `1a87e1e02191ad27eac619a51ca5b46a64b6a5a4` with original base `d761a4de816c974357c66690c56948ccdd914aef`. The immutable candidate hash is reported at handoff; accepted R4/R5 predecessors remain history and are not modified.
+- `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `pending_ruling`: explicit production subscriber allowance amount remains open; production lineage authentication, credentials, provider access, and external purchase integration also remain owner/external gates
-- `blocked_by`: the earlier accidental-codegen cloud uncertainty is reconciled by the owner-authorized read-only audit and accepted hosted-dev deployment. The remaining R5 gates are public RevenueCat SDK-key build configuration, a signed sandbox package, and one real monthly sandbox purchase/restore. Production allowance, provider approval, production deployment, review, and publication remain closed.
-- `next_action`: run the dedicated MAS development packager with the public RevenueCat SDK key supplied only in the process environment, validate the signed artifact, then run the real monthly sandbox purchase/restore canary with the fake transcription provider.
+- `pending_ruling`: Lead acceptance of this repository correction remains open; the user-selected security-scoped export runtime gate, package/download/sign, launch, monthly purchase, and restore remain later separately authorized work.
+- `blocked_by`: external gates are closed. No artifact readiness, package/download/sign result, launch result, purchase, restore, App Review, publication, or production deployment is claimed by this correction.
+- `next_action`: Lead inspects and accepts the immutable repository candidate; only afterward, under separate authority, may the MAS package be built/signed/launched and the monthly purchase/restore canary be attempted.
 
 ## Ownership And Authority
 
@@ -978,28 +978,64 @@ deployment environment passed the current exact HMAC-only allowlist proof; the
 metadata-only audit still reported zero documents in every managed table and
 zero storage objects.
 
-### R5 Mac App Store development packaging candidate (2026-09-01)
+### R5 Mac App Store development packaging correction (2026-09-02)
 
-The sandbox purchase package has a dedicated path that does not mutate or
-reinterpret the historical direct-DMG release path. Its package command creates
-an absolute disposable proof root and passes the exact accepted development
-profile and Apple Development identity explicitly; a RevenueCat `appl_` public
-SDK key is supplied only through the build environment and is removed before
-child processes are launched. The packager first creates the existing composed
-app, retains its local composition manifest as provenance, replaces the nested
-runtime with the pinned Electron 41.2.0 `mas-arm64` artifact, injects only the
-public SDK key and team ID into the copied bundle, embeds the selected profile,
-and signs the MAS closure with the checked-in parent/child App Sandbox
-entitlements. The resulting artifact proof verifies the deep signature, exact
-profile bytes/team/device, exact parent/child entitlement closure, thin arm64
-MAS Electron executable, and presence—but never the value—of the public SDK
-key. This repository-only candidate remains pending one real artifact run.
+The prior local packaging claim is reopened. This correction keeps the direct
+DMG composer, direct contract JSON, and direct runtime behavior unchanged, then
+introduces one target-specific MAS composition boundary: after the direct
+composition is retained as provenance, the MAS bundle receives a generated
+installation contract, package marker, and host configuration whose writable
+state and recording destination resolve inside the Meetless app container. The
+checked-in MAS contract remains the authority for `Meetless` and
+`Meetless/recordings` inside container Application Support; the MAS runtime
+rejects a direct `~/Documents/meetings` export override. External export still
+requires a user-selected security-scoped destination and remains an explicit
+runtime/product gate, not fabricated package metadata.
+
+Because the app-container prefix exceeds Darwin's Unix-socket length limit, the
+MAS runtime uses the existing hashed short-path mechanism for its ephemeral
+recording transport socket under `/private/tmp`; durable runtime state and
+recording exports remain container-owned. The direct target keeps its existing
+socket rejection and path behavior.
+
+The MAS host resolves the target-specific runtime root through the sandboxed
+Application Support directory and passes the resolved container support root to
+the runtime. The generic marker/schema and host-config envelope remain intact
+because the packaged host and runtime validators consume those exact shapes;
+the MAS contract's app-container-relative state paths are the target identity.
+This keeps policy in the contract/runtime boundary and leaves transport,
+storage, and vendor details at their existing edges.
+
+The profile path is now the current user's Xcode profile directory with the
+exact accepted `.mobileprovision` filename. The packager snapshots profile bytes
+into the disposable proof root before composition, validates exact identity and
+expiry, signs from that immutable snapshot, and compares embedded bytes to the
+snapshot. Signed-closure validation classifies the outer `MeetlessHost` Mach-O
+as parent-entitled code, checks nested Mach-Os against child entitlements, and
+verifies every inventoried Mach-O without applying child entitlements to the
+outer executable.
+
+This is repository correction work only. The MAS package entrypoint, Electron
+download, actual signing, launch, monthly purchase, restore, and other external
+gates were not run or claimed; the immutable candidate remains pending Lead
+acceptance.
+
+Observed repository-only verification on 2026-09-02: the focused MAS/runtime/
+direct-DMG command passed 3 files and 29 tests; `npm run validate:macos:app-store`,
+`npm run typecheck`, `npm run build:meetless`, and `npm run build:native` passed;
+the native command also ran `MeetlessHostTests` successfully. Node syntax checks
+and `git diff --check` passed. The frozen-file `sha256sum` record digest matched
+`fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`. No
+checked-in CI workflow or executable local hook invokes the MAS packager; branch
+protection was not queried and was not changed.
 
 ### Risks And Recovery
 
 - App Sandbox may reject the current nested Electron, Node, helper, listener, or
-  writable-path topology. Preserve the direct-DMG package path while developing
-  a distinct MAS target; do not weaken existing validation to make MAS pass.
+  writable-path topology. The MAS target now resolves writable state in its
+  container, but the user-selected security-scoped export flow and actual
+  sandbox launch remain open gates. Preserve the direct-DMG package path; do
+  not weaken validation to make MAS pass.
 - Store and RevenueCat credentials are external. Keep public SDK configuration
   build-scoped; never persist private keys or issuer secrets in the repository.
 - Convex currently offers no APAC hosted region; upload latency and regional
@@ -1014,8 +1050,9 @@ key. This repository-only candidate remains pending one real artifact run.
   contracts.
 - The local keychain has Apple Development and Apple Distribution identities,
   and both development and distribution profiles now match macOS
-  `com.meetless.app`; each selected profile must still be bound into and
-  validated against the corresponding signed package.
+  `com.meetless.app`; the exact development profile is snapshotted before any
+  package effects and must still be bound into and validated against a later
+  signed package.
 - App Review and store processing are external gates. Record exact states and
   do not claim publication before the public listing is observed.
 
@@ -1038,6 +1075,10 @@ key. This repository-only candidate remains pending one real artifact run.
 - Integration: packaged sandbox app with StoreKit/RevenueCat sandbox purchase,
   restore-to-new-installation, device enrollment, and managed transcription.
 - Repository: typecheck, focused tests, build, and a MAS-specific package validator.
+- Current correction proof: target-specific MAS contract/runtime positive and
+  direct-path negative tests, direct-DMG regression, syntax, MAS baseline,
+  typecheck/build, and frozen-authority digest. The MAS packaging entrypoint and
+  all package/download/sign/launch/purchase/restore operations remain unrun.
 - External: App Store Connect processing, App Review submission, and public listing.
 
 Observed predecessor R1 validation on 2026-08-31 (historical, not acceptance evidence):
@@ -1122,6 +1163,16 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v34`: the prior MAS development-packaging
+  claim was reopened by `R5-MAS-DEVELOPMENT-PACKAGING-CORRECTION`. The active
+  order is now MAS app-container contract/runtime composition, exact profile
+  snapshot and signed-closure validation, repository candidate acceptance, and
+  only later separately authorized package/sign/launch/monthly-purchase/restore.
+  The correction base is `1a87e1e02191ad27eac619a51ca5b46a64b6a5a4`; the
+  original base is `d761a4de816c974357c66690c56948ccdd914aef`; frozen authority
+  digest is `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`.
+  No external gate or prior accepted R4/R5 milestone is changed.
 
 - Base snapshot: clean `main@3ab08d4f45699ee1dee49b75c6b0caf40086bdae`.
 - The former 4,943-line active ledger moved to completed evidence; no evidence

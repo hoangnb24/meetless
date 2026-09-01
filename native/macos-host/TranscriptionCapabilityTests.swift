@@ -110,6 +110,23 @@ private func testHostExecutableUsesPOSIXIdentity() throws {
   }
 }
 
+private func testAppStoreContainerRuntimeResolutionBoundary() {
+  let containerSupport = "/Users/example/Library/Containers/com.meetless.app/Data/Library/Application Support"
+  let runtimeRoot = "\(containerSupport)/Meetless"
+  check(
+    meetlessAppStoreContainerSupportRoot(for: runtimeRoot) == containerSupport,
+    "MAS runtime state must derive its container Application Support root from the app-container runtime path"
+  )
+  check(
+    meetlessAppStoreContainerSupportRoot(for: "/Users/example/Library/Application Support/Meetless") == nil,
+    "direct-DMG support state must not be classified as MAS app-container state"
+  )
+  check(
+    meetlessAppStoreContainerSupportRoot(for: "\(containerSupport)/Meetless/recordings") == nil,
+    "MAS recording export state must not be classified as the runtime root"
+  )
+}
+
 private func fixtureIdentity(_ data: Data) -> StagedRangeIdentity {
   StagedRangeIdentity(
     byteLength: Int64(data.count),
@@ -797,6 +814,7 @@ private func testLegacyIdentityMigrationBoundary() {
 private struct TranscriptionCapabilityTests {
   static func main() {
     testLaunchCoordinatorLifecycle()
+    testAppStoreContainerRuntimeResolutionBoundary()
     do { try testHostExecutableUsesPOSIXIdentity() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: POSIX host executable identity: \(error)\n".utf8))

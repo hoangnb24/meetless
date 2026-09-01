@@ -1,14 +1,27 @@
+import { homedir } from "node:os";
 import path from "node:path";
 
 export const MACOS_APP_STORE_DEVELOPMENT_AUTHORITY = "docs/decisions/0005-mac-app-store-and-revenuecat.md";
 export const R5_APP_STORE_DEVELOPMENT_PROFILE_NAME = "Meetless Mac App Store R5 Sandbox Development";
 export const R5_APP_STORE_DEVELOPMENT_PROFILE_UUID = "828a0bac-887f-4e60-9e4b-9da7690178bc";
-export const R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME = `${R5_APP_STORE_DEVELOPMENT_PROFILE_UUID}.provisionprofile`;
+export const R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME = `${R5_APP_STORE_DEVELOPMENT_PROFILE_UUID}.mobileprovision`;
 export const R5_APP_STORE_DEVELOPMENT_DEVICE_UDID = "00006041-000861C60EFA401C";
 export const R5_APP_STORE_DEVELOPMENT_IDENTITY = "Apple Development: Long Le (335C7MY4H4)";
 export const R5_APP_STORE_TEAM_ID = "63M98WD275";
 export const R5_APP_STORE_BUNDLE_ID = "com.meetless.app";
 export const R5_REVENUECAT_INFO_PLIST_KEY = "MeetlessRevenueCatAPIKey";
+
+export function resolveR5DevelopmentProfilePath(userHome = homedir()) {
+  return path.join(
+    userHome,
+    "Library",
+    "Developer",
+    "Xcode",
+    "UserData",
+    "Provisioning Profiles",
+    R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME,
+  );
+}
 
 export function parseMacAppStoreDevelopmentArguments(arguments_) {
   if (!Array.isArray(arguments_)) throw developmentError("Mac App Store development arguments must be an array");
@@ -135,7 +148,7 @@ export function validateR5DevelopmentElectronFileOutput(fileOutput) {
   return { architecture: "arm64" };
 }
 
-export function validateR5DevelopmentProfile(profile) {
+export function validateR5DevelopmentProfile(profile, { now = new Date() } = {}) {
   if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
     throw developmentError("development provisioning profile is not a dictionary");
   }
@@ -147,6 +160,9 @@ export function validateR5DevelopmentProfile(profile) {
   }
   if (profile.Entitlements?.["com.apple.developer.team-identifier"] !== R5_APP_STORE_TEAM_ID) {
     throw developmentError("development provisioning profile team identifier does not match Meetless");
+  }
+  if (!isFutureProfileDate(profile.ExpirationDate, now)) {
+    throw developmentError("development provisioning profile is expired or has no valid ExpirationDate");
   }
   if (!Array.isArray(profile.ProvisionedDevices) || profile.ProvisionedDevices.length !== 1 || profile.ProvisionedDevices[0] !== R5_APP_STORE_DEVELOPMENT_DEVICE_UDID) {
     throw developmentError("development provisioning profile must contain only the accepted Mac Studio");
@@ -164,6 +180,12 @@ function isExactProfileTeamValue(value) {
   return Array.isArray(value)
     ? value.length === 1 && value[0] === R5_APP_STORE_TEAM_ID
     : value === R5_APP_STORE_TEAM_ID;
+}
+
+function isFutureProfileDate(value, now) {
+  const expiration = value instanceof Date ? value : new Date(value ?? "");
+  const reference = now instanceof Date ? now : new Date(now);
+  return Number.isFinite(expiration.getTime()) && Number.isFinite(reference.getTime()) && expiration.getTime() > reference.getTime();
 }
 
 function matchLine(text, key) {
