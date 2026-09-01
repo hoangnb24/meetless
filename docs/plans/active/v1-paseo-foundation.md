@@ -2,16 +2,16 @@
 
 ## Current State
 
-- `plan_revision`: `v24`
-- `current_frontier`: `CONVEX-HOSTED-DEV-R4-CANARY-RESIDUE-CONVERGENCE`
-- `state`: `HOSTED_DEV_CANARY_RESIDUE_CORRECTED_PENDING_CLOSEOUT`
+- `plan_revision`: `v25`
+- `current_frontier`: `CONVEX-HOSTED-DEV-R4-CLOSEOUT`
+- `state`: `HOSTED_DEV_R4_ACCEPTED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: this residue-correction candidate is pending closeout directly from `fb66c40c0f85aa228dbc993b59e742c3e6da275e`; the hosted-dev canary convergence predecessor is immutable at `fb66c40c0f85aa228dbc993b59e742c3e6da275e`, directly from `ea431f0dbbe38afea5f78e982e5c1125e66f8ca8`; local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`; the Convex local-first R3 convergence is accepted at `f93b705561eb6118c9ccbe7d0f9ae146db4f5df8`. Rejected predecessors `966b9abd78481db001e912cc2e60d895c00bef37`, `0a82b39f758e8c2ec19e831ca1c8c1b75529763d`, and `522faa0b1d1e78e54f0e7d0fc813fc0a0706ab01` remain history only.
+- `candidate`: hosted-development R4 and correction `R4-HOSTED-001` are accepted at `e9352a47e363291efff3ca60fc6d06cac2d68446`, directly from hosted canary candidate `fb66c40c0f85aa228dbc993b59e742c3e6da275e`; local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`; the Convex local-first R3 convergence is accepted at `f93b705561eb6118c9ccbe7d0f9ae146db4f5df8`. Rejected predecessors `966b9abd78481db001e912cc2e60d895c00bef37`, `0a82b39f758e8c2ec19e831ca1c8c1b75529763d`, and `522faa0b1d1e78e54f0e7d0fc813fc0a0706ab01` remain history only.
 - `authority_contract_sha256`: `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `pending_ruling`: explicit production subscriber allowance amount remains open; production lineage authentication, credentials, provider access, and external purchase integration also remain owner/external gates
 - `blocked_by`: production subscriber allowance, production issuer/key separation, real Apple/App Store Server API verification, RevenueCat production configuration, provider approval, and production deployment remain external gates; the hosted-development R4 canary is no longer blocked by `start_push`.
-- `next_action`: complete the no-network closeout gates and create the immutable residue-correction candidate from `fb66c40c0f85aa228dbc993b59e742c3e6da275e`; do not select production or call real Apple, RevenueCat, or provider services.
+- `next_action`: begin the StoreKit/RevenueCat sandbox purchase-and-restore foundation check against the accepted hosted-development boundary; keep production allowance, credentials, real provider spend, review, and publication explicitly gated.
 
 ## Ownership And Authority
 
