@@ -2,7 +2,7 @@
 
 ## Current State
 
-- `plan_revision`: `v30`
+- `plan_revision`: `v31`
 - `current_frontier`: `STOREKIT-REVENUECAT-SANDBOX-PURCHASE-RESTORE-R5-EXTERNAL-CANARY`
 - `state`: `R5_DEV_PREREQUISITES_READY_PENDING_SIGNED_BUILD_AND_REAL_PURCHASE`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
@@ -937,6 +937,16 @@ and annual purchase testing closed. Apple now has one Mac App Store profile for
 `Long Le (63M98WD275)`, expiration 2027-08-25. The profile was downloaded and
 installed in Xcode's user provisioning-profile store; its application and team
 entitlements were parsed locally and matched the accepted bundle/team boundary.
+For the real local sandbox purchase, Apple also now has development profile
+portal ID `XY38PGA3WP`, name
+`Meetless Mac App Store R5 Sandbox Development`, UUID
+`828a0bac-887f-4e60-9e4b-9da7690178bc`, expiration 2027-09-01. It contains the
+installed Apple Development certificate expiring 2027-07-28 and only the
+registered current Mac Studio UDID `00006041-000861C60EFA401C`. Its application
+identifier, team identifier, and Keychain access group were parsed locally as
+`63M98WD275.com.meetless.app`, `63M98WD275`, and `63M98WD275.*`; the profile was
+installed in Xcode's user provisioning-profile store with mode 0600. No device
+or certificate was created or changed.
 
 RevenueCat app `appe0ef526253` now reuses the team's existing In-App Purchase
 key `U5B866A76M` and App Store Connect API key `3FPFT7R8L6`; the app page was
@@ -986,9 +996,9 @@ zero storage objects.
   reservation/settlement, ambiguous outcomes, and cleanup are application
   contracts.
 - The local keychain has Apple Development and Apple Distribution identities,
-  but the installed profiles inspected on 2026-08-30 are iOS-only and none
-  matches macOS `com.meetless.app`; a Mac App Store profile must be created and
-  installed before a certificate-backed sandbox package can be proven.
+  and both development and distribution profiles now match macOS
+  `com.meetless.app`; each selected profile must still be bound into and
+  validated against the corresponding signed package.
 - App Review and store processing are external gates. Record exact states and
   do not claim publication before the public listing is observed.
 
