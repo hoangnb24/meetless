@@ -2,16 +2,16 @@
 
 ## Current State
 
-- `plan_revision`: `v27`
-- `current_frontier`: `STOREKIT-REVENUECAT-SANDBOX-PURCHASE-RESTORE-R5-REPOSITORY`
-- `state`: `R5_CORRECTION_CANDIDATE_READY`
+- `plan_revision`: `v28`
+- `current_frontier`: `STOREKIT-REVENUECAT-SANDBOX-PURCHASE-RESTORE-R5-REPOSITORY-CLOSEOUT`
+- `state`: `R5_REPOSITORY_ACCEPTED_EXTERNAL_GATES_CLOSED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: R5-001/R5-002 correction candidate is the direct repository descendant of correction base `1a15170d027f2c8f1c7241a536b80a95df3919cb`; the final local commit identity is reported at handoff. Accepted predecessors remain history and are not modified.
+- `candidate`: repository-only R5 accepted at correction commit `7fd925c470f243a9966041789243373a1ba540cf`, a direct descendant of correction base `1a15170d027f2c8f1c7241a536b80a95df3919cb` and original base `5cd62e56091e604d7b6defe01bca47c22f98ef02`. Accepted predecessors remain history and are not modified.
 - `authority_contract_sha256`: `d32d834f9e4424ebc35e7607e2f53cd69c3bf29975c810bebf8d40672df1f2aa` (previous `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `pending_ruling`: explicit production subscriber allowance amount remains open; production lineage authentication, credentials, provider access, and external purchase integration also remain owner/external gates
-- `blocked_by`: real monthly Apple sandbox purchase/restore, credentials and dashboard configuration, Apple signing/profile/package gates, external webhook delivery, production subscriber allowance, provider approval, and deployment/review/publication remain external gates; no repository blocker remains.
-- `next_action`: hand the immutable repository candidate to Lead; only a separately authorized external phase may perform sandbox purchase/restore or hosted/production changes.
+- `blocked_by`: the accidental Convex codegen incident remains classified `CLOUD_STATE_UNKNOWN`; a separately owner-authorized read-only cloud audit is required before any external phase. Real monthly Apple sandbox purchase/restore, credentials and dashboard configuration, Apple signing/profile/package gates, external webhook delivery, production subscriber allowance, provider approval, and deployment/review/publication remain external gates; no repository blocker remains.
+- `next_action`: keep every external gate closed. If the owner elects to continue, authorize a read-only cloud-state audit separately before any configuration, deployment, webhook, or real sandbox purchase/restore operation.
 
 ## Ownership And Authority
 
@@ -877,14 +877,16 @@ spend approval, production deployment, sandbox purchase/restore, availability,
 review, and publication. The seven-day trial remains `18,000` seconds and no
 production subscriber allowance is selected here.
 
-### PLAN_RECONCILIATION v7 — R5-001/R5-002 correction candidate (2026-09-01)
+### PLAN_RECONCILIATION v8 — R5 repository acceptance (2026-09-01)
 
 Foundation check v1 was sufficient against exact base `5cd62e5`; this repository
 candidate does not intentionally open the external Apple, RevenueCat, Convex,
 credential, signing, deployment, or purchase gates. During local validation,
 one accidental `npx convex codegen` invocation reached the Convex CLI upload
-stage and failed before typecheck; it was not retried, generated API drift was
-reverted, and external state must be re-audited before acceptance. The
+stage and failed before typecheck; it was not retried and generated API drift was
+reverted. The repository candidate is accepted from local evidence, while the
+incident remains `CLOUD_STATE_UNKNOWN` and requires a separately authorized
+read-only audit before any external phase. The
 implementation keeps the accepted R4 fixture/canary path and fake transcription
 provider while adding the real
 App Store Server Library Node boundary, opaque native/plugin transaction handoff,
@@ -896,6 +898,15 @@ including the three-active-plus-revoked rejection case. The R5-002 correction
 anchors first monthly/trial quota snapshots to verified Apple start/expiry dates
 and preserves existing period usage and reset dates on replay; annual catalog
 history remains intact without adding annual monthly slicing.
+
+Lead accepted correction commit `7fd925c470f243a9966041789243373a1ba540cf`
+as a direct four-path descendant of `1a15170d027f2c8f1c7241a536b80a95df3919cb`.
+R5-001 and R5-002 are closed by the device-reactivation slot invariant and the
+Apple-verified quota-period invariant. Personally observed repository evidence
+was 82 focused tests, Convex and workspace TypeScript checks, and a clean
+correction diff. This is repository-only acceptance and grants no authority for
+cloud inspection or mutation, credentials, dashboard configuration, webhook
+delivery, signing, deployment, or real sandbox purchase/restore.
 
 The real path accepts only opaque `{ adapter, signedTransaction }` material at
 the action boundary. The Node verifier returns normalized fields only to the
