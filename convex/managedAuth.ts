@@ -1,5 +1,5 @@
 import { anyApi } from "convex/server";
-import { internalMutation, internalQuery, mutation } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import {
@@ -311,6 +311,64 @@ export const readRevenueCatEvent = internalQuery({
   handler: async (ctx, args) => ctx.db.query("managedRevenueCatEvents").withIndex("by_event", (q) => q.eq("eventId", args.eventId)).unique(),
 });
 
+/** Safe canary observation: event identity and processing state only. */
+export const revenueCatEventStatus = query({
+  args: { eventId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const { principal } = await requirePrincipal(ctx);
+    const event = await ctx.db
+      .query("managedRevenueCatEvents")
+      .withIndex("by_event", (q) => q.eq("eventId", args.eventId))
+      .unique();
+    if (!event) return null;
+    const lineage = await ctx.db
+      .query("managedLineages")
+      .withIndex("by_lineage", (q) => q.eq("lineageKey", event.lineageKey))
+      .unique();
+    if (!lineage || lineage.accountId !== principal.accountId) return null;
+    return {
+      eventId: event.eventId,
+      eventType: event.eventType,
+      environment: event.environment,
+      processed: event.processedAt !== null,
+    };
+  },
+});
+
+/**
+ * A bounded hosted-development-only canary cleanup. The lineage key is
+ * required so a run can delete only its own uniquely-created account. It is
+ * authenticated by the still-active enrolled device before that account is
+ * removed; production has no callable cleanup path.
+ */
+export const cleanupFixtureAccount = mutation({
+  args: { lineageKey: v.string() },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const config = readManagedRuntimeConfig();
+    if (config.mode !== "hosted-development") {
+      throw new Error("Hosted canary cleanup is available only in hosted-development mode");
+    }
+    const { principal } = await requirePrincipal(ctx);
+    const lineage = await ctx.db
+      .query("managedLineages")
+      .withIndex("by_lineage", (q) => q.eq("lineageKey", args.lineageKey))
+      .unique();
+    if (!lineage || lineage.accountId !== principal.accountId) {
+      throw new Error("Hosted canary cleanup lineage is not owned by the authenticated device");
+    }
+    const lineages = await ctx.db
+      .query("managedLineages")
+      .withIndex("by_account", (q) => q.eq("accountId", principal.accountId))
+      .collect();
+    if (lineages.length !== 1 || lineages[0]!.lineageKey !== args.lineageKey) {
+      throw new Error("Hosted canary cleanup refuses an account with multiple subscription lineages");
+    }
+    return deleteFixtureAccount(ctx, principal.accountId, args.lineageKey);
+  },
+});
+
 export const markRevenueCatEventProcessed = internalMutation({
   args: { eventId: v.string() },
   returns: v.any(),
@@ -378,6 +436,67 @@ function lineageRecord(lineage: {
     currentState: lineage.currentState,
     verifiedAt: lineage.verifiedAtMs,
     adapter: "fixture" as const,
+  };
+}
+
+async function deleteFixtureAccount(ctx: MutationCtx, accountId: string, lineageKey: string) {
+  const uploads = await ctx.db.query("managedUploads").withIndex("by_account", (q) => q.eq("accountId", accountId)).collect();
+  let storageObjects = 0;
+  let uploadParts = 0;
+  for (const upload of uploads) {
+    const parts = await ctx.db.query("managedUploadParts").withIndex("by_upload_part", (q) => q.eq("uploadId", upload._id)).collect();
+    for (const part of parts) {
+      await ctx.storage.delete(part.storageId);
+      await ctx.db.delete(part._id);
+      storageObjects += 1;
+      uploadParts += 1;
+    }
+    await ctx.db.delete(upload._id);
+  }
+  const jobs = await ctx.db.query("managedJobs").withIndex("by_timeline", (q) => q.eq("accountId", accountId)).collect();
+  let charges = 0;
+  for (const job of jobs) {
+    const jobCharges = await ctx.db.query("managedCharges").withIndex("by_job", (q) => q.eq("jobId", job._id)).collect();
+    for (const charge of jobCharges) {
+      await ctx.db.delete(charge._id);
+      charges += 1;
+    }
+    await ctx.db.delete(job._id);
+  }
+  const periods = await ctx.db.query("managedPeriods").withIndex("by_account", (q) => q.eq("accountId", accountId)).collect();
+  for (const period of periods) await ctx.db.delete(period._id);
+  const events = await ctx.db.query("managedRevenueCatEvents").withIndex("by_lineage", (q) => q.eq("lineageKey", lineageKey)).collect();
+  for (const event of events) await ctx.db.delete(event._id);
+  const lineage = await ctx.db.query("managedLineages").withIndex("by_lineage", (q) => q.eq("lineageKey", lineageKey)).unique();
+  if (lineage) await ctx.db.delete(lineage._id);
+  const devices = await ctx.db.query("managedDevices").withIndex("by_account", (q) => q.eq("accountId", accountId)).collect();
+  let challenges = 0;
+  for (const device of devices) {
+    const deviceChallenges = await ctx.db.query("managedDeviceChallenges").withIndex("by_device_key", (q) => q.eq("deviceId", device.deviceId).eq("keyId", device.keyId)).collect();
+    for (const challenge of deviceChallenges) {
+      await ctx.db.delete(challenge._id);
+      challenges += 1;
+    }
+  }
+  const principals = await ctx.db.query("managedPrincipals").withIndex("by_account_device", (q) => q.eq("accountId", accountId)).collect();
+  for (const principal of principals) await ctx.db.delete(principal._id);
+  for (const device of devices) await ctx.db.delete(device._id);
+  const account = await ctx.db.query("managedAccounts").withIndex("by_account", (q) => q.eq("accountId", accountId)).unique();
+  if (account) await ctx.db.delete(account._id);
+  return {
+    cleaned: true,
+    uploads: uploads.length,
+    uploadParts,
+    jobs: jobs.length,
+    charges,
+    periods: periods.length,
+    events: events.length,
+    challenges,
+    principals: principals.length,
+    devices: devices.length,
+    lineages: lineage ? 1 : 0,
+    accounts: account ? 1 : 0,
+    storageObjects,
   };
 }
 

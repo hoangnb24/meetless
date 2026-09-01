@@ -13,3 +13,5 @@ coverage/
 .meetless-runtime/
 native/**/.build/
 *.tsbuildinfo
+
+.env.local

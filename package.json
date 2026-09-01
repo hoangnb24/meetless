@@ -67,6 +67,7 @@
     "test:m5-proof": "vitest run --config vitest.config.ts test/m5-proof-validation.test.ts",
     "proof:managed-convex-local": "node scripts/prove-managed-convex-phase1.mjs",
     "proof:managed-convex-phase1": "node scripts/prove-managed-convex-phase1.mjs",
+    "proof:managed-convex-hosted-dev": "node scripts/prove-managed-convex-hosted-dev.mjs --run",
     "proof:managed-convex-local:diagnostic": "node scripts/prove-managed-convex-local.mjs --diagnostic-only --network-denied-sandbox",
     "validate:managed-convex-deploy": "node scripts/validate-managed-convex-deploy.mjs --production --check-only",
     "deploy:managed-convex": "node scripts/validate-managed-convex-deploy.mjs --production && npx convex deploy"

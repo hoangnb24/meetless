@@ -7,19 +7,15 @@ let config: AuthConfig;
 try {
   const runtime = readManagedRuntimeConfig();
   const jwk = JSON.parse(runtime.authPublicJwk) as Record<string, unknown>;
-  if (
-    jwk.kty !== "EC" || jwk.crv !== "P-256" || typeof jwk.x !== "string" || typeof jwk.y !== "string" ||
-    jwk.kid !== runtime.authKeyId || jwk.alg !== "ES256" || jwk.use !== "sig" || "d" in jwk
-  ) {
-    throw new Error("public JWKS must contain only the configured ES256 public key");
-  }
   config = {
     providers: [{
       type: "customJwt",
       issuer: runtime.authIssuer,
       applicationID: runtime.authAudience,
       algorithm: "ES256",
-      jwks: `data:application/json;base64,${base64(JSON.stringify({ keys: [jwk] }))}`,
+      // Convex accepts a data-URI JWKS. Keep the diagnostic route separate:
+      // auth validation must not depend on a same-deployment HTTP route.
+      jwks: buildInlinePublicJwks(jwk, runtime.authKeyId),
     }],
   };
 } catch (error) {
@@ -31,6 +27,20 @@ try {
 }
 
 export default config;
+
+export function buildInlinePublicJwks(publicJwk: Record<string, unknown>, expectedKid?: string): string {
+  if (
+    !publicJwk || Array.isArray(publicJwk) || publicJwk.kty !== "EC" || publicJwk.crv !== "P-256" ||
+    typeof publicJwk.x !== "string" || typeof publicJwk.y !== "string" || publicJwk.alg !== "ES256" ||
+    publicJwk.use !== "sig" || "d" in publicJwk
+  ) {
+    throw new Error("public JWKS must contain only the configured ES256 public key");
+  }
+  if (expectedKid !== undefined && publicJwk.kid !== expectedKid) {
+    throw new Error("public JWKS key identifier does not match the configured key identifier");
+  }
+  return `data:application/json;base64,${base64(JSON.stringify({ keys: [publicJwk] }))}`;
+}
 
 function base64(value: string): string {
   const bytes = new TextEncoder().encode(value);

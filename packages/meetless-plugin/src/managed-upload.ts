@@ -1282,8 +1282,8 @@ export class ConvexManagedUploadPort {
 export class ConvexHttpManagedFunctionClient implements ManagedConvexFunctionClient {
   private readonly client: ConvexHttpClient;
 
-  constructor(address: string, options: { authToken?: string } = {}) {
-    this.client = new ConvexHttpClient(address, { logger: false });
+  constructor(address: string, options: { authToken?: string; fetch?: typeof fetch } = {}) {
+    this.client = new ConvexHttpClient(address, { logger: false, fetch: options.fetch });
     if (options.authToken) this.client.setAuth(options.authToken);
   }
 

@@ -12,6 +12,8 @@ const syntaxTargets = [
   path.join(repositoryRoot, "scripts", "prove-managed-convex-runtime.mjs"),
   path.join(repositoryRoot, "scripts", "prove-managed-convex-local.mjs"),
   path.join(repositoryRoot, "scripts", "validate-managed-convex-deploy.mjs"),
+  path.join(repositoryRoot, "scripts", "prove-managed-convex-hosted-dev-target.mjs"),
+  path.join(repositoryRoot, "scripts", "prove-managed-convex-hosted-dev.mjs"),
 ];
 const pureTestTargets = [
   path.join(repositoryRoot, "test", "managed-convex-local-guard.test.ts"),

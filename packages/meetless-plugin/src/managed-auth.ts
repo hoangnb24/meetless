@@ -62,6 +62,8 @@ const ChallengeSchema = z.object({
   keyId: z.string().min(1),
   expiresAt: z.number().int().positive(),
   signingPayload: z.string().regex(/^[A-Za-z0-9_-]+$/u),
+  issuer: z.string().min(1),
+  audience: z.string().min(1),
 }).strict();
 
 const TokenSchema = z.object({
