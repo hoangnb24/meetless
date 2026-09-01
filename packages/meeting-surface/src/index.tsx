@@ -24,6 +24,7 @@ import type {
   CitationWire,
   MeetingChatThreadWire,
   MeetingWire,
+  ManagedDeviceWire,
   PremiumAccessWire,
   RecordingStatusWire,
   TranscriptWire,
@@ -523,6 +524,11 @@ export interface MeetingListSurfaceProps {
   onRefreshPremium?(): Promise<void>;
   onPurchasePremium?(packageId: "monthly" | "annual"): Promise<void>;
   onRestorePremium?(): Promise<void>;
+  managedDevices?: ManagedDeviceWire[] | null;
+  managedDevicesPending?: boolean;
+  managedDevicesError?: string | null;
+  onListManagedDevices?(): Promise<void>;
+  onRevokeManagedDevice?(deviceId: string): Promise<void>;
   onChangeHost?(): void | Promise<void>;
   deleteConfirmationMeetingId?: string | null;
   deletePending?: boolean;
@@ -574,6 +580,17 @@ export function MeetingListSurface({
   onChatSelection,
   onAskQuestion,
   onRetryQuestion,
+  premiumAccess = null,
+  premiumPending = false,
+  premiumError = null,
+  onRefreshPremium,
+  onPurchasePremium,
+  onRestorePremium,
+  managedDevices = null,
+  managedDevicesPending = false,
+  managedDevicesError = null,
+  onListManagedDevices,
+  onRevokeManagedDevice,
   onChangeHost,
   deleteConfirmationMeetingId = null,
   deletePending = false,
@@ -630,6 +647,17 @@ export function MeetingListSurface({
       pending={pending}
       selectedMeetingId={selectedMeetingId}
       onChangeHost={onChangeHost ? requestChangeHost : undefined}
+      premiumAccess={premiumAccess}
+      premiumPending={premiumPending}
+      premiumError={premiumError}
+      onRefreshPremium={onRefreshPremium}
+      onPurchasePremium={onPurchasePremium}
+      onRestorePremium={onRestorePremium}
+      managedDevices={managedDevices}
+      managedDevicesPending={managedDevicesPending}
+      managedDevicesError={managedDevicesError}
+      onListManagedDevices={onListManagedDevices}
+      onRevokeManagedDevice={onRevokeManagedDevice}
     />
   );
 
@@ -771,6 +799,17 @@ interface MeetingSidebarProps {
   pending: boolean;
   selectedMeetingId: string | null;
   onChangeHost?: () => void | Promise<void>;
+  premiumAccess: PremiumAccessWire | null;
+  premiumPending: boolean;
+  premiumError: string | null;
+  onRefreshPremium?: () => Promise<void>;
+  onPurchasePremium?: (packageId: "monthly" | "annual") => Promise<void>;
+  onRestorePremium?: () => Promise<void>;
+  managedDevices: ManagedDeviceWire[] | null;
+  managedDevicesPending: boolean;
+  managedDevicesError: string | null;
+  onListManagedDevices?: () => Promise<void>;
+  onRevokeManagedDevice?: (deviceId: string) => Promise<void>;
 }
 
 function MeetingSidebar({
@@ -786,6 +825,17 @@ function MeetingSidebar({
   pending,
   selectedMeetingId,
   onChangeHost,
+  premiumAccess,
+  premiumPending,
+  premiumError,
+  onRefreshPremium,
+  onPurchasePremium,
+  onRestorePremium,
+  managedDevices,
+  managedDevicesPending,
+  managedDevicesError,
+  onListManagedDevices,
+  onRevokeManagedDevice,
 }: MeetingSidebarProps) {
   const interactive = hostConnectionStatus === "online";
   const groups = groupMeetings(meetings);
@@ -878,6 +928,21 @@ function MeetingSidebar({
         </View>
       </ScrollView>
       <View style={styles.sidebarFoot}>
+        {onPurchasePremium || onRestorePremium || onListManagedDevices ? (
+          <PremiumPanel
+            access={premiumAccess}
+            pending={premiumPending}
+            error={premiumError}
+            onRefresh={onRefreshPremium}
+            onPurchase={onPurchasePremium}
+            onRestore={onRestorePremium}
+            devices={managedDevices}
+            devicesPending={managedDevicesPending}
+            devicesError={managedDevicesError}
+            onListDevices={onListManagedDevices}
+            onRevokeDevice={onRevokeManagedDevice}
+          />
+        ) : null}
         <Text style={styles.sidebarFootText}>Stored on {hostLabel === "your isolated Meetless daemon" ? "this host" : hostLabel}</Text>
         {onChangeHost ? (
           <FocusPressable accessibilityLabel="Change host" accessibilityRole="button" onPress={() => void onChangeHost()} style={styles.ghostButton} testID="change-companion-host">
@@ -888,6 +953,108 @@ function MeetingSidebar({
           <Text style={styles.ghostButtonText}>{interactive ? "Refresh" : "Try again"}</Text>
         </FocusPressable>
       </View>
+    </View>
+  );
+}
+
+function PremiumPanel({
+  access,
+  pending,
+  error,
+  onRefresh,
+  onPurchase,
+  onRestore,
+  devices,
+  devicesPending,
+  devicesError,
+  onListDevices,
+  onRevokeDevice,
+}: {
+  access: PremiumAccessWire | null;
+  pending: boolean;
+  error: string | null;
+  onRefresh?: () => Promise<void>;
+  onPurchase?: (packageId: "monthly" | "annual") => Promise<void>;
+  onRestore?: () => Promise<void>;
+  devices: ManagedDeviceWire[] | null;
+  devicesPending: boolean;
+  devicesError: string | null;
+  onListDevices?: () => Promise<void>;
+  onRevokeDevice?: (deviceId: string) => Promise<void>;
+}) {
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  const title = access?.status === "active" ? "Managed transcription is active" : "Managed transcription is Premium";
+  return (
+    <View style={styles.premiumPanel} testID="premium-panel">
+      <View style={styles.premiumHeading}>
+        <Text style={styles.premiumTitle}>Premium</Text>
+        <Text style={styles.premiumStatus}>{access ? title : "Checking access…"}</Text>
+      </View>
+      {access?.status === "inactive" && access.packages.length > 0 ? (
+        <View style={styles.premiumPackages}>
+          {access.packages.map((item) => (
+            <FocusPressable
+              key={item.packageId}
+              accessibilityLabel={`Buy ${item.packageId} Premium for ${item.localizedPrice}`}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: pending || !onPurchase }}
+              disabled={pending || !onPurchase}
+              onPress={() => void onPurchase?.(item.packageId)}
+              style={styles.secondaryButtonSmall}
+              testID={`premium-purchase-${item.packageId}`}
+            >
+              <Text style={styles.secondaryButtonText}>{item.packageId === "monthly" ? "Monthly" : "Annual"} · {item.localizedPrice}</Text>
+            </FocusPressable>
+          ))}
+        </View>
+      ) : null}
+      {onRestore ? (
+        <FocusPressable accessibilityLabel="Restore Premium purchases" accessibilityRole="button" accessibilityState={{ disabled: pending }} disabled={pending} onPress={() => void onRestore()} style={styles.ghostButton} testID="premium-restore">
+          <Text style={styles.ghostButtonText}>{pending ? "Working…" : "Restore purchases"}</Text>
+        </FocusPressable>
+      ) : null}
+      {onRefresh && access?.status === "unavailable" ? (
+        <FocusPressable accessibilityLabel="Retry Premium plans" accessibilityRole="button" accessibilityState={{ disabled: pending }} disabled={pending} onPress={() => void onRefresh()} style={styles.ghostButton} testID="premium-refresh">
+          <Text style={styles.ghostButtonText}>Try again</Text>
+        </FocusPressable>
+      ) : null}
+      {error ? <Text accessibilityRole="alert" style={styles.premiumError} testID="premium-error">{error}</Text> : null}
+      {onListDevices ? (
+        <>
+          <FocusPressable
+            accessibilityLabel="Manage enrolled Macs"
+            accessibilityRole="button"
+            accessibilityState={{ expanded: devicesOpen, disabled: devicesPending }}
+            disabled={devicesPending}
+            onPress={() => { setDevicesOpen(true); void onListDevices(); }}
+            style={styles.ghostButton}
+            testID="premium-manage-devices"
+          >
+            <Text style={styles.ghostButtonText}>{devicesPending ? "Loading Macs…" : "Manage Macs"}</Text>
+          </FocusPressable>
+          {devicesOpen ? (
+            <View style={styles.deviceList} testID="premium-device-list">
+              <Text style={styles.deviceListTitle}>Enrolled Macs</Text>
+              {devicesError ? <Text accessibilityRole="alert" style={styles.premiumError}>{devicesError}</Text> : null}
+              {!devicesPending && devices && devices.length === 0 ? <Text style={styles.deviceListEmpty}>No enrolled Macs found.</Text> : null}
+              {devices?.map((device) => (
+                <View key={device.deviceId} style={styles.deviceRow} testID={`premium-device-${device.deviceId}`}>
+                  <View style={styles.deviceCopy}>
+                    <Text style={styles.deviceLabel}>{device.label}</Text>
+                    <Text style={styles.deviceMeta}>Enrolled {formatDeviceDate(device.enrolledAt)}</Text>
+                    <Text style={styles.deviceMeta}>Last active {formatDeviceDate(device.lastActiveAt)}</Text>
+                  </View>
+                  {device.revokedAt === null && onRevokeDevice ? (
+                    <FocusPressable accessibilityLabel={`Revoke ${device.label}`} accessibilityRole="button" accessibilityState={{ disabled: devicesPending }} disabled={devicesPending} onPress={() => void onRevokeDevice(device.deviceId)} style={styles.ghostButton} testID={`premium-revoke-${device.deviceId}`}>
+                      <Text style={styles.dangerButtonText}>Revoke</Text>
+                    </FocusPressable>
+                  ) : <Text style={styles.deviceMeta}>Revoked</Text>}
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </>
+      ) : null}
     </View>
   );
 }
@@ -2318,6 +2485,12 @@ function formatMeetingDate(value?: string): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")} · ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}`;
 }
 
+function formatDeviceDate(value: number): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "date unavailable";
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
 function formatDuration(milliseconds: number): string {
   const minutes = Math.floor(milliseconds / 60_000);
   return minutes > 0 ? `${minutes} min` : "Less than 1 min";
@@ -2378,6 +2551,19 @@ const styles = StyleSheet.create({
   emptyText: { color: colors.muted, fontSize: 13, lineHeight: 20, maxWidth: 360 },
   sidebarFoot: { flexShrink: 0, gap: 8, borderTopColor: colors.borderSoft, borderTopWidth: 1, paddingHorizontal: 14, paddingVertical: 10 },
   sidebarFootText: { color: colors.muted, fontFamily: mono, fontSize: 11 },
+  premiumPanel: { gap: 8, padding: 10, borderColor: colors.borderSoft, borderWidth: 1, borderRadius: 8, backgroundColor: "rgba(255,255,255,0.025)" },
+  premiumHeading: { gap: 3 },
+  premiumTitle: { color: colors.foreground, fontSize: 13.5, fontWeight: "600" },
+  premiumStatus: { color: colors.muted, fontSize: 11.5, lineHeight: 17 },
+  premiumPackages: { gap: 6 },
+  premiumError: { color: colors.warning, fontSize: 11.5, lineHeight: 17 },
+  deviceList: { gap: 7, paddingTop: 4 },
+  deviceListTitle: { color: colors.secondary, fontFamily: mono, fontSize: 10.5, letterSpacing: 0.6, textTransform: "uppercase" },
+  deviceListEmpty: { color: colors.muted, fontSize: 11.5 },
+  deviceRow: { flexDirection: "row", alignItems: "center", gap: 7, paddingTop: 6, borderTopColor: colors.borderSoft, borderTopWidth: 1 },
+  deviceCopy: { flex: 1, minWidth: 0, gap: 2 },
+  deviceLabel: { color: colors.foreground, fontSize: 12, fontWeight: "500" },
+  deviceMeta: { color: colors.muted, fontFamily: mono, fontSize: 9.5 },
   detailPane: { flex: 1, minWidth: 0, minHeight: 0 },
   detail: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.bg },
   detailHeader: { minHeight: 78, flexShrink: 0, flexDirection: "row", alignItems: "center", gap: 12, borderBottomColor: colors.borderSoft, borderBottomWidth: 1, paddingHorizontal: 24, paddingVertical: 14 },

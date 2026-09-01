@@ -208,23 +208,23 @@ final class MeetlessTranscriptionCapability {
       return
     }
     if operation == "premiumStatus" || operation == "premiumPurchase" || operation == "premiumRestore" {
-      let result = runtimeAuthorization.withValidLease(lease) { () -> (String, MeetlessPremiumAccessResult) in
-        if operation == "premiumStatus" { return ("status", premium.status()) }
+      let result = runtimeAuthorization.withValidLease(lease) { () -> (String, MeetlessPremiumAccessResult, String?) in
+        if operation == "premiumStatus" { return ("status", premium.status(), nil) }
         if operation == "premiumRestore" {
           let restored = premium.restore()
-          return (restored.outcome, restored.access)
+          return (restored.outcome, restored.access, restored.appleSignedTransaction)
         }
         guard let packageId = request["packageId"] as? String, packageId == "monthly" || packageId == "annual" else {
-          return ("failed", .unavailable("store_unavailable"))
+          return ("failed", .unavailable("store_unavailable"), nil)
         }
         let purchased = premium.purchase(packageId: packageId)
-        return (purchased.outcome, purchased.access)
+        return (purchased.outcome, purchased.access, purchased.appleSignedTransaction)
       }
       guard let result else {
         writePremiumResponse(client, requestId: requestId, ok: false, outcome: "failed", access: .unavailable("store_unavailable"))
         return
       }
-      writePremiumResponse(client, requestId: requestId, ok: true, outcome: result.0, access: result.1)
+      writePremiumResponse(client, requestId: requestId, ok: true, outcome: result.0, access: result.1, appleSignedTransaction: result.2)
       return
     }
     guard operation == "transcribe",
@@ -333,7 +333,8 @@ final class MeetlessTranscriptionCapability {
     requestId: String,
     ok: Bool,
     outcome: String,
-    access: MeetlessPremiumAccessResult
+    access: MeetlessPremiumAccessResult,
+    appleSignedTransaction: String? = nil
   ) {
     let packages: [[String: Any]] = access.packages.map { package in
       [
@@ -343,7 +344,7 @@ final class MeetlessTranscriptionCapability {
         "trialEligible": package.trialEligible,
       ]
     }
-    let response: [String: Any] = [
+    var response: [String: Any] = [
       "version": 1,
       "requestId": requestId,
       "ok": ok,
@@ -356,6 +357,7 @@ final class MeetlessTranscriptionCapability {
         "reason": access.reason.map { $0 as Any } ?? NSNull(),
       ],
     ]
+    if let appleSignedTransaction { response["appleSignedTransaction"] = appleSignedTransaction }
     guard let data = try? JSONSerialization.data(withJSONObject: response) else { return }
     writeAll(descriptor, data: data + Data([10]))
   }

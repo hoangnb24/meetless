@@ -191,6 +191,30 @@ export const MeetingPremiumRestoreRpc = defineRpc({
   output: PremiumMutationResultWireSchema,
 });
 
+/** Device management is anonymous and intentionally excludes host/computer names. */
+export const ManagedDeviceWireSchema = z.object({
+  deviceId: z.string().trim().min(1),
+  label: z.enum(["This Mac", "Another Mac"]),
+  enrolledAt: z.number().int().nonnegative(),
+  lastActiveAt: z.number().int().nonnegative(),
+  revokedAt: z.number().int().nonnegative().nullable(),
+  current: z.boolean(),
+}).strict();
+
+export type ManagedDeviceWire = z.infer<typeof ManagedDeviceWireSchema>;
+
+export const MeetingManagedDevicesRpc = defineRpc({
+  name: "meeting.premium.devices",
+  input: z.object({}).strict(),
+  output: z.object({ devices: z.array(ManagedDeviceWireSchema) }).strict(),
+});
+
+export const MeetingManagedDeviceRevokeRpc = defineRpc({
+  name: "meeting.premium.devices.revoke",
+  input: z.object({ deviceId: z.string().trim().min(1) }).strict(),
+  output: z.object({ deviceId: z.string().trim().min(1), outcome: z.enum(["revoked", "already-revoked"]) }).strict(),
+});
+
 export const ChatProviderModelWireSchema = z.object({
   id: z.string().trim().min(1),
   label: z.string().trim().min(1),

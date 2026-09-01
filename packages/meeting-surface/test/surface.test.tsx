@@ -227,6 +227,53 @@ describe("global recording strip", () => {
 });
 
 describe("companion meeting surface", () => {
+  test("offers explicit Premium purchase/restore and anonymous Mac management", async () => {
+    const purchase = vi.fn(async () => undefined);
+    const restore = vi.fn(async () => undefined);
+    const listDevices = vi.fn(async () => undefined);
+    const revokeDevice = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          hostConnectionStatus="online"
+          meetings={[]}
+          onRefresh={async () => undefined}
+          premiumAccess={{
+            entitlement: "premium",
+            status: "inactive",
+            packages: [{ packageId: "monthly", productId: "com.meetless.app.premium.monthly", localizedPrice: "$9.99", trialEligible: true }],
+            reason: null,
+          }}
+          onPurchasePremium={purchase}
+          onRestorePremium={restore}
+          managedDevices={[
+            { deviceId: "device-1", label: "This Mac", enrolledAt: 1_000, lastActiveAt: 2_000, revokedAt: null, current: true },
+            { deviceId: "device-2", label: "Another Mac", enrolledAt: 3_000, lastActiveAt: 4_000, revokedAt: 5_000, current: false },
+          ]}
+          onListManagedDevices={listDevices}
+          onRevokeManagedDevice={revokeDevice}
+        />,
+      );
+    });
+
+    await act(async () => { renderer!.root.findByProps({ testID: "premium-purchase-monthly" }).props.onPress(); });
+    await act(async () => { renderer!.root.findByProps({ testID: "premium-restore" }).props.onPress(); });
+    await act(async () => { renderer!.root.findByProps({ testID: "premium-manage-devices" }).props.onPress(); });
+    expect(purchase).toHaveBeenCalledWith("monthly");
+    expect(restore).toHaveBeenCalledOnce();
+    expect(listDevices).toHaveBeenCalledOnce();
+    expect(renderer!.root.findByProps({ testID: "premium-device-list" })).toBeTruthy();
+    expect(renderer!.root.findByProps({ testID: "premium-device-device-1" })).toBeTruthy();
+    expect(renderer!.root.findByProps({ testID: "premium-device-device-2" })).toBeTruthy();
+    await act(async () => { renderer!.root.findByProps({ testID: "premium-revoke-device-1" }).props.onPress(); });
+    expect(revokeDevice).toHaveBeenCalledWith("device-1");
+    renderer!.unmount();
+  });
+
   test("keeps a draggable Electron titlebar region above the meeting surface", async () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {

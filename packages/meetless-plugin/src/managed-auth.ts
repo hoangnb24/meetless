@@ -14,10 +14,10 @@ export interface ManagedDeviceSigner {
   signChallenge(payload: Uint8Array): Promise<ManagedDeviceIdentity & { readonly signature: string }>;
 }
 
-export interface ManagedAppleVerificationMaterial {
-  readonly adapter: "fixture" | "app-store-server-api";
+export interface ManagedAppleFixtureVerificationMaterial {
+  readonly adapter: "fixture";
   readonly bundleId: string;
-  readonly environment: "SANDBOX" | "PRODUCTION";
+  readonly environment: "SANDBOX";
   readonly productId: string;
   readonly originalTransactionId: string;
   readonly periodType: "normal" | "trial";
@@ -25,8 +25,14 @@ export interface ManagedAppleVerificationMaterial {
   readonly expiresAtMs: number;
   readonly currentState: "active" | "grace" | "expired" | "refunded" | "revoked";
   readonly fixtureProof?: string;
-  readonly signedTransaction?: string;
 }
+
+export interface ManagedAppleSignedTransactionMaterial {
+  readonly adapter: "app-store-server-api";
+  readonly signedTransaction: string;
+}
+
+export type ManagedAppleVerificationMaterial = ManagedAppleFixtureVerificationMaterial | ManagedAppleSignedTransactionMaterial;
 
 export interface ManagedAuthFunctionNames {
   readonly createChallenge: string;

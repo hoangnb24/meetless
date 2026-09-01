@@ -31,6 +31,7 @@ import {
   type ConvexManagedTranscriptionResult,
 } from "./managed-transcription.js";
 import { NativePremiumAccessPort, PremiumService, UnavailablePremiumAccessPort } from "./premium-service.js";
+import { ManagedDeviceWireSchema, type ManagedDeviceWire } from "@meetless/meeting-contracts";
 import {
   ConvexManagedCredentialSource,
   UnixSocketManagedAuthTransport,
@@ -52,6 +53,8 @@ let recordingStart: Promise<void> | null = null;
 let runtimeIdentity: { instanceId: string; startedAt: string; uiTest: UiTestIdentity | null } | null = null;
 let chatService: MeetingChatService | null = null;
 let premiumService: PremiumService | null = null;
+let managedCredential: ManagedConvexCredential | null = null;
+let managedCredentialSource: ConvexManagedCredentialSource | null = null;
 const meetingLifecycle = new MeetingLifecycleCoordinator();
 
 export async function deleteMeetingSafely(
@@ -151,8 +154,37 @@ export function getPremiumService(): PremiumService {
   if (!socketPath) {
     return new PremiumService(new UnavailablePremiumAccessPort(configuredSocket ? "store_unavailable" : "not_configured"));
   }
-  premiumService ??= new PremiumService(new NativePremiumAccessPort(socketPath));
+  premiumService ??= new PremiumService(new NativePremiumAccessPort(socketPath), {
+    requireAppleSignedTransaction: true,
+    onAppleSignedTransaction: enrollManagedAppleTransaction,
+  });
   return premiumService;
+}
+
+/** Consumes the opaque host JWS before the public Premium RPC resolves. */
+export async function enrollManagedAppleTransaction(signedTransaction: string): Promise<void> {
+  if (!signedTransaction.trim()) throw new Error("Apple signed transaction is empty");
+  managedCredential = await getManagedConvexCredentialSource().enroll({
+    adapter: "app-store-server-api",
+    signedTransaction,
+  });
+}
+
+export async function listManagedDevices(): Promise<ManagedDeviceWire[]> {
+  const client = await managedClientWithCredential();
+  await client.mutation("managedAuth:touchDeviceActivity", {});
+  const value = await client.query("managedAuth:listDevices", {});
+  if (!Array.isArray(value)) throw new Error("Managed device list response is invalid");
+  return value.map((device) => ManagedDeviceWireSchema.parse(device));
+}
+
+export async function revokeManagedDevice(deviceId: string): Promise<{ deviceId: string; outcome: "revoked" | "already-revoked" }> {
+  const client = await managedClientWithCredential();
+  const value = await client.mutation("managedAuth:revokeEnrolledDevice", { deviceId });
+  if (!value || typeof value !== "object" || typeof (value as { deviceId?: unknown }).deviceId !== "string" || (value as { outcome?: unknown }).outcome !== "revoked" && (value as { outcome?: unknown }).outcome !== "already-revoked") {
+    throw new Error("Managed device revoke response is invalid");
+  }
+  return { deviceId: (value as { deviceId: string }).deviceId, outcome: (value as { outcome: "revoked" | "already-revoked" }).outcome };
 }
 
 export async function stopMeetingChatService(): Promise<void> {
@@ -320,10 +352,18 @@ export function recordingRuntimeIdentity(): { instanceId: string; startedAt: str
 export function getManagedConvexCredentialSource(): ConvexManagedCredentialSource {
   const convexUrl = requiredEnv("MEETLESS_CONVEX_URL");
   const socket = requiredAbsolute("MEETLESS_TRANSCRIPTION_SOCKET");
-  return new ConvexManagedCredentialSource(
+  managedCredentialSource ??= new ConvexManagedCredentialSource(
     new ConvexHttpManagedFunctionClient(convexUrl),
     new UnixSocketManagedAuthTransport(socket),
   );
+  return managedCredentialSource;
+}
+
+async function managedClientWithCredential(): Promise<ConvexHttpManagedFunctionClient> {
+  const credential = managedCredential ?? await getManagedConvexCredentialSource().refresh();
+  managedCredential = credential;
+  const client = new ConvexHttpManagedFunctionClient(requiredEnv("MEETLESS_CONVEX_URL"), { authToken: credential.authToken });
+  return client;
 }
 
 export async function transcribeManagedRecording(input: {

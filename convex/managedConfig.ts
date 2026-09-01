@@ -31,8 +31,8 @@ export const MANAGED_ENVIRONMENT_VARIABLES = {
   authKeyId: "MEETLESS_AUTH_KEY_ID",
   authPrivateKey: "MEETLESS_AUTH_PRIVATE_KEY_PKCS8",
   authPublicJwk: "MEETLESS_AUTH_PUBLIC_JWK",
+  appleRootCertificates: "MEETLESS_APPLE_ROOT_CERTIFICATES_BASE64",
   revenueCatAuthMode: "MEETLESS_REVENUECAT_AUTH_MODE",
-  revenueCatAuthorization: "MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER",
   revenueCatSigningSecret: "MEETLESS_REVENUECAT_WEBHOOK_SIGNING_SECRET",
   revenueCatEnvironment: "MEETLESS_REVENUECAT_ENVIRONMENT",
 } as const;
@@ -40,7 +40,7 @@ export const MANAGED_ENVIRONMENT_VARIABLES = {
 export type ManagedDeploymentMode = "hosted-development" | "test" | "production";
 export type ManagedProviderMode = "fake" | "real";
 export type ManagedAppleVerifierMode = "fixture" | "app-store-server-api";
-export type ManagedRevenueCatAuthMode = "authorization" | "hmac";
+export type ManagedRevenueCatAuthMode = "hmac";
 export type ManagedRevenueCatEnvironment = "SANDBOX" | "PRODUCTION";
 
 export interface ManagedRuntimeConfig {
@@ -54,8 +54,9 @@ export interface ManagedRuntimeConfig {
   readonly authKeyId: string;
   readonly authPrivateKeyPkcs8: string;
   readonly authPublicJwk: string;
+  /** Comma-separated base64 DER Apple root certificates; absent for fixtures. */
+  readonly appleRootCertificatesBase64: string | null;
   readonly revenueCatAuthMode: ManagedRevenueCatAuthMode;
-  readonly revenueCatAuthorizationHeader: string | null;
   readonly revenueCatSigningSecret: string | null;
   readonly revenueCatEnvironment: ManagedRevenueCatEnvironment;
 }
@@ -84,8 +85,8 @@ export function readManagedRuntimeConfig(
   const authKeyId = required(source, MANAGED_ENVIRONMENT_VARIABLES.authKeyId);
   const authPrivateKeyPkcs8 = required(source, MANAGED_ENVIRONMENT_VARIABLES.authPrivateKey);
   const authPublicJwk = required(source, MANAGED_ENVIRONMENT_VARIABLES.authPublicJwk);
+  const appleRootCertificatesBase64 = optional(source, MANAGED_ENVIRONMENT_VARIABLES.appleRootCertificates);
   const revenueCatAuthMode = required(source, MANAGED_ENVIRONMENT_VARIABLES.revenueCatAuthMode);
-  const revenueCatAuthorizationHeader = optional(source, MANAGED_ENVIRONMENT_VARIABLES.revenueCatAuthorization);
   const revenueCatSigningSecret = optional(source, MANAGED_ENVIRONMENT_VARIABLES.revenueCatSigningSecret);
   const revenueCatEnvironment = required(source, MANAGED_ENVIRONMENT_VARIABLES.revenueCatEnvironment);
 
@@ -95,17 +96,17 @@ export function readManagedRuntimeConfig(
   if (appleVerifierMode !== "fixture" && appleVerifierMode !== "app-store-server-api") {
     throw new ManagedConfigurationError(`${MANAGED_ENVIRONMENT_VARIABLES.appleVerifierMode} is unsupported`);
   }
-  if (revenueCatAuthMode !== "authorization" && revenueCatAuthMode !== "hmac") {
-    throw new ManagedConfigurationError(`${MANAGED_ENVIRONMENT_VARIABLES.revenueCatAuthMode} must be authorization or hmac`);
+  if (revenueCatAuthMode !== "hmac") {
+    throw new ManagedConfigurationError(`${MANAGED_ENVIRONMENT_VARIABLES.revenueCatAuthMode} must be hmac; authorization headers are not accepted`);
   }
   if (revenueCatEnvironment !== "SANDBOX" && revenueCatEnvironment !== "PRODUCTION") {
     throw new ManagedConfigurationError(`${MANAGED_ENVIRONMENT_VARIABLES.revenueCatEnvironment} must be SANDBOX or PRODUCTION`);
   }
-  if (revenueCatAuthMode === "authorization" && !revenueCatAuthorizationHeader) {
-    throw new ManagedConfigurationError(`${MANAGED_ENVIRONMENT_VARIABLES.revenueCatAuthorization} is required for authorization webhook verification`);
-  }
-  if (revenueCatAuthMode === "hmac" && !revenueCatSigningSecret) {
+  if (!revenueCatSigningSecret) {
     throw new ManagedConfigurationError(`${MANAGED_ENVIRONMENT_VARIABLES.revenueCatSigningSecret} is required for HMAC webhook verification`);
+  }
+  if (appleVerifierMode === "app-store-server-api" && !appleRootCertificatesBase64) {
+    throw new ManagedConfigurationError(`${MANAGED_ENVIRONMENT_VARIABLES.appleRootCertificates} is required for Apple signed transaction verification`);
   }
 
   if (mode === "production") {
@@ -128,8 +129,8 @@ export function readManagedRuntimeConfig(
     if (allowanceSource !== (mode === "hosted-development" ? "hosted-development-test" : "local-test")) {
       throw new ManagedConfigurationError(`${mode} must use its explicit non-production allowance source label`);
     }
-    if (providerMode !== "fake" || appleVerifierMode !== "fixture") {
-      throw new ManagedConfigurationError(`${mode} may use only the deterministic fake provider and fixture Apple verifier`);
+    if (providerMode !== "fake") {
+      throw new ManagedConfigurationError(`${mode} must keep the deterministic fake transcription provider`);
     }
     if (revenueCatEnvironment !== "SANDBOX") {
       throw new ManagedConfigurationError(`${mode} must use the SANDBOX RevenueCat environment`);
@@ -151,8 +152,8 @@ export function readManagedRuntimeConfig(
     authKeyId,
     authPrivateKeyPkcs8,
     authPublicJwk,
+    appleRootCertificatesBase64,
     revenueCatAuthMode,
-    revenueCatAuthorizationHeader,
     revenueCatSigningSecret,
     revenueCatEnvironment,
   };

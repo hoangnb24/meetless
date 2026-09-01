@@ -66,4 +66,26 @@ describe("Premium service", () => {
       access: { entitlement: "premium", status: "unavailable", packages: [], reason: "store_unavailable" },
     });
   });
+
+  test("consumes a signed transaction inside the plugin and returns only the public Premium result", async () => {
+    const onAppleSignedTransaction = vi.fn(async () => undefined);
+    const service = new PremiumService(accessPort({
+      purchase: vi.fn(async () => ({ outcome: "active" as const, access: activeAccess, appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.synthetic.signature" })),
+    }), { onAppleSignedTransaction, requireAppleSignedTransaction: true });
+
+    const result = await service.purchase("monthly");
+
+    expect(onAppleSignedTransaction).toHaveBeenCalledWith("eyJhbGciOiJFUzI1NiJ9.synthetic.signature");
+    expect(result).toEqual({ outcome: "active", access: activeAccess });
+    expect(result).not.toHaveProperty("appleSignedTransaction");
+  });
+
+  test("fails closed when an active real purchase has no signed transaction", async () => {
+    const service = new PremiumService(accessPort(), { requireAppleSignedTransaction: true });
+
+    await expect(service.purchase("monthly")).resolves.toEqual({
+      outcome: "failed",
+      access: { entitlement: "premium", status: "unavailable", packages: [], reason: "store_unavailable" },
+    });
+  });
 });

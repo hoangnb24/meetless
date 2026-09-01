@@ -17,6 +17,8 @@ import {
   MeetingPremiumPurchaseRpc,
   MeetingPremiumRestoreRpc,
   MeetingPremiumStatusRpc,
+  MeetingManagedDeviceRevokeRpc,
+  MeetingManagedDevicesRpc,
   MeetingTranscriptRpc,
   MeetingTranscriptionConsentRpc,
   type MeetingWire,
@@ -30,6 +32,7 @@ import {
   type MeetingDeleteResultWire,
   type PremiumAccessWire,
   type PremiumMutationResultWire,
+  type ManagedDeviceWire,
   type TranscriptionProviderStatusWire,
   RecordingControlResponseSchema,
   RecordingStatusEventSchema,
@@ -353,6 +356,25 @@ export class MeetlessClient {
       MeetingPremiumRestoreRpc,
       (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
       {},
+    );
+  }
+
+  async listPremiumDevices(): Promise<ManagedDeviceWire[]> {
+    this.requireReady();
+    const output = await callPluginRpc(
+      MeetingManagedDevicesRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      {},
+    );
+    return output.devices;
+  }
+
+  async revokePremiumDevice(deviceId: string): Promise<{ deviceId: string; outcome: "revoked" | "already-revoked" }> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingManagedDeviceRevokeRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      { deviceId },
     );
   }
 

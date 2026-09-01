@@ -20,14 +20,21 @@ const NativePremiumResponseSchema = z.object({
   type: z.literal("premium.access"),
   outcome: z.enum(["status", "active", "cancelled", "pending", "failed"]),
   access: PremiumAccessWireSchema,
+  /** Trusted host/plugin field; PremiumService strips it before RPC return. */
+  appleSignedTransaction: z.string().trim().min(1).optional(),
 }).strict();
 
 type NativePremiumOperation = "premiumStatus" | "premiumPurchase" | "premiumRestore";
 
+export interface PremiumMutationResultInternal extends PremiumMutationResultWire {
+  /** Opaque JWS retained inside the trusted plugin path only. */
+  readonly appleSignedTransaction?: string;
+}
+
 export interface PremiumAccessPort {
   status(): Promise<PremiumAccessWire>;
-  purchase(packageId: "monthly" | "annual"): Promise<PremiumMutationResultWire>;
-  restore(): Promise<PremiumMutationResultWire>;
+  purchase(packageId: "monthly" | "annual"): Promise<PremiumMutationResultInternal>;
+  restore(): Promise<PremiumMutationResultInternal>;
 }
 
 export class UnavailablePremiumAccessPort implements PremiumAccessPort {
@@ -37,11 +44,11 @@ export class UnavailablePremiumAccessPort implements PremiumAccessPort {
     return unavailablePremium(this.reason);
   }
 
-  async purchase(_packageId: "monthly" | "annual"): Promise<PremiumMutationResultWire> {
+  async purchase(_packageId: "monthly" | "annual"): Promise<PremiumMutationResultInternal> {
     return { outcome: "failed", access: unavailablePremium(this.reason) };
   }
 
-  async restore(): Promise<PremiumMutationResultWire> {
+  async restore(): Promise<PremiumMutationResultInternal> {
     return { outcome: "failed", access: unavailablePremium(this.reason) };
   }
 }
@@ -61,14 +68,14 @@ export class NativePremiumAccessPort implements PremiumAccessPort {
     return response.access;
   }
 
-  async purchase(packageId: "monthly" | "annual"): Promise<PremiumMutationResultWire> {
+  async purchase(packageId: "monthly" | "annual"): Promise<PremiumMutationResultInternal> {
     const response = await this.request("premiumPurchase", packageId);
-    return PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access });
+    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction };
   }
 
-  async restore(): Promise<PremiumMutationResultWire> {
+  async restore(): Promise<PremiumMutationResultInternal> {
     const response = await this.request("premiumRestore");
-    return PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access });
+    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction };
   }
 
   private request(operation: NativePremiumOperation, packageId?: "monthly" | "annual") {
@@ -108,7 +115,13 @@ export function unavailablePremium(reason: PremiumAccessWire["reason"] = "store_
 }
 
 export class PremiumService {
-  constructor(private readonly access: PremiumAccessPort) {}
+  constructor(
+    private readonly access: PremiumAccessPort,
+    private readonly options: {
+      readonly onAppleSignedTransaction?: (signedTransaction: string) => Promise<void>;
+      readonly requireAppleSignedTransaction?: boolean;
+    } = {},
+  ) {}
 
   async status(): Promise<PremiumAccessWire> {
     try {
@@ -124,7 +137,7 @@ export class PremiumService {
 
   async purchase(packageId: "monthly" | "annual"): Promise<PremiumMutationResultWire> {
     try {
-      return PremiumMutationResultWireSchema.parse(await this.access.purchase(packageId));
+      return await this.complete(await this.access.purchase(packageId));
     } catch {
       return { outcome: "failed", access: unavailablePremium() };
     }
@@ -132,9 +145,28 @@ export class PremiumService {
 
   async restore(): Promise<PremiumMutationResultWire> {
     try {
-      return PremiumMutationResultWireSchema.parse(await this.access.restore());
+      return await this.complete(await this.access.restore());
     } catch {
       return { outcome: "failed", access: unavailablePremium() };
     }
   }
+
+  private async complete(result: PremiumMutationResultInternal): Promise<PremiumMutationResultWire> {
+    const parsed = PremiumMutationResultWireSchema.parse({ outcome: result.outcome, access: result.access });
+    if (parsed.outcome !== "active") return parsed;
+    const signedTransaction = result.appleSignedTransaction;
+    if (this.options.requireAppleSignedTransaction && !signedTransaction) return failedPremiumResult();
+    if (!signedTransaction) return parsed;
+    if (!this.options.onAppleSignedTransaction) return failedPremiumResult();
+    try {
+      await this.options.onAppleSignedTransaction(signedTransaction);
+      return parsed;
+    } catch {
+      return failedPremiumResult();
+    }
+  }
+}
+
+function failedPremiumResult(): PremiumMutationResultWire {
+  return { outcome: "failed", access: unavailablePremium("store_unavailable") };
 }

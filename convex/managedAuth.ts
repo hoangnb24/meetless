@@ -12,11 +12,7 @@ import {
   MANAGED_TRIAL_SECONDS,
   readManagedRuntimeConfig,
 } from "./managedConfig";
-import {
-  verifyAppleMaterial,
-  type AppleSubscriptionState,
-  type AppleVerificationMaterial,
-} from "./appleSubscription";
+import { type AppleSubscriptionState } from "./appleSubscription";
 import {
   challengeSigningPayload,
   createDeviceChallenge as makeDeviceChallenge,
@@ -25,7 +21,7 @@ import {
   tokenIdentifierFor,
   verifyP256Signature,
 } from "./deviceAuth";
-import { appleMaterialValidatorForAction, revenueCatEventValidatorForMutation } from "./managedAuthValidators";
+import { revenueCatEventValidatorForMutation, verifiedAppleLineageValidatorForMutation } from "./managedAuthValidators";
 import {
   assertHostedCanaryAccountOwnership,
   HOSTED_CANARY_DEVICE_PREFIX,
@@ -69,6 +65,71 @@ export async function requirePrincipal(ctx: PrincipalContext) {
   if (!account) throw new Error("Managed Convex quota account is missing");
   return { identity, principal, device, account, config };
 }
+
+/** Anonymous device UX exposes only labels and activity timestamps. */
+export const listDevices = query({
+  args: {},
+  returns: v.any(),
+  handler: async (ctx) => {
+    const { principal } = await requirePrincipal(ctx);
+    const devices = await ctx.db.query("managedDevices")
+      .withIndex("by_account", (q) => q.eq("accountId", principal.accountId))
+      .collect();
+    return devices
+      .sort((left, right) => left.enrolledAt - right.enrolledAt)
+      .map((device) => ({
+        deviceId: device.deviceId,
+        label: device.deviceId === principal.deviceId ? "This Mac" : "Another Mac",
+        enrolledAt: device.enrolledAt,
+        lastActiveAt: device.lastActiveAt ?? device.enrolledAt,
+        revokedAt: device.revokedAt,
+        current: device.deviceId === principal.deviceId,
+      }));
+  },
+});
+
+export const touchDeviceActivity = mutation({
+  args: {},
+  returns: v.any(),
+  handler: async (ctx) => {
+    const { device } = await requirePrincipal(ctx);
+    const lastActiveAt = Date.now();
+    await ctx.db.patch(device._id, { lastActiveAt });
+    return { lastActiveAt };
+  },
+});
+
+export const revokeEnrolledDevice = mutation({
+  args: { deviceId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const { principal } = await requirePrincipal(ctx);
+    const device = await ctx.db.query("managedDevices")
+      .withIndex("by_account_device", (q) => q.eq("accountId", principal.accountId).eq("deviceId", args.deviceId))
+      .unique();
+    if (!device) throw new Error("Managed device is not enrolled in this account");
+    if (device.revokedAt !== null) return { outcome: "already-revoked", deviceId: device.deviceId, revokedAt: device.revokedAt };
+    const revokedAt = Date.now();
+    await ctx.db.patch(device._id, { revokedAt });
+    const principals = await ctx.db.query("managedPrincipals")
+      .withIndex("by_account_device", (q) => q.eq("accountId", principal.accountId).eq("deviceId", args.deviceId))
+      .collect();
+    await Promise.all(principals.map((entry) => ctx.db.patch(entry._id, { revokedAt, entitlement: "revoked" })));
+    const jobs = await ctx.db.query("managedJobs")
+      .withIndex("by_timeline", (q) => q.eq("accountId", principal.accountId))
+      .collect();
+    for (const job of jobs) {
+      if (job.deviceId !== args.deviceId || (job.status !== "reserved" && job.status !== "running")) continue;
+      const period = await ctx.db.query("managedPeriods")
+        .withIndex("by_account_start", (q) => q.eq("accountId", job.accountId).eq("startAt", job.periodStartAt))
+        .unique();
+      if (!period || period.reservedSeconds < job.billableSeconds) throw new Error("Managed device revoke found an inconsistent reservation");
+      await ctx.db.patch(period._id, { reservedSeconds: period.reservedSeconds - job.billableSeconds });
+      await ctx.db.patch(job._id, { status: "stopped", executionToken: null, failureReason: "device revoked" });
+    }
+    return { outcome: "revoked", deviceId: device.deviceId, revokedAt };
+  },
+});
 
 export const createDeviceChallenge = mutation({
   args: {
@@ -134,7 +195,7 @@ export const consumeEnrollment = internalMutation({
     keyId: v.string(),
     publicKey: v.string(),
     signature: v.string(),
-    apple: appleMaterialValidatorForAction,
+    apple: verifiedAppleLineageValidatorForMutation,
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -143,7 +204,7 @@ export const consumeEnrollment = internalMutation({
     if (!(await verifyP256Signature(challenge.publicKey, args.signature, challengeSigningPayload(challenge)))) {
       throw new Error("Managed enrollment signature does not prove device-key possession");
     }
-    const verified = await verifyAppleMaterial(args.apple as AppleVerificationMaterial, config.appleVerifierMode, Date.now());
+    const verified = args.apple;
     const now = Date.now();
     const existingLineage = await ctx.db.query("managedLineages").withIndex("by_lineage", (q) => q.eq("lineageKey", verified.lineageKey)).unique();
     if (existingLineage && existingLineage.accountId !== verified.accountId) throw new Error("Verified Apple lineage changed account identity");
@@ -194,9 +255,13 @@ export const consumeEnrollment = internalMutation({
       keyVersion: args.keyId,
       publicKey: args.publicKey,
       enrolledAt: now,
+      lastActiveAt: now,
       revokedAt: null,
     }).then((id) => ctx.db.get(id));
     if (!device) throw new Error("Managed device disappeared during enrollment");
+    if (currentDevice) {
+      await ctx.db.patch(currentDevice._id, { lastActiveAt: now, revokedAt: null });
+    }
     const subject = stableDeviceSubject(args.deviceId);
     const tokenIdentifier = tokenIdentifierFor(config.authIssuer, subject);
     const principal = await ctx.db.query("managedPrincipals").withIndex("by_account_device", (q) => q.eq("accountId", verified.accountId).eq("deviceId", args.deviceId)).unique();
@@ -209,7 +274,7 @@ export const consumeEnrollment = internalMutation({
         keyVersion: args.keyId,
         lineageVerified: true,
         entitlement,
-        revokedAt: device.revokedAt,
+        revokedAt: null,
         naturalExpiryAt,
         enrolledAt: principal.enrolledAt,
       });
@@ -222,7 +287,7 @@ export const consumeEnrollment = internalMutation({
         keyVersion: args.keyId,
         lineageVerified: true,
         entitlement,
-        revokedAt: device.revokedAt,
+        revokedAt: null,
         naturalExpiryAt,
         enrolledAt: now,
       });
@@ -269,6 +334,7 @@ export const setFixtureAppleState = internalMutation({
     assertNonProductionFixture(config, "fixture Apple state mutation");
     const lineage = await ctx.db.query("managedLineages").withIndex("by_lineage", (q) => q.eq("lineageKey", args.lineageKey)).unique();
     if (!lineage) throw new Error("Managed fixture lineage is missing");
+    if (lineage.adapter !== "fixture") throw new Error("Fixture Apple state cannot mutate a real Apple lineage");
     await ctx.db.patch(lineage._id, { currentState: args.currentState, expiresAt: args.expiresAt });
     return { lineageKey: args.lineageKey, currentState: args.currentState };
   },
@@ -282,6 +348,7 @@ export const reconcileFixtureLineage = internalMutation({
     assertNonProductionFixture(config, "fixture Apple reconciliation");
     const lineage = await ctx.db.query("managedLineages").withIndex("by_lineage", (q) => q.eq("lineageKey", args.lineageKey)).unique();
     if (!lineage) return { outcome: "unknown-lineage" };
+    if (lineage.adapter !== "fixture") return { outcome: "awaiting-apple-verification", lineageKey: lineage.lineageKey };
     await applyLineageProjection(ctx, lineage);
     return { outcome: "reconciled", lineageKey: lineage.lineageKey, currentState: lineage.currentState };
   },
@@ -297,7 +364,7 @@ export const receiveRevenueCatEvent = internalMutation({
     }
     const existing = await ctx.db.query("managedRevenueCatEvents").withIndex("by_event", (q) => q.eq("eventId", args.event.eventId)).unique();
     if (existing) {
-      if (existing.lineageKey !== args.event.lineageKey || existing.eventType !== args.event.eventType) throw new Error("RevenueCat event ID was rebound to different data");
+      if (existing.lineageKey !== args.event.lineageKey || existing.appId !== args.event.appId || existing.productId !== args.event.productId || existing.environment !== args.event.environment || existing.eventType !== args.event.eventType || existing.eventTimestampMs !== args.event.eventTimestampMs) throw new Error("RevenueCat event ID was rebound to different data");
       if (existing.processedAt === null) await ctx.scheduler.runAfter(0, anyApi.managedAuthActions.processRevenueCatEvent, { eventId: existing.eventId });
       return { outcome: "duplicate", eventId: existing.eventId };
     }
@@ -305,6 +372,7 @@ export const receiveRevenueCatEvent = internalMutation({
       ...args.event,
       receivedAt: Date.now(),
       processedAt: null,
+      reconciliationStatus: "pending",
     });
     await ctx.scheduler.runAfter(0, anyApi.managedAuthActions.processRevenueCatEvent, { eventId: args.event.eventId });
     return { outcome: "received", eventId: args.event.eventId, receiptId: event };
@@ -338,6 +406,7 @@ export const revenueCatEventStatus = query({
       eventType: event.eventType,
       environment: event.environment,
       processed: event.processedAt !== null,
+      reconciliationStatus: event.reconciliationStatus ?? (event.processedAt === null ? "pending" : "awaiting-apple-verification"),
     };
   },
 });
@@ -533,12 +602,15 @@ export const readHostedCanaryStateCounts = query({
 });
 
 export const markRevenueCatEventProcessed = internalMutation({
-  args: { eventId: v.string() },
+  args: {
+    eventId: v.string(),
+    reconciliationStatus: v.union(v.literal("reconciled"), v.literal("awaiting-apple-verification")),
+  },
   returns: v.any(),
   handler: async (ctx, args) => {
     const event = await ctx.db.query("managedRevenueCatEvents").withIndex("by_event", (q) => q.eq("eventId", args.eventId)).unique();
     if (!event) return false;
-    if (event.processedAt === null) await ctx.db.patch(event._id, { processedAt: Date.now() });
+    if (event.processedAt === null) await ctx.db.patch(event._id, { processedAt: Date.now(), reconciliationStatus: args.reconciliationStatus });
     return true;
   },
 });
@@ -572,6 +644,7 @@ async function challengeForConsume(
 }
 
 function lineageRecord(lineage: {
+  adapter: "fixture" | "app-store-server-api";
   lineageKey: string;
   accountId: string;
   appId: string;
@@ -598,7 +671,7 @@ function lineageRecord(lineage: {
     expiresAt: lineage.expiresAtMs,
     currentState: lineage.currentState,
     verifiedAt: lineage.verifiedAtMs,
-    adapter: "fixture" as const,
+    adapter: lineage.adapter,
   };
 }
 

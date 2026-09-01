@@ -4,7 +4,12 @@ import Foundation
 import RevenueCat
 #endif
 
+#if canImport(StoreKit)
+import StoreKit
+#endif
+
 let meetlessPremiumEntitlement = "premium"
+let meetlessPremiumAppBundle = "com.meetless.app"
 let meetlessPremiumMonthlyProduct = "com.meetless.app.premium.monthly"
 let meetlessPremiumAnnualProduct = "com.meetless.app.premium.annual"
 
@@ -28,6 +33,13 @@ struct MeetlessPremiumAccessResult {
 struct MeetlessPremiumMutationResult {
   let outcome: String
   let access: MeetlessPremiumAccessResult
+  let appleSignedTransaction: String?
+
+  init(outcome: String, access: MeetlessPremiumAccessResult, appleSignedTransaction: String? = nil) {
+    self.outcome = outcome
+    self.access = access
+    self.appleSignedTransaction = appleSignedTransaction
+  }
 }
 
 protocol MeetlessPremiumPurchaseAccess {
@@ -70,22 +82,26 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
     }
     let result = wait(timeout: 300, start: { completion in
       DispatchQueue.main.async {
-        purchases.purchase(package: package) { _, customerInfo, error, userCancelled in
-          completion((customerInfo, error == nil, userCancelled))
+        purchases.purchase(package: package) { transaction, customerInfo, error, userCancelled in
+          completion((transaction?.productIdentifier, customerInfo, error == nil, userCancelled))
         }
       }
     })
     guard let result else {
       return MeetlessPremiumMutationResult(outcome: "failed", access: .unavailable("store_unavailable"))
     }
-    let nextAccess = result.0.map { access(purchases: purchases, customerInfo: $0) } ?? status()
+    let nextAccess = result.1.map { access(purchases: purchases, customerInfo: $0) } ?? status()
+    let signedTransaction = result.3 == false && result.2 && nextAccess.status == "active"
+      ? signedTransactionFor(productId: result.0 ?? package.storeProduct.productIdentifier)
+      : nil
     return MeetlessPremiumMutationResult(
       outcome: meetlessPremiumPurchaseOutcome(
-        succeeded: result.1,
-        userCancelled: result.2,
+        succeeded: result.2,
+        userCancelled: result.3,
         accessStatus: nextAccess.status
       ),
-      access: nextAccess
+      access: nextAccess,
+      appleSignedTransaction: signedTransaction
     )
   }
 
@@ -99,7 +115,12 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
       return MeetlessPremiumMutationResult(outcome: "failed", access: .unavailable("store_unavailable"))
     }
     let nextAccess = access(purchases: purchases, customerInfo: customerInfo)
-    return MeetlessPremiumMutationResult(outcome: nextAccess.status == "active" ? "active" : "failed", access: nextAccess)
+    let signedTransaction = nextAccess.status == "active" ? signedTransactionForActiveManagedProduct() : nil
+    return MeetlessPremiumMutationResult(
+      outcome: nextAccess.status == "active" && signedTransaction != nil ? "active" : "failed",
+      access: nextAccess,
+      appleSignedTransaction: signedTransaction
+    )
   }
 
   private func access(purchases: Purchases, customerInfo: CustomerInfo) -> MeetlessPremiumAccessResult {
@@ -149,6 +170,53 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
       $0.packageType == expectedType && $0.storeProduct.productIdentifier == expectedProduct
     }
   }
+
+  #if canImport(StoreKit)
+  private func signedTransactionFor(productId: String) -> String? {
+    guard productId == meetlessPremiumMonthlyProduct || productId == meetlessPremiumAnnualProduct else { return nil }
+    return wait(timeout: 30, start: { completion in
+      Task {
+        guard let result = await StoreKit.Transaction.latest(for: productId) else {
+          completion(nil)
+          return
+        }
+        switch result {
+        case .verified(let transaction):
+          guard transaction.productID == productId,
+                transaction.appBundleID == meetlessPremiumAppBundle,
+                transaction.environment == .sandbox else {
+            completion(nil)
+            return
+          }
+          completion(result.jwsRepresentation)
+        case .unverified:
+          completion(nil)
+        }
+      }
+    })
+  }
+
+  private func signedTransactionForActiveManagedProduct() -> String? {
+    wait(timeout: 60, start: { completion in
+      Task {
+        for await result in StoreKit.Transaction.currentEntitlements {
+          guard case .verified(let transaction) = result,
+                transaction.productID == meetlessPremiumMonthlyProduct || transaction.productID == meetlessPremiumAnnualProduct,
+                transaction.appBundleID == meetlessPremiumAppBundle,
+                transaction.environment == .sandbox,
+                transaction.revocationDate == nil,
+                transaction.expirationDate.map({ $0 > Date() }) ?? true else { continue }
+          completion(result.jwsRepresentation)
+          return
+        }
+        completion(nil)
+      }
+    })
+  }
+  #else
+  private func signedTransactionFor(productId: String) -> String? { nil }
+  private func signedTransactionForActiveManagedProduct() -> String? { nil }
+  #endif
 
   private func wait<Value>(timeout: TimeInterval, start: (@escaping (Value?) -> Void) -> Void) -> Value? {
     let semaphore = DispatchSemaphore(value: 0)

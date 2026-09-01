@@ -2,16 +2,16 @@
 
 ## Current State
 
-- `plan_revision`: `v25`
-- `current_frontier`: `CONVEX-HOSTED-DEV-R4-CLOSEOUT`
-- `state`: `HOSTED_DEV_R4_ACCEPTED`
+- `plan_revision`: `v26`
+- `current_frontier`: `STOREKIT-REVENUECAT-SANDBOX-PURCHASE-RESTORE-R5-REPOSITORY`
+- `state`: `R5_REPOSITORY_CANDIDATE_READY`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: hosted-development R4 and correction `R4-HOSTED-001` are accepted at `e9352a47e363291efff3ca60fc6d06cac2d68446`, directly from hosted canary candidate `fb66c40c0f85aa228dbc993b59e742c3e6da275e`; local pre-external R2 is accepted at `7183b3d9a8da19ee51cd1f68ddad0bac7ba4b726`; managed-transcription foundation R1 is accepted at `cdc42fd44b8644b259a37876646cfd3f00aefa88`; the Convex local-first R3 convergence is accepted at `f93b705561eb6118c9ccbe7d0f9ae146db4f5df8`. Rejected predecessors `966b9abd78481db001e912cc2e60d895c00bef37`, `0a82b39f758e8c2ec19e831ca1c8c1b75529763d`, and `522faa0b1d1e78e54f0e7d0fc813fc0a0706ab01` remain history only.
-- `authority_contract_sha256`: `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`
+- `candidate`: R5 repository candidate is pending one immutable local commit directly from exact base `5cd62e5`; accepted predecessors remain history and are not modified.
+- `authority_contract_sha256`: `d32d834f9e4424ebc35e7607e2f53cd69c3bf29975c810bebf8d40672df1f2aa` (previous `4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4`)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `pending_ruling`: explicit production subscriber allowance amount remains open; production lineage authentication, credentials, provider access, and external purchase integration also remain owner/external gates
-- `blocked_by`: production subscriber allowance, production issuer/key separation, real Apple/App Store Server API verification, RevenueCat production configuration, provider approval, and production deployment remain external gates; the hosted-development R4 canary is no longer blocked by `start_push`.
-- `next_action`: begin the StoreKit/RevenueCat sandbox purchase-and-restore foundation check against the accepted hosted-development boundary; keep production allowance, credentials, real provider spend, review, and publication explicitly gated.
+- `blocked_by`: real monthly Apple sandbox purchase/restore, credentials and dashboard configuration, Apple signing/profile/package gates, external webhook delivery, production subscriber allowance, provider approval, and deployment/review/publication remain external gates; no repository blocker remains.
+- `next_action`: hand the immutable repository candidate to Lead; only a separately authorized external phase may perform sandbox purchase/restore or hosted/production changes.
 
 ## Ownership And Authority
 
@@ -751,13 +751,15 @@ revision was observed. No retry, rollback, broad cleanup, production action,
 provider call, Apple call, RevenueCat dashboard change, or customer mutation
 was made.
 
-The mutated-name allowlist was: `MEETLESS_APPLE_VERIFIER_MODE`,
+The historical pre-R5 mutated-name allowlist was: `MEETLESS_APPLE_VERIFIER_MODE`,
 `MEETLESS_AUTH_AUDIENCE`, `MEETLESS_AUTH_ISSUER`, `MEETLESS_AUTH_KEY_ID`,
 `MEETLESS_AUTH_PRIVATE_KEY_PKCS8`, `MEETLESS_AUTH_PUBLIC_JWK`,
 `MEETLESS_DEPLOYMENT_MODE`, `MEETLESS_MANAGED_ALLOWANCE_SECONDS`,
 `MEETLESS_MANAGED_ALLOWANCE_SOURCE`, `MEETLESS_MANAGED_PROVIDER_MODE`,
 `MEETLESS_REVENUECAT_AUTH_MODE`, `MEETLESS_REVENUECAT_ENVIRONMENT`, and
-`MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER`.
+`MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER`. This historical authorization-header
+name is superseded by the R5 HMAC-only contract recorded below and is not a
+supported current configuration.
 
 Lead's post-failure audit records the current clean application state as
 `functions=[]`, no tables, and empty `_storage`; exactly the approved 13
@@ -792,8 +794,10 @@ private component.
 
 The approved 13 `MEETLESS_*` development environment names were the only names
 mutated during the authorized hosted setup; the successful `--canary-only`
-run did not rotate them or deploy. The canary read the current webhook
-authorization and public auth configuration only in memory. No production
+run did not rotate them or deploy. The historical canary read the then-current
+webhook authorization and public auth configuration only in memory. Its
+authorization-header configuration is superseded by the R5 HMAC-only contract.
+No production
 environment, `convex deploy`, `--prod`, real provider, Apple production API,
 RevenueCat dashboard, or customer data was used.
 
@@ -872,6 +876,40 @@ RevenueCat production webhook configuration, provider credential/access and
 spend approval, production deployment, sandbox purchase/restore, availability,
 review, and publication. The seven-day trial remains `18,000` seconds and no
 production subscriber allowance is selected here.
+
+### PLAN_RECONCILIATION v6 — R5 repository candidate (2026-09-01)
+
+Foundation check v1 was sufficient against exact base `5cd62e5`; this repository
+candidate does not intentionally open the external Apple, RevenueCat, Convex,
+credential, signing, deployment, or purchase gates. During local validation,
+one accidental `npx convex codegen` invocation reached the Convex CLI upload
+stage and failed before typecheck; it was not retried, generated API drift was
+reverted, and external state must be re-audited before acceptance. The
+implementation keeps the accepted R4 fixture/canary path and fake transcription
+provider while adding the real
+App Store Server Library Node boundary, opaque native/plugin transaction handoff,
+Apple-derived hashed lineage admission, explicit restore, three-Mac anonymous
+listing/revocation, and HMAC-only RevenueCat webhook verification over
+`timestamp.raw_body` with replay tolerance and idempotent lifecycle signaling.
+
+The real path accepts only opaque `{ adapter, signedTransaction }` material at
+the action boundary. The Node verifier returns normalized fields only to the
+Convex mutation; the raw JWS and raw original transaction identifier are not
+persisted or returned to the renderer. Fixture mutation/reconciliation remains
+explicitly fixture-only. The monthly and annual catalog objects remain in the
+native adapter, while monthly-only real sandbox purchase/restore is the later
+acceptance gate. The active plan records the authority digest transition from
+`4f609ef15102282f49f47e34176894e64b361fbc3524a05b1441ff7a005487e4` to
+`d32d834f9e4424ebc35e7607e2f53cd69c3bf29975c810bebf8d40672df1f2aa` after the
+explicit R5 owner decisions were added to ADR0005.
+
+Repository verification for this candidate is local-only: Convex TypeScript,
+workspace typecheck, focused policy/adapter/HMAC, contract/client/plugin,
+surface, native boundary, build, syntax, MAS-baseline, and diff checks. No hook,
+CI requirement, or branch-protection rule is changed or verified. A real Apple
+sandbox transaction, Apple/RevenueCat credentials and dashboard setup, signed
+Mac App Store package, external webhook delivery, Convex deployment, and
+production allowance/provider/review/publication remain unmet gates.
 
 ### Risks And Recovery
 

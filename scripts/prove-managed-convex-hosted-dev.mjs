@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash, randomBytes, randomUUID, webcrypto } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, webcrypto } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -99,7 +99,7 @@ export async function runHostedDevelopmentProof({ canaryOnly = false } = {}) {
     if (canaryOnly) {
       validateHostedEnvironmentNames(initialNames.join("\n"), HOSTED_DEV_ENVIRONMENT_NAMES);
       const current = await runHostedStage("config", secretValues, () => readCurrentHostedConfiguration());
-      secretValues.push(current.webhookAuthorization);
+      secretValues.push(current.webhookSigningSecret);
       const apple = makeAppleFixture(runId);
       material = {
         ...current,
@@ -118,7 +118,7 @@ export async function runHostedDevelopmentProof({ canaryOnly = false } = {}) {
         throw new Error("target deployment environment is neither empty nor the exact approved allowlist; no hosted mutation was attempted");
       }
       material = generated;
-      secretValues.push(material.privateKeyPkcs8, material.webhookAuthorization);
+      secretValues.push(material.privateKeyPkcs8, material.webhookSigningSecret);
       const runtimeEnvPath = path.join(root, "managed-runtime.env");
       await writeEnvFile(runtimeEnvPath, material.runtimeEnvironment);
 
@@ -211,7 +211,7 @@ export async function runHostedDevelopmentProof({ canaryOnly = false } = {}) {
         if (rejected.status !== 401) throw new Error("unauthenticated RevenueCat webhook was not rejected");
         const accepted = await targetFetch(`${HOSTED_DEV_TARGET.siteUrl}${WEBHOOK_PATH}`, {
           method: "POST",
-          headers: { "content-type": "application/json", authorization: material.webhookAuthorization },
+          headers: { "content-type": "application/json", "x-revenuecat-webhook-signature": revenueCatHmacHeader(webhookBody, material.webhookSigningSecret) },
           body: webhookBody,
         });
         const acceptedBody = await readJson(accepted);
@@ -220,7 +220,7 @@ export async function runHostedDevelopmentProof({ canaryOnly = false } = {}) {
         }
         const duplicate = await targetFetch(`${HOSTED_DEV_TARGET.siteUrl}${WEBHOOK_PATH}`, {
           method: "POST",
-          headers: { "content-type": "application/json", authorization: material.webhookAuthorization },
+          headers: { "content-type": "application/json", "x-revenuecat-webhook-signature": revenueCatHmacHeader(webhookBody, material.webhookSigningSecret) },
           body: webhookBody,
         });
         const duplicateBody = await readJson(duplicate);
@@ -494,12 +494,12 @@ async function readCurrentHostedConfiguration() {
   if (values.MEETLESS_AUTH_KEY_ID !== publicJwk.kid) {
     throw new Error("hosted current JWT key identifier does not match the public JWK");
   }
-  if (!/^Bearer [A-Za-z0-9_-]+$/u.test(values.MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER)) {
-    throw new Error("hosted current RevenueCat authorization is not a bounded bearer value");
+  if (!/^[A-Za-z0-9_-]{32,}$/u.test(values.MEETLESS_REVENUECAT_WEBHOOK_SIGNING_SECRET)) {
+    throw new Error("hosted current RevenueCat HMAC secret is not a bounded value");
   }
   return {
     publicJwk,
-    webhookAuthorization: values.MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER,
+    webhookSigningSecret: values.MEETLESS_REVENUECAT_WEBHOOK_SIGNING_SECRET,
     runtimeEnvironment: {
       MEETLESS_AUTH_ISSUER: values.MEETLESS_AUTH_ISSUER,
       MEETLESS_AUTH_AUDIENCE: values.MEETLESS_AUTH_AUDIENCE,
@@ -777,6 +777,12 @@ async function readJson(response) {
   }
 }
 
+function revenueCatHmacHeader(body, secret) {
+  const timestamp = Math.floor(Date.now() / 1_000);
+  const digest = createHmac("sha256", secret).update(`${timestamp}.`).update(body).digest("hex");
+  return `t=${timestamp},v1=${digest}`;
+}
+
 async function makeCanaryMaterial(runId) {
   const keyPair = await webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
   const privateDer = new Uint8Array(await webcrypto.subtle.exportKey("pkcs8", keyPair.privateKey));
@@ -784,12 +790,12 @@ async function makeCanaryMaterial(runId) {
   const rawPublicKey = new Uint8Array(await webcrypto.subtle.exportKey("raw", keyPair.publicKey));
   const keyId = `hosted-dev-${runId}`;
   const checkedPublicJwk = { ...publicJwk, kid: keyId, alg: "ES256", use: "sig" };
-  const webhookAuthorization = `Bearer ${randomBytes(32).toString("base64url")}`;
+  const webhookSigningSecret = randomBytes(32).toString("base64url");
   const apple = makeAppleFixture(runId);
   return {
     privateKeyPkcs8: pem("PRIVATE KEY", privateDer),
     publicJwk: checkedPublicJwk,
-    webhookAuthorization,
+    webhookSigningSecret,
     apple,
     lineageKey: `apple-lineage:${sha256Text(apple.originalTransactionId)}`,
     runtimeEnvironment: {
@@ -803,8 +809,8 @@ async function makeCanaryMaterial(runId) {
       MEETLESS_AUTH_KEY_ID: keyId,
       MEETLESS_AUTH_PRIVATE_KEY_PKCS8: pem("PRIVATE KEY", privateDer),
       MEETLESS_AUTH_PUBLIC_JWK: JSON.stringify(checkedPublicJwk),
-      MEETLESS_REVENUECAT_AUTH_MODE: "authorization",
-      MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER: webhookAuthorization,
+      MEETLESS_REVENUECAT_AUTH_MODE: "hmac",
+      MEETLESS_REVENUECAT_WEBHOOK_SIGNING_SECRET: webhookSigningSecret,
       MEETLESS_REVENUECAT_ENVIRONMENT: "SANDBOX",
     },
     keyPair,

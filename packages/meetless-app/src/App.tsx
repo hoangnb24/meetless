@@ -16,6 +16,7 @@ import {
   type ChatSelectionWire,
   type MeetingChatThreadWire,
   type MeetingWire,
+  type ManagedDeviceWire,
   type PremiumAccessWire,
 } from "@meetless/meeting-contracts";
 import type { CitationWire, TranscriptWire, TranscriptionProviderStatusWire } from "@meetless/meeting-contracts";
@@ -70,6 +71,9 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [premiumAccess, setPremiumAccess] = useState<PremiumAccessWire | null>(null);
   const [premiumPending, setPremiumPending] = useState(false);
   const [premiumError, setPremiumError] = useState<string | null>(null);
+  const [managedDevices, setManagedDevices] = useState<ManagedDeviceWire[] | null>(null);
+  const [managedDevicesPending, setManagedDevicesPending] = useState(false);
+  const [managedDevicesError, setManagedDevicesError] = useState<string | null>(null);
   const [citationEvidence, setCitationEvidence] = useState<CitationEvidenceState | null>(null);
   const [deleteConfirmationMeetingId, setDeleteConfirmationMeetingId] = useState<string | null>(null);
   const [deletePending, setDeletePending] = useState(false);
@@ -111,6 +115,9 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setPremiumAccess(null);
     setPremiumPending(false);
     setPremiumError(null);
+    setManagedDevices(null);
+    setManagedDevicesPending(false);
+    setManagedDevicesError(null);
     setCitationEvidence((current) => current ? {
       ...current,
       status: "failed",
@@ -187,6 +194,36 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
       if (isCurrentConnection(active)) setPremiumError("Purchases could not be restored. Try again.");
     } finally {
       if (isCurrentConnection(active)) setPremiumPending(false);
+    }
+  }, [isCurrentConnection]);
+
+  const listManagedDevices = useCallback(async () => {
+    const active = connection.current;
+    if (!active) throw new Error("Meetless host is not connected yet");
+    setManagedDevicesPending(true);
+    setManagedDevicesError(null);
+    try {
+      const devices = await active.client.listPremiumDevices();
+      if (isCurrentConnection(active)) setManagedDevices(devices);
+    } catch {
+      if (isCurrentConnection(active)) setManagedDevicesError("Mac access could not be loaded. Restore Premium and try again.");
+    } finally {
+      if (isCurrentConnection(active)) setManagedDevicesPending(false);
+    }
+  }, [isCurrentConnection]);
+
+  const revokeManagedDevice = useCallback(async (deviceId: string) => {
+    const active = connection.current;
+    if (!active) throw new Error("Meetless host is not connected yet");
+    setManagedDevicesPending(true);
+    setManagedDevicesError(null);
+    try {
+      await active.client.revokePremiumDevice(deviceId);
+      if (isCurrentConnection(active)) setManagedDevices(await active.client.listPremiumDevices());
+    } catch {
+      if (isCurrentConnection(active)) setManagedDevicesError("That Mac could not be revoked. Try again.");
+    } finally {
+      if (isCurrentConnection(active)) setManagedDevicesPending(false);
     }
   }, [isCurrentConnection]);
 
@@ -819,12 +856,17 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         premiumAccess={premiumAccess}
         premiumPending={premiumPending}
         premiumError={premiumError}
+        managedDevices={managedDevices}
+        managedDevicesPending={managedDevicesPending}
+        managedDevicesError={managedDevicesError}
         onChatSelectionBundle={selectChatSelection}
         onAskQuestion={interactive ? askQuestion : undefined}
         onRetryQuestion={interactive ? retryQuestion : undefined}
         onRefreshPremium={interactive ? refreshPremium : undefined}
         onPurchasePremium={interactive ? purchasePremium : undefined}
         onRestorePremium={interactive ? restorePremium : undefined}
+        onListManagedDevices={interactive ? listManagedDevices : undefined}
+        onRevokeManagedDevice={interactive ? revokeManagedDevice : undefined}
         onChangeHost={mode === "companion" ? changeCompanionHost : undefined}
         deleteConfirmationMeetingId={deleteConfirmationMeetingId}
         deletePending={deletePending}

@@ -51,6 +51,7 @@ export default defineSchema({
     keyVersion: v.string(),
     publicKey: v.string(),
     enrolledAt: v.number(),
+    lastActiveAt: v.optional(v.number()),
     revokedAt: v.union(v.number(), v.null()),
   })
     .index("by_account", ["accountId"])
@@ -118,6 +119,11 @@ export default defineSchema({
     eventTimestampMs: v.number(),
     receivedAt: v.number(),
     processedAt: v.union(v.number(), v.null()),
+    reconciliationStatus: v.optional(v.union(
+      v.literal("pending"),
+      v.literal("reconciled"),
+      v.literal("awaiting-apple-verification"),
+    )),
   })
     .index("by_event", ["eventId"])
     .index("by_lineage", ["lineageKey"]),

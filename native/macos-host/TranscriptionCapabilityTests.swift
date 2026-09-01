@@ -207,11 +207,11 @@ private final class FakePremiumAccess: MeetlessPremiumPurchaseAccess {
   func status() -> MeetlessPremiumAccessResult { inactive }
   func purchase(packageId: String) -> MeetlessPremiumMutationResult {
     purchasedPackage = packageId
-    return MeetlessPremiumMutationResult(outcome: "active", access: active)
+    return MeetlessPremiumMutationResult(outcome: "active", access: active, appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.synthetic.signature")
   }
   func restore() -> MeetlessPremiumMutationResult {
     restoreCount += 1
-    return MeetlessPremiumMutationResult(outcome: "active", access: active)
+    return MeetlessPremiumMutationResult(outcome: "active", access: active, appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.synthetic.signature")
   }
 }
 
@@ -341,6 +341,7 @@ private func testPremiumSocketBoundary() {
 
   let status = request("{\"version\":1,\"requestId\":\"premium-status\",\"operation\":\"premiumStatus\"}")
   check(status?["type"] as? String == "premium.access", "Premium status must use the typed native envelope")
+  check(status?["appleSignedTransaction"] == nil, "Premium status must not expose transaction material")
   let statusAccess = status?["access"] as? [String: Any]
   check(statusAccess?["status"] as? String == "inactive", "Premium status must preserve inactive access")
   let statusPackages = statusAccess?["packages"] as? [[String: Any]]
@@ -351,10 +352,12 @@ private func testPremiumSocketBoundary() {
   check(purchase?["outcome"] as? String == "active", "Premium purchase must return the normalized mutation outcome")
   let purchaseAccess = purchase?["access"] as? [String: Any]
   check(purchaseAccess?["status"] as? String == "active", "Premium purchase must return active entitlement state")
+  check(purchase?["appleSignedTransaction"] as? String == "eyJhbGciOiJFUzI1NiJ9.synthetic.signature", "Premium purchase must carry opaque transaction material only to the trusted plugin boundary")
 
   let restore = request("{\"version\":1,\"requestId\":\"premium-restore\",\"operation\":\"premiumRestore\"}")
   check(premium.restoreCount == 1, "Premium restore must run only after the explicit restore request")
   check(restore?["outcome"] as? String == "active", "Premium restore must return the normalized mutation outcome")
+  check(restore?["appleSignedTransaction"] as? String == "eyJhbGciOiJFUzI1NiJ9.synthetic.signature", "Premium restore must carry opaque transaction material only to the trusted plugin boundary")
 }
 
 private func testPremiumPurchaseOutcomePolicy() {

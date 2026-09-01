@@ -44,12 +44,10 @@ http.route({
     try {
       const config = readManagedRuntimeConfig();
       await verifyRevenueCatWebhook(rawBody, {
-        authorization: request.headers.get("authorization") ?? undefined,
         "x-revenuecat-webhook-signature": request.headers.get("x-revenuecat-webhook-signature") ?? undefined,
       }, {
         mode: config.revenueCatAuthMode,
-        authorizationHeader: config.revenueCatAuthorizationHeader,
-        signingSecret: config.revenueCatSigningSecret,
+        signingSecret: config.revenueCatSigningSecret!,
       });
       const parsed = parseRevenueCatWebhook(
         rawBody,

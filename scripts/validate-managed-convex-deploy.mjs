@@ -11,8 +11,8 @@ const names = {
   authKeyId: "MEETLESS_AUTH_KEY_ID",
   authPrivateKey: "MEETLESS_AUTH_PRIVATE_KEY_PKCS8",
   authPublicJwk: "MEETLESS_AUTH_PUBLIC_JWK",
+  appleRootCertificates: "MEETLESS_APPLE_ROOT_CERTIFICATES_BASE64",
   revenueCatAuthMode: "MEETLESS_REVENUECAT_AUTH_MODE",
-  revenueCatAuthorization: "MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER",
   revenueCatSigningSecret: "MEETLESS_REVENUECAT_WEBHOOK_SIGNING_SECRET",
   revenueCatEnvironment: "MEETLESS_REVENUECAT_ENVIRONMENT",
 };
@@ -36,16 +36,16 @@ export function validateManagedConvexDeploymentEnvironment(env = process.env, op
   const keyId = required(names.authKeyId);
   const privateKey = required(names.authPrivateKey);
   const publicJwkText = required(names.authPublicJwk);
+  const appleRootCertificates = String(env[names.appleRootCertificates] ?? "").trim();
   const revenueCatAuthMode = required(names.revenueCatAuthMode);
   const environment = required(names.revenueCatEnvironment);
-  const authorization = String(env[names.revenueCatAuthorization] ?? "").trim();
   const signingSecret = String(env[names.revenueCatSigningSecret] ?? "").trim();
   if (providerMode !== "fake" && providerMode !== "real") throw new Error(`${names.providerMode} is unsupported`);
   if (appleVerifierMode !== "fixture" && appleVerifierMode !== "app-store-server-api") throw new Error(`${names.appleVerifierMode} is unsupported`);
-  if (revenueCatAuthMode !== "authorization" && revenueCatAuthMode !== "hmac") throw new Error(`${names.revenueCatAuthMode} is unsupported`);
+  if (revenueCatAuthMode !== "hmac") throw new Error(`${names.revenueCatAuthMode} must be hmac; authorization headers are not accepted`);
   if (environment !== "SANDBOX" && environment !== "PRODUCTION") throw new Error(`${names.revenueCatEnvironment} is unsupported`);
-  if (revenueCatAuthMode === "authorization" && !authorization) throw new Error(`${names.revenueCatAuthorization} is required for authorization webhook verification`);
-  if (revenueCatAuthMode === "hmac" && !signingSecret) throw new Error(`${names.revenueCatSigningSecret} is required for HMAC webhook verification`);
+  if (!signingSecret) throw new Error(`${names.revenueCatSigningSecret} is required for HMAC webhook verification`);
+  if (appleVerifierMode === "app-store-server-api" && !appleRootCertificates) throw new Error(`${names.appleRootCertificates} is required for Apple signed transaction verification`);
   if (!privateKey.includes("BEGIN PRIVATE KEY")) throw new Error(`${names.authPrivateKey} must contain a PKCS8 private key`);
   let publicJwk;
   try { publicJwk = JSON.parse(publicJwkText); } catch { throw new Error(`${names.authPublicJwk} must be valid JSON`); }
@@ -62,7 +62,7 @@ export function validateManagedConvexDeploymentEnvironment(env = process.env, op
     }
   } else {
     if (allowanceSource !== (mode === "hosted-development" ? "hosted-development-test" : "local-test")) throw new Error("non-production allowance source label is invalid");
-    if (providerMode !== "fake" || appleVerifierMode !== "fixture") throw new Error("non-production deployment must select fake provider and fixture Apple verifier");
+    if (providerMode !== "fake") throw new Error("non-production deployment must select the fake transcription provider");
     if (environment !== "SANDBOX") throw new Error("non-production RevenueCat environment must be SANDBOX");
   }
   return { mode, allowanceSeconds: Number(allowanceText), allowanceSource, providerMode, appleVerifierMode, issuer, audience, keyId };

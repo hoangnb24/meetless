@@ -9,8 +9,10 @@ import {
   MANAGED_MONTHLY_PRODUCT_ID,
   MANAGED_REVENUECAT_APP_ID,
   appleFixtureProof,
+  normalizeVerifiedAppleTransaction,
   verifyAppleMaterial,
 } from "../convex/appleSubscription";
+import { verifySignedAppleTransaction } from "../convex/appleSubscriptionNode";
 import {
   challengeSigningPayload,
   createDeviceChallenge,
@@ -62,8 +64,8 @@ function environment(overrides: Record<string, string> = {}): Record<string, str
     MEETLESS_AUTH_KEY_ID: "hosted-development-fixture",
     MEETLESS_AUTH_PRIVATE_KEY_PKCS8: "-----BEGIN PRIVATE KEY-----\nfixture\n-----END PRIVATE KEY-----",
     MEETLESS_AUTH_PUBLIC_JWK: publicKeyPlaceholder,
-    MEETLESS_REVENUECAT_AUTH_MODE: "authorization",
-    MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER: "fixture-webhook-token",
+    MEETLESS_REVENUECAT_AUTH_MODE: "hmac",
+    MEETLESS_REVENUECAT_WEBHOOK_SIGNING_SECRET: "fixture-webhook-secret",
     MEETLESS_REVENUECAT_ENVIRONMENT: "SANDBOX",
     ...overrides,
   };
@@ -84,7 +86,7 @@ describe("hosted-development Convex boundaries", () => {
       "MEETLESS_MANAGED_PROVIDER_MODE",
       "MEETLESS_REVENUECAT_AUTH_MODE",
       "MEETLESS_REVENUECAT_ENVIRONMENT",
-      "MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER",
+      "MEETLESS_REVENUECAT_WEBHOOK_SIGNING_SECRET",
     ];
     const empty = "No environment variables set (on dev deployment frugal-mandrill-646)";
     expect(parseHostedEnvironmentNames(empty)).toEqual([]);
@@ -249,7 +251,7 @@ describe("hosted-development Convex boundaries", () => {
       MEETLESS_REVENUECAT_ENVIRONMENT: "PRODUCTION",
       MEETLESS_AUTH_ISSUER: "https://meetless.invalid/production",
       MEETLESS_AUTH_KEY_ID: "production-key",
-      MEETLESS_REVENUECAT_AUTH_MODE: "authorization",
+      MEETLESS_REVENUECAT_AUTH_MODE: "hmac",
     }))).toThrow(/real provider/);
     expect(readManagedRuntimeConfig(environment({
       MEETLESS_MANAGED_ALLOWANCE_SOURCE: "hosted-development-test",
@@ -290,7 +292,32 @@ describe("hosted-development Convex boundaries", () => {
     const checked = { ...material, fixtureProof: await appleFixtureProof(material) };
     await expect(verifyAppleMaterial(checked, "fixture", 2_000)).resolves.toMatchObject({ product: "monthly", lineageKey: expect.stringMatching(/^apple-lineage:/u) });
     await expect(verifyAppleMaterial({ ...checked, productId: MANAGED_ANNUAL_PRODUCT_ID }, "fixture", 2_000)).rejects.toThrow(/fixture proof/);
-    await expect(verifyAppleMaterial({ ...checked, adapter: "app-store-server-api" }, "app-store-server-api", 2_000)).rejects.toThrow(/external|unconfigured/);
+    await expect(verifyAppleMaterial({ ...checked, adapter: "app-store-server-api" }, "app-store-server-api", 2_000)).rejects.toThrow(/Node|signed transaction/);
+  });
+
+  test("rejects real-path Apple invariant violations after the cryptographic adapter boundary", async () => {
+    const base = {
+      bundleId: MANAGED_APPLE_BUNDLE_ID,
+      environment: "Sandbox",
+      productId: MANAGED_MONTHLY_PRODUCT_ID,
+      originalTransactionId: "synthetic-invalid-test-only",
+      purchaseDate: 1_000,
+      originalPurchaseDate: 1_000,
+      expiresDate: 10_000,
+      signedDate: 2_000,
+      type: "Auto-Renewable Subscription",
+    } as const;
+    await expect(normalizeVerifiedAppleTransaction({ ...base, appAccountToken: "forbidden" }, 3_000)).rejects.toThrow(/appAccountToken/);
+    await expect(normalizeVerifiedAppleTransaction({ ...base, bundleId: "com.other.app" }, 3_000)).rejects.toThrow(/bundle/);
+    await expect(normalizeVerifiedAppleTransaction({ ...base, productId: "com.meetless.app.premium.unknown" }, 3_000)).rejects.toThrow(/catalog/);
+    await expect(normalizeVerifiedAppleTransaction({ ...base, expiresDate: 900 }, 3_000)).rejects.toThrow(/period bounds/);
+    await expect(normalizeVerifiedAppleTransaction({ ...base, signedDate: 4_000_000 }, 3_000)).rejects.toThrow(/signed date/);
+  });
+
+  test("keeps the official Node verifier fail-closed before any real transaction is accepted", async () => {
+    const fixtureConfig = readManagedRuntimeConfig(environment());
+    await expect(verifySignedAppleTransaction("not-a-jws", fixtureConfig, 2_000)).rejects.toThrow(/App Store Server API verifier/);
+    expect(() => readManagedRuntimeConfig(environment({ MEETLESS_APPLE_VERIFIER_MODE: "app-store-server-api" }))).toThrow(/root certificates|APPLE_ROOT_CERTIFICATES/i);
   });
 
   test("authenticates the current RevenueCat raw-body mechanism and filters exact catalog/environment", async () => {
@@ -310,7 +337,16 @@ describe("hosted-development Convex boundaries", () => {
     const signature = await revenueCatHmacHeader(body, "secret", timestamp);
     await expect(verifyRevenueCatWebhook(body, { "X-RevenueCat-Webhook-Signature": signature }, { mode: "hmac", signingSecret: "secret" })).resolves.toBeUndefined();
     await expect(verifyRevenueCatWebhook(new TextEncoder().encode(`${new TextDecoder().decode(body)} `), { "X-RevenueCat-Webhook-Signature": signature }, { mode: "hmac", signingSecret: "secret" })).rejects.toThrow(/signature/);
-    await expect(verifyRevenueCatWebhook(body, { Authorization: "fixture-token" }, { mode: "authorization", authorizationHeader: "fixture-token" })).resolves.toBeUndefined();
+    await expect(verifyRevenueCatWebhook(body, {}, { mode: "hmac", signingSecret: "secret" })).rejects.toThrow(/missing/);
+    await expect(verifyRevenueCatWebhook(body, { "X-RevenueCat-Webhook-Signature": await revenueCatHmacHeader(body, "secret", timestamp - 600) }, { mode: "hmac", signingSecret: "secret" }, timestamp * 1_000)).rejects.toThrow(/replay/);
+    await expect(verifyRevenueCatWebhook(body, { Authorization: "fixture-token" }, { mode: "hmac", signingSecret: "secret" })).rejects.toThrow(/missing/);
+    const webhookSource = readFileSync(path.resolve("convex/revenueCatWebhook.ts"), "utf8");
+    const configSource = readFileSync(path.resolve("convex/managedConfig.ts"), "utf8");
+    expect(webhookSource).toContain("parsed.timestamp");
+    expect(webhookSource).toContain("rawBody");
+    expect(webhookSource).not.toContain("authorizationHeader");
+    expect(configSource).toContain('revenueCatAuthMode !== "hmac"');
+    expect(configSource).not.toContain("MEETLESS_REVENUECAT_WEBHOOK_AUTH_HEADER");
     expect(parseRevenueCatWebhook(body, MANAGED_REVENUECAT_APP_ID, [MANAGED_MONTHLY_PRODUCT_ID, MANAGED_ANNUAL_PRODUCT_ID], "SANDBOX")).toMatchObject({ eventId: "event-1", eventType: "CANCELLATION" });
     expect(() => parseRevenueCatWebhook(body, "other-app", [MANAGED_MONTHLY_PRODUCT_ID], "SANDBOX")).toThrow(/app id/);
     expect(() => parseRevenueCatWebhook(body, MANAGED_REVENUECAT_APP_ID, [MANAGED_ANNUAL_PRODUCT_ID], "SANDBOX")).toThrow(/catalog/);

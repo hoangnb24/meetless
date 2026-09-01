@@ -179,6 +179,35 @@ native errors do not enter ordinary logs or durable meeting state. RevenueCat's
 public Apple SDK key is supplied at build time and may be embedded in the app;
 secret keys are forbidden from the bundle and repository.
 
+### R5 repository owner decisions
+
+The R5 sandbox acceptance evidence is monthly only and must come from a real
+Apple sandbox purchase or an explicit user-selected Restore Purchases action.
+The retained fixture adapter and its historical canary path remain available
+for repository tests, but a fixture or synthetic successful purchase is not
+purchase acceptance evidence. Annual catalog objects and annual behavior remain
+intact.
+
+On the real path, StoreKit transaction material stays inside the trusted native
+host/plugin orchestration until the server verifies the Apple-signed JWS. The
+server derives the billing identity from Apple-verified `originalTransactionId`,
+hashes it before persistence, and rejects client-supplied lineage, entitlement,
+state, or `appAccountToken` claims. The renderer never receives signed
+transactions or secrets. V1 has no Meetless login or account identity.
+
+Restore is an explicit user action and never runs during startup. A restored
+installation enrolls its distinct Keychain-backed Mac against the shared
+lineage, does not automatically revoke another Mac, and remains bounded to
+three distinct Macs. Device management is anonymous and exposes only “This
+Mac”, “Another Mac”, enrollment date, last active time, and explicit revoke.
+
+RevenueCat webhooks use HMAC-only authentication in hosted-development and
+production. Verification covers the exact `timestamp.raw_body` bytes with
+bounded replay tolerance; accepted events are idempotent lifecycle/reconciliation
+signals only, and Apple verification remains entitlement authority. Signed
+transactions, receipts, secrets, and raw original transaction identifiers are
+never logged or durably persisted.
+
 ## Consequences
 
 - Existing direct-DMG signing, notarization, Gatekeeper, install-path, and DMG

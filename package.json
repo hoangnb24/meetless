@@ -39,8 +39,8 @@
     "runtime:stop": "node packages/runtime/dist/cli.js stop",
     "runtime:preowner": "node packages/runtime/dist/cli.js preowner",
     "host:install": "npm run build:native && npm run build:meetless && node scripts/install-macos-host.mjs",
-  "package:macos:arm64": "npm run build && node scripts/package-macos.mjs --signing-mode=local-ad-hoc --proof-root=$(mktemp -d /private/tmp/meetless-package-proof.XXXXXX)",
-  "package:macos:dmg": "node scripts/package-macos-dmg.mjs --build-package --proof-root=$(mktemp -d /private/tmp/meetless-dmg-proof.XXXXXX)",
+    "package:macos:arm64": "npm run build && node scripts/package-macos.mjs --signing-mode=local-ad-hoc --proof-root=$(mktemp -d /private/tmp/meetless-package-proof.XXXXXX)",
+    "package:macos:dmg": "node scripts/package-macos-dmg.mjs --build-package --proof-root=$(mktemp -d /private/tmp/meetless-dmg-proof.XXXXXX)",
     "package:macos:arm64:release": "npm run build && node scripts/package-macos.mjs --signing-mode=release",
     "validate:macos:app-store": "node scripts/validate-macos-app-store-baseline.mjs",
     "validate:macos:dmg": "node scripts/validate-macos-dmg.mjs",
@@ -73,6 +73,7 @@
     "deploy:managed-convex": "node scripts/validate-managed-convex-deploy.mjs --production && npx convex deploy"
   },
   "devDependencies": {
+    "@apple/app-store-server-library": "3.1.0",
     "@clack/core": "1.1.0",
     "@clack/prompts": "1.1.0",
     "@modelcontextprotocol/sdk": "^1.30.0",

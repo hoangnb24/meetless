@@ -163,19 +163,26 @@ describe("Meetless capability gate", () => {
       }],
       reason: null,
     };
-    const invokePluginRpc = vi.fn(async (_id: string, method: string) =>
-      method === "meeting.premium.status" ? access : { outcome: "active", access: { ...access, status: "active" } },
-    );
+    const invokePluginRpc = vi.fn(async (_id: string, method: string) => {
+      if (method === "meeting.premium.status") return access;
+      if (method === "meeting.premium.devices") return { devices: [{ deviceId: "device-1", label: "This Mac", enrolledAt: 1_000, lastActiveAt: 2_000, revokedAt: null, current: true }] };
+      if (method === "meeting.premium.devices.revoke") return { deviceId: "device-2", outcome: "revoked" };
+      return { outcome: "active", access: { ...access, status: "active" } };
+    });
     const client = new MeetlessClient(daemon({ invokePluginRpc }));
     await client.initialize();
 
     await expect(client.getPremiumAccess()).resolves.toEqual(access);
     await expect(client.purchasePremium("monthly")).resolves.toMatchObject({ outcome: "active" });
     await expect(client.restorePremium()).resolves.toMatchObject({ outcome: "active" });
+    await expect(client.listPremiumDevices()).resolves.toEqual([{ deviceId: "device-1", label: "This Mac", enrolledAt: 1_000, lastActiveAt: 2_000, revokedAt: null, current: true }]);
+    await expect(client.revokePremiumDevice("device-2")).resolves.toEqual({ deviceId: "device-2", outcome: "revoked" });
     expect(invokePluginRpc.mock.calls).toEqual([
       ["meetless", "meeting.premium.status", {}],
       ["meetless", "meeting.premium.purchase", { packageId: "monthly" }],
       ["meetless", "meeting.premium.restore", {}],
+      ["meetless", "meeting.premium.devices", {}],
+      ["meetless", "meeting.premium.devices.revoke", { deviceId: "device-2" }],
     ]);
   });
 });

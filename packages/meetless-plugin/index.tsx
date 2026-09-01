@@ -16,6 +16,8 @@ import {
   MeetingPremiumPurchaseRpc,
   MeetingPremiumRestoreRpc,
   MeetingPremiumStatusRpc,
+  MeetingManagedDeviceRevokeRpc,
+  MeetingManagedDevicesRpc,
   MeetingTranscriptRpc,
   MeetingTranscriptionConsentRpc,
 } from "@meetless/meeting-contracts";
@@ -69,6 +71,14 @@ export default function contribute(plugin: PluginContext) {
   plugin.handle(MeetingPremiumRestoreRpc, async () => {
     const server = await import("./src/server.js");
     return server.getPremiumService().restore();
+  });
+  plugin.handle(MeetingManagedDevicesRpc, async () => {
+    const server = await import("./src/server.js");
+    return { devices: await server.listManagedDevices() };
+  });
+  plugin.handle(MeetingManagedDeviceRevokeRpc, async ({ deviceId }) => {
+    const server = await import("./src/server.js");
+    return server.revokeManagedDevice(deviceId);
   });
   plugin.handle(MeetingChatProvidersRpc, async (_input, { paseo }) => {
     const server = await import("./src/server.js");

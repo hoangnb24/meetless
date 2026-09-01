@@ -25,6 +25,8 @@ describe("Meetless plugin contribution", () => {
       "meeting.premium.status",
       "meeting.premium.purchase",
       "meeting.premium.restore",
+      "meeting.premium.devices",
+      "meeting.premium.devices.revoke",
       "meeting.chat.providers",
       "meeting.chat.controls.v1",
       "meeting.chat.features.v1",

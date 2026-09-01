@@ -1,13 +1,11 @@
 /** RevenueCat webhook transport boundary.  No raw webhook is persisted here. */
 
 export const REVENUECAT_SIGNATURE_HEADER = "x-revenuecat-webhook-signature";
-export const REVENUECAT_AUTHORIZATION_HEADER = "authorization";
 export const REVENUECAT_REPLAY_TOLERANCE_MS = 5 * 60 * 1_000;
 
 export interface RevenueCatWebhookVerificationConfig {
-  readonly mode: "authorization" | "hmac";
-  readonly authorizationHeader?: string | null;
-  readonly signingSecret?: string | null;
+  readonly mode: "hmac";
+  readonly signingSecret: string;
   readonly replayToleranceMs?: number;
 }
 
@@ -35,20 +33,14 @@ export async function verifyRevenueCatWebhook(
   nowMs = Date.now(),
 ): Promise<void> {
   if (rawBody.byteLength === 0 || rawBody.byteLength > 1_000_000) throw new RevenueCatWebhookError("raw body size is outside the accepted bound");
-  if (config.mode === "authorization") {
-    const expected = config.authorizationHeader?.trim();
-    const actual = header(headers, REVENUECAT_AUTHORIZATION_HEADER);
-    if (!expected || !actual || !constantTimeEqual(actual, expected)) throw new RevenueCatWebhookError("authorization header is invalid");
-    return;
-  }
   if (config.mode !== "hmac") throw new RevenueCatWebhookError("authentication mode is unsupported");
-  const secret = config.signingSecret?.trim();
+  const secret = config.signingSecret.trim();
   if (!secret) throw new RevenueCatWebhookError("HMAC signing secret is not configured");
   const signature = header(headers, REVENUECAT_SIGNATURE_HEADER);
   if (!signature) throw new RevenueCatWebhookError("signature header is missing");
   const parsed = parseSignatureHeader(signature);
   const tolerance = config.replayToleranceMs ?? REVENUECAT_REPLAY_TOLERANCE_MS;
-  if (!Number.isSafeInteger(nowMs) || Math.abs(nowMs - parsed.timestamp * 1_000) > tolerance) {
+  if (!Number.isSafeInteger(tolerance) || tolerance < 0 || !Number.isSafeInteger(nowMs) || Math.abs(nowMs - parsed.timestamp * 1_000) > tolerance) {
     throw new RevenueCatWebhookError("signature timestamp is outside the replay tolerance");
   }
   const prefix = new TextEncoder().encode(`${parsed.timestamp}.`);
@@ -131,14 +123,22 @@ function header(headers: Record<string, string | undefined>, name: string): stri
 }
 
 function parseSignatureHeader(value: string): { timestamp: number; signature: string } {
-  const fields = new Map(value.split(",").map((part) => part.trim().split("=", 2) as [string, string]));
+  const fields = new Map<string, string>();
+  for (const part of value.split(",")) {
+    const [name, ...rest] = part.trim().split("=");
+    const fieldValue = rest.join("=");
+    if ((name !== "t" && name !== "v1") || !fieldValue || fields.has(name)) {
+      throw new RevenueCatWebhookError("signature header format is invalid");
+    }
+    fields.set(name, fieldValue);
+  }
   const timestampText = fields.get("t");
   const signature = fields.get("v1");
   if (!timestampText || !signature || !/^[0-9]+$/u.test(timestampText) || !/^[a-f0-9]{64}$/u.test(signature)) {
     throw new RevenueCatWebhookError("signature header format is invalid");
   }
   const timestamp = Number(timestampText);
-  if (!Number.isSafeInteger(timestamp)) throw new RevenueCatWebhookError("signature timestamp is invalid");
+  if (!Number.isSafeInteger(timestamp) || timestamp > Math.floor(Number.MAX_SAFE_INTEGER / 1_000)) throw new RevenueCatWebhookError("signature timestamp is invalid");
   return { timestamp, signature };
 }
 
@@ -165,6 +165,6 @@ function text(value: unknown, field: string): string {
 }
 
 function number(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) throw new RevenueCatWebhookError(`${field} is invalid`);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new RevenueCatWebhookError(`${field} is invalid`);
   return value;
 }
