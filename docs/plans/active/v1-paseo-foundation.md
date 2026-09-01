@@ -2,16 +2,16 @@
 
 ## Current State
 
-- `plan_revision`: `v35`
+- `plan_revision`: `v36`
 - `current_frontier`: `R5-MAS-DEVELOPMENT-PACKAGING-CORRECTION`
-- `state`: `R5_MAS_DEVELOPMENT_PACKAGING_CORRECTION_PENDING_CANDIDATE_ACCEPTANCE`
+- `state`: `R5_MAS_DEVELOPMENT_PACKAGING_REPOSITORY_ACCEPTED_EXTERNAL_GATES_CLOSED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: no accepted MAS correction candidate yet; this correction's immutable candidate will be created from exact parent `ab73a9def158f7e404d4e8e18e1ce06a7b883437`, the rejected/unaccepted descendant of correction predecessor `1a87e1e02191ad27eac619a51ca5b46a64b6a5a4`; last accepted base remains `d761a4de816c974357c66690c56948ccdd914aef`. The immutable candidate hash is reported at handoff; Lead acceptance remains open and accepted R4/R5 predecessors remain history and are not modified.
+- `candidate`: Lead accepted immutable repository candidate `6fe924d68c7bbb0f560ffbfed1501f67a66e0ea8`, whose exact parent is rejected candidate `ab73a9def158f7e404d4e8e18e1ce06a7b883437`; the accepted correction chain starts from last accepted base `d761a4de816c974357c66690c56948ccdd914aef`. No artifact or external result is accepted by this repository verdict.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `pending_ruling`: Lead acceptance of this repository correction remains open; the user-selected security-scoped export runtime gate, package/download/sign, launch, monthly purchase, and restore remain later separately authorized work.
+- `pending_ruling`: repository acceptance is closed; the user-selected security-scoped export runtime gate, package/download/sign, launch, monthly purchase, and restore remain later separately authorized work.
 - `blocked_by`: external gates are closed. No artifact readiness, package/download/sign result, launch result, purchase, restore, App Review, publication, or production deployment is claimed by this correction.
-- `next_action`: Lead inspects and accepts the immutable repository candidate; only afterward, under separate authority, may the MAS package be built/signed/launched and the monthly purchase/restore canary be attempted.
+- `next_action`: await separate owner authorization before any MAS package/download/sign/launch or monthly purchase/restore canary; repository acceptance alone opens no external gate.
 
 ## Ownership And Authority
 
@@ -1028,10 +1028,12 @@ as parent-entitled code, checks nested Mach-Os against child entitlements, and
 verifies every inventoried Mach-O without applying child entitlements to the
 outer executable.
 
-This is repository correction work only. The MAS package entrypoint, Electron
-download, actual signing, launch, monthly purchase, restore, and other external
-gates were not run or claimed; the immutable candidate remains pending Lead
-acceptance.
+This is repository correction work only. Lead accepted immutable candidate
+`6fe924d68c7bbb0f560ffbfed1501f67a66e0ea8` after independent artifact,
+certificate-requirement, focused test, native, validator, typecheck, build,
+syntax, frozen-contract, and clean-tree checks. The MAS package entrypoint,
+Electron download, actual signing, launch, monthly purchase, restore, and other
+external gates were not run or claimed.
 
 Observed repository-only verification on 2026-09-02: the focused MAS/runtime/
 direct-DMG command passed 3 files and 30 tests; `npm run validate:macos:app-store`,
@@ -1178,6 +1180,18 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v36`: Lead accepted immutable repository
+  candidate `6fe924d68c7bbb0f560ffbfed1501f67a66e0ea8`. Lead verified its exact parent
+  and six-path correction delta, the complete ten-path chain from `d761a4d`,
+  frozen seven-file zero diff and digest, actual local Apple Development
+  certificate CN/OU compatibility with the parsed native requirement, 3 focused
+  files and 30 tests, native `MeetlessHostTests`, MAS baseline, typecheck,
+  Meetless build, Node syntax, pinned-Paseo resolver output, diff check, and
+  clean tracked tree. MAS-DEV-001 is closed; MAS-DEV-002-narrowed, MAS-DEV-004,
+  and MAS-DEV-005 remain closed; MAS-DEV-003 remains rejected. Repository
+  acceptance opens no package, signing, launch, purchase, restore, deployment,
+  push, or other external gate.
 
 - 2026-09-02 `PLAN_RECONCILIATION v35`: the two deterministic MAS-DEV-001
   blockers are corrected within the existing boundaries. The marker resolver is
