@@ -1,5 +1,10 @@
+import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+import { PASEO_DEPENDENCY } from "./paseo-dependency.mjs";
+
+const execFileAsync = promisify(execFile);
 
 export const MACOS_APP_STORE_DEVELOPMENT_AUTHORITY = "docs/decisions/0005-mac-app-store-and-revenuecat.md";
 export const R5_APP_STORE_DEVELOPMENT_PROFILE_NAME = "Meetless Mac App Store R5 Sandbox Development";
@@ -21,6 +26,38 @@ export function resolveR5DevelopmentProfilePath(userHome = homedir()) {
     "Provisioning Profiles",
     R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME,
   );
+}
+
+export async function resolveR5DevelopmentPaseoCommit(repositoryRoot, { execute = execFileAsync } = {}) {
+  if (typeof repositoryRoot !== "string" || !path.isAbsolute(repositoryRoot)) {
+    throw paseoDevelopmentError("the MAS marker resolver requires an absolute repository root");
+  }
+  if (typeof execute !== "function") {
+    throw paseoDevelopmentError("the MAS marker resolver requires a Git command executor");
+  }
+  const paseoPath = path.join(repositoryRoot, "vendor", "paseo");
+  let result;
+  try {
+    result = await execute(
+      "git",
+      ["-C", paseoPath, "rev-parse", "--verify", "HEAD^{commit}"],
+      { cwd: repositoryRoot },
+    );
+  } catch (error) {
+    throw paseoDevelopmentError(
+      `cannot resolve the pinned Paseo commit from ${paseoPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const commit = typeof result?.stdout === "string" ? result.stdout.trim() : "";
+  if (!/^[a-f0-9]{40}$/u.test(commit)) {
+    throw paseoDevelopmentError(`Git returned an invalid Paseo commit marker from ${paseoPath}`);
+  }
+  if (commit !== PASEO_DEPENDENCY.expectedCommit) {
+    throw paseoDevelopmentError(
+      `Paseo is pinned to ${PASEO_DEPENDENCY.expectedCommit}, but ${paseoPath} resolves to ${commit}`,
+    );
+  }
+  return commit;
 }
 
 export function parseMacAppStoreDevelopmentArguments(arguments_) {
@@ -194,4 +231,11 @@ function matchLine(text, key) {
 
 function developmentError(reason) {
   return new Error(`${reason}. Authority: ${MACOS_APP_STORE_DEVELOPMENT_AUTHORITY}. Next action: use the exact accepted R5 development profile, identity, and build-scoped public Apple SDK key.`);
+}
+
+function paseoDevelopmentError(reason) {
+  return new Error(
+    `${reason}. Authority: ${MACOS_APP_STORE_DEVELOPMENT_AUTHORITY} and docs/decisions/0001-maintained-paseo-fork.md. ` +
+      "Next action: restore vendor/paseo to the accepted pinned commit before rebuilding the MAS marker.",
+  );
 }

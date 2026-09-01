@@ -7,9 +7,12 @@ private let meetlessInstallPath = "/Applications/Meetless.app"
 private let meetlessBundleIdentifier = "com.meetless.app"
 private let meetlessDeveloperIDTeam = "63M98WD275"
 private let meetlessDeveloperIDRequirement = "identifier \"com.meetless.app\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"63M98WD275\""
+private let meetlessAppStoreDevelopmentIdentity = "Apple Development: Long Le (335C7MY4H4)"
+private let meetlessAppStoreDevelopmentRequirement = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[subject.CN] = \"Apple Development: Long Le (335C7MY4H4)\" and certificate leaf[subject.OU] = \"63M98WD275\""
 private let meetlessHostConfigSchema = "MEETLESS_MACOS_HOST_CONFIG v2"
 private let meetlessInstallationContractSchema = "MEETLESS_INSTALLATION_CONTRACT v1"
 private let meetlessPackageSchema = "MEETLESS_MACOS_PACKAGE v2"
+private let meetlessDirectRuntimeRootRelativePath = "Library/Application Support/Meetless"
 private let meetlessAppStoreContainerSupportRelativePath = "Library/Containers/com.meetless.app/Data/Library/Application Support"
 private let meetlessAppStoreRuntimeRootRelativePath = "\(meetlessAppStoreContainerSupportRelativePath)/Meetless"
 private let meetlessAppStoreRecordingExportsRelativePath = "\(meetlessAppStoreContainerSupportRelativePath)/Meetless/recordings"
@@ -44,6 +47,11 @@ struct MeetlessLaunchCoordinator<Configuration> {
     try runtime(configuration)
     return configuration
   }
+}
+
+enum MeetlessPackagedSignaturePolicy: Equatable {
+  case directDeveloperID
+  case appStoreDevelopment
 }
 
 enum MeetlessInstallLocation {
@@ -252,6 +260,27 @@ func meetlessAppStoreContainerSupportRoot(for runtimeRoot: String) -> String? {
   return URL(fileURLWithPath: runtimeRoot).deletingLastPathComponent().standardizedFileURL.path
 }
 
+func meetlessSignaturePolicy(forRuntimeRootRelativePath relative: String) -> MeetlessPackagedSignaturePolicy? {
+  switch relative {
+  case meetlessDirectRuntimeRootRelativePath:
+    return .directDeveloperID
+  case meetlessAppStoreRuntimeRootRelativePath:
+    return .appStoreDevelopment
+  default:
+    return nil
+  }
+}
+
+func meetlessSignaturePolicy(forRuntimeRoot runtimeRoot: String) -> MeetlessPackagedSignaturePolicy? {
+  if runtimeRoot.hasSuffix("/\(meetlessAppStoreRuntimeRootRelativePath)") {
+    return .appStoreDevelopment
+  }
+  if runtimeRoot.hasSuffix("/\(meetlessDirectRuntimeRootRelativePath)") {
+    return .directDeveloperID
+  }
+  return nil
+}
+
 private func resolvePackagedRuntimeRoot(_ relative: String, label: String) throws -> String {
   guard relative == meetlessAppStoreRuntimeRootRelativePath else {
     return try userHomeRelativePath(relative, label: label)
@@ -298,27 +327,40 @@ private func firstMatch(_ value: String, pattern: String) -> String? {
   return String(value[range])
 }
 
+func meetlessPackagedSignatureRequirement(for policy: MeetlessPackagedSignaturePolicy) -> String {
+  switch policy {
+  case .directDeveloperID:
+    return meetlessDeveloperIDRequirement
+  case .appStoreDevelopment:
+    return meetlessAppStoreDevelopmentRequirement
+  }
+}
+
 func meetlessMayMigrateLegacyIdentity(
   previousRequirement: String,
   currentRequirement: String,
-  packagedDeveloperIDVerified: Bool
+  packagedSignaturePolicy: MeetlessPackagedSignaturePolicy?
 ) -> Bool {
-  guard packagedDeveloperIDVerified, previousRequirement != currentRequirement else { return false }
+  guard packagedSignaturePolicy != nil, previousRequirement != currentRequirement else { return false }
   return previousRequirement.range(
     of: #"\Acdhash H\"[0-9A-Fa-f]{40}\"\z"#,
     options: .regularExpression
   ) != nil
 }
 
-private func assertApprovedPackagedDeveloperIDSignature(_ bundlePath: String) throws {
+private func assertApprovedPackagedSignature(
+  _ bundlePath: String,
+  policy: MeetlessPackagedSignaturePolicy
+) throws {
+  let identity = policy == .appStoreDevelopment ? meetlessAppStoreDevelopmentIdentity : "Developer ID"
   _ = try inspectCodesign([
     "--verify",
     "--deep",
     "--strict",
     "--verbose=4",
-    "-R=\(meetlessDeveloperIDRequirement)",
+    "-R=\(meetlessPackagedSignatureRequirement(for: policy))",
     bundlePath,
-  ], label: "Developer ID signature for team \(meetlessDeveloperIDTeam)")
+  ], label: "\(identity) signature for team \(meetlessDeveloperIDTeam)")
 }
 
 private func writeIdentityAtomically(_ data: Data, to identityPath: String, runtimeRoot: String) throws {
@@ -469,6 +511,9 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       let nodeRelative = file.nodePath,
       let runtimeCliRelative = file.runtimeCliPath
     else { throw hostPreflightError("packaged host configuration is incomplete") }
+    guard meetlessSignaturePolicy(forRuntimeRootRelativePath: runtimeRootRelative) != nil else {
+      throw hostPreflightError("packaged runtime root does not identify the exact direct-DMG or MAS development target")
+    }
 
     let packageRoot = try bundleRelativePath(packageRootRelative, label: "package root")
     let contractPath = try bundleRelativePath(packageRootRelative + "/" + contractFilename, label: "installation contract")
@@ -576,7 +621,10 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     guard FileManager.default.isExecutableFile(atPath: hostExecutable) else {
       throw hostPreflightError("MeetlessHost executable is missing or not executable")
     }
-    try assertApprovedPackagedDeveloperIDSignature(Bundle.main.bundlePath)
+    guard let signaturePolicy = meetlessSignaturePolicy(forRuntimeRoot: configuration.runtimeRoot) else {
+      throw hostPreflightError("packaged resource attestation has no exact target signature policy")
+    }
+    try assertApprovedPackagedSignature(Bundle.main.bundlePath, policy: signaturePolicy)
   }
 
   private func publishIdentity(_ configuration: HostConfiguration) throws {
@@ -619,7 +667,9 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
         previous.bundleRealPath == meetlessInstallPath &&
         previous.designatedRequirement == identity.designatedRequirement
       if !stableIdentity {
-        let packaged = configuration.repositoryRoot.hasPrefix(bundlePath + "/")
+        let packagedSignaturePolicy = configuration.repositoryRoot.hasPrefix(bundlePath + "/")
+          ? meetlessSignaturePolicy(forRuntimeRoot: configuration.runtimeRoot)
+          : nil
         let sameOwner = previous.bundleIdentifier == identity.bundleIdentifier &&
           previous.bundlePath == meetlessInstallPath &&
           previous.bundleRealPath == meetlessInstallPath &&
@@ -628,10 +678,10 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
         let trustedMigration = sameOwner && meetlessMayMigrateLegacyIdentity(
           previousRequirement: previous.designatedRequirement,
           currentRequirement: identity.designatedRequirement,
-          packagedDeveloperIDVerified: packaged
+          packagedSignaturePolicy: packagedSignaturePolicy
         )
-        if trustedMigration {
-          try assertApprovedPackagedDeveloperIDSignature(bundlePath)
+        if trustedMigration, let packagedSignaturePolicy {
+          try assertApprovedPackagedSignature(bundlePath, policy: packagedSignaturePolicy)
         } else {
           throw hostPreflightError("recorded host identity drifted in path, bundle identifier, or designated requirement; refusing to refresh it")
         }

@@ -2,11 +2,11 @@
 
 ## Current State
 
-- `plan_revision`: `v34`
+- `plan_revision`: `v35`
 - `current_frontier`: `R5-MAS-DEVELOPMENT-PACKAGING-CORRECTION`
 - `state`: `R5_MAS_DEVELOPMENT_PACKAGING_CORRECTION_PENDING_CANDIDATE_ACCEPTANCE`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: no accepted MAS correction candidate yet; this correction is based on `1a87e1e02191ad27eac619a51ca5b46a64b6a5a4` with original base `d761a4de816c974357c66690c56948ccdd914aef`. The immutable candidate hash is reported at handoff; accepted R4/R5 predecessors remain history and are not modified.
+- `candidate`: no accepted MAS correction candidate yet; this correction's immutable candidate will be created from exact parent `ab73a9def158f7e404d4e8e18e1ce06a7b883437`, the rejected/unaccepted descendant of correction predecessor `1a87e1e02191ad27eac619a51ca5b46a64b6a5a4`; last accepted base remains `d761a4de816c974357c66690c56948ccdd914aef`. The immutable candidate hash is reported at handoff; Lead acceptance remains open and accepted R4/R5 predecessors remain history and are not modified.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `pending_ruling`: Lead acceptance of this repository correction remains open; the user-selected security-scoped export runtime gate, package/download/sign, launch, monthly purchase, and restore remain later separately authorized work.
@@ -980,9 +980,22 @@ zero storage objects.
 
 ### R5 Mac App Store development packaging correction (2026-09-02)
 
-The prior local packaging claim is reopened. This correction keeps the direct
-DMG composer, direct contract JSON, and direct runtime behavior unchanged, then
-introduces one target-specific MAS composition boundary: after the direct
+The prior local packaging claim is reopened. This correction closes only the two
+MAS-DEV-001 blockers while keeping the direct DMG composer, direct contract JSON,
+and direct runtime behavior unchanged. The MAS marker now resolves the exact
+checked-in Paseo revision through an import-safe helper and validates the
+resolved commit against the accepted pin before marker construction; importing
+the helper does not run either packaging entrypoint. The native host derives its
+signature policy from the exact packaged runtime-root contract: direct-DMG
+packages retain the Developer ID requirement, while the MAS app-container path
+requires only `Apple Development: Long Le (335C7MY4H4)` with bundle
+`com.meetless.app` and Team `63M98WD275`. Resource attestation and identity
+publication/migration use that same target policy, and an unknown packaged path
+fails closed. Direct legacy identity migration remains restricted to the
+existing exact Developer ID path; MAS migration is allowed only after the exact
+MAS requirement is verified.
+
+The target-specific MAS composition boundary remains: after the direct
 composition is retained as provenance, the MAS bundle receives a generated
 installation contract, package marker, and host configuration whose writable
 state and recording destination resolve inside the Meetless app container. The
@@ -1021,13 +1034,15 @@ gates were not run or claimed; the immutable candidate remains pending Lead
 acceptance.
 
 Observed repository-only verification on 2026-09-02: the focused MAS/runtime/
-direct-DMG command passed 3 files and 29 tests; `npm run validate:macos:app-store`,
+direct-DMG command passed 3 files and 30 tests; `npm run validate:macos:app-store`,
 `npm run typecheck`, `npm run build:meetless`, and `npm run build:native` passed;
-the native command also ran `MeetlessHostTests` successfully. Node syntax checks
-and `git diff --check` passed. The frozen-file `sha256sum` record digest matched
-`fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`. No
-checked-in CI workflow or executable local hook invokes the MAS packager; branch
-protection was not queried and was not changed.
+the native command also ran `MeetlessHostTests` successfully. Both modified Node
+files passed `node --check`; the direct helper probe resolved
+`7618cda71e2836f9ba7e821286504841203cb745` without running the MAS packaging
+entrypoint. `git diff --check` passed. The frozen-file `sha256sum` record digest
+matched `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`.
+No checked-in CI workflow or executable local hook invokes the MAS packager;
+branch protection was not queried and was not changed.
 
 ### Risks And Recovery
 
@@ -1163,6 +1178,19 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v35`: the two deterministic MAS-DEV-001
+  blockers are corrected within the existing boundaries. The marker resolver is
+  import-safe, executes `git -C vendor/paseo rev-parse --verify HEAD^{commit}`
+  against the repository root, and accepts only the ADR0001 pinned revision.
+  Native packaged verification selects direct Developer ID or the exact R5
+  Apple Development identity from the existing direct/MAS runtime-root contract;
+  resource attestation and legacy identity migration use the selected policy.
+  Focused positive/negative runtime and native proof, syntax, validator,
+  typecheck, build, native-test, diff, and frozen-authority checks passed. The
+  immutable candidate is pending Lead acceptance; MAS packaging and all external
+  gates remain closed. MAS-DEV-002-narrowed, MAS-DEV-004, and MAS-DEV-005 remain
+  closed, and MAS-DEV-003 remains rejected.
 
 - 2026-09-02 `PLAN_RECONCILIATION v34`: the prior MAS development-packaging
   claim was reopened by `R5-MAS-DEVELOPMENT-PACKAGING-CORRECTION`. The active

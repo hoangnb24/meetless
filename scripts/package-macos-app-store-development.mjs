@@ -36,6 +36,7 @@ import {
   R5_APP_STORE_TEAM_ID,
   parseMacAppStoreDevelopmentArguments,
   prepareMacAppStoreDevelopmentInfo,
+  resolveR5DevelopmentPaseoCommit,
   validateMacAppStoreDevelopmentInfo,
   validateR5DevelopmentElectronFileOutput,
   validateR5DevelopmentElectronInfo,
@@ -191,7 +192,7 @@ async function applyMacAppStorePackageContract() {
   const contractBytes = macAppStoreInstallationContractBytes();
   const contractSha256 = macAppStoreInstallationContractSha256();
   const contract = JSON.parse(contractBytes.toString("utf8"));
-  const marker = macAppStorePackagedMarker({ paseoCommit: await gitPaseoCommit() });
+  const marker = macAppStorePackagedMarker({ paseoCommit: await resolveR5DevelopmentPaseoCommit(repositoryRoot) });
   const hostConfiguration = macAppStorePackagedHostConfiguration({ contractSha256 });
   validateMacAppStorePackageContract(contract);
   validateMacAppStorePackagedMarker(marker, { contractSha256 });

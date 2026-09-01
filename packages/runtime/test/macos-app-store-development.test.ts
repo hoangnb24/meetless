@@ -8,6 +8,7 @@ import {
   R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME,
   R5_APP_STORE_DEVELOPMENT_PROFILE_NAME,
   R5_APP_STORE_DEVELOPMENT_PROFILE_UUID,
+  resolveR5DevelopmentPaseoCommit,
   resolveR5DevelopmentProfilePath,
   validateMacAppStoreDevelopmentInfo,
   validateR5DevelopmentElectronFileOutput,
@@ -135,6 +136,32 @@ describe("Mac App Store development package boundary", () => {
     expect(resolveR5DevelopmentProfilePath("/Users/example")).toBe(
       "/Users/example/Library/Developer/Xcode/UserData/Provisioning Profiles/828a0bac-887f-4e60-9e4b-9da7690178bc.mobileprovision",
     );
+  });
+
+  test("binds the MAS marker to the pinned Paseo commit without running the packager", async () => {
+    const calls: unknown[][] = [];
+    const commit = await resolveR5DevelopmentPaseoCommit("/workspace/meetless", {
+      execute: async (...arguments_) => {
+        calls.push(arguments_);
+        return { stdout: "7618cda71e2836f9ba7e821286504841203cb745\n" };
+      },
+    });
+    expect(commit).toBe("7618cda71e2836f9ba7e821286504841203cb745");
+    expect(calls).toEqual([[
+      "git",
+      ["-C", "/workspace/meetless/vendor/paseo", "rev-parse", "--verify", "HEAD^{commit}"],
+      { cwd: "/workspace/meetless" },
+    ]]);
+
+    await expect(resolveR5DevelopmentPaseoCommit("/workspace/meetless", {
+      execute: async () => ({ stdout: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" }),
+    })).rejects.toThrow(/Paseo is pinned.*docs\/decisions\/0001-maintained-paseo-fork\.md.*restore vendor\/paseo/s);
+    await expect(resolveR5DevelopmentPaseoCommit("/workspace/meetless", {
+      execute: async () => ({ stdout: "not-a-commit\n" }),
+    })).rejects.toThrow(/invalid Paseo commit marker/);
+    await expect(resolveR5DevelopmentPaseoCommit("relative-repository", {
+      execute: async () => ({ stdout: "7618cda71e2836f9ba7e821286504841203cb745" }),
+    })).rejects.toThrow(/absolute repository root/);
   });
 
   test("binds the exact profile, team, app, and one current Mac", () => {

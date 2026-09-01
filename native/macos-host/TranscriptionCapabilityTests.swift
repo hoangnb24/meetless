@@ -127,6 +127,50 @@ private func testAppStoreContainerRuntimeResolutionBoundary() {
   )
 }
 
+private func testPackagedSignaturePolicyBoundary() {
+  let directRuntimeRoot = "Library/Application Support/Meetless"
+  let appStoreRuntimeRoot = "Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless"
+  let directPolicy = meetlessSignaturePolicy(forRuntimeRootRelativePath: directRuntimeRoot)
+  let appStorePolicy = meetlessSignaturePolicy(forRuntimeRootRelativePath: appStoreRuntimeRoot)
+  let directResolvedRuntimeRoot = "/Users/example/Library/Application Support/Meetless"
+  let appStoreResolvedRuntimeRoot = "/Users/example/Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless"
+  check(
+    directPolicy == MeetlessPackagedSignaturePolicy.directDeveloperID,
+    "direct packaged state must select the Developer ID signature policy"
+  )
+  check(
+    appStorePolicy == MeetlessPackagedSignaturePolicy.appStoreDevelopment,
+    "MAS app-container state must select the Apple Development signature policy"
+  )
+  check(
+    meetlessSignaturePolicy(forRuntimeRoot: directResolvedRuntimeRoot) == .directDeveloperID,
+    "resolved direct-DMG runtime state must select the Developer ID signature policy"
+  )
+  check(
+    meetlessSignaturePolicy(forRuntimeRoot: appStoreResolvedRuntimeRoot) == .appStoreDevelopment,
+    "resolved MAS app-container runtime state must select the Apple Development signature policy"
+  )
+  check(
+    meetlessSignaturePolicy(forRuntimeRootRelativePath: "Library/Application Support/Other") == nil,
+    "an unknown packaged target must not inherit either signature policy"
+  )
+
+  let directRequirement = meetlessPackagedSignatureRequirement(for: .directDeveloperID)
+  let appStoreRequirement = meetlessPackagedSignatureRequirement(for: .appStoreDevelopment)
+  check(
+    directRequirement.contains("certificate 1[field.1.2.840.113635.100.6.2.6] exists") &&
+      directRequirement.contains("certificate leaf[field.1.2.840.113635.100.6.1.13] exists") &&
+      !directRequirement.contains("Apple Development"),
+    "direct packaging must retain the exact Developer ID certificate requirement"
+  )
+  check(
+    appStoreRequirement.contains("certificate leaf[subject.CN] = \"Apple Development: Long Le (335C7MY4H4)\"") &&
+      appStoreRequirement.contains("certificate leaf[subject.OU] = \"63M98WD275\"") &&
+      !appStoreRequirement.contains("field.1.2.840.113635.100.6.1.13"),
+    "MAS packaging must require only the exact Apple Development identity and Team ID"
+  )
+}
+
 private func fixtureIdentity(_ data: Data) -> StagedRangeIdentity {
   StagedRangeIdentity(
     byteLength: Int64(data.count),
@@ -780,7 +824,7 @@ private func testLegacyIdentityMigrationBoundary() {
     meetlessMayMigrateLegacyIdentity(
       previousRequirement: legacy,
       currentRequirement: stableDeveloperID,
-      packagedDeveloperIDVerified: true
+      packagedSignaturePolicy: .directDeveloperID
     ),
     "verified Developer ID package must migrate one exact legacy ad-hoc identity"
   )
@@ -788,7 +832,7 @@ private func testLegacyIdentityMigrationBoundary() {
     !meetlessMayMigrateLegacyIdentity(
       previousRequirement: legacy,
       currentRequirement: stableDeveloperID,
-      packagedDeveloperIDVerified: false
+      packagedSignaturePolicy: nil
     ),
     "unverified signer or team must not migrate legacy identity"
   )
@@ -796,7 +840,7 @@ private func testLegacyIdentityMigrationBoundary() {
     !meetlessMayMigrateLegacyIdentity(
       previousRequirement: "identifier \"com.meetless.app\" and anchor cdhash H\"abc\"",
       currentRequirement: stableDeveloperID,
-      packagedDeveloperIDVerified: true
+      packagedSignaturePolicy: .directDeveloperID
     ),
     "non-canonical legacy requirements must not migrate"
   )
@@ -804,9 +848,17 @@ private func testLegacyIdentityMigrationBoundary() {
     !meetlessMayMigrateLegacyIdentity(
       previousRequirement: legacy,
       currentRequirement: legacy,
-      packagedDeveloperIDVerified: true
+      packagedSignaturePolicy: .directDeveloperID
     ),
     "migration helper must not classify an unchanged identity as migration"
+  )
+  check(
+    meetlessMayMigrateLegacyIdentity(
+      previousRequirement: legacy,
+      currentRequirement: meetlessPackagedSignatureRequirement(for: .appStoreDevelopment),
+      packagedSignaturePolicy: .appStoreDevelopment
+    ),
+    "verified MAS Apple Development package must migrate one exact legacy ad-hoc identity"
   )
 }
 
@@ -815,6 +867,7 @@ private struct TranscriptionCapabilityTests {
   static func main() {
     testLaunchCoordinatorLifecycle()
     testAppStoreContainerRuntimeResolutionBoundary()
+    testPackagedSignaturePolicyBoundary()
     do { try testHostExecutableUsesPOSIXIdentity() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: POSIX host executable identity: \(error)\n".utf8))
