@@ -65,6 +65,8 @@ struct MeetlessProcessRegistrationPolicy: Equatable {
   let transcriptionEndpointName: String
   let nodePath: String
   let runtimeCliPath: String
+  let daemonWorkerPath: String
+  let daemonWorkerArguments: [String]
   let pluginPath: String
   let pluginArguments: [String]
   let captureHelperPath: String

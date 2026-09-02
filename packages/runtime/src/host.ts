@@ -762,14 +762,14 @@ async function expectedPackagedProcessIdentity(
   const runtimeCli = path.join(path.resolve(config.paths.plugin, "..", ".."), "packages", "runtime", "dist", "cli.js");
   const pluginPath = path.join(
     path.resolve(config.paths.plugin, "..", ".."),
-    "vendor", "paseo", "packages", "server", "dist", "server", "server", "daemon-worker.js",
+    "vendor", "paseo", "packages", "server", "dist", "server", "server", "plugins", "plugin-process.js",
   );
   const arguments_ = role === "desktop"
     ? [executable, runtimeCli, "desktop"]
     : role === "daemon"
     ? [executable, runtimeCli, "daemon"]
     : role === "plugin"
-    ? [executable, pluginPath, "daemon"]
+    ? [executable, pluginPath]
     : [executable];
   return configuredProcessIdentity(executable, arguments_);
 }

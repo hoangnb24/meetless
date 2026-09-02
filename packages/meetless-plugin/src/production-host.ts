@@ -274,10 +274,9 @@ function parseExpectedPluginArguments(
   try { decoded = JSON.parse(raw); } catch { throw hostFailure("packaged plugin argv policy is not valid JSON"); }
   if (
     !Array.isArray(decoded) ||
-    decoded.length !== 3 ||
+    decoded.length !== 2 ||
     decoded[0] !== expectedNodePath ||
     decoded[1] !== expectedPluginPath ||
-    decoded[2] !== "daemon" ||
     decoded.some((value) => typeof value !== "string" || !value || value !== value.trim() || value.includes("\0"))
   ) {
     throw hostFailure("packaged plugin argv policy is incomplete or differs from the native host policy");

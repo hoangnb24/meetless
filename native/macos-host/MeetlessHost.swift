@@ -466,11 +466,16 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
               transcriptionEndpointName: transcriptionEndpointName,
               nodePath: configuration.nodePath,
               runtimeCliPath: configuration.runtimeCliPath,
-              pluginPath: packagedDaemonWorkerPath(configuration.repositoryRoot),
-              pluginArguments: [
+              daemonWorkerPath: packagedDaemonWorkerPath(configuration.repositoryRoot),
+              daemonWorkerArguments: [
                 configuration.nodePath,
                 packagedDaemonWorkerPath(configuration.repositoryRoot),
                 "daemon"
+              ],
+              pluginPath: packagedPluginProcessPath(configuration.repositoryRoot),
+              pluginArguments: [
+                configuration.nodePath,
+                packagedPluginProcessPath(configuration.repositoryRoot)
               ],
               captureHelperPath: captureHelperPath
             )
@@ -978,7 +983,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       }
       environment["MEETLESS_RUNTIME_ENDPOINTS"] = compositionValue
       environment["MEETLESS_RUNTIME_PACKAGED"] = "1"
-      let pluginPath = packagedDaemonWorkerPath(configuration.repositoryRoot)
+      let pluginPath = packagedPluginProcessPath(configuration.repositoryRoot)
       environment["MEETLESS_HOST_PROCESS_ENDPOINT"] = transcriptionEndpointName
       environment["MEETLESS_HOST_EXPECTED_NODE_PATH"] = configuration.nodePath
       environment["MEETLESS_HOST_EXPECTED_RUNTIME_CLI_PATH"] = configuration.runtimeCliPath
@@ -987,7 +992,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
         throw hostPreflightError("packaged capture helper identity is unavailable")
       }
       environment["MEETLESS_HOST_EXPECTED_CAPTURE_HELPER_PATH"] = captureHelperPath
-      if let pluginArguments = try? JSONEncoder().encode([configuration.nodePath, pluginPath, "daemon"]),
+      if let pluginArguments = try? JSONEncoder().encode([configuration.nodePath, pluginPath]),
          let encodedPluginArguments = String(data: pluginArguments, encoding: .utf8) {
         environment["MEETLESS_HOST_EXPECTED_PLUGIN_ARGV"] = encodedPluginArguments
       } else {
@@ -1045,8 +1050,16 @@ public func runMeetlessHostApplication() {
 }
 
 final class RuntimeAuthorizationState {
+  private struct ProcessOwnerEvidence: Equatable {
+    let role: String
+    let pid: pid_t
+    let identity: MeetlessProcessIdentity
+    let parentPID: pid_t
+    let parentIdentity: MeetlessProcessIdentity
+  }
+
   private struct RegisteredChild {
-    let ownerPID: pid_t
+    let owner: ProcessOwnerEvidence
     let role: String
     let pid: pid_t
     let expectedIdentity: MeetlessProcessIdentity
@@ -1054,18 +1067,51 @@ final class RuntimeAuthorizationState {
     var attested: Bool
   }
 
+  private struct RegistrationOwnerPlan {
+    let role: String
+    let pid: pid_t
+    let expectedIdentity: MeetlessProcessIdentity
+    let parentPID: pid_t
+    let expectedParentIdentity: MeetlessProcessIdentity
+  }
+
+  private struct AuthorizationSnapshot {
+    let generation: UInt64
+    let revision: UInt64
+    let runtimePID: pid_t
+    let processPolicy: MeetlessProcessRegistrationPolicy
+    let hostIdentity: MeetlessHostIdentityAttestation
+    let hostPID: pid_t
+    let hostProcessIdentity: MeetlessProcessIdentity?
+    let desktopOwnerToken: String?
+    let desktopAttested: Bool
+    let desktopIdentity: MeetlessProcessIdentity?
+    let registrations: [pid_t: RegisteredChild]
+  }
+
   private let lock = NSLock()
   private var runtimePID: pid_t?
   private var generation: UInt64 = 0
+  private var revision: UInt64 = 0
   private var processPolicy: MeetlessProcessRegistrationPolicy?
   private var hostIdentity: MeetlessHostIdentityAttestation?
   private var hostPID: pid_t?
+  private var hostProcessIdentity: MeetlessProcessIdentity?
   private var desktopOwnerToken: String?
   private var desktopAttested = false
+  private var desktopIdentity: MeetlessProcessIdentity?
   private var registrations: [pid_t: RegisteredChild] = [:]
   private var usedRequestIDs: Set<String> = []
+  private var usedRegistrationTokens: Set<String> = []
   private var usedChallenges: Set<String> = []
   private var activeExecutions: [UUID: NativeRequestCancellation] = [:]
+  private var inspectionHook: (() -> Void)?
+
+  func setInspectionHook(_ hook: (() -> Void)?) {
+    lock.lock()
+    inspectionHook = hook
+    lock.unlock()
+  }
 
   func configure(
     processPolicy: MeetlessProcessRegistrationPolicy,
@@ -1076,18 +1122,32 @@ final class RuntimeAuthorizationState {
     self.processPolicy = processPolicy
     self.hostIdentity = hostIdentity
     self.hostPID = hostPID
+    self.hostProcessIdentity = nil
+    self.desktopIdentity = nil
+    self.desktopAttested = false
+    self.registrations.removeAll()
+    self.usedRequestIDs.removeAll()
+    self.usedRegistrationTokens.removeAll()
+    self.usedChallenges.removeAll()
+    self.inspectionHook = nil
+    revision &+= 1
     lock.unlock()
   }
 
   func publish(_ pid: pid_t) {
     lock.lock()
     generation &+= 1
+    revision &+= 1
     runtimePID = pid > 1 ? pid : nil
     desktopOwnerToken = runtimePID == nil ? nil : UUID().uuidString
     desktopAttested = false
+    desktopIdentity = nil
+    hostProcessIdentity = nil
     registrations.removeAll()
     usedRequestIDs.removeAll()
+    usedRegistrationTokens.removeAll()
     usedChallenges.removeAll()
+    inspectionHook = nil
     let cancellations = Array(activeExecutions.values)
     activeExecutions.removeAll()
     lock.unlock()
@@ -1101,12 +1161,17 @@ final class RuntimeAuthorizationState {
       return
     }
     generation &+= 1
+    revision &+= 1
     runtimePID = nil
     desktopOwnerToken = nil
     desktopAttested = false
+    desktopIdentity = nil
+    hostProcessIdentity = nil
     registrations.removeAll()
     usedRequestIDs.removeAll()
+    usedRegistrationTokens.removeAll()
     usedChallenges.removeAll()
+    inspectionHook = nil
     let cancellations = Array(activeExecutions.values)
     activeExecutions.removeAll()
     lock.unlock()
@@ -1130,7 +1195,11 @@ final class RuntimeAuthorizationState {
       lock.unlock()
       return nil
     }
-    let candidate = RuntimeAuthorizationLease(runtimePID: pid, generation: generation)
+    let candidate = RuntimeAuthorizationLease(
+      runtimePID: pid,
+      generation: generation,
+      revision: requireRegistered ? revision : nil
+    )
     lock.unlock()
     let authorized: Bool
     if requireRegistered {
@@ -1153,9 +1222,7 @@ final class RuntimeAuthorizationState {
     lock.lock()
     guard let runtimePID,
           runtimePID == peerPID,
-          let processPolicy,
           hostIdentity != nil,
-          let hostPID,
           let ownerToken = desktopOwnerToken,
           useRequestIDLocked(requestId),
           usedChallenges.count < 256,
@@ -1164,28 +1231,57 @@ final class RuntimeAuthorizationState {
       lock.unlock()
       return nil
     }
-    let currentGeneration = generation
+    revision &+= 1
     lock.unlock()
 
-    let expected = expectedProcessIdentity(for: "desktop", policy: processPolicy)
-    guard liveParentPID(peerPID) == hostPID,
-          let identity = try? inspectMeetlessProcessIdentity(peerPID),
-          identity.configuredPath == expected.configuredPath,
-          identity.argv == expected.argv else { return nil }
+    for _ in 0..<3 {
+      lock.lock()
+      guard generation > 0,
+            runtimePID == peerPID,
+            desktopOwnerToken == ownerToken,
+            !desktopAttested,
+            let snapshot = authorizationSnapshotLocked() else {
+        lock.unlock()
+        return nil
+      }
+      lock.unlock()
 
-    lock.lock()
-    defer { lock.unlock() }
-    guard generation == currentGeneration,
-          runtimePID == peerPID,
-          desktopOwnerToken == ownerToken,
-          let finalHostIdentity = self.hostIdentity else { return nil }
-    desktopAttested = true
-    return MeetlessDesktopAttestationResult(
-      generation: currentGeneration,
-      ownerToken: ownerToken,
-      identity: identity,
-      hostIdentity: finalHostIdentity
-    )
+      guard inspectDesktopAttestation(snapshot) != nil else { return nil }
+      notifyInspectionHook()
+
+      lock.lock()
+      guard isCurrentStateLocked(snapshot),
+            runtimePID == peerPID,
+            desktopOwnerToken == ownerToken,
+            !desktopAttested else {
+        lock.unlock()
+        continue
+      }
+      lock.unlock()
+
+      guard let finalObservation = inspectDesktopAttestation(snapshot) else { return nil }
+      lock.lock()
+      guard isCurrentStateLocked(snapshot),
+            runtimePID == peerPID,
+            desktopOwnerToken == ownerToken,
+            !desktopAttested,
+            let finalHostIdentity = self.hostIdentity else {
+        lock.unlock()
+        continue
+      }
+      desktopIdentity = finalObservation.identity
+      hostProcessIdentity = finalObservation.hostProcessIdentity
+      desktopAttested = true
+      revision &+= 1
+      lock.unlock()
+      return MeetlessDesktopAttestationResult(
+        generation: snapshot.generation,
+        ownerToken: ownerToken,
+        identity: finalObservation.identity,
+        hostIdentity: finalHostIdentity
+      )
+    }
+    return nil
   }
 
   func registerChild(
@@ -1201,48 +1297,106 @@ final class RuntimeAuthorizationState {
   ) -> MeetlessChildRegistrationResult? {
     guard validProtocolToken(requestId), validProtocolToken(ownerToken), validProtocolToken(registrationToken), validProcessIdentity(expectedIdentity),
           validProcessRole(role), childPID > 1 else { return nil }
-    pruneDeadRegistrations()
+
+    guard pruneDeadRegistrations() else { return nil }
     lock.lock()
-    let ownerPID = registrationOwnerPIDLocked(peerPID: peerPID, childPID: childPID, role: role, ownerToken: ownerToken)
     guard generation == requestedGeneration,
           liveRuntimePIDLocked() != nil,
           let processPolicy,
           policyMatches(requestedPolicy, processPolicy),
           useRequestIDLocked(requestId),
-          ownerPID != nil,
+          registrationToken != ownerToken,
+          !usedRegistrationTokens.contains(registrationToken),
           expectedIdentityMatchesPolicy(expectedIdentity, role: role, policy: processPolicy),
           registrations[childPID] == nil,
           !registrations.values.contains(where: { $0.role == role }) else {
       lock.unlock()
       return nil
     }
-    let currentGeneration = generation
-    let expectedOwnerPID = ownerPID!
     lock.unlock()
 
-    guard liveParentPID(childPID) == expectedOwnerPID,
-          let liveIdentity = try? inspectMeetlessProcessIdentity(childPID),
-          liveIdentity == expectedIdentity else { return nil }
+    for _ in 0..<3 {
+      let observedParentPID = liveParentPID(childPID)
+      lock.lock()
+      guard generation == requestedGeneration,
+            liveRuntimePIDLocked() != nil,
+            let snapshot = authorizationSnapshotLocked(),
+            policyMatches(requestedPolicy, snapshot.processPolicy),
+            expectedIdentityMatchesPolicy(expectedIdentity, role: role, policy: snapshot.processPolicy),
+            registrations[childPID] == nil,
+            !registrations.values.contains(where: { $0.role == role }),
+            usedRegistrationTokens.count < 256,
+            !usedRegistrationTokens.contains(registrationToken) else {
+        lock.unlock()
+        return nil
+      }
+      guard let ownerPlan = registrationOwnerPlanLocked(
+        peerPID: peerPID,
+        childPID: childPID,
+        role: role,
+        ownerToken: ownerToken,
+        observedParentPID: observedParentPID,
+        snapshot: snapshot
+      ) else {
+        lock.unlock()
+        return nil
+      }
+      lock.unlock()
 
-    lock.lock()
-    defer { lock.unlock() }
-    guard generation == currentGeneration,
-          liveRuntimePIDLocked() != nil,
-          registrations[childPID] == nil else { return nil }
-    registrations[childPID] = RegisteredChild(
-      ownerPID: expectedOwnerPID,
-      role: role,
-      pid: childPID,
-      expectedIdentity: expectedIdentity,
-      registrationToken: registrationToken,
-      attested: false
-    )
-    return MeetlessChildRegistrationResult(
-      generation: currentGeneration,
-      role: role,
-      pid: childPID,
-      registrationToken: registrationToken
-    )
+      guard inspectRegistrationCandidate(
+        childPID: childPID,
+        expectedIdentity: expectedIdentity,
+        ownerPlan: ownerPlan,
+        snapshot: snapshot
+      ) != nil else { return nil }
+      notifyInspectionHook()
+
+      lock.lock()
+      guard isCurrentStateLocked(snapshot),
+            liveRuntimePIDLocked() != nil,
+            registrations[childPID] == nil,
+            !registrations.values.contains(where: { $0.role == role }),
+            !usedRegistrationTokens.contains(registrationToken) else {
+        lock.unlock()
+        continue
+      }
+      lock.unlock()
+
+      guard let finalObservation = inspectRegistrationCandidate(
+        childPID: childPID,
+        expectedIdentity: expectedIdentity,
+        ownerPlan: ownerPlan,
+        snapshot: snapshot
+      ) else { return nil }
+
+      lock.lock()
+      guard isCurrentStateLocked(snapshot),
+            liveRuntimePIDLocked() != nil,
+            registrations[childPID] == nil,
+            !registrations.values.contains(where: { $0.role == role }),
+            !usedRegistrationTokens.contains(registrationToken) else {
+        lock.unlock()
+        continue
+      }
+      registrations[childPID] = RegisteredChild(
+        owner: finalObservation.owner,
+        role: role,
+        pid: childPID,
+        expectedIdentity: expectedIdentity,
+        registrationToken: registrationToken,
+        attested: false
+      )
+      usedRegistrationTokens.insert(registrationToken)
+      revision &+= 1
+      lock.unlock()
+      return MeetlessChildRegistrationResult(
+        generation: snapshot.generation,
+        role: role,
+        pid: childPID,
+        registrationToken: registrationToken
+      )
+    }
+    return nil
   }
 
   func attestRegisteredProcess(
@@ -1253,6 +1407,7 @@ final class RuntimeAuthorizationState {
     role: String
   ) -> MeetlessRegisteredProcessAttestationResult? {
     guard validProtocolToken(requestId), validProtocolToken(registrationToken), validProcessRole(role) else { return nil }
+    guard pruneDeadRegistrations() else { return nil }
     lock.lock()
     guard generation == requestedGeneration,
           liveRuntimePIDLocked() != nil,
@@ -1265,29 +1420,57 @@ final class RuntimeAuthorizationState {
       lock.unlock()
       return nil
     }
-    let currentGeneration = generation
-    let ownerPID = registration.ownerPID
-    let expectedIdentity = registration.expectedIdentity
     lock.unlock()
 
-    guard liveParentPID(peerPID) == ownerPID,
-          let liveIdentity = try? inspectMeetlessProcessIdentity(peerPID),
-          liveIdentity == expectedIdentity else { return nil }
+    for _ in 0..<3 {
+      lock.lock()
+      guard generation == requestedGeneration,
+            liveRuntimePIDLocked() != nil,
+            let snapshot = authorizationSnapshotLocked(),
+            let current = registrations[peerPID],
+            current.role == role,
+            current.registrationToken == registrationToken,
+            !current.attested else {
+        lock.unlock()
+        return nil
+      }
+      lock.unlock()
 
-    lock.lock()
-    defer { lock.unlock() }
-    guard generation == currentGeneration,
-          let current = registrations[peerPID],
-          current.registrationToken == registrationToken,
-          !current.attested,
-          let finalHostIdentity = self.hostIdentity else { return nil }
-    registrations[peerPID]?.attested = true
-    return MeetlessRegisteredProcessAttestationResult(
-      generation: currentGeneration,
-      role: role,
-      identity: expectedIdentity,
-      hostIdentity: finalHostIdentity
-    )
+      guard inspectRegisteredProcess(current, snapshot: snapshot) != nil else { return nil }
+      notifyInspectionHook()
+      lock.lock()
+      guard isCurrentStateLocked(snapshot),
+            let latest = registrations[peerPID],
+            latest.role == role,
+            latest.registrationToken == registrationToken,
+            !latest.attested else {
+        lock.unlock()
+        continue
+      }
+      lock.unlock()
+
+      guard let finalIdentity = inspectRegisteredProcess(current, snapshot: snapshot) else { return nil }
+      lock.lock()
+      guard isCurrentStateLocked(snapshot),
+            let latest = registrations[peerPID],
+            latest.role == role,
+            latest.registrationToken == registrationToken,
+            !latest.attested,
+            let finalHostIdentity = self.hostIdentity else {
+        lock.unlock()
+        continue
+      }
+      registrations[peerPID]?.attested = true
+      revision &+= 1
+      lock.unlock()
+      return MeetlessRegisteredProcessAttestationResult(
+        generation: snapshot.generation,
+        role: role,
+        identity: finalIdentity,
+        hostIdentity: finalHostIdentity
+      )
+    }
+    return nil
   }
 
   func registrationStatus(
@@ -1297,7 +1480,7 @@ final class RuntimeAuthorizationState {
     ownerToken: String
   ) -> [MeetlessProcessRegistrationStatus]? {
     guard validProtocolToken(requestId), validProtocolToken(ownerToken) else { return nil }
-    pruneDeadRegistrations()
+    guard pruneDeadRegistrations() else { return nil }
     lock.lock()
     guard generation == requestedGeneration,
           let runtimePID,
@@ -1308,33 +1491,39 @@ final class RuntimeAuthorizationState {
       lock.unlock()
       return nil
     }
-    let currentGeneration = generation
-    let snapshot = Array(registrations.values)
     lock.unlock()
 
-    var result: [MeetlessProcessRegistrationStatus] = []
-    for registration in snapshot {
-      guard let identity = try? inspectMeetlessProcessIdentity(registration.pid),
-            identity == registration.expectedIdentity else { return nil }
-      result.append(MeetlessProcessRegistrationStatus(
-        role: registration.role,
-        pid: registration.pid,
-        attested: registration.attested,
-        identity: MeetlessProcessIdentityWire(
-          configuredPath: identity.configuredPath,
-          realPath: identity.realPath,
-          device: identity.device,
-          inode: identity.inode,
-          byteLength: identity.byteLength,
-          sha256: identity.sha256,
-          argv: identity.argv
-        )
-      ))
+    for _ in 0..<3 {
+      lock.lock()
+      guard generation == requestedGeneration,
+            let snapshot = authorizationSnapshotLocked(),
+            snapshot.runtimePID == peerPID,
+            snapshot.desktopAttested,
+            snapshot.desktopOwnerToken == ownerToken else {
+        lock.unlock()
+        return nil
+      }
+      lock.unlock()
+
+      guard inspectRegistrationStatus(snapshot) != nil else { return nil }
+      notifyInspectionHook()
+      lock.lock()
+      guard isCurrentStateLocked(snapshot), desktopAttested else {
+        lock.unlock()
+        continue
+      }
+      lock.unlock()
+
+      guard let finalResult = inspectRegistrationStatus(snapshot) else { return nil }
+      lock.lock()
+      guard isCurrentStateLocked(snapshot), desktopAttested else {
+        lock.unlock()
+        continue
+      }
+      lock.unlock()
+      return finalResult.sorted { $0.pid < $1.pid }
     }
-    lock.lock()
-    defer { lock.unlock() }
-    guard generation == currentGeneration, desktopAttested else { return nil }
-    return result.sorted { $0.pid < $1.pid }
+    return nil
   }
 
   func releaseChild(
@@ -1345,21 +1534,92 @@ final class RuntimeAuthorizationState {
     childPID: pid_t
   ) -> Bool {
     guard validProtocolToken(requestId), validProtocolToken(ownerToken), childPID > 1 else { return false }
+    guard pruneDeadRegistrations() else { return false }
     lock.lock()
-    defer { lock.unlock() }
     guard generation == requestedGeneration,
+          liveRuntimePIDLocked() != nil,
           useRequestIDLocked(requestId),
           isAuthorizedOwnerLocked(peerPID: peerPID, ownerToken: ownerToken),
           let registration = registrations[childPID],
-          registration.ownerPID == peerPID else { return false }
-    registrations.removeValue(forKey: childPID)
+          registration.owner.pid == peerPID,
+          let snapshot = authorizationSnapshotLocked() else {
+      lock.unlock()
+      return false
+    }
+    lock.unlock()
+
+    guard inspectAuthorizedOwner(peerPID: peerPID, ownerToken: ownerToken, snapshot: snapshot) else { return false }
+    lock.lock()
+    guard isCurrentStateLocked(snapshot),
+          isAuthorizedOwnerLocked(peerPID: peerPID, ownerToken: ownerToken),
+          let current = registrations[childPID],
+          current.owner.pid == peerPID else {
+      lock.unlock()
+      return false
+    }
+    lock.unlock()
+
+    guard inspectAuthorizedOwner(peerPID: peerPID, ownerToken: ownerToken, snapshot: snapshot) else { return false }
+    lock.lock()
+    guard isCurrentStateLocked(snapshot),
+          isAuthorizedOwnerLocked(peerPID: peerPID, ownerToken: ownerToken),
+          let current = registrations[childPID],
+          current.owner.pid == peerPID else {
+      lock.unlock()
+      return false
+    }
+    removeRegistrationAndDescendantsLocked(startingAt: childPID)
+    revision &+= 1
+    lock.unlock()
     return true
   }
 
-  func pruneDeadRegistrations() {
-    lock.lock()
-    registrations = registrations.filter { _, registration in isProcessAlive(registration.pid) }
-    lock.unlock()
+  @discardableResult
+  func pruneDeadRegistrations() -> Bool {
+    for _ in 0..<3 {
+      lock.lock()
+      if let runtimePID, !isProcessAlive(runtimePID) {
+        self.runtimePID = nil
+        desktopOwnerToken = nil
+        desktopAttested = false
+        desktopIdentity = nil
+        hostProcessIdentity = nil
+        registrations.removeAll()
+        usedRegistrationTokens.removeAll()
+        generation &+= 1
+        revision &+= 1
+        lock.unlock()
+        return true
+      }
+      guard let snapshot = authorizationSnapshotLocked() else {
+        lock.unlock()
+        return true
+      }
+      lock.unlock()
+
+      var invalid = Set<pid_t>()
+      for registration in snapshot.registrations.values {
+        var visited = Set<pid_t>()
+        if !validateRegistrationChain(registration, snapshot: snapshot, visited: &visited) {
+          invalid.insert(registration.pid)
+        }
+      }
+
+      lock.lock()
+      guard isCurrentStateLocked(snapshot) else {
+        lock.unlock()
+        continue
+      }
+      if invalid.isEmpty {
+        lock.unlock()
+        return true
+      }
+      removeRegistrationAndDescendantsLocked(pids: invalid)
+      revision &+= 1
+      lock.unlock()
+      return true
+    }
+    return false
   }
 
   func withValidLease<T>(_ lease: RuntimeAuthorizationLease, _ action: () -> T) -> T? {
@@ -1400,7 +1660,11 @@ final class RuntimeAuthorizationState {
   }
 
   private func isValidLocked(_ lease: RuntimeAuthorizationLease) -> Bool {
-    generation == lease.generation && runtimePID == lease.runtimePID && liveRuntimePIDLocked() == lease.runtimePID
+    guard generation == lease.generation,
+          runtimePID == lease.runtimePID,
+          liveRuntimePIDLocked() == lease.runtimePID else { return false }
+    if let leaseRevision = lease.revision, revision != leaseRevision { return false }
+    return true
   }
 
   private func liveRuntimePIDLocked() -> pid_t? {
@@ -1410,6 +1674,7 @@ final class RuntimeAuthorizationState {
 
   private func useRequestIDLocked(_ requestId: String) -> Bool {
     guard usedRequestIDs.count < 256, usedRequestIDs.insert(requestId).inserted else { return false }
+    revision &+= 1
     return true
   }
 
@@ -1422,31 +1687,92 @@ final class RuntimeAuthorizationState {
     return true
   }
 
-  private func registrationOwnerPIDLocked(
+  private func authorizationSnapshotLocked() -> AuthorizationSnapshot? {
+    guard let runtimePID,
+          let processPolicy,
+          let hostIdentity,
+          let hostPID else { return nil }
+    return AuthorizationSnapshot(
+      generation: generation,
+      revision: revision,
+      runtimePID: runtimePID,
+      processPolicy: processPolicy,
+      hostIdentity: hostIdentity,
+      hostPID: hostPID,
+      hostProcessIdentity: hostProcessIdentity,
+      desktopOwnerToken: desktopOwnerToken,
+      desktopAttested: desktopAttested,
+      desktopIdentity: desktopIdentity,
+      registrations: registrations
+    )
+  }
+
+  private func isCurrentStateLocked(_ snapshot: AuthorizationSnapshot) -> Bool {
+    generation == snapshot.generation &&
+      revision == snapshot.revision &&
+      runtimePID == snapshot.runtimePID
+  }
+
+  private func notifyInspectionHook() {
+    lock.lock()
+    let hook = inspectionHook
+    inspectionHook = nil
+    lock.unlock()
+    hook?()
+  }
+
+  private func registrationOwnerPlanLocked(
     peerPID: pid_t,
     childPID: pid_t,
     role: String,
-    ownerToken: String
-  ) -> pid_t? {
+    ownerToken: String,
+    observedParentPID: pid_t?,
+    snapshot: AuthorizationSnapshot
+  ) -> RegistrationOwnerPlan? {
     if peerPID == runtimePID {
-      return desktopAttested && desktopOwnerToken == ownerToken ? peerPID : nil
+      guard role == "daemon",
+            snapshot.desktopAttested,
+            snapshot.desktopOwnerToken == ownerToken,
+            let desktopIdentity = snapshot.desktopIdentity,
+            let hostProcessIdentity = snapshot.hostProcessIdentity else { return nil }
+      return RegistrationOwnerPlan(
+        role: "desktop",
+        pid: snapshot.runtimePID,
+        expectedIdentity: desktopIdentity,
+        parentPID: snapshot.hostPID,
+        expectedParentIdentity: hostProcessIdentity
+      )
     }
-    if let registration = registrations[peerPID],
-       (registration.role == "daemon" || registration.role == "plugin"),
+    if role == "capture-helper",
+       let registration = snapshot.registrations[peerPID],
+       registration.role == "plugin",
        registration.attested,
        registration.registrationToken == ownerToken {
-      return peerPID
+      return RegistrationOwnerPlan(
+        role: "plugin",
+        pid: registration.pid,
+        expectedIdentity: registration.expectedIdentity,
+        parentPID: registration.owner.pid,
+        expectedParentIdentity: registration.owner.identity
+      )
     }
     // The Paseo supervisor owns its worker ChildProcess, but that worker is
-    // created inside the pinned supervisor entrypoint. Allow only that exact
-    // direct child to complete its own registration with the supervisor's
-    // already-attested owner token; the native peer PID and policy-bound
-    // identity still come from this capability boundary.
+    // created inside the pinned supervisor entrypoint. The worker remains an
+    // unregistered, native-pinned intermediate: only its exact direct child
+    // plugin process may self-register with the already-attested supervisor
+    // token.
     if role == "plugin", childPID == peerPID,
-       let daemon = registrations.values.first(where: {
+       let workerPID = observedParentPID,
+       let daemon = snapshot.registrations.values.first(where: {
          $0.role == "daemon" && $0.attested && $0.registrationToken == ownerToken
        }) {
-      return daemon.pid
+      return RegistrationOwnerPlan(
+        role: "daemon-worker",
+        pid: workerPID,
+        expectedIdentity: expectedProcessIdentity(for: "daemon-worker", policy: snapshot.processPolicy),
+        parentPID: daemon.pid,
+        expectedParentIdentity: daemon.expectedIdentity
+      )
     }
     return nil
   }
@@ -1457,38 +1783,260 @@ final class RuntimeAuthorizationState {
   }
 
   private func isCurrentPackagedPeer(peerPID: pid_t, runtimePID: pid_t, generation: UInt64) -> Bool {
-    lock.lock()
-    guard self.generation == generation,
-          self.runtimePID == runtimePID,
-          let processPolicy,
-          let hostPID,
-          isPackagedPeerAuthorizedLocked(peerPID) else {
+    for _ in 0..<3 {
+      lock.lock()
+      guard self.generation == generation,
+            self.runtimePID == runtimePID,
+            let snapshot = authorizationSnapshotLocked(),
+            isPackagedPeerAuthorizedLocked(peerPID) else {
+        lock.unlock()
+        return false
+      }
       lock.unlock()
+
+      guard inspectPackagedPeer(peerPID: peerPID, snapshot: snapshot) else { return false }
+      notifyInspectionHook()
+      lock.lock()
+      guard isCurrentStateLocked(snapshot) else {
+        lock.unlock()
+        continue
+      }
+      lock.unlock()
+
+      guard inspectPackagedPeer(peerPID: peerPID, snapshot: snapshot) else { return false }
+      lock.lock()
+      guard isCurrentStateLocked(snapshot), isPackagedPeerAuthorizedLocked(peerPID) else {
+        lock.unlock()
+        continue
+      }
+      lock.unlock()
+      return true
+    }
+    return false
+  }
+
+  private func inspectPackagedPeer(
+    peerPID: pid_t,
+    snapshot: AuthorizationSnapshot
+  ) -> Bool {
+    if peerPID == snapshot.runtimePID {
+      return snapshot.desktopAttested && inspectDesktopAttestation(snapshot) != nil
+    }
+    guard let registration = snapshot.registrations[peerPID], registration.attested else { return false }
+    return inspectRegisteredProcess(registration, snapshot: snapshot) != nil
+  }
+
+  private func inspectDesktopAttestation(
+    _ snapshot: AuthorizationSnapshot
+  ) -> (identity: MeetlessProcessIdentity, hostProcessIdentity: MeetlessProcessIdentity)? {
+    let expected = expectedProcessIdentity(for: "desktop", policy: snapshot.processPolicy)
+    guard liveParentPID(snapshot.runtimePID) == snapshot.hostPID,
+          let identity = try? inspectMeetlessProcessIdentity(snapshot.runtimePID),
+          processIdentityMatchesShape(identity, expected),
+          let currentHostIdentity = try? inspectMeetlessProcessIdentity(snapshot.hostPID),
+          hostProcessIdentityMatchesAttestation(currentHostIdentity, snapshot.hostIdentity) else { return nil }
+    if let recordedDesktop = snapshot.desktopIdentity, recordedDesktop != identity { return nil }
+    if let recordedHost = snapshot.hostProcessIdentity, recordedHost != currentHostIdentity { return nil }
+    return (identity, currentHostIdentity)
+  }
+
+  private func inspectRegistrationCandidate(
+    childPID: pid_t,
+    expectedIdentity: MeetlessProcessIdentity,
+    ownerPlan: RegistrationOwnerPlan,
+    snapshot: AuthorizationSnapshot
+  ) -> (identity: MeetlessProcessIdentity, owner: ProcessOwnerEvidence)? {
+    guard liveParentPID(childPID) == ownerPlan.pid,
+          let liveIdentity = try? inspectMeetlessProcessIdentity(childPID),
+          liveIdentity == expectedIdentity,
+          liveParentPID(ownerPlan.pid) == ownerPlan.parentPID,
+          let ownerIdentity = try? inspectMeetlessProcessIdentity(ownerPlan.pid),
+          processIdentityMatchesShape(ownerIdentity, ownerPlan.expectedIdentity),
+          let parentIdentity = try? inspectMeetlessProcessIdentity(ownerPlan.parentPID),
+          parentIdentity == ownerPlan.expectedParentIdentity else { return nil }
+    let owner = ProcessOwnerEvidence(
+      role: ownerPlan.role,
+      pid: ownerPlan.pid,
+      identity: ownerIdentity,
+      parentPID: ownerPlan.parentPID,
+      parentIdentity: parentIdentity
+    )
+    var visited = Set<pid_t>()
+    guard validateOwnerEvidence(owner, snapshot: snapshot, visited: &visited) else { return nil }
+    return (liveIdentity, owner)
+  }
+
+  private func inspectRegisteredProcess(
+    _ registration: RegisteredChild,
+    snapshot: AuthorizationSnapshot
+  ) -> MeetlessProcessIdentity? {
+    guard let identity = try? inspectMeetlessProcessIdentity(registration.pid),
+          identity == registration.expectedIdentity,
+          liveParentPID(registration.pid) == registration.owner.pid else { return nil }
+    var visited = Set<pid_t>()
+    guard validateRegistrationChain(registration, snapshot: snapshot, visited: &visited) else { return nil }
+    return identity
+  }
+
+  private func inspectAuthorizedOwner(
+    peerPID: pid_t,
+    ownerToken: String,
+    snapshot: AuthorizationSnapshot
+  ) -> Bool {
+    if peerPID == snapshot.runtimePID {
+      guard snapshot.desktopAttested,
+            snapshot.desktopOwnerToken == ownerToken else { return false }
+      return inspectDesktopAttestation(snapshot) != nil
+    }
+    guard let registration = snapshot.registrations[peerPID],
+          (registration.role == "daemon" || registration.role == "plugin"),
+          registration.attested,
+          registration.registrationToken == ownerToken else { return false }
+    return inspectRegisteredProcess(registration, snapshot: snapshot) != nil
+  }
+
+  private func inspectRegistrationStatus(
+    _ snapshot: AuthorizationSnapshot
+  ) -> [MeetlessProcessRegistrationStatus]? {
+    guard inspectDesktopAttestation(snapshot) != nil else { return nil }
+    var result: [MeetlessProcessRegistrationStatus] = []
+    for registration in snapshot.registrations.values {
+      guard let identity = inspectRegisteredProcess(registration, snapshot: snapshot) else { return nil }
+      result.append(MeetlessProcessRegistrationStatus(
+        role: registration.role,
+        pid: registration.pid,
+        attested: registration.attested,
+        identity: MeetlessProcessIdentityWire(
+          configuredPath: identity.configuredPath,
+          realPath: identity.realPath,
+          device: identity.device,
+          inode: identity.inode,
+          byteLength: identity.byteLength,
+          sha256: identity.sha256,
+          argv: identity.argv
+        )
+      ))
+    }
+    return result
+  }
+
+  private func validateRegistrationChain(
+    _ registration: RegisteredChild,
+    snapshot: AuthorizationSnapshot,
+    visited: inout Set<pid_t>
+  ) -> Bool {
+    guard visited.insert(registration.pid).inserted,
+          let identity = try? inspectMeetlessProcessIdentity(registration.pid),
+          identity == registration.expectedIdentity,
+          liveParentPID(registration.pid) == registration.owner.pid else { return false }
+    return validateOwnerEvidence(registration.owner, snapshot: snapshot, visited: &visited)
+  }
+
+  private func validateOwnerEvidence(
+    _ owner: ProcessOwnerEvidence,
+    snapshot: AuthorizationSnapshot,
+    visited: inout Set<pid_t>
+  ) -> Bool {
+    guard owner.pid > 1,
+          owner.parentPID > 1,
+          let currentIdentity = try? inspectMeetlessProcessIdentity(owner.pid),
+          currentIdentity == owner.identity,
+          liveParentPID(owner.pid) == owner.parentPID,
+          let currentParentIdentity = try? inspectMeetlessProcessIdentity(owner.parentPID),
+          currentParentIdentity == owner.parentIdentity else { return false }
+    switch owner.role {
+    case "desktop":
+      guard snapshot.desktopAttested,
+            owner.pid == snapshot.runtimePID,
+            owner.identity == snapshot.desktopIdentity,
+            owner.parentPID == snapshot.hostPID,
+            owner.parentIdentity == snapshot.hostProcessIdentity,
+            processIdentityMatchesShape(owner.identity, expectedProcessIdentity(for: "desktop", policy: snapshot.processPolicy)),
+            hostProcessIdentityMatchesAttestation(owner.parentIdentity, snapshot.hostIdentity) else { return false }
+      return true
+    case "daemon-worker":
+      guard daemonWorkerIdentityMatchesPolicy(owner.identity, policy: snapshot.processPolicy),
+            let daemon = snapshot.registrations[owner.parentPID],
+            daemon.role == "daemon",
+            daemon.attested,
+            daemon.expectedIdentity == owner.parentIdentity else { return false }
+      return validateRegistrationChain(daemon, snapshot: snapshot, visited: &visited)
+    case "plugin":
+      guard let plugin = snapshot.registrations[owner.pid],
+            plugin.role == "plugin",
+            plugin.attested,
+            plugin.expectedIdentity == owner.identity,
+            plugin.owner.pid == owner.parentPID,
+            plugin.owner.identity == owner.parentIdentity else { return false }
+      return validateRegistrationChain(plugin, snapshot: snapshot, visited: &visited)
+    default:
       return false
     }
-    let expected: MeetlessProcessIdentity
-    let expectedParent: pid_t
-    if peerPID == runtimePID {
-      expected = expectedProcessIdentity(for: "desktop", policy: processPolicy)
-      expectedParent = hostPID
-    } else if let registration = registrations[peerPID] {
-      expected = registration.expectedIdentity
-      expectedParent = registration.ownerPID
-    } else {
-      lock.unlock()
-      return false
+  }
+
+  private func removeRegistrationAndDescendantsLocked(startingAt pid: pid_t) {
+    removeRegistrationAndDescendantsLocked(pids: [pid])
+  }
+
+  private func removeRegistrationAndDescendantsLocked(pids initial: Set<pid_t>) {
+    var removed = initial
+    var changed = true
+    while changed {
+      changed = false
+      for registration in registrations.values where
+        removed.contains(registration.owner.pid) || removed.contains(registration.owner.parentPID) {
+        if removed.insert(registration.pid).inserted { changed = true }
+      }
     }
-    lock.unlock()
-    guard liveParentPID(peerPID) == expectedParent,
-          let liveIdentity = try? inspectMeetlessProcessIdentity(peerPID),
-          liveIdentity == expected else { return false }
-    return true
+    for pid in removed { registrations.removeValue(forKey: pid) }
+  }
+
+  private func processIdentityMatchesShape(
+    _ identity: MeetlessProcessIdentity,
+    _ expected: MeetlessProcessIdentity
+  ) -> Bool {
+    identity.configuredPath == expected.configuredPath &&
+      identity.realPath == expected.realPath &&
+      identity.argv == expected.argv
+  }
+
+  private func daemonWorkerIdentityMatchesPolicy(
+    _ identity: MeetlessProcessIdentity,
+    policy: MeetlessProcessRegistrationPolicy
+  ) -> Bool {
+    guard policy.daemonWorkerArguments.count == 3,
+          policy.daemonWorkerArguments[0] == policy.nodePath,
+          policy.daemonWorkerArguments[1] == policy.daemonWorkerPath,
+          policy.daemonWorkerArguments[2] == "daemon" else { return false }
+    return processIdentityMatchesShape(
+      identity,
+      expectedProcessIdentity(for: "daemon-worker", policy: policy)
+    )
+  }
+
+  private func hostProcessIdentityMatchesAttestation(
+    _ identity: MeetlessProcessIdentity,
+    _ expected: MeetlessHostIdentityAttestation
+  ) -> Bool {
+    identity.configuredPath == expected.executablePath &&
+      identity.realPath == expected.executablePath &&
+      identity.device == expected.binaryDevice &&
+      identity.inode == expected.binaryInode &&
+      identity.byteLength == expected.binarySize &&
+      identity.sha256 == expected.binarySha256
   }
 }
 
 private func packagedDaemonWorkerPath(_ packageRoot: String) -> String {
   URL(fileURLWithPath: packageRoot)
     .appendingPathComponent("vendor/paseo/packages/server/dist/server/server/daemon-worker.js")
+    .standardizedFileURL
+    .path
+}
+
+private func packagedPluginProcessPath(_ packageRoot: String) -> String {
+  URL(fileURLWithPath: packageRoot)
+    .appendingPathComponent("vendor/paseo/packages/server/dist/server/server/plugins/plugin-process.js")
     .standardizedFileURL
     .path
 }
@@ -1521,6 +2069,8 @@ private func expectedProcessIdentity(
     ? [policy.nodePath, policy.runtimeCliPath, "desktop"]
     : role == "daemon"
     ? [policy.nodePath, policy.runtimeCliPath, "daemon"]
+    : role == "daemon-worker"
+    ? policy.daemonWorkerArguments
     : role == "plugin"
     ? policy.pluginArguments
     : [policy.captureHelperPath]
@@ -1540,10 +2090,14 @@ private func expectedIdentityMatchesPolicy(
   role: String,
   policy: MeetlessProcessRegistrationPolicy
 ) -> Bool {
+  if role == "plugin" &&
+     (policy.pluginArguments != [policy.nodePath, policy.pluginPath]) {
+    return false
+  }
   let expected = expectedProcessIdentity(for: role, policy: policy)
   return identity.configuredPath == expected.configuredPath &&
     identity.argv == expected.argv &&
-    (role != "plugin" || policy.pluginPath == expected.argv.dropFirst().first)
+    (role != "plugin" || expected.argv.dropFirst().first == policy.pluginPath)
 }
 
 private func isProcessAlive(_ pid: pid_t) -> Bool {
@@ -1555,6 +2109,7 @@ private func isProcessAlive(_ pid: pid_t) -> Bool {
 struct RuntimeAuthorizationLease {
   let runtimePID: pid_t
   let generation: UInt64
+  let revision: UInt64?
 }
 
 struct RuntimeAuthorizationExecution {

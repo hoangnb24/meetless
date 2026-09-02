@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v56`
-- `current_frontier`: `R5-MAS-PACKAGED-HOST-ATTESTATION-CAPTURE-CONVERGENCE`
-- `state`: `R5_MAS_PACKAGED_HOST_ATTESTATION_CAPTURE_CONVERGENCE_PENDING_LEAD_REVIEW`
+- `plan_revision`: `v57`
+- `current_frontier`: `R5-MAS-HOST-ATTESTATION-TOPOLOGY-STATE-CONVERGENCE`
+- `state`: `R5_MAS_HOST_ATTESTATION_TOPOLOGY_STATE_CONVERGENCE_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable capture-convergence correction from exact parent/base candidate `49c77aeb9e0a7b117d4c7dda51aaf8226a6b5c4f`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted DIAG-002 correction, host identity/context history, Lead-accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a`, liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`, and integration checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3` remain preserved.
+- `candidate`: pending immutable topology/state-convergence correction from exact parent/base candidate `7ea0b2c3c2ddf873db8f996721bff4605de64490`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted DIAG-002 correction, host identity/context history, Lead-accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a`, liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`, integration checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3`, and prior capture relative-socket/fresh-request-ID correction remain preserved. Original frontier base is `c69f26ee500e7cfa403139a99a4d81ed0b1ef5bf`.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: attempt 8 validly packaged, signed, installed, and reached the LaunchServices topology. Sandboxed desktop PID `46289` failed before the argv helper with `command="ps" purpose="parent PID for 46289" error.code="EPERM" errno=-1 syscall="spawnSync ps" status/signal null` and absent stdout/stderr. The exact proof root `/private/tmp/meetless-mas-development-proof.tY0GlP` and diagnostic evidence `/private/tmp/meetless-mas-diagnostic.SnLDCy` remain read-only evidence; artifact/evidence roots were not inspected for secrets or cache child names.
-- `pending_ruling`: the accepted diagnostic correction and exact attempt-8 EPERM evidence reopen the packaged runtime boundary. The capture-convergence correction is limited to connecting with the validated short relative endpoint from the validated runtime-root CWD and generating a fresh bounded request ID for every attestation retry. It preserves the existing native host-attestation architecture, ownership, identity, argv, startup, cleanup, and direct-development behavior. It is pending Lead review. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
+- `pending_ruling`: the accepted diagnostic correction and exact attempt-8 EPERM evidence reopen the packaged runtime boundary. Route A keeps vendor Paseo and daemon-worker unmodified: native validates `D→S→W→P→C`, with the policy-pinned daemon-worker as an unregistered intermediate and plugin-process as the registered plugin role. Registration, attestation, status, packaged leases, recursive pruning, and cleanup use generation/revision snapshots with exact owner-chain revalidation. The prior capture correction remains in force. It preserves direct-development behavior and is pending Lead review. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
 - `blocked_by`: no safe in-scope implementation dependency remains; no package, sign, install, launch, or external result is accepted by this candidate.
-- `next_action`: Lead reviews the immutable capture-convergence correction from exact parent/base candidate `49c77aeb9e0a7b117d4c7dda51aaf8226a6b5c4f`; only after acceptance may any separately authorized external packaged verification be considered.
+- `next_action`: Lead reviews the immutable topology/state-convergence correction from exact parent/base candidate `7ea0b2c3c2ddf873db8f996721bff4605de64490`; only after acceptance may any separately authorized external packaged verification be considered.
 
 ## Ownership And Authority
 
@@ -1276,6 +1276,38 @@ with a fresh ID. The frozen authority digest remains
 authority document changes are included. Package, sign, install, launch,
 retained-root, secret/cache inspection, external operation, and push remain
 closed. The correction candidate is pending Lead review.
+
+### R5 host-attestation topology/state convergence (2026-09-03; current frontier)
+
+`PLAN_RECONCILIATION v57` records the binding Route A ruling against exact
+correction base `7ea0b2c3c2ddf873db8f996721bff4605de64490`, preserving original
+frontier base `c69f26ee500e7cfa403139a99a4d81ed0b1ef5bf` and authority digest
+`fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`.
+Vendor Paseo and daemon-worker remain unchanged. Native now pins the exact
+daemon-worker path/argv as an unregistered intermediate and accepts only the
+`D→S→W→P→C` chain, with plugin-process as the registered plugin role and
+RecordingService/plugin ownership of the capture helper preserved. TypeScript
+and native expected plugin identity/argv point to
+`vendor/paseo/packages/server/dist/server/server/plugins/plugin-process.js`.
+
+Registration, process attestation, status, and packaged lease checks snapshot
+the launch generation and internal registration revision, revalidate exact
+current owner/parent/intermediate identities across unlocked inspection, and
+fail or retry when state changes. Registration revision advances on every
+authority-affecting mutation, including registration, attestation, release,
+prune, publish, and clear. Invalid owner chains are recursively pruned with
+descendants; stale generations, replayed requests/tokens, conflicting roles,
+and malformed identity/argv policy remain rejected. Native executable fixture
+proof models `D→S→W→P→C` and covers owner-release races, recursive worker
+cleanup, exact worker/plugin identity and argv, and packaged lease revision
+invalidity. Direct-development/static inspection adapters and the prior
+capture relative-socket/fresh-request-ID correction remain unchanged.
+
+Focused native host/capture, runtime/plugin, typecheck, package/isolation,
+MAS-baseline, syntax, and diff validation are repository-only proof. No
+package/sign/install/launch retry, retained-root or secret/cache inspection,
+external operation, or push is part of this frontier. The immutable candidate
+is pending Lead review; all external gates remain closed.
 
 ### Risks And Recovery
 

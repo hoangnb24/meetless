@@ -356,6 +356,22 @@ private func nativeProcessFixtureExecutable() throws -> String {
   try inspectMeetlessProcessIdentity(getpid()).configuredPath
 }
 
+private func fixtureHostIdentity() throws -> MeetlessHostIdentityAttestation {
+  let identity = try inspectMeetlessProcessIdentity(getpid())
+  return MeetlessHostIdentityAttestation(
+    bundleIdentifier: "com.meetless.app",
+    bundlePath: "/Applications/Meetless.app",
+    bundleRealPath: "/Applications/Meetless.app",
+    executablePath: identity.configuredPath,
+    designatedRequirement: "fixture",
+    cdHash: String(repeating: "a", count: 40),
+    binarySha256: identity.sha256,
+    binaryDevice: identity.device,
+    binaryInode: identity.inode,
+    binarySize: identity.byteLength
+  )
+}
+
 private func requestNativeHostProcessProtocol(
   socketPath: String,
   request: [String: Any]
@@ -436,10 +452,19 @@ private func runNativeProcessFixture(_ role: String) {
      let root = environment["MEETLESS_NATIVE_FIXTURE_PID_ROOT"],
      let executable = try? nativeProcessFixtureExecutable(),
      let runtimeCli = environment["MEETLESS_NATIVE_FIXTURE_RUNTIME_CLI"],
+     let workerPath = environment["MEETLESS_NATIVE_FIXTURE_WORKER_PATH"],
      let pluginPath = environment["MEETLESS_NATIVE_FIXTURE_PLUGIN_PATH"] {
-    let childRole = role == "desktop" ? "daemon" : role == "daemon" ? "plugin" : "capture-helper"
+    let childRole = role == "desktop"
+      ? "daemon"
+      : role == "daemon"
+      ? "daemon-worker"
+      : role == "daemon-worker"
+      ? "plugin"
+      : "capture-helper"
     let childArguments = childRole == "plugin"
-      ? [pluginPath, "daemon"]
+      ? [pluginPath]
+      : childRole == "daemon-worker"
+      ? [workerPath, "daemon"]
       : childRole == "capture-helper"
       ? []
       : [runtimeCli, childRole]
@@ -526,7 +551,8 @@ private func testNativeProcessProtocolTransport() throws {
   let executable = try nativeProcessFixtureExecutable()
   let socketPath = root.appendingPathComponent("transcription.sock").path
   let runtimeCli = root.appendingPathComponent("runtime-cli.js").path
-  let pluginPath = root.appendingPathComponent("daemon-worker.js").path
+  let workerPath = root.appendingPathComponent("daemon-worker.js").path
+  let pluginPath = root.appendingPathComponent("plugins/plugin-process.js").path
   let policy = MeetlessProcessRegistrationPolicy(
     runtimeRoot: root.path,
     endpointPolicy: meetlessRuntimeEndpointSchema,
@@ -535,22 +561,13 @@ private func testNativeProcessProtocolTransport() throws {
     transcriptionEndpointName: "transcription.sock",
     nodePath: executable,
     runtimeCliPath: runtimeCli,
+    daemonWorkerPath: workerPath,
+    daemonWorkerArguments: [executable, workerPath, "daemon"],
     pluginPath: pluginPath,
-    pluginArguments: [executable, pluginPath, "daemon"],
+    pluginArguments: [executable, pluginPath],
     captureHelperPath: executable
   )
-  let hostIdentity = MeetlessHostIdentityAttestation(
-    bundleIdentifier: "com.meetless.app",
-    bundlePath: "/Applications/Meetless.app",
-    bundleRealPath: "/Applications/Meetless.app",
-    executablePath: "/Applications/Meetless.app/Contents/MacOS/MeetlessHost",
-    designatedRequirement: "fixture",
-    cdHash: String(repeating: "a", count: 40),
-    binarySha256: String(repeating: "b", count: 64),
-    binaryDevice: 1,
-    binaryInode: 1,
-    binarySize: 1
-  )
+  let hostIdentity = try fixtureHostIdentity()
   let state = RuntimeAuthorizationState()
   let capability = MeetlessTranscriptionCapability(
     socketPath: socketPath,
@@ -840,7 +857,8 @@ private func testPackagedProcessRegistrationChain() throws {
   defer { try? FileManager.default.removeItem(at: root) }
   let executable = try nativeProcessFixtureExecutable()
   let runtimeCli = root.appendingPathComponent("runtime-cli.js").path
-  let pluginPath = root.appendingPathComponent("daemon-worker.js").path
+  let workerPath = root.appendingPathComponent("daemon-worker.js").path
+  let pluginPath = root.appendingPathComponent("plugins/plugin-process.js").path
   let policy = MeetlessProcessRegistrationPolicy(
     runtimeRoot: root.path,
     endpointPolicy: meetlessRuntimeEndpointSchema,
@@ -849,8 +867,10 @@ private func testPackagedProcessRegistrationChain() throws {
     transcriptionEndpointName: "transcription.sock",
     nodePath: executable,
     runtimeCliPath: runtimeCli,
+    daemonWorkerPath: workerPath,
+    daemonWorkerArguments: [executable, workerPath, "daemon"],
     pluginPath: pluginPath,
-    pluginArguments: [executable, pluginPath, "daemon"],
+    pluginArguments: [executable, pluginPath],
     captureHelperPath: executable
   )
   let wirePolicy = MeetlessHostProcessPolicyWire(
@@ -860,23 +880,13 @@ private func testPackagedProcessRegistrationChain() throws {
     recordingEndpointName: policy.recordingEndpointName,
     transcriptionEndpointName: policy.transcriptionEndpointName
   )
-  let hostIdentity = MeetlessHostIdentityAttestation(
-    bundleIdentifier: "com.meetless.app",
-    bundlePath: "/Applications/Meetless.app",
-    bundleRealPath: "/Applications/Meetless.app",
-    executablePath: "/Applications/Meetless.app/Contents/MacOS/MeetlessHost",
-    designatedRequirement: "fixture",
-    cdHash: String(repeating: "a", count: 40),
-    binarySha256: String(repeating: "b", count: 64),
-    binaryDevice: 1,
-    binaryInode: 1,
-    binarySize: 1
-  )
+  let hostIdentity = try fixtureHostIdentity()
   let environmentRoot = root.path
   var environment = ProcessInfo.processInfo.environment
   environment["MEETLESS_NATIVE_PROCESS_FIXTURE"] = "desktop"
   environment["MEETLESS_NATIVE_FIXTURE_PID_ROOT"] = environmentRoot
   environment["MEETLESS_NATIVE_FIXTURE_RUNTIME_CLI"] = runtimeCli
+  environment["MEETLESS_NATIVE_FIXTURE_WORKER_PATH"] = workerPath
   environment["MEETLESS_NATIVE_FIXTURE_PLUGIN_PATH"] = pluginPath
   let desktop = Process()
   desktop.executableURL = URL(fileURLWithPath: executable)
@@ -889,9 +899,11 @@ private func testPackagedProcessRegistrationChain() throws {
   defer {
     let helperPID = readNativeProcessFixturePID(environmentRoot, role: "capture-helper")
     let pluginPID = readNativeProcessFixturePID(environmentRoot, role: "plugin")
+    let workerPID = readNativeProcessFixturePID(environmentRoot, role: "daemon-worker")
     let daemonPID = readNativeProcessFixturePID(environmentRoot, role: "daemon")
     terminateNativeProcessFixture(helperPID)
     terminateNativeProcessFixture(pluginPID)
+    terminateNativeProcessFixture(workerPID)
     terminateNativeProcessFixture(daemonPID)
     terminateNativeProcessFixture(desktop.processIdentifier)
   }
@@ -912,7 +924,15 @@ private func testPackagedProcessRegistrationChain() throws {
     check(false, "desktop fixture must spawn a daemon child with inspectable identity")
     return
   }
-  let daemonToken = "daemon-registration-token"
+  guard let workerPID = waitForNativeProcessFixturePID(environmentRoot, role: "daemon-worker"),
+        let workerIdentity = try? inspectMeetlessProcessIdentity(workerPID) else {
+    check(false, "daemon fixture must spawn the pinned worker intermediate with inspectable identity")
+    return
+  }
+  check(liveParentPID(workerPID) == daemonPID, "daemon worker must remain a direct daemon child")
+  check(workerIdentity.configuredPath == executable, "daemon worker executable identity must match the node path")
+  check(workerIdentity.argv == [executable, workerPath, "daemon"], "daemon worker argv must match the pinned worker entrypoint")
+  var daemonToken = "daemon-registration-token"
   func registerDaemon(
     requestId: String,
     generation: UInt64? = nil,
@@ -1067,10 +1087,136 @@ private func testPackagedProcessRegistrationChain() throws {
     check(false, "daemon fixture must spawn a plugin child with inspectable identity")
     return
   }
-  check(liveParentPID(pluginPID) == daemonPID, "plugin fixture must remain a direct daemon child")
+  check(liveParentPID(pluginPID) == workerPID, "plugin fixture must remain a direct worker child")
   check(pluginIdentity.configuredPath == executable, "plugin fixture executable identity must match the node path")
-  check(pluginIdentity.argv == [executable, pluginPath, "daemon"], "plugin fixture argv must match the worker entrypoint")
-  let pluginToken = "plugin-registration-token"
+  check(pluginIdentity.argv == [executable, pluginPath], "plugin fixture argv must match the plugin-process entrypoint")
+  var pluginToken = "plugin-registration-token"
+  check(
+    state.registerChild(
+      peerPID: pluginPID,
+      requestId: "wrong-plugin-path",
+      generation: desktopAttestation.generation,
+      ownerToken: daemonToken,
+      registrationToken: "wrong-plugin-path-token",
+      role: "plugin",
+      childPID: pluginPID,
+      expectedIdentity: replacingProcessIdentity(pluginIdentity, configuredPath: "/private/wrong-plugin"),
+      policy: wirePolicy
+    ) == nil,
+    "wrong plugin executable path must be rejected"
+  )
+  check(
+    state.registerChild(
+      peerPID: pluginPID,
+      requestId: "wrong-plugin-argv",
+      generation: desktopAttestation.generation,
+      ownerToken: daemonToken,
+      registrationToken: "wrong-plugin-argv-token",
+      role: "plugin",
+      childPID: pluginPID,
+      expectedIdentity: replacingProcessIdentity(pluginIdentity, argv: [executable, pluginPath, "daemon"]),
+      policy: wirePolicy
+    ) == nil,
+    "wrong plugin argv must be rejected"
+  )
+  func rejectsPlugin(with processPolicy: MeetlessProcessRegistrationPolicy, prefix: String) -> Bool {
+    let candidate = RuntimeAuthorizationState()
+    candidate.configure(processPolicy: processPolicy, hostIdentity: hostIdentity, hostPID: getpid())
+    candidate.publish(desktopPID)
+    guard let owner = candidate.attestDesktop(
+      peerPID: desktopPID,
+      requestId: "\(prefix)-desktop",
+      challenge: "\(prefix)-challenge"
+    ),
+    candidate.registerChild(
+      peerPID: desktopPID,
+      requestId: "\(prefix)-daemon-registration",
+      generation: owner.generation,
+      ownerToken: owner.ownerToken,
+      registrationToken: "\(prefix)-daemon-token",
+      role: "daemon",
+      childPID: daemonPID,
+      expectedIdentity: daemonIdentity,
+      policy: wirePolicy
+    ) != nil,
+    candidate.attestRegisteredProcess(
+      peerPID: daemonPID,
+      requestId: "\(prefix)-daemon-attestation",
+      generation: owner.generation,
+      registrationToken: "\(prefix)-daemon-token",
+      role: "daemon"
+    ) != nil else { return false }
+    return candidate.registerChild(
+      peerPID: pluginPID,
+      requestId: "\(prefix)-plugin-registration",
+      generation: owner.generation,
+      ownerToken: "\(prefix)-daemon-token",
+      registrationToken: "\(prefix)-plugin-token",
+      role: "plugin",
+      childPID: pluginPID,
+      expectedIdentity: pluginIdentity,
+      policy: wirePolicy
+    ) == nil
+  }
+  let wrongWorkerPathPolicy = MeetlessProcessRegistrationPolicy(
+    runtimeRoot: policy.runtimeRoot,
+    endpointPolicy: policy.endpointPolicy,
+    endpointWorkingDirectory: policy.endpointWorkingDirectory,
+    recordingEndpointName: policy.recordingEndpointName,
+    transcriptionEndpointName: policy.transcriptionEndpointName,
+    nodePath: policy.nodePath,
+    runtimeCliPath: policy.runtimeCliPath,
+    daemonWorkerPath: "/private/wrong-daemon-worker.js",
+    daemonWorkerArguments: [executable, "/private/wrong-daemon-worker.js", "daemon"],
+    pluginPath: policy.pluginPath,
+    pluginArguments: policy.pluginArguments,
+    captureHelperPath: policy.captureHelperPath
+  )
+  check(rejectsPlugin(with: wrongWorkerPathPolicy, prefix: "wrong-worker-path"), "wrong daemon-worker path must reject plugin registration")
+  let wrongWorkerArgvPolicy = MeetlessProcessRegistrationPolicy(
+    runtimeRoot: policy.runtimeRoot,
+    endpointPolicy: policy.endpointPolicy,
+    endpointWorkingDirectory: policy.endpointWorkingDirectory,
+    recordingEndpointName: policy.recordingEndpointName,
+    transcriptionEndpointName: policy.transcriptionEndpointName,
+    nodePath: policy.nodePath,
+    runtimeCliPath: policy.runtimeCliPath,
+    daemonWorkerPath: workerPath,
+    daemonWorkerArguments: [executable, workerPath, "daemon", "--wrapper"],
+    pluginPath: policy.pluginPath,
+    pluginArguments: policy.pluginArguments,
+    captureHelperPath: policy.captureHelperPath
+  )
+  check(rejectsPlugin(with: wrongWorkerArgvPolicy, prefix: "wrong-worker-argv"), "wrong daemon-worker argv must reject plugin registration")
+  let wrongPluginArgvPolicy = MeetlessProcessRegistrationPolicy(
+    runtimeRoot: policy.runtimeRoot,
+    endpointPolicy: policy.endpointPolicy,
+    endpointWorkingDirectory: policy.endpointWorkingDirectory,
+    recordingEndpointName: policy.recordingEndpointName,
+    transcriptionEndpointName: policy.transcriptionEndpointName,
+    nodePath: policy.nodePath,
+    runtimeCliPath: policy.runtimeCliPath,
+    daemonWorkerPath: policy.daemonWorkerPath,
+    daemonWorkerArguments: policy.daemonWorkerArguments,
+    pluginPath: policy.pluginPath,
+    pluginArguments: [executable, pluginPath, "daemon"],
+    captureHelperPath: policy.captureHelperPath
+  )
+  check(rejectsPlugin(with: wrongPluginArgvPolicy, prefix: "wrong-plugin-policy-argv"), "wrong native plugin argv policy must reject plugin registration")
+  check(
+    state.registerChild(
+      peerPID: daemonPID,
+      requestId: "direct-daemon-plugin-registration",
+      generation: desktopAttestation.generation,
+      ownerToken: daemonToken,
+      registrationToken: "direct-daemon-plugin-token",
+      role: "plugin",
+      childPID: pluginPID,
+      expectedIdentity: pluginIdentity,
+      policy: wirePolicy
+    ) == nil,
+    "direct daemon-to-plugin registration must be rejected when the pinned worker is absent"
+  )
   guard state.registerChild(
     peerPID: pluginPID,
     requestId: "plugin-registration",
@@ -1115,6 +1261,65 @@ private func testPackagedProcessRegistrationChain() throws {
     ) != nil,
     "plugin must register its recording-service-owned helper"
   )
+  let attestationRaceState = RuntimeAuthorizationState()
+  attestationRaceState.configure(processPolicy: policy, hostIdentity: hostIdentity, hostPID: getpid())
+  attestationRaceState.publish(desktopPID)
+  if let raceDesktop = attestationRaceState.attestDesktop(
+    peerPID: desktopPID,
+    requestId: "attestation-race-desktop",
+    challenge: "attestation-race-challenge"
+  ),
+  attestationRaceState.registerChild(
+    peerPID: desktopPID,
+    requestId: "attestation-race-daemon-registration",
+    generation: raceDesktop.generation,
+    ownerToken: raceDesktop.ownerToken,
+    registrationToken: "attestation-race-daemon-token",
+    role: "daemon",
+    childPID: daemonPID,
+    expectedIdentity: daemonIdentity,
+    policy: wirePolicy
+  ) != nil,
+  attestationRaceState.attestRegisteredProcess(
+    peerPID: daemonPID,
+    requestId: "attestation-race-daemon-attestation",
+    generation: raceDesktop.generation,
+    registrationToken: "attestation-race-daemon-token",
+    role: "daemon"
+  ) != nil,
+  attestationRaceState.registerChild(
+    peerPID: pluginPID,
+    requestId: "attestation-race-plugin-registration",
+    generation: raceDesktop.generation,
+    ownerToken: "attestation-race-daemon-token",
+    registrationToken: "attestation-race-plugin-token",
+    role: "plugin",
+    childPID: pluginPID,
+    expectedIdentity: pluginIdentity,
+    policy: wirePolicy
+  ) != nil {
+    attestationRaceState.setInspectionHook {
+      _ = attestationRaceState.releaseChild(
+        peerPID: desktopPID,
+        requestId: "attestation-race-daemon-release",
+        generation: raceDesktop.generation,
+        ownerToken: raceDesktop.ownerToken,
+        childPID: daemonPID
+      )
+    }
+    check(
+      attestationRaceState.attestRegisteredProcess(
+        peerPID: pluginPID,
+        requestId: "attestation-race-plugin-attestation",
+        generation: raceDesktop.generation,
+        registrationToken: "attestation-race-plugin-token",
+        role: "plugin"
+      ) == nil,
+      "plugin attestation must be rejected when its daemon owner is released during inspection"
+    )
+  } else {
+    check(false, "attestation race fixture must establish the exact daemon-to-worker-to-plugin chain")
+  }
   check(
     state.registerChild(
       peerPID: getpid(),
@@ -1169,18 +1374,223 @@ private func testPackagedProcessRegistrationChain() throws {
     return
   }
   check(afterHelperRelease.count == 2, "owned helper release must remove only the helper registration")
-  terminateNativeProcessFixture(daemonPID)
-  waitForNativeProcessFixtureExit(daemonPID)
-  guard let afterReplacement = state.registrationStatus(
+  check(
+    state.registerChild(
+      peerPID: pluginPID,
+      requestId: "helper-token-replay",
+      generation: desktopAttestation.generation,
+      ownerToken: pluginToken,
+      registrationToken: helperToken,
+      role: "capture-helper",
+      childPID: helperPID,
+      expectedIdentity: helperIdentity,
+      policy: wirePolicy
+    ) == nil,
+    "a released registration token must not be replayable in the launch generation"
+  )
+  state.setInspectionHook {
+    _ = state.releaseChild(
+      peerPID: desktopPID,
+      requestId: "plugin-release-during-registration",
+      generation: desktopAttestation.generation,
+      ownerToken: desktopAttestation.ownerToken,
+      childPID: daemonPID
+    )
+  }
+  check(
+    state.registerChild(
+      peerPID: pluginPID,
+      requestId: "helper-registration-during-release",
+      generation: desktopAttestation.generation,
+      ownerToken: pluginToken,
+      registrationToken: "helper-registration-during-release-token",
+      role: "capture-helper",
+      childPID: helperPID,
+      expectedIdentity: helperIdentity,
+      policy: wirePolicy
+    ) == nil,
+    "helper registration must be rejected when its daemon owner chain is released during inspection"
+  )
+  daemonToken = "daemon-reregistration-token"
+  check(
+    state.registerChild(
+      peerPID: desktopPID,
+      requestId: "daemon-reregistration",
+      generation: desktopAttestation.generation,
+      ownerToken: desktopAttestation.ownerToken,
+      registrationToken: daemonToken,
+      role: "daemon",
+      childPID: daemonPID,
+      expectedIdentity: daemonIdentity,
+      policy: wirePolicy
+    ) != nil,
+    "daemon must re-register after an owner release during child registration"
+  )
+  check(
+    state.attestRegisteredProcess(
+      peerPID: daemonPID,
+      requestId: "daemon-re-attestation",
+      generation: desktopAttestation.generation,
+      registrationToken: daemonToken,
+      role: "daemon"
+    ) != nil,
+    "re-registered daemon must complete attestation"
+  )
+  pluginToken = "plugin-reregistration-token"
+  check(
+    state.registerChild(
+      peerPID: pluginPID,
+      requestId: "plugin-reregistration",
+      generation: desktopAttestation.generation,
+      ownerToken: daemonToken,
+      registrationToken: pluginToken,
+      role: "plugin",
+      childPID: pluginPID,
+      expectedIdentity: pluginIdentity,
+      policy: wirePolicy
+    ) != nil,
+    "plugin must re-register after its owner released the prior registration"
+  )
+  check(
+    state.attestRegisteredProcess(
+      peerPID: pluginPID,
+      requestId: "plugin-re-attestation",
+      generation: desktopAttestation.generation,
+      registrationToken: pluginToken,
+      role: "plugin"
+    ) != nil,
+    "re-registered plugin must complete attestation"
+  )
+  check(
+    state.registerChild(
+      peerPID: pluginPID,
+      requestId: "helper-reregistration",
+      generation: desktopAttestation.generation,
+      ownerToken: pluginToken,
+      registrationToken: "helper-reregistration-token",
+      role: "capture-helper",
+      childPID: helperPID,
+      expectedIdentity: helperIdentity,
+      policy: wirePolicy
+    ) != nil,
+    "plugin must be able to re-register a helper after owner-release rejection"
+  )
+  guard let beforeReparent = state.registrationStatus(
     peerPID: desktopPID,
-    requestId: "registration-status-after-replacement",
+    requestId: "registration-status-before-reparent",
     generation: desktopAttestation.generation,
     ownerToken: desktopAttestation.ownerToken
   ) else {
-    check(false, "desktop status must remain bounded after a registered process exits")
+    check(false, "desktop status must remain bounded after helper re-registration")
     return
   }
-  check(!afterReplacement.contains(where: { $0.pid == daemonPID }), "replaced or exited registered processes must be removed")
+  check(beforeReparent.count == 3, "helper re-registration must restore the complete bounded chain")
+  state.setInspectionHook {
+    _ = state.releaseChild(
+      peerPID: pluginPID,
+      requestId: "helper-release-during-status",
+      generation: desktopAttestation.generation,
+      ownerToken: pluginToken,
+      childPID: helperPID
+    )
+  }
+  guard let afterStatusRelease = state.registrationStatus(
+    peerPID: desktopPID,
+    requestId: "registration-status-during-release",
+    generation: desktopAttestation.generation,
+    ownerToken: desktopAttestation.ownerToken
+  ) else {
+    check(false, "status must fail closed or retry after an owner release during inspection")
+    return
+  }
+  check(
+    afterStatusRelease.count == 2 && !afterStatusRelease.contains(where: { $0.pid == helperPID }),
+    "status must not report a helper released during its unlocked inspection"
+  )
+  check(
+    state.registerChild(
+      peerPID: pluginPID,
+      requestId: "helper-lease-registration",
+      generation: desktopAttestation.generation,
+      ownerToken: pluginToken,
+      registrationToken: "helper-lease-token",
+      role: "capture-helper",
+      childPID: helperPID,
+      expectedIdentity: helperIdentity,
+      policy: wirePolicy
+    ) != nil,
+    "plugin must restore helper ownership before lease revision proof"
+  )
+  state.setInspectionHook {
+    _ = state.releaseChild(
+      peerPID: pluginPID,
+      requestId: "helper-release-during-lease",
+      generation: desktopAttestation.generation,
+      ownerToken: pluginToken,
+      childPID: helperPID
+    )
+  }
+  check(
+    state.issueLease(
+      peerPID: pluginPID,
+      authorizer: RuntimePeerAuthorizer(),
+      requireRegistered: true
+    ) == nil,
+    "a packaged lease must be rejected when registration revision changes during inspection"
+  )
+  check(
+    state.registerChild(
+      peerPID: pluginPID,
+      requestId: "helper-reparent-registration",
+      generation: desktopAttestation.generation,
+      ownerToken: pluginToken,
+      registrationToken: "helper-reparent-token",
+      role: "capture-helper",
+      childPID: helperPID,
+      expectedIdentity: helperIdentity,
+      policy: wirePolicy
+    ) != nil,
+    "plugin must restore helper ownership before worker-chain pruning proof"
+  )
+  terminateNativeProcessFixture(workerPID)
+  waitForNativeProcessFixtureExit(workerPID)
+  guard let afterWorkerExit = state.registrationStatus(
+    peerPID: desktopPID,
+    requestId: "registration-status-after-worker-exit",
+    generation: desktopAttestation.generation,
+    ownerToken: desktopAttestation.ownerToken
+  ) else {
+    check(false, "desktop status must remain available after the worker intermediate exits")
+    return
+  }
+  check(
+    afterWorkerExit.count == 1 && afterWorkerExit[0].pid == daemonPID,
+    "worker reparent or exit must recursively remove plugin and helper registrations"
+  )
+  terminateNativeProcessFixture(pluginPID)
+  waitForNativeProcessFixtureExit(pluginPID)
+  guard let afterPluginExit = state.registrationStatus(
+    peerPID: desktopPID,
+    requestId: "registration-status-after-plugin-exit",
+    generation: desktopAttestation.generation,
+    ownerToken: desktopAttestation.ownerToken
+  ) else {
+    check(false, "desktop status must remain bounded after the plugin exits")
+    return
+  }
+  check(afterPluginExit.count == 1 && afterPluginExit[0].pid == daemonPID, "plugin exit must not remove its unowned daemon")
+  terminateNativeProcessFixture(daemonPID)
+  waitForNativeProcessFixtureExit(daemonPID)
+  guard let afterDaemonExit = state.registrationStatus(
+    peerPID: desktopPID,
+    requestId: "registration-status-after-daemon-exit",
+    generation: desktopAttestation.generation,
+    ownerToken: desktopAttestation.ownerToken
+  ) else {
+    check(false, "desktop status must remain bounded after the daemon exits")
+    return
+  }
+  check(afterDaemonExit.isEmpty, "daemon exit must recursively release the remaining registration chain")
   state.clear()
   check(
     state.registrationStatus(

@@ -78,6 +78,24 @@ describe("packaged host-attestation composition", () => {
     expect(capture.indexOf("diagnostic(\"packaged native capture helper could not attest through MeetlessHost\")")).toBeGreaterThanOrEqual(0);
     expect(capture.indexOf("diagnostic(\"packaged native capture helper could not attest through MeetlessHost\")")).toBeLessThan(capture.indexOf("while let line"));
   });
+
+  test("binds PluginRuntime to plugin-process below the native-pinned daemon worker", async () => {
+    const [host, plugin, native] = await Promise.all([
+      readFile("packages/runtime/src/host.ts", "utf8"),
+      readFile("packages/meetless-plugin/src/production-host.ts", "utf8"),
+      readFile("native/macos-host/MeetlessHost.swift", "utf8"),
+    ]);
+    expect(host).toContain('"plugins", "plugin-process.js"');
+    expect(host).toContain("? [executable, pluginPath]");
+    expect(host).not.toContain("? [executable, pluginPath, \"daemon\"]");
+    expect(native).toContain("daemon-worker.js");
+    expect(native).toContain("plugins/plugin-process.js");
+    expect(native).toContain("daemonWorkerArguments");
+    expect(native).toContain("policy.daemonWorkerArguments[1] == policy.daemonWorkerPath");
+    expect(plugin).toContain("decoded.length !== 2");
+    expect(plugin).toContain("decoded[1] !== expectedPluginPath");
+    expect(plugin).not.toContain("decoded[2] !== \"daemon\"");
+  });
 });
 
 function sourceBetween(source: string, startMarker: string, endMarker: string): string {
