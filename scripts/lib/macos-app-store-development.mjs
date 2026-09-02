@@ -28,6 +28,41 @@ export function resolveR5DevelopmentProfilePath(userHome = homedir()) {
   );
 }
 
+export function resolveMacAppStoreDevelopmentEmbeddedProfilePath(bundlePath) {
+  return path.resolve(bundlePath, "Contents", "embedded.provisionprofile");
+}
+
+export function createMacAppStoreDevelopmentSigningOptions({ bundlePath, parentEntitlementsPath, childEntitlementsPath }) {
+  const resolvedBundlePath = path.resolve(bundlePath);
+  const embeddedProfilePath = resolveMacAppStoreDevelopmentEmbeddedProfilePath(resolvedBundlePath);
+  return {
+    ignore(filePath) {
+      return path.resolve(filePath) === embeddedProfilePath;
+    },
+    optionsForFile(filePath) {
+      const entitlements = path.resolve(filePath) === resolvedBundlePath
+        ? parentEntitlementsPath
+        : childEntitlementsPath;
+      return { entitlements, hardenedRuntime: false, timestamp: "none" };
+    },
+  };
+}
+
+export function parseUnsignedCodesignProfileDiagnostic({ exitCode, stdout = "", stderr = "" }, label = "embedded provisioning profile") {
+  const diagnostic = "code object is not signed at all";
+  if (exitCode !== 1) {
+    const outcome = exitCode === 0 ? "succeeded" : `exited with ${String(exitCode)}`;
+    throw developmentError(`${label} codesign display ${outcome}; expected the unsigned-code-object diagnostic`);
+  }
+  const output = `${String(stdout ?? "")}\n${String(stderr ?? "")}`;
+  const lines = output.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  const expectedLine = lines.length === 1 && (lines[0] === diagnostic || lines[0].endsWith(`: ${diagnostic}`));
+  if (!expectedLine) {
+    throw developmentError(`${label} codesign display did not report the expected unsigned-code-object diagnostic`);
+  }
+  return { exitCode, diagnostic };
+}
+
 export async function resolveR5DevelopmentPaseoCommit(repositoryRoot, { execute = execFileAsync } = {}) {
   if (typeof repositoryRoot !== "string" || !path.isAbsolute(repositoryRoot)) {
     throw paseoDevelopmentError("the MAS marker resolver requires an absolute repository root");

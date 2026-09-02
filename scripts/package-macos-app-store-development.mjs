@@ -34,8 +34,11 @@ import {
   R5_APP_STORE_DEVELOPMENT_IDENTITY,
   R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME,
   R5_APP_STORE_TEAM_ID,
+  createMacAppStoreDevelopmentSigningOptions,
+  parseUnsignedCodesignProfileDiagnostic,
   parseMacAppStoreDevelopmentArguments,
   prepareMacAppStoreDevelopmentInfo,
+  resolveMacAppStoreDevelopmentEmbeddedProfilePath,
   resolveR5DevelopmentPaseoCommit,
   validateMacAppStoreDevelopmentInfo,
   validateR5DevelopmentElectronFileOutput,
@@ -129,6 +132,7 @@ async function snapshotProvisioningProfile(profilePath) {
   const snapshotPath = path.join(options.proofRoot, "profile-snapshot.mobileprovision");
   await writeFile(snapshotPath, bytes, { mode: 0o600 });
   await chmod(snapshotPath, 0o400);
+  await assertReadOnlyProfileMode(snapshotPath, "immutable provisioning-profile snapshot");
   const { stdout } = await run("security", ["cms", "-D", "-i", snapshotPath]);
   return {
     path: snapshotPath,
@@ -253,6 +257,11 @@ async function injectBuildInputs() {
 }
 
 async function signMasBundle(provisioningProfilePath) {
+  const signingOptions = createMacAppStoreDevelopmentSigningOptions({
+    bundlePath,
+    parentEntitlementsPath,
+    childEntitlementsPath,
+  });
   await signAsync({
     app: bundlePath,
     platform: "mas",
@@ -263,11 +272,13 @@ async function signMasBundle(provisioningProfilePath) {
     preAutoEntitlements: false,
     preEmbedProvisioningProfile: true,
     strictVerify: true,
-    optionsForFile(filePath) {
-      const target = path.resolve(filePath) === path.resolve(bundlePath) ? parentEntitlementsPath : childEntitlementsPath;
-      return { entitlements: target, hardenedRuntime: false, timestamp: "none" };
-    },
+    ignore: signingOptions.ignore,
+    optionsForFile: signingOptions.optionsForFile,
   });
+  await assertReadOnlyProfileMode(
+    resolveMacAppStoreDevelopmentEmbeddedProfilePath(bundlePath),
+    "embedded development provisioning profile",
+  );
 }
 
 async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, directComposition }) {
@@ -288,8 +299,9 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
     { applicationGroup: `${R5_APP_STORE_TEAM_ID}.${R5_APP_STORE_BUNDLE_ID}` },
   );
 
-  const profilePath = path.join(contentsPath, "embedded.provisionprofile");
+  const profilePath = resolveMacAppStoreDevelopmentEmbeddedProfilePath(bundlePath);
   await requireRegularFile(profilePath, "embedded development provisioning profile");
+  await assertReadOnlyProfileMode(profilePath, "embedded development provisioning profile");
   const embeddedProfileBytes = await readFile(profilePath);
   if (!embeddedProfileBytes.equals(profileBytes)) {
     throw developmentError("embedded development provisioning profile bytes differ from the immutable selected-profile snapshot");
@@ -300,6 +312,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
   if (embeddedProfile.UUID !== profile.UUID || embeddedProfile.Name !== profile.Name) {
     throw developmentError("signed bundle embeds a different R5 development profile");
   }
+  await assertUnsignedCodesignProfileData(profilePath);
 
   const entries = await enumeratePackageEntries(bundlePath);
   const machoEntries = await inspectPackageMachOEntries(bundlePath, entries, { ownerMode: true });
@@ -447,6 +460,24 @@ async function readCodesignEntitlements(target) {
   return parsePlistDocument(`${result.stdout}\n${result.stderr}`, `${target} signed entitlements`);
 }
 
+async function assertUnsignedCodesignProfileData(profilePath) {
+  try {
+    const result = await run("codesign", ["--display", "--verbose=2", profilePath]);
+    parseUnsignedCodesignProfileDiagnostic(
+      { exitCode: 0, stdout: result.stdout, stderr: result.stderr },
+      "embedded development provisioning profile",
+    );
+  } catch (error) {
+    if (Number.isInteger(error?.code)) {
+      return parseUnsignedCodesignProfileDiagnostic(
+        { exitCode: error.code, stdout: error.stdout, stderr: error.stderr },
+        "embedded development provisioning profile",
+      );
+    }
+    throw error;
+  }
+}
+
 async function runFile(target) {
   return (await run("file", [target])).stdout;
 }
@@ -459,6 +490,13 @@ async function requireRegularFile(target, label) {
 async function requireDirectory(target, label) {
   const state = await stat(target).catch(() => null);
   if (!state?.isDirectory()) throw developmentError(`${label} is missing or is not a directory`);
+}
+
+async function assertReadOnlyProfileMode(target, label) {
+  const state = await lstat(target).catch(() => null);
+  if (!state?.isFile() || (state.mode & 0o777) !== 0o400) {
+    throw developmentError(`${label} must remain a regular file with mode 0400`);
+  }
 }
 
 function parsePlistDocument(text, label) {

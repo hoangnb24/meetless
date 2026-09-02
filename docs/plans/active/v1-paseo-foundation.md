@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v41`
+- `plan_revision`: `v42`
 - `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-R3`
-- `state`: `R5_MAS_NATIVE_SCOPE_ACCEPTED_DEV_EXTERNAL_GATE_AUTHORIZED`
+- `state`: `R5_MAS_EMBEDDED_PROFILE_SIGNING_CORRECTION_REOPENED_PRE_FINAL_SIGNING`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead accepted immutable nested-native correction chain ending at `13f20d2eb49549f72098d103e0a49d1900a9248e`, whose exact parent is `34467fdd375fb7433d1a720759fb69684bed95a9` in the original family based at `189d7d490d33498e9bb392a1f31fa30d2ce92781`. `NATIVE-SCOPE-001` through `NATIVE-SCOPE-004` are closed. `57b1020aa30f31b611141f5cc1e020ce8d3baf0c`, `189d7d490d33498e9bb392a1f31fa30d2ce92781`, and retained failed proof `Ffw0bs` remain historical correction evidence. No artifact or external result is accepted by this repository verdict.
+- `candidate`: one immutable embedded-profile signing correction is prepared from exact base `8311c9928a899b74833608eef1980bac12f66f04`; accepted history through `13f20d2eb49549f72098d103e0a49d1900a9248e` and checkpoint `8311c9928a899b74833608eef1980bac12f66f04` remain preserved. The exact correction commit is reported at handoff; no artifact or external result is accepted by this repository verdict.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `failed_proof`: retained read-only root `/private/tmp/meetless-mas-development-proof.Ffw0bs`; direct artifact validation failed with `native-binaries child member Contents/Resources/meetless/node_modules/convex/node_modules/@esbuild/darwin-arm64/package.json is outside its component scope` before MAS injection, signing, installation, or launch. `/Applications` was untouched and no launch occurred.
-- `pending_ruling`: the owner-authorized frontier now opens only dev MAS packaging, Apple Development signing, recoverable local installation, exact local launch, bounded readiness, and inherent RevenueCat public-SDK configure/read behavior. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and every other external gate remain closed.
-- `blocked_by`: no artifact, signing, install, launch, or cleanup result is accepted yet. Purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions remain forbidden.
-- `next_action`: execute one fresh SERIAL package/sign/install/launch attempt from the accepted integration tip, restore the pre-existing app after bounded verification, and return exact evidence for Lead acceptance. Dependency order otherwise remains unchanged.
+- `failed_proof`: retained read-only root `/private/tmp/meetless-mas-development-proof.GpvGZD`; exact command `npm run package:macos:app-store:development` failed during MAS bundle signing because `Contents/embedded.provisionprofile` was passed to `codesign` with child entitlements and returned `Permission denied`. The observed command was `codesign --sign Apple Development: Long Le (335C7MY4H4) --force --timestamp=none --entitlements /Users/tubakhuym/projects/supervisors/meetless/native/macos-host/MeetlessAppStoreChild.entitlements.plist /private/tmp/meetless-mas-development-proof.GpvGZD/release/macos/Meetless.app/Contents/embedded.provisionprofile`; embedded mode was `0400`, profile bytes matched the snapshot, and profile CMS/fields remained valid. No MAS manifest was produced; `/Applications` was untouched, no install or launch occurred, and no retry was made.
+- `pending_ruling`: the embedded CMS provisioning profile is data and must be the only exact normalized path ignored before `optionsForFile`; every code object retains the existing parent/child entitlement route. Post-sign validation must retain byte equality and `security cms` parsing, then require `codesign --display --verbose=2` on the profile to return only the unsigned-code-object diagnostic. The deterministic repository correction proof is complete locally and remains pending Lead acceptance.
+- `blocked_by`: every external gate is closed for this correction: no packaging, Electron download, signing, signing retry, installation, launch, cleanup, purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operation, or real transcription-provider action is authorized. Dependency order is unchanged.
+- `next_action`: Lead inspects the immutable repository candidate; only after acceptance may a separately routed fresh package/sign/install/launch attempt proceed. No external action is part of this frontier.
 
 ## Ownership And Authority
 
@@ -1047,7 +1047,7 @@ matched `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`.
 No checked-in CI workflow or executable local hook invokes the MAS packager;
 branch protection was not queried and was not changed.
 
-### R5 NATIVE-SCOPE-003 clean-checkout proof correction (2026-09-02; current frontier)
+### R5 NATIVE-SCOPE-003 clean-checkout proof correction (2026-09-02; historical predecessor; closed by v41)
 
 Package validation/readiness remains reopened at exact correction base
 `34467fdd375fb7433d1a720759fb69684bed95a9` in the original family based at
@@ -1079,11 +1079,49 @@ artifact test remains optional historical evidence only; clean-checkout proof
 does not depend on it. No package manifest, lockfile, package composer,
 validator consumer, authority document, or static component summary changed.
 Close-out accepted `NATIVE-SCOPE-001`, `NATIVE-SCOPE-002`, and
-`NATIVE-SCOPE-004`; only `NATIVE-SCOPE-003` is reopened pending Lead acceptance.
+`NATIVE-SCOPE-004`; at that stage only `NATIVE-SCOPE-003` was reopened pending
+Lead acceptance. The v41 record below closes that finding.
 The preserved `57b1020`, `189d7d4`, failed root `Ffw0bs`, and `34467fd` remain
 historical correction evidence, not acceptance of this candidate. Every
 external gate stays closed until new acceptance and a separately routed retry;
 dependency order otherwise remains unchanged.
+
+### R5 MAS embedded-profile signing correction (2026-09-02; current frontier)
+
+Package readiness is reopened at exact base
+`8311c9928a899b74833608eef1980bac12f66f04`, preserving accepted history through
+`13f20d2eb49549f72098d103e0a49d1900a9248e` and checkpoint `8311c992`. The
+retained read-only root `/private/tmp/meetless-mas-development-proof.GpvGZD`
+records the exact failed command `npm run package:macos:app-store:development`:
+`@electron/osx-sign` classified `Contents/embedded.provisionprofile` as binary,
+then invoked `codesign` with child entitlements and received `Permission denied`.
+The embedded profile was mode `0400`; its bytes matched the immutable snapshot
+and its Apple CMS/profile field validation passed. The failure occurred before
+the MAS manifest; `/Applications` was untouched, and no install or launch was
+attempted.
+
+The correction treats the CMS provisioning profile as data. A pure seam in
+`scripts/lib/macos-app-store-development.mjs` derives the exact normalized
+`Contents/embedded.provisionprofile` path and supplies a synchronous `ignore`
+predicate. The MAS signer wires that predicate before the unchanged
+`optionsForFile` route: the outer app keeps parent entitlements and every other
+actual code object keeps child entitlements. The signer still uses
+`preEmbedProvisioningProfile: true` from the immutable snapshot, and snapshot
+and embedded profile modes remain `0400`; the selected source profile remains
+untouched.
+
+After signing, artifact validation still requires deep/strict bundle and
+Mach-O verification, profile byte equality, and `security cms` parsing. It also
+requires `codesign --display --verbose=2` on the embedded profile to fail with
+the one expected `code object is not signed at all` diagnostic. Exit 0, a signed
+profile, an unrelated failure, or extra diagnostic output is rejected.
+
+Observed deterministic repository proof on 2026-09-02:
+
+- `npx vitest run --config vitest.config.ts packages/runtime/test/macos-app-store-development.test.ts` passed 1 file and 10 tests, covering exact normalized ignore, modeled pre-options routing, parent/child entitlements, negative path cases, and unsigned-profile diagnostics.
+- `npx vitest run --config vitest.config.ts packages/runtime/test/macos-app-store-contract.test.ts packages/runtime/test/mas-runtime-package-contract.test.ts packages/runtime/test/macos-package.test.ts --maxWorkers=1` passed 3 files and 41 tests.
+- The non-signing subset of `packages/runtime/test/macos-package-signature.test.ts` passed 38 tests with 5 skipped; the two disposable ad-hoc signing tests were excluded by this frontier's no-real-signing rule, and three pre-existing diagnostic assertions remain incompatible with the current `docs/specs/macos-artifact-validation.md` authority wording.
+- `npm run validate:macos:app-store`, both changed-file `node --check` commands, and `git diff --check` passed. No package, download, signing, signing retry, install, launch, or external action was run. The correction and this plan reconciliation remain pending Lead acceptance.
 
 ### Risks And Recovery
 
@@ -1228,6 +1266,18 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v42`: package readiness is reopened before
+  final signing for the embedded-profile signing correction at exact base
+  `8311c9928a899b74833608eef1980bac12f66f04`. Accepted history through
+  `13f20d2eb49549f72098d103e0a49d1900a9248e` and checkpoint `8311c99` remain
+  preserved. Retained root `GpvGZD` records the exact `codesign`/`Permission
+  denied` failure on `Contents/embedded.provisionprofile`; profile bytes/CMS/
+  fields passed, the manifest was not produced, and no install or launch
+  occurred. The exact-path ignore seam, unchanged code-object entitlement
+  routing, and unsigned-data diagnostic parser are implemented and covered by
+  deterministic repository proof; this candidate remains pending Lead
+  acceptance. Every external gate is closed and dependency order is unchanged.
 
 - 2026-09-02 `PLAN_RECONCILIATION v41`: Lead accepted immutable correction
   `13f20d2eb49549f72098d103e0a49d1900a9248e` after the unconditional clean-

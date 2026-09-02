@@ -1,3 +1,4 @@
+import path from "node:path";
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import {
@@ -8,8 +9,11 @@ import {
   R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME,
   R5_APP_STORE_DEVELOPMENT_PROFILE_NAME,
   R5_APP_STORE_DEVELOPMENT_PROFILE_UUID,
+  createMacAppStoreDevelopmentSigningOptions,
+  parseUnsignedCodesignProfileDiagnostic,
   resolveR5DevelopmentPaseoCommit,
   resolveR5DevelopmentProfilePath,
+  resolveMacAppStoreDevelopmentEmbeddedProfilePath,
   validateMacAppStoreDevelopmentInfo,
   validateR5DevelopmentElectronFileOutput,
   validateR5DevelopmentElectronInfo,
@@ -113,6 +117,70 @@ describe("Mac App Store development package boundary", () => {
     expect(() => validateR5DevelopmentSignature(details.replace("TeamIdentifier=63M98WD275", "TeamIdentifier=OTHER"))).toThrow(/Team ID/);
     expect(() => validateR5DevelopmentSignature(details.replace("Apple Development: Long Le (335C7MY4H4)", "Apple Distribution: Long Le (63M98WD275)"))).toThrow(/identity/);
     expect(validateR5DevelopmentSignature(details.replace("Identifier=com.meetless.app", "Identifier=com.meetless.helper"), "nested", { expectedBundleIdentifier: null })).toMatchObject({ identifier: "com.meetless.helper" });
+  });
+
+  test("ignores only the normalized embedded profile and preserves code-object signing routes", () => {
+    const bundlePath = "/tmp/mas-proof/release/Meetless.app";
+    const parentEntitlementsPath = "/tmp/mas-proof/parent.entitlements.plist";
+    const childEntitlementsPath = "/tmp/mas-proof/child.entitlements.plist";
+    const signingOptions = createMacAppStoreDevelopmentSigningOptions({
+      bundlePath,
+      parentEntitlementsPath,
+      childEntitlementsPath,
+    });
+    const embeddedProfilePath = resolveMacAppStoreDevelopmentEmbeddedProfilePath(bundlePath);
+    const exactNormalizedProfilePath = `${bundlePath}/Contents/Resources/../embedded.provisionprofile`;
+    const paths = [
+      embeddedProfilePath,
+      exactNormalizedProfilePath,
+      path.join(bundlePath, "Contents", "embedded.provisionprofile.mobileprovision.bak"),
+      path.join(bundlePath, "Contents", "Embedded.provisionprofile"),
+      path.join(bundlePath, "Contents", "Resources", "Nested.app", "Contents", "embedded.provisionprofile"),
+      bundlePath,
+      path.join(bundlePath, "Contents", "MacOS", "MeetlessHost"),
+      path.join(bundlePath, "Contents", "Resources", "Electron.app"),
+      path.join(bundlePath, "Contents", "Frameworks", "Example.framework"),
+    ];
+    const optionsForFileCalls: string[] = [];
+    const routed = paths.flatMap((filePath) => {
+      if (signingOptions.ignore(filePath)) return [];
+      optionsForFileCalls.push(filePath);
+      return [{ filePath, options: signingOptions.optionsForFile(filePath) }];
+    });
+
+    expect(signingOptions.ignore(exactNormalizedProfilePath)).toBe(true);
+    expect(optionsForFileCalls).not.toContain(embeddedProfilePath);
+    expect(routed).toHaveLength(paths.length - 2);
+    expect(routed.find(({ filePath }) => filePath === bundlePath)?.options).toEqual({
+      entitlements: parentEntitlementsPath,
+      hardenedRuntime: false,
+      timestamp: "none",
+    });
+    expect(routed.filter(({ filePath }) => filePath !== bundlePath).every(({ options }) => options.entitlements === childEntitlementsPath)).toBe(true);
+    expect(paths.slice(2).every((filePath) => !signingOptions.ignore(filePath))).toBe(true);
+  });
+
+  test("accepts only the expected unsigned embedded-profile codesign diagnostic", () => {
+    expect(parseUnsignedCodesignProfileDiagnostic({
+      exitCode: 1,
+      stderr: "/tmp/Meetless.app/Contents/embedded.provisionprofile: code object is not signed at all\n",
+    })).toEqual({ exitCode: 1, diagnostic: "code object is not signed at all" });
+    expect(() => parseUnsignedCodesignProfileDiagnostic({
+      exitCode: 0,
+      stdout: "signed code object",
+    })).toThrow(/unsigned-code-object diagnostic/);
+    expect(() => parseUnsignedCodesignProfileDiagnostic({
+      exitCode: 1,
+      stderr: "code object is signed",
+    })).toThrow(/unsigned-code-object diagnostic/);
+    expect(() => parseUnsignedCodesignProfileDiagnostic({
+      exitCode: 1,
+      stderr: "permission denied",
+    })).toThrow(/unsigned-code-object diagnostic/);
+    expect(() => parseUnsignedCodesignProfileDiagnostic({
+      exitCode: 1,
+      stderr: "/tmp/Meetless.app/Contents/embedded.provisionprofile: code object is not signed at all\nunrelated failure",
+    })).toThrow(/unsigned-code-object diagnostic/);
   });
 
   test("keeps the direct package command unchanged and makes MAS inputs explicit", () => {
