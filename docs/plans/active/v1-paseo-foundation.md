@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v45`
-- `current_frontier`: `R5-MAS-ENTITLEMENT-CONVERGENCE-CORRECTION`
-- `state`: `R5_MAS_POST_SIGN_ENTITLEMENT_CONVERGENCE_REOPENED`
+- `plan_revision`: `v46`
+- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-5`
+- `state`: `R5_MAS_DEVELOPMENT_EXTERNAL_GATE_READY`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending one immutable entitlement-validation convergence correction from exact base `f914864f3e746662b58bdfe75fd852eb1e6f63c0`; the v44 Mach-O type-policy correction, accepted profile-signing correction `25257e4c96e743fd56ad80956bb1b31511e2c544`, checkpoint `81c9fe5`, and history through `13f20d2eb49549f72098d103e0a49d1900a9248e` remain preserved. No artifact or external result is accepted by this repository verdict.
+- `candidate`: Lead accepted immutable entitlement-validation convergence correction `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6`; the v44 Mach-O type-policy correction, accepted profile-signing correction `25257e4c96e743fd56ad80956bb1b31511e2c544`, checkpoint `81c9fe5`, and history through `13f20d2eb49549f72098d103e0a49d1900a9248e` remain preserved. No artifact or external result is accepted by this repository verdict.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: FAST closeout accepted the v44 authoritative Mach-O type policy but found two direct defects in the same post-sign validator boundary: NONE-policy evidence projection called `Object.keys(null)` for entitlement-free `MH_BUNDLE`/`MH_DYLIB` objects, and entitlement-result parsing required the known codesign deprecation warning instead of accepting the exact warning-free `Executable=` result. Retained read-only roots `/private/tmp/meetless-mas-development-proof.GNud6q` and `/private/tmp/meetless-mas-development-proof.GpvGZD` remain historical evidence; no package retry is claimed.
-- `pending_ruling`: package readiness is reopened only for this final post-sign/pre-install entitlement-validation convergence correction. The owner-authorized frontier still opens only dev MAS packaging, Apple Development signing, recoverable local installation, exact local launch, bounded readiness, and inherent RevenueCat public-SDK configure/read behavior. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and every other external gate remain closed.
-- `blocked_by`: no artifact, signing, install, launch, or cleanup result is accepted yet. The FAST findings are local integration defects, not a new architecture review or a package retry authorization. Purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions remain forbidden.
-- `next_action`: Lead review of the one immutable v45 candidate; only after acceptance may a separately routed SERIAL package/sign/install/launch attempt proceed. Dependency order otherwise remains unchanged.
+- `pending_ruling`: the owner-authorized gate is open only for dev MAS packaging, Apple Development signing, recoverable local installation, exact local launch, bounded readiness, and inherent RevenueCat public-SDK configure/read behavior. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and every other external gate remain closed.
+- `blocked_by`: no artifact, signing, install, launch, or cleanup result is accepted yet. Purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions remain forbidden.
+- `next_action`: one fresh SERIAL external operator runs package/sign/install/launch attempt 5 from the accepted repository tip, with transactional restoration of the pre-existing installed app and bounded lifecycle cleanup. Dependency order otherwise remains unchanged.
 
 ## Ownership And Authority
 
@@ -1354,6 +1354,19 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v46`: Lead accepted immutable convergence
+  correction `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6` after personally
+  inspecting the exact four-path delta, rerunning the focused MAS suite (12
+  tests), the composed MAS/package/contract suite (51 tests), typecheck, MAS
+  baseline validation, syntax and diff checks, and replaying the retained
+  GNud6q signed artifact. The replay validated all 43 Mach-O objects as one
+  parent, 15 child, and 27 no-entitlement policies; all 27 no-entitlement
+  evidence records serialized with empty key lists. The repository frontier now
+  opens only owner-authorized dev MAS package/sign/recoverable-install/exact-
+  launch verification attempt 5. No artifact, install, launch, RevenueCat
+  runtime read, or external result is accepted yet; all excluded gates remain
+  closed.
 
 - 2026-09-02 `PLAN_RECONCILIATION v45`: package readiness is reopened at exact
   base `f914864f3e746662b58bdfe75fd852eb1e6f63c0` for
