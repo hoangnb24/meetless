@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v48`
-- `current_frontier`: `R5-MAS-RUNTIME-IPC-ENDPOINT-CORRECTION`
-- `state`: `R5_MAS_RUNTIME_IPC_ENDPOINT_CORRECTION_PENDING_LEAD_REVIEW`
+- `plan_revision`: `v49`
+- `current_frontier`: `R5-MAS-RUNTIME-IPC-LIVENESS-CONVERGENCE`
+- `state`: `R5_MAS_RUNTIME_IPC_CLOSEOUT_REOPENED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: immutable correction candidate produced from exact original base `0477b10b8eaea19244fa694c567b8a601714591a`; Lead review is pending. Attempt-5 artifact packaging, Apple Development signing, immutable validation, recoverable installation, exact LaunchServices host start, stop audit, and restoration remain observed evidence but not an accepted launch result. The accepted correction history through `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6` remains preserved.
+- `candidate`: IPC topology candidate `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a` from exact base `0477b10b8eaea19244fa694c567b8a601714591a` remains unaccepted pending one bounded liveness/proof convergence correction. Attempt-5 package/sign/install/start/restore evidence and accepted history through `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6` remain preserved.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: retained attempt-5 proof root `/private/tmp/meetless-mas-development-proof.D97ICp` contains a fully signed and validated dev MAS artifact. Its exact install and native-signature preflight passed, but the host exited before daemon/renderer readiness because the app-container transcription socket expanded to 113 UTF-8 bytes while the Darwin binding accepts at most 103. The old app was restored exactly. Attempt-created MAS container/group roots, RevenueCat cache, and host lock remain retained evidence. One operator residue listing exposed a full public SDK-key-bearing cache filename; it was not frozen into evidence, but the no-disclosure handling condition was violated and must not be repeated.
-- `pending_ruling`: the bounded runtime IPC correction candidate is complete for Lead review. Package and signing readiness remain accepted evidence; launch readiness remains reopened until Lead accepts this candidate and a separately authorized fresh attempt is run. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and every other external gate remain closed.
-- `blocked_by`: no implementation dependency remains inside the authorized boundary. Lead acceptance and the separately excluded external launch gates are the only remaining decisions; they are not performed by this candidate.
-- `next_action`: Lead reviews the immutable candidate and its local proof. Only after Lead acceptance may a fresh external attempt proceed.
+- `pending_ruling`: FAST closeout accepted the relative endpoint topology and composition, but reopened native and Node stale/active liveness checks because they probe the overlong canonical path instead of the short bind argument. Package and signing readiness remain accepted evidence; launch and every excluded external gate remain closed.
+- `blocked_by`: IPC-003 and IPC-005 remain open. Both lifecycle owners must probe liveness through the authoritative short bind argument while retaining canonical paths for stat/marker/permissions/unlink, and clean long-root real bind/reclaim plus cross-language golden-vector proof must pass.
+- `next_action`: one final SERIAL convergence correction is limited to native/plugin liveness, direct tests, golden vectors, current diagnostics, and plan reconciliation. Lead performs deterministic acceptance afterward; no new architecture review or external retry is implied.
 
 ## Ownership And Authority
 
@@ -1354,6 +1354,19 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v49` / `CONVERGENCE_RECONCILIATION v1`:
+  FAST closeout accepted IPC-001 and the selected relative AF_UNIX topology,
+  but reopened IPC-003/IPC-005 because stale/active probes in both native and
+  Node lifecycle owners used the overlong canonical socket path. On the
+  attempt-5 113-byte topology this prevents deterministic stale recovery even
+  though bind/connect uses the short relative endpoint. The final correction
+  keeps the architecture fixed: use the short bind argument for liveness and
+  canonical path only for stat, marker identity, permissions, and unlink; add
+  real long-root bind/reclaim, active-owner rejection, and cross-language
+  golden vectors; refresh v47 diagnostics. No third architecture loop or
+  external retry is authorized by this reconciliation, and every excluded gate
+  remains closed.
 
 - 2026-09-02 `PLAN_RECONCILIATION v48`: from exact original base
   `0477b10b8eaea19244fa694c567b8a601714591a`, this candidate adds one pure,
