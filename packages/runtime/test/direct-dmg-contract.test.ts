@@ -78,6 +78,21 @@ describe("M7 direct-DMG installation contract", () => {
       identity: "/Users/example/Library/Application Support/Meetless/host-identity.json",
     });
     expect(config.paths.recordingExports).toBe("/Users/example/Documents/meetings");
+    expect(config.endpoints).toMatchObject({
+      schema: "MEETLESS_RUNTIME_ENDPOINTS v1",
+      mode: "development",
+      workingDirectory: config.paths.root,
+      recording: {
+        name: "paseo-home/recording-control.sock",
+        bindArgument: config.paths.recordingSocket,
+        canonicalPath: config.paths.recordingSocket,
+      },
+      transcription: {
+        name: "transcription.sock",
+        bindArgument: config.paths.transcriptionSocket,
+        canonicalPath: config.paths.transcriptionSocket,
+      },
+    });
     for (const candidate of [
       config.paths.root,
       config.paths.paseoHome,

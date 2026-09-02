@@ -369,6 +369,12 @@ async function packagedResourceFixture(): Promise<{ root: string; packageRoot: s
       recordingSocketRelativePath: "paseo-home/recording-control.sock",
       transcriptionSocketRelativePath: "transcription.sock",
       transcriptionStagingRelativePath: "meeting-store/transcription-ranges",
+      endpointPolicy: {
+        schema: "MEETLESS_RUNTIME_ENDPOINTS v1",
+        workingDirectory: "runtime-root",
+        recordingEndpointName: "paseo-home/recording-control.sock",
+        transcriptionEndpointName: "transcription.sock",
+      },
     },
     listen: "127.0.0.1:16777",
     rendererOrigin: "http://127.0.0.1:18082",

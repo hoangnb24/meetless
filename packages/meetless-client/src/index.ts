@@ -39,6 +39,11 @@ import {
   type RecordingControlRequest,
   type RecordingStatusWire,
 } from "@meetless/meeting-contracts";
+import {
+  parseRendererRuntimeEndpointComposition,
+  parseRuntimeEndpointComposition,
+  type RuntimeEndpointComposition,
+} from "./runtime-endpoints.js";
 
 export const MEETLESS_PLUGIN_ID = "meetless";
 
@@ -65,12 +70,15 @@ export class DesktopRecordingClient {
   private readonly pending = new Map<string, { resolve(status: RecordingStatusWire): void; reject(error: Error): void }>();
   private readonly listeners = new Set<(status: RecordingStatusWire) => void>();
 
-  constructor(private readonly bridge: DesktopBridge) {
+  private readonly endpoints: RuntimeEndpointComposition;
+
+  constructor(private readonly bridge: DesktopBridge, endpoints: unknown) {
     if (bridge.platform !== "darwin" || typeof bridge.invoke !== "function" || typeof bridge.events?.on !== "function") {
       throw new MeetlessFeatureUnavailableError(
         "Desktop recording requires the pinned macOS Electron bridge; web, mobile, and URL parameters cannot grant it.",
       );
     }
+    this.endpoints = parseRuntimeEndpointComposition(endpoints);
   }
 
   async connect(): Promise<RecordingStatusWire> {
@@ -92,13 +100,7 @@ export class DesktopRecordingClient {
     if (!this.unlisten) {
       this.unlisten = await this.bridge.events!.on("local-daemon-transport-event", (payload) => this.handleTransportEvent(payload));
     }
-    if (!this.socketPath) {
-      const daemonStatus = await this.bridge.invoke!("desktop_daemon_status") as { home?: unknown };
-      if (typeof daemonStatus?.home !== "string" || !daemonStatus.home.startsWith("/")) {
-        throw new Error("Desktop daemon did not expose an absolute isolated home");
-      }
-      this.socketPath = await resolveRecordingSocket(daemonStatus.home.replace(/\/$/u, ""));
-    }
+    if (!this.socketPath) this.socketPath = this.endpoints.recording.bindArgument;
     let session: unknown;
     let lastError: unknown;
     for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -224,21 +226,16 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function resolveRecordingSocket(paseoHome: string): Promise<string> {
-  const inHome = `${paseoHome}/recording-control.sock`;
-  if (new TextEncoder().encode(inHome).byteLength <= 103) return inHome;
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(paseoHome));
-  const identity = [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 24);
-  return `/private/tmp/meetless-recording-${identity}.sock`;
-}
-
 export function createDesktopRecordingClient(): DesktopRecordingClient {
   const bridge = typeof window === "undefined" ? undefined : (window as unknown as { paseoDesktop?: DesktopBridge }).paseoDesktop;
   if (!bridge) throw new MeetlessFeatureUnavailableError("Electron recording bridge is unavailable");
-  return new DesktopRecordingClient(bridge);
+  const href = typeof window === "undefined" ? "" : (window as unknown as { location?: { href?: unknown } }).location?.href;
+  if (typeof href !== "string" || !href) {
+    throw new MeetlessFeatureUnavailableError(
+      "Electron recording requires the host-provided meetlessEndpoints composition; the renderer URL is missing it.",
+    );
+  }
+  return new DesktopRecordingClient(bridge, parseRendererRuntimeEndpointComposition(href));
 }
 
 export class MeetlessFeatureUnavailableError extends Error {

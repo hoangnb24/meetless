@@ -11,6 +11,7 @@ import {
   MACOS_INSTALLATION_CONTRACT,
   packagedHostConfiguration,
 } from "../../../scripts/lib/macos-package-contract.mjs";
+import { resolveHostConfiguration } from "../src/host.js";
 import {
   macAppStoreInstallationContract,
   macAppStoreInstallationContractBytes,
@@ -73,6 +74,31 @@ describe("Mac App Store runtime/package contract", () => {
     })).toThrow(/valid Paseo commit/);
   });
 
+  test("names endpoint policy violations and gives a compliant repair action", () => {
+    const contract = macAppStoreInstallationContract();
+    const invalidContract = {
+      ...contract,
+      runtime: {
+        ...contract.runtime,
+        endpointPolicy: {
+          ...contract.runtime.endpointPolicy,
+          recordingEndpointName: "../recording.sock",
+        },
+      },
+    };
+    expect(() => validateMacAppStorePackageContract(invalidContract)).toThrow(
+      /installation contract recording endpoint name.*relative name.*Authority:.*0005-mac-app-store-and-revenuecat.*Next action: restore a non-empty relative endpoint name/s,
+    );
+
+    const invalidHost = {
+      ...macAppStorePackagedHostConfiguration(),
+      recordingEndpointName: "a".repeat(104),
+    };
+    expect(() => validateMacAppStorePackagedHostConfiguration(invalidHost)).toThrow(
+      /host configuration recording endpoint name exceeds the 103-byte Darwin limit.*Next action: restore an endpoint name at or below 103 UTF-8 bytes/s,
+    );
+  });
+
   test("resolves packaged MAS state inside the app container and rejects direct export overrides", async () => {
     const root = await createPackagedMasFixture();
     const config = resolveRuntimeConfig({
@@ -86,10 +112,25 @@ describe("Mac App Store runtime/package contract", () => {
       `${FIXTURE_CONTAINER_SUPPORT}/Meetless/recordings`,
     );
     expect(config.paths.recordingExports).not.toBe(`${FIXTURE_HOME}/Documents/meetings`);
-    expect(config.paths.recordingSocket).toMatch(/^\/private\/tmp\/meetless-recording-[a-f0-9]{24}\.sock$/u);
-    expect(config.paths.recordingSocket).not.toContain(FIXTURE_CONTAINER_SUPPORT);
+    expect(config.paths.recordingSocket).toBe(
+      `${FIXTURE_RUNTIME_ROOT}/paseo-home/recording-control.sock`,
+    );
+    expect(config.endpoints.recording.bindArgument).toBe("paseo-home/recording-control.sock");
+    expect(config.endpoints.transcription.bindArgument).toBe("transcription.sock");
+    expect(config.endpoints.recording.canonicalPath).toContain(FIXTURE_CONTAINER_SUPPORT);
     expect(config.environment.MEETLESS_APP_CONTAINER_SUPPORT_ROOT).toBe(FIXTURE_CONTAINER_SUPPORT);
     expect(config.environment.MEETLESS_EXPORT_ROOT).toBe(config.paths.recordingExports);
+
+    expect(() => resolveRuntimeConfig({
+      repositoryRoot: root,
+      userHome: FIXTURE_HOME,
+      environment: {
+        MEETLESS_RUNTIME_ROOT: FIXTURE_RUNTIME_ROOT,
+        MEETLESS_RECORDING_SOCKET: `${FIXTURE_RUNTIME_ROOT}/legacy-recording.sock`,
+      },
+    })).toThrow(
+      /Runtime endpoint MEETLESS_RECORDING_SOCKET violates policy.*canonical absolute projection.*stop before child launch/s,
+    );
 
     expect(() => resolveRuntimeConfig({
       repositoryRoot: root,
@@ -109,6 +150,71 @@ describe("Mac App Store runtime/package contract", () => {
         MEETLESS_APP_CONTAINER_SUPPORT_ROOT: `${FIXTURE_HOME}/Library/Application Support`,
       },
     })).toThrow(/differs from the app-container path.*docs\/decisions\/0005-mac-app-store-and-revenuecat\.md/s);
+  });
+
+  test("keeps packaged bind arguments stable across ordinary, long ASCII, and long Unicode homes", async () => {
+    const root = await createPackagedMasFixture();
+    const homes = [
+      "/Users/example",
+      `/Users/${"long-ascii-home-segment-".repeat(12)}`,
+      `/Users/${"用户家目录-".repeat(18)}`,
+    ];
+    const compositions = homes.map((userHome) => {
+      const containerSupport = path.join(
+        userHome,
+        "Library/Containers/com.meetless.app/Data/Library/Application Support",
+      );
+      return resolveRuntimeConfig({
+        repositoryRoot: root,
+        userHome,
+        environment: { MEETLESS_RUNTIME_ROOT: path.join(containerSupport, "Meetless") },
+      }).endpoints;
+    });
+
+    for (const endpoints of compositions) {
+      expect(endpoints.recording.bindArgument).toBe("paseo-home/recording-control.sock");
+      expect(endpoints.transcription.bindArgument).toBe("transcription.sock");
+      expect(Buffer.byteLength(endpoints.recording.bindArgument, "utf8")).toBeLessThanOrEqual(103);
+      expect(Buffer.byteLength(endpoints.transcription.bindArgument, "utf8")).toBeLessThanOrEqual(103);
+      expect(endpoints.recording.canonicalPath).toBe(
+        `${endpoints.workingDirectory}/paseo-home/recording-control.sock`,
+      );
+      expect(endpoints.transcription.canonicalPath).toBe(
+        `${endpoints.workingDirectory}/transcription.sock`,
+      );
+      expect(endpoints.recording.canonicalPath.startsWith(`${endpoints.workingDirectory}/`)).toBe(true);
+      expect(endpoints.transcription.canonicalPath.startsWith(`${endpoints.workingDirectory}/`)).toBe(true);
+    }
+    expect(compositions.map((endpoints) => endpoints.recording.bindArgument)).toEqual([
+      "paseo-home/recording-control.sock",
+      "paseo-home/recording-control.sock",
+      "paseo-home/recording-control.sock",
+    ]);
+  });
+
+  test("projects the packaged host endpoint composition under the exact runtime root", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-mas-host-contract-"));
+    fixtureRoots.push(root);
+    const bundle = path.join(root, "Meetless.app");
+    const packageRoot = path.join(bundle, "Contents/Resources/meetless");
+    await mkdir(packageRoot, { recursive: true });
+    const contract = macAppStoreInstallationContract();
+    const contractSha256 = macAppStoreInstallationContractSha256();
+    const marker = macAppStorePackagedMarker({ paseoCommit: FIXTURE_PASEO_COMMIT });
+    await writeFile(path.join(packageRoot, "installation-contract.json"), macAppStoreInstallationContractBytes());
+    await writeFile(path.join(packageRoot, "meetless-package.json"), `${JSON.stringify(marker, null, 2)}\n`);
+
+    const configuration = resolveHostConfiguration(
+      macAppStorePackagedHostConfiguration({ contractSha256 }),
+      bundle,
+    );
+    expect(configuration.endpointPolicy).toBe("MEETLESS_RUNTIME_ENDPOINTS v1");
+    expect(configuration.endpointWorkingDirectory).toBe("runtime-root");
+    expect(configuration.recordingEndpointName).toBe(contract.runtime.endpointPolicy.recordingEndpointName);
+    expect(configuration.transcriptionEndpointName).toBe(contract.runtime.endpointPolicy.transcriptionEndpointName);
+    expect(configuration.transcriptionSocket).toBe(
+      path.join(configuration.runtimeRoot, contract.runtime.endpointPolicy.transcriptionEndpointName),
+    );
   });
 });
 

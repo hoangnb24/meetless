@@ -627,7 +627,14 @@ async function temporaryRoot(): Promise<string> {
 }
 
 function withSocket(config: RuntimeConfig, recordingSocket: string): RuntimeConfig {
-  return { ...config, paths: { ...config.paths, recordingSocket } };
+  return {
+    ...config,
+    paths: { ...config.paths, recordingSocket },
+    endpoints: {
+      ...config.endpoints,
+      recording: { ...config.endpoints.recording, bindArgument: recordingSocket, canonicalPath: recordingSocket },
+    },
+  };
 }
 
 function idleStatus() {

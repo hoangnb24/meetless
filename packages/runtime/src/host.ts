@@ -7,6 +7,11 @@ import path from "node:path";
 import { z } from "zod";
 import type { RuntimeConfig } from "./config.js";
 import { inspectNativeArgumentVector, RECORDING_READINESS_AUTHORITY } from "./readiness.js";
+import {
+  MEETLESS_RUNTIME_ENDPOINTS_SCHEMA,
+  MEETLESS_RUNTIME_ENDPOINT_WORKING_DIRECTORY,
+  validateEndpointName,
+} from "./runtime-endpoints.js";
 
 export const MEETLESS_HOST_BUNDLE_ID = "com.meetless.app";
 export const MEETLESS_HOST_EXECUTABLE = "MeetlessHost";
@@ -25,6 +30,10 @@ const HostLaunchConfigurationSchema = z.object({
   nodePath: z.string().min(1),
   runtimeCliPath: z.string().min(1),
   identityPath: z.string().min(1),
+  endpointPolicy: z.literal(MEETLESS_RUNTIME_ENDPOINTS_SCHEMA).optional(),
+  endpointWorkingDirectory: z.literal(MEETLESS_RUNTIME_ENDPOINT_WORKING_DIRECTORY).optional(),
+  recordingEndpointName: z.string().min(1).optional(),
+  transcriptionEndpointName: z.string().min(1).optional(),
 }).strict();
 
 export type HostLaunchConfiguration = z.infer<typeof HostLaunchConfigurationSchema>;
@@ -47,6 +56,10 @@ const PackagedHostConfigurationSchema = z.object({
   rendererOrigin: z.string().url(),
   transcriptionSocketRelativeToRuntimeRoot: RelativeHostPathSchema,
   transcriptionStagingRelativeToRuntimeRoot: RelativeHostPathSchema,
+  endpointPolicy: z.literal(MEETLESS_RUNTIME_ENDPOINTS_SCHEMA),
+  endpointWorkingDirectory: z.literal(MEETLESS_RUNTIME_ENDPOINT_WORKING_DIRECTORY),
+  recordingEndpointName: RelativeHostPathSchema,
+  transcriptionEndpointName: RelativeHostPathSchema,
   nodePath: RelativeHostPathSchema,
   runtimeCliPath: RelativeHostPathSchema,
 }).strict();
@@ -80,7 +93,23 @@ const InstallationContractSchema = z.object({
   userSupportRelativePath: RelativeHostPathSchema,
   recordingExportsRelativePath: RelativeHostPathSchema,
   identityRelativePath: RelativeHostPathSchema,
-  runtime: z.record(z.string(), z.string()),
+  runtime: z.object({
+    paseoHomeRelativePath: RelativeHostPathSchema,
+    electronUserDataRelativePath: RelativeHostPathSchema,
+    meetingStoreRelativePath: RelativeHostPathSchema,
+    logsRelativePath: RelativeHostPathSchema,
+    daemonLogRelativePath: RelativeHostPathSchema,
+    manifestRelativePath: RelativeHostPathSchema,
+    recordingSocketRelativePath: RelativeHostPathSchema,
+    transcriptionSocketRelativePath: RelativeHostPathSchema,
+    transcriptionStagingRelativePath: RelativeHostPathSchema,
+    endpointPolicy: z.object({
+      schema: z.literal(MEETLESS_RUNTIME_ENDPOINTS_SCHEMA),
+      workingDirectory: z.literal(MEETLESS_RUNTIME_ENDPOINT_WORKING_DIRECTORY),
+      recordingEndpointName: RelativeHostPathSchema,
+      transcriptionEndpointName: RelativeHostPathSchema,
+    }).strict(),
+  }).strict(),
   listen: z.string().min(1),
   rendererOrigin: z.string().url(),
   package: z.object({
@@ -176,7 +205,15 @@ export async function inspectHostBundle(bundlePath: string): Promise<HostIdentit
 }
 
 export function resolveHostConfiguration(configuration: unknown, bundlePath: string): HostLaunchConfiguration {
-  const parsed = HostConfigurationFileSchema.parse(configuration);
+  let parsed: HostConfigurationFile;
+  try {
+    parsed = HostConfigurationFileSchema.parse(configuration);
+  } catch (error) {
+    if (isRecord(configuration) && configuration.mode === "packaged" && !hasPackagedEndpointPolicyShape(configuration)) {
+      throw endpointConfigurationError("packaged host configuration endpoint policy is missing or invalid", error);
+    }
+    throw error;
+  }
   if (parsed.mode === "development") {
     return HostLaunchConfigurationSchema.parse({
       repositoryRoot: parsed.repositoryRoot,
@@ -199,7 +236,16 @@ export function resolveHostConfiguration(configuration: unknown, bundlePath: str
   if (contractDigest !== parsed.installationContractSha256) {
     throw new Error(`host configuration installation contract digest ${contractDigest} differs from ${parsed.installationContractSha256}`);
   }
-  const contract = InstallationContractSchema.parse(parseJsonRequired(contractBytes, contractPath));
+  const contractValue = parseJsonRequired(contractBytes, contractPath);
+  let contract: z.infer<typeof InstallationContractSchema>;
+  try {
+    contract = InstallationContractSchema.parse(contractValue);
+  } catch (error) {
+    throw endpointConfigurationError(
+      "packaged installation contract endpoint policy is missing or invalid",
+      error,
+    );
+  }
   const markerPath = resolveContainedPath(packageRoot, "meetless-package.json", "package marker");
   const marker = parseJsonRequired(readFileSyncRequired(markerPath, "package marker"), markerPath) as Record<string, unknown>;
   if (
@@ -215,10 +261,17 @@ export function resolveHostConfiguration(configuration: unknown, bundlePath: str
     contract.package.contractFilename !== parsed.installationContract ||
     contract.listen !== parsed.listen ||
     contract.rendererOrigin !== parsed.rendererOrigin ||
+    contract.runtime.endpointPolicy.schema !== parsed.endpointPolicy ||
+    contract.runtime.endpointPolicy.workingDirectory !== parsed.endpointWorkingDirectory ||
+    contract.runtime.endpointPolicy.recordingEndpointName !== parsed.recordingEndpointName ||
+    contract.runtime.endpointPolicy.transcriptionEndpointName !== parsed.transcriptionEndpointName ||
+    contract.runtime.recordingSocketRelativePath !== contract.runtime.endpointPolicy.recordingEndpointName ||
+    contract.runtime.transcriptionSocketRelativePath !== contract.runtime.endpointPolicy.transcriptionEndpointName ||
     JSON.stringify(marker.resources) !== JSON.stringify(contract.package.resources)
   ) {
-    throw new Error("host configuration differs from the packaged installation contract");
+    throw endpointConfigurationError("packaged host configuration differs from the accepted endpoint policy");
   }
+  validateHostEndpointPolicy(parsed.recordingEndpointName, parsed.transcriptionEndpointName);
   for (const [name, relativePath] of Object.entries(contract.package.resources)) {
     resolveBundleRelativePath(packageRoot, relativePath, `packaged ${name}`);
   }
@@ -244,6 +297,10 @@ export function resolveHostConfiguration(configuration: unknown, bundlePath: str
     nodePath: resolveBundleRelativePath(packageRoot, parsed.nodePath, "packaged node"),
     runtimeCliPath: resolveBundleRelativePath(packageRoot, parsed.runtimeCliPath, "packaged runtime CLI"),
     identityPath,
+    endpointPolicy: parsed.endpointPolicy,
+    endpointWorkingDirectory: parsed.endpointWorkingDirectory,
+    recordingEndpointName: parsed.recordingEndpointName,
+    transcriptionEndpointName: parsed.transcriptionEndpointName,
   });
 }
 
@@ -358,6 +415,10 @@ export async function assertInstalledHostIdentity(
     installed.configuration.transcriptionStaging !== expectedConfiguration.transcriptionStaging ||
     installed.configuration.runtimeCliPath !== expectedConfiguration.runtimeCliPath ||
     installed.configuration.identityPath !== expectedConfiguration.identityPath ||
+    installed.configuration.endpointPolicy !== expectedConfiguration.endpointPolicy ||
+    installed.configuration.endpointWorkingDirectory !== expectedConfiguration.endpointWorkingDirectory ||
+    installed.configuration.recordingEndpointName !== expectedConfiguration.recordingEndpointName ||
+    installed.configuration.transcriptionEndpointName !== expectedConfiguration.transcriptionEndpointName ||
     !path.isAbsolute(installed.configuration.nodePath)
   ) {
     throw hostFailure("installed host repository/runtime configuration differs from this production runtime");
@@ -402,6 +463,14 @@ export async function assertSupervisorOwnedByHost(
 }
 
 export function expectedHostConfiguration(config: RuntimeConfig): HostLaunchConfiguration {
+  const endpointConfiguration = config.packaged && config.endpoints.mode === "packaged"
+    ? {
+      endpointPolicy: config.endpoints.schema,
+      endpointWorkingDirectory: MEETLESS_RUNTIME_ENDPOINT_WORKING_DIRECTORY,
+      recordingEndpointName: config.endpoints.recording.name,
+      transcriptionEndpointName: config.endpoints.transcription.name,
+    }
+    : {};
   return {
     repositoryRoot: path.resolve(config.paths.plugin, "..", ".."),
     runtimeRoot: config.paths.root,
@@ -412,7 +481,36 @@ export function expectedHostConfiguration(config: RuntimeConfig): HostLaunchConf
     nodePath: process.execPath,
     runtimeCliPath: path.join(path.resolve(config.paths.plugin, "..", ".."), "packages", "runtime", "dist", "cli.js"),
     identityPath: config.host.identity,
+    ...endpointConfiguration,
   };
+}
+
+function validateHostEndpointPolicy(recording: string, transcription: string): void {
+  try {
+    validateEndpointName("recording", recording);
+    validateEndpointName("transcription", transcription);
+  } catch (error) {
+    throw endpointConfigurationError("packaged host endpoint name is invalid", error);
+  }
+  if (recording === transcription) {
+    throw endpointConfigurationError("packaged recording and transcription endpoint names must remain distinct");
+  }
+}
+
+function hasPackagedEndpointPolicyShape(configuration: Record<string, unknown>): boolean {
+  return configuration.endpointPolicy === MEETLESS_RUNTIME_ENDPOINTS_SCHEMA &&
+    configuration.endpointWorkingDirectory === MEETLESS_RUNTIME_ENDPOINT_WORKING_DIRECTORY &&
+    typeof configuration.recordingEndpointName === "string" &&
+    typeof configuration.transcriptionEndpointName === "string";
+}
+
+function endpointConfigurationError(reason: string, detail?: unknown): Error {
+  const suffix = detail ? `: ${message(detail)}` : "";
+  return new Error(
+    `${reason}${suffix}. Authority: docs/decisions/0005-mac-app-store-and-revenuecat.md, ` +
+      "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md, and PLAN_RECONCILIATION v47. " +
+      "Next action: rebuild host-config.json and the installation contract from the accepted versioned endpoint policy; stop before child launch.",
+  );
 }
 
 async function assertExactTopology(
@@ -516,4 +614,8 @@ function hostFailure(reason: string): Error {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

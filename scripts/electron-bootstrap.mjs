@@ -1,5 +1,5 @@
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { app, Menu } from "electron";
 import { readConsumedUiTestMarkerSync } from "../packages/runtime/dist/ui-test-envelope.js";
 
@@ -38,6 +38,7 @@ app.on("browser-window-created", (_event, window) => {
   );
 });
 
-const desktopMain = path.resolve("vendor/paseo/packages/desktop/dist/main.js");
+const bootstrapDirectory = path.dirname(fileURLToPath(import.meta.url));
+const desktopMain = path.resolve(bootstrapDirectory, "../vendor/paseo/packages/desktop/dist/main.js");
 await import(pathToFileURL(desktopMain).href);
 app.setName("Meetless");

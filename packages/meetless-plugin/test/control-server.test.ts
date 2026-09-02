@@ -1,4 +1,5 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import net from "node:net";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import WebSocket, { type RawData } from "ws";
@@ -76,7 +77,142 @@ describe("private desktop recording control", () => {
     expect(stopped.status.status).toBe("saved");
     second.close();
   }, 30_000);
+
+  test("binds a packaged endpoint relative to the explicit runtime-root working directory", async () => {
+    root = await mkdtemp("/private/tmp/meetless-control-");
+    const socketPath = path.join(root, "recording-control.sock");
+    service = await fixtureService(root);
+    const endpoint = {
+      role: "recording" as const,
+      mode: "packaged" as const,
+      workingDirectory: root,
+      name: "recording-control.sock",
+      bindArgument: "recording-control.sock",
+      canonicalPath: socketPath,
+    };
+    const previousDirectory = process.cwd();
+    process.chdir(root);
+    try {
+      server = new RecordingControlServer(endpoint, service);
+      await server.start();
+      expect((await stat(socketPath)).mode & 0o777).toBe(0o600);
+      await connectRelative(endpoint.bindArgument);
+      await server.close();
+      server = null;
+      expect(await exists(socketPath)).toBe(false);
+      expect(await exists(`${socketPath}.owner.json`)).toBe(false);
+    } finally {
+      process.chdir(previousDirectory);
+    }
+  });
+
+  test("rejects a wrong CWD and preserves foreign regular, symlink, and unknown socket entries", async () => {
+    root = await mkdtemp("/private/tmp/meetless-control-");
+    service = await fixtureService(root);
+    const socketPath = path.join(root, "recording-control.sock");
+    const wrongCwdEndpoint = {
+      role: "recording" as const,
+      mode: "packaged" as const,
+      workingDirectory: path.join(root, "expected-runtime-root"),
+      name: "recording-control.sock",
+      bindArgument: "recording-control.sock",
+      canonicalPath: path.join(root, "expected-runtime-root", "recording-control.sock"),
+    };
+    const wrongCwd = new RecordingControlServer(wrongCwdEndpoint, service);
+    await expect(wrongCwd.start()).rejects.toThrow(/CWD.*runtime-root working directory.*Authority.*Next action/s);
+
+    await writeFile(socketPath, "foreign-entry\n");
+    const regular = new RecordingControlServer(socketPath, service);
+    await expect(regular.start()).rejects.toThrow(/foreign non-socket entry.*not removed/);
+    expect(await readFile(socketPath, "utf8")).toBe("foreign-entry\n");
+    await rm(socketPath);
+
+    const target = path.join(root, "foreign-target");
+    await writeFile(target, "target\n");
+    await symlink(target, socketPath);
+    const link = new RecordingControlServer(socketPath, service);
+    await expect(link.start()).rejects.toThrow(/foreign symlink.*not removed/);
+    expect((await lstat(socketPath)).isSymbolicLink()).toBe(true);
+    await rm(socketPath);
+
+    const occupied = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      occupied.once("error", reject);
+      occupied.listen(socketPath, () => resolve());
+    });
+    const unknown = new RecordingControlServer(socketPath, service);
+    await expect(unknown.start()).rejects.toThrow(/unknown socket without an owned marker.*not removed/);
+    await new Promise<void>((resolve) => occupied.close(() => resolve()));
+    await rm(socketPath, { force: true });
+  });
+
+  test("reclaims a provably stale owner marker and rejects a concurrently occupied owner", async () => {
+    root = await mkdtemp("/private/tmp/meetless-control-");
+    service = await fixtureService(root);
+    const socketPath = path.join(root, "recording-control.sock");
+    const endpoint = {
+      role: "recording" as const,
+      mode: "packaged" as const,
+      workingDirectory: root,
+      name: "recording-control.sock",
+      bindArgument: "recording-control.sock",
+      canonicalPath: socketPath,
+    };
+    const previousDirectory = process.cwd();
+    process.chdir(root);
+    try {
+      const staleListener = net.createServer();
+      await new Promise<void>((resolve, reject) => {
+        staleListener.once("error", reject);
+        staleListener.listen(socketPath, () => resolve());
+      });
+      await new Promise<void>((resolve) => staleListener.close(() => resolve()));
+      await writeFile(`${socketPath}.owner.json`, `${JSON.stringify({
+        schema: "MEETLESS_RECORDING_ENDPOINT_OWNER v1",
+        role: "recording",
+        endpointName: endpoint.name,
+        canonicalPath: endpoint.canonicalPath,
+        pid: 2_147_483_647,
+        token: "stale-marker",
+      })}\n`, { mode: 0o600 });
+
+      server = new RecordingControlServer(endpoint, service);
+      await server.start();
+      const contender = new RecordingControlServer(endpoint, service);
+      await expect(contender.start()).rejects.toThrow(/owner PID.*still running|concurrently occupied/);
+      await connectRelative(endpoint.bindArgument);
+      await server.close();
+      server = null;
+      expect(await exists(socketPath)).toBe(false);
+      expect(await exists(`${socketPath}.owner.json`)).toBe(false);
+    } finally {
+      process.chdir(previousDirectory);
+    }
+  });
 });
+
+async function fixtureService(fixtureRoot: string): Promise<RecordingService> {
+  const instance = new RecordingService({
+    storeRoot: path.join(fixtureRoot, "store"),
+    helperPath: path.resolve("native/macos-capture/.build/release/meetless-capture"),
+    ffmpeg: "/opt/homebrew/bin/ffmpeg", ffprobe: "/opt/homebrew/bin/ffprobe",
+    exportRoot: path.join(fixtureRoot, "exports"), fixture: true,
+  });
+  await instance.initialize();
+  return instance;
+}
+
+async function connectRelative(socketPath: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const socket = net.createConnection(socketPath);
+    socket.once("connect", () => { socket.destroy(); resolve(); });
+    socket.once("error", reject);
+  });
+}
+
+async function exists(candidate: string): Promise<boolean> {
+  return lstat(candidate).then(() => true, () => false);
+}
 
 async function connect(socketPath: string): Promise<WebSocket> {
   const socket = new WebSocket(`ws+unix://${socketPath}:/ws`);

@@ -12,6 +12,60 @@ let meetlessOpenAIModel = "gpt-transcribe"
 let meetlessOpenAILanguages = ["en", "vi"]
 let meetlessMaximumRequestLineBytes = 16 * 1024
 let meetlessMaximumRangeFileBytes: Int64 = 25_000_000
+let meetlessRuntimeEndpointSchema = "MEETLESS_RUNTIME_ENDPOINTS v1"
+let meetlessRuntimeEndpointWorkingDirectory = "runtime-root"
+let meetlessDarwinUnixSocketPathBytes = 103
+
+struct MeetlessRuntimeEndpointDescriptor: Codable, Equatable {
+  let role: String
+  let name: String
+  let bindArgument: String
+  let canonicalPath: String
+}
+
+struct MeetlessRuntimeEndpointComposition: Codable, Equatable {
+  let schema: String
+  let mode: String
+  let workingDirectory: String
+  let recording: MeetlessRuntimeEndpointDescriptor
+  let transcription: MeetlessRuntimeEndpointDescriptor
+}
+
+func meetlessPackagedEndpoint(
+  role: String,
+  name: String,
+  runtimeRoot: String
+) throws -> MeetlessRuntimeEndpointDescriptor {
+  try validateMeetlessEndpointName(role: role, name: name)
+  let root = URL(fileURLWithPath: runtimeRoot).standardizedFileURL.path
+  guard root.hasPrefix("/") else { throw capabilityError("runtime endpoint root must be absolute") }
+  let canonical = URL(fileURLWithPath: root).appendingPathComponent(name).standardizedFileURL.path
+  guard canonical != root && isMeetlessPath(canonical, descendantOf: root) else {
+    throw capabilityError("\(role) endpoint \(name) escapes the canonical runtime root")
+  }
+  return MeetlessRuntimeEndpointDescriptor(role: role, name: name, bindArgument: name, canonicalPath: canonical)
+}
+
+func validateMeetlessEndpointName(role: String, name: String) throws {
+  guard !name.isEmpty, name == name.trimmingCharacters(in: .whitespacesAndNewlines), !name.contains("\0") else {
+    throw capabilityError("\(role) endpoint name is empty or contains unsafe whitespace/NUL")
+  }
+  guard !name.hasPrefix("/"), !name.contains("\\") else {
+    throw capabilityError("\(role) endpoint name \(name) must be relative")
+  }
+  guard !name.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else {
+    throw capabilityError("\(role) endpoint name \(name) contains an empty, current-directory, or parent segment")
+  }
+  guard name.utf8.count <= meetlessDarwinUnixSocketPathBytes else {
+    throw capabilityError("\(role) endpoint name \(name) exceeds the \(meetlessDarwinUnixSocketPathBytes)-byte Darwin limit")
+  }
+}
+
+private func isMeetlessPath(_ candidate: String, descendantOf parent: String) -> Bool {
+  let root = URL(fileURLWithPath: parent).standardizedFileURL.path
+  let child = URL(fileURLWithPath: candidate).standardizedFileURL.path
+  return child.hasPrefix(root.hasSuffix("/") ? root : "\(root)/")
+}
 
 enum MeetlessCredentialRead {
   case configured(String)
@@ -24,8 +78,19 @@ protocol MeetlessKeychainAccess {
   func readForTranscription() -> MeetlessCredentialRead
 }
 
+private struct MeetlessEndpointOwnerMarker: Codable, Equatable {
+  let schema: String
+  let role: String
+  let endpointName: String
+  let canonicalPath: String
+  let pid: Int32
+  let token: String
+}
+
 final class MeetlessTranscriptionCapability {
-  private let socketPath: String
+  private let endpoint: MeetlessRuntimeEndpointDescriptor
+  private let workingDirectory: String
+  private let packagedEndpoint: Bool
   private let stagingDirectory: String
   private let runtimeAuthorization: RuntimeAuthorizationState
   private let keychain: MeetlessKeychainAccess
@@ -40,8 +105,38 @@ final class MeetlessTranscriptionCapability {
   private var listener: Int32 = -1
   private var stopped = true
   private var started = false
+  private var ownerMarker: MeetlessEndpointOwnerMarker?
+  private var ownsEndpoint = false
 
-  init(
+  private init(
+    endpoint: MeetlessRuntimeEndpointDescriptor,
+    workingDirectory: String,
+    packagedEndpoint: Bool,
+    stagingDirectory: String,
+    runtimeAuthorization: RuntimeAuthorizationState,
+    keychain: MeetlessKeychainAccess = MeetlessOpenAIKeychain(),
+    transcribe: @escaping (Data, String, NativeRequestCancellation) throws -> OpenAIResult = { audio, apiKey, cancellation in
+      try OpenAITranscriber(apiKey: apiKey).transcribe(audio: audio, cancellation: cancellation)
+    },
+    leaseIssued: (() -> Void)? = nil,
+    capturePermissions: MeetlessCapturePermissionAccess = MeetlessCapturePermissions(),
+    premium: MeetlessPremiumPurchaseAccess = MeetlessRevenueCatPurchaseAccess(),
+    managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability()
+  ) {
+    self.endpoint = endpoint
+    self.workingDirectory = URL(fileURLWithPath: workingDirectory).standardizedFileURL.path
+    self.packagedEndpoint = packagedEndpoint
+    self.stagingDirectory = URL(fileURLWithPath: stagingDirectory).standardizedFileURL.path
+    self.runtimeAuthorization = runtimeAuthorization
+    self.keychain = keychain
+    self.transcribe = transcribe
+    self.leaseIssued = leaseIssued
+    self.capturePermissions = capturePermissions
+    self.premium = premium
+    self.managedAuth = managedAuth
+  }
+
+  convenience init(
     socketPath: String,
     stagingDirectory: String,
     runtimeAuthorization: RuntimeAuthorizationState,
@@ -54,21 +149,58 @@ final class MeetlessTranscriptionCapability {
     premium: MeetlessPremiumPurchaseAccess = MeetlessRevenueCatPurchaseAccess(),
     managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability()
   ) {
-    self.socketPath = socketPath
-    self.stagingDirectory = URL(fileURLWithPath: stagingDirectory).standardizedFileURL.path
-    self.runtimeAuthorization = runtimeAuthorization
-    self.keychain = keychain
-    self.transcribe = transcribe
-    self.leaseIssued = leaseIssued
-    self.capturePermissions = capturePermissions
-    self.premium = premium
-    self.managedAuth = managedAuth
+    let canonicalPath = URL(fileURLWithPath: socketPath).standardizedFileURL.path
+    self.init(
+      endpoint: MeetlessRuntimeEndpointDescriptor(
+        role: "transcription",
+        name: canonicalPath,
+        bindArgument: canonicalPath,
+        canonicalPath: canonicalPath
+      ),
+      workingDirectory: FileManager.default.currentDirectoryPath,
+      packagedEndpoint: false,
+      stagingDirectory: stagingDirectory,
+      runtimeAuthorization: runtimeAuthorization,
+      keychain: keychain,
+      transcribe: transcribe,
+      leaseIssued: leaseIssued,
+      capturePermissions: capturePermissions,
+      premium: premium,
+      managedAuth: managedAuth
+    )
+  }
+
+  convenience init(
+    endpoint: MeetlessRuntimeEndpointDescriptor,
+    workingDirectory: String,
+    stagingDirectory: String,
+    runtimeAuthorization: RuntimeAuthorizationState,
+    keychain: MeetlessKeychainAccess = MeetlessOpenAIKeychain(),
+    transcribe: @escaping (Data, String, NativeRequestCancellation) throws -> OpenAIResult = { audio, apiKey, cancellation in
+      try OpenAITranscriber(apiKey: apiKey).transcribe(audio: audio, cancellation: cancellation)
+    },
+    leaseIssued: (() -> Void)? = nil,
+    capturePermissions: MeetlessCapturePermissionAccess = MeetlessCapturePermissions(),
+    premium: MeetlessPremiumPurchaseAccess = MeetlessRevenueCatPurchaseAccess(),
+    managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability()
+  ) {
+    self.init(
+      endpoint: endpoint,
+      workingDirectory: workingDirectory,
+      packagedEndpoint: true,
+      stagingDirectory: stagingDirectory,
+      runtimeAuthorization: runtimeAuthorization,
+      keychain: keychain,
+      transcribe: transcribe,
+      leaseIssued: leaseIssued,
+      capturePermissions: capturePermissions,
+      premium: premium,
+      managedAuth: managedAuth
+    )
   }
 
   func start() throws {
-    guard socketPath.utf8.count < 104 else {
-      throw capabilityError("transcription capability socket path is too long")
-    }
+    try validateEndpoint()
     lifecycleLock.lock()
     guard !started else {
       lifecycleLock.unlock()
@@ -76,34 +208,69 @@ final class MeetlessTranscriptionCapability {
     }
     started = true
     lifecycleLock.unlock()
-    try createPrivateDirectory(URL(fileURLWithPath: socketPath).deletingLastPathComponent().path)
-    try createPrivateDirectory(stagingDirectory)
-    unlink(socketPath)
-    let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-    guard descriptor >= 0 else { throw capabilityError("cannot create transcription capability socket") }
-    var address = sockaddr_un()
-    address.sun_family = sa_family_t(AF_UNIX)
-    let pathBytes = Array(socketPath.utf8) + [0]
-    withUnsafeMutableBytes(of: &address.sun_path) { buffer in buffer.copyBytes(from: pathBytes) }
-    let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + pathBytes.count)
-    let bound = withUnsafePointer(to: &address) { pointer in
-      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(descriptor, $0, addressLength) }
+    do {
+      try createPrivateDirectory(URL(fileURLWithPath: endpoint.canonicalPath).deletingLastPathComponent().path)
+      try createPrivateDirectory(stagingDirectory)
+      try reconcileEndpoint()
+      let owner = MeetlessEndpointOwnerMarker(
+        schema: "MEETLESS_TRANSCRIPTION_ENDPOINT_OWNER v1",
+        role: "transcription",
+        endpointName: endpoint.name,
+        canonicalPath: endpoint.canonicalPath,
+        pid: getpid(),
+        token: UUID().uuidString
+      )
+      try writeOwnerMarker(owner)
+      ownerMarker = owner
+
+      let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+      guard descriptor >= 0 else { throw capabilityError("cannot create transcription capability socket") }
+      var address = sockaddr_un()
+      address.sun_family = sa_family_t(AF_UNIX)
+      let pathBytes = Array(endpoint.bindArgument.utf8) + [0]
+      withUnsafeMutableBytes(of: &address.sun_path) { buffer in buffer.copyBytes(from: pathBytes) }
+      let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + pathBytes.count)
+      let bound = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(descriptor, $0, addressLength) }
+      }
+      guard bound == 0 else {
+        let reason = errno == EADDRINUSE ? "transcription capability endpoint is concurrently occupied" : "cannot bind transcription capability socket"
+        close(descriptor)
+        throw capabilityError(reason)
+      }
+      ownsEndpoint = true
+      guard Darwin.listen(descriptor, 8) == 0 else {
+        close(descriptor)
+        try? removeOwnedEndpoint(owner)
+        ownsEndpoint = false
+        throw capabilityError("cannot listen on transcription capability socket")
+      }
+      guard chmod(endpoint.canonicalPath, 0o600) == 0 else {
+        shutdown(descriptor, SHUT_RDWR)
+        close(descriptor)
+        try? removeOwnedEndpoint(owner)
+        throw capabilityError("cannot restrict transcription capability socket")
+      }
+      lifecycleLock.lock()
+      stopped = false
+      listener = descriptor
+      lifecycleLock.unlock()
+      acceptQueue.async { [weak self] in self?.acceptLoop() }
+    } catch {
+      lifecycleLock.lock()
+      started = false
+      lifecycleLock.unlock()
+      if let owner = ownerMarker {
+        if ownsEndpoint {
+          try? removeOwnedEndpoint(owner)
+          ownsEndpoint = false
+        } else {
+          try? removeOwnerMarker(owner, at: endpointOwnerMarkerPath(endpoint.canonicalPath))
+        }
+        ownerMarker = nil
+      }
+      throw error
     }
-    guard bound == 0, Darwin.listen(descriptor, 8) == 0 else {
-      close(descriptor)
-      throw capabilityError("cannot bind transcription capability socket")
-    }
-    guard chmod(socketPath, 0o600) == 0 else {
-      shutdown(descriptor, SHUT_RDWR)
-      close(descriptor)
-      unlink(socketPath)
-      throw capabilityError("cannot restrict transcription capability socket")
-    }
-    lifecycleLock.lock()
-    stopped = false
-    listener = descriptor
-    lifecycleLock.unlock()
-    acceptQueue.async { [weak self] in self?.acceptLoop() }
   }
 
   func stop() {
@@ -117,7 +284,104 @@ final class MeetlessTranscriptionCapability {
       shutdown(descriptor, SHUT_RDWR)
       close(descriptor)
     }
-    unlink(socketPath)
+    if ownsEndpoint, let owner = ownerMarker {
+      try? removeOwnedEndpoint(owner)
+      ownsEndpoint = false
+      ownerMarker = nil
+    }
+  }
+
+  private func validateEndpoint() throws {
+    guard endpoint.role == "transcription" else {
+      throw capabilityError("transcription capability received endpoint role \(endpoint.role)")
+    }
+    guard endpoint.canonicalPath.hasPrefix("/") else {
+      throw capabilityError("transcription endpoint canonical path must be absolute")
+    }
+    if packagedEndpoint {
+      try validateMeetlessEndpointName(role: "transcription", name: endpoint.name)
+      guard endpoint.bindArgument == endpoint.name else {
+        throw capabilityError("packaged transcription bind argument must be the accepted relative endpoint name")
+      }
+      let expectedWorkingDirectory = URL(fileURLWithPath: workingDirectory).resolvingSymlinksInPath().standardizedFileURL.path
+      let currentWorkingDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).resolvingSymlinksInPath().standardizedFileURL.path
+      guard expectedWorkingDirectory == currentWorkingDirectory else {
+        throw capabilityError("transcription endpoint working directory differs from the authoritative runtime root")
+      }
+      let projected = URL(fileURLWithPath: workingDirectory).appendingPathComponent(endpoint.name).standardizedFileURL.path
+      guard projected == endpoint.canonicalPath && isMeetlessPath(projected, descendantOf: workingDirectory) else {
+        throw capabilityError("transcription endpoint canonical projection leaves the runtime root")
+      }
+    } else {
+      guard endpoint.bindArgument == endpoint.canonicalPath else {
+        throw capabilityError("development transcription endpoint must retain its absolute bind path")
+      }
+    }
+    guard endpoint.bindArgument.utf8.count <= meetlessDarwinUnixSocketPathBytes else {
+      throw capabilityError("transcription capability bind argument exceeds the \(meetlessDarwinUnixSocketPathBytes)-byte Darwin limit")
+    }
+  }
+
+  private func reconcileEndpoint() throws {
+    let markerPath = endpointOwnerMarkerPath(endpoint.canonicalPath)
+    let endpointState = try meetlessLstatIdentity(endpoint.canonicalPath)
+    let marker = try readOwnerMarker(markerPath)
+    guard let endpointState else {
+      if let marker {
+        if try meetlessOwnerProcessIsRunning(marker.pid) {
+          throw capabilityError("transcription endpoint owner PID \(marker.pid) is still running while the socket is absent")
+        }
+        try removeOwnerMarker(marker, at: markerPath)
+      }
+      return
+    }
+    guard endpointState.mode & S_IFMT == S_IFSOCK else {
+      throw capabilityError("transcription endpoint is occupied by a foreign non-socket entry; it was not removed")
+    }
+    guard endpointState.owner == geteuid() else {
+      throw capabilityError("transcription endpoint is owned by a foreign user; it was not removed")
+    }
+    guard let marker else {
+      throw capabilityError("transcription endpoint is an unknown socket without an owned marker; it was not removed")
+    }
+    if try meetlessOwnerProcessIsRunning(marker.pid) || meetlessSocketIsReachable(endpoint.canonicalPath) {
+      throw capabilityError("transcription endpoint is concurrently occupied; it was not removed")
+    }
+    guard let current = try meetlessLstatIdentity(endpoint.canonicalPath),
+          current.mode & S_IFMT == S_IFSOCK else {
+      throw capabilityError("transcription endpoint changed during stale cleanup; it was not removed")
+    }
+    try meetlessUnlinkIfSame(
+      endpoint.canonicalPath,
+      original: (mode: current.mode, device: current.device, inode: current.inode)
+    )
+    try removeOwnerMarker(marker, at: markerPath)
+  }
+
+  private func writeOwnerMarker(_ owner: MeetlessEndpointOwnerMarker) throws {
+    let data = try JSONEncoder().encode(owner)
+    try meetlessWriteExclusively(data: data, path: endpointOwnerMarkerPath(endpoint.canonicalPath))
+  }
+
+  private func readOwnerMarker(_ markerPath: String) throws -> MeetlessEndpointOwnerMarker? {
+    try readEndpointOwnerMarker(markerPath, endpoint: endpoint)
+  }
+
+  private func removeOwnedEndpoint(_ owner: MeetlessEndpointOwnerMarker) throws {
+    let markerPath = endpointOwnerMarkerPath(endpoint.canonicalPath)
+    guard let marker = try readOwnerMarker(markerPath), marker == owner else { return }
+    guard let state = try meetlessLstatIdentity(endpoint.canonicalPath) else {
+      try removeOwnerMarker(owner, at: markerPath)
+      return
+    }
+    guard state.mode & S_IFMT == S_IFSOCK, state.owner == geteuid() else {
+      throw capabilityError("transcription endpoint changed to a foreign entry; it was not removed")
+    }
+    try meetlessUnlinkIfSame(
+      endpoint.canonicalPath,
+      original: (mode: state.mode, device: state.device, inode: state.inode)
+    )
+    try removeOwnerMarker(owner, at: markerPath)
   }
 
   private func acceptLoop() {
@@ -783,6 +1047,134 @@ func makeTranscriptionMultipartBody(audio: Data, boundary: String) -> Data {
 
 private func appendMultipartPart(_ body: inout Data, boundary: String, name: String, value: String) {
   body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
+}
+
+private func endpointOwnerMarkerPath(_ canonicalPath: String) -> String {
+  "\(canonicalPath).owner.json"
+}
+
+private func meetlessLstatIdentity(_ path: String) throws -> (mode: mode_t, device: dev_t, inode: ino_t, owner: uid_t)? {
+  var information = stat()
+  guard lstat(path, &information) == 0 else {
+    if errno == ENOENT { return nil }
+    throw capabilityError("cannot inspect endpoint entry \(path): errno \(errno)")
+  }
+  return (information.st_mode, information.st_dev, information.st_ino, information.st_uid)
+}
+
+private func meetlessOwnerProcessIsRunning(_ pid: Int32) throws -> Bool {
+  guard pid > 1 else { throw capabilityError("endpoint owner PID is invalid") }
+  if kill(pid, 0) == 0 { return true }
+  if errno == ESRCH { return false }
+  if errno == EPERM { return true }
+  throw capabilityError("cannot inspect endpoint owner PID \(pid): errno \(errno)")
+}
+
+private func meetlessSocketIsReachable(_ path: String) -> Bool {
+  let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+  guard descriptor >= 0 else { return true }
+  defer { close(descriptor) }
+  var address = sockaddr_un()
+  address.sun_family = sa_family_t(AF_UNIX)
+  let pathBytes = Array(path.utf8) + [0]
+  guard pathBytes.count <= MemoryLayout.size(ofValue: address.sun_path) else { return true }
+  withUnsafeMutableBytes(of: &address.sun_path) { buffer in buffer.copyBytes(from: pathBytes) }
+  let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + pathBytes.count)
+  let connected = withUnsafePointer(to: &address) { pointer in
+    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+      Darwin.connect(descriptor, $0, addressLength)
+    }
+  }
+  if connected == 0 { return true }
+  return errno != ECONNREFUSED && errno != ENOENT
+}
+
+private func readEndpointOwnerMarker(
+  _ markerPath: String,
+  endpoint: MeetlessRuntimeEndpointDescriptor
+) throws -> MeetlessEndpointOwnerMarker? {
+  guard let state = try meetlessLstatIdentity(markerPath) else { return nil }
+  guard state.mode & S_IFMT == S_IFREG else {
+    throw capabilityError("endpoint owner marker \(markerPath) is not an owned regular file")
+  }
+  guard state.owner == getuid(), state.mode & (S_IRWXG | S_IRWXO) == 0 else {
+    throw capabilityError("endpoint owner marker \(markerPath) is not a private file owned by this runtime user")
+  }
+  let marker: MeetlessEndpointOwnerMarker
+  do {
+    marker = try JSONDecoder().decode(
+      MeetlessEndpointOwnerMarker.self,
+      from: Data(contentsOf: URL(fileURLWithPath: markerPath))
+    )
+  } catch {
+    throw capabilityError("endpoint owner marker \(markerPath) is invalid: \(error.localizedDescription)")
+  }
+  guard marker.schema == "MEETLESS_TRANSCRIPTION_ENDPOINT_OWNER v1",
+        marker.role == "transcription",
+        marker.endpointName == endpoint.name,
+        marker.canonicalPath == endpoint.canonicalPath,
+        marker.pid > 1,
+        !marker.token.isEmpty else {
+    throw capabilityError("endpoint owner marker \(markerPath) does not match the accepted transcription policy")
+  }
+  return marker
+}
+
+private func removeOwnerMarker(_ owner: MeetlessEndpointOwnerMarker, at markerPath: String) throws {
+  guard let state = try meetlessLstatIdentity(markerPath),
+        state.mode & S_IFMT == S_IFREG,
+        state.owner == getuid(),
+        state.mode & (S_IRWXG | S_IRWXO) == 0 else { return }
+  guard let data = try? Data(contentsOf: URL(fileURLWithPath: markerPath)),
+        let marker = try? JSONDecoder().decode(MeetlessEndpointOwnerMarker.self, from: data),
+        marker == owner else { return }
+  guard unlink(markerPath) == 0 || errno == ENOENT else {
+    throw capabilityError("cannot remove owned endpoint marker \(markerPath): errno \(errno)")
+  }
+}
+
+private func meetlessUnlinkIfSame(
+  _ path: String,
+  original: (mode: mode_t, device: dev_t, inode: ino_t)
+) throws {
+  guard let current = try meetlessLstatIdentity(path),
+        current.mode & S_IFMT == S_IFSOCK,
+        current.device == original.device,
+        current.inode == original.inode else {
+    throw capabilityError("endpoint changed during stale cleanup; it was not removed")
+  }
+  guard unlink(path) == 0 || errno == ENOENT else {
+    throw capabilityError("cannot remove stale endpoint \(path): errno \(errno)")
+  }
+}
+
+private func meetlessWriteExclusively(data: Data, path: String) throws {
+  let descriptor = Darwin.open(path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
+  guard descriptor >= 0 else {
+    throw capabilityError("endpoint owner marker \(path) is occupied or unavailable: errno \(errno)")
+  }
+  defer { close(descriptor) }
+  var success = true
+  data.withUnsafeBytes { buffer in
+    guard let base = buffer.baseAddress else { return }
+    var offset = 0
+    while offset < buffer.count {
+      let written = Darwin.write(descriptor, base.advanced(by: offset), buffer.count - offset)
+      if written <= 0 {
+        success = false
+        return
+      }
+      offset += written
+    }
+  }
+  guard success else {
+    unlink(path)
+    throw capabilityError("cannot write endpoint owner marker \(path)")
+  }
+  guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
+    unlink(path)
+    throw capabilityError("cannot restrict endpoint owner marker \(path)")
+  }
 }
 
 private func createPrivateDirectory(_ path: String) throws {

@@ -5,6 +5,7 @@ import { MeetingStore } from "@meetless/meeting-store";
 import type { MeetingDeleteStoreResult } from "@meetless/meeting-store";
 import { RecordingService } from "./recording-service.js";
 import { RecordingControlServer } from "./control-server.js";
+import { runtimeEndpoint } from "./runtime-endpoints.js";
 import { assertCapturePermissionsReady, assertProductionHostProvenance } from "./production-host.js";
 import { FfmpegAudioInspector, TranscriptionService } from "./transcription-service.js";
 import {
@@ -150,11 +151,11 @@ export async function getMeetingChatService(
 export function getPremiumService(): PremiumService {
   if (premiumService) return premiumService;
   const configuredSocket = process.env.MEETLESS_TRANSCRIPTION_SOCKET?.trim() ?? "";
-  const socketPath = configuredSocket && path.isAbsolute(configuredSocket) ? path.resolve(configuredSocket) : null;
-  if (!socketPath) {
+  if (!configuredSocket && process.env.MEETLESS_RUNTIME_PACKAGED !== "1") {
     return new PremiumService(new UnavailablePremiumAccessPort(configuredSocket ? "store_unavailable" : "not_configured"));
   }
-  premiumService ??= new PremiumService(new NativePremiumAccessPort(socketPath), {
+  const endpoint = runtimeEndpoint(process.env, "transcription");
+  premiumService ??= new PremiumService(new NativePremiumAccessPort(endpoint.bindArgument), {
     requireAppleSignedTransaction: true,
     onAppleSignedTransaction: enrollManagedAppleTransaction,
   });
@@ -221,8 +222,7 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
   const ffmpeg = requiredAbsolute("MEETLESS_FFMPEG");
   const ffprobe = requiredAbsolute("MEETLESS_FFPROBE");
   const exportRoot = requiredAbsolute("MEETLESS_EXPORT_ROOT");
-  const socketPath = requiredAbsolute("MEETLESS_RECORDING_SOCKET");
-  const transcriptionSocket = process.env.MEETLESS_TRANSCRIPTION_SOCKET?.trim();
+  const recordingEndpoint = runtimeEndpoint(process.env, "recording");
   const transcriptionStaging = process.env.MEETLESS_TRANSCRIPTION_STAGING?.trim();
   const uiTest = await readControlledUiTestIdentity();
   await Promise.all([access(helperPath), access(ffmpeg), access(ffprobe)]);
@@ -234,16 +234,19 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
     );
   }
   if (!fixture) await assertProductionHostProvenance();
-  if (!fixture && (!transcriptionSocket || !path.isAbsolute(transcriptionSocket) || !transcriptionStaging || !path.isAbsolute(transcriptionStaging))) {
+  const transcriptionMode = uiTest?.transcriptionMode ?? "native";
+  const transcriptionEndpoint = transcriptionMode === "fake"
+    ? null
+    : runtimeEndpoint(process.env, "transcription");
+  if (!fixture && (!transcriptionEndpoint || !transcriptionStaging || !path.isAbsolute(transcriptionStaging))) {
     throw new Error("Production transcription requires the signed MeetlessHost native capability socket");
   }
   const fixtureExportNow = resolveFixtureExportNow(fixture, fixedStamp);
   const managedArtifacts = new ManagedTimelineArtifactStore(path.join(storeRoot, "managed-artifacts"));
-  const transcriptionMode = uiTest?.transcriptionMode ?? "native";
   const provider: TranscriptionProvider | null = transcriptionMode === "fake"
     ? new DeterministicFixtureTranscriptionProvider()
-    : transcriptionSocket
-      ? new NativeOpenAiTranscriptionProvider(new UnixSocketNativeTranscriptionTransport(transcriptionSocket))
+    : transcriptionEndpoint
+      ? new NativeOpenAiTranscriptionProvider(new UnixSocketNativeTranscriptionTransport(transcriptionEndpoint.bindArgument))
       : null;
   if (fixture && !provider) {
     throw new Error("Controlled native transcription requires the signed host capability socket");
@@ -279,7 +282,7 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
     startedAt: new Date().toISOString(),
     uiTest,
   };
-  const server = new RecordingControlServer(socketPath, service, identity);
+  const server = new RecordingControlServer(recordingEndpoint, service, identity);
   try {
     await service.initialize();
     assertBootstrapDeadline(deadlineEpochMs);
@@ -351,7 +354,7 @@ export function recordingRuntimeIdentity(): { instanceId: string; startedAt: str
  */
 export function getManagedConvexCredentialSource(): ConvexManagedCredentialSource {
   const convexUrl = requiredEnv("MEETLESS_CONVEX_URL");
-  const socket = requiredAbsolute("MEETLESS_TRANSCRIPTION_SOCKET");
+  const socket = runtimeEndpoint(process.env, "transcription").bindArgument;
   managedCredentialSource ??= new ConvexManagedCredentialSource(
     new ConvexHttpManagedFunctionClient(convexUrl),
     new UnixSocketManagedAuthTransport(socket),

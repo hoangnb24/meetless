@@ -9,6 +9,7 @@ import type { RuntimeConfig } from "./config.js";
 import { copyEnvironmentWithoutDirectPasswordSecrets, prepareRuntime, REPOSITORY_ROOT } from "./config.js";
 import { assertDesktopLaunchedByHost, assertSupervisorOwnedByHost } from "./host.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
+import { serializeRuntimeEndpointComposition } from "./runtime-endpoints.js";
 import { activateUiTestRun, removeUiTestRunState } from "./ui-test-envelope.js";
 
 const rendererAbortListeners = new WeakMap<Server, { signal: AbortSignal; listener: () => void }>();
@@ -24,6 +25,7 @@ export function buildRendererUrl(config: RuntimeConfig): string {
     );
   }
   url.searchParams.set("daemon", localDaemonWebSocketUrl(config.listen));
+  url.searchParams.set("meetlessEndpoints", serializeRuntimeEndpointComposition(config.endpoints));
   if (config.environment.MEETLESS_UI_TEST_MODE === "1" && config.environment.MEETLESS_UI_TEST_RUN_ID) {
     url.searchParams.set("uiTestRunId", config.environment.MEETLESS_UI_TEST_RUN_ID);
     url.searchParams.set("uiTestDesktopId", "com.meetless.desktop");
@@ -62,7 +64,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
     } else {
       const cliPath = fileURLToPath(new URL("./cli.js", import.meta.url));
       daemonChild = spawn(process.execPath, [cliPath, "daemon"], {
-        cwd: REPOSITORY_ROOT,
+        cwd: config.packaged ? config.paths.root : REPOSITORY_ROOT,
         env: config.environment,
         stdio: "inherit",
         detached: true,
@@ -82,7 +84,12 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
     const rendererUrl = buildRendererUrl(config);
     const nonSecretChildEnvironment = copyEnvironmentWithoutDirectPasswordSecrets(config.environment);
     if (config.packaged) {
-      rendererServer = await startPackagedRenderer(config, shutdown.signal);
+      rendererServer = await startPackagedRenderer(
+        config,
+        shutdown.signal,
+        {},
+        config.endpoints.transcription.bindArgument,
+      );
       await waitForHttp(config.rendererOrigin, null, shutdown.signal);
     } else if (!process.env.MEETLESS_RENDERER_URL) {
       const appPort = new URL(config.rendererOrigin).port;
@@ -110,7 +117,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
       ? [bootstrap]
       : [fileURLToPath(import.meta.resolve("electron/cli.js")), bootstrap];
     electron = spawn(electronCommand, electronArguments, {
-      cwd: REPOSITORY_ROOT,
+      cwd: config.packaged ? config.paths.root : REPOSITORY_ROOT,
       env: {
         ...nonSecretChildEnvironment,
         EXPO_DEV_URL: rendererUrl,
@@ -327,6 +334,7 @@ async function startPackagedRenderer(
   config: RuntimeConfig,
   signal: AbortSignal,
   boundaryOptions: CapturePermissionBoundaryOptions = {},
+  nativeSocket: string,
 ): Promise<Server> {
   const rendererRoot = config.packageResources?.rendererRoot;
   if (!rendererRoot) {
@@ -347,7 +355,7 @@ async function startPackagedRenderer(
   const host = origin.hostname === "localhost" ? "127.0.0.1" : origin.hostname.replace(/^\[|\]$/gu, "");
   const permissionBoundary = createCapturePermissionBoundary(
     origin,
-    config.paths?.transcriptionSocket,
+    nativeSocket,
     boundaryOptions,
   );
   const server = createServer((request, response) => {
@@ -398,11 +406,11 @@ export async function startPackagedRendererForTest(
   signal: AbortSignal,
   options: CapturePermissionBoundaryOptions & { nativeSocket?: string } = {},
 ): Promise<Server> {
+  const nativeSocket = options.nativeSocket ?? path.join(rendererRoot, "transcription.sock");
   return startPackagedRenderer({
     packageResources: { rendererRoot } as RuntimeConfig["packageResources"],
     rendererOrigin,
-    paths: { transcriptionSocket: options.nativeSocket } as RuntimeConfig["paths"],
-  } as RuntimeConfig, signal, options);
+  } as RuntimeConfig, signal, options, nativeSocket);
 }
 
 export async function closePackagedRendererForTest(server: Server): Promise<void> {

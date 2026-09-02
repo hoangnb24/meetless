@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFile, realpath, stat } from "node:fs/promises";
-import path from "node:path";
 import net from "node:net";
 import { z } from "zod";
+import { runtimeEndpoint } from "./runtime-endpoints.js";
 
 const AUTHORITY = "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md and docs/decisions/0004-recording-host-and-capture-permission-boundary.md";
 const HostIdentitySchema = z.object({
@@ -93,8 +93,12 @@ export async function assertProductionHostProvenance(
 
 export async function assertCapturePermissionsReady(environment: NodeJS.ProcessEnv = process.env): Promise<void> {
   if (environment.MEETLESS_CAPTURE_MODE === "fixture") return;
-  const socketPath = environment.MEETLESS_TRANSCRIPTION_SOCKET?.trim();
-  if (!socketPath || !path.isAbsolute(socketPath)) throw hostFailure("the native capture-permission socket is unavailable");
+  let socketPath: string;
+  try {
+    socketPath = runtimeEndpoint(environment, "transcription").bindArgument;
+  } catch (error) {
+    throw hostFailure(error instanceof Error ? error.message : String(error));
+  }
   const requestId = randomUUID();
   const response = await new Promise<Record<string, unknown>>((resolve, reject) => {
     const socket = net.createConnection(socketPath);

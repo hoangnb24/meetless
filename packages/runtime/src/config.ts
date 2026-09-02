@@ -21,6 +21,15 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import {
+  composeRuntimeEndpointComposition,
+  MEETLESS_RUNTIME_ENDPOINTS_SCHEMA,
+  MEETLESS_RUNTIME_ENDPOINT_WORKING_DIRECTORY,
+  parseRuntimeEndpointComposition,
+  serializeRuntimeEndpointComposition,
+  type RuntimeEndpointComposition,
+  RuntimeEndpointPolicyViolationError,
+} from "./runtime-endpoints.js";
 
 export const PINNED_PASEO_COMMIT = "7618cda71e2836f9ba7e821286504841203cb745";
 export const DEFAULT_MEETLESS_LISTEN = "127.0.0.1:6777";
@@ -28,8 +37,6 @@ export const MEETLESS_INSTALLATION_PATH = "/Applications/Meetless.app";
 export const MEETLESS_USER_SUPPORT_RELATIVE_PATH = "Library/Application Support/Meetless";
 export const MEETLESS_RECORDING_EXPORTS_RELATIVE_PATH = "Documents/meetings";
 export const PACKAGED_RENDERER_ORIGIN = "http://127.0.0.1:18082";
-const DARWIN_UNIX_SOCKET_PATH_BYTES = 103;
-
 const packageDirectory = path.dirname(fileURLToPath(import.meta.url));
 export const REPOSITORY_ROOT = path.resolve(packageDirectory, "../../..");
 const PACKAGED_MANIFEST_FILENAME = "meetless-package.json";
@@ -76,6 +83,12 @@ const InstallationContractShape = {
     recordingSocketRelativePath: RelativeContractPathSchema,
     transcriptionSocketRelativePath: RelativeContractPathSchema,
     transcriptionStagingRelativePath: RelativeContractPathSchema,
+    endpointPolicy: z.object({
+      schema: z.literal(MEETLESS_RUNTIME_ENDPOINTS_SCHEMA),
+      workingDirectory: z.literal(MEETLESS_RUNTIME_ENDPOINT_WORKING_DIRECTORY),
+      recordingEndpointName: RelativeContractPathSchema,
+      transcriptionEndpointName: RelativeContractPathSchema,
+    }).strict(),
   }).strict(),
   listen: z.literal("127.0.0.1:16777"),
   rendererOrigin: z.literal(PACKAGED_RENDERER_ORIGIN),
@@ -264,6 +277,7 @@ export interface RuntimeConfig {
   rendererOrigin: string;
   supervisorEntrypoint: string;
   paths: RuntimePaths;
+  endpoints: RuntimeEndpointComposition;
   host: {
     bundle: string;
     identity: string;
@@ -376,6 +390,60 @@ export function resolveRuntimeConfig(input: {
     "vendor/paseo/packages/server/dist/scripts/supervisor-entrypoint.js",
   );
   const runtimeLayout = installationContract.runtime;
+  const endpoints = composeRuntimeEndpointComposition({
+    runtimeRoot: root,
+    packaged,
+    policy: runtimeLayout.endpointPolicy,
+  });
+  if (
+    runtimeLayout.recordingSocketRelativePath !== runtimeLayout.endpointPolicy.recordingEndpointName ||
+    runtimeLayout.transcriptionSocketRelativePath !== runtimeLayout.endpointPolicy.transcriptionEndpointName
+  ) {
+    throw new RuntimeEndpointPolicyViolationError(
+      "installation contract",
+      "legacy socket layout fields do not match the versioned endpoint names",
+    );
+  }
+  const configuredEndpointComposition = sourceEnvironment.MEETLESS_RUNTIME_ENDPOINTS;
+  if (packaged && configuredEndpointComposition !== undefined) {
+    if (!configuredEndpointComposition.trim()) {
+      throw new RuntimeEndpointPolicyViolationError(
+        "composition",
+        "MEETLESS_RUNTIME_ENDPOINTS is present but empty",
+      );
+    }
+    let parsedConfigured: RuntimeEndpointComposition;
+    try {
+      parsedConfigured = parseRuntimeEndpointComposition(JSON.parse(configuredEndpointComposition));
+    } catch (error) {
+      throw error instanceof RuntimeEndpointPolicyViolationError
+        ? error
+        : new RuntimeEndpointPolicyViolationError(
+          "composition",
+          `packaged MEETLESS_RUNTIME_ENDPOINTS is not valid JSON (${describe(error)})`,
+        );
+    }
+    const supplied = JSON.stringify(parsedConfigured);
+    const expected = JSON.stringify(endpoints);
+    if (supplied !== expected) {
+      throw new RuntimeEndpointPolicyViolationError(
+        "composition",
+        "packaged MEETLESS_RUNTIME_ENDPOINTS differs from the accepted host-provided composition",
+      );
+    }
+  }
+  if (packaged) {
+    validatePackagedLegacyEndpoint(
+      sourceEnvironment.MEETLESS_RECORDING_SOCKET,
+      "MEETLESS_RECORDING_SOCKET",
+      endpoints.recording.canonicalPath,
+    );
+    validatePackagedLegacyEndpoint(
+      sourceEnvironment.MEETLESS_TRANSCRIPTION_SOCKET,
+      "MEETLESS_TRANSCRIPTION_SOCKET",
+      endpoints.transcription.canonicalPath,
+    );
+  }
   const paseoHome = path.join(root, runtimeLayout.paseoHomeRelativePath);
   const meetingStore = path.join(root, runtimeLayout.meetingStoreRelativePath);
   const logs = path.join(root, runtimeLayout.logsRelativePath);
@@ -394,12 +462,8 @@ export function resolveRuntimeConfig(input: {
     plugin: path.join(repositoryRoot, "packages", "meetless-plugin"),
     captureHelper: packageResources?.captureHelper ??
       path.join(repositoryRoot, "native", "macos-capture", ".build", "release", "meetless-capture"),
-    recordingSocket: resolveRecordingSocket(
-      path.join(root, runtimeLayout.recordingSocketRelativePath),
-      acceptedSupportRoot,
-      { allowExternalShortPath: macAppStore },
-    ),
-    transcriptionSocket: path.join(root, runtimeLayout.transcriptionSocketRelativePath),
+    recordingSocket: endpoints.recording.canonicalPath,
+    transcriptionSocket: endpoints.transcription.canonicalPath,
     transcriptionStaging: path.join(root, runtimeLayout.transcriptionStagingRelativePath),
     recordingExports: macAppStore || packaged
       ? acceptedRecordingExports
@@ -416,6 +480,7 @@ export function resolveRuntimeConfig(input: {
     rendererOrigin,
     supervisorEntrypoint,
     paths,
+    endpoints,
     host: {
       bundle: MEETLESS_INSTALLATION_PATH,
       identity: path.join(acceptedSupportRoot, installationContract.identityRelativePath),
@@ -442,6 +507,8 @@ export function resolveRuntimeConfig(input: {
       MEETLESS_CAPTURE_HELPER: paths.captureHelper,
       MEETLESS_RECORDING_SOCKET: paths.recordingSocket,
       MEETLESS_TRANSCRIPTION_SOCKET: paths.transcriptionSocket,
+      MEETLESS_RUNTIME_ENDPOINTS: serializeRuntimeEndpointComposition(endpoints),
+      MEETLESS_RUNTIME_PACKAGED: packaged ? "1" : "0",
       MEETLESS_TRANSCRIPTION_STAGING: paths.transcriptionStaging,
       MEETLESS_EXPORT_ROOT: paths.recordingExports,
       ...(macAppStore && stateRoots.containerSupportRoot
@@ -576,13 +643,23 @@ function readPackagedInstallationContract(
 }
 
 function parseInstallationContract(contractPath: string, source: string): InstallationContract {
+  let decoded: unknown;
   try {
-    return InstallationContractSchema.parse(JSON.parse(readFileSync(contractPath, "utf8")));
+    decoded = JSON.parse(readFileSync(contractPath, "utf8"));
+    return InstallationContractSchema.parse(decoded);
   } catch (error) {
+    const endpointPolicy = isRecord(decoded) && isRecord(decoded.runtime)
+      ? decoded.runtime.endpointPolicy
+      : undefined;
+    const endpointReason = decoded === undefined
+      ? "contract data is missing or not JSON"
+      : endpointPolicy === undefined
+      ? "endpoint policy MEETLESS_RUNTIME_ENDPOINTS v1 is missing"
+      : `endpoint policy ${JSON.stringify(endpointPolicy)} is invalid`;
     throw new Error(
-      `${source} Meetless installation contract is missing or invalid at ${contractPath}: ${describe(error)}. ` +
-        "Authority: docs/decisions/0002-direct-notarized-macos-dmg.md. " +
-        "Next action: restore the owner-approved plain-data contract; do not use a repository or builder fallback for a packaged runtime.",
+      `${source} Meetless installation contract endpoint policy is invalid at ${contractPath}: ${endpointReason}; ${describe(error)}. ` +
+        "Authority: docs/decisions/0005-mac-app-store-and-revenuecat.md and PLAN_RECONCILIATION v47. " +
+        "Next action: restore the owner-approved MEETLESS_RUNTIME_ENDPOINTS v1 policy and stop before child launch; do not use a repository or builder fallback for a packaged runtime.",
     );
   }
 }
@@ -739,8 +816,7 @@ export function assertIsolated(paths: RuntimePaths, listen: string, userHome = h
   const productionUserData = productionElectronPaths(path.resolve(userHome));
   for (const candidate of Object.values(paths)) {
     if (
-      candidate === paths.plugin || candidate === paths.captureHelper ||
-      candidate === paths.recordingSocket || candidate === paths.transcriptionSocket || candidate === paths.recordingExports
+      candidate === paths.plugin || candidate === paths.captureHelper || candidate === paths.recordingExports
     ) continue;
     if (!isSameOrDescendant(candidate, paths.root)) {
       throw new IsolationViolationError(`Runtime path escapes the isolated root: ${candidate}`);
@@ -749,24 +825,6 @@ export function assertIsolated(paths: RuntimePaths, listen: string, userHome = h
       throw new IsolationViolationError(`Refusing production Paseo Electron user-data ${candidate}`);
     }
   }
-}
-
-function resolveRecordingSocket(
-  recordingSocketPath: string,
-  acceptedSupportRoot: string,
-  { allowExternalShortPath = false }: { allowExternalShortPath?: boolean } = {},
-): string {
-  const inHome = path.resolve(recordingSocketPath);
-  if (process.platform !== "darwin" || Buffer.byteLength(inHome) <= DARWIN_UNIX_SOCKET_PATH_BYTES) {
-    return inHome;
-  }
-  if (!allowExternalShortPath && path.resolve(path.dirname(path.dirname(inHome))) === path.resolve(acceptedSupportRoot)) {
-    throw new IsolationViolationError(
-      `Meetless recording socket path is too long for the per-user support root: ${inHome}`,
-    );
-  }
-  const identity = createHash("sha256").update(inHome).digest("hex").slice(0, 24);
-  return `/private/tmp/meetless-recording-${identity}.sock`;
 }
 
 function parseMeetlessListen(listen: string): { host: string; port: number; loopback: boolean } {
@@ -787,6 +845,24 @@ function parseMeetlessListen(listen: string): { host: string; port: number; loop
     port: Number(match[2]),
     loopback: host === "127.0.0.1" || host === "localhost" || host === "[::1]",
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validatePackagedLegacyEndpoint(
+  configured: string | undefined,
+  variable: string,
+  canonicalPath: string,
+): void {
+  if (configured === undefined) return;
+  if (configured !== canonicalPath) {
+    throw new RuntimeEndpointPolicyViolationError(
+      variable,
+      `${variable} must remain the canonical absolute projection ${canonicalPath}; packaged endpoint names do not reinterpret this general-purpose absolute variable`,
+    );
+  }
 }
 
 function productionElectronPaths(userHome: string): string[] {

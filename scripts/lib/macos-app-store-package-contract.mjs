@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   MACOS_INSTALLATION_CONTRACT,
+  MACOS_RUNTIME_ENDPOINTS_SCHEMA,
+  MACOS_RUNTIME_ENDPOINT_WORKING_DIRECTORY,
   MACOS_PACKAGE_SCHEMA,
   packagedHostConfiguration,
 } from "./macos-package-contract.mjs";
@@ -77,6 +79,7 @@ export function validateMacAppStorePackageContract(value) {
       `(${MACOS_INSTALLATION_CONTRACT.userSupportRelativePath} or ${MACOS_INSTALLATION_CONTRACT.recordingExportsRelativePath})`,
     );
   }
+  validateEndpointPolicy(value.runtime?.endpointPolicy, "installation contract");
   if (JSON.stringify(value) !== JSON.stringify(expected)) {
     throw macAppStoreContractError("the packaged installation contract does not match the app-container MAS contract");
   }
@@ -111,16 +114,69 @@ export function validateMacAppStorePackagedHostConfiguration(
       `the MAS host configuration resolves runtime state through ${MACOS_INSTALLATION_CONTRACT.userSupportRelativePath}`,
     );
   }
+  validateEndpointPolicy({
+    schema: value.endpointPolicy,
+    workingDirectory: value.endpointWorkingDirectory,
+    recordingEndpointName: value.recordingEndpointName,
+    transcriptionEndpointName: value.transcriptionEndpointName,
+  }, "host configuration");
   if (JSON.stringify(value) !== JSON.stringify(expected)) {
     throw macAppStoreContractError("the packaged host configuration does not bind the app-container MAS contract");
   }
   return value;
 }
 
-function macAppStoreContractError(reason) {
+function validateEndpointPolicy(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw macAppStoreContractError(`${label} endpoint policy is missing or not an object`);
+  }
+  const expectedKeys = ["schema", "workingDirectory", "recordingEndpointName", "transcriptionEndpointName"].sort();
+  const actualKeys = Object.keys(value).sort();
+  if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) {
+    throw macAppStoreContractError(
+      `${label} endpoint policy fields ${JSON.stringify(actualKeys)} do not match ${JSON.stringify(expectedKeys)}`,
+      "restore the exact MEETLESS_RUNTIME_ENDPOINTS v1 policy shape before packaging",
+    );
+  }
+  const expected = {
+    schema: MACOS_RUNTIME_ENDPOINTS_SCHEMA,
+    workingDirectory: MACOS_RUNTIME_ENDPOINT_WORKING_DIRECTORY,
+  };
+  if (value.schema !== expected.schema || value.workingDirectory !== expected.workingDirectory) {
+    throw macAppStoreContractError(
+      `${label} endpoint policy ${JSON.stringify(value.schema)} / working directory ${JSON.stringify(value.workingDirectory)} ` +
+      `does not match ${expected.schema} / ${expected.workingDirectory}`,
+    );
+  }
+  for (const [role, name] of [
+    ["recording", value.recordingEndpointName],
+    ["transcription", value.transcriptionEndpointName],
+  ]) {
+    if (typeof name !== "string" || !name || name !== name.trim() || name.includes("\\") || name.includes("\u0000") || name.startsWith("/") || name.split("/").some((part) => !part || part === "." || part === "..")) {
+      throw macAppStoreContractError(
+        `${label} ${role} endpoint name ${JSON.stringify(name)} is not a contained relative name`,
+        "restore a non-empty relative endpoint name from the accepted MEETLESS_RUNTIME_ENDPOINTS v1 policy",
+      );
+    }
+    if (Buffer.byteLength(name, "utf8") > 103) {
+      throw macAppStoreContractError(
+        `${label} ${role} endpoint name exceeds the 103-byte Darwin limit`,
+        "restore an endpoint name at or below 103 UTF-8 bytes in the accepted MEETLESS_RUNTIME_ENDPOINTS v1 policy",
+      );
+    }
+  }
+  if (value.recordingEndpointName === value.transcriptionEndpointName) {
+    throw macAppStoreContractError(
+      `${label} recording and transcription endpoint names must remain distinct`,
+      "restore distinct recording and transcription names in the accepted MEETLESS_RUNTIME_ENDPOINTS v1 policy",
+    );
+  }
+}
+
+function macAppStoreContractError(reason, nextAction = "rebuild the MAS artifact with app-container-owned state and a user-selected security-scoped export destination") {
   return new Error(
     `${reason}. Authority: ${MACOS_APP_STORE_PACKAGE_CONTRACT_AUTHORITY}. ` +
-      "Next action: rebuild the MAS artifact with app-container-owned state and a user-selected security-scoped export destination.",
+      `Next action: ${nextAction}.`,
   );
 }
 

@@ -377,6 +377,149 @@ private func testRealSocketStatusResponse() throws {
   check((response?.utf8.count ?? 4_096) < 1_024, "real socket status response must remain compact")
 }
 
+private func testPackagedEndpointCompositionAndOwnership() throws {
+  let syntheticRoot = "/Users/\(String(repeating: "long-home-segment-", count: 12))/Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless"
+  let recording = try meetlessPackagedEndpoint(
+    role: "recording",
+    name: "paseo-home/recording-control.sock",
+    runtimeRoot: syntheticRoot
+  )
+  let transcription = try meetlessPackagedEndpoint(
+    role: "transcription",
+    name: "transcription.sock",
+    runtimeRoot: syntheticRoot
+  )
+  check(recording.bindArgument == "paseo-home/recording-control.sock", "packaged recording bind must remain the accepted short name")
+  check(transcription.bindArgument == "transcription.sock", "packaged transcription bind must remain the accepted short name")
+  check(recording.bindArgument.utf8.count <= meetlessDarwinUnixSocketPathBytes, "packaged recording bind must fit Darwin AF_UNIX")
+  check(transcription.bindArgument.utf8.count <= meetlessDarwinUnixSocketPathBytes, "packaged transcription bind must fit Darwin AF_UNIX")
+  check(recording.canonicalPath == syntheticRoot + "/paseo-home/recording-control.sock", "recording canonical path must project inside the synthetic runtime root")
+  check(transcription.canonicalPath == syntheticRoot + "/transcription.sock", "transcription canonical path must project inside the synthetic runtime root")
+  check(recording.name != transcription.name, "recording and transcription names must remain distinct")
+  for (label, name) in [
+    ("absolute", "/private/tmp/transcription.sock"),
+    ("escaping", "../transcription.sock"),
+    ("empty segment", "meeting-store//transcription.sock"),
+    ("overlong Unicode", String(repeating: "录", count: 40) + ".sock"),
+  ] {
+    expectThrow("\(label) packaged endpoint name must fail closed") {
+      try validateMeetlessEndpointName(role: "transcription", name: name)
+    }
+  }
+
+  let fileManager = FileManager.default
+  let root = URL(fileURLWithPath: "/private/var/tmp").appendingPathComponent("meetless-packaged-endpoint-\(UUID().uuidString)")
+  try fileManager.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+  let socketPath = root.appendingPathComponent("transcription.sock").path
+  let markerPath = socketPath + ".owner.json"
+  let staging = root.appendingPathComponent("meeting-store/transcription-ranges").path
+  let previousDirectory = fileManager.currentDirectoryPath
+  defer {
+    _ = fileManager.changeCurrentDirectoryPath(previousDirectory)
+    try? fileManager.removeItem(at: root)
+  }
+  check(fileManager.changeCurrentDirectoryPath(root.path), "packaged endpoint test must enter the explicit runtime-root working directory")
+  let endpoint = try meetlessPackagedEndpoint(role: "transcription", name: "transcription.sock", runtimeRoot: root.path)
+
+  let wrongCwdCapability = MeetlessTranscriptionCapability(
+    endpoint: endpoint,
+    workingDirectory: root.path,
+    stagingDirectory: staging,
+    runtimeAuthorization: authorizedRuntimeState(),
+    keychain: FakeKeychain()
+  )
+  _ = fileManager.changeCurrentDirectoryPath(previousDirectory)
+  expectThrow("packaged endpoint must reject a wrong working directory") { try wrongCwdCapability.start() }
+  check(fileManager.changeCurrentDirectoryPath(root.path), "packaged endpoint test must restore the runtime-root working directory")
+
+  try Data("foreign regular entry\n".utf8).write(to: URL(fileURLWithPath: socketPath))
+  let regularCapability = MeetlessTranscriptionCapability(
+    endpoint: endpoint,
+    workingDirectory: root.path,
+    stagingDirectory: staging,
+    runtimeAuthorization: authorizedRuntimeState(),
+    keychain: FakeKeychain()
+  )
+  expectThrow("foreign regular endpoint entry must be preserved") { try regularCapability.start() }
+  let regularContents = try Data(contentsOf: URL(fileURLWithPath: socketPath))
+  check(String(data: regularContents, encoding: .utf8) == "foreign regular entry\n", "foreign regular endpoint entry must remain unchanged")
+  try fileManager.removeItem(atPath: socketPath)
+
+  let symlinkTarget = root.appendingPathComponent("foreign-target")
+  try Data("foreign symlink target\n".utf8).write(to: symlinkTarget)
+  try fileManager.createSymbolicLink(atPath: socketPath, withDestinationPath: symlinkTarget.path)
+  let symlinkCapability = MeetlessTranscriptionCapability(
+    endpoint: endpoint,
+    workingDirectory: root.path,
+    stagingDirectory: staging,
+    runtimeAuthorization: authorizedRuntimeState(),
+    keychain: FakeKeychain()
+  )
+  expectThrow("foreign symlink endpoint entry must be preserved") { try symlinkCapability.start() }
+  var symlinkState = stat()
+  check(lstat(socketPath, &symlinkState) == 0 && symlinkState.st_mode & S_IFMT == S_IFLNK, "foreign symlink endpoint entry must remain a symlink")
+  try fileManager.removeItem(atPath: socketPath)
+  try fileManager.removeItem(at: symlinkTarget)
+
+  let unknownListener = try openUnixListener(socketPath)
+  let unknownCapability = MeetlessTranscriptionCapability(
+    endpoint: endpoint,
+    workingDirectory: root.path,
+    stagingDirectory: staging,
+    runtimeAuthorization: authorizedRuntimeState(),
+    keychain: FakeKeychain()
+  )
+  expectThrow("unknown occupied socket must fail closed") { try unknownCapability.start() }
+  close(unknownListener)
+  check(fileManager.fileExists(atPath: socketPath), "unknown occupied socket must not be removed by failed startup")
+  unlink(socketPath)
+
+  let staleListener = try openUnixListener(socketPath)
+  close(staleListener)
+  let staleMarker = "{\"schema\":\"MEETLESS_TRANSCRIPTION_ENDPOINT_OWNER v1\",\"role\":\"transcription\",\"endpointName\":\"transcription.sock\",\"canonicalPath\":\"\(endpoint.canonicalPath)\",\"pid\":2147483647,\"token\":\"stale-marker\"}\n"
+  try Data(staleMarker.utf8).write(to: URL(fileURLWithPath: markerPath), options: .atomic)
+  try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: markerPath)
+  let staleCapability = MeetlessTranscriptionCapability(
+    endpoint: endpoint,
+    workingDirectory: root.path,
+    stagingDirectory: staging,
+    runtimeAuthorization: authorizedRuntimeState(),
+    keychain: FakeKeychain()
+  )
+  try staleCapability.start()
+  check(fileManager.fileExists(atPath: socketPath), "provably stale socket must be reclaimed before the new listener binds")
+  check(fileManager.fileExists(atPath: markerPath), "new transcription listener must publish an owner marker")
+  check(statusRequest(socketPath: "transcription.sock", requestId: "packaged-status"), "native packaged listener must accept its short relative endpoint")
+  staleCapability.stop()
+  check(!fileManager.fileExists(atPath: socketPath), "owned packaged transcription socket must be removed on shutdown")
+  check(!fileManager.fileExists(atPath: markerPath), "owned packaged transcription marker must be removed on shutdown")
+}
+
+private func openUnixListener(_ socketPath: String) throws -> Int32 {
+  let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+  guard descriptor >= 0 else { throw capabilityError("test Unix listener could not open") }
+  var address = sockaddr_un()
+  address.sun_family = sa_family_t(AF_UNIX)
+  let pathBytes = Array(socketPath.utf8) + [0]
+  guard pathBytes.count <= MemoryLayout.size(ofValue: address.sun_path) else {
+    close(descriptor)
+    throw capabilityError("test Unix listener path is too long")
+  }
+  withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: pathBytes) }
+  let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + pathBytes.count)
+  let bound = withUnsafePointer(to: &address) { pointer in
+    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+      Darwin.bind(descriptor, $0, addressLength)
+    }
+  }
+  guard bound == 0, Darwin.listen(descriptor, 1) == 0 else {
+    close(descriptor)
+    unlink(socketPath)
+    throw capabilityError("test Unix listener could not bind")
+  }
+  return descriptor
+}
+
 private func testPremiumSocketBoundary() {
   let premium = FakePremiumAccess()
   let capability = MeetlessTranscriptionCapability(
@@ -492,7 +635,7 @@ private func statusRequest(socketPath: String, requestId: String) -> Bool {
       Darwin.connect(client, $0, addressLength)
     }
   }
-  guard connected == 0 else { return true }
+  guard connected == 0 else { return false }
   let request = Data("{\"version\":1,\"requestId\":\"\(requestId)\",\"operation\":\"status\"}\n".utf8)
   request.withUnsafeBytes { buffer in _ = Darwin.write(client, buffer.baseAddress, buffer.count) }
   let response = readBoundedLine(client, maximumBytes: 4_096)
@@ -877,6 +1020,10 @@ private struct TranscriptionCapabilityTests {
     do { try testRealSocketStatusResponse() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: real socket status: \(error)\n".utf8))
+    }
+    do { try testPackagedEndpointCompositionAndOwnership() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: packaged endpoint composition and ownership: \(error)\n".utf8))
     }
     testPremiumSocketBoundary()
     testPremiumPurchaseOutcomePolicy()

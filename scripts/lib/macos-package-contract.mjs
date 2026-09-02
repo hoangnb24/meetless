@@ -10,6 +10,8 @@ export const MACOS_HOST_CONFIG_SCHEMA = "MEETLESS_MACOS_HOST_CONFIG v2";
 export const MACOS_PACKAGE_CONTRACT_FILENAME = "installation-contract.json";
 export const MACOS_PACKAGE_MARKER_FILENAME = "meetless-package.json";
 export const MACOS_PACKAGE_INSTALL_PATH = "/Applications/Meetless.app";
+export const MACOS_RUNTIME_ENDPOINTS_SCHEMA = "MEETLESS_RUNTIME_ENDPOINTS v1";
+export const MACOS_RUNTIME_ENDPOINT_WORKING_DIRECTORY = "runtime-root";
 
 const contractPath = fileURLToPath(new URL("./macos-package-contract.json", import.meta.url));
 const contractBytes = readFileSync(contractPath);
@@ -69,6 +71,10 @@ export function packagedHostConfiguration() {
     rendererOrigin: MACOS_PACKAGE_RENDERER_ORIGIN,
     transcriptionSocketRelativeToRuntimeRoot: runtime.transcriptionSocketRelativePath,
     transcriptionStagingRelativeToRuntimeRoot: runtime.transcriptionStagingRelativePath,
+    endpointPolicy: runtime.endpointPolicy.schema,
+    endpointWorkingDirectory: runtime.endpointPolicy.workingDirectory,
+    recordingEndpointName: runtime.endpointPolicy.recordingEndpointName,
+    transcriptionEndpointName: runtime.endpointPolicy.transcriptionEndpointName,
     nodePath: "runtime/node",
     runtimeCliPath: "packages/runtime/dist/cli.js",
   };

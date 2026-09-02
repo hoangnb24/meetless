@@ -194,6 +194,24 @@ const recordingStatus: RecordingStatusWire = {
   outputPath: null, error: null,
 };
 
+const recordingEndpoints = {
+  schema: "MEETLESS_RUNTIME_ENDPOINTS v1" as const,
+  mode: "packaged" as const,
+  workingDirectory: "/private/runtime",
+  recording: {
+    role: "recording" as const,
+    name: "paseo-home/recording-control.sock",
+    bindArgument: "paseo-home/recording-control.sock",
+    canonicalPath: "/private/runtime/paseo-home/recording-control.sock",
+  },
+  transcription: {
+    role: "transcription" as const,
+    name: "transcription.sock",
+    bindArgument: "transcription.sock",
+    canonicalPath: "/private/runtime/transcription.sock",
+  },
+};
+
 describe("Electron-only recording transport", () => {
   test.each([
     ["Start without chunks", "start", { ...recordingStatus, status: "failed" as const, error: "capture start failed" }],
@@ -225,7 +243,7 @@ describe("Electron-only recording transport", () => {
     const client = new DesktopRecordingClient({
       platform: "darwin", invoke,
       events: { on: async (_event, next) => { handler = next; return () => { handler = null; }; } },
-    });
+    }, recordingEndpoints);
     const observed: RecordingStatusWire[] = [];
     client.subscribe((status) => observed.push(status));
     await client.connect();
@@ -262,7 +280,7 @@ describe("Electron-only recording transport", () => {
     const client = new DesktopRecordingClient({
       platform: "darwin", invoke,
       events: { on: async (_event, next) => { handler = next; return () => { handler = null; }; } },
-    });
+    }, recordingEndpoints);
 
     await client.connect();
     await expect(client.start("Production call")).resolves.toEqual(recordingStatus);
@@ -294,7 +312,7 @@ describe("Electron-only recording transport", () => {
     const client = new DesktopRecordingClient({
       platform: "darwin", invoke,
       events: { on: async (_event, next) => { handler = next; return () => { handler = null; }; } },
-    });
+    }, recordingEndpoints);
     const observed: RecordingStatusWire[] = [];
     client.subscribe((status) => observed.push(status));
     await client.connect();
@@ -303,12 +321,12 @@ describe("Electron-only recording transport", () => {
     await vi.waitFor(() => expect(observed).toContainEqual(recovered));
     expect(session).toBe(2);
     expect(invoke).toHaveBeenCalledWith("open_local_daemon_transport", {
-      transportType: "socket", transportPath: "/private/runtime/paseo-home/recording-control.sock",
+      transportType: "socket", transportPath: "paseo-home/recording-control.sock",
     });
     await client.close();
   });
 
-  test("derives the same short private socket for an overlong isolated daemon home", async () => {
+  test("uses the authoritative short endpoint for an overlong isolated runtime root", async () => {
     let handler: ((payload: unknown) => void) | null = null;
     const home = `/private/var/folders/${"long-runtime-segment/".repeat(8)}paseo-home`;
     let openedPath = "";
@@ -330,15 +348,15 @@ describe("Electron-only recording transport", () => {
     const client = new DesktopRecordingClient({
       platform: "darwin", invoke,
       events: { on: async (_event, next) => { handler = next; return () => { handler = null; }; } },
-    });
+    }, recordingEndpoints);
 
     await client.connect();
-    expect(openedPath).toMatch(/^\/private\/tmp\/meetless-recording-[a-f0-9]{24}\.sock$/u);
+    expect(openedPath).toBe("paseo-home/recording-control.sock");
     expect(Buffer.byteLength(openedPath)).toBeLessThanOrEqual(103);
     await client.close();
   });
 
-  test("derives the private socket only from Electron daemon state and reconnects without owning capture", async () => {
+  test("consumes the same authoritative endpoint after disconnect and reconnects without owning capture", async () => {
     let handler: ((payload: unknown) => void) | null = null;
     let session = 0;
     const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
@@ -356,10 +374,10 @@ describe("Electron-only recording transport", () => {
     const client = new DesktopRecordingClient({
       platform: "darwin", invoke,
       events: { on: async (_event, next) => { handler = next; return () => { handler = null; }; } },
-    });
+    }, recordingEndpoints);
     await expect(client.connect()).resolves.toEqual(recordingStatus);
     expect(invoke).toHaveBeenCalledWith("open_local_daemon_transport", {
-      transportType: "socket", transportPath: "/private/runtime/paseo-home/recording-control.sock",
+      transportType: "socket", transportPath: "paseo-home/recording-control.sock",
     });
     await client.close();
     await expect(client.connect()).resolves.toEqual(recordingStatus);
@@ -386,7 +404,7 @@ describe("Electron-only recording transport", () => {
     const client = new DesktopRecordingClient({
       platform: "darwin", invoke,
       events: { on: async (_event, next) => { handler = next; return () => { handler = null; }; } },
-    });
+    }, recordingEndpoints);
 
     await expect(client.connect()).resolves.toEqual(recordingStatus);
     expect(opens).toBe(3);
@@ -394,7 +412,7 @@ describe("Electron-only recording transport", () => {
   });
 
   test("rejects browser/mobile and non-macOS bridges instead of trusting URL parameters", () => {
-    expect(() => new DesktopRecordingClient({ platform: "linux", invoke: vi.fn(), events: { on: vi.fn() } })).toThrow(
+    expect(() => new DesktopRecordingClient({ platform: "linux", invoke: vi.fn(), events: { on: vi.fn() } }, recordingEndpoints)).toThrow(
       /web, mobile, and URL parameters cannot grant it/,
     );
   });

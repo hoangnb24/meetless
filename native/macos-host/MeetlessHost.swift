@@ -83,6 +83,10 @@ private struct HostConfiguration: Codable {
   let nodePath: String
   let runtimeCliPath: String
   let identityPath: String
+  let endpointPolicy: String?
+  let endpointWorkingDirectory: String?
+  let recordingEndpointName: String?
+  let transcriptionEndpointName: String?
 }
 
 private struct HostConfigurationFile: Decodable {
@@ -100,6 +104,10 @@ private struct HostConfigurationFile: Decodable {
   let rendererOrigin: String?
   let transcriptionSocketRelativeToRuntimeRoot: String?
   let transcriptionStagingRelativeToRuntimeRoot: String?
+  let endpointPolicy: String?
+  let endpointWorkingDirectory: String?
+  let recordingEndpointName: String?
+  let transcriptionEndpointName: String?
   let transcriptionSocket: String?
   let transcriptionStaging: String?
   let nodePath: String?
@@ -115,6 +123,26 @@ private struct InstallationPackageContract: Decodable {
   let resources: [String: String]
 }
 
+private struct InstallationEndpointPolicy: Decodable {
+  let schema: String
+  let workingDirectory: String
+  let recordingEndpointName: String
+  let transcriptionEndpointName: String
+}
+
+private struct InstallationRuntimeContract: Decodable {
+  let paseoHomeRelativePath: String
+  let electronUserDataRelativePath: String
+  let meetingStoreRelativePath: String
+  let logsRelativePath: String
+  let daemonLogRelativePath: String
+  let manifestRelativePath: String
+  let recordingSocketRelativePath: String
+  let transcriptionSocketRelativePath: String
+  let transcriptionStagingRelativePath: String
+  let endpointPolicy: InstallationEndpointPolicy
+}
+
 private struct InstallationContract: Decodable {
   let schema: String
   let bundleIdentifier: String
@@ -122,7 +150,7 @@ private struct InstallationContract: Decodable {
   let userSupportRelativePath: String
   let recordingExportsRelativePath: String
   let identityRelativePath: String
-  let runtime: [String: String]
+  let runtime: InstallationRuntimeContract
   let listen: String
   let rendererOrigin: String
   let package: InstallationPackageContract
@@ -413,11 +441,29 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
         lock: { configuration in try self.acquireRuntimeLock(configuration.runtimeRoot) },
         capability: { configuration in
           self.installSignalHandlers()
-          let capability = MeetlessTranscriptionCapability(
-            socketPath: configuration.transcriptionSocket,
-            stagingDirectory: configuration.transcriptionStaging,
-            runtimeAuthorization: self.runtimeAuthorization
-          )
+          if configuration.endpointPolicy != nil {
+            try self.enterPackagedRuntimeWorkingDirectory(configuration.runtimeRoot)
+          }
+          let capability: MeetlessTranscriptionCapability
+          if let endpointName = configuration.transcriptionEndpointName {
+            let endpoint = try meetlessPackagedEndpoint(
+              role: "transcription",
+              name: endpointName,
+              runtimeRoot: configuration.runtimeRoot
+            )
+            capability = MeetlessTranscriptionCapability(
+              endpoint: endpoint,
+              workingDirectory: configuration.runtimeRoot,
+              stagingDirectory: configuration.transcriptionStaging,
+              runtimeAuthorization: self.runtimeAuthorization
+            )
+          } else {
+            capability = MeetlessTranscriptionCapability(
+              socketPath: configuration.transcriptionSocket,
+              stagingDirectory: configuration.transcriptionStaging,
+              runtimeAuthorization: self.runtimeAuthorization
+            )
+          }
           try capability.start()
           self.transcriptionCapability = capability
         },
@@ -492,7 +538,11 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
         transcriptionStaging: transcriptionStaging,
         nodePath: nodePath,
         runtimeCliPath: runtimeCliPath,
-        identityPath: identityPath
+        identityPath: identityPath,
+        endpointPolicy: nil,
+        endpointWorkingDirectory: nil,
+        recordingEndpointName: nil,
+        transcriptionEndpointName: nil
       )
     }
     guard file.mode == "packaged" else {
@@ -508,6 +558,10 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       let rendererOrigin = file.rendererOrigin,
       let transcriptionSocketRelative = file.transcriptionSocketRelativeToRuntimeRoot,
       let transcriptionStagingRelative = file.transcriptionStagingRelativeToRuntimeRoot,
+      let endpointPolicy = file.endpointPolicy,
+      let endpointWorkingDirectory = file.endpointWorkingDirectory,
+      let recordingEndpointName = file.recordingEndpointName,
+      let transcriptionEndpointName = file.transcriptionEndpointName,
       let nodeRelative = file.nodePath,
       let runtimeCliRelative = file.runtimeCliPath
     else { throw hostPreflightError("packaged host configuration is incomplete") }
@@ -532,13 +586,34 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       contract.identityRelativePath == identityRelative,
       contract.listen == listen,
       contract.rendererOrigin == rendererOrigin,
-      contract.runtime["transcriptionSocketRelativePath"] == transcriptionSocketRelative,
-      contract.runtime["transcriptionStagingRelativePath"] == transcriptionStagingRelative
+      endpointPolicy == meetlessRuntimeEndpointSchema,
+      endpointWorkingDirectory == meetlessRuntimeEndpointWorkingDirectory,
+      contract.runtime.transcriptionSocketRelativePath == transcriptionSocketRelative,
+      contract.runtime.transcriptionStagingRelativePath == transcriptionStagingRelative,
+      contract.runtime.endpointPolicy.schema == endpointPolicy,
+      contract.runtime.endpointPolicy.workingDirectory == endpointWorkingDirectory,
+      contract.runtime.endpointPolicy.recordingEndpointName == recordingEndpointName,
+      contract.runtime.endpointPolicy.transcriptionEndpointName == transcriptionEndpointName,
+      contract.runtime.recordingSocketRelativePath == recordingEndpointName,
+      contract.runtime.transcriptionSocketRelativePath == transcriptionEndpointName
     else { throw hostPreflightError("host configuration differs from the installation contract") }
+    try validateMeetlessEndpointName(role: "recording", name: recordingEndpointName)
+    try validateMeetlessEndpointName(role: "transcription", name: transcriptionEndpointName)
+    guard recordingEndpointName != transcriptionEndpointName else {
+      throw hostPreflightError("recording and transcription endpoint names must remain distinct")
+    }
 
     let runtimeRoot = try resolvePackagedRuntimeRoot(runtimeRootRelative, label: "runtime root")
     let identityPath = try containedPath(runtimeRoot, identityRelative, label: "host identity")
+    let transcriptionDescriptor = try meetlessPackagedEndpoint(
+      role: "transcription",
+      name: transcriptionEndpointName,
+      runtimeRoot: runtimeRoot
+    )
     let transcriptionSocket = try containedPath(runtimeRoot, transcriptionSocketRelative, label: "transcription socket")
+    guard transcriptionSocket == transcriptionDescriptor.canonicalPath else {
+      throw hostPreflightError("transcription endpoint canonical projection differs from the accepted runtime root")
+    }
     let transcriptionStaging = try containedPath(runtimeRoot, transcriptionStagingRelative, label: "transcription staging")
     return HostConfiguration(
       repositoryRoot: packageRoot,
@@ -549,8 +624,34 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       transcriptionStaging: transcriptionStaging,
       nodePath: try bundleRelativePath(packageRootRelative + "/" + nodeRelative, label: "packaged node"),
       runtimeCliPath: try bundleRelativePath(packageRootRelative + "/" + runtimeCliRelative, label: "packaged runtime CLI"),
-      identityPath: identityPath
+      identityPath: identityPath,
+      endpointPolicy: endpointPolicy,
+      endpointWorkingDirectory: endpointWorkingDirectory,
+      recordingEndpointName: recordingEndpointName,
+      transcriptionEndpointName: transcriptionEndpointName
     )
+  }
+
+  private func enterPackagedRuntimeWorkingDirectory(_ runtimeRoot: String) throws {
+    let runtimeURL = URL(fileURLWithPath: runtimeRoot).standardizedFileURL
+    do {
+      try FileManager.default.createDirectory(
+        at: runtimeURL,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+      )
+    } catch {
+      throw hostPreflightError("packaged runtime-root working directory is unavailable: \(error.localizedDescription)")
+    }
+    guard runtimeURL.resolvingSymlinksInPath().standardizedFileURL.path == runtimeURL.path else {
+      throw hostPreflightError("packaged runtime-root working directory must not resolve through a symlink")
+    }
+    guard chmod(runtimeURL.path, 0o700) == 0 else {
+      throw hostPreflightError("cannot restrict the packaged runtime-root working directory")
+    }
+    guard FileManager.default.changeCurrentDirectoryPath(runtimeURL.path) else {
+      throw hostPreflightError("cannot enter the packaged runtime-root working directory")
+    }
   }
 
   private func assertExactInstalledPath() throws {
@@ -770,7 +871,9 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: configuration.nodePath)
     process.arguments = [configuration.runtimeCliPath, "desktop"]
-    process.currentDirectoryURL = URL(fileURLWithPath: configuration.repositoryRoot)
+    process.currentDirectoryURL = URL(fileURLWithPath: configuration.endpointPolicy == nil
+      ? configuration.repositoryRoot
+      : configuration.runtimeRoot)
     var environment = ProcessInfo.processInfo.environment
     environment.removeValue(forKey: "MEETLESS_CAPTURE_MODE")
     environment.removeValue(forKey: "MEETLESS_FIXTURE_EXPORT_STAMP")
@@ -786,6 +889,43 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     environment["MEETLESS_HOST_IDENTITY_PATH"] = configuration.identityPath
     environment["MEETLESS_TRANSCRIPTION_SOCKET"] = configuration.transcriptionSocket
     environment["MEETLESS_TRANSCRIPTION_STAGING"] = configuration.transcriptionStaging
+    if let endpointPolicy = configuration.endpointPolicy,
+       let endpointWorkingDirectory = configuration.endpointWorkingDirectory,
+       let recordingEndpointName = configuration.recordingEndpointName,
+       let transcriptionEndpointName = configuration.transcriptionEndpointName {
+      guard endpointPolicy == meetlessRuntimeEndpointSchema,
+            endpointWorkingDirectory == meetlessRuntimeEndpointWorkingDirectory else {
+        throw hostPreflightError("runtime endpoint policy is not the accepted versioned packaged composition")
+      }
+      let recording = try meetlessPackagedEndpoint(
+        role: "recording",
+        name: recordingEndpointName,
+        runtimeRoot: configuration.runtimeRoot
+      )
+      let transcription = try meetlessPackagedEndpoint(
+        role: "transcription",
+        name: transcriptionEndpointName,
+        runtimeRoot: configuration.runtimeRoot
+      )
+      guard recording.name != transcription.name else {
+        throw hostPreflightError("recording and transcription endpoint names must remain distinct")
+      }
+      let composition = MeetlessRuntimeEndpointComposition(
+        schema: endpointPolicy,
+        mode: "packaged",
+        workingDirectory: URL(fileURLWithPath: configuration.runtimeRoot).standardizedFileURL.path,
+        recording: recording,
+        transcription: transcription
+      )
+      let compositionData = try JSONEncoder().encode(composition)
+      guard let compositionValue = String(data: compositionData, encoding: .utf8) else {
+        throw hostPreflightError("runtime endpoint composition could not be encoded")
+      }
+      environment["MEETLESS_RUNTIME_ENDPOINTS"] = compositionValue
+      environment["MEETLESS_RUNTIME_PACKAGED"] = "1"
+    } else {
+      environment["MEETLESS_RUNTIME_PACKAGED"] = "0"
+    }
     if let containerSupportRoot = meetlessAppStoreContainerSupportRoot(for: configuration.runtimeRoot) {
       environment["MEETLESS_APP_CONTAINER_SUPPORT_ROOT"] = containerSupportRoot
     }

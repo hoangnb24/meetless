@@ -49,6 +49,7 @@ export interface RecordingReadinessDependencies {
     socketPath: string,
     operation: ReadinessOperation,
     context?: ReadinessOperationContext,
+    canonicalSocketPath?: string,
   ): Promise<RecordingRuntimeReadinessResponse>;
   verifyOwnership(
     config: RuntimeConfig,
@@ -190,7 +191,12 @@ export async function waitForRecordingRuntime(
         pluginBootstrapped = true;
       }
       const response = await beforeDeadline(
-        (context) => dependencies.requestReadiness(config.paths.recordingSocket, "status", context),
+        (context) => dependencies.requestReadiness(
+          config.endpoints.recording.bindArgument,
+          "status",
+          context,
+          config.paths.recordingSocket,
+        ),
         deadline,
         "authoritative recording status",
         input.signal,
@@ -230,9 +236,10 @@ export async function requestRecordingRuntimeReadiness(
   socketPath: string,
   operation: ReadinessOperation = "status",
   context?: ReadinessOperationContext,
+  canonicalSocketPath = socketPath,
 ): Promise<RecordingRuntimeReadinessResponse> {
   context?.signal.throwIfAborted();
-  const before = await socketIdentity(socketPath);
+  const before = await socketIdentity(canonicalSocketPath);
   const requestId = `readiness-${process.pid}-${randomUUID()}`;
   const remaining = context ? Math.max(1, context.deadline - Date.now()) : 2_000;
   const socket = new WebSocket("ws://localhost/ws", {
@@ -279,7 +286,7 @@ export async function requestRecordingRuntimeReadiness(
     });
     socket.send(JSON.stringify({ version: 1, requestId, command: "runtime.readiness", operation }));
     const attested = await response;
-    const after = await socketIdentity(socketPath);
+    const after = await socketIdentity(canonicalSocketPath);
     if (!sameSocket(before, after) || !sameSocket(after, attested.runtime.socketIdentity)) {
       throw new Error("recording socket was replaced or the responding listener does not own its inode");
     }
@@ -422,7 +429,12 @@ export async function prepareCollisionEvidence(
   requestReadiness: RecordingReadinessDependencies["requestReadiness"] = requestRecordingRuntimeReadiness,
 ): Promise<RuntimeReadinessReport> {
   assertPreOwnerRecordingReady(report);
-  const prepared = await requestReadiness(config.paths.recordingSocket, "prepareCollision").catch((error) => {
+  const prepared = await requestReadiness(
+    config.endpoints.recording.bindArgument,
+    "prepareCollision",
+    undefined,
+    config.paths.recordingSocket,
+  ).catch((error) => {
     throw readinessFailure("collision evidence preparation", config, error);
   });
   await assertRuntimeAttestation(config, prepared);
