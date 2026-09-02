@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v37`
-- `current_frontier`: `R5-MAS-DEVELOPMENT-PACKAGE-WORKSPACE-CLOSURE-CORRECTION`
-- `state`: `R5_MAS_DEVELOPMENT_PACKAGE_READINESS_REOPENED_PRE_SIGNING`
+- `plan_revision`: `v38`
+- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH`
+- `state`: `R5_MAS_PACKAGE_CLOSURE_ACCEPTED_DEV_EXTERNAL_GATE_AUTHORIZED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: a new immutable correction candidate is ready for Lead review from exact original/current base `0e37877620ef11c5d590b3d3466c6ea6fd8f11c2`; Lead acceptance remains open and its exact commit is reported at handoff. The historically accepted implementation evidence at `6fe924d68c7bbb0f560ffbfed1501f67a66e0ea8` remains preserved and is not this candidate. No artifact or external result is accepted by this repository verdict.
+- `candidate`: Lead accepted immutable package-workspace-closure correction `57b1020aa30f31b611141f5cc1e020ce8d3baf0c`, whose exact parent/original base is `0e37877620ef11c5d590b3d3466c6ea6fd8f11c2`. The historically accepted implementation evidence at `6fe924d68c7bbb0f560ffbfed1501f67a66e0ea8` remains preserved. No artifact or external result is accepted by this repository verdict.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: retained root `/private/tmp/meetless-mas-development-proof.i9JfdG`; the authorized dev MAS command failed before MAS signing/manifest because `@meetless/plugin` declared the root-lock workspace link `@meetless/managed-transcription-foundation`, which the fixed local package selection omitted. `/Applications` was untouched and no launch occurred.
-- `pending_ruling`: Lead acceptance of this package-workspace-closure correction remains open; package readiness is reopened at the pre-signing closure boundary. The user-selected security-scoped export runtime gate, package/download/sign, launch, monthly purchase, and restore remain later separately authorized work.
-- `blocked_by`: external gates are closed. No artifact readiness, package/download/sign result, launch result, purchase, restore, App Review, publication, or production deployment is claimed by this correction.
-- `next_action`: Lead inspects and accepts the new immutable repository candidate; only afterward, under separate authority, may MAS package/download/sign/launch or monthly purchase/restore work resume. Dependency order otherwise remains unchanged.
+- `pending_ruling`: the owner authorized only dev-only MAS packaging, Apple Development signing, recoverable local installation, exact local launch, bounded readiness verification, and inherent RevenueCat public-SDK configure/read behavior. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and all other external gates remain closed.
+- `blocked_by`: no artifact, signing, install, launch, or cleanup result is accepted yet. Purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions remain forbidden.
+- `next_action`: execute one fresh SERIAL dev package/sign/install/launch gate from the accepted integration tip, validate the artifact before installation, restore the pre-existing app after bounded verification, and return exact evidence for Lead acceptance. Dependency order otherwise remains unchanged.
 
 ## Ownership And Authority
 
@@ -1218,6 +1218,17 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v38`: Lead accepted immutable correction
+  `57b1020aa30f31b611141f5cc1e020ce8d3baf0c` after verifying its exact parent,
+  five-path scope, 32 focused tests, Node syntax, and the bounded independent
+  close-out of `PKG-CLOSURE-001` through `PKG-CLOSURE-004`. The owner-authorized
+  frontier now opens only dev MAS packaging, Apple Development signing,
+  recoverable local installation, exact launch, bounded readiness, and inherent
+  RevenueCat public-SDK configure/read behavior. Purchase, restore, production,
+  annual-product, provider, deployment, upload, submission, publication, and
+  every other external gate remain closed. No artifact or external effect is
+  accepted by this repository verdict.
 
 - 2026-09-02 `PLAN_RECONCILIATION v37`: package readiness is reopened at exact
   correction base `0e37877620ef11c5d590b3d3466c6ea6fd8f11c2` after retained proof
