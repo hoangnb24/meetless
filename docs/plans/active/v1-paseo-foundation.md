@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v42`
-- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-R3`
-- `state`: `R5_MAS_EMBEDDED_PROFILE_SIGNING_CORRECTION_REOPENED_PRE_FINAL_SIGNING`
+- `plan_revision`: `v43`
+- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-4`
+- `state`: `R5_MAS_PROFILE_SIGNING_ACCEPTED_DEV_EXTERNAL_GATE_AUTHORIZED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: one immutable embedded-profile signing correction is prepared from exact base `8311c9928a899b74833608eef1980bac12f66f04`; accepted history through `13f20d2eb49549f72098d103e0a49d1900a9248e` and checkpoint `8311c9928a899b74833608eef1980bac12f66f04` remain preserved. The exact correction commit is reported at handoff; no artifact or external result is accepted by this repository verdict.
+- `candidate`: Lead accepted immutable embedded-profile signing correction `25257e4c96e743fd56ad80956bb1b31511e2c544`, whose exact parent/base is `8311c9928a899b74833608eef1980bac12f66f04`; accepted history through `13f20d2eb49549f72098d103e0a49d1900a9248e` remains preserved. No artifact or external result is accepted by this repository verdict.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: retained read-only root `/private/tmp/meetless-mas-development-proof.GpvGZD`; exact command `npm run package:macos:app-store:development` failed during MAS bundle signing because `Contents/embedded.provisionprofile` was passed to `codesign` with child entitlements and returned `Permission denied`. The observed command was `codesign --sign Apple Development: Long Le (335C7MY4H4) --force --timestamp=none --entitlements /Users/tubakhuym/projects/supervisors/meetless/native/macos-host/MeetlessAppStoreChild.entitlements.plist /private/tmp/meetless-mas-development-proof.GpvGZD/release/macos/Meetless.app/Contents/embedded.provisionprofile`; embedded mode was `0400`, profile bytes matched the snapshot, and profile CMS/fields remained valid. No MAS manifest was produced; `/Applications` was untouched, no install or launch occurred, and no retry was made.
-- `pending_ruling`: the embedded CMS provisioning profile is data and must be the only exact normalized path ignored before `optionsForFile`; every code object retains the existing parent/child entitlement route. Post-sign validation must retain byte equality and `security cms` parsing, then require `codesign --display --verbose=2` on the profile to return only the unsigned-code-object diagnostic. The deterministic repository correction proof is complete locally and remains pending Lead acceptance.
-- `blocked_by`: every external gate is closed for this correction: no packaging, Electron download, signing, signing retry, installation, launch, cleanup, purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operation, or real transcription-provider action is authorized. Dependency order is unchanged.
-- `next_action`: Lead inspects the immutable repository candidate; only after acceptance may a separately routed fresh package/sign/install/launch attempt proceed. No external action is part of this frontier.
+- `pending_ruling`: the owner-authorized frontier opens only dev MAS packaging, Apple Development signing, recoverable local installation, exact local launch, bounded readiness, and inherent RevenueCat public-SDK configure/read behavior. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and every other external gate remain closed.
+- `blocked_by`: no artifact, signing, install, launch, or cleanup result is accepted yet. Three unchanged generic-signature tests retain stale authority-wording regex expectations; 40 peer tests pass and independent close-out ruled the drift unrelated to signer safety or build-retry readiness. Purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions remain forbidden.
+- `next_action`: execute one fresh SERIAL package/sign/install/launch attempt from the accepted integration tip, restore the pre-existing app after bounded verification, and return exact evidence for Lead acceptance. Dependency order otherwise remains unchanged.
 
 ## Ownership And Authority
 
@@ -1266,6 +1266,17 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v43`: Lead accepted immutable correction
+  `25257e4c96e743fd56ad80956bb1b31511e2c544` after focused MAS and package
+  proofs, typecheck/validation, and independent close-out passed all four
+  `PROFILE-SIGN` findings. Three unchanged generic-signature tests retain stale
+  authority-wording regex expectations; close-out ruled them unrelated to
+  signer safety and retry readiness. The owner-authorized frontier reopens only
+  dev MAS packaging, Apple Development signing, recoverable local installation,
+  exact launch, bounded readiness, and inherent RevenueCat public-SDK
+  configure/read behavior. Every other external gate remains closed; no
+  artifact or external result is accepted by this verdict.
 
 - 2026-09-02 `PLAN_RECONCILIATION v42`: package readiness is reopened before
   final signing for the embedded-profile signing correction at exact base
