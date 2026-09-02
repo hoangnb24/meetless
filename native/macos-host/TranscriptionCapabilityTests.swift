@@ -6,6 +6,19 @@ import Security
 
 private var failures = 0
 
+private struct RuntimeEndpointGoldenPolicy: Decodable {
+  let schema: String
+  let workingDirectory: String
+  let recordingEndpointName: String
+  let transcriptionEndpointName: String
+}
+
+private struct RuntimeEndpointGoldenVector: Decodable {
+  let id: String
+  let policy: RuntimeEndpointGoldenPolicy
+  let composition: MeetlessRuntimeEndpointComposition
+}
+
 private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
   if !condition() {
     failures += 1
@@ -377,6 +390,45 @@ private func testRealSocketStatusResponse() throws {
   check((response?.utf8.count ?? 4_096) < 1_024, "real socket status response must remain compact")
 }
 
+private func testRuntimeEndpointGoldenVectors() throws {
+  let fixtureURL = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .appendingPathComponent("packages/runtime/test/fixtures/runtime-endpoint-vectors.json")
+  let vectors = try JSONDecoder().decode(
+    [RuntimeEndpointGoldenVector].self,
+    from: Data(contentsOf: fixtureURL)
+  )
+  check(vectors.map(\.id) == ["ordinary", "long-ascii", "long-unicode"], "native golden vectors must cover all endpoint root classes")
+  for vector in vectors {
+    check(vector.policy.schema == meetlessRuntimeEndpointSchema, "\(vector.id) policy schema must use the accepted endpoint version")
+    check(vector.policy.workingDirectory == meetlessRuntimeEndpointWorkingDirectory, "\(vector.id) policy must use the runtime-root working directory")
+    let recording = try meetlessPackagedEndpoint(
+      role: "recording",
+      name: vector.policy.recordingEndpointName,
+      runtimeRoot: vector.composition.workingDirectory
+    )
+    let transcription = try meetlessPackagedEndpoint(
+      role: "transcription",
+      name: vector.policy.transcriptionEndpointName,
+      runtimeRoot: vector.composition.workingDirectory
+    )
+    let composed = MeetlessRuntimeEndpointComposition(
+      schema: meetlessRuntimeEndpointSchema,
+      mode: "packaged",
+      workingDirectory: URL(fileURLWithPath: vector.composition.workingDirectory).standardizedFileURL.path,
+      recording: recording,
+      transcription: transcription
+    )
+    check(composed == vector.composition, "\(vector.id) native composition must equal the shared runtime golden vector")
+    check(recording.bindArgument == vector.composition.recording.bindArgument, "\(vector.id) recording bind argument must remain cross-language identical")
+    check(transcription.bindArgument == vector.composition.transcription.bindArgument, "\(vector.id) transcription bind argument must remain cross-language identical")
+    check(recording.bindArgument.utf8.count <= meetlessDarwinUnixSocketPathBytes, "\(vector.id) recording bind argument must fit Darwin AF_UNIX")
+    check(transcription.bindArgument.utf8.count <= meetlessDarwinUnixSocketPathBytes, "\(vector.id) transcription bind argument must fit Darwin AF_UNIX")
+  }
+}
+
 private func testPackagedEndpointCompositionAndOwnership() throws {
   let syntheticRoot = "/Users/\(String(repeating: "long-home-segment-", count: 12))/Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless"
   let recording = try meetlessPackagedEndpoint(
@@ -408,9 +460,11 @@ private func testPackagedEndpointCompositionAndOwnership() throws {
   }
 
   let fileManager = FileManager.default
-  let root = URL(fileURLWithPath: "/private/var/tmp").appendingPathComponent("meetless-packaged-endpoint-\(UUID().uuidString)")
+  let rootName = "meetless-packaged-endpoint-\(String(repeating: "long-ascii-runtime-root-", count: 6))\(UUID().uuidString)"
+  let root = URL(fileURLWithPath: "/private/var/tmp").appendingPathComponent(rootName)
   try fileManager.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
   let socketPath = root.appendingPathComponent("transcription.sock").path
+  check(socketPath.utf8.count > meetlessDarwinUnixSocketPathBytes, "native lifecycle proof must use a canonical path longer than Darwin AF_UNIX")
   let markerPath = socketPath + ".owner.json"
   let staging = root.appendingPathComponent("meeting-store/transcription-ranges").path
   let previousDirectory = fileManager.currentDirectoryPath
@@ -461,7 +515,7 @@ private func testPackagedEndpointCompositionAndOwnership() throws {
   try fileManager.removeItem(atPath: socketPath)
   try fileManager.removeItem(at: symlinkTarget)
 
-  let unknownListener = try openUnixListener(socketPath)
+  let unknownListener = try openUnixListener(socketPath, bindPath: endpoint.bindArgument)
   let unknownCapability = MeetlessTranscriptionCapability(
     endpoint: endpoint,
     workingDirectory: root.path,
@@ -474,7 +528,7 @@ private func testPackagedEndpointCompositionAndOwnership() throws {
   check(fileManager.fileExists(atPath: socketPath), "unknown occupied socket must not be removed by failed startup")
   unlink(socketPath)
 
-  let staleListener = try openUnixListener(socketPath)
+  let staleListener = try openUnixListener(socketPath, bindPath: endpoint.bindArgument)
   close(staleListener)
   let staleMarker = "{\"schema\":\"MEETLESS_TRANSCRIPTION_ENDPOINT_OWNER v1\",\"role\":\"transcription\",\"endpointName\":\"transcription.sock\",\"canonicalPath\":\"\(endpoint.canonicalPath)\",\"pid\":2147483647,\"token\":\"stale-marker\"}\n"
   try Data(staleMarker.utf8).write(to: URL(fileURLWithPath: markerPath), options: .atomic)
@@ -489,18 +543,27 @@ private func testPackagedEndpointCompositionAndOwnership() throws {
   try staleCapability.start()
   check(fileManager.fileExists(atPath: socketPath), "provably stale socket must be reclaimed before the new listener binds")
   check(fileManager.fileExists(atPath: markerPath), "new transcription listener must publish an owner marker")
+  let activeContender = MeetlessTranscriptionCapability(
+    endpoint: endpoint,
+    workingDirectory: root.path,
+    stagingDirectory: staging,
+    runtimeAuthorization: authorizedRuntimeState(),
+    keychain: FakeKeychain()
+  )
+  expectThrow("active transcription owner must reject a concurrent contender") { try activeContender.start() }
   check(statusRequest(socketPath: "transcription.sock", requestId: "packaged-status"), "native packaged listener must accept its short relative endpoint")
   staleCapability.stop()
   check(!fileManager.fileExists(atPath: socketPath), "owned packaged transcription socket must be removed on shutdown")
   check(!fileManager.fileExists(atPath: markerPath), "owned packaged transcription marker must be removed on shutdown")
 }
 
-private func openUnixListener(_ socketPath: String) throws -> Int32 {
+private func openUnixListener(_ socketPath: String, bindPath: String? = nil) throws -> Int32 {
   let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
   guard descriptor >= 0 else { throw capabilityError("test Unix listener could not open") }
   var address = sockaddr_un()
   address.sun_family = sa_family_t(AF_UNIX)
-  let pathBytes = Array(socketPath.utf8) + [0]
+  let addressPath = bindPath ?? socketPath
+  let pathBytes = Array(addressPath.utf8) + [0]
   guard pathBytes.count <= MemoryLayout.size(ofValue: address.sun_path) else {
     close(descriptor)
     throw capabilityError("test Unix listener path is too long")
@@ -514,7 +577,7 @@ private func openUnixListener(_ socketPath: String) throws -> Int32 {
   }
   guard bound == 0, Darwin.listen(descriptor, 1) == 0 else {
     close(descriptor)
-    unlink(socketPath)
+    unlink(addressPath)
     throw capabilityError("test Unix listener could not bind")
   }
   return descriptor
@@ -1020,6 +1083,10 @@ private struct TranscriptionCapabilityTests {
     do { try testRealSocketStatusResponse() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: real socket status: \(error)\n".utf8))
+    }
+    do { try testRuntimeEndpointGoldenVectors() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: runtime endpoint golden vectors: \(error)\n".utf8))
     }
     do { try testPackagedEndpointCompositionAndOwnership() } catch {
       failures += 1

@@ -508,7 +508,7 @@ function endpointConfigurationError(reason: string, detail?: unknown): Error {
   const suffix = detail ? `: ${message(detail)}` : "";
   return new Error(
     `${reason}${suffix}. Authority: docs/decisions/0005-mac-app-store-and-revenuecat.md, ` +
-      "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md, and PLAN_RECONCILIATION v47. " +
+      "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md, and the accepted MEETLESS_RUNTIME_ENDPOINTS v1 package/runtime endpoint contract. " +
       "Next action: rebuild host-config.json and the installation contract from the accepted versioned endpoint policy; stop before child launch.",
   );
 }

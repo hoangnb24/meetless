@@ -1,0 +1,80 @@
+[
+  {
+    "id": "ordinary",
+    "policy": {
+      "schema": "MEETLESS_RUNTIME_ENDPOINTS v1",
+      "workingDirectory": "runtime-root",
+      "recordingEndpointName": "paseo-home/recording-control.sock",
+      "transcriptionEndpointName": "transcription.sock"
+    },
+    "composition": {
+      "schema": "MEETLESS_RUNTIME_ENDPOINTS v1",
+      "mode": "packaged",
+      "workingDirectory": "/private/tmp/meetless-endpoint-vectors/ordinary",
+      "recording": {
+        "role": "recording",
+        "name": "paseo-home/recording-control.sock",
+        "bindArgument": "paseo-home/recording-control.sock",
+        "canonicalPath": "/private/tmp/meetless-endpoint-vectors/ordinary/paseo-home/recording-control.sock"
+      },
+      "transcription": {
+        "role": "transcription",
+        "name": "transcription.sock",
+        "bindArgument": "transcription.sock",
+        "canonicalPath": "/private/tmp/meetless-endpoint-vectors/ordinary/transcription.sock"
+      }
+    }
+  },
+  {
+    "id": "long-ascii",
+    "policy": {
+      "schema": "MEETLESS_RUNTIME_ENDPOINTS v1",
+      "workingDirectory": "runtime-root",
+      "recordingEndpointName": "paseo-home/recording-control.sock",
+      "transcriptionEndpointName": "transcription.sock"
+    },
+    "composition": {
+      "schema": "MEETLESS_RUNTIME_ENDPOINTS v1",
+      "mode": "packaged",
+      "workingDirectory": "/private/tmp/meetless-endpoint-vectors/long-ascii-home-segment-long-ascii-home-segment-long-ascii-home-segment-long-ascii-home-segment-long-ascii-home-segment-long-ascii-home-segment-runtime-root",
+      "recording": {
+        "role": "recording",
+        "name": "paseo-home/recording-control.sock",
+        "bindArgument": "paseo-home/recording-control.sock",
+        "canonicalPath": "/private/tmp/meetless-endpoint-vectors/long-ascii-home-segment-long-ascii-home-segment-long-ascii-home-segment-long-ascii-home-segment-long-ascii-home-segment-long-ascii-home-segment-runtime-root/paseo-home/recording-control.sock"
+      },
+      "transcription": {
+        "role": "transcription",
+        "name": "transcription.sock",
+        "bindArgument": "transcription.sock",
+        "canonicalPath": "/private/tmp/meetless-endpoint-vectors/long-ascii-home-segment-long-ascii-home-segment-long-ascii-home-segment-long-ascii-home-segment-long-ascii-home-segment-long-ascii-home-segment-runtime-root/transcription.sock"
+      }
+    }
+  },
+  {
+    "id": "long-unicode",
+    "policy": {
+      "schema": "MEETLESS_RUNTIME_ENDPOINTS v1",
+      "workingDirectory": "runtime-root",
+      "recordingEndpointName": "paseo-home/recording-control.sock",
+      "transcriptionEndpointName": "transcription.sock"
+    },
+    "composition": {
+      "schema": "MEETLESS_RUNTIME_ENDPOINTS v1",
+      "mode": "packaged",
+      "workingDirectory": "/private/tmp/meetless-endpoint-vectors/用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-runtime-root",
+      "recording": {
+        "role": "recording",
+        "name": "paseo-home/recording-control.sock",
+        "bindArgument": "paseo-home/recording-control.sock",
+        "canonicalPath": "/private/tmp/meetless-endpoint-vectors/用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-runtime-root/paseo-home/recording-control.sock"
+      },
+      "transcription": {
+        "role": "transcription",
+        "name": "transcription.sock",
+        "bindArgument": "transcription.sock",
+        "canonicalPath": "/private/tmp/meetless-endpoint-vectors/用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-用户家目录-runtime-root/transcription.sock"
+      }
+    }
+  }
+]

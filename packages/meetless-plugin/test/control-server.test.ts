@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -78,16 +78,18 @@ describe("private desktop recording control", () => {
     second.close();
   }, 30_000);
 
-  test("binds a packaged endpoint relative to the explicit runtime-root working directory", async () => {
-    root = await mkdtemp("/private/tmp/meetless-control-");
-    const socketPath = path.join(root, "recording-control.sock");
+  test("binds and connects a packaged endpoint relatively under a long ASCII runtime root", async () => {
+    root = await longRuntimeRoot("ascii");
+    const endpointName = "paseo-home/recording-control.sock";
+    const socketPath = path.join(root, endpointName);
+    expect(Buffer.byteLength(socketPath)).toBeGreaterThan(103);
     service = await fixtureService(root);
     const endpoint = {
       role: "recording" as const,
       mode: "packaged" as const,
       workingDirectory: root,
-      name: "recording-control.sock",
-      bindArgument: "recording-control.sock",
+      name: endpointName,
+      bindArgument: endpointName,
       canonicalPath: socketPath,
     };
     const previousDirectory = process.cwd();
@@ -106,65 +108,81 @@ describe("private desktop recording control", () => {
     }
   });
 
-  test("rejects a wrong CWD and preserves foreign regular, symlink, and unknown socket entries", async () => {
-    root = await mkdtemp("/private/tmp/meetless-control-");
+  test("rejects a wrong CWD and preserves foreign entries under a long Unicode runtime root", async () => {
+    root = await longRuntimeRoot("unicode");
     service = await fixtureService(root);
-    const socketPath = path.join(root, "recording-control.sock");
-    const wrongCwdEndpoint = {
-      role: "recording" as const,
-      mode: "packaged" as const,
-      workingDirectory: path.join(root, "expected-runtime-root"),
-      name: "recording-control.sock",
-      bindArgument: "recording-control.sock",
-      canonicalPath: path.join(root, "expected-runtime-root", "recording-control.sock"),
-    };
-    const wrongCwd = new RecordingControlServer(wrongCwdEndpoint, service);
-    await expect(wrongCwd.start()).rejects.toThrow(/CWD.*runtime-root working directory.*Authority.*Next action/s);
-
-    await writeFile(socketPath, "foreign-entry\n");
-    const regular = new RecordingControlServer(socketPath, service);
-    await expect(regular.start()).rejects.toThrow(/foreign non-socket entry.*not removed/);
-    expect(await readFile(socketPath, "utf8")).toBe("foreign-entry\n");
-    await rm(socketPath);
-
-    const target = path.join(root, "foreign-target");
-    await writeFile(target, "target\n");
-    await symlink(target, socketPath);
-    const link = new RecordingControlServer(socketPath, service);
-    await expect(link.start()).rejects.toThrow(/foreign symlink.*not removed/);
-    expect((await lstat(socketPath)).isSymbolicLink()).toBe(true);
-    await rm(socketPath);
-
-    const occupied = net.createServer();
-    await new Promise<void>((resolve, reject) => {
-      occupied.once("error", reject);
-      occupied.listen(socketPath, () => resolve());
-    });
-    const unknown = new RecordingControlServer(socketPath, service);
-    await expect(unknown.start()).rejects.toThrow(/unknown socket without an owned marker.*not removed/);
-    await new Promise<void>((resolve) => occupied.close(() => resolve()));
-    await rm(socketPath, { force: true });
-  });
-
-  test("reclaims a provably stale owner marker and rejects a concurrently occupied owner", async () => {
-    root = await mkdtemp("/private/tmp/meetless-control-");
-    service = await fixtureService(root);
-    const socketPath = path.join(root, "recording-control.sock");
+    const endpointName = "recording-control.sock";
+    const socketPath = path.join(root, endpointName);
+    expect(Buffer.byteLength(socketPath)).toBeGreaterThan(103);
     const endpoint = {
       role: "recording" as const,
       mode: "packaged" as const,
       workingDirectory: root,
-      name: "recording-control.sock",
-      bindArgument: "recording-control.sock",
+      name: endpointName,
+      bindArgument: endpointName,
+      canonicalPath: socketPath,
+    };
+    const wrongCwdEndpoint = {
+      ...endpoint,
+      workingDirectory: path.join(root, "expected-runtime-root"),
+      canonicalPath: path.join(root, "expected-runtime-root", endpointName),
+    };
+    const wrongCwd = new RecordingControlServer(wrongCwdEndpoint, service);
+    await expect(wrongCwd.start()).rejects.toThrow(/CWD.*runtime-root working directory.*Authority.*Next action/s);
+
+    const previousDirectory = process.cwd();
+    process.chdir(root);
+    try {
+      await writeFile(socketPath, "foreign-entry\n");
+      const regular = new RecordingControlServer(endpoint, service);
+      await expect(regular.start()).rejects.toThrow(/foreign non-socket entry.*not removed/);
+      expect(await readFile(socketPath, "utf8")).toBe("foreign-entry\n");
+      await rm(socketPath);
+
+      const target = path.join(root, "foreign-target");
+      await writeFile(target, "target\n");
+      await symlink(target, socketPath);
+      const link = new RecordingControlServer(endpoint, service);
+      await expect(link.start()).rejects.toThrow(/foreign symlink.*not removed/);
+      expect((await lstat(socketPath)).isSymbolicLink()).toBe(true);
+      await rm(socketPath);
+
+      const occupied = net.createServer();
+      await new Promise<void>((resolve, reject) => {
+        occupied.once("error", reject);
+        occupied.listen(endpoint.bindArgument, () => resolve());
+      });
+      const unknown = new RecordingControlServer(endpoint, service);
+      await expect(unknown.start()).rejects.toThrow(/unknown socket without an owned marker.*not removed/);
+      await new Promise<void>((resolve) => occupied.close(() => resolve()));
+      await rm(socketPath, { force: true });
+    } finally {
+      process.chdir(previousDirectory);
+    }
+  });
+
+  test("reclaims a provably stale owner marker and rejects a concurrently occupied owner", async () => {
+    root = await longRuntimeRoot("unicode");
+    service = await fixtureService(root);
+    const endpointName = "paseo-home/recording-control.sock";
+    const socketPath = path.join(root, endpointName);
+    expect(Buffer.byteLength(socketPath)).toBeGreaterThan(103);
+    const endpoint = {
+      role: "recording" as const,
+      mode: "packaged" as const,
+      workingDirectory: root,
+      name: endpointName,
+      bindArgument: endpointName,
       canonicalPath: socketPath,
     };
     const previousDirectory = process.cwd();
     process.chdir(root);
     try {
+      await mkdir(path.dirname(socketPath), { recursive: true, mode: 0o700 });
       const staleListener = net.createServer();
       await new Promise<void>((resolve, reject) => {
         staleListener.once("error", reject);
-        staleListener.listen(socketPath, () => resolve());
+        staleListener.listen(endpoint.bindArgument, () => resolve());
       });
       await new Promise<void>((resolve) => staleListener.close(() => resolve()));
       await writeFile(`${socketPath}.owner.json`, `${JSON.stringify({
@@ -200,6 +218,11 @@ async function fixtureService(fixtureRoot: string): Promise<RecordingService> {
   });
   await instance.initialize();
   return instance;
+}
+
+async function longRuntimeRoot(kind: "ascii" | "unicode"): Promise<string> {
+  const segment = kind === "ascii" ? "long-ascii-runtime-root-" : "长运行时根目录-";
+  return mkdtemp(`/private/tmp/meetless-control-${segment.repeat(7)}`);
 }
 
 async function connectRelative(socketPath: string): Promise<void> {

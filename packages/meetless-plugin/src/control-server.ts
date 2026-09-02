@@ -68,15 +68,11 @@ export class RecordingControlServer {
       throw new Error(
         `Recording control socket path is too long for ${process.platform}: ${this.endpoint.bindArgument}. ` +
           `Endpoint recording policy ${this.endpoint.name} must use a bind argument of at most ${maximumSocketPathBytes} bytes; ` +
-          "Authority: docs/decisions/0005-mac-app-store-and-revenuecat.md and PLAN_RECONCILIATION v47. " +
+          "Authority: docs/decisions/0005-mac-app-store-and-revenuecat.md and the accepted MEETLESS_RUNTIME_ENDPOINTS v1 package/runtime endpoint contract. " +
           "Next action: use the accepted relative endpoint name and canonical runtime-root working directory.",
       );
     }
-    if (this.endpoint.mode === "packaged" && path.resolve(process.cwd()) !== this.endpoint.workingDirectory) {
-      throw endpointFailure(
-        `process CWD ${process.cwd()} differs from the authoritative runtime-root working directory ${this.endpoint.workingDirectory}`,
-      );
-    }
+    assertPackagedWorkingDirectory(this.endpoint);
     const endpointDirectory = path.dirname(this.endpoint.canonicalPath);
     await mkdir(endpointDirectory, { recursive: true, mode: 0o700 });
     if (await realpath(endpointDirectory) !== path.resolve(endpointDirectory)) {
@@ -303,7 +299,7 @@ async function reconcileEndpoint(endpoint: RecordingSocketEndpoint): Promise<voi
       `recording endpoint ${endpoint.canonicalPath} is an unknown socket without an owned marker; it was not removed`,
     );
   }
-  if (await ownerProcessIsRunning(marker.pid) || await socketIsReachable(endpoint.canonicalPath)) {
+  if (await ownerProcessIsRunning(marker.pid) || await socketIsReachable(endpoint)) {
     throw endpointFailure(`recording endpoint ${endpoint.canonicalPath} is concurrently occupied; it was not removed`);
   }
   const current = await lstat(endpoint.canonicalPath).catch(() => null);
@@ -404,15 +400,30 @@ async function removeOwnedEndpoint(owner: RecordingEndpointOwner, canonicalPath:
   if (marker?.token === owner.token) await unlink(markerPath);
 }
 
-async function socketIsReachable(socketPath: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = net.createConnection(socketPath);
+function assertPackagedWorkingDirectory(endpoint: RecordingSocketEndpoint): void {
+  if (endpoint.mode === "packaged" && path.resolve(process.cwd()) !== endpoint.workingDirectory) {
+    throw endpointFailure(
+      `process CWD ${process.cwd()} differs from the authoritative runtime-root working directory ${endpoint.workingDirectory}`,
+    );
+  }
+}
+
+async function socketIsReachable(endpoint: RecordingSocketEndpoint): Promise<boolean> {
+  const validatedEndpoint = normalizeEndpoint(endpoint);
+  assertPackagedWorkingDirectory(validatedEndpoint);
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(validatedEndpoint.bindArgument);
     let settled = false;
     const finish = (reachable: boolean) => {
       if (settled) return;
       settled = true;
       socket.destroy();
-      resolve(reachable);
+      try {
+        assertPackagedWorkingDirectory(validatedEndpoint);
+        resolve(reachable);
+      } catch (error) {
+        reject(error);
+      }
     };
     socket.once("connect", () => finish(true));
     socket.once("error", (error) => {
@@ -454,7 +465,7 @@ function isErrno(error: unknown, code: string): boolean {
 function endpointFailure(reason: string): Error {
   return new Error(
     `Runtime endpoint recording violates policy: ${reason}. Authority: docs/decisions/0005-mac-app-store-and-revenuecat.md, ` +
-      "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md, docs/decisions/0004-recording-host-and-capture-permission-boundary.md, and PLAN_RECONCILIATION v47. " +
+      "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md, docs/decisions/0004-recording-host-and-capture-permission-boundary.md, and the accepted MEETLESS_RUNTIME_ENDPOINTS v1 package/runtime endpoint contract. " +
       "Next action: stop before launch, preserve foreign entries, and retry with the accepted runtime-root endpoint composition.",
   );
 }

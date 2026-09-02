@@ -658,7 +658,7 @@ function parseInstallationContract(contractPath: string, source: string): Instal
       : `endpoint policy ${JSON.stringify(endpointPolicy)} is invalid`;
     throw new Error(
       `${source} Meetless installation contract endpoint policy is invalid at ${contractPath}: ${endpointReason}; ${describe(error)}. ` +
-        "Authority: docs/decisions/0005-mac-app-store-and-revenuecat.md and PLAN_RECONCILIATION v47. " +
+        "Authority: docs/decisions/0005-mac-app-store-and-revenuecat.md and the accepted MEETLESS_RUNTIME_ENDPOINTS v1 package/runtime endpoint contract. " +
         "Next action: restore the owner-approved MEETLESS_RUNTIME_ENDPOINTS v1 policy and stop before child launch; do not use a repository or builder fallback for a packaged runtime.",
     );
   }

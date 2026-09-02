@@ -33,7 +33,7 @@ const ENDPOINT_AUTHORITY =
   "docs/decisions/0005-mac-app-store-and-revenuecat.md, " +
   "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md, " +
   "docs/decisions/0004-recording-host-and-capture-permission-boundary.md, " +
-  "PLAN_RECONCILIATION v47";
+  "the accepted MEETLESS_RUNTIME_ENDPOINTS v1 package/runtime endpoint contract";
 
 export class RuntimeEndpointPolicyViolationError extends Error {
   constructor(endpoint: string, reason: string) {

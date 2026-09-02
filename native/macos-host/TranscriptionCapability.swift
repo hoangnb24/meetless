@@ -322,6 +322,13 @@ final class MeetlessTranscriptionCapability {
     }
   }
 
+  private func socketIsReachableThroughValidatedEndpoint() throws -> Bool {
+    try validateEndpoint()
+    let reachable = meetlessSocketIsReachable(endpoint.bindArgument)
+    try validateEndpoint()
+    return reachable
+  }
+
   private func reconcileEndpoint() throws {
     let markerPath = endpointOwnerMarkerPath(endpoint.canonicalPath)
     let endpointState = try meetlessLstatIdentity(endpoint.canonicalPath)
@@ -344,7 +351,7 @@ final class MeetlessTranscriptionCapability {
     guard let marker else {
       throw capabilityError("transcription endpoint is an unknown socket without an owned marker; it was not removed")
     }
-    if try meetlessOwnerProcessIsRunning(marker.pid) || meetlessSocketIsReachable(endpoint.canonicalPath) {
+    if try meetlessOwnerProcessIsRunning(marker.pid) || socketIsReachableThroughValidatedEndpoint() {
       throw capabilityError("transcription endpoint is concurrently occupied; it was not removed")
     }
     guard let current = try meetlessLstatIdentity(endpoint.canonicalPath),
