@@ -613,6 +613,227 @@ private func testNativeProcessProtocolTransport() throws {
   check(state.snapshot() == nil, "capability shutdown must release the launch generation")
 }
 
+private func nativeCaptureHelperExecutable() -> String {
+  URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .appendingPathComponent("macos-capture/.build/release/meetless-capture")
+    .standardizedFileURL
+    .path
+}
+
+private func captureHelperEnvironment(
+  runtimeRoot: String,
+  endpointName: String,
+  generation: UInt64,
+  registrationToken: String
+) -> [String: String] {
+  var environment = ProcessInfo.processInfo.environment
+  environment["MEETLESS_RUNTIME_PACKAGED"] = "1"
+  environment["MEETLESS_RUNTIME_ROOT"] = runtimeRoot
+  environment["MEETLESS_HOST_PROCESS_ENDPOINT"] = endpointName
+  environment["MEETLESS_HOST_PROCESS_GENERATION"] = String(generation)
+  environment["MEETLESS_HOST_PROCESS_TOKEN"] = registrationToken
+  environment["MEETLESS_HOST_PROCESS_ROLE"] = "capture-helper"
+  environment.removeValue(forKey: "MEETLESS_CAPTURE_MODE")
+  return environment
+}
+
+private func acceptCaptureProtocolClient(_ listener: Int32, timeoutMilliseconds: Int32) throws -> Int32 {
+  var descriptor = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
+  guard Darwin.poll(&descriptor, 1, timeoutMilliseconds) > 0 else {
+    throw NSError(domain: "MeetlessHostTests", code: 40, userInfo: [NSLocalizedDescriptionKey: "capture helper did not reach the relative endpoint within the test bound"])
+  }
+  let client = Darwin.accept(listener, nil, nil)
+  guard client >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+  var timeout = timeval(tv_sec: 2, tv_usec: 0)
+  _ = setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+  _ = setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+  return client
+}
+
+private func writeCaptureProtocolResponse(_ descriptor: Int32, object: [String: Any]) throws {
+  guard let data = try? JSONSerialization.data(withJSONObject: object),
+        data.count < meetlessMaximumRequestLineBytes else {
+    throw NSError(domain: "MeetlessHostTests", code: 41, userInfo: [NSLocalizedDescriptionKey: "capture helper test response exceeds the bounded frame"])
+  }
+  var framed = data
+  framed.append(0x0a)
+  try framed.withUnsafeBytes { raw in
+    var offset = 0
+    while offset < raw.count {
+      let written = Darwin.write(descriptor, raw.baseAddress!.advanced(by: offset), raw.count - offset)
+      guard written > 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+      offset += written
+    }
+  }
+}
+
+private func runPackagedCaptureHelperExpectingFailure(
+  executable: String,
+  runtimeRoot: String,
+  workingDirectory: String,
+  endpointName: String
+) throws -> Int32 {
+  let helper = Process()
+  helper.executableURL = URL(fileURLWithPath: executable)
+  helper.arguments = []
+  helper.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+  helper.environment = captureHelperEnvironment(
+    runtimeRoot: runtimeRoot,
+    endpointName: endpointName,
+    generation: 1,
+    registrationToken: "capture-helper-test-token"
+  )
+  helper.standardInput = FileHandle.nullDevice
+  helper.standardOutput = FileHandle.nullDevice
+  helper.standardError = FileHandle.nullDevice
+  try helper.run()
+  let deadline = Date().addingTimeInterval(3)
+  while helper.isRunning && Date() < deadline { usleep(10_000) }
+  guard !helper.isRunning else {
+    terminateNativeProcessFixture(helper.processIdentifier)
+    waitForNativeProcessFixtureExit(helper.processIdentifier)
+    throw NSError(domain: "MeetlessHostTests", code: 42, userInfo: [NSLocalizedDescriptionKey: "invalid packaged capture helper context did not fail within the test bound"])
+  }
+  helper.waitUntilExit()
+  return helper.terminationStatus
+}
+
+private func testPackagedCaptureHelperRelativeConnectAndRetryIDs() throws {
+  let fileManager = FileManager.default
+  let root = URL(fileURLWithPath: "/private/var/tmp").appendingPathComponent(
+    "meetless-capture-relative-\(String(repeating: "long-root-segment-", count: 8))\(UUID().uuidString)"
+  )
+  let endpointName = "transcription.sock"
+  let socketPath = root.appendingPathComponent(endpointName).path
+  let executable = nativeCaptureHelperExecutable()
+  guard fileManager.isExecutableFile(atPath: executable) else {
+    throw NSError(domain: "MeetlessHostTests", code: 43, userInfo: [NSLocalizedDescriptionKey: "release meetless-capture executable is required for relative endpoint proof"])
+  }
+  try fileManager.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+  let previousDirectory = fileManager.currentDirectoryPath
+  var listener: Int32 = -1
+  var clients: [Int32] = []
+  var helper: Process?
+  defer {
+    if let helper {
+      terminateNativeProcessFixture(helper.processIdentifier)
+      waitForNativeProcessFixtureExit(helper.processIdentifier)
+    }
+    clients.forEach {
+      shutdown($0, SHUT_RDWR)
+      close($0)
+    }
+    if listener >= 0 {
+      shutdown(listener, SHUT_RDWR)
+      close(listener)
+    }
+    unlink(socketPath)
+    _ = fileManager.changeCurrentDirectoryPath(previousDirectory)
+    try? fileManager.removeItem(at: root)
+  }
+  check(socketPath.utf8.count > meetlessDarwinUnixSocketPathBytes, "capture helper proof must use a canonical socket path beyond Darwin AF_UNIX")
+  check(endpointName.utf8.count <= meetlessDarwinUnixSocketPathBytes, "capture helper proof must use a short relative endpoint name")
+  guard fileManager.changeCurrentDirectoryPath(root.path) else {
+    throw NSError(domain: "MeetlessHostTests", code: 44, userInfo: [NSLocalizedDescriptionKey: "capture helper test could not enter its long runtime root"])
+  }
+  listener = try openUnixListener(socketPath, bindPath: endpointName)
+  guard fileManager.changeCurrentDirectoryPath(previousDirectory) else {
+    throw NSError(domain: "MeetlessHostTests", code: 45, userInfo: [NSLocalizedDescriptionKey: "capture helper test could not restore its parent working directory"])
+  }
+
+  let process = Process()
+  process.executableURL = URL(fileURLWithPath: executable)
+  process.arguments = []
+  process.currentDirectoryURL = URL(fileURLWithPath: root.path)
+  process.environment = captureHelperEnvironment(
+    runtimeRoot: root.path,
+    endpointName: endpointName,
+    generation: 27,
+    registrationToken: "capture-helper-test-token"
+  )
+  let input = Pipe()
+  process.standardInput = input
+  process.standardOutput = FileHandle.nullDevice
+  process.standardError = FileHandle.nullDevice
+  try process.run()
+  helper = process
+
+  let firstClient = try acceptCaptureProtocolClient(listener, timeoutMilliseconds: 5_000)
+  clients.append(firstClient)
+  guard let firstLine = readBoundedLine(firstClient, maximumBytes: meetlessMaximumRequestLineBytes),
+        let firstData = firstLine.data(using: .utf8),
+        let firstRequest = try JSONSerialization.jsonObject(with: firstData) as? [String: Any],
+        let firstRequestId = firstRequest["requestId"] as? String else {
+    throw NSError(domain: "MeetlessHostTests", code: 46, userInfo: [NSLocalizedDescriptionKey: "capture helper pre-registration request was not a bounded JSON object"])
+  }
+  check(firstRequest["operation"] as? String == "processAttestation", "capture helper must request process attestation over the relative endpoint")
+  check(firstRequest["role"] as? String == "capture-helper", "capture helper must preserve its typed process role")
+  check((firstRequest["generation"] as? NSNumber)?.uint64Value == 27, "capture helper must preserve its launch generation on retry")
+  check(!firstRequestId.isEmpty && firstRequestId.utf8.count <= 4_096, "capture helper pre-registration request ID must be fresh and bounded")
+  // This disposable listener models the native capability's pre-registration
+  // rejection; the state-chain test separately proves native ID consumption.
+  try writeCaptureProtocolResponse(firstClient, object: [
+    "version": meetlessHostProcessProtocolVersion,
+    "type": "host.process.attestation",
+    "requestId": firstRequestId,
+    "ok": false,
+    "role": "capture-helper",
+    "processPid": process.processIdentifier,
+    "generation": 27,
+    "error": "registered process attestation failed closed",
+  ])
+
+  let secondClient = try acceptCaptureProtocolClient(listener, timeoutMilliseconds: 5_000)
+  clients.append(secondClient)
+  guard let secondLine = readBoundedLine(secondClient, maximumBytes: meetlessMaximumRequestLineBytes),
+        let secondData = secondLine.data(using: .utf8),
+        let secondRequest = try JSONSerialization.jsonObject(with: secondData) as? [String: Any],
+        let secondRequestId = secondRequest["requestId"] as? String else {
+    throw NSError(domain: "MeetlessHostTests", code: 47, userInfo: [NSLocalizedDescriptionKey: "capture helper retry request was not a bounded JSON object"])
+  }
+  check(secondRequestId != firstRequestId, "capture helper retry must use a fresh request ID after pre-registration rejection")
+  check(secondRequest["operation"] as? String == "processAttestation", "capture helper retry must remain process attestation")
+  check((secondRequest["generation"] as? NSNumber)?.uint64Value == 27, "capture helper retry must preserve its launch generation")
+  try writeCaptureProtocolResponse(secondClient, object: [
+    "version": meetlessHostProcessProtocolVersion,
+    "type": "host.process.attestation",
+    "requestId": secondRequestId,
+    "ok": true,
+    "role": "capture-helper",
+    "processPid": process.processIdentifier,
+    "generation": 27,
+    "identity": [
+      "configuredPath": executable,
+      "realPath": executable,
+      "sha256": String(repeating: "a", count: 64),
+      "argv": [executable],
+    ],
+    "host": ["bundleIdentifier": "com.meetless.app"],
+  ])
+  usleep(50_000)
+  check(process.isRunning, "capture helper must remain alive after successful native attestation")
+  _ = input
+
+  let wrongCWDStatus = try runPackagedCaptureHelperExpectingFailure(
+    executable: executable,
+    runtimeRoot: root.path,
+    workingDirectory: root.deletingLastPathComponent().path,
+    endpointName: endpointName
+  )
+  check(wrongCWDStatus != 0, "capture helper must reject a working directory different from runtimeRoot")
+  for malformedEndpoint in ["", "/private/var/tmp/absolute.sock", "../transcription.sock", "nested/../../transcription.sock"] {
+    let status = try runPackagedCaptureHelperExpectingFailure(
+      executable: executable,
+      runtimeRoot: root.path,
+      workingDirectory: root.path,
+      endpointName: malformedEndpoint
+    )
+    check(status != 0, "capture helper must reject malformed endpoint \(malformedEndpoint.debugDescription)")
+  }
+}
+
 private func testPackagedProcessRegistrationChain() throws {
   let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("meetless-process-chain-\(UUID().uuidString)")
   try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -784,6 +1005,16 @@ private func testPackagedProcessRegistrationChain() throws {
   ), "whitespace argv fields must be rejected")
   check(!registerDaemon(requestId: "unknown-role", role: "unknown"), "unknown process roles must be rejected")
   check(!registerDaemon(requestId: "direct-daemon-peer", peerPID: getpid()), "direct daemon registration from an unrelated peer must be rejected")
+  check(
+    state.attestRegisteredProcess(
+      peerPID: daemonPID,
+      requestId: "daemon-pre-registration",
+      generation: desktopAttestation.generation,
+      registrationToken: daemonToken,
+      role: "daemon"
+    ) == nil,
+    "a daemon must be rejected before its child registration exists"
+  )
   guard let daemonRegistration = state.registerChild(
     peerPID: desktopPID,
     requestId: "daemon-registration",
@@ -801,6 +1032,16 @@ private func testPackagedProcessRegistrationChain() throws {
   check(daemonRegistration.pid == daemonPID, "daemon registration must preserve the spawned child PID")
   check(!registerDaemon(requestId: "conflicting-daemon-registration"), "conflicting duplicate child registration must be rejected")
   check(!registerDaemon(requestId: "replayed-daemon-registration"), "replayed child registration request must be rejected")
+  check(
+    state.attestRegisteredProcess(
+      peerPID: daemonPID,
+      requestId: "daemon-pre-registration",
+      generation: desktopAttestation.generation,
+      registrationToken: daemonToken,
+      role: "daemon"
+    ) == nil,
+    "a request ID consumed by pre-registration rejection must not be replayable after registration"
+  )
   guard let daemonAttestation = state.attestRegisteredProcess(
     peerPID: daemonPID,
     requestId: "daemon-attestation",
@@ -1687,6 +1928,10 @@ private struct TranscriptionCapabilityTests {
     do { try testNativeProcessProtocolTransport() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: native process protocol transport: \(error)\n".utf8))
+    }
+    do { try testPackagedCaptureHelperRelativeConnectAndRetryIDs() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: packaged capture helper relative endpoint and retry IDs: \(error)\n".utf8))
     }
     do { try testPackagedProcessRegistrationChain() } catch {
       failures += 1

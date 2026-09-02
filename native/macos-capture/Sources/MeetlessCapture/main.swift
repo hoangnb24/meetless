@@ -520,20 +520,19 @@ private func attestPackagedCaptureHelper() throws {
         URL(fileURLWithPath: FileManager.default.currentDirectoryPath).standardizedFileURL.path == root else {
     throw NSError(domain: "MeetlessCapture", code: 31, userInfo: [NSLocalizedDescriptionKey: "packaged native host attestation working directory is invalid"])
   }
-  let socketPath = URL(fileURLWithPath: root).appendingPathComponent(endpointName).standardizedFileURL.path
-  let requestId = UUID().uuidString
-  let request: [String: Any] = [
-    "version": hostProcessProtocolVersion,
-    "requestId": requestId,
-    "operation": "processAttestation",
-    "generation": generation,
-    "registrationToken": registrationToken,
-    "role": "capture-helper",
-  ]
   var lastFailure: Error?
   for attempt in 0..<200 {
+    let requestId = UUID().uuidString
+    let request: [String: Any] = [
+      "version": hostProcessProtocolVersion,
+      "requestId": requestId,
+      "operation": "processAttestation",
+      "generation": generation,
+      "registrationToken": registrationToken,
+      "role": "capture-helper",
+    ]
     do {
-      let response = try hostProcessProtocolRequest(socketPath: socketPath, request: request)
+      let response = try hostProcessProtocolRequest(bindArgument: endpointName, request: request)
       guard hostProcessAttestationResponseIsValid(
         response,
         requestId: requestId,
@@ -561,12 +560,15 @@ private func validCaptureHelperEndpointName(_ value: String) -> Bool {
 }
 
 private func hostProcessProtocolRequest(
-  socketPath: String,
+  bindArgument: String,
   request: [String: Any]
 ) throws -> [String: Any] {
+  guard validCaptureHelperEndpointName(bindArgument) else {
+    throw NSError(domain: "MeetlessCapture", code: 34, userInfo: [NSLocalizedDescriptionKey: "native host process endpoint is not a valid relative bind argument"])
+  }
   guard let data = try? JSONSerialization.data(withJSONObject: request),
         data.count < hostProcessProtocolFrameBytes else {
-    throw NSError(domain: "MeetlessCapture", code: 34, userInfo: [NSLocalizedDescriptionKey: "native host process request is outside the bounded frame"])
+    throw NSError(domain: "MeetlessCapture", code: 35, userInfo: [NSLocalizedDescriptionKey: "native host process request is outside the bounded frame"])
   }
   let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
   guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
@@ -579,9 +581,9 @@ private func hostProcessProtocolRequest(
   _ = setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
   var address = sockaddr_un()
   address.sun_family = sa_family_t(AF_UNIX)
-  let pathBytes = Array(socketPath.utf8) + [0]
+  let pathBytes = Array(bindArgument.utf8) + [0]
   guard pathBytes.count <= MemoryLayout.size(ofValue: address.sun_path) else {
-    throw NSError(domain: "MeetlessCapture", code: 35, userInfo: [NSLocalizedDescriptionKey: "native host process endpoint exceeds the Darwin socket limit"])
+    throw NSError(domain: "MeetlessCapture", code: 36, userInfo: [NSLocalizedDescriptionKey: "native host process endpoint exceeds the Darwin socket limit"])
   }
   withUnsafeMutableBytes(of: &address.sun_path) { buffer in buffer.copyBytes(from: pathBytes) }
   let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + pathBytes.count)
@@ -602,7 +604,7 @@ private func hostProcessProtocolRequest(
   guard let line = readHostProcessProtocolLine(descriptor),
         let responseData = line.data(using: .utf8),
         let response = try JSONSerialization.jsonObject(with: responseData) as? [String: Any] else {
-    throw NSError(domain: "MeetlessCapture", code: 36, userInfo: [NSLocalizedDescriptionKey: "native host process response is invalid"])
+    throw NSError(domain: "MeetlessCapture", code: 37, userInfo: [NSLocalizedDescriptionKey: "native host process response is invalid"])
   }
   return response
 }

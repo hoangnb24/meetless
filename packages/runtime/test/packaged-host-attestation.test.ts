@@ -57,6 +57,13 @@ describe("packaged host-attestation composition", () => {
     expect(capture).toContain("do { try attestPackagedCaptureHelper() }");
     expect(capture.indexOf("do { try attestPackagedCaptureHelper() }")).toBeLessThan(capture.indexOf("while let line"));
     expect(capture).not.toMatch(/\b(?:ps|lsof|codesign|meetless-process-argv)\b/u);
+
+    expect(capture).toContain("hostProcessProtocolRequest(bindArgument: endpointName");
+    expect(capture).not.toContain("appendingPathComponent(endpointName)");
+    const retryLoop = sourceBetween(capture, "var lastFailure: Error?", "  throw lastFailure");
+    expect(retryLoop.indexOf("for attempt")).toBeGreaterThanOrEqual(0);
+    expect(retryLoop.indexOf("let requestId = UUID().uuidString")).toBeGreaterThan(retryLoop.indexOf("for attempt"));
+    expect(capture).toContain("validCaptureHelperEndpointName(bindArgument)");
   });
 
   test("registers a packaged helper before sending its start command and exits on attestation failure", async () => {

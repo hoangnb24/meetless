@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v55`
-- `current_frontier`: `R5-MAS-PACKAGED-HOST-ATTESTATION-REGISTRATION-001`
-- `state`: `R5_MAS_PACKAGED_HOST_ATTESTATION_REGISTRATION_PENDING_LEAD_REVIEW`
+- `plan_revision`: `v56`
+- `current_frontier`: `R5-MAS-PACKAGED-HOST-ATTESTATION-CAPTURE-CONVERGENCE`
+- `state`: `R5_MAS_PACKAGED_HOST_ATTESTATION_CAPTURE_CONVERGENCE_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable packaged host-attestation/registration candidate from exact parent/base `c69f26ee500e7cfa403139a99a4d81ed0b1ef5bf`; candidate commit placeholder is `<immutable-candidate-commit-pending>`. The accepted DIAG-002 correction, host identity/context history, Lead-accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a`, liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`, and integration checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3` remain preserved.
+- `candidate`: pending immutable capture-convergence correction from exact parent/base candidate `49c77aeb9e0a7b117d4c7dda51aaf8226a6b5c4f`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted DIAG-002 correction, host identity/context history, Lead-accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a`, liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`, and integration checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3` remain preserved.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: attempt 8 validly packaged, signed, installed, and reached the LaunchServices topology. Sandboxed desktop PID `46289` failed before the argv helper with `command="ps" purpose="parent PID for 46289" error.code="EPERM" errno=-1 syscall="spawnSync ps" status/signal null` and absent stdout/stderr. The exact proof root `/private/tmp/meetless-mas-development-proof.tY0GlP` and diagnostic evidence `/private/tmp/meetless-mas-diagnostic.SnLDCy` remain read-only evidence; artifact/evidence roots were not inspected for secrets or cache child names.
-- `pending_ruling`: the accepted diagnostic correction and exact attempt-8 EPERM evidence reopen the packaged runtime boundary. This repository-only candidate extends the existing native transcription capability with generation-bound host process attestation and owner-held child registration, preserving fail-closed host ownership, process roles, executable identities, argv boundaries, startup order, and cleanup. It is pending Lead review. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
+- `pending_ruling`: the accepted diagnostic correction and exact attempt-8 EPERM evidence reopen the packaged runtime boundary. The capture-convergence correction is limited to connecting with the validated short relative endpoint from the validated runtime-root CWD and generating a fresh bounded request ID for every attestation retry. It preserves the existing native host-attestation architecture, ownership, identity, argv, startup, cleanup, and direct-development behavior. It is pending Lead review. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
 - `blocked_by`: no safe in-scope implementation dependency remains; no package, sign, install, launch, or external result is accepted by this candidate.
-- `next_action`: Lead reviews the immutable candidate from exact parent/base `c69f26ee500e7cfa403139a99a4d81ed0b1ef5bf`; only after acceptance may any separately authorized external packaged verification be considered.
+- `next_action`: Lead reviews the immutable capture-convergence correction from exact parent/base candidate `49c77aeb9e0a7b117d4c7dda51aaf8226a6b5c4f`; only after acceptance may any separately authorized external packaged verification be considered.
 
 ## Ownership And Authority
 
@@ -1249,6 +1249,33 @@ repository-only evidence. No package/sign/install/launch retry, artifact child
 execution, external mutation, secret/cache inspection, or push is part of this
 frontier. The frontier and candidate remain pending Lead review; all external
 gates stay closed.
+
+### R5 packaged capture attestation convergence (2026-09-03; current frontier)
+
+`PLAN_RECONCILIATION v56` records the accepted correction findings against
+candidate `49c77aeb9e0a7b117d4c7dda51aaf8226a6b5c4f`:
+
+- `HOST-ATTEST-CAPTURE-001`: the native capture helper must retain the
+  validated canonical `runtimeRoot` and `CWD` checks but connect through the
+  short validated relative endpoint/bind argument. It must not reconstruct an
+  absolute Unix socket path that can exceed Darwin's AF_UNIX limit.
+- `HOST-ATTEST-CAPTURE-002`: every attempt in the bounded attestation retry
+  loop must create a fresh bounded request ID. A pre-registration rejection may
+  consume an ID in native `attestRegisteredProcess`; retrying that ID must stay
+  rejected while a fresh ID can complete after registration.
+
+The correction is limited to the native capture helper and focused proof. It
+does not change the accepted host-attestation architecture, process ownership,
+signing/package policy, direct-development path, or external gates. Executable
+native proof covers a long canonical root with a short relative endpoint,
+pre-registration rejection followed by successful retry with distinct request
+IDs, and wrong-CWD, absolute, traversal, and malformed endpoint rejection.
+Native state proof covers consumption of the pre-registration ID and success
+with a fresh ID. The frozen authority digest remains
+`fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`; no
+authority document changes are included. Package, sign, install, launch,
+retained-root, secret/cache inspection, external operation, and push remain
+closed. The correction candidate is pending Lead review.
 
 ### Risks And Recovery
 
