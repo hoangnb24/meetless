@@ -12,7 +12,10 @@ import {
   assertInstalledHostIdentity,
   assertSupervisorOwnedByHost,
   expectedHostConfiguration,
+  hostIdentityEquals,
   resolveHostConfiguration,
+  trustedHostInspectionContext,
+  type HostInspectionContext,
   type HostIdentity,
 } from "../src/host.js";
 
@@ -38,6 +41,117 @@ describe("Meetless-owned production host invariant", () => {
       bundleIdentifier: "com.meetless.app",
       ...launch,
     }, "/Applications/Meetless.app")).toEqual(launch);
+  });
+
+  test("accepts native sorted-key identity against Node insertion order and rejects every identity field mutation", () => {
+    const config = resolveRuntimeConfig();
+    const identity = completeIdentity(config);
+    const nativeSorted = JSON.parse(JSON.stringify(sortJsonKeys(identity)));
+
+    expect(JSON.stringify(nativeSorted)).not.toBe(JSON.stringify(identity));
+    expect(hostIdentityEquals(nativeSorted, identity)).toBe(true);
+
+    const mutations: Array<[string, (value: HostIdentity) => unknown]> = [
+      ["version", (value) => ({ ...value, version: 2 })],
+      ["bundleIdentifier", (value) => ({ ...value, bundleIdentifier: "com.other.app" })],
+      ["bundlePath", (value) => ({ ...value, bundlePath: "/Applications/Other.app" })],
+      ["bundleRealPath", (value) => ({ ...value, bundleRealPath: "/Applications/Other.app" })],
+      ["executablePath", (value) => ({ ...value, executablePath: "/Applications/Other.app/Contents/MacOS/MeetlessHost" })],
+      ["designatedRequirement", (value) => ({ ...value, designatedRequirement: "identifier com.other.app" })],
+      ["cdHash", (value) => ({ ...value, cdHash: "b".repeat(40) })],
+      ["binarySha256", (value) => ({ ...value, binarySha256: "d".repeat(64) })],
+      ["binaryDevice", (value) => ({ ...value, binaryDevice: value.binaryDevice + 1 })],
+      ["binaryInode", (value) => ({ ...value, binaryInode: value.binaryInode + 1 })],
+      ["binarySize", (value) => ({ ...value, binarySize: value.binarySize + 1 })],
+      ["configuration.repositoryRoot", (value) => ({
+        ...value,
+        configuration: { ...value.configuration, repositoryRoot: "/other/repository" },
+      })],
+      ["configuration.runtimeRoot", (value) => ({
+        ...value,
+        configuration: { ...value.configuration, runtimeRoot: "/other/runtime" },
+      })],
+      ["configuration.listen", (value) => ({
+        ...value,
+        configuration: { ...value.configuration, listen: "127.0.0.1:17777" },
+      })],
+      ["configuration.rendererOrigin", (value) => ({
+        ...value,
+        configuration: { ...value.configuration, rendererOrigin: "http://127.0.0.1:18083" },
+      })],
+      ["configuration.transcriptionSocket", (value) => ({
+        ...value,
+        configuration: { ...value.configuration, transcriptionSocket: "/other/transcription.sock" },
+      })],
+      ["configuration.transcriptionStaging", (value) => ({
+        ...value,
+        configuration: { ...value.configuration, transcriptionStaging: "/other/transcription" },
+      })],
+      ["configuration.nodePath", (value) => ({
+        ...value,
+        configuration: { ...value.configuration, nodePath: "/other/node" },
+      })],
+      ["configuration.runtimeCliPath", (value) => ({
+        ...value,
+        configuration: { ...value.configuration, runtimeCliPath: "/other/cli.js" },
+      })],
+      ["configuration.identityPath", (value) => ({
+        ...value,
+        configuration: { ...value.configuration, identityPath: "/other/identity.json" },
+      })],
+      ["configuration.endpointPolicy", (value) => ({
+        ...value,
+        configuration: omitConfigurationField(value.configuration, "endpointPolicy"),
+      })],
+      ["configuration.endpointWorkingDirectory", (value) => ({
+        ...value,
+        configuration: omitConfigurationField(value.configuration, "endpointWorkingDirectory"),
+      })],
+      ["configuration.recordingEndpointName", (value) => ({
+        ...value,
+        configuration: { ...value.configuration, recordingEndpointName: "other-recording.sock" },
+      })],
+      ["configuration.transcriptionEndpointName", (value) => ({
+        ...value,
+        configuration: { ...value.configuration, transcriptionEndpointName: "other-transcription.sock" },
+      })],
+    ];
+
+    for (const [field, mutate] of mutations) {
+      expect(hostIdentityEquals(identity, mutate(identity)), field).toBe(false);
+    }
+  });
+
+  test("passes the RuntimeConfig-derived trusted context to installed and live inspection", async () => {
+    const config = resolveRuntimeConfig();
+    const identity = fakeIdentity(config);
+    const nativeSorted = JSON.parse(JSON.stringify(sortJsonKeys(identity))) as HostIdentity;
+    const processes = new Map([
+      [100, processIdentity(identity, { pid: 100, ppid: 1, executablePath: identity.executablePath, arguments: [identity.executablePath] })],
+      [200, {
+        pid: 200,
+        ppid: 100,
+        executablePath: identity.configuration.nodePath,
+        arguments: [identity.configuration.nodePath, identity.configuration.runtimeCliPath, "desktop"],
+        executableDevice: 4, executableInode: 5, executableSize: 6,
+      }],
+    ]);
+    const contexts: { installed?: HostInspectionContext; live?: HostInspectionContext } = {};
+    const dependencies = {
+      ...fakeDependencies(identity, processes),
+      inspectInstalled: async (_bundlePath: string, context?: HostInspectionContext) => {
+        contexts.installed = context;
+        return nativeSorted;
+      },
+      inspectLiveHost: async (_bundlePath: string, context?: HostInspectionContext) => {
+        contexts.live = context;
+        return nativeSorted;
+      },
+    };
+
+    await expect(assertDesktopLaunchedByHost(config, 200, dependencies)).resolves.toEqual(identity);
+    expect(contexts.installed).toEqual(trustedHostInspectionContext(config));
+    expect(contexts.live).toEqual(trustedHostInspectionContext(config));
   });
 
   test("accepts only LaunchServices → exact MeetlessHost → desktop → supervisor", async () => {
@@ -254,6 +368,35 @@ function fakeIdentity(config: ReturnType<typeof resolveRuntimeConfig>): HostIden
     binarySize: 3,
     configuration: expectedHostConfiguration(config),
   };
+}
+
+function completeIdentity(config: ReturnType<typeof resolveRuntimeConfig>): HostIdentity {
+  const identity = fakeIdentity(config);
+  identity.configuration = {
+    ...identity.configuration,
+    endpointPolicy: "MEETLESS_RUNTIME_ENDPOINTS v1",
+    endpointWorkingDirectory: "runtime-root",
+    recordingEndpointName: "recording-control.sock",
+    transcriptionEndpointName: "transcription.sock",
+  };
+  return identity;
+}
+
+function sortJsonKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonKeys);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value).sort().map((key) => [key, sortJsonKeys((value as Record<string, unknown>)[key])]),
+  );
+}
+
+function omitConfigurationField(
+  configuration: HostIdentity["configuration"],
+  field: keyof HostIdentity["configuration"],
+): HostIdentity["configuration"] {
+  const copy = { ...configuration };
+  delete copy[field];
+  return copy;
 }
 
 function fakeDependencies(

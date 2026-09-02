@@ -7,6 +7,7 @@ import {
   packageTransactionPaths,
   recoverPackageTransaction,
   replacePackageBundle,
+  serializeSortedJson,
   restorePackageTransaction,
 } from "../../../scripts/lib/macos-package-transaction.mjs";
 
@@ -54,6 +55,53 @@ describe("macOS package replacement transaction", () => {
       identityPath: root.identityPath,
     })).rejects.toThrow(/changed outside the package transaction/);
     await expect(readFile(path.join(root.target, "outside-change"), "utf8")).resolves.toBe("do not remove\n");
+  });
+
+  it("uses native-style recursive sorted identity bytes and rejects outside identity mutation", async () => {
+    const root = await setup();
+    const inspected = {
+      z: "outer",
+      configuration: {
+        z: "nested-last",
+        a: "nested-first",
+      },
+    };
+    const transaction = await replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-test-owner",
+      runId: newPackageTransactionId(),
+      inspect: async () => inspected,
+    });
+
+    expect(transaction.nextIdentityBytes.toString()).toBe(
+      '{\n  "configuration": {\n    "a": "nested-first",\n    "z": "nested-last"\n  },\n  "z": "outer"\n}\n',
+    );
+    expect(transaction.nextIdentityBytes).toEqual(serializeSortedJson(inspected));
+
+    await writeFile(root.identityPath, serializeSortedJson(inspected));
+    await restorePackageTransaction(transaction, {
+      ownerToken: "M7-test-owner",
+      target: root.target,
+      identityPath: root.identityPath,
+    });
+    await expect(readFile(root.identityPath, "utf8")).resolves.toBe("prior identity\n");
+
+    const second = await replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-test-owner",
+      runId: newPackageTransactionId(),
+      inspect: async () => inspected,
+    });
+    await writeFile(root.identityPath, serializeSortedJson({ ...inspected, z: "outside mutation" }));
+    await expect(restorePackageTransaction(second, {
+      ownerToken: "M7-test-owner",
+      target: root.target,
+      identityPath: root.identityPath,
+    })).rejects.toThrow(/identity changed outside package transaction/);
   });
 });
 

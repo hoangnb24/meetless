@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { inspectHostBundle } from "../packages/runtime/dist/host.js";
+import {
+  hostIdentityEquals,
+  inspectHostBundle,
+  trustedHostInspectionContext,
+} from "../packages/runtime/dist/host.js";
 import { resolveRuntimeConfig } from "../packages/runtime/dist/config.js";
 import {
   finalizePackageTransaction,
@@ -25,6 +29,15 @@ const config = resolveRuntimeConfig({
 });
 const target = config.host.bundle;
 const identityPath = config.host.identity;
+const inspectionContext = trustedHostInspectionContext(config);
+const nodePath = config.packaged ? config.packageResources?.nodeBinary : process.execPath;
+if (!nodePath || (config.packaged && !path.isAbsolute(nodePath))) {
+  throw new Error(
+    "Cannot install MeetlessHost without the exact packaged nodeBinary from RuntimeConfig. " +
+    "Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md and docs/decisions/0005-mac-app-store-and-revenuecat.md. " +
+    "Next action: rebuild the packaged resource manifest before installation.",
+  );
+}
 const exclusionPath = path.join(config.paths.root, "meetless-host.lock");
 const exclusionMarker = "MEETLESS_HOST_INSTALL_LOCK_HELD";
 
@@ -58,10 +71,10 @@ const hostArtifact = await requireRevenueCatHostArtifact();
 if (await exists(target)) {
   try {
     const [installed, recorded] = await Promise.all([
-      inspectHostBundle(target),
+      inspectHostBundle(target, inspectionContext),
       readFile(identityPath, "utf8").then(JSON.parse),
     ]);
-    if (JSON.stringify(installed) === JSON.stringify(recorded) && !replace) {
+    if (hostIdentityEquals(installed, recorded) && !replace) {
       process.stdout.write(`${JSON.stringify({ status: "unchanged", sourceHash, ...installed }, null, 2)}\n`);
       process.exit(0);
     }
@@ -99,7 +112,7 @@ try {
     rendererOrigin: config.rendererOrigin,
     transcriptionSocket: config.paths.transcriptionSocket,
     transcriptionStaging: config.paths.transcriptionStaging,
-    nodePath: process.execPath,
+    nodePath,
     runtimeCliPath: path.join(repositoryRoot, "packages/runtime/dist/cli.js"),
     identityPath,
   }, null, 2)}\n`, { mode: 0o644 });
@@ -126,7 +139,7 @@ try {
         identityPath,
         ownerToken,
         runId,
-        inspect: inspectHostBundle,
+        inspect: (bundlePath) => inspectHostBundle(bundlePath, inspectionContext),
       });
     } catch (error) {
       if (await exists(journalPath)) transaction = JSON.parse(await readFile(journalPath, "utf8"));
@@ -138,7 +151,7 @@ try {
       identityPath,
       assertNoLiveHost: async () => assertNoExactHost(target),
     });
-    const installed = await inspectHostBundle(target);
+    const installed = await inspectHostBundle(target, inspectionContext);
     process.stdout.write(`${JSON.stringify({ status: replace ? "replaced" : "installed", sourceHash, ...installed }, null, 2)}\n`);
   } catch (error) {
     if (transaction && await exists(journalPath)) {

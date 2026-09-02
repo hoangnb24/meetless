@@ -83,7 +83,7 @@ export async function replacePackageBundle(input) {
   await transition(transaction, "candidate-installed", faultAt);
 
   const inspected = await inspect(target);
-  transaction.nextIdentityBytes = Buffer.from(`${JSON.stringify(inspected, null, 2)}\n`);
+  transaction.nextIdentityBytes = serializeSortedJson(inspected);
   transaction.nextIdentityFingerprint = digest(transaction.nextIdentityBytes);
   await writeJournal(transaction);
   await writeBytesAtomic(identityPath, transaction.nextIdentityBytes);
@@ -370,4 +370,18 @@ async function exists(candidate) {
 
 function digest(bytes) {
   return bytes === null || bytes === undefined ? null : createHash("sha256").update(bytes).digest("hex");
+}
+
+export function serializeSortedJson(value) {
+  const encoded = JSON.stringify(sortJsonKeys(value), null, 2);
+  if (encoded === undefined) throw new Error("cannot serialize package identity as JSON");
+  return Buffer.from(`${encoded}\n`);
+}
+
+function sortJsonKeys(value) {
+  if (Array.isArray(value)) return value.map(sortJsonKeys);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value).sort().map((key) => [key, sortJsonKeys(value[key])]),
+  );
 }

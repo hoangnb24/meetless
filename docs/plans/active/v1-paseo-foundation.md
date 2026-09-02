@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v51`
+- `plan_revision`: `v52`
 - `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-6`
-- `state`: `R5_MAS_DEVELOPMENT_EXTERNAL_GATE_READY`
+- `state`: `R5_MAS_HOST_IDENTITY_CORRECTION_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a` and liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`; current accepted integration tip is the v50 plan checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3`. Attempt-5 package/sign/install/start/restore evidence and accepted history through `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6` remain preserved.
+- `candidate`: pending one immutable host identity/context correction from exact base `beb7865abf7342ceebc0545850351e5cd631436a`; Lead-accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a`, liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`, and integration checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3` remain preserved. Attempt-5 package/sign/install/start/restore evidence and accepted history through `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6` remain preserved.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `failed_proof`: retained attempt-5 proof root `/private/tmp/meetless-mas-development-proof.D97ICp` contains a fully signed and validated dev MAS artifact. Its exact install and native-signature preflight passed, but the host exited before daemon/renderer readiness because the app-container transcription socket expanded to 113 UTF-8 bytes while the Darwin binding accepts at most 103. The old app was restored exactly. Attempt-created MAS container/group roots, RevenueCat cache, and host lock remain retained evidence. One operator residue listing exposed a full public SDK-key-bearing cache filename; it was not frozen into evidence, but the no-disclosure handling condition was violated and must not be repeated.
-- `pending_ruling`: the owner-authorized gate is open only for a fresh dev MAS package, Apple Development sign, recoverable local install, exact LaunchServices start, bounded readiness, owned stop, and restoration attempt. Purchase, restore, premium/provider actions, Convex, production, upload, submission, publication, App Review, and every other external gate remain closed.
+- `failed_proof`: retained attempt-5 proof root `/private/tmp/meetless-mas-development-proof.D97ICp` contains a fully signed and validated dev MAS artifact. Its exact install and native-signature preflight passed, but the host exited before daemon/renderer readiness because the app-container transcription socket expanded to 113 UTF-8 bytes while the Darwin binding accepts at most 103. Attempt 6 then reached the exact LaunchServices `MeetlessHost` with `ppid=1`, but its child runtime failed closed with `installed bundle identity drifted...`; retained artifact replay found semantic identity equality but insertion-order JSON inequality and no scalar drift. The old app was restored exactly. Attempt-created MAS container/group roots, RevenueCat cache, and host lock remain retained evidence. One operator residue listing exposed a full public SDK-key-bearing cache filename; it was not frozen into evidence, but the no-disclosure handling condition was violated and must not be repeated.
+- `pending_ruling`: the owner-authorized attempt-6 external evidence is retained, and this repository-only identity/context correction is pending Lead review. Purchase, restore, premium/provider actions, Convex, production, upload, submission, publication, App Review, and every other external gate remain closed.
 - `blocked_by`: no implementation dependency remains; no attempt-6 artifact, install, launch-readiness, lifecycle, or cleanup result is accepted yet.
-- `next_action`: one fresh SERIAL external operator executes attempt 6 from the accepted tip, reuses no prior proof root, avoids all secret/cache-name listing, and restores the pre-existing app after bounded verification or any failure.
+- `next_action`: Lead reviews the one immutable correction candidate from exact base `beb7865abf7342ceebc0545850351e5cd631436a`; no package, install, launch, or artifact execution is part of this correction.
 
 ## Ownership And Authority
 
@@ -1367,6 +1367,39 @@ Observed convergence-correction validation on 2026-08-31:
   package/sign/recoverable-install/exact-launch/bounded-readiness/owned-stop/
   restore lifecycle. No attempt-6 external result is accepted yet and every
   excluded gate remains closed.
+
+- 2026-09-02 `PLAN_RECONCILIATION v52`: attempt 6 from exact accepted tip
+  `beb7865abf7342ceebc0545850351e5cd631436a` reached the real LaunchServices
+  topology (`MeetlessHost` with `ppid=1`) and then failed in the child runtime
+  with `installed bundle identity drifted...`. Native Swift identity encoding
+  uses recursive sorted keys; Node's constructed identity and parsed recorded
+  identity were semantically/canonically equal in the retained read-only replay,
+  but their raw insertion-order `JSON.stringify` bytes differed. Native and
+  static inspection agreed on bundle, designated requirement, CDHash, binary
+  hash, and MAS runtime root, so no scalar identity drift was observed. Receipt
+  absence is unrelated to this correction.
+
+  The accepted correction keeps complete strict identity attestation and makes
+  the trusted context explicit: production installed/live inspection receives
+  the RuntimeConfig-derived runtime root and MAS app-container support root;
+  wrong context fails closed, while one-argument direct-DMG/external/static
+  inspection remains compatible. Installed and live comparisons now parse the
+  strict complete identity schema and recursively compare every value without
+  key-order sensitivity. Expected packaged configuration binds `nodePath` to
+  `RuntimeConfig.packageResources.nodeBinary`; development alone uses
+  `process.execPath`. Transaction `nextIdentityBytes` uses the same recursive
+  sorted-key pretty JSON plus newline as native Swift, preserving byte-level
+  ownership and exact rollback checks. Focused positive/negative identity,
+  trusted MAS context, compatibility, runtime wiring, and transaction
+  recovery/mutation proof are included in the six owned code/test paths.
+
+  The retained signed MAS artifact and attempt-6 runtime evidence remain
+  read-only evidence; no artifact child was executed and no package, sign,
+  install, launch, receipt, purchase/restore, RevenueCat/Convex, native source,
+  config, container, external state, or push action occurred for this
+  correction. Authority digest remains
+  `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`.
+  Repository candidate and plan are pending Lead review.
 
 - 2026-09-02 `PLAN_RECONCILIATION v50` / `CONVERGENCE_RECONCILIATION v1`:
   From exact unchanged base `94999f10e1e7d841209a695392e259c1b185f0f9`,

@@ -5,7 +5,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import type { RuntimeConfig } from "./config.js";
+import { MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH, type RuntimeConfig } from "./config.js";
 import { inspectNativeArgumentVector, RECORDING_READINESS_AUTHORITY } from "./readiness.js";
 import {
   MEETLESS_RUNTIME_ENDPOINTS_SCHEMA,
@@ -19,6 +19,8 @@ export const MEETLESS_HOST_INSTALL_PATH = "/Applications/Meetless.app";
 const MEETLESS_HOST_CONFIG_SCHEMA = "MEETLESS_MACOS_HOST_CONFIG v2";
 const MEETLESS_INSTALLATION_CONTRACT_SCHEMA = "MEETLESS_INSTALLATION_CONTRACT v1";
 const MEETLESS_PACKAGE_SCHEMA = "MEETLESS_MACOS_PACKAGE v2";
+const DIRECT_RUNTIME_ROOT_RELATIVE_PATH = "Library/Application Support/Meetless";
+const MACOS_APP_CONTAINER_SUPPORT_ROOT_SUFFIX = "/Library/Containers/com.meetless.app/Data/Library/Application Support";
 
 const HostLaunchConfigurationSchema = z.object({
   repositoryRoot: z.string().min(1),
@@ -140,6 +142,11 @@ export const HostIdentitySchema = z.object({
 
 export type HostIdentity = z.infer<typeof HostIdentitySchema>;
 
+export interface HostInspectionContext {
+  runtimeRoot: string;
+  containerSupportRoot?: string;
+}
+
 interface ProcessIdentity {
   pid: number;
   ppid: number;
@@ -151,10 +158,10 @@ interface ProcessIdentity {
 }
 
 interface HostInspectionDependencies {
-  inspectInstalled(bundlePath: string): Promise<HostIdentity>;
+  inspectInstalled(bundlePath: string, context?: HostInspectionContext): Promise<HostIdentity>;
   readRecorded(identityPath: string): Promise<HostIdentity>;
   inspectProcess(pid: number): Promise<ProcessIdentity>;
-  inspectLiveHost(bundlePath: string): Promise<HostIdentity>;
+  inspectLiveHost(bundlePath: string, context?: HostInspectionContext): Promise<HostIdentity>;
 }
 
 const defaultDependencies: HostInspectionDependencies = {
@@ -164,7 +171,10 @@ const defaultDependencies: HostInspectionDependencies = {
   inspectLiveHost: inspectHostBundle,
 };
 
-export async function inspectHostBundle(bundlePath: string): Promise<HostIdentity> {
+export async function inspectHostBundle(
+  bundlePath: string,
+  context?: HostInspectionContext,
+): Promise<HostIdentity> {
   const canonicalBundle = await realpath(bundlePath);
   const bundleIdentifier = inspectRequired(
     "plutil",
@@ -180,7 +190,7 @@ export async function inspectHostBundle(bundlePath: string): Promise<HostIdentit
     stat(executablePath),
     readFile(path.join(canonicalBundle, "Contents", "Resources", "host-config.json"), "utf8"),
   ]);
-  const configuration = resolveHostConfiguration(JSON.parse(configurationText), canonicalBundle);
+  const configuration = resolveHostConfiguration(JSON.parse(configurationText), canonicalBundle, context);
   const requirementOutput = inspectRequiredOutput("codesign", ["-d", "-r-", canonicalBundle], "designated requirement");
   const designatedRequirement = /^(?:# )?designated => (.+)$/mu.exec(requirementOutput)?.[1];
   if (!designatedRequirement) throw new Error("codesign did not report a designated requirement for Meetless.app");
@@ -204,7 +214,11 @@ export async function inspectHostBundle(bundlePath: string): Promise<HostIdentit
   });
 }
 
-export function resolveHostConfiguration(configuration: unknown, bundlePath: string): HostLaunchConfiguration {
+export function resolveHostConfiguration(
+  configuration: unknown,
+  bundlePath: string,
+  context?: HostInspectionContext,
+): HostLaunchConfiguration {
   let parsed: HostConfigurationFile;
   try {
     parsed = HostConfigurationFileSchema.parse(configuration);
@@ -215,7 +229,7 @@ export function resolveHostConfiguration(configuration: unknown, bundlePath: str
     throw error;
   }
   if (parsed.mode === "development") {
-    return HostLaunchConfigurationSchema.parse({
+    const launchConfiguration = HostLaunchConfigurationSchema.parse({
       repositoryRoot: parsed.repositoryRoot,
       runtimeRoot: parsed.runtimeRoot,
       listen: parsed.listen,
@@ -226,6 +240,12 @@ export function resolveHostConfiguration(configuration: unknown, bundlePath: str
       runtimeCliPath: parsed.runtimeCliPath,
       identityPath: parsed.identityPath,
     });
+    if (context && path.resolve(launchConfiguration.runtimeRoot) !== trustedRuntimeRoot(context, "development")) {
+      throw trustedContextError(
+        `runtime root ${launchConfiguration.runtimeRoot} differs from the supplied ${context.runtimeRoot}`,
+      );
+    }
+    return launchConfiguration;
   }
 
   const canonicalBundle = path.resolve(bundlePath);
@@ -275,7 +295,7 @@ export function resolveHostConfiguration(configuration: unknown, bundlePath: str
   for (const [name, relativePath] of Object.entries(contract.package.resources)) {
     resolveBundleRelativePath(packageRoot, relativePath, `packaged ${name}`);
   }
-  const runtimeRoot = resolveUserHomeRelativePath(parsed.runtimeRootRelativeToUserHome, "runtime root");
+  const runtimeRoot = resolvePackagedRuntimeRoot(parsed.runtimeRootRelativeToUserHome, context);
   const identityPath = resolveContainedPath(runtimeRoot, parsed.identityRelativeToRuntimeRoot, "host identity");
   const transcriptionSocket = resolveContainedPath(
     runtimeRoot,
@@ -302,6 +322,63 @@ export function resolveHostConfiguration(configuration: unknown, bundlePath: str
     recordingEndpointName: parsed.recordingEndpointName,
     transcriptionEndpointName: parsed.transcriptionEndpointName,
   });
+}
+
+function resolvePackagedRuntimeRoot(
+  relativePath: string,
+  context?: HostInspectionContext,
+): string {
+  if (!context) return resolveUserHomeRelativePath(relativePath, "runtime root");
+
+  const runtimeRoot = trustedRuntimeRoot(context, "packaged");
+  if (relativePath === MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH) {
+    const containerSupportRoot = trustedContainerSupportRoot(context);
+    const expectedRuntimeRoot = path.join(containerSupportRoot, "Meetless");
+    if (runtimeRoot !== expectedRuntimeRoot) {
+      throw trustedContextError(
+        `MAS runtime root ${runtimeRoot} differs from the supplied app-container support root ${containerSupportRoot}`,
+      );
+    }
+    return runtimeRoot;
+  }
+  if (context.containerSupportRoot !== undefined) {
+    throw trustedContextError("a MAS app-container support root was supplied for a direct-DMG runtime");
+  }
+  if (relativePath !== DIRECT_RUNTIME_ROOT_RELATIVE_PATH ||
+      !runtimeRoot.endsWith(`/${DIRECT_RUNTIME_ROOT_RELATIVE_PATH}`)) {
+    throw trustedContextError(
+      `direct-DMG runtime root ${runtimeRoot} does not match the accepted relative path ${relativePath}`,
+    );
+  }
+  return runtimeRoot;
+}
+
+function trustedRuntimeRoot(context: HostInspectionContext, mode: string): string {
+  if (!context.runtimeRoot || !path.isAbsolute(context.runtimeRoot)) {
+    throw trustedContextError(`${mode} runtime root must be an absolute path`);
+  }
+  return path.resolve(context.runtimeRoot);
+}
+
+function trustedContainerSupportRoot(context: HostInspectionContext): string {
+  if (!context.containerSupportRoot || !path.isAbsolute(context.containerSupportRoot)) {
+    throw trustedContextError("MAS app-container support root must be supplied as an absolute path");
+  }
+  const containerSupportRoot = path.resolve(context.containerSupportRoot);
+  if (!containerSupportRoot.endsWith(MACOS_APP_CONTAINER_SUPPORT_ROOT_SUFFIX)) {
+    throw trustedContextError(
+      `MAS app-container support root ${containerSupportRoot} is outside the Meetless app container`,
+    );
+  }
+  return containerSupportRoot;
+}
+
+function trustedContextError(reason: string): Error {
+  return new Error(
+    `trusted Meetless host inspection context is invalid: ${reason}. ` +
+      "Authority: docs/decisions/0005-mac-app-store-and-revenuecat.md and docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md. " +
+      "Next action: derive the runtime and app-container support roots from RuntimeConfig and stop before child launch.",
+  );
 }
 
 function resolveBundleRelativePath(bundleRoot: string, relativePath: string, label: string): string {
@@ -349,6 +426,12 @@ export async function readHostIdentity(identityPath: string): Promise<HostIdenti
   return HostIdentitySchema.parse(JSON.parse(await readFile(identityPath, "utf8")));
 }
 
+export function hostIdentityEquals(left: unknown, right: unknown): boolean {
+  const leftResult = HostIdentitySchema.safeParse(left);
+  const rightResult = HostIdentitySchema.safeParse(right);
+  return leftResult.success && rightResult.success && deepValueEqual(leftResult.data, rightResult.data);
+}
+
 export function assertExactInstalledHostPath(bundlePath: string): void {
   if (path.resolve(bundlePath) !== MEETLESS_HOST_INSTALL_PATH) {
     throw new Error(
@@ -394,42 +477,35 @@ export async function assertInstalledHostIdentity(
   let recorded: HostIdentity;
   try {
     [installed, recorded] = await Promise.all([
-      dependencies.inspectInstalled(config.host.bundle),
+      dependencies.inspectInstalled(config.host.bundle, trustedHostInspectionContext(config)),
       dependencies.readRecorded(config.host.identity),
     ]);
   } catch (error) {
     throw hostFailure(`cannot attest the installed host: ${message(error)}`);
   }
-  if (JSON.stringify(installed) !== JSON.stringify(recorded)) {
+  const parsedInstalled = parseHostIdentity(installed, "installed");
+  const parsedRecorded = parseHostIdentity(recorded, "recorded");
+  if (!deepValueEqual(parsedInstalled, parsedRecorded)) {
     throw hostFailure(
       "installed bundle identity drifted from its recorded designated requirement/CDHash/binary identity",
     );
   }
-  const expectedConfiguration = expectedHostConfiguration(config);
-  if (
-    installed.configuration.repositoryRoot !== expectedConfiguration.repositoryRoot ||
-    installed.configuration.runtimeRoot !== expectedConfiguration.runtimeRoot ||
-    installed.configuration.listen !== expectedConfiguration.listen ||
-    installed.configuration.rendererOrigin !== expectedConfiguration.rendererOrigin ||
-    installed.configuration.transcriptionSocket !== expectedConfiguration.transcriptionSocket ||
-    installed.configuration.transcriptionStaging !== expectedConfiguration.transcriptionStaging ||
-    installed.configuration.runtimeCliPath !== expectedConfiguration.runtimeCliPath ||
-    installed.configuration.identityPath !== expectedConfiguration.identityPath ||
-    installed.configuration.endpointPolicy !== expectedConfiguration.endpointPolicy ||
-    installed.configuration.endpointWorkingDirectory !== expectedConfiguration.endpointWorkingDirectory ||
-    installed.configuration.recordingEndpointName !== expectedConfiguration.recordingEndpointName ||
-    installed.configuration.transcriptionEndpointName !== expectedConfiguration.transcriptionEndpointName ||
-    !path.isAbsolute(installed.configuration.nodePath)
-  ) {
+  let expectedConfiguration: HostLaunchConfiguration;
+  try {
+    expectedConfiguration = expectedHostConfiguration(config);
+  } catch (error) {
+    throw hostFailure(message(error));
+  }
+  if (!deepValueEqual(parsedInstalled.configuration, expectedConfiguration)) {
     throw hostFailure("installed host repository/runtime configuration differs from this production runtime");
   }
   if (
-    installed.bundlePath !== path.resolve(config.host.bundle) ||
-    installed.bundleRealPath !== path.resolve(config.host.bundle)
+    parsedInstalled.bundlePath !== path.resolve(config.host.bundle) ||
+    parsedInstalled.bundleRealPath !== path.resolve(config.host.bundle)
   ) {
     throw hostFailure(`installed host is not at the canonical path ${config.host.bundle}`);
   }
-  return installed;
+  return parsedInstalled;
 }
 
 export async function assertDesktopLaunchedByHost(
@@ -471,6 +547,16 @@ export function expectedHostConfiguration(config: RuntimeConfig): HostLaunchConf
       transcriptionEndpointName: config.endpoints.transcription.name,
     }
     : {};
+  const nodePath = config.packaged
+    ? config.packageResources?.nodeBinary
+    : process.execPath;
+  if (!nodePath || (config.packaged && !path.isAbsolute(nodePath))) {
+    throw new Error(
+      "packaged runtime has no exact absolute nodeBinary in RuntimeConfig.packageResources. " +
+        "Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md and docs/decisions/0005-mac-app-store-and-revenuecat.md. " +
+        "Next action: rebuild the packaged resource manifest and stop before child launch.",
+    );
+  }
   return {
     repositoryRoot: path.resolve(config.paths.plugin, "..", ".."),
     runtimeRoot: config.paths.root,
@@ -478,10 +564,18 @@ export function expectedHostConfiguration(config: RuntimeConfig): HostLaunchConf
     rendererOrigin: config.rendererOrigin,
     transcriptionSocket: config.paths.transcriptionSocket,
     transcriptionStaging: config.paths.transcriptionStaging,
-    nodePath: process.execPath,
+    nodePath,
     runtimeCliPath: path.join(path.resolve(config.paths.plugin, "..", ".."), "packages", "runtime", "dist", "cli.js"),
     identityPath: config.host.identity,
     ...endpointConfiguration,
+  };
+}
+
+export function trustedHostInspectionContext(config: RuntimeConfig): HostInspectionContext {
+  const containerSupportRoot = config.environment.MEETLESS_APP_CONTAINER_SUPPORT_ROOT?.trim();
+  return {
+    runtimeRoot: config.paths.root,
+    ...(containerSupportRoot ? { containerSupportRoot } : {}),
   };
 }
 
@@ -518,7 +612,7 @@ async function assertExactTopology(
   desktop: ProcessIdentity,
   host: ProcessIdentity,
   config: RuntimeConfig,
-  inspectLiveHost: (bundlePath: string) => Promise<HostIdentity>,
+  inspectLiveHost: (bundlePath: string, context?: HostInspectionContext) => Promise<HostIdentity>,
 ): Promise<void> {
   if (path.resolve(host.executablePath) !== path.resolve(identity.executablePath)) {
     throw hostFailure(
@@ -557,10 +651,37 @@ async function assertExactTopology(
       "Terminal, Codex, Paseo, and direct executable launch are not accepted responsible ancestors",
     );
   }
-  const liveIdentity = await inspectLiveHost(identity.bundleRealPath);
-  if (JSON.stringify(liveIdentity) !== JSON.stringify(identity)) {
+  const liveIdentity = parseHostIdentity(
+    await inspectLiveHost(identity.bundleRealPath, trustedHostInspectionContext(config)),
+    "live",
+  );
+  if (!deepValueEqual(liveIdentity, identity)) {
     throw hostFailure("live host executable hash/CDHash/designated requirement differs from the installed identity");
   }
+}
+
+function parseHostIdentity(value: unknown, label: string): HostIdentity {
+  const parsed = HostIdentitySchema.safeParse(value);
+  if (!parsed.success) {
+    throw hostFailure(`${label} host identity is not schema-valid and complete: ${parsed.error.message}`);
+  }
+  return parsed.data;
+}
+
+function deepValueEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) &&
+      left.length === right.length && left.every((value, index) => deepValueEqual(value, right[index]));
+  }
+  if (isRecord(left) || isRecord(right)) {
+    if (!isRecord(left) || !isRecord(right)) return false;
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    return leftKeys.length === rightKeys.length &&
+      leftKeys.every((key, index) => key === rightKeys[index] && deepValueEqual(left[key], right[key]));
+  }
+  return false;
 }
 
 async function inspectProcess(pid: number): Promise<ProcessIdentity> {

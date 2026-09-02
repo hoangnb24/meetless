@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
@@ -9,9 +9,11 @@ import {
 } from "../src/config.js";
 import {
   MACOS_INSTALLATION_CONTRACT,
+  installationContractBytes,
+  packagedMarker,
   packagedHostConfiguration,
 } from "../../../scripts/lib/macos-package-contract.mjs";
-import { resolveHostConfiguration } from "../src/host.js";
+import { expectedHostConfiguration, resolveHostConfiguration } from "../src/host.js";
 import {
   macAppStoreInstallationContract,
   macAppStoreInstallationContractBytes,
@@ -120,6 +122,8 @@ describe("Mac App Store runtime/package contract", () => {
     expect(config.endpoints.recording.canonicalPath).toContain(FIXTURE_CONTAINER_SUPPORT);
     expect(config.environment.MEETLESS_APP_CONTAINER_SUPPORT_ROOT).toBe(FIXTURE_CONTAINER_SUPPORT);
     expect(config.environment.MEETLESS_EXPORT_ROOT).toBe(config.paths.recordingExports);
+    expect(expectedHostConfiguration(config).nodePath).toBe(config.packageResources?.nodeBinary);
+    expect(expectedHostConfiguration(config).nodePath).not.toBe(process.execPath);
 
     expect(() => resolveRuntimeConfig({
       repositoryRoot: root,
@@ -150,6 +154,25 @@ describe("Mac App Store runtime/package contract", () => {
         MEETLESS_APP_CONTAINER_SUPPORT_ROOT: `${FIXTURE_HOME}/Library/Application Support`,
       },
     })).toThrow(/differs from the app-container path.*docs\/decisions\/0005-mac-app-store-and-revenuecat\.md/s);
+  });
+
+  test("keeps direct-DMG one-argument static host inspection compatible", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-direct-host-contract-"));
+    fixtureRoots.push(root);
+    const bundle = path.join(root, "Meetless.app");
+    const packageRoot = path.join(bundle, "Contents/Resources/meetless");
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(path.join(packageRoot, "installation-contract.json"), installationContractBytes());
+    await writeFile(
+      path.join(packageRoot, "meetless-package.json"),
+      `${JSON.stringify(packagedMarker({ paseoCommit: FIXTURE_PASEO_COMMIT }), null, 2)}\n`,
+    );
+
+    const configuration = resolveHostConfiguration(packagedHostConfiguration(), bundle);
+    expect(configuration.runtimeRoot).toBe(
+      path.resolve(homedir(), MACOS_INSTALLATION_CONTRACT.userSupportRelativePath),
+    );
+    expect(configuration.nodePath).toBe(path.join(packageRoot, "runtime/node"));
   });
 
   test("keeps packaged bind arguments stable across ordinary, long ASCII, and long Unicode homes", async () => {
@@ -207,6 +230,10 @@ describe("Mac App Store runtime/package contract", () => {
     const configuration = resolveHostConfiguration(
       macAppStorePackagedHostConfiguration({ contractSha256 }),
       bundle,
+      {
+        runtimeRoot: FIXTURE_RUNTIME_ROOT,
+        containerSupportRoot: FIXTURE_CONTAINER_SUPPORT,
+      },
     );
     expect(configuration.endpointPolicy).toBe("MEETLESS_RUNTIME_ENDPOINTS v1");
     expect(configuration.endpointWorkingDirectory).toBe("runtime-root");
@@ -215,6 +242,32 @@ describe("Mac App Store runtime/package contract", () => {
     expect(configuration.transcriptionSocket).toBe(
       path.join(configuration.runtimeRoot, contract.runtime.endpointPolicy.transcriptionEndpointName),
     );
+
+    expect(resolveHostConfiguration(
+      macAppStorePackagedHostConfiguration({ contractSha256 }),
+      bundle,
+    ).runtimeRoot).not.toBe(FIXTURE_RUNTIME_ROOT);
+    expect(() => resolveHostConfiguration(
+      macAppStorePackagedHostConfiguration({ contractSha256 }),
+      bundle,
+      {
+        runtimeRoot: path.join(FIXTURE_CONTAINER_SUPPORT, "Other"),
+        containerSupportRoot: FIXTURE_CONTAINER_SUPPORT,
+      },
+    )).toThrow(/MAS runtime root .*differs from the supplied app-container support root/);
+    expect(() => resolveHostConfiguration(
+      macAppStorePackagedHostConfiguration({ contractSha256 }),
+      bundle,
+      {
+        runtimeRoot: FIXTURE_RUNTIME_ROOT,
+        containerSupportRoot: `${FIXTURE_HOME}/Library/Application Support`,
+      },
+    )).toThrow(/app-container support root .*outside the Meetless app container/);
+    expect(() => resolveHostConfiguration(
+      macAppStorePackagedHostConfiguration({ contractSha256 }),
+      bundle,
+      { runtimeRoot: FIXTURE_RUNTIME_ROOT },
+    )).toThrow(/app-container support root must be supplied/);
   });
 });
 
