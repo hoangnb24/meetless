@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v40`
-- `current_frontier`: `R5-MAS-NATIVE-SCOPE-003-CLEAN-CHECKOUT-PROOF`
-- `state`: `R5_MAS_NATIVE_SCOPE_003_CLEAN_CHECKOUT_PROOF_REOPENED_PRE_SIGNING`
+- `plan_revision`: `v41`
+- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-R3`
+- `state`: `R5_MAS_NATIVE_SCOPE_ACCEPTED_DEV_EXTERNAL_GATE_AUTHORIZED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: one immutable clean-checkout proof correction is prepared from exact correction base `34467fdd375fb7433d1a720759fb69684bed95a9`, in the original family based at `189d7d490d33498e9bb392a1f31fa30d2ce92781`; Lead acceptance remains open and its exact commit is reported at handoff. Close-out accepted `NATIVE-SCOPE-001`, `NATIVE-SCOPE-002`, and `NATIVE-SCOPE-004`; only `NATIVE-SCOPE-003` remains open. `57b1020aa30f31b611141f5cc1e020ce8d3baf0c`, `189d7d490d33498e9bb392a1f31fa30d2ce92781`, retained failed proof `Ffw0bs`, and unaccepted correction `34467fdd375fb7433d1a720759fb69684bed95a9` remain preserved as historical correction evidence. No artifact or external result is accepted by this repository verdict.
+- `candidate`: Lead accepted immutable nested-native correction chain ending at `13f20d2eb49549f72098d103e0a49d1900a9248e`, whose exact parent is `34467fdd375fb7433d1a720759fb69684bed95a9` in the original family based at `189d7d490d33498e9bb392a1f31fa30d2ce92781`. `NATIVE-SCOPE-001` through `NATIVE-SCOPE-004` are closed. `57b1020aa30f31b611141f5cc1e020ce8d3baf0c`, `189d7d490d33498e9bb392a1f31fa30d2ce92781`, and retained failed proof `Ffw0bs` remain historical correction evidence. No artifact or external result is accepted by this repository verdict.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: retained read-only root `/private/tmp/meetless-mas-development-proof.Ffw0bs`; direct artifact validation failed with `native-binaries child member Contents/Resources/meetless/node_modules/convex/node_modules/@esbuild/darwin-arm64/package.json is outside its component scope` before MAS injection, signing, installation, or launch. `/Applications` was untouched and no launch occurred.
-- `pending_ruling`: the shared exact npm package-root resolver/classification behavior remains intact; only the unconditional clean-checkout source-projection/inventory coverage and omitted/misassigned provenance proof for `NATIVE-SCOPE-003` is pending Lead acceptance. Package validation/readiness remains reopened before signing. The owner-authorized dev MAS package/sign/install/launch path may resume only as a separately routed retry after that acceptance.
-- `blocked_by`: every external gate remains closed until the new candidate is accepted and a retry is separately routed: MAS package/download/signing, installation, launch, purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions.
-- `next_action`: Lead inspects the new immutable candidate; only after acceptance may a separately routed fresh package/sign/install/launch attempt proceed. Dependency order otherwise remains unchanged.
+- `pending_ruling`: the owner-authorized frontier now opens only dev MAS packaging, Apple Development signing, recoverable local installation, exact local launch, bounded readiness, and inherent RevenueCat public-SDK configure/read behavior. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and every other external gate remain closed.
+- `blocked_by`: no artifact, signing, install, launch, or cleanup result is accepted yet. Purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions remain forbidden.
+- `next_action`: execute one fresh SERIAL package/sign/install/launch attempt from the accepted integration tip, restore the pre-existing app after bounded verification, and return exact evidence for Lead acceptance. Dependency order otherwise remains unchanged.
 
 ## Ownership And Authority
 
@@ -1228,6 +1228,16 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v41`: Lead accepted immutable correction
+  `13f20d2eb49549f72098d103e0a49d1900a9248e` after the unconditional clean-
+  checkout proof passed independently, the focused suite passed 35 tests, and
+  independent close-out closed `NATIVE-SCOPE-003` with no material findings.
+  `NATIVE-SCOPE-001` through `NATIVE-SCOPE-004` are closed. The owner-authorized
+  frontier reopens only dev MAS packaging, Apple Development signing,
+  recoverable local installation, exact launch, bounded readiness, and inherent
+  RevenueCat public-SDK configure/read behavior; every other external gate
+  remains closed. No artifact or external effect is accepted by this verdict.
 
 - 2026-09-02 `PLAN_RECONCILIATION v40`: close-out accepted
   `NATIVE-SCOPE-001`, `NATIVE-SCOPE-002`, and `NATIVE-SCOPE-004`; only
