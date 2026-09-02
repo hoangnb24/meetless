@@ -10,6 +10,7 @@ import {
   PACKAGE_SOURCE_SNAPSHOT_COMMAND,
 } from "./candidate-snapshot.mjs";
 import { PASEO_DEPENDENCY } from "./lib/paseo-dependency.mjs";
+import { MACOS_LOCAL_PACKAGES, validateMacOSPackageComposition } from "./lib/macos-package-composition.mjs";
 import { digestManifest, validateMacOSPackage } from "./validate-macos-package.mjs";
 import { enumeratePackageEntries, inspectMachO, inspectPackageMachOEntries } from "./lib/macos-package-inventory.mjs";
 import {
@@ -56,27 +57,11 @@ if (signingArguments.signingMode === "local-ad-hoc" && !proofRoot) {
   throw new Error("local/ad-hoc package proof requires --proof-root outside repository release/macos; refusing to mutate release/macos");
 }
 
-const localPackages = [
-  ["@meetless/runtime", "packages/runtime", ["dist"], []],
-  ["@meetless/meeting-contracts", "packages/meeting-contracts", ["dist"], []],
-  ["@meetless/meeting-domain", "packages/meeting-domain", ["dist"], []],
-  ["@meetless/meeting-store", "packages/meeting-store", ["dist"], []],
-  ["@meetless/client", "packages/meetless-client", ["dist"], []],
-  ["@meetless/plugin", "packages/meetless-plugin", ["dist", "src"], ["index.tsx", "paseo-plugin.json"]],
-  ["@getpaseo/highlight", "vendor/paseo/packages/highlight", ["dist"], []],
-  ["@paseo/plugin", "vendor/paseo/packages/plugin", ["dist"], []],
-  ["@getpaseo/protocol", "vendor/paseo/packages/protocol", ["dist"], []],
-  ["@getpaseo/relay", "vendor/paseo/packages/relay", ["dist"], []],
-  ["@getpaseo/client", "vendor/paseo/packages/client", ["dist"], []],
-  ["@getpaseo/server", "vendor/paseo/packages/server", ["dist"], []],
-  ["@getpaseo/cli", "vendor/paseo/packages/cli", ["dist", "bin"], []],
-  ["@getpaseo/desktop", "vendor/paseo/packages/desktop", ["dist", "assets"], []],
-];
-
 await main(signingArguments);
 
 async function main(rawSigningOptions) {
   assertDarwinArm64();
+  await validateMacOSPackageComposition({ repositoryRoot, localPackages: MACOS_LOCAL_PACKAGES });
   const signingInputs = await resolveSigningInputs({
     mode: rawSigningOptions.signingMode,
     signingIdentity: rawSigningOptions.signingIdentity,
@@ -291,7 +276,7 @@ async function createRuntimeTree(paseoCommit) {
   await copyFileIfPresent("scripts/launch-macos-host.mjs", path.join(packageRoot, "scripts/launch-macos-host.mjs"));
   await copyFileIfPresent("scripts/stop-macos-host.mjs", path.join(packageRoot, "scripts/stop-macos-host.mjs"));
 
-  for (const [, sourceRelative, directories, files] of localPackages) {
+  for (const [, sourceRelative, directories, files] of MACOS_LOCAL_PACKAGES) {
     const sourceRoot = path.join(repositoryRoot, sourceRelative);
     const targetRoot = path.join(packageRoot, sourceRelative);
     await mkdir(targetRoot, { recursive: true, mode: 0o755 });
@@ -320,9 +305,9 @@ async function createRuntimeTree(paseoCommit) {
 
 async function createPackageDependencies() {
   const lock = JSON.parse(await readFile(path.join(repositoryRoot, "package-lock.json"), "utf8"));
-  const localNames = new Set(localPackages.map(([name]) => name));
+  const localNames = new Set(MACOS_LOCAL_PACKAGES.map(([name]) => name));
   const dependencies = new Map();
-  for (const [, sourceRelative] of localPackages) {
+  for (const [, sourceRelative] of MACOS_LOCAL_PACKAGES) {
     const packageJson = JSON.parse(await readFile(path.join(repositoryRoot, sourceRelative, "package.json"), "utf8"));
     for (const section of ["dependencies", "optionalDependencies", "peerDependencies"]) {
       for (const [name] of Object.entries(packageJson[section] ?? {})) {
@@ -363,7 +348,7 @@ async function createPackageDependencies() {
     env: { ...process.env, npm_config_arch: "arm64", npm_config_platform: "darwin" },
   });
   await rm(path.join(packageRoot, "node_modules", ".package-lock.json"), { force: true });
-  for (const [name, sourceRelative] of localPackages) {
+  for (const [name, sourceRelative] of MACOS_LOCAL_PACKAGES) {
     const link = path.join(packageRoot, "node_modules", ...name.split("/"));
     const target = path.join(packageRoot, sourceRelative);
     await mkdir(path.dirname(link), { recursive: true, mode: 0o755 });

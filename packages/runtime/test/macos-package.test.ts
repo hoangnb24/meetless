@@ -31,7 +31,8 @@ import {
   digestComponentEntries,
   isVerifiedNoticeName,
 } from "../../../scripts/lib/macos-license-inventory.mjs";
-import { MACOS_PACKAGE_INPUT_AUTHORITY, MACOS_PACKAGE_INPUT_SCHEMA, digestJson, validateMacOSPackageInputDocument } from "../../../scripts/lib/macos-package-inputs.mjs";
+import { buildMacOSPackageInputSpecs, MACOS_PACKAGE_INPUT_AUTHORITY, MACOS_PACKAGE_INPUT_SCHEMA, digestJson, validateMacOSPackageInputDocument } from "../../../scripts/lib/macos-package-inputs.mjs";
+import { MACOS_LOCAL_PACKAGES, validateMacOSPackageComposition } from "../../../scripts/lib/macos-package-composition.mjs";
 import { createSigningMetadata } from "../../../scripts/lib/macos-package-signing.mjs";
 import { assertDistributionReadiness } from "../../../scripts/check-macos-distribution-readiness.mjs";
 import {
@@ -259,6 +260,48 @@ describe("macOS package composition manifest", () => {
     packageInputs.inputs[0].content.digest = "f".repeat(64);
     expect(() => validateMacOSPackageInputDocument(packageInputs, manifest.candidateSnapshot)).toThrow(
       /package-input manifest digest is stale.*rebuild the package-input manifest/s,
+    );
+  });
+
+  it("accepts the full selective local package set and binds the foundation dist", async () => {
+    const foundationTuple = MACOS_LOCAL_PACKAGES.find(([name]) => name === "@meetless/managed-transcription-foundation");
+    expect(foundationTuple).toEqual([
+      "@meetless/managed-transcription-foundation",
+      "packages/managed-transcription-foundation",
+      ["dist"],
+      [],
+    ]);
+
+    const composition = await validateMacOSPackageComposition({ repositoryRoot: process.cwd() });
+    expect(composition.localPackages).toEqual(MACOS_LOCAL_PACKAGES);
+    expect(composition.workspaceLinks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        declaringPackage: "@meetless/plugin",
+        dependency: "@meetless/managed-transcription-foundation",
+        classification: "root-lock-workspace-link",
+      }),
+    ]));
+
+    const inputSpecs = buildMacOSPackageInputSpecs();
+    expect(inputSpecs.find(({ id }) => id === "managed-transcription-foundation-dist")).toMatchObject({
+      kind: "generated-dist",
+      sourcePaths: ["packages/managed-transcription-foundation/dist"],
+      artifactPathPrefixes: ["Contents/Resources/meetless/packages/managed-transcription-foundation/"],
+    });
+    expect(inputSpecs.find(({ id }) => id === "package-assembly-scripts").sourcePaths).toContain(
+      "scripts/lib/macos-package-composition.mjs",
+    );
+  });
+
+  it("rejects the plugin workspace dependency when only its foundation tuple is omitted", async () => {
+    const withoutFoundation = MACOS_LOCAL_PACKAGES.filter(([name]) => name !== "@meetless/managed-transcription-foundation");
+    expect(withoutFoundation).toHaveLength(MACOS_LOCAL_PACKAGES.length - 1);
+
+    await expect(validateMacOSPackageComposition({
+      repositoryRoot: process.cwd(),
+      localPackages: withoutFoundation,
+    })).rejects.toThrow(
+      /@meetless\/plugin[\s\S]*@meetless\/managed-transcription-foundation[\s\S]*localPackages\/selection/,
     );
   });
 

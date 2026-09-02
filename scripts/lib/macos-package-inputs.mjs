@@ -23,6 +23,7 @@ const PACKAGE_INPUT_ACTION =
 const GENERATED_INPUTS = [
   ["meetless-app-dist", "generated-dist", "packages/meetless-app/dist", ["Contents/Resources/meetless/packages/meetless-app/"]],
   ["runtime-dist", "generated-dist", "packages/runtime/dist", ["Contents/Resources/meetless/packages/runtime/"]],
+  ["managed-transcription-foundation-dist", "generated-dist", "packages/managed-transcription-foundation/dist", ["Contents/Resources/meetless/packages/managed-transcription-foundation/"]],
   ["meeting-contracts-dist", "generated-dist", "packages/meeting-contracts/dist", ["Contents/Resources/meetless/packages/meeting-contracts/"]],
   ["meeting-domain-dist", "generated-dist", "packages/meeting-domain/dist", ["Contents/Resources/meetless/packages/meeting-domain/"]],
   ["meeting-store-dist", "generated-dist", "packages/meeting-store/dist", ["Contents/Resources/meetless/packages/meeting-store/"]],
@@ -61,7 +62,7 @@ export async function collectMacOSPackageInputs({
   const packageRoot = path.join(bundlePath, "Contents", "Resources", "meetless");
   const workspaceMembers = await collectWorkspaceMembers(bundlePath);
   const metadata = packageMetadata ?? await collectMacOSPackageMetadata(packageRoot, repositoryRoot, workspaceMembers);
-  const specs = buildInputSpecs({ repositoryRoot, candidateSnapshot, mediaSources, priorManifest });
+  const specs = buildMacOSPackageInputSpecs({ candidateSnapshot, mediaSources, priorManifest });
   const inputs = [];
   for (const spec of specs) inputs.push(await hashInputSpec(spec, repositoryRoot, priorManifest));
 
@@ -187,7 +188,7 @@ export function digestJson(value) {
   return sha256(JSON.stringify(value));
 }
 
-function buildInputSpecs({ repositoryRoot, candidateSnapshot, mediaSources, priorManifest }) {
+export function buildMacOSPackageInputSpecs({ candidateSnapshot, mediaSources, priorManifest } = {}) {
   const specs = [
     {
       id: "root-package-manifests",
@@ -204,7 +205,7 @@ function buildInputSpecs({ repositoryRoot, candidateSnapshot, mediaSources, prio
     {
       id: "package-assembly-scripts",
       kind: "package-build-script",
-      sourcePaths: ["scripts/package-macos.mjs", "scripts/build-native.mjs", "scripts/electron-bootstrap.mjs", "scripts/launch-macos-host.mjs", "scripts/stop-macos-host.mjs", "scripts/lib/macos-package-contract.mjs", "scripts/lib/macos-package-contract.json"],
+      sourcePaths: ["scripts/package-macos.mjs", "scripts/lib/macos-package-composition.mjs", "scripts/build-native.mjs", "scripts/electron-bootstrap.mjs", "scripts/launch-macos-host.mjs", "scripts/stop-macos-host.mjs", "scripts/lib/macos-package-contract.mjs", "scripts/lib/macos-package-contract.json"],
       artifactPathPrefixes: ["Contents/Resources/host-config.json", "Contents/Resources/meetless/installation-contract.json", "Contents/Resources/meetless/meetless-package.json", "Contents/Resources/meetless/scripts/"],
     },
     {

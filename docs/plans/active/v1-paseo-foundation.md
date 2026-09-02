@@ -2,20 +2,21 @@
 
 ## Current State
 
-- `plan_revision`: `v36`
-- `current_frontier`: `R5-MAS-DEVELOPMENT-PACKAGING-CORRECTION`
-- `state`: `R5_MAS_DEVELOPMENT_PACKAGING_REPOSITORY_ACCEPTED_EXTERNAL_GATES_CLOSED`
+- `plan_revision`: `v37`
+- `current_frontier`: `R5-MAS-DEVELOPMENT-PACKAGE-WORKSPACE-CLOSURE-CORRECTION`
+- `state`: `R5_MAS_DEVELOPMENT_PACKAGE_READINESS_REOPENED_PRE_SIGNING`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead accepted immutable repository candidate `6fe924d68c7bbb0f560ffbfed1501f67a66e0ea8`, whose exact parent is rejected candidate `ab73a9def158f7e404d4e8e18e1ce06a7b883437`; the accepted correction chain starts from last accepted base `d761a4de816c974357c66690c56948ccdd914aef`. No artifact or external result is accepted by this repository verdict.
+- `candidate`: a new immutable correction candidate is ready for Lead review from exact original/current base `0e37877620ef11c5d590b3d3466c6ea6fd8f11c2`; Lead acceptance remains open and its exact commit is reported at handoff. The historically accepted implementation evidence at `6fe924d68c7bbb0f560ffbfed1501f67a66e0ea8` remains preserved and is not this candidate. No artifact or external result is accepted by this repository verdict.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `pending_ruling`: repository acceptance is closed; the user-selected security-scoped export runtime gate, package/download/sign, launch, monthly purchase, and restore remain later separately authorized work.
+- `failed_proof`: retained root `/private/tmp/meetless-mas-development-proof.i9JfdG`; the authorized dev MAS command failed before MAS signing/manifest because `@meetless/plugin` declared the root-lock workspace link `@meetless/managed-transcription-foundation`, which the fixed local package selection omitted. `/Applications` was untouched and no launch occurred.
+- `pending_ruling`: Lead acceptance of this package-workspace-closure correction remains open; package readiness is reopened at the pre-signing closure boundary. The user-selected security-scoped export runtime gate, package/download/sign, launch, monthly purchase, and restore remain later separately authorized work.
 - `blocked_by`: external gates are closed. No artifact readiness, package/download/sign result, launch result, purchase, restore, App Review, publication, or production deployment is claimed by this correction.
-- `next_action`: await separate owner authorization before any MAS package/download/sign/launch or monthly purchase/restore canary; repository acceptance alone opens no external gate.
+- `next_action`: Lead inspects and accepts the new immutable repository candidate; only afterward, under separate authority, may MAS package/download/sign/launch or monthly purchase/restore work resume. Dependency order otherwise remains unchanged.
 
 ## Ownership And Authority
 
-Date: 2026-08-30; reconciled 2026-08-31
+Date: 2026-08-30; reconciled 2026-09-02
 
 - Owner: `v1-paseo-foundation` owns the managed-transcription foundation contract,
   residual M7, paused `M7-F29-NOTARIZE-STAPLE-VERIFY`, and TCC R3.
@@ -978,7 +979,7 @@ deployment environment passed the current exact HMAC-only allowlist proof; the
 metadata-only audit still reported zero documents in every managed table and
 zero storage objects.
 
-### R5 Mac App Store development packaging correction (2026-09-02)
+### R5 Mac App Store development packaging correction (2026-09-02; historical implementation evidence)
 
 The prior local packaging claim is reopened. This correction closes only the two
 MAS-DEV-001 blockers while keeping the direct DMG composer, direct contract JSON,
@@ -1046,6 +1047,37 @@ matched `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`.
 No checked-in CI workflow or executable local hook invokes the MAS packager;
 branch protection was not queried and was not changed.
 
+### R5 package-workspace-closure correction (2026-09-02; current frontier)
+
+Package readiness is reopened at exact correction base
+`0e37877620ef11c5d590b3d3466c6ea6fd8f11c2` after the retained authorized dev MAS
+proof root `/private/tmp/meetless-mas-development-proof.i9JfdG` failed before MAS
+signing and manifest generation. `@meetless/plugin` declares
+`@meetless/managed-transcription-foundation`; the root lock classifies it as a
+workspace link, but the fixed selective `localPackages` set omitted it.
+`/Applications` was untouched and no launch occurred.
+
+This correction keeps fixed/selective package inclusion, moves the tuple list to
+an import-safe composition helper, adds the foundation tuple with `dist` only,
+and validates every selected package's declared dependency, optional dependency,
+and peer dependency against root-lock workspace links. An omitted local link
+fails with the declaring package, dependency, and `localPackages/selection` next
+action; the check does not auto-include or repair packages. The foundation dist
+and composition helper are bound into generated package-input accounting. No
+package manifest or lockfile change is expected.
+
+Observed repository-only proof for this correction passed on 2026-09-02:
+`npx vitest run --config vitest.config.ts packages/runtime/test/macos-package.test.ts
+--maxWorkers=1` passed 1 file and 32 tests; `node --check` passed for the three
+changed Node modules; and a read-only helper probe passed the full 15-package
+selection with 27 root-lock workspace links. The positive case proves the
+foundation tuple and generated package-input bindings; the negative case proves
+the plugin/foundation omission diagnostic. No package manifest or lockfile was
+changed. The accepted `6fe924d68c7bbb0f560ffbfed1501f67a66e0ea8` implementation
+evidence remains historical; this candidate requires Lead acceptance, and
+external package, signing, launch, purchase, restore, deployment, publication,
+and other gates remain closed. Dependency order otherwise remains unchanged.
+
 ### Risks And Recovery
 
 - App Sandbox may reject the current nested Electron, Node, helper, listener, or
@@ -1092,10 +1124,16 @@ branch protection was not queried and was not changed.
 - Integration: packaged sandbox app with StoreKit/RevenueCat sandbox purchase,
   restore-to-new-installation, device enrollment, and managed transcription.
 - Repository: typecheck, focused tests, build, and a MAS-specific package validator.
-- Current correction proof: target-specific MAS contract/runtime positive and
-  direct-path negative tests, direct-DMG regression, syntax, MAS baseline,
-  typecheck/build, and frozen-authority digest. The MAS packaging entrypoint and
-  all package/download/sign/launch/purchase/restore operations remain unrun.
+- Historical R5 MAS contract/runtime correction proof: target-specific
+  contract/runtime positive and direct-path negative tests, direct-DMG
+  regression, syntax, MAS baseline, typecheck/build, and frozen-authority
+  digest. It remains implementation evidence for accepted candidate
+  `6fe924d68c7bbb0f560ffbfed1501f67a66e0ea8`.
+- Current package-workspace-closure correction proof: the selective tuple
+  preflight's full-list positive case, foundation-tuple omission negative case,
+  generated foundation-dist/helper package-input bindings, focused Vitest, and
+  Node syntax. The MAS packaging entrypoint and all package/download/sign/
+  launch/purchase/restore operations remain unrun.
 - External: App Store Connect processing, App Review submission, and public listing.
 
 Observed predecessor R1 validation on 2026-08-31 (historical, not acceptance evidence):
@@ -1180,6 +1218,22 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v37`: package readiness is reopened at exact
+  correction base `0e37877620ef11c5d590b3d3466c6ea6fd8f11c2` after retained proof
+  root `/private/tmp/meetless-mas-development-proof.i9JfdG` recorded a failure
+  before MAS signing/manifest: `@meetless/plugin` declared the root-lock
+  workspace link `@meetless/managed-transcription-foundation`, but the fixed
+  `localPackages` selection omitted it. `/Applications` was untouched and no
+  launch occurred. The current correction owns selective closure validation,
+  foundation `dist` packaging, and package-input binding; no package manifest or
+  lockfile change is expected. The focused positive/negative regression passed
+  1 file and 32 tests; three changed Node modules passed `node --check`; and a
+  read-only full-selection probe passed 15 selected packages and 27 workspace
+  links. Historical accepted implementation evidence at
+  `6fe924d68c7bbb0f560ffbfed1501f67a66e0ea8` is retained; this new candidate is
+  pending Lead acceptance, external gates remain closed, and dependency order
+  otherwise remains unchanged.
 
 - 2026-09-02 `PLAN_RECONCILIATION v36`: Lead accepted immutable repository
   candidate `6fe924d68c7bbb0f560ffbfed1501f67a66e0ea8`. Lead verified its exact parent
