@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v46`
-- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-5`
-- `state`: `R5_MAS_DEVELOPMENT_EXTERNAL_GATE_READY`
+- `plan_revision`: `v47`
+- `current_frontier`: `R5-MAS-RUNTIME-IPC-ENDPOINT-CORRECTION`
+- `state`: `R5_MAS_LAUNCH_IPC_REOPENED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead accepted immutable entitlement-validation convergence correction `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6`; the v44 Mach-O type-policy correction, accepted profile-signing correction `25257e4c96e743fd56ad80956bb1b31511e2c544`, checkpoint `81c9fe5`, and history through `13f20d2eb49549f72098d103e0a49d1900a9248e` remain preserved. No artifact or external result is accepted by this repository verdict.
+- `candidate`: accepted repository tip `4d7dc17f3710dd4bfb055f242eb7eb4d79697f08`; attempt-5 artifact packaging, Apple Development signing, immutable validation, recoverable installation, exact LaunchServices host start, stop audit, and restoration are observed evidence but not an accepted launch result. The accepted correction history through `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6` remains preserved.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `failed_proof`: FAST closeout accepted the v44 authoritative Mach-O type policy but found two direct defects in the same post-sign validator boundary: NONE-policy evidence projection called `Object.keys(null)` for entitlement-free `MH_BUNDLE`/`MH_DYLIB` objects, and entitlement-result parsing required the known codesign deprecation warning instead of accepting the exact warning-free `Executable=` result. Retained read-only roots `/private/tmp/meetless-mas-development-proof.GNud6q` and `/private/tmp/meetless-mas-development-proof.GpvGZD` remain historical evidence; no package retry is claimed.
-- `pending_ruling`: the owner-authorized gate is open only for dev MAS packaging, Apple Development signing, recoverable local installation, exact local launch, bounded readiness, and inherent RevenueCat public-SDK configure/read behavior. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and every other external gate remain closed.
-- `blocked_by`: no artifact, signing, install, launch, or cleanup result is accepted yet. Purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions remain forbidden.
-- `next_action`: one fresh SERIAL external operator runs package/sign/install/launch attempt 5 from the accepted repository tip, with transactional restoration of the pre-existing installed app and bounded lifecycle cleanup. Dependency order otherwise remains unchanged.
+- `failed_proof`: retained attempt-5 proof root `/private/tmp/meetless-mas-development-proof.D97ICp` contains a fully signed and validated dev MAS artifact. Its exact install and native-signature preflight passed, but the host exited before daemon/renderer readiness because the app-container transcription socket expanded to 113 UTF-8 bytes while the Darwin binding accepts at most 103. The old app was restored exactly. Attempt-created MAS container/group roots, RevenueCat cache, and host lock remain retained evidence. One operator residue listing exposed a full public SDK-key-bearing cache filename; it was not frozen into evidence, but the no-disclosure handling condition was violated and must not be repeated.
+- `pending_ruling`: package and signing readiness remain accepted evidence; launch readiness is reopened only at the packaged runtime IPC endpoint/composition boundary. The binding verdict keeps physical sockets inside the app container, uses short relative endpoint names from one explicit runtime-root working directory across native/Node/Electron, retains canonical absolute paths for filesystem ownership and cleanup, and removes independent `/private/tmp` fallbacks. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and every other external gate remain closed.
+- `blocked_by`: no bounded runtime-readiness result is accepted. Native, Node, Electron, and renderer endpoint agreement must pass clean synthetic long-ASCII/Unicode-home composition proof before another package/install/launch attempt. Purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions remain forbidden.
+- `next_action`: one SERIAL vertical correction owns the versioned packaged IPC endpoint representation, native/Node/Electron composition, direct-DMG preservation, deterministic ownership/cleanup checks, focused proof, and plan reconciliation. Only after Lead acceptance may a fresh external attempt proceed.
 
 ## Ownership And Authority
 
@@ -1354,6 +1354,24 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v47`: attempt 5 from accepted tip
+  `4d7dc17f3710dd4bfb055f242eb7eb4d79697f08` successfully packaged, Apple
+  Development signed, validated, transactionally installed, and started the
+  exact native host, then reopened before runtime readiness because the MAS
+  app-container transcription socket expanded to 113 UTF-8 bytes against the
+  103-byte Darwin address limit. The pre-existing app was restored exactly and
+  all owned processes, listeners, sockets, and install transaction paths were
+  released. Two independent foundation judgments rejected a filename-only
+  fix; Lead selected short relative packaged endpoint names resolved from one
+  explicit app-container runtime-root working directory, while retaining
+  canonical absolute paths for ownership and cleanup. Native, Node, Electron,
+  and renderer must consume the same versioned composition; the independent
+  `/private/tmp` recording fallback is removed, durable app-container state and
+  direct-DMG behavior remain unchanged, and clean long-ASCII/Unicode-home proof
+  is required. The public SDK-key-bearing residue listing is recorded as an
+  operational evidence-handling violation; no RevenueCat mutation or rotation
+  is authorized. Every excluded external gate remains closed.
 
 - 2026-09-02 `PLAN_RECONCILIATION v46`: Lead accepted immutable convergence
   correction `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6` after personally
