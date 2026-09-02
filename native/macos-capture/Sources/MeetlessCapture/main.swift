@@ -496,17 +496,186 @@ private final class Runtime: @unchecked Sendable {
   }
 }
 
+private let hostProcessProtocolVersion = 1
+private let hostProcessProtocolFrameBytes = 16 * 1024
+
+private func attestPackagedCaptureHelper() throws {
+  let environment = ProcessInfo.processInfo.environment
+  guard environment["MEETLESS_RUNTIME_PACKAGED"] == "1" else { return }
+  guard environment["MEETLESS_HOST_PROCESS_ROLE"] == "capture-helper",
+        let runtimeRoot = environment["MEETLESS_RUNTIME_ROOT"],
+        let endpointName = environment["MEETLESS_HOST_PROCESS_ENDPOINT"],
+        let generationText = environment["MEETLESS_HOST_PROCESS_GENERATION"],
+        let registrationToken = environment["MEETLESS_HOST_PROCESS_TOKEN"],
+        let generation = UInt64(generationText),
+        generation > 0,
+        validCaptureHelperEndpointName(endpointName),
+        !registrationToken.isEmpty,
+        registrationToken == registrationToken.trimmingCharacters(in: .whitespacesAndNewlines),
+        !registrationToken.contains("\0") else {
+    throw NSError(domain: "MeetlessCapture", code: 30, userInfo: [NSLocalizedDescriptionKey: "packaged native host attestation context is incomplete"])
+  }
+  let root = URL(fileURLWithPath: runtimeRoot).standardizedFileURL.path
+  guard root.hasPrefix("/"),
+        URL(fileURLWithPath: FileManager.default.currentDirectoryPath).standardizedFileURL.path == root else {
+    throw NSError(domain: "MeetlessCapture", code: 31, userInfo: [NSLocalizedDescriptionKey: "packaged native host attestation working directory is invalid"])
+  }
+  let socketPath = URL(fileURLWithPath: root).appendingPathComponent(endpointName).standardizedFileURL.path
+  let requestId = UUID().uuidString
+  let request: [String: Any] = [
+    "version": hostProcessProtocolVersion,
+    "requestId": requestId,
+    "operation": "processAttestation",
+    "generation": generation,
+    "registrationToken": registrationToken,
+    "role": "capture-helper",
+  ]
+  var lastFailure: Error?
+  for attempt in 0..<200 {
+    do {
+      let response = try hostProcessProtocolRequest(socketPath: socketPath, request: request)
+      guard hostProcessAttestationResponseIsValid(
+        response,
+        requestId: requestId,
+        generation: generation
+      ) else {
+        throw NSError(domain: "MeetlessCapture", code: 32, userInfo: [NSLocalizedDescriptionKey: "native host process attestation response is invalid"])
+      }
+      return
+    } catch {
+      lastFailure = error
+      if attempt < 199 { usleep(25_000) }
+    }
+  }
+  throw lastFailure ?? NSError(domain: "MeetlessCapture", code: 33, userInfo: [NSLocalizedDescriptionKey: "native host process attestation timed out"])
+}
+
+private func validCaptureHelperEndpointName(_ value: String) -> Bool {
+  !value.isEmpty &&
+    value == value.trimmingCharacters(in: .whitespacesAndNewlines) &&
+    value.utf8.count <= 103 &&
+    !value.hasPrefix("/") &&
+    !value.contains("\\") &&
+    !value.contains("\0") &&
+    !value.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == "." || $0 == ".." })
+}
+
+private func hostProcessProtocolRequest(
+  socketPath: String,
+  request: [String: Any]
+) throws -> [String: Any] {
+  guard let data = try? JSONSerialization.data(withJSONObject: request),
+        data.count < hostProcessProtocolFrameBytes else {
+    throw NSError(domain: "MeetlessCapture", code: 34, userInfo: [NSLocalizedDescriptionKey: "native host process request is outside the bounded frame"])
+  }
+  let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+  guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+  defer {
+    shutdown(descriptor, SHUT_RDWR)
+    Darwin.close(descriptor)
+  }
+  var timeout = timeval(tv_sec: 2, tv_usec: 0)
+  _ = setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+  _ = setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+  var address = sockaddr_un()
+  address.sun_family = sa_family_t(AF_UNIX)
+  let pathBytes = Array(socketPath.utf8) + [0]
+  guard pathBytes.count <= MemoryLayout.size(ofValue: address.sun_path) else {
+    throw NSError(domain: "MeetlessCapture", code: 35, userInfo: [NSLocalizedDescriptionKey: "native host process endpoint exceeds the Darwin socket limit"])
+  }
+  withUnsafeMutableBytes(of: &address.sun_path) { buffer in buffer.copyBytes(from: pathBytes) }
+  let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + pathBytes.count)
+  let connected = withUnsafePointer(to: &address) { pointer in
+    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(descriptor, $0, addressLength) }
+  }
+  guard connected == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+  var framed = data
+  framed.append(0x0a)
+  try framed.withUnsafeBytes { raw in
+    var offset = 0
+    while offset < raw.count {
+      let written = Darwin.write(descriptor, raw.baseAddress!.advanced(by: offset), raw.count - offset)
+      guard written > 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+      offset += written
+    }
+  }
+  guard let line = readHostProcessProtocolLine(descriptor),
+        let responseData = line.data(using: .utf8),
+        let response = try JSONSerialization.jsonObject(with: responseData) as? [String: Any] else {
+    throw NSError(domain: "MeetlessCapture", code: 36, userInfo: [NSLocalizedDescriptionKey: "native host process response is invalid"])
+  }
+  return response
+}
+
+private func readHostProcessProtocolLine(_ descriptor: Int32) -> String? {
+  var data = Data()
+  var byte: UInt8 = 0
+  while data.count < hostProcessProtocolFrameBytes {
+    let count = Darwin.read(descriptor, &byte, 1)
+    if count <= 0 { return nil }
+    if byte == 0x0a { return String(data: data, encoding: .utf8) }
+    data.append(byte)
+  }
+  return nil
+}
+
+private func hostProcessAttestationResponseIsValid(
+  _ response: [String: Any],
+  requestId: String,
+  generation: UInt64
+) -> Bool {
+  guard response["version"] as? Int == hostProcessProtocolVersion,
+        response["type"] as? String == "host.process.attestation",
+        response["requestId"] as? String == requestId,
+        response["ok"] as? Bool == true,
+        response["role"] as? String == "capture-helper",
+        (response["processPid"] as? NSNumber)?.int32Value == getpid(),
+        (response["generation"] as? NSNumber)?.uint64Value == generation,
+        let identity = response["identity"] as? [String: Any],
+        let host = response["host"] as? [String: Any],
+        processIdentityResponseIsComplete(identity),
+        host["bundleIdentifier"] as? String == "com.meetless.app" else {
+    return false
+  }
+  return true
+}
+
+private func processIdentityResponseIsComplete(_ identity: [String: Any]) -> Bool {
+  guard let configuredPath = identity["configuredPath"] as? String,
+        let realPath = identity["realPath"] as? String,
+        let digest = identity["sha256"] as? String,
+        let argv = identity["argv"] as? [String],
+        !configuredPath.isEmpty,
+        !realPath.isEmpty,
+        !digest.isEmpty,
+        !argv.isEmpty,
+        argv.count <= 32 else { return false }
+  return true
+}
+
 private let timelineFixture = CommandLine.arguments.contains("--timeline-fixture")
 private let invalidClaimFixture = CommandLine.arguments.contains("--invalid-claim-fixture")
 private let jitterFixture = CommandLine.arguments.contains("--jitter-fixture")
 private let backwardPTSFixture = CommandLine.arguments.contains("--backward-pts-fixture")
+private let environmentFixture = ProcessInfo.processInfo.environment["MEETLESS_CAPTURE_MODE"] == "fixture"
 private let runtime = Runtime(
-  fixture: CommandLine.arguments.contains("--fixture") || timelineFixture || invalidClaimFixture || jitterFixture || backwardPTSFixture,
+  fixture: environmentFixture || CommandLine.arguments.contains("--fixture") || timelineFixture || invalidClaimFixture || jitterFixture || backwardPTSFixture,
   timelineFixture: timelineFixture,
   invalidClaimFixture: invalidClaimFixture,
   jitterFixture: jitterFixture,
   backwardPTSFixture: backwardPTSFixture
 )
+if ProcessInfo.processInfo.environment["MEETLESS_RUNTIME_PACKAGED"] == "1" && runtimeFixtureArgumentsPresent() {
+  diagnostic("packaged native capture helper rejects fixture or wrapper arguments")
+  exit(1)
+}
+if ProcessInfo.processInfo.environment["MEETLESS_RUNTIME_PACKAGED"] == "1" {
+  do { try attestPackagedCaptureHelper() }
+  catch {
+    diagnostic("packaged native capture helper could not attest through MeetlessHost")
+    exit(1)
+  }
+}
 while let line = readLine() {
   guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
   do {
@@ -518,3 +687,7 @@ while let line = readLine() {
   }
 }
 runtime.shutdown(interrupted: true)
+
+private func runtimeFixtureArgumentsPresent() -> Bool {
+  timelineFixture || invalidClaimFixture || jitterFixture || backwardPTSFixture || CommandLine.arguments.contains("--fixture")
+}

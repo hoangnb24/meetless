@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { z } from "zod";
 import type { CommittedRecordingChunk } from "@meetless/meeting-domain";
@@ -28,6 +29,7 @@ export interface CaptureHelperOptions {
   fixture: boolean;
   arguments?: string[];
   startTimeoutMs?: number;
+  registerProcess?: (childPid: number, registrationToken: string) => Promise<() => Promise<void>>;
   onChunk(chunk: CommittedRecordingChunk): Promise<void>;
   onFailure(reason: string): Promise<void>;
   onDiagnostic?(line: string): void;
@@ -42,20 +44,23 @@ export class CaptureHelper {
   private expectedExit = false;
   private failed = false;
   private started = false;
+  private releaseRegistration: (() => Promise<void>) | null = null;
 
   constructor(private readonly options: CaptureHelperOptions) {}
 
   get pid(): number | null { return this.child?.pid ?? null; }
   get executable(): string { return this.options.executable; }
   get arguments(): readonly string[] {
+    if (this.options.registerProcess) return this.options.arguments ?? [];
     return this.options.arguments ?? (this.options.fixture ? ["--fixture"] : []);
   }
 
   async start(): Promise<void> {
     if (this.child) throw new Error("Capture helper is already running");
+    const registrationToken = this.options.registerProcess ? randomUUID() : null;
     const child = spawn(this.options.executable, this.arguments, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { PATH: process.env.PATH },
+      env: this.childEnvironment(registrationToken),
     });
     this.child = child;
     child.stdout.setEncoding("utf8");
@@ -70,9 +75,24 @@ export class CaptureHelper {
       void this.eventTail.finally(() => {
         this.child = null;
         this.rejectWaiters(new Error(`Capture helper exited (${code ?? signal ?? "unknown"})`));
-        if (!this.expectedExit) void this.fail(`capture helper exited unexpectedly (${code ?? signal ?? "unknown"}): ${this.stderr}`);
+        return this.releaseChildRegistration().finally(() => {
+          if (!this.expectedExit) void this.fail(`capture helper exited unexpectedly (${code ?? signal ?? "unknown"}): ${this.stderr}`);
+        });
       });
     });
+    if (this.options.registerProcess) {
+      if (!child.pid || !registrationToken) {
+        child.kill("SIGKILL");
+        throw new Error("capture helper did not expose a child PID for native registration");
+      }
+      try {
+        this.releaseRegistration = await this.options.registerProcess(child.pid, registrationToken);
+      } catch (error) {
+        this.expectedExit = true;
+        child.kill("SIGTERM");
+        throw error;
+      }
+    }
     await this.commandAndWait(
       "started",
       { version: 1, command: "start", sessionDirectory: this.options.sessionDirectory, elapsedMs: 0 },
@@ -106,6 +126,40 @@ export class CaptureHelper {
     child.kill("SIGKILL");
     if (!(await this.waitForExit(2_000))) throw new Error(`Capture helper ${child.pid ?? "unknown"} did not exit after SIGKILL`);
     await this.drainEvents();
+  }
+
+  private childEnvironment(registrationToken: string | null): NodeJS.ProcessEnv {
+    const path = process.env.PATH;
+    if (!this.options.registerProcess) return path ? { PATH: path } : {};
+    const required = [
+      "MEETLESS_RUNTIME_PACKAGED",
+      "MEETLESS_RUNTIME_ROOT",
+      "MEETLESS_HOST_PROCESS_ENDPOINT",
+    ] as const;
+    const environment: NodeJS.ProcessEnv = path ? { PATH: path } : {};
+    for (const key of required) {
+      const value = process.env[key];
+      if (!value) throw new Error(`packaged capture helper environment is missing ${key}`);
+      environment[key] = value;
+    }
+    if (process.env.MEETLESS_CAPTURE_MODE === "fixture") environment.MEETLESS_CAPTURE_MODE = "fixture";
+    const generation = process.env.MEETLESS_HOST_PROCESS_GENERATION;
+    if (!generation || !registrationToken) throw new Error("packaged capture helper registration context is incomplete");
+    environment.MEETLESS_HOST_PROCESS_GENERATION = generation;
+    environment.MEETLESS_HOST_PROCESS_TOKEN = registrationToken;
+    environment.MEETLESS_HOST_PROCESS_ROLE = "capture-helper";
+    return environment;
+  }
+
+  private async releaseChildRegistration(): Promise<void> {
+    const release = this.releaseRegistration;
+    this.releaseRegistration = null;
+    if (!release) return;
+    try {
+      await release();
+    } catch (error) {
+      this.options.onDiagnostic?.(`capture-helper native registration release failed: ${describe(error)}`);
+    }
   }
 
   private commandAndWait(event: string, command: Record<string, unknown>, timeoutMs = 30_000): Promise<void> {
@@ -184,6 +238,10 @@ export class CaptureHelper {
   private async drainEvents(): Promise<void> {
     await this.eventTail;
   }
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

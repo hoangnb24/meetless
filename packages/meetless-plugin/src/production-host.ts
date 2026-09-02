@@ -2,8 +2,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFile, realpath, stat } from "node:fs/promises";
 import net from "node:net";
+import path from "node:path";
 import { z } from "zod";
 import { runtimeEndpoint } from "./runtime-endpoints.js";
+import {
+  requestHostProcessProtocol,
+  type HostIdentityAttestation,
+  type HostProcessIdentity,
+  type HostProcessPolicy,
+} from "./readiness-protocol.js";
 
 const AUTHORITY = "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md and docs/decisions/0004-recording-host-and-capture-permission-boundary.md";
 const HostIdentitySchema = z.object({
@@ -41,11 +48,29 @@ const defaultDependencies: ProductionHostDependencies = {
   inspectCode: inspectCodeIdentity,
 };
 
+interface PackagedProcessAuthority {
+  generation: number;
+  registrationToken: string;
+  identity: HostProcessIdentity;
+}
+
+const packagedProcessAuthorities = new WeakMap<object, PackagedProcessAuthority>();
+
 export async function assertProductionHostProvenance(
   environment: NodeJS.ProcessEnv = process.env,
   pluginPid = process.pid,
   dependencies: ProductionHostDependencies = defaultDependencies,
 ): Promise<void> {
+  const packaged = environment.MEETLESS_RUNTIME_PACKAGED === "1" ||
+    environment.MEETLESS_HOST_PROCESS_ENDPOINT !== undefined ||
+    environment.MEETLESS_HOST_EXPECTED_NODE_PATH !== undefined;
+  if (packaged) {
+    if (environment.MEETLESS_RUNTIME_PACKAGED !== "1") {
+      throw hostFailure("packaged plugin environment is missing the host-provided packaged marker");
+    }
+    await assertPackagedPluginProvenance(environment, pluginPid);
+    return;
+  }
   if (environment.MEETLESS_CAPTURE_MODE === "fixture") return;
   const hostPid = Number(environment.MEETLESS_HOST_PID);
   const bundlePath = environment.MEETLESS_HOST_BUNDLE_PATH?.trim();
@@ -90,6 +115,248 @@ export async function assertProductionHostProvenance(
     throw hostFailure("the live host CDHash/designated requirement differs from the installed identity");
   }
 }
+
+export async function registerPackagedCaptureHelper(
+  childPid: number,
+  registrationToken: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<() => Promise<void>> {
+  if (environment.MEETLESS_RUNTIME_PACKAGED !== "1") {
+    throw hostFailure("capture-helper registration requires the host-provided packaged runtime");
+  }
+  const authority = await requirePackagedProcessAuthority(environment);
+  if (!Number.isInteger(childPid) || childPid <= 1 || !validToken(registrationToken)) {
+    throw hostFailure("capture-helper registration has an invalid child PID or registration token");
+  }
+  const expectedPath = requiredPackagedEnvironment(environment, "MEETLESS_HOST_EXPECTED_CAPTURE_HELPER_PATH");
+  const expected = await configuredProcessIdentity(expectedPath, [expectedPath]);
+  const policy = packagedProcessPolicy(environment);
+  const response = await requestHostProcessProtocol(
+    runtimeEndpoint(environment, "transcription").bindArgument,
+    {
+      version: 1,
+      requestId: randomUUID(),
+      operation: "registerChild",
+      generation: authority.generation,
+      ownerToken: authority.registrationToken,
+      registrationToken,
+      role: "capture-helper",
+      childPid,
+      expectedIdentity: expected,
+      policy,
+    },
+  );
+  if (
+    response.type !== "host.process.registration" ||
+    response.role !== "capture-helper" ||
+    response.processPid !== childPid ||
+    response.generation !== authority.generation ||
+    response.registrationToken !== registrationToken
+  ) {
+    throw hostFailure("native capture-helper registration is not bound to the spawned child and launch generation");
+  }
+  return async () => {
+    const release = await requestHostProcessProtocol(
+      runtimeEndpoint(environment, "transcription").bindArgument,
+      {
+        version: 1,
+        requestId: randomUUID(),
+        operation: "releaseChild",
+        generation: authority.generation,
+        ownerToken: authority.registrationToken,
+        childPid,
+      },
+    );
+    if (
+      release.type !== "host.process.release" ||
+      release.processPid !== childPid ||
+      release.generation !== authority.generation
+    ) {
+      throw hostFailure("native capture-helper release is not bound to the registered child and launch generation");
+    }
+  };
+}
+
+async function requirePackagedProcessAuthority(environment: NodeJS.ProcessEnv): Promise<PackagedProcessAuthority> {
+  const cached = packagedProcessAuthorities.get(environment);
+  if (cached) return cached;
+  const authority = await assertPackagedPluginProvenance(environment, process.pid);
+  const resolved = authority ?? packagedProcessAuthorities.get(environment);
+  if (!resolved) throw hostFailure("packaged plugin attestation did not establish a native process authority");
+  return resolved;
+}
+
+async function assertPackagedPluginProvenance(
+  environment: NodeJS.ProcessEnv,
+  pluginPid: number,
+): Promise<PackagedProcessAuthority | undefined> {
+  const cached = packagedProcessAuthorities.get(environment);
+  if (cached) {
+    if (pluginPid !== process.pid) throw hostFailure("packaged plugin attestation PID differs from this process");
+    return cached;
+  }
+  const generation = positiveInteger(environment.MEETLESS_HOST_PROCESS_GENERATION);
+  const ownerToken = requiredPackagedEnvironment(environment, "MEETLESS_HOST_PROCESS_TOKEN");
+  const expectedNodePath = requiredPackagedEnvironment(environment, "MEETLESS_HOST_EXPECTED_NODE_PATH");
+  const expectedPluginPath = requiredPackagedEnvironment(environment, "MEETLESS_HOST_EXPECTED_PLUGIN_PATH");
+  const expectedArguments = parseExpectedPluginArguments(environment, expectedNodePath, expectedPluginPath);
+  const expected = await configuredProcessIdentity(expectedNodePath, expectedArguments);
+  const policy = packagedProcessPolicy(environment);
+  const registrationToken = randomUUID();
+  const socketPath = runtimeEndpoint(environment, "transcription").bindArgument;
+  const registration = await requestHostProcessProtocol(socketPath, {
+    version: 1,
+    requestId: randomUUID(),
+    operation: "registerChild",
+    generation,
+    ownerToken,
+    registrationToken,
+    role: "plugin",
+    childPid: pluginPid,
+    expectedIdentity: expected,
+    policy,
+  });
+  if (
+    registration.type !== "host.process.registration" ||
+    registration.role !== "plugin" ||
+    registration.processPid !== pluginPid ||
+    registration.generation !== generation ||
+    registration.registrationToken !== registrationToken
+  ) {
+    throw hostFailure("native plugin registration is not bound to this process and launch generation");
+  }
+  const attestation = await requestHostProcessProtocol(socketPath, {
+    version: 1,
+    requestId: randomUUID(),
+    operation: "processAttestation",
+    generation,
+    registrationToken,
+    role: "plugin",
+  });
+  const hostIdentity = await readPackagedHostIdentity(environment);
+  if (
+    attestation.type !== "host.process.attestation" ||
+    attestation.role !== "plugin" ||
+    attestation.processPid !== pluginPid ||
+    attestation.generation !== generation
+  ) {
+    throw hostFailure("native plugin attestation is not bound to this process and launch generation");
+  }
+  assertProcessIdentity(attestation.identity, expected, "plugin");
+  assertHostIdentityAttestation(attestation.host, hostIdentity);
+  const authority: PackagedProcessAuthority = { generation, registrationToken, identity: attestation.identity };
+  packagedProcessAuthorities.set(environment, authority);
+  return authority;
+}
+
+function packagedProcessPolicy(environment: NodeJS.ProcessEnv): HostProcessPolicy {
+  const recording = runtimeEndpoint(environment, "recording");
+  const transcription = runtimeEndpoint(environment, "transcription");
+  if (recording.workingDirectory !== transcription.workingDirectory) {
+    throw hostFailure("packaged endpoint working directories differ");
+  }
+  return {
+    runtimeRoot: transcription.workingDirectory,
+    endpointPolicy: "MEETLESS_RUNTIME_ENDPOINTS v1",
+    endpointWorkingDirectory: "runtime-root",
+    recordingEndpointName: recording.name,
+    transcriptionEndpointName: transcription.name,
+  };
+}
+
+function parseExpectedPluginArguments(
+  environment: NodeJS.ProcessEnv,
+  expectedNodePath: string,
+  expectedPluginPath: string,
+): string[] {
+  const raw = requiredPackagedEnvironment(environment, "MEETLESS_HOST_EXPECTED_PLUGIN_ARGV");
+  let decoded: unknown;
+  try { decoded = JSON.parse(raw); } catch { throw hostFailure("packaged plugin argv policy is not valid JSON"); }
+  if (
+    !Array.isArray(decoded) ||
+    decoded.length !== 3 ||
+    decoded[0] !== expectedNodePath ||
+    decoded[1] !== expectedPluginPath ||
+    decoded[2] !== "daemon" ||
+    decoded.some((value) => typeof value !== "string" || !value || value !== value.trim() || value.includes("\0"))
+  ) {
+    throw hostFailure("packaged plugin argv policy is incomplete or differs from the native host policy");
+  }
+  return decoded;
+}
+
+async function readPackagedHostIdentity(environment: NodeJS.ProcessEnv): Promise<HostIdentity> {
+  const identityPath = requiredPackagedEnvironment(environment, "MEETLESS_HOST_IDENTITY_PATH");
+  try { return HostIdentitySchema.parse(JSON.parse(await readFile(identityPath, "utf8"))); }
+  catch (error) { throw hostFailure(`cannot read the native host identity: ${describe(error)}`); }
+}
+
+async function configuredProcessIdentity(executable: string, argv: string[]): Promise<HostProcessIdentity> {
+  if (
+    !path.isAbsolute(executable) ||
+    !argv.length ||
+    argv.some((argument) => !path.isAbsolute(argument) && argument !== "daemon" && argument !== "desktop" && argument !== "plugin") ||
+    argv.some((argument) => !argument || argument !== argument.trim() || argument.includes("\0"))
+  ) {
+    throw hostFailure("packaged process identity contains an empty, whitespace, or non-absolute field");
+  }
+  const [info, realPath, bytes] = await Promise.all([stat(executable), realpath(executable), readFile(executable)]);
+  return {
+    configuredPath: path.resolve(executable),
+    realPath,
+    device: info.dev,
+    inode: info.ino,
+    byteLength: info.size,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    argv,
+  };
+}
+
+function assertProcessIdentity(actual: HostProcessIdentity, expected: HostProcessIdentity, role: string): void {
+  if (
+    actual.configuredPath !== expected.configuredPath ||
+    actual.realPath !== expected.realPath ||
+    actual.device !== expected.device ||
+    actual.inode !== expected.inode ||
+    actual.byteLength !== expected.byteLength ||
+    actual.sha256 !== expected.sha256 ||
+    actual.argv.length !== expected.argv.length ||
+    actual.argv.some((argument, index) => argument !== expected.argv[index])
+  ) throw hostFailure(`native ${role} executable identity or argv differs from the configured package resource`);
+}
+
+function assertHostIdentityAttestation(actual: HostIdentityAttestation, expected: HostIdentity): void {
+  if (
+    actual.bundleIdentifier !== expected.bundleIdentifier ||
+    actual.bundlePath !== expected.bundlePath ||
+    actual.bundleRealPath !== expected.bundleRealPath ||
+    actual.executablePath !== expected.executablePath ||
+    actual.designatedRequirement !== expected.designatedRequirement ||
+    actual.cdHash !== expected.cdHash ||
+    actual.binarySha256 !== expected.binarySha256 ||
+    actual.binaryDevice !== expected.binaryDevice ||
+    actual.binaryInode !== expected.binaryInode ||
+    actual.binarySize !== expected.binarySize
+  ) throw hostFailure("native host attestation differs from the recorded installed host identity");
+}
+
+function positiveInteger(value: string | undefined): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) throw hostFailure("packaged process generation is invalid");
+  return parsed;
+}
+
+function requiredPackagedEnvironment(environment: NodeJS.ProcessEnv, key: string): string {
+  const value = environment[key]?.trim();
+  if (!value) throw hostFailure(`packaged process environment is missing ${key}`);
+  return value;
+}
+
+function validToken(value: string): boolean {
+  return value.length > 0 && value === value.trim() && value.length <= 4096 && !value.includes("\0");
+}
+
+type HostIdentity = z.infer<typeof HostIdentitySchema>;
 
 export async function assertCapturePermissionsReady(environment: NodeJS.ProcessEnv = process.env): Promise<void> {
   if (environment.MEETLESS_CAPTURE_MODE === "fixture") return;

@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v54`
-- `current_frontier`: `R5-MAS-DEV-PROCESS-INSPECTOR-DIAG-002-CORRECTION`
-- `state`: `R5_MAS_PROCESS_INSPECTOR_DIAG_002_CORRECTION_PENDING_LEAD_REVIEW`
+- `plan_revision`: `v55`
+- `current_frontier`: `R5-MAS-PACKAGED-HOST-ATTESTATION-REGISTRATION-001`
+- `state`: `R5_MAS_PACKAGED_HOST_ATTESTATION_REGISTRATION_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable DIAG-002 correction from exact parent/base `a6a46a56aeeff15a3b02f73a69a1566a1e5a8fd1`; candidate commit placeholder is `<immutable-candidate-commit-pending>`. Original correction base `eabdaceab58c2f984f9b8f3a617f9d9da2c97a6c`, accepted host identity/context correction, Lead-accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a`, liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`, and integration checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3` remain preserved.
+- `candidate`: pending immutable packaged host-attestation/registration candidate from exact parent/base `c69f26ee500e7cfa403139a99a4d81ed0b1ef5bf`; candidate commit placeholder is `<immutable-candidate-commit-pending>`. The accepted DIAG-002 correction, host identity/context history, Lead-accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a`, liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`, and integration checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3` remain preserved.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `failed_proof`: retained attempt-7 root `/private/tmp/meetless-mas-development-proof.lPh2Bk` reached packaged sandbox-inherit Node after the accepted identity correction passed semantic equality, but logged only the masked diagnostic `Cannot read properties of undefined (reading 'trim')`. The original spawn failure fields were not retained, so no underlying errno, code, or sandbox cause is proven. The signed thin arm64 helper’s static presence, executability, and signature do not prove MAS spawnability; no artifact child execution is claimed here. Attempt-5/6 package, install, launch, restoration, and disclosure-handling evidence remains preserved as historical context.
-- `pending_ruling`: FAST closeout accepted DIAG-001, DIAG-003, and DIAG-004 and reopened only DIAG-002. This repository-only bounded stream-metadata correction is pending Lead review. After acceptance, exactly one controlled diagnostic MAS retry may decide whether the existing native argv inspector runs; no replacement topology or fallback is authorized. Purchase, restore, premium/provider actions, Convex, production, upload, submission, publication, App Review, and every other external gate remain closed.
-- `blocked_by`: no implementation dependency remains; no package, sign, install, launch-readiness, lifecycle, cleanup, or external result is accepted by this candidate.
-- `next_action`: Lead reviews the immutable child candidate from exact parent/base `a6a46a56aeeff15a3b02f73a69a1566a1e5a8fd1`; only after acceptance may the owner route one controlled diagnostic MAS retry.
+- `failed_proof`: attempt 8 validly packaged, signed, installed, and reached the LaunchServices topology. Sandboxed desktop PID `46289` failed before the argv helper with `command="ps" purpose="parent PID for 46289" error.code="EPERM" errno=-1 syscall="spawnSync ps" status/signal null` and absent stdout/stderr. The exact proof root `/private/tmp/meetless-mas-development-proof.tY0GlP` and diagnostic evidence `/private/tmp/meetless-mas-diagnostic.SnLDCy` remain read-only evidence; artifact/evidence roots were not inspected for secrets or cache child names.
+- `pending_ruling`: the accepted diagnostic correction and exact attempt-8 EPERM evidence reopen the packaged runtime boundary. This repository-only candidate extends the existing native transcription capability with generation-bound host process attestation and owner-held child registration, preserving fail-closed host ownership, process roles, executable identities, argv boundaries, startup order, and cleanup. It is pending Lead review. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
+- `blocked_by`: no safe in-scope implementation dependency remains; no package, sign, install, launch, or external result is accepted by this candidate.
+- `next_action`: Lead reviews the immutable candidate from exact parent/base `c69f26ee500e7cfa403139a99a4d81ed0b1ef5bf`; only after acceptance may any separately authorized external packaged verification be considered.
 
 ## Ownership And Authority
 
@@ -1210,6 +1210,45 @@ passed 41 tests; `npm run typecheck`, `npm run validate:macos:app-store`, both
 changed Node syntax checks, and `git diff --check` passed. No broad signing
 fixture, package command, signing retry, install, launch, retained-root replay,
 secret access, or external action was run for this convergence correction.
+
+### R5 MAS packaged host-attestation and child-registration boundary (2026-09-03; current frontier)
+
+`PLAN_RECONCILIATION v55` accepts the c69f diagnostic correction and records
+the exact attempt-8 packaged evidence. Attempt 8 validly packaged, signed,
+installed, and launched through LaunchServices; sandboxed desktop PID `46289`
+failed before the native argv helper because `ps` returned
+`command="ps" purpose="parent PID for 46289" error.code="EPERM" errno=-1 syscall="spawnSync ps" status/signal null`,
+with stdout and stderr absent. The exact proof root
+`/private/tmp/meetless-mas-development-proof.tY0GlP` and diagnostic evidence
+`/private/tmp/meetless-mas-diagnostic.SnLDCy` remain read-only. Artifact and
+evidence roots were not inspected for secrets or cache child names.
+
+The candidate starts at exact base `c69f26ee500e7cfa403139a99a4d81ed0b1ef5bf`
+and keeps authority digest
+`fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
+unchanged. It extends the existing authenticated transcription-capability
+Unix socket with a bounded, versioned protocol: native LOCAL_PEERPID
+authentication, exact desktop attestation, one-launch-generation host policy,
+desktop-owned child registration, and registered-process self-attestation.
+The native host validates exact configured and real executable identity,
+device/inode/size/hash, argv, direct parent, role, endpoint policy, runtime
+root, tokens, request IDs, and generation. Runtime and plugin packaged paths
+consume this provider exclusively; development/static inspection retains its
+existing native/system-tool adapters. RecordingService remains the capture
+helper lifecycle and permission owner, with helper registration/readiness
+before capture start. Startup cancellation, bounded shutdown, child exit, and
+listener cleanup release registrations and processes fail closed.
+
+Pure policy, native transport, exact desktop attestation, full
+desktop/daemon/plugin/helper registration, replay/conflict/wrong-peer/stale-
+generation/identity/argv/wrapper/empty-argument/replaced-process negatives,
+packaged source-level forbidden-tool proof, native helper attestation, capture
+lifecycle, focused runtime/plugin behavior, Swift builds/tests, typecheck,
+build, syntax, package-contract, node, and diff checks are required and remain
+repository-only evidence. No package/sign/install/launch retry, artifact child
+execution, external mutation, secret/cache inspection, or push is part of this
+frontier. The frontier and candidate remain pending Lead review; all external
+gates stay closed.
 
 ### Risks And Recovery
 

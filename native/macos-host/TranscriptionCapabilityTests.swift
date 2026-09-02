@@ -352,6 +352,606 @@ private func testBoundedRequestLine() {
   check(readBoundedLine(descriptors[1], maximumBytes: 32) == nil, "oversized request line must be rejected")
 }
 
+private func nativeProcessFixtureExecutable() throws -> String {
+  try inspectMeetlessProcessIdentity(getpid()).configuredPath
+}
+
+private func requestNativeHostProcessProtocol(
+  socketPath: String,
+  request: [String: Any]
+) throws -> [String: Any] {
+  guard let data = try? JSONSerialization.data(withJSONObject: request),
+        data.count < meetlessMaximumRequestLineBytes else {
+    throw NSError(domain: "MeetlessHostTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "request exceeds the bounded frame"])
+  }
+  let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+  guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+  defer {
+    shutdown(descriptor, SHUT_RDWR)
+    close(descriptor)
+  }
+  var address = sockaddr_un()
+  address.sun_family = sa_family_t(AF_UNIX)
+  let pathBytes = Array(socketPath.utf8) + [0]
+  guard pathBytes.count <= MemoryLayout.size(ofValue: address.sun_path) else {
+    throw NSError(domain: "MeetlessHostTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "socket path exceeds the Darwin limit"])
+  }
+  withUnsafeMutableBytes(of: &address.sun_path) { buffer in buffer.copyBytes(from: pathBytes) }
+  let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + pathBytes.count)
+  let connected = withUnsafePointer(to: &address) { pointer in
+    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(descriptor, $0, addressLength) }
+  }
+  guard connected == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+  var framed = data
+  framed.append(0x0a)
+  try framed.withUnsafeBytes { raw in
+    var offset = 0
+    while offset < raw.count {
+      let written = Darwin.write(descriptor, raw.baseAddress!.advanced(by: offset), raw.count - offset)
+      guard written > 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+      offset += written
+    }
+  }
+  guard let line = readBoundedLine(descriptor, maximumBytes: meetlessMaximumRequestLineBytes),
+        let responseData = line.data(using: .utf8),
+        let response = try JSONSerialization.jsonObject(with: responseData) as? [String: Any] else {
+    throw NSError(domain: "MeetlessHostTests", code: 3, userInfo: [NSLocalizedDescriptionKey: "host process response is invalid"])
+  }
+  return response
+}
+
+private func writeNativeProcessFixturePID(_ root: String, role: String, pid: pid_t) {
+  let path = URL(fileURLWithPath: root).appendingPathComponent("\(role).pid")
+  try? Data(String(pid).utf8).write(to: path, options: .atomic)
+}
+
+private func runNativeProcessFixture(_ role: String) {
+  let environment = ProcessInfo.processInfo.environment
+  if role == "desktop",
+     environment["MEETLESS_NATIVE_PROCESS_PROTOCOL_ONLY"] == "1",
+     let socketPath = environment["MEETLESS_NATIVE_PROCESS_PROTOCOL_SOCKET"],
+     let responsePath = environment["MEETLESS_NATIVE_PROCESS_PROTOCOL_RESPONSE"] {
+    let request: [String: Any] = [
+      "version": meetlessHostProcessProtocolVersion,
+      "requestId": "transport-desktop-request",
+      "operation": "desktopAttestation",
+      "challenge": "transport-desktop-challenge",
+    ]
+    var response: [String: Any]?
+    for attempt in 0..<200 {
+      if let candidate = try? requestNativeHostProcessProtocol(socketPath: socketPath, request: request),
+         candidate["ok"] as? Bool == true {
+        response = candidate
+        break
+      }
+      if attempt < 199 { usleep(25_000) }
+    }
+    if let response,
+       let data = try? JSONSerialization.data(withJSONObject: response) {
+      try? data.write(to: URL(fileURLWithPath: responsePath), options: .atomic)
+    }
+    while true { sleep(1) }
+  }
+  if role != "capture-helper",
+     let root = environment["MEETLESS_NATIVE_FIXTURE_PID_ROOT"],
+     let executable = try? nativeProcessFixtureExecutable(),
+     let runtimeCli = environment["MEETLESS_NATIVE_FIXTURE_RUNTIME_CLI"],
+     let pluginPath = environment["MEETLESS_NATIVE_FIXTURE_PLUGIN_PATH"] {
+    let childRole = role == "desktop" ? "daemon" : role == "daemon" ? "plugin" : "capture-helper"
+    let childArguments = childRole == "plugin"
+      ? [pluginPath, "daemon"]
+      : childRole == "capture-helper"
+      ? []
+      : [runtimeCli, childRole]
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: executable)
+    child.arguments = childArguments
+    var childEnvironment = environment
+    childEnvironment["MEETLESS_NATIVE_PROCESS_FIXTURE"] = childRole
+    child.environment = childEnvironment
+    child.standardInput = FileHandle.nullDevice
+    child.standardOutput = FileHandle.nullDevice
+    child.standardError = FileHandle.nullDevice
+    do {
+      try child.run()
+      writeNativeProcessFixturePID(root, role: childRole, pid: child.processIdentifier)
+      child.waitUntilExit()
+    } catch {
+      exit(2)
+    }
+  }
+  while true { sleep(1) }
+}
+
+private func readNativeProcessFixturePID(_ root: String, role: String) -> pid_t? {
+  let path = URL(fileURLWithPath: root).appendingPathComponent("\(role).pid")
+  guard let value = try? String(contentsOf: path).trimmingCharacters(in: .whitespacesAndNewlines),
+        let pid = Int32(value),
+        pid > 1 else { return nil }
+  return pid
+}
+
+private func replacingProcessIdentity(
+  _ identity: MeetlessProcessIdentity,
+  configuredPath: String? = nil,
+  realPath: String? = nil,
+  device: Int? = nil,
+  inode: Int? = nil,
+  byteLength: Int? = nil,
+  sha256: String? = nil,
+  argv: [String]? = nil
+) -> MeetlessProcessIdentity {
+  MeetlessProcessIdentity(
+    configuredPath: configuredPath ?? identity.configuredPath,
+    realPath: realPath ?? identity.realPath,
+    device: device ?? identity.device,
+    inode: inode ?? identity.inode,
+    byteLength: byteLength ?? identity.byteLength,
+    sha256: sha256 ?? identity.sha256,
+    argv: argv ?? identity.argv
+  )
+}
+
+private func waitForNativeProcessFixturePID(_ root: String, role: String) -> pid_t? {
+  let deadline = Date().addingTimeInterval(3)
+  while Date() < deadline {
+    if let pid = readNativeProcessFixturePID(root, role: role) { return pid }
+    usleep(10_000)
+  }
+  return nil
+}
+
+private func terminateNativeProcessFixture(_ pid: pid_t?) {
+  guard let pid, pid > 1 else { return }
+  _ = kill(pid, SIGTERM)
+  usleep(50_000)
+  _ = kill(pid, SIGKILL)
+}
+
+private func waitForNativeProcessFixtureExit(_ pid: pid_t) {
+  let deadline = Date().addingTimeInterval(2)
+  while nativeProcessIsAlive(pid) && Date() < deadline { usleep(10_000) }
+}
+
+private func nativeProcessIsAlive(_ pid: pid_t) -> Bool {
+  guard pid > 1 else { return false }
+  if kill(pid, 0) == 0 { return true }
+  return errno == EPERM
+}
+
+private func testNativeProcessProtocolTransport() throws {
+  let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("meetless-process-transport-\(UUID().uuidString)")
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let executable = try nativeProcessFixtureExecutable()
+  let socketPath = root.appendingPathComponent("transcription.sock").path
+  let runtimeCli = root.appendingPathComponent("runtime-cli.js").path
+  let pluginPath = root.appendingPathComponent("daemon-worker.js").path
+  let policy = MeetlessProcessRegistrationPolicy(
+    runtimeRoot: root.path,
+    endpointPolicy: meetlessRuntimeEndpointSchema,
+    endpointWorkingDirectory: meetlessRuntimeEndpointWorkingDirectory,
+    recordingEndpointName: "recording.sock",
+    transcriptionEndpointName: "transcription.sock",
+    nodePath: executable,
+    runtimeCliPath: runtimeCli,
+    pluginPath: pluginPath,
+    pluginArguments: [executable, pluginPath, "daemon"],
+    captureHelperPath: executable
+  )
+  let hostIdentity = MeetlessHostIdentityAttestation(
+    bundleIdentifier: "com.meetless.app",
+    bundlePath: "/Applications/Meetless.app",
+    bundleRealPath: "/Applications/Meetless.app",
+    executablePath: "/Applications/Meetless.app/Contents/MacOS/MeetlessHost",
+    designatedRequirement: "fixture",
+    cdHash: String(repeating: "a", count: 40),
+    binarySha256: String(repeating: "b", count: 64),
+    binaryDevice: 1,
+    binaryInode: 1,
+    binarySize: 1
+  )
+  let state = RuntimeAuthorizationState()
+  let capability = MeetlessTranscriptionCapability(
+    socketPath: socketPath,
+    stagingDirectory: root.appendingPathComponent("ranges").path,
+    runtimeAuthorization: state,
+    keychain: FakeKeychain(),
+    processPolicy: policy,
+    hostIdentity: hostIdentity,
+    hostPID: getpid()
+  )
+  try capability.start()
+  defer { capability.stop() }
+  let responsePath = root.appendingPathComponent("desktop-attestation.json").path
+  var environment = ProcessInfo.processInfo.environment
+  environment["MEETLESS_NATIVE_PROCESS_FIXTURE"] = "desktop"
+  environment["MEETLESS_NATIVE_PROCESS_PROTOCOL_ONLY"] = "1"
+  environment["MEETLESS_NATIVE_PROCESS_PROTOCOL_SOCKET"] = socketPath
+  environment["MEETLESS_NATIVE_PROCESS_PROTOCOL_RESPONSE"] = responsePath
+  let desktop = Process()
+  desktop.executableURL = URL(fileURLWithPath: executable)
+  desktop.arguments = [runtimeCli, "desktop"]
+  desktop.environment = environment
+  desktop.standardInput = FileHandle.nullDevice
+  desktop.standardOutput = FileHandle.nullDevice
+  desktop.standardError = FileHandle.nullDevice
+  try desktop.run()
+  defer { terminateNativeProcessFixture(desktop.processIdentifier) }
+  state.publish(desktop.processIdentifier)
+  let deadline = Date().addingTimeInterval(5)
+  var response: [String: Any]?
+  while Date() < deadline {
+    if let data = try? Data(contentsOf: URL(fileURLWithPath: responsePath)),
+       let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+      response = decoded
+      break
+    }
+    usleep(10_000)
+  }
+  guard let response else {
+    check(false, "desktop attestation must cross the authenticated native capability socket")
+    return
+  }
+  check(response["type"] as? String == "host.process.attestation", "transport desktop response must be a typed attestation")
+  check(response["ok"] as? Bool == true, "transport desktop response must be successful")
+  check((response["processPid"] as? NSNumber)?.int32Value == desktop.processIdentifier, "transport attestation must bind the socket peer PID")
+  check(response["challenge"] as? String == "transport-desktop-challenge", "transport attestation must echo the exact challenge")
+  check((response["ownerToken"] as? String)?.isEmpty == false, "transport attestation must issue a bounded owner token")
+  let wrongPeer = try requestNativeHostProcessProtocol(
+    socketPath: socketPath,
+    request: [
+      "version": meetlessHostProcessProtocolVersion,
+      "requestId": "transport-wrong-peer",
+      "operation": "desktopAttestation",
+      "challenge": "transport-wrong-peer-challenge",
+    ]
+  )
+  check(wrongPeer["ok"] as? Bool == false, "a different socket peer must be rejected before desktop attestation")
+  capability.stop()
+  waitForNativeProcessFixtureExit(desktop.processIdentifier)
+  check(state.snapshot() == nil, "capability shutdown must release the launch generation")
+}
+
+private func testPackagedProcessRegistrationChain() throws {
+  let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("meetless-process-chain-\(UUID().uuidString)")
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let executable = try nativeProcessFixtureExecutable()
+  let runtimeCli = root.appendingPathComponent("runtime-cli.js").path
+  let pluginPath = root.appendingPathComponent("daemon-worker.js").path
+  let policy = MeetlessProcessRegistrationPolicy(
+    runtimeRoot: root.path,
+    endpointPolicy: meetlessRuntimeEndpointSchema,
+    endpointWorkingDirectory: meetlessRuntimeEndpointWorkingDirectory,
+    recordingEndpointName: "recording.sock",
+    transcriptionEndpointName: "transcription.sock",
+    nodePath: executable,
+    runtimeCliPath: runtimeCli,
+    pluginPath: pluginPath,
+    pluginArguments: [executable, pluginPath, "daemon"],
+    captureHelperPath: executable
+  )
+  let wirePolicy = MeetlessHostProcessPolicyWire(
+    runtimeRoot: policy.runtimeRoot,
+    endpointPolicy: policy.endpointPolicy,
+    endpointWorkingDirectory: policy.endpointWorkingDirectory,
+    recordingEndpointName: policy.recordingEndpointName,
+    transcriptionEndpointName: policy.transcriptionEndpointName
+  )
+  let hostIdentity = MeetlessHostIdentityAttestation(
+    bundleIdentifier: "com.meetless.app",
+    bundlePath: "/Applications/Meetless.app",
+    bundleRealPath: "/Applications/Meetless.app",
+    executablePath: "/Applications/Meetless.app/Contents/MacOS/MeetlessHost",
+    designatedRequirement: "fixture",
+    cdHash: String(repeating: "a", count: 40),
+    binarySha256: String(repeating: "b", count: 64),
+    binaryDevice: 1,
+    binaryInode: 1,
+    binarySize: 1
+  )
+  let environmentRoot = root.path
+  var environment = ProcessInfo.processInfo.environment
+  environment["MEETLESS_NATIVE_PROCESS_FIXTURE"] = "desktop"
+  environment["MEETLESS_NATIVE_FIXTURE_PID_ROOT"] = environmentRoot
+  environment["MEETLESS_NATIVE_FIXTURE_RUNTIME_CLI"] = runtimeCli
+  environment["MEETLESS_NATIVE_FIXTURE_PLUGIN_PATH"] = pluginPath
+  let desktop = Process()
+  desktop.executableURL = URL(fileURLWithPath: executable)
+  desktop.arguments = [runtimeCli, "desktop"]
+  desktop.environment = environment
+  desktop.standardInput = FileHandle.nullDevice
+  desktop.standardOutput = FileHandle.nullDevice
+  desktop.standardError = FileHandle.nullDevice
+  try desktop.run()
+  defer {
+    let helperPID = readNativeProcessFixturePID(environmentRoot, role: "capture-helper")
+    let pluginPID = readNativeProcessFixturePID(environmentRoot, role: "plugin")
+    let daemonPID = readNativeProcessFixturePID(environmentRoot, role: "daemon")
+    terminateNativeProcessFixture(helperPID)
+    terminateNativeProcessFixture(pluginPID)
+    terminateNativeProcessFixture(daemonPID)
+    terminateNativeProcessFixture(desktop.processIdentifier)
+  }
+  let desktopPID = desktop.processIdentifier
+  let state = RuntimeAuthorizationState()
+  state.configure(processPolicy: policy, hostIdentity: hostIdentity, hostPID: getpid())
+  state.publish(desktopPID)
+  guard let desktopAttestation = state.attestDesktop(peerPID: desktopPID, requestId: "desktop-request", challenge: "desktop-challenge") else {
+    check(false, "packaged desktop must complete the exact challenge-bound attestation")
+    return
+  }
+  check(
+    state.attestDesktop(peerPID: desktopPID, requestId: "desktop-replay", challenge: "desktop-challenge") == nil,
+    "desktop attestation challenge replay must be rejected"
+  )
+  guard let daemonPID = waitForNativeProcessFixturePID(environmentRoot, role: "daemon"),
+        let daemonIdentity = try? inspectMeetlessProcessIdentity(daemonPID) else {
+    check(false, "desktop fixture must spawn a daemon child with inspectable identity")
+    return
+  }
+  let daemonToken = "daemon-registration-token"
+  func registerDaemon(
+    requestId: String,
+    generation: UInt64? = nil,
+    peerPID: pid_t? = nil,
+    ownerToken: String? = nil,
+    role: String = "daemon",
+    childPID: pid_t? = nil,
+    expectedIdentity: MeetlessProcessIdentity? = nil,
+    policy: MeetlessHostProcessPolicyWire? = nil
+  ) -> Bool {
+    state.registerChild(
+      peerPID: peerPID ?? desktopPID,
+      requestId: requestId,
+      generation: generation ?? desktopAttestation.generation,
+      ownerToken: ownerToken ?? desktopAttestation.ownerToken,
+      registrationToken: daemonToken,
+      role: role,
+      childPID: childPID ?? daemonPID,
+      expectedIdentity: expectedIdentity ?? daemonIdentity,
+      policy: policy ?? wirePolicy
+    ) != nil
+  }
+  check(!registerDaemon(requestId: "stale-generation", generation: desktopAttestation.generation + 1), "stale daemon registration generation must be rejected")
+  check(
+    !registerDaemon(
+      requestId: "wrong-runtime-root",
+      policy: MeetlessHostProcessPolicyWire(
+        runtimeRoot: "/private/wrong-runtime-root",
+        endpointPolicy: wirePolicy.endpointPolicy,
+        endpointWorkingDirectory: wirePolicy.endpointWorkingDirectory,
+        recordingEndpointName: wirePolicy.recordingEndpointName,
+        transcriptionEndpointName: wirePolicy.transcriptionEndpointName
+      )
+    ),
+    "wrong runtime-root policy must be rejected"
+  )
+  check(
+    !registerDaemon(
+      requestId: "wrong-endpoint-policy",
+      policy: MeetlessHostProcessPolicyWire(
+        runtimeRoot: wirePolicy.runtimeRoot,
+        endpointPolicy: "MEETLESS_RUNTIME_ENDPOINTS v0",
+        endpointWorkingDirectory: wirePolicy.endpointWorkingDirectory,
+        recordingEndpointName: wirePolicy.recordingEndpointName,
+        transcriptionEndpointName: wirePolicy.transcriptionEndpointName
+      )
+    ),
+    "wrong endpoint policy version must be rejected"
+  )
+  check(!registerDaemon(
+    requestId: "wrong-configured-path",
+    expectedIdentity: replacingProcessIdentity(daemonIdentity, configuredPath: "/private/wrong-node")
+  ), "wrong configured executable path must be rejected")
+  check(!registerDaemon(
+    requestId: "wrong-real-path",
+    expectedIdentity: replacingProcessIdentity(daemonIdentity, realPath: "/private/wrong-node")
+  ), "wrong executable real path must be rejected")
+  check(!registerDaemon(
+    requestId: "wrong-device",
+    expectedIdentity: replacingProcessIdentity(daemonIdentity, device: daemonIdentity.device + 1)
+  ), "wrong executable device must be rejected")
+  check(!registerDaemon(
+    requestId: "wrong-inode",
+    expectedIdentity: replacingProcessIdentity(daemonIdentity, inode: daemonIdentity.inode + 1)
+  ), "wrong executable inode must be rejected")
+  check(!registerDaemon(
+    requestId: "wrong-size",
+    expectedIdentity: replacingProcessIdentity(daemonIdentity, byteLength: daemonIdentity.byteLength + 1)
+  ), "wrong executable size must be rejected")
+  check(!registerDaemon(
+    requestId: "wrong-hash",
+    expectedIdentity: replacingProcessIdentity(
+      daemonIdentity,
+      sha256: daemonIdentity.sha256 == String(repeating: "f", count: 64)
+        ? String(repeating: "e", count: 64)
+        : String(repeating: "f", count: 64)
+    )
+  ), "wrong executable hash must be rejected")
+  check(!registerDaemon(
+    requestId: "wrapper-argv",
+    expectedIdentity: replacingProcessIdentity(daemonIdentity, argv: [executable, runtimeCli, "daemon", "--wrapper"])
+  ), "wrapper argv must be rejected")
+  check(!registerDaemon(
+    requestId: "empty-argv",
+    expectedIdentity: replacingProcessIdentity(daemonIdentity, argv: [executable, runtimeCli, ""])
+  ), "empty argv fields must be rejected")
+  check(!registerDaemon(
+    requestId: "whitespace-argv",
+    expectedIdentity: replacingProcessIdentity(daemonIdentity, argv: [executable, runtimeCli, " "])
+  ), "whitespace argv fields must be rejected")
+  check(!registerDaemon(requestId: "unknown-role", role: "unknown"), "unknown process roles must be rejected")
+  check(!registerDaemon(requestId: "direct-daemon-peer", peerPID: getpid()), "direct daemon registration from an unrelated peer must be rejected")
+  guard let daemonRegistration = state.registerChild(
+    peerPID: desktopPID,
+    requestId: "daemon-registration",
+    generation: desktopAttestation.generation,
+    ownerToken: desktopAttestation.ownerToken,
+    registrationToken: daemonToken,
+    role: "daemon",
+    childPID: daemonPID,
+    expectedIdentity: daemonIdentity,
+    policy: wirePolicy
+  ) else {
+    check(false, "desktop must register only its exact daemon child")
+    return
+  }
+  check(daemonRegistration.pid == daemonPID, "daemon registration must preserve the spawned child PID")
+  check(!registerDaemon(requestId: "conflicting-daemon-registration"), "conflicting duplicate child registration must be rejected")
+  check(!registerDaemon(requestId: "replayed-daemon-registration"), "replayed child registration request must be rejected")
+  guard let daemonAttestation = state.attestRegisteredProcess(
+    peerPID: daemonPID,
+    requestId: "daemon-attestation",
+    generation: desktopAttestation.generation,
+    registrationToken: daemonToken,
+    role: "daemon"
+  ) else {
+    check(false, "daemon must attest from its registered peer PID")
+    return
+  }
+  check(
+    state.attestRegisteredProcess(
+      peerPID: daemonPID,
+      requestId: "daemon-replay",
+      generation: desktopAttestation.generation,
+      registrationToken: daemonToken,
+      role: "daemon"
+    ) == nil,
+    "daemon attestation replay must be rejected"
+  )
+  guard let pluginPID = waitForNativeProcessFixturePID(environmentRoot, role: "plugin"),
+        let pluginIdentity = try? inspectMeetlessProcessIdentity(pluginPID) else {
+    check(false, "daemon fixture must spawn a plugin child with inspectable identity")
+    return
+  }
+  check(liveParentPID(pluginPID) == daemonPID, "plugin fixture must remain a direct daemon child")
+  check(pluginIdentity.configuredPath == executable, "plugin fixture executable identity must match the node path")
+  check(pluginIdentity.argv == [executable, pluginPath, "daemon"], "plugin fixture argv must match the worker entrypoint")
+  let pluginToken = "plugin-registration-token"
+  guard state.registerChild(
+    peerPID: pluginPID,
+    requestId: "plugin-registration",
+    generation: daemonAttestation.generation,
+    ownerToken: daemonToken,
+    registrationToken: pluginToken,
+    role: "plugin",
+    childPID: pluginPID,
+    expectedIdentity: pluginIdentity,
+    policy: wirePolicy
+  ) != nil else {
+    check(false, "a plugin may self-register only through its attested daemon parent token")
+    return
+  }
+  guard state.attestRegisteredProcess(
+    peerPID: pluginPID,
+    requestId: "plugin-attestation",
+    generation: desktopAttestation.generation,
+    registrationToken: pluginToken,
+    role: "plugin"
+  ) != nil else {
+    check(false, "plugin must attest from its own registered peer PID")
+    return
+  }
+  guard let helperPID = waitForNativeProcessFixturePID(environmentRoot, role: "capture-helper"),
+        let helperIdentity = try? inspectMeetlessProcessIdentity(helperPID) else {
+    check(false, "plugin fixture must spawn a capture helper child with inspectable identity")
+    return
+  }
+  let helperToken = "helper-registration-token"
+  check(
+    state.registerChild(
+      peerPID: pluginPID,
+      requestId: "helper-registration",
+      generation: desktopAttestation.generation,
+      ownerToken: pluginToken,
+      registrationToken: helperToken,
+      role: "capture-helper",
+      childPID: helperPID,
+      expectedIdentity: helperIdentity,
+      policy: wirePolicy
+    ) != nil,
+    "plugin must register its recording-service-owned helper"
+  )
+  check(
+    state.registerChild(
+      peerPID: getpid(),
+      requestId: "wrong-peer-registration",
+      generation: desktopAttestation.generation,
+      ownerToken: desktopAttestation.ownerToken,
+      registrationToken: "wrong-peer-token",
+      role: "capture-helper",
+      childPID: helperPID,
+      expectedIdentity: helperIdentity,
+      policy: wirePolicy
+    ) == nil,
+    "wrong registration peer must be rejected"
+  )
+  check(
+    !state.releaseChild(
+      peerPID: daemonPID,
+      requestId: "unowned-helper-release",
+      generation: desktopAttestation.generation,
+      ownerToken: daemonToken,
+      childPID: helperPID
+    ),
+    "unowned helper cleanup must be rejected"
+  )
+  guard let registrations = state.registrationStatus(
+    peerPID: desktopPID,
+    requestId: "registration-status",
+    generation: desktopAttestation.generation,
+    ownerToken: desktopAttestation.ownerToken
+  ) else {
+    check(false, "desktop must inspect only the current launch generation registrations")
+    return
+  }
+  check(registrations.count == 3, "desktop status must retain daemon, plugin, and helper registration state")
+  check(
+    state.releaseChild(
+      peerPID: pluginPID,
+      requestId: "helper-release",
+      generation: desktopAttestation.generation,
+      ownerToken: pluginToken,
+      childPID: helperPID
+    ),
+    "plugin must release its helper registration on helper shutdown"
+  )
+  guard let afterHelperRelease = state.registrationStatus(
+    peerPID: desktopPID,
+    requestId: "registration-status-after-helper-release",
+    generation: desktopAttestation.generation,
+    ownerToken: desktopAttestation.ownerToken
+  ) else {
+    check(false, "desktop status must remain available after owned helper release")
+    return
+  }
+  check(afterHelperRelease.count == 2, "owned helper release must remove only the helper registration")
+  terminateNativeProcessFixture(daemonPID)
+  waitForNativeProcessFixtureExit(daemonPID)
+  guard let afterReplacement = state.registrationStatus(
+    peerPID: desktopPID,
+    requestId: "registration-status-after-replacement",
+    generation: desktopAttestation.generation,
+    ownerToken: desktopAttestation.ownerToken
+  ) else {
+    check(false, "desktop status must remain bounded after a registered process exits")
+    return
+  }
+  check(!afterReplacement.contains(where: { $0.pid == daemonPID }), "replaced or exited registered processes must be removed")
+  state.clear()
+  check(
+    state.registrationStatus(
+      peerPID: desktopPID,
+      requestId: "stale-status",
+      generation: desktopAttestation.generation,
+      ownerToken: desktopAttestation.ownerToken
+    ) == nil,
+    "shutdown must remove all launch-generation registration state"
+  )
+}
+
 private func testRealSocketStatusResponse() throws {
   let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("m3sock-\(getpid())-\(UUID().uuidString.prefix(8))")
   let socketPath = root.appendingPathComponent("transcription.sock").path
@@ -1071,6 +1671,10 @@ private func testLegacyIdentityMigrationBoundary() {
 @main
 private struct TranscriptionCapabilityTests {
   static func main() {
+    if let fixtureRole = ProcessInfo.processInfo.environment["MEETLESS_NATIVE_PROCESS_FIXTURE"] {
+      runNativeProcessFixture(fixtureRole)
+      return
+    }
     testLaunchCoordinatorLifecycle()
     testAppStoreContainerRuntimeResolutionBoundary()
     testPackagedSignaturePolicyBoundary()
@@ -1080,6 +1684,14 @@ private struct TranscriptionCapabilityTests {
     }
     testPeerAncestry()
     testBoundedRequestLine()
+    do { try testNativeProcessProtocolTransport() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: native process protocol transport: \(error)\n".utf8))
+    }
+    do { try testPackagedProcessRegistrationChain() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: packaged process registration chain: \(error)\n".utf8))
+    }
     do { try testRealSocketStatusResponse() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: real socket status: \(error)\n".utf8))

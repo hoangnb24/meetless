@@ -9,6 +9,8 @@ import {
   RecordingRuntimeBootstrapOutputSchema,
   RecordingRuntimeReadinessResponseSchema,
   type CollisionEvidence,
+  type HostProcessIdentity,
+  type HostProcessRegistration,
   type RecordingRuntimeReadinessResponse,
 } from "@meetless/plugin/readiness-protocol";
 import WebSocket from "ws";
@@ -499,6 +501,9 @@ async function inspectOwnedRuntime(
 ): Promise<{ lock: NonNullable<Awaited<ReturnType<typeof readPidLock>>>; daemonPid: number }> {
   const lock = await readPidLock(config.paths.pidLock);
   if (!lock) throw readinessFailure("supervisor identity", config, new Error("PID lock is unavailable"));
+  if (isPackagedAttestationRuntime(config)) {
+    return inspectPackagedOwnedRuntime(config, lock, attestation, daemonPlugin);
+  }
   const live = inspectLiveProcess({
     pid: lock.pid,
     expectedListen: config.listen,
@@ -527,6 +532,88 @@ async function inspectOwnedRuntime(
     processes,
   });
   return { lock, daemonPid };
+}
+
+async function inspectPackagedOwnedRuntime(
+  config: RuntimeConfig,
+  lock: NonNullable<Awaited<ReturnType<typeof readPidLock>>>,
+  attestation: RecordingRuntimeReadinessResponse,
+  daemonPlugin: DaemonMeetlessPluginAttestation,
+): Promise<{ lock: NonNullable<Awaited<ReturnType<typeof readPidLock>>>; daemonPid: number }> {
+  if (!lock.desktopManaged || (lock.listen !== null && lock.listen !== config.listen) || !isRunning(lock.pid)) {
+    throw readinessFailure(
+      "packaged supervisor attestation",
+      config,
+      new Error("the PID lock is not a live desktop-managed process for the configured endpoint"),
+    );
+  }
+  const { inspectPackagedRegistrations } = await import("./host.js");
+  const registrations = await inspectPackagedRegistrations(config);
+  const daemon = registrationFor(registrations, "daemon", lock.pid);
+  if (!daemon?.attested) {
+    throw readinessFailure(
+      "packaged daemon attestation",
+      config,
+      new Error(`the desktop launch generation has no attested daemon registration for PID ${lock.pid}`),
+    );
+  }
+  const plugin = registrationFor(registrations, "plugin", daemonPlugin.pluginPid);
+  if (!plugin?.attested || plugin.pid !== attestation.runtime.pluginPid) {
+    throw readinessFailure(
+      "packaged plugin attestation",
+      config,
+      new Error(`the desktop launch generation has no attested plugin registration for PID ${attestation.runtime.pluginPid}`),
+    );
+  }
+  const helperPid = attestation.runtime.capture.helperPid;
+  if (helperPid !== null) {
+    const helper = registrationFor(registrations, "capture-helper", helperPid);
+    if (!helper?.attested || !sameRegisteredIdentity(helper.identity, attestation.runtime.capture.executable, attestation.runtime.capture.arguments)) {
+      throw readinessFailure(
+        "packaged capture-helper attestation",
+        config,
+        new Error(`the desktop launch generation has no matching attested capture-helper registration for PID ${helperPid}`),
+      );
+    }
+  }
+  return { lock, daemonPid: lock.pid };
+}
+
+function isPackagedAttestationRuntime(config: RuntimeConfig): boolean {
+  return config.packaged && config.endpoints.mode === "packaged";
+}
+
+function registrationFor(
+  registrations: HostProcessRegistration[],
+  role: HostProcessRegistration["role"],
+  pid: number,
+): HostProcessRegistration | undefined {
+  return registrations.find((registration) => registration.role === role && registration.pid === pid);
+}
+
+function sameRegisteredIdentity(
+  identity: HostProcessIdentity,
+  executable: RecordingRuntimeReadinessResponse["runtime"]["capture"]["executable"],
+  arguments_: string[],
+): boolean {
+  const expectedArguments = [executable.configuredPath, ...arguments_];
+  return identity.configuredPath === executable.configuredPath &&
+    identity.realPath === executable.realPath &&
+    identity.device === executable.device &&
+    identity.inode === executable.inode &&
+    identity.byteLength === executable.byteLength &&
+    identity.sha256 === executable.sha256 &&
+    identity.argv.length === expectedArguments.length &&
+    identity.argv.every((argument, index) => argument === expectedArguments[index]);
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
 }
 
 export function assertPreOwnerRecordingReady(report: RuntimeReadinessReport): void {

@@ -15,6 +15,9 @@ let meetlessMaximumRangeFileBytes: Int64 = 25_000_000
 let meetlessRuntimeEndpointSchema = "MEETLESS_RUNTIME_ENDPOINTS v1"
 let meetlessRuntimeEndpointWorkingDirectory = "runtime-root"
 let meetlessDarwinUnixSocketPathBytes = 103
+let meetlessHostProcessProtocolVersion = 1
+let meetlessMaximumProcessArgumentCount = 32
+let meetlessMaximumProcessFieldBytes = 16 * 1024
 
 struct MeetlessRuntimeEndpointDescriptor: Codable, Equatable {
   let role: String
@@ -29,6 +32,100 @@ struct MeetlessRuntimeEndpointComposition: Codable, Equatable {
   let workingDirectory: String
   let recording: MeetlessRuntimeEndpointDescriptor
   let transcription: MeetlessRuntimeEndpointDescriptor
+}
+
+struct MeetlessHostIdentityAttestation: Codable, Equatable {
+  let bundleIdentifier: String
+  let bundlePath: String
+  let bundleRealPath: String
+  let executablePath: String
+  let designatedRequirement: String
+  let cdHash: String
+  let binarySha256: String
+  let binaryDevice: Int
+  let binaryInode: Int
+  let binarySize: Int
+}
+
+struct MeetlessProcessIdentity: Codable, Equatable {
+  let configuredPath: String
+  let realPath: String
+  let device: Int
+  let inode: Int
+  let byteLength: Int
+  let sha256: String
+  let argv: [String]
+}
+
+struct MeetlessProcessRegistrationPolicy: Equatable {
+  let runtimeRoot: String
+  let endpointPolicy: String
+  let endpointWorkingDirectory: String
+  let recordingEndpointName: String
+  let transcriptionEndpointName: String
+  let nodePath: String
+  let runtimeCliPath: String
+  let pluginPath: String
+  let pluginArguments: [String]
+  let captureHelperPath: String
+}
+
+struct MeetlessHostProcessPolicyWire: Codable, Equatable {
+  let runtimeRoot: String
+  let endpointPolicy: String
+  let endpointWorkingDirectory: String
+  let recordingEndpointName: String
+  let transcriptionEndpointName: String
+}
+
+struct MeetlessProcessIdentityWire: Codable, Equatable {
+  let configuredPath: String
+  let realPath: String
+  let device: Int
+  let inode: Int
+  let byteLength: Int
+  let sha256: String
+  let argv: [String]
+
+  var identity: MeetlessProcessIdentity {
+    MeetlessProcessIdentity(
+      configuredPath: configuredPath,
+      realPath: realPath,
+      device: device,
+      inode: inode,
+      byteLength: byteLength,
+      sha256: sha256,
+      argv: argv
+    )
+  }
+}
+
+struct MeetlessProcessRegistrationStatus: Codable {
+  let role: String
+  let pid: Int32
+  let attested: Bool
+  let identity: MeetlessProcessIdentityWire
+}
+
+struct MeetlessDesktopAttestationResult {
+  let generation: UInt64
+  let ownerToken: String
+  let identity: MeetlessProcessIdentity
+  let hostIdentity: MeetlessHostIdentityAttestation
+}
+
+struct MeetlessChildRegistrationResult {
+  let generation: UInt64
+  let role: String
+  let pid: Int32
+  let registrationToken: String
+}
+
+struct MeetlessRegisteredProcessAttestationResult {
+  let generation: UInt64
+  let role: String
+  let identity: MeetlessProcessIdentity
+  let hostIdentity: MeetlessHostIdentityAttestation
 }
 
 func meetlessPackagedEndpoint(
@@ -99,6 +196,8 @@ final class MeetlessTranscriptionCapability {
   private let leaseIssued: (() -> Void)?
   private let capturePermissions: MeetlessCapturePermissionAccess
   private let premium: MeetlessPremiumPurchaseAccess
+  private let processPolicy: MeetlessProcessRegistrationPolicy?
+  private var registrationReaper: DispatchSourceTimer?
   private let acceptQueue = DispatchQueue(label: "com.meetless.transcription-capability.accept", qos: .userInitiated)
   private let requestQueue = DispatchQueue(label: "com.meetless.transcription-capability.request", qos: .userInitiated, attributes: .concurrent)
   private let lifecycleLock = NSLock()
@@ -121,7 +220,10 @@ final class MeetlessTranscriptionCapability {
     leaseIssued: (() -> Void)? = nil,
     capturePermissions: MeetlessCapturePermissionAccess = MeetlessCapturePermissions(),
     premium: MeetlessPremiumPurchaseAccess = MeetlessRevenueCatPurchaseAccess(),
-    managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability()
+    managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability(),
+    processPolicy: MeetlessProcessRegistrationPolicy? = nil,
+    hostIdentity: MeetlessHostIdentityAttestation? = nil,
+    hostPID: pid_t = getpid()
   ) {
     self.endpoint = endpoint
     self.workingDirectory = URL(fileURLWithPath: workingDirectory).standardizedFileURL.path
@@ -134,6 +236,14 @@ final class MeetlessTranscriptionCapability {
     self.capturePermissions = capturePermissions
     self.premium = premium
     self.managedAuth = managedAuth
+    self.processPolicy = processPolicy
+    if let processPolicy, let hostIdentity {
+      runtimeAuthorization.configure(
+        processPolicy: processPolicy,
+        hostIdentity: hostIdentity,
+        hostPID: hostPID
+      )
+    }
   }
 
   convenience init(
@@ -147,7 +257,10 @@ final class MeetlessTranscriptionCapability {
     leaseIssued: (() -> Void)? = nil,
     capturePermissions: MeetlessCapturePermissionAccess = MeetlessCapturePermissions(),
     premium: MeetlessPremiumPurchaseAccess = MeetlessRevenueCatPurchaseAccess(),
-    managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability()
+    managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability(),
+    processPolicy: MeetlessProcessRegistrationPolicy? = nil,
+    hostIdentity: MeetlessHostIdentityAttestation? = nil,
+    hostPID: pid_t = getpid()
   ) {
     let canonicalPath = URL(fileURLWithPath: socketPath).standardizedFileURL.path
     self.init(
@@ -166,7 +279,10 @@ final class MeetlessTranscriptionCapability {
       leaseIssued: leaseIssued,
       capturePermissions: capturePermissions,
       premium: premium,
-      managedAuth: managedAuth
+      managedAuth: managedAuth,
+      processPolicy: processPolicy,
+      hostIdentity: hostIdentity,
+      hostPID: hostPID
     )
   }
 
@@ -182,7 +298,10 @@ final class MeetlessTranscriptionCapability {
     leaseIssued: (() -> Void)? = nil,
     capturePermissions: MeetlessCapturePermissionAccess = MeetlessCapturePermissions(),
     premium: MeetlessPremiumPurchaseAccess = MeetlessRevenueCatPurchaseAccess(),
-    managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability()
+    managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability(),
+    processPolicy: MeetlessProcessRegistrationPolicy? = nil,
+    hostIdentity: MeetlessHostIdentityAttestation? = nil,
+    hostPID: pid_t = getpid()
   ) {
     self.init(
       endpoint: endpoint,
@@ -195,7 +314,10 @@ final class MeetlessTranscriptionCapability {
       leaseIssued: leaseIssued,
       capturePermissions: capturePermissions,
       premium: premium,
-      managedAuth: managedAuth
+      managedAuth: managedAuth,
+      processPolicy: processPolicy,
+      hostIdentity: hostIdentity,
+      hostPID: hostPID
     )
   }
 
@@ -255,6 +377,11 @@ final class MeetlessTranscriptionCapability {
       stopped = false
       listener = descriptor
       lifecycleLock.unlock()
+      let reaper = DispatchSource.makeTimerSource(queue: requestQueue)
+      reaper.schedule(deadline: .now() + .milliseconds(250), repeating: .milliseconds(250))
+      reaper.setEventHandler { [weak self] in self?.runtimeAuthorization.pruneDeadRegistrations() }
+      reaper.resume()
+      registrationReaper = reaper
       acceptQueue.async { [weak self] in self?.acceptLoop() }
     } catch {
       lifecycleLock.lock()
@@ -275,6 +402,8 @@ final class MeetlessTranscriptionCapability {
 
   func stop() {
     runtimeAuthorization.clear()
+    registrationReaper?.cancel()
+    registrationReaper = nil
     lifecycleLock.lock()
     stopped = true
     let descriptor = listener
@@ -410,7 +539,19 @@ final class MeetlessTranscriptionCapability {
 
   func handle(_ client: Int32) {
     defer { shutdown(client, SHUT_RDWR); close(client) }
-    guard let peerPID = socketPeerPID(client), let lease = runtimeAuthorization.issueLease(
+    let peerPID: pid_t
+    if let socketPID = socketPeerPID(client), socketPID > 1 {
+      peerPID = socketPID
+    } else if processPolicy == nil {
+      // Development unit transports may use socketpair(), which has no
+      // LOCAL_PEERPID option. Packaged capability traffic never takes this
+      // branch: its peer PID is mandatory at the native boundary.
+      peerPID = getpid()
+    } else {
+      writeHostProcessError(client, requestId: "invalid", reason: "socket peer PID is unavailable")
+      return
+    }
+    guard let preliminaryLease = runtimeAuthorization.issueLease(
       peerPID: peerPID,
       authorizer: RuntimePeerAuthorizer()
     ) else {
@@ -425,9 +566,151 @@ final class MeetlessTranscriptionCapability {
       let request = object as? [String: Any],
       let requestId = request["requestId"] as? String,
       !requestId.isEmpty,
+      requestId == requestId.trimmingCharacters(in: .whitespacesAndNewlines),
       let operation = request["operation"] as? String
     else {
       writeResponse(client, requestId: "invalid", ok: false, status: "invalid", text: nil, languages: nil, usage: nil)
+      return
+    }
+    if isHostProcessOperation(operation) {
+      guard hasExactHostProcessRequestKeys(request, operation: operation) else {
+        writeHostProcessError(client, requestId: requestId, reason: "host process protocol request shape is unsupported")
+        return
+      }
+      guard let version = request["version"] as? NSNumber,
+            CFGetTypeID(version) != CFBooleanGetTypeID(),
+            version.intValue == meetlessHostProcessProtocolVersion,
+            version.doubleValue == Double(meetlessHostProcessProtocolVersion) else {
+        writeHostProcessError(client, requestId: requestId, reason: "host process protocol version is unsupported")
+        return
+      }
+    }
+
+    if operation == "desktopAttestation" {
+      guard let challenge = request["challenge"] as? String,
+            let attestation = runtimeAuthorization.attestDesktop(peerPID: peerPID, requestId: requestId, challenge: challenge) else {
+        writeHostProcessError(client, requestId: requestId, reason: "desktop attestation challenge is invalid")
+        return
+      }
+      writeHostProcessAttestation(
+        client,
+        requestId: requestId,
+        challenge: challenge,
+        generation: attestation.generation,
+        role: "desktop",
+        pid: peerPID,
+        identity: attestation.identity,
+        hostIdentity: attestation.hostIdentity,
+        ownerToken: attestation.ownerToken
+      )
+      return
+    }
+    if operation == "registerChild" {
+      guard let generation = unsignedInteger(request["generation"]),
+            let ownerToken = request["ownerToken"] as? String,
+            let registrationToken = request["registrationToken"] as? String,
+            let role = request["role"] as? String,
+            let childPID = signedInteger(request["childPid"]),
+            let expected = processIdentityWire(request["expectedIdentity"]),
+            let policy = processPolicyWire(request["policy"]),
+            let registration = runtimeAuthorization.registerChild(
+              peerPID: peerPID,
+              requestId: requestId,
+              generation: generation,
+              ownerToken: ownerToken,
+              registrationToken: registrationToken,
+              role: role,
+              childPID: childPID,
+              expectedIdentity: expected.identity,
+              policy: policy
+            ) else {
+        writeHostProcessError(client, requestId: requestId, reason: "child registration failed closed")
+        return
+      }
+      writeHostProcessRegistration(
+        client,
+        requestId: requestId,
+        generation: registration.generation,
+        role: registration.role,
+        pid: registration.pid,
+        registrationToken: registration.registrationToken
+      )
+      return
+    }
+    if operation == "processAttestation" {
+      guard let generation = unsignedInteger(request["generation"]),
+            let registrationToken = request["registrationToken"] as? String,
+            let role = request["role"] as? String,
+            let attestation = runtimeAuthorization.attestRegisteredProcess(
+              peerPID: peerPID,
+              requestId: requestId,
+              generation: generation,
+              registrationToken: registrationToken,
+              role: role
+            ) else {
+        writeHostProcessError(client, requestId: requestId, reason: "registered process attestation failed closed")
+        return
+      }
+      writeHostProcessAttestation(
+        client,
+        requestId: requestId,
+        challenge: nil,
+        generation: attestation.generation,
+        role: attestation.role,
+        pid: peerPID,
+        identity: attestation.identity,
+        hostIdentity: attestation.hostIdentity,
+        ownerToken: nil
+      )
+      return
+    }
+    if operation == "registrationStatus" {
+      guard let generation = unsignedInteger(request["generation"]),
+            let ownerToken = request["ownerToken"] as? String,
+            let registrations = runtimeAuthorization.registrationStatus(
+              peerPID: peerPID,
+              requestId: requestId,
+              generation: generation,
+              ownerToken: ownerToken
+            ) else {
+        writeHostProcessError(client, requestId: requestId, reason: "registration status is unauthorized")
+        return
+      }
+      writeHostProcessRegistrationStatus(
+        client,
+        requestId: requestId,
+        generation: generation,
+        registrations: registrations
+      )
+      return
+    }
+    if operation == "releaseChild" {
+      guard let generation = unsignedInteger(request["generation"]),
+            let ownerToken = request["ownerToken"] as? String,
+            let childPID = signedInteger(request["childPid"]),
+            runtimeAuthorization.releaseChild(
+              peerPID: peerPID,
+              requestId: requestId,
+              generation: generation,
+              ownerToken: ownerToken,
+              childPID: childPID
+            ) else {
+        writeHostProcessError(client, requestId: requestId, reason: "child release failed closed")
+        return
+      }
+      writeHostProcessRelease(client, requestId: requestId, generation: generation, childPID: childPID)
+      return
+    }
+
+    let lease = processPolicy == nil
+      ? preliminaryLease
+      : runtimeAuthorization.issueLease(
+        peerPID: peerPID,
+        authorizer: RuntimePeerAuthorizer(),
+        requireRegistered: true
+      )
+    guard let lease else {
+      writeResponse(client, requestId: requestId, ok: false, status: "invalid", text: nil, languages: nil, usage: nil)
       return
     }
     guard runtimeAuthorization.withValidLease(lease, {}) != nil else {
@@ -550,6 +833,103 @@ final class MeetlessTranscriptionCapability {
       let status = runtimeAuthorization.withValidLease(lease, { "configured" }) ?? "invalid"
       writeResponse(client, requestId: requestId, ok: false, status: status, text: nil, languages: nil, usage: nil)
     }
+  }
+
+  private func writeHostProcessAttestation(
+    _ descriptor: Int32,
+    requestId: String,
+    challenge: String?,
+    generation: UInt64,
+    role: String,
+    pid: pid_t,
+    identity: MeetlessProcessIdentity,
+    hostIdentity: MeetlessHostIdentityAttestation,
+    ownerToken: String?
+  ) {
+    var response: [String: Any] = [
+      "version": meetlessHostProcessProtocolVersion,
+      "type": "host.process.attestation",
+      "requestId": requestId,
+      "ok": true,
+      "generation": NSNumber(value: generation),
+      "role": role,
+      "processPid": pid,
+      "identity": processIdentityObject(identity),
+      "host": hostIdentityObject(hostIdentity),
+    ]
+    if let challenge { response["challenge"] = challenge }
+    if let ownerToken { response["ownerToken"] = ownerToken }
+    writeHostProcessObject(descriptor, response)
+  }
+
+  private func writeHostProcessRegistration(
+    _ descriptor: Int32,
+    requestId: String,
+    generation: UInt64,
+    role: String,
+    pid: pid_t,
+    registrationToken: String
+  ) {
+    writeHostProcessObject(descriptor, [
+      "version": meetlessHostProcessProtocolVersion,
+      "type": "host.process.registration",
+      "requestId": requestId,
+      "ok": true,
+      "generation": NSNumber(value: generation),
+      "role": role,
+      "processPid": pid,
+      "registrationToken": registrationToken,
+    ])
+  }
+
+  private func writeHostProcessRegistrationStatus(
+    _ descriptor: Int32,
+    requestId: String,
+    generation: UInt64,
+    registrations: [MeetlessProcessRegistrationStatus]
+  ) {
+    writeHostProcessObject(descriptor, [
+      "version": meetlessHostProcessProtocolVersion,
+      "type": "host.process.registrations",
+      "requestId": requestId,
+      "ok": true,
+      "generation": NSNumber(value: generation),
+      "registrations": registrations.map { registration in
+        [
+          "role": registration.role,
+          "pid": registration.pid,
+          "attested": registration.attested,
+          "identity": processIdentityObject(registration.identity.identity),
+        ]
+      },
+    ])
+  }
+
+  private func writeHostProcessRelease(_ descriptor: Int32, requestId: String, generation: UInt64, childPID: pid_t) {
+    writeHostProcessObject(descriptor, [
+      "version": meetlessHostProcessProtocolVersion,
+      "type": "host.process.release",
+      "requestId": requestId,
+      "ok": true,
+      "generation": NSNumber(value: generation),
+      "processPid": childPID,
+    ])
+  }
+
+  private func writeHostProcessError(_ descriptor: Int32, requestId: String, reason: String) {
+    writeHostProcessObject(descriptor, [
+      "version": meetlessHostProcessProtocolVersion,
+      "type": "host.process.error",
+      "requestId": requestId,
+      "ok": false,
+      "error": reason,
+    ])
+  }
+
+  private func writeHostProcessObject(_ descriptor: Int32, _ response: [String: Any]) {
+    guard let data = try? JSONSerialization.data(withJSONObject: response),
+          data.count <= meetlessMaximumRequestLineBytes else { return }
+    writeAll(descriptor, data: data + Data([10]))
   }
 
   private func writeCapturePermissionResponse(_ descriptor: Int32, requestId: String, result: MeetlessCapturePermissionResult) {
@@ -773,6 +1153,70 @@ func liveParentPID(_ pid: pid_t) -> pid_t? {
   return pid_t(info.pbi_ppid)
 }
 
+func inspectMeetlessProcessIdentity(_ pid: pid_t) throws -> MeetlessProcessIdentity {
+  guard pid > 1 else { throw capabilityError("process PID is invalid") }
+  var pathBuffer = [UInt8](repeating: 0, count: Int(MAXPATHLEN))
+  let pathLength = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
+  guard pathLength > 0 else { throw capabilityError("process executable path is unavailable") }
+  let executablePath = String(decoding: pathBuffer.prefix(Int(pathLength)), as: UTF8.self)
+  let realPath = URL(fileURLWithPath: executablePath).resolvingSymlinksInPath().standardizedFileURL.path
+  var information = stat()
+  guard lstat(executablePath, &information) == 0,
+        (information.st_mode & S_IFMT) == S_IFREG,
+        information.st_size > 0 else {
+    throw capabilityError("process executable is not a regular file")
+  }
+  let binary: Data
+  do {
+    binary = try Data(contentsOf: URL(fileURLWithPath: executablePath))
+  } catch {
+    throw capabilityError("process executable cannot be read")
+  }
+  return MeetlessProcessIdentity(
+    configuredPath: executablePath,
+    realPath: realPath,
+    device: Int(information.st_dev),
+    inode: Int(information.st_ino),
+    byteLength: Int(information.st_size),
+    sha256: SHA256.hash(data: binary).map { String(format: "%02x", $0) }.joined(),
+    argv: try inspectMeetlessProcessArguments(pid)
+  )
+}
+
+private func inspectMeetlessProcessArguments(_ pid: pid_t) throws -> [String] {
+  var mib = [CTL_KERN, KERN_PROCARGS2, pid]
+  var size = 0
+  guard sysctl(&mib, UInt32(mib.count), nil, &size, nil, 0) == 0,
+        size > MemoryLayout<Int32>.size,
+        size <= 256 * 1024 else {
+    throw capabilityError("process argv is unavailable")
+  }
+  var bytes = [UInt8](repeating: 0, count: size)
+  guard sysctl(&mib, UInt32(mib.count), &bytes, &size, nil, 0) == 0,
+        size >= MemoryLayout<Int32>.size else {
+    throw capabilityError("process argv cannot be read")
+  }
+  if size < bytes.count { bytes.removeSubrange(size..<bytes.count) }
+  let argc = bytes.withUnsafeBytes { raw -> Int32 in
+    raw.loadUnaligned(as: Int32.self)
+  }
+  guard argc > 0, argc <= Int32(meetlessMaximumProcessArgumentCount) else {
+    throw capabilityError("process argv count is outside the bounded protocol")
+  }
+  var cursor = MemoryLayout<Int32>.size
+  while cursor < bytes.count && bytes[cursor] != 0 { cursor += 1 }
+  while cursor < bytes.count && bytes[cursor] == 0 { cursor += 1 }
+  var arguments: [String] = []
+  while arguments.count < Int(argc), cursor < bytes.count {
+    let start = cursor
+    while cursor < bytes.count && bytes[cursor] != 0 { cursor += 1 }
+    arguments.append(String(decoding: bytes[start..<cursor], as: UTF8.self))
+    cursor += 1
+  }
+  guard arguments.count == Int(argc) else { throw capabilityError("process argv ended before argc") }
+  return arguments
+}
+
 func readBoundedLine(_ descriptor: Int32, maximumBytes: Int) -> String? {
   var bytes = Data()
   var byte: UInt8 = 0
@@ -783,6 +1227,112 @@ func readBoundedLine(_ descriptor: Int32, maximumBytes: Int) -> String? {
     bytes.append(byte)
   }
   return nil
+}
+
+private func signedInteger(_ value: Any?) -> Int32? {
+  guard let number = value as? NSNumber else { return nil }
+  let result = number.int64Value
+  guard result > 1, result <= Int64(Int32.max), Double(result) == number.doubleValue else { return nil }
+  return Int32(result)
+}
+
+private func unsignedInteger(_ value: Any?) -> UInt64? {
+  guard let number = value as? NSNumber else { return nil }
+  let result = number.doubleValue
+  guard result.isFinite, result >= 1, result.rounded() == result, result <= Double(UInt64.max) else { return nil }
+  return UInt64(result)
+}
+
+private func processIdentityWire(_ value: Any?) -> MeetlessProcessIdentityWire? {
+  guard let value,
+        hasExactObjectKeys(value, ["argv", "byteLength", "configuredPath", "device", "inode", "realPath", "sha256"]),
+        let data = try? JSONSerialization.data(withJSONObject: value),
+        let wire = try? JSONDecoder().decode(MeetlessProcessIdentityWire.self, from: data),
+        validProcessIdentity(wire.identity) else { return nil }
+  return wire
+}
+
+private func processPolicyWire(_ value: Any?) -> MeetlessHostProcessPolicyWire? {
+  guard let value,
+        hasExactObjectKeys(value, ["endpointPolicy", "endpointWorkingDirectory", "recordingEndpointName", "runtimeRoot", "transcriptionEndpointName"]),
+        let data = try? JSONSerialization.data(withJSONObject: value),
+        let wire = try? JSONDecoder().decode(MeetlessHostProcessPolicyWire.self, from: data),
+        !wire.runtimeRoot.isEmpty,
+        !wire.endpointPolicy.isEmpty,
+        !wire.endpointWorkingDirectory.isEmpty,
+        !wire.recordingEndpointName.isEmpty,
+        !wire.transcriptionEndpointName.isEmpty else { return nil }
+  return wire
+}
+
+private func hasExactObjectKeys(_ value: Any, _ expected: Set<String>) -> Bool {
+  guard let object = value as? [String: Any] else { return false }
+  return Set(object.keys) == expected
+}
+
+private func isHostProcessOperation(_ operation: String) -> Bool {
+  operation == "desktopAttestation" ||
+    operation == "registerChild" ||
+    operation == "processAttestation" ||
+    operation == "registrationStatus" ||
+    operation == "releaseChild"
+}
+
+private func hasExactHostProcessRequestKeys(_ request: [String: Any], operation: String) -> Bool {
+  let expected: Set<String>
+  switch operation {
+  case "desktopAttestation": expected = ["challenge", "operation", "requestId", "version"]
+  case "registerChild": expected = ["childPid", "expectedIdentity", "generation", "operation", "ownerToken", "policy", "registrationToken", "requestId", "role", "version"]
+  case "processAttestation": expected = ["generation", "operation", "registrationToken", "requestId", "role", "version"]
+  case "registrationStatus": expected = ["generation", "operation", "ownerToken", "requestId", "version"]
+  case "releaseChild": expected = ["childPid", "generation", "operation", "ownerToken", "requestId", "version"]
+  default: return false
+  }
+  return Set(request.keys) == expected
+}
+
+func validProcessIdentity(_ identity: MeetlessProcessIdentity) -> Bool {
+  let fields = [identity.configuredPath, identity.realPath, identity.sha256]
+  guard fields.allSatisfy({ !$0.isEmpty && $0 == $0.trimmingCharacters(in: .whitespacesAndNewlines) && !$0.contains("\0") }),
+        identity.configuredPath.hasPrefix("/"),
+        identity.realPath.hasPrefix("/"),
+        identity.device >= 0,
+        identity.inode > 0,
+        identity.byteLength > 0,
+        identity.sha256.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil,
+        !identity.argv.isEmpty,
+        identity.argv.count <= meetlessMaximumProcessArgumentCount,
+        identity.argv.allSatisfy({ !$0.isEmpty && $0 == $0.trimmingCharacters(in: .whitespacesAndNewlines) && !$0.contains("\0") && $0.utf8.count <= meetlessMaximumProcessFieldBytes }) else {
+    return false
+  }
+  return true
+}
+
+private func processIdentityObject(_ identity: MeetlessProcessIdentity) -> [String: Any] {
+  [
+    "configuredPath": identity.configuredPath,
+    "realPath": identity.realPath,
+    "device": identity.device,
+    "inode": identity.inode,
+    "byteLength": identity.byteLength,
+    "sha256": identity.sha256,
+    "argv": identity.argv,
+  ]
+}
+
+private func hostIdentityObject(_ identity: MeetlessHostIdentityAttestation) -> [String: Any] {
+  [
+    "bundleIdentifier": identity.bundleIdentifier,
+    "bundlePath": identity.bundlePath,
+    "bundleRealPath": identity.bundleRealPath,
+    "executablePath": identity.executablePath,
+    "designatedRequirement": identity.designatedRequirement,
+    "cdHash": identity.cdHash,
+    "binarySha256": identity.binarySha256,
+    "binaryDevice": identity.binaryDevice,
+    "binaryInode": identity.binaryInode,
+    "binarySize": identity.binarySize,
+  ]
 }
 
 struct StagedRangeIdentity {

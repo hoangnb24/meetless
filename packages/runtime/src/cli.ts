@@ -1,7 +1,7 @@
 import { open, type FileHandle } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { prepareRuntime, resolveRuntimeConfig, type RuntimeConfig } from "./config.js";
-import { assertSupervisorOwnedByHost } from "./host.js";
+import { assertSupervisorOwnedByHost, attestPackagedProcess, isPackagedRuntime } from "./host.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
 import { activateUiTestRun } from "./ui-test-envelope.js";
 
@@ -37,6 +37,11 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "preowner") {
+    if (isPackagedRuntime(config)) {
+      throw new Error(
+        "Packaged pre-owner readiness is owned by the attested Meetless desktop; direct packaged CLI ownership is rejected.",
+      );
+    }
     const lock = await readPidLock(config.paths.pidLock);
     if (!lock || !isRunning(lock.pid)) {
       throw new Error(
@@ -79,6 +84,11 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "stop") {
+    if (isPackagedRuntime(config)) {
+      throw new Error(
+        "Packaged runtime shutdown is owned by the attested Meetless desktop; direct packaged CLI stop is rejected.",
+      );
+    }
     if (!lock || !isRunning(lock.pid)) {
       process.stdout.write("Meetless isolated daemon is not running.\n");
       return;
@@ -107,6 +117,20 @@ export async function assertPackagedDaemonOwnedByHost(
   currentPid = process.pid,
   ownershipCheck: typeof assertSupervisorOwnedByHost = assertSupervisorOwnedByHost,
 ): Promise<void> {
+  if (isPackagedRuntime(config)) {
+    const deadline = Date.now() + 5_000;
+    let lastError: unknown;
+    while (Date.now() < deadline) {
+      try {
+        await attestPackagedProcess(config, "daemon", currentPid);
+        return;
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("packaged daemon native attestation timed out");
+  }
   if (config.packaged) await ownershipCheck(config, currentPid);
 }
 

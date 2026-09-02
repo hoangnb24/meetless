@@ -32,6 +32,7 @@ export interface RecordingServiceConfig {
   observeCommand?(executable: string, arguments_: readonly string[]): void;
   helperArguments?: string[];
   helperStartTimeoutMs?: number;
+  registerCaptureHelper?: (childPid: number, registrationToken: string) => Promise<() => Promise<void>>;
   exportNow?: () => Date;
   fixtureStampApplied?: boolean;
   failFinalizationOnce?: boolean;
@@ -186,7 +187,7 @@ export class RecordingService {
     return {
       pid: this.helper?.pid ?? null,
       executable: this.helper?.executable ?? this.config.helperPath,
-      arguments: [...(this.helper?.arguments ?? this.config.helperArguments ?? (this.config.fixture ? ["--fixture"] : []))],
+      arguments: [...(this.helper?.arguments ?? this.config.helperArguments ?? (this.config.registerCaptureHelper ? [] : (this.config.fixture ? ["--fixture"] : [])))],
     };
   }
 
@@ -268,6 +269,7 @@ export class RecordingService {
         fixture: this.config.fixture,
         arguments: this.config.helperArguments,
         startTimeoutMs: this.config.helperStartTimeoutMs,
+        registerProcess: this.config.registerCaptureHelper,
         onChunk: async (chunk) => {
           await this.store.commitChunk(establishedRecording.id, chunk);
           this.scheduleStatus();

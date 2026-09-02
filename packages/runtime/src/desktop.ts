@@ -7,7 +7,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RuntimeConfig } from "./config.js";
 import { copyEnvironmentWithoutDirectPasswordSecrets, prepareRuntime, REPOSITORY_ROOT } from "./config.js";
-import { assertDesktopLaunchedByHost, assertSupervisorOwnedByHost } from "./host.js";
+import {
+  assertDesktopLaunchedByHost,
+  attestPackagedDesktop,
+  inspectPackagedRegistrations,
+  isPackagedRuntime,
+  registerPackagedChild,
+  releasePackagedChild,
+  assertSupervisorOwnedByHost,
+  type PackagedDesktopAttestation,
+} from "./host.js";
 import { assertStopAuthorization, inspectLiveProcess, readPidLock } from "./lifecycle.js";
 import { serializeRuntimeEndpointComposition } from "./runtime-endpoints.js";
 import { activateUiTestRun, removeUiTestRunState } from "./ui-test-envelope.js";
@@ -49,8 +58,10 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
   let electron: ChildProcess | null = null;
   let daemonOwned = false;
   let hostAttested = false;
+  let desktopAttestation: PackagedDesktopAttestation | null = null;
   try {
-    const hostIdentity = await assertDesktopLaunchedByHost(config);
+    desktopAttestation = isPackagedRuntime(config) ? await attestPackagedDesktop(config) : null;
+    const hostIdentity = desktopAttestation?.identity ?? await assertDesktopLaunchedByHost(config);
     hostAttested = true;
     const uiTest = await activateUiTestRun(config, hostIdentity);
     shutdown.signal.throwIfAborted();
@@ -59,20 +70,51 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
     await writeDesktopSettings(config.paths.electronUserData);
     let lock = await readPidLock(config.paths.pidLock);
     if (lock && processIsRunning(lock.pid)) {
+      if (isPackagedRuntime(config)) {
+        throw new Error("packaged runtime found a live daemon without a registration in this host launch generation");
+      }
       authorizeOwnedDaemon(config, lock);
       await assertSupervisorOwnedByHost(config, lock.pid);
     } else {
-      const cliPath = fileURLToPath(new URL("./cli.js", import.meta.url));
-      daemonChild = spawn(process.execPath, [cliPath, "daemon"], {
+      const cliPath = isPackagedRuntime(config)
+        ? path.join(path.resolve(config.paths.plugin, "..", ".."), "packages", "runtime", "dist", "cli.js")
+        : fileURLToPath(new URL("./cli.js", import.meta.url));
+      const daemonToken = isPackagedRuntime(config) ? randomUUID() : null;
+      const daemonEnvironment = isPackagedRuntime(config) && desktopAttestation && daemonToken
+        ? {
+          ...config.environment,
+          MEETLESS_HOST_PROCESS_GENERATION: String(desktopAttestation.generation),
+          MEETLESS_HOST_PROCESS_TOKEN: daemonToken,
+          MEETLESS_HOST_PROCESS_ROLE: "daemon",
+        }
+        : config.environment;
+      const daemonExecutable = isPackagedRuntime(config)
+        ? config.packageResources?.nodeBinary
+        : process.execPath;
+      if (!daemonExecutable) throw new Error("packaged runtime has no exact Node executable for the daemon");
+      daemonChild = spawn(daemonExecutable, [cliPath, "daemon"], {
         cwd: config.packaged ? config.paths.root : REPOSITORY_ROOT,
-        env: config.environment,
+        env: daemonEnvironment,
         stdio: "inherit",
         detached: true,
       });
       daemonOwned = true;
       await owned.track("daemon", daemonChild);
+      if (isPackagedRuntime(config) && desktopAttestation && daemonToken && daemonChild.pid) {
+        await registerPackagedChild(config, {
+          role: "daemon",
+          childPid: daemonChild.pid,
+          registrationToken: daemonToken,
+          owner: desktopAttestation,
+        });
+        await owned.trackRegistration("daemon", {
+          generation: desktopAttestation.generation,
+          ownerToken: desktopAttestation.ownerToken,
+          childPid: daemonChild.pid,
+        });
+      }
       lock = await waitForDaemon(config, daemonChild, shutdown.signal);
-      await assertSupervisorOwnedByHost(config, lock.pid);
+      if (!isPackagedRuntime(config)) await assertSupervisorOwnedByHost(config, lock.pid);
     }
 
     const recorder = await waitForRecordingRuntime(config, { signal: shutdown.signal });
@@ -141,7 +183,7 @@ type OwnedGroupName = "daemon" | "renderer" | "electron";
 interface ShutdownInspection {
   signalGroup(pgid: number, signal: NodeJS.Signals): void;
   groupRunning(pgid: number): boolean;
-  listenerExists(port: string): boolean;
+  listenerExists(port: string): boolean | Promise<boolean>;
   socketExists(socketPath: string): Promise<boolean>;
   delay(milliseconds: number): Promise<void>;
 }
@@ -176,17 +218,48 @@ const systemShutdownInspection: ShutdownInspection = {
   delay,
 };
 
+const packagedShutdownInspection: ShutdownInspection = {
+  signalGroup: (pgid, signal) => {
+    try { process.kill(-pgid, signal); } catch (error) {
+      if (!isErrno(error, "ESRCH")) throw error;
+    }
+  },
+  groupRunning: (pgid) => {
+    try { process.kill(-pgid, 0); return true; } catch (error) {
+      if (isErrno(error, "ESRCH")) return false;
+      throw new Error(`Cannot inspect owned process group ${pgid}: ${describe(error)}`);
+    }
+  },
+  listenerExists: (port) => probeTcpListener(port),
+  socketExists: async (socketPath) => {
+    try { await stat(socketPath); return true; } catch (error) {
+      if (isErrno(error, "ENOENT")) return false;
+      throw new Error(`Cannot inspect recording socket ${socketPath}: ${describe(error)}`);
+    }
+  },
+  delay,
+};
+
+interface PackagedRegistration {
+  generation: number;
+  ownerToken: string;
+  childPid: number;
+}
+
 export class HostOwnedRuntimeShutdown {
   readonly signals = installShutdownHandlers();
   private readonly groups = new Map<OwnedGroupName, number>();
+  private readonly registrations = new Map<OwnedGroupName, PackagedRegistration>();
   private readonly registryPath: string;
   private closing = false;
+  private readonly inspection: ShutdownInspection;
 
   constructor(
     private readonly config: RuntimeConfig,
-    private readonly inspection: ShutdownInspection = systemShutdownInspection,
+    inspection?: ShutdownInspection,
   ) {
     this.registryPath = path.join(config.paths.root, "owned-process-groups.json");
+    this.inspection = inspection ?? (isPackagedRuntime(config) ? packagedShutdownInspection : systemShutdownInspection);
   }
 
   async track(name: OwnedGroupName, child: ChildProcess): Promise<void> {
@@ -194,6 +267,15 @@ export class HostOwnedRuntimeShutdown {
     this.groups.set(name, child.pid);
     await this.writeRegistry();
     this.signals.signal.throwIfAborted();
+  }
+
+  async trackRegistration(name: OwnedGroupName, registration: PackagedRegistration): Promise<void> {
+    if (!isPackagedRuntime(this.config)) throw new Error("packaged process registration is unavailable in development mode");
+    if (this.groups.get(name) !== registration.childPid) {
+      throw new Error(`Cannot register ${name}: registration PID is not the owned child handle`);
+    }
+    if (this.registrations.has(name)) throw new Error(`Cannot register ${name}: registration already exists`);
+    this.registrations.set(name, registration);
   }
 
   async shutdown(input: { daemonChild: ChildProcess | null; daemonOwned: boolean }): Promise<void> {
@@ -209,8 +291,12 @@ export class HostOwnedRuntimeShutdown {
           throw new Error(`Cannot inspect owned daemon PID lock during shutdown: ${describe(error)}`);
         });
         if (lock && processIsRunning(lock.pid)) {
-          authorizeOwnedDaemon(this.config, lock);
-          process.kill(lock.pid, "SIGTERM");
+          if (isPackagedRuntime(this.config)) {
+            process.kill(lock.pid, "SIGTERM");
+          } else {
+            authorizeOwnedDaemon(this.config, lock);
+            process.kill(lock.pid, "SIGTERM");
+          }
         } else {
           this.signal("daemon", "SIGTERM");
         }
@@ -228,6 +314,11 @@ export class HostOwnedRuntimeShutdown {
         gracefulError ??= error;
       }
       try { released = await this.waitForRelease(5_000); } catch (error) { gracefulError ??= error; }
+    }
+    try {
+      await this.releaseRegistrations();
+    } catch (error) {
+      gracefulError ??= error;
     }
     if (!released || gracefulError) {
       throw new Error(
@@ -256,8 +347,23 @@ export class HostOwnedRuntimeShutdown {
 
   private async released(): Promise<boolean> {
     if ([...this.groups.values()].some((pgid) => this.inspection.groupRunning(pgid))) return false;
-    for (const port of this.listenerPorts()) if (this.inspection.listenerExists(port)) return false;
+    for (const port of this.listenerPorts()) if (await this.inspection.listenerExists(port)) return false;
     return !(await this.inspection.socketExists(this.config.paths.recordingSocket));
+  }
+
+  private async releaseRegistrations(): Promise<void> {
+    if (!isPackagedRuntime(this.config)) return;
+    for (const [name, registration] of this.registrations) {
+      try {
+        await releasePackagedChild(this.config, registration.childPid, {
+          generation: registration.generation,
+          ownerToken: registration.ownerToken,
+        });
+      } catch (error) {
+        if (processIsRunning(registration.childPid)) throw new Error(`Cannot release registered ${name}: ${describe(error)}`);
+      }
+      this.registrations.delete(name);
+    }
   }
 
   private listenerPorts(): string[] {
@@ -312,6 +418,11 @@ async function waitForDaemon(config: RuntimeConfig, child: ChildProcess, signal:
     if (child.exitCode !== null) throw new Error(`Meetless daemon exited during startup (${child.exitCode})`);
     const lock = await readPidLock(config.paths.pidLock).catch(() => null);
     if (lock?.desktopManaged === true && processIsRunning(lock.pid)) {
+      if (isPackagedRuntime(config)) {
+        const registrations = await inspectPackagedRegistrations(config).catch(() => []);
+        const daemon = registrations.find((registration) => registration.role === "daemon" && registration.pid === lock.pid);
+        if (daemon?.attested === true) return lock;
+      } else {
       const live = inspectLiveProcess({
         pid: lock.pid,
         expectedListen: config.listen,
@@ -319,6 +430,7 @@ async function waitForDaemon(config: RuntimeConfig, child: ChildProcess, signal:
         expectedSupervisorEntrypoint: config.supervisorEntrypoint,
       });
       if (live.listener?.address === config.listen && live.listener.belongsToSupervisor) return lock;
+      }
     }
     await delay(100);
   }
@@ -728,6 +840,22 @@ function waitForShutdown(signal: AbortSignal): Promise<{ code: number | null; si
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function probeTcpListener(port: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port: Number(port) });
+    let settled = false;
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(value);
+    };
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+    socket.setTimeout(250, () => finish(false));
+  });
 }
 
 function isErrno(error: unknown, code: string): boolean {

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
@@ -17,6 +17,14 @@ import {
   MEETLESS_RUNTIME_ENDPOINT_WORKING_DIRECTORY,
   validateEndpointName,
 } from "./runtime-endpoints.js";
+import {
+  requestHostProcessProtocol,
+  type HostIdentityAttestation,
+  type HostProcessIdentity,
+  type HostProcessPolicy,
+  type HostProcessRegistration,
+  type HostProcessRole,
+} from "@meetless/plugin/readiness-protocol";
 
 export const MEETLESS_HOST_BUNDLE_ID = "com.meetless.app";
 export const MEETLESS_HOST_EXECUTABLE = "MeetlessHost";
@@ -36,6 +44,7 @@ const HostLaunchConfigurationSchema = z.object({
   transcriptionStaging: z.string().min(1),
   nodePath: z.string().min(1),
   runtimeCliPath: z.string().min(1),
+  captureHelperPath: z.string().min(1).optional(),
   identityPath: z.string().min(1),
   endpointPolicy: z.literal(MEETLESS_RUNTIME_ENDPOINTS_SCHEMA).optional(),
   endpointWorkingDirectory: z.literal(MEETLESS_RUNTIME_ENDPOINT_WORKING_DIRECTORY).optional(),
@@ -518,11 +527,295 @@ export async function assertDesktopLaunchedByHost(
   currentPid = process.pid,
   dependencies: HostInspectionDependencies = defaultDependencies,
 ): Promise<HostIdentity> {
+  if (isPackagedRuntime(config)) return (await attestPackagedDesktop(config, currentPid)).identity;
   const identity = await assertInstalledHostIdentity(config, dependencies);
   const desktop = await dependencies.inspectProcess(currentPid);
   const host = await dependencies.inspectProcess(desktop.ppid);
   await assertExactTopology(identity, desktop, host, config, dependencies.inspectLiveHost);
   return identity;
+}
+
+export interface PackagedDesktopAttestation {
+  pid: number;
+  identity: HostIdentity;
+  generation: number;
+  ownerToken: string;
+  process: HostProcessIdentity;
+}
+
+const packagedDesktopAttestations = new WeakMap<RuntimeConfig, PackagedDesktopAttestation>();
+
+export function isPackagedRuntime(config: RuntimeConfig): boolean {
+  return config.packaged &&
+    config.endpoints.mode === "packaged";
+}
+
+export async function attestPackagedDesktop(
+  config: RuntimeConfig,
+  currentPid = process.pid,
+): Promise<PackagedDesktopAttestation> {
+  if (!isPackagedRuntime(config)) {
+    throw hostFailure("packaged desktop attestation requires the host-provided packaged endpoint composition");
+  }
+  const cached = packagedDesktopAttestations.get(config);
+  if (cached && cached.pid === currentPid) return cached;
+  const identity = await readHostIdentity(config.host.identity).catch((error) => {
+    throw hostFailure(`cannot read the native host identity: ${message(error)}`);
+  });
+  assertPackagedHostConfiguration(identity, config);
+  const expected = await expectedPackagedProcessIdentity(config, "desktop");
+  let challenge = "";
+  let response: Awaited<ReturnType<typeof requestHostProcessProtocol>>;
+  const deadline = Date.now() + 5_000;
+  while (true) {
+    challenge = randomUUID();
+    try {
+      response = await requestHostProcessProtocol(
+        config.endpoints.transcription.bindArgument,
+        {
+          version: 1,
+          requestId: randomUUID(),
+          operation: "desktopAttestation",
+          challenge,
+        },
+      );
+      break;
+    } catch (error) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw hostFailure(`native desktop attestation was unavailable during startup: ${message(error)}`);
+      await new Promise((resolve) => setTimeout(resolve, Math.min(25, remaining)));
+    }
+  }
+  if (
+    response.type !== "host.process.attestation" ||
+    response.role !== "desktop" ||
+    response.processPid !== currentPid ||
+    response.challenge !== challenge ||
+    !response.ownerToken
+  ) {
+    throw hostFailure("native desktop attestation response is not bound to this exact desktop challenge and PID");
+  }
+  assertProcessIdentity(response.identity, expected, "desktop");
+  assertHostIdentityAttestation(response.host, identity);
+  const attestation: PackagedDesktopAttestation = {
+    pid: currentPid,
+    identity,
+    generation: response.generation,
+    ownerToken: response.ownerToken,
+    process: response.identity,
+  };
+  packagedDesktopAttestations.set(config, attestation);
+  return attestation;
+}
+
+export async function attestPackagedProcess(
+  config: RuntimeConfig,
+  role: Exclude<HostProcessRole, "desktop">,
+  currentPid = process.pid,
+): Promise<HostProcessIdentity> {
+  if (!isPackagedRuntime(config)) {
+    throw hostFailure("packaged child attestation requires the host-provided packaged endpoint composition");
+  }
+  const generation = Number(config.environment.MEETLESS_HOST_PROCESS_GENERATION);
+  const registrationToken = config.environment.MEETLESS_HOST_PROCESS_TOKEN;
+  if (!Number.isSafeInteger(generation) || generation <= 0 || !registrationToken || !validProtocolToken(registrationToken)) {
+    throw hostFailure(`packaged ${role} has no complete native registration token`);
+  }
+  const response = await requestHostProcessProtocol(
+    config.endpoints.transcription.bindArgument,
+    {
+      version: 1,
+      requestId: randomUUID(),
+      operation: "processAttestation",
+      generation,
+      registrationToken,
+      role,
+    },
+  );
+  const expected = await expectedPackagedProcessIdentity(config, role);
+  if (response.type !== "host.process.attestation" || response.role !== role || response.processPid !== currentPid || response.generation !== generation) {
+    throw hostFailure(`native ${role} attestation response is not bound to this PID and launch generation`);
+  }
+  assertProcessIdentity(response.identity, expected, role);
+  const identity = await readHostIdentity(config.host.identity);
+  assertPackagedHostConfiguration(identity, config);
+  assertHostIdentityAttestation(response.host, identity);
+  return response.identity;
+}
+
+export async function registerPackagedChild(
+  config: RuntimeConfig,
+  input: {
+    role: Exclude<HostProcessRole, "desktop">;
+    childPid: number;
+    expectedArguments?: string[];
+    registrationToken?: string;
+    owner?: { generation: number; ownerToken: string };
+  },
+): Promise<{ generation: number; registrationToken: string; identity: HostProcessIdentity }> {
+  if (!isPackagedRuntime(config)) {
+    throw hostFailure("packaged child registration requires the host-provided packaged endpoint composition");
+  }
+  const owner = input.owner ?? await packagedHostOwner(config);
+  const executable = input.role === "capture-helper" ? config.paths.captureHelper : config.packageResources?.nodeBinary;
+  if (!executable) throw hostFailure(`packaged ${input.role} has no exact configured executable`);
+  const expected = input.expectedArguments
+    ? await configuredProcessIdentity(executable, input.expectedArguments)
+    : await expectedPackagedProcessIdentity(config, input.role);
+  const registrationToken = input.registrationToken ?? randomUUID();
+  if (!validProtocolToken(registrationToken)) throw hostFailure(`packaged ${input.role} has an invalid registration token`);
+  const response = await requestHostProcessProtocol(
+    config.endpoints.transcription.bindArgument,
+    {
+      version: 1,
+      requestId: randomUUID(),
+      operation: "registerChild",
+      generation: owner.generation,
+      ownerToken: owner.ownerToken,
+      registrationToken,
+      role: input.role,
+      childPid: input.childPid,
+      expectedIdentity: expected,
+      policy: packagedHostProcessPolicy(config),
+    },
+  );
+  if (response.type !== "host.process.registration" || response.role !== input.role || response.processPid !== input.childPid || response.generation !== owner.generation) {
+    throw hostFailure(`native ${input.role} registration response is not bound to the spawned PID and launch generation`);
+  }
+  return { generation: response.generation, registrationToken: response.registrationToken, identity: expected };
+}
+
+export async function releasePackagedChild(
+  config: RuntimeConfig,
+  childPid: number,
+  owner?: { generation: number; ownerToken: string },
+): Promise<void> {
+  const currentOwner = owner ?? await packagedHostOwner(config);
+  const response = await requestHostProcessProtocol(
+    config.endpoints.transcription.bindArgument,
+    {
+      version: 1,
+      requestId: randomUUID(),
+      operation: "releaseChild",
+      generation: currentOwner.generation,
+      ownerToken: currentOwner.ownerToken,
+      childPid,
+    },
+  );
+  if (response.type !== "host.process.release" || response.processPid !== childPid || response.generation !== currentOwner.generation) {
+    throw hostFailure("native child release response is not bound to the registered PID and launch generation");
+  }
+}
+
+export async function inspectPackagedRegistrations(
+  config: RuntimeConfig,
+  owner?: PackagedDesktopAttestation,
+): Promise<HostProcessRegistration[]> {
+  const desktop = owner ?? await attestPackagedDesktop(config);
+  const response = await requestHostProcessProtocol(
+    config.endpoints.transcription.bindArgument,
+    {
+      version: 1,
+      requestId: randomUUID(),
+      operation: "registrationStatus",
+      generation: desktop.generation,
+      ownerToken: desktop.ownerToken,
+    },
+  );
+  if (response.type !== "host.process.registrations" || response.generation !== desktop.generation) {
+    throw hostFailure("native registration status is not bound to the desktop launch generation");
+  }
+  return response.registrations;
+}
+
+async function packagedHostOwner(config: RuntimeConfig): Promise<{ generation: number; ownerToken: string }> {
+  const desktop = packagedDesktopAttestations.get(config);
+  if (desktop) return { generation: desktop.generation, ownerToken: desktop.ownerToken };
+  const generation = Number(config.environment.MEETLESS_HOST_PROCESS_GENERATION);
+  const ownerToken = config.environment.MEETLESS_HOST_PROCESS_TOKEN;
+  if (!Number.isSafeInteger(generation) || generation <= 0 || !ownerToken || !validProtocolToken(ownerToken) || config.environment.MEETLESS_HOST_PROCESS_ROLE !== "daemon") {
+    throw hostFailure("current packaged process has no native owner token for child registration");
+  }
+  return { generation, ownerToken };
+}
+
+function validProtocolToken(value: string): boolean {
+  return value.length > 0 && value === value.trim() && value.length <= 4_096 && !value.includes("\0");
+}
+
+function packagedHostProcessPolicy(config: RuntimeConfig): HostProcessPolicy {
+  return {
+    runtimeRoot: config.paths.root,
+    endpointPolicy: MEETLESS_RUNTIME_ENDPOINTS_SCHEMA,
+    endpointWorkingDirectory: MEETLESS_RUNTIME_ENDPOINT_WORKING_DIRECTORY,
+    recordingEndpointName: config.endpoints.recording.name,
+    transcriptionEndpointName: config.endpoints.transcription.name,
+  };
+}
+
+async function expectedPackagedProcessIdentity(
+  config: RuntimeConfig,
+  role: HostProcessRole,
+): Promise<HostProcessIdentity> {
+  const executable = role === "capture-helper" ? config.paths.captureHelper : config.packageResources?.nodeBinary;
+  if (!executable) throw hostFailure(`packaged ${role} has no exact executable resource`);
+  const runtimeCli = path.join(path.resolve(config.paths.plugin, "..", ".."), "packages", "runtime", "dist", "cli.js");
+  const pluginPath = path.join(
+    path.resolve(config.paths.plugin, "..", ".."),
+    "vendor", "paseo", "packages", "server", "dist", "server", "server", "daemon-worker.js",
+  );
+  const arguments_ = role === "desktop"
+    ? [executable, runtimeCli, "desktop"]
+    : role === "daemon"
+    ? [executable, runtimeCli, "daemon"]
+    : role === "plugin"
+    ? [executable, pluginPath, "daemon"]
+    : [executable];
+  return configuredProcessIdentity(executable, arguments_);
+}
+
+async function configuredProcessIdentity(executable: string, arguments_: string[]): Promise<HostProcessIdentity> {
+  if (!path.isAbsolute(executable) || !arguments_.every((argument) => argument.length > 0 && argument === argument.trim() && !argument.includes("\0"))) {
+    throw hostFailure("configured packaged process identity contains an empty, whitespace, or non-absolute field");
+  }
+  const [info, realPath, bytes] = await Promise.all([stat(executable), realpath(executable), readFile(executable)]);
+  return {
+    configuredPath: path.resolve(executable),
+    realPath,
+    device: info.dev,
+    inode: info.ino,
+    byteLength: info.size,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    argv: arguments_,
+  };
+}
+
+function assertProcessIdentity(actual: HostProcessIdentity, expected: HostProcessIdentity, role: string): void {
+  if (!deepValueEqual(actual, expected)) throw hostFailure(`native ${role} executable identity or argv differs from the configured package resource`);
+}
+
+function assertHostIdentityAttestation(actual: HostIdentityAttestation, expected: HostIdentity): void {
+  if (
+    actual.bundleIdentifier !== expected.bundleIdentifier ||
+    actual.bundlePath !== expected.bundlePath ||
+    actual.bundleRealPath !== expected.bundleRealPath ||
+    actual.executablePath !== expected.executablePath ||
+    actual.designatedRequirement !== expected.designatedRequirement ||
+    actual.cdHash !== expected.cdHash ||
+    actual.binarySha256 !== expected.binarySha256 ||
+    actual.binaryDevice !== expected.binaryDevice ||
+    actual.binaryInode !== expected.binaryInode ||
+    actual.binarySize !== expected.binarySize
+  ) throw hostFailure("native host attestation differs from the recorded installed host identity");
+}
+
+function assertPackagedHostConfiguration(identity: HostIdentity, config: RuntimeConfig): void {
+  let expected: HostLaunchConfiguration;
+  try { expected = expectedHostConfiguration(config); }
+  catch (error) { throw hostFailure(message(error)); }
+  if (!deepValueEqual(identity.configuration, expected)) {
+    throw hostFailure("native host configuration differs from the exact packaged runtime policy");
+  }
 }
 
 export async function assertSupervisorOwnedByHost(
@@ -535,6 +828,9 @@ export async function assertSupervisorOwnedByHost(
   desktopPid: number;
   supervisorPid: number;
 }> {
+  if (isPackagedRuntime(config)) {
+    throw hostFailure("packaged supervisor ownership must use the native host process attestation provider");
+  }
   const identity = await assertInstalledHostIdentity(config, dependencies);
   const supervisor = await dependencies.inspectProcess(supervisorPid);
   const desktop = await dependencies.inspectProcess(supervisor.ppid);
@@ -571,6 +867,7 @@ export function expectedHostConfiguration(config: RuntimeConfig): HostLaunchConf
     transcriptionStaging: config.paths.transcriptionStaging,
     nodePath,
     runtimeCliPath: path.join(path.resolve(config.paths.plugin, "..", ".."), "packages", "runtime", "dist", "cli.js"),
+    ...(config.packaged ? { captureHelperPath: config.paths.captureHelper } : {}),
     identityPath: config.host.identity,
     ...endpointConfiguration,
   };

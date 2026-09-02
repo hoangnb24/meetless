@@ -6,7 +6,11 @@ import type { MeetingDeleteStoreResult } from "@meetless/meeting-store";
 import { RecordingService } from "./recording-service.js";
 import { RecordingControlServer } from "./control-server.js";
 import { runtimeEndpoint } from "./runtime-endpoints.js";
-import { assertCapturePermissionsReady, assertProductionHostProvenance } from "./production-host.js";
+import {
+  assertCapturePermissionsReady,
+  assertProductionHostProvenance,
+  registerPackagedCaptureHelper,
+} from "./production-host.js";
 import { FfmpegAudioInspector, TranscriptionService } from "./transcription-service.js";
 import {
   DeterministicFixtureTranscriptionProvider,
@@ -233,7 +237,7 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
       "Fixture capture requires a valid consumed one-shot UI-test envelope; normal production has no fixture fallback",
     );
   }
-  if (!fixture) await assertProductionHostProvenance();
+  if (!fixture || process.env.MEETLESS_RUNTIME_PACKAGED === "1") await assertProductionHostProvenance();
   const transcriptionMode = uiTest?.transcriptionMode ?? "native";
   const transcriptionEndpoint = transcriptionMode === "fake"
     ? null
@@ -274,6 +278,10 @@ async function startRecordingRuntimeOnce(deadlineEpochMs: number): Promise<void>
       await assertProductionHostProvenance();
       await assertCapturePermissionsReady();
     },
+    ...(process.env.MEETLESS_RUNTIME_PACKAGED === "1"
+      ? { registerCaptureHelper: (childPid: number, registrationToken: string) =>
+        registerPackagedCaptureHelper(childPid, registrationToken) }
+      : {}),
     transcription: transcript,
     managedTimelineConsumer: managedArtifacts,
   }, getMeetingStore(), meetingLifecycle);
