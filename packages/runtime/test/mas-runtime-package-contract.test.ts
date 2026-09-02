@@ -125,6 +125,14 @@ describe("Mac App Store runtime/package contract", () => {
     expect(expectedHostConfiguration(config).nodePath).toBe(config.packageResources?.nodeBinary);
     expect(expectedHostConfiguration(config).nodePath).not.toBe(process.execPath);
 
+    const childConfig = resolveRuntimeConfig({
+      repositoryRoot: root,
+      userHome: FIXTURE_HOME,
+      environment: config.environment,
+    });
+    expect(childConfig.paths.recordingExports).toBe(config.paths.recordingExports);
+    expect(childConfig.environment.MEETLESS_EXPORT_ROOT).toBe(config.paths.recordingExports);
+
     expect(() => resolveRuntimeConfig({
       repositoryRoot: root,
       userHome: FIXTURE_HOME,

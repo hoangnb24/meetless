@@ -371,7 +371,11 @@ export function resolveRuntimeConfig(input: {
     );
   }
   const requestedRecordingExports = sourceEnvironment.MEETLESS_EXPORT_ROOT?.trim();
-  if (macAppStore && requestedRecordingExports) {
+  if (
+    macAppStore &&
+    requestedRecordingExports &&
+    path.resolve(requestedRecordingExports) !== acceptedRecordingExports
+  ) {
     throw new Error(
       `Mac App Store recording exports cannot be redirected to ${requestedRecordingExports}; writable state is app-container owned. ` +
         `Authority: ${MACOS_APP_STORE_CONTRACT_AUTHORITY}. ` +

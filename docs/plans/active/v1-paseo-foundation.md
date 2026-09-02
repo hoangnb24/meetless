@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v58`
-- `current_frontier`: `R5-MAS-HOST-ATTESTATION-LEASE-USE-CLOSEOUT`
-- `state`: `R5_MAS_HOST_ATTESTATION_LEASE_USE_CLOSEOUT_PENDING_LEAD_REVIEW`
+- `plan_revision`: `v59`
+- `current_frontier`: `R5-MAS-CONTAINER-EXPORT-ROUNDTRIP-CORRECTION`
+- `state`: `R5_MAS_CONTAINER_EXPORT_ROUNDTRIP_CORRECTION_PENDING_LEAD_PROOF`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable lease-use closeout correction from exact parent/base candidate `8ac474c2926c0f8f38c9b841127942869bc30e28`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted DIAG-002 correction, host identity/context history, Lead-accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a`, liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`, integration checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3`, capture relative-socket/fresh-request-ID correction, and topology/state convergence remain preserved. Original frontier base is `c69f26ee500e7cfa403139a99a4d81ed0b1ef5bf`.
+- `candidate`: pending immutable MAS container-export round-trip correction from accepted exact base `bd2dcdf26e0a7d139dbe6203dd2186fcfaec57ef`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted host-attestation, topology/state, lease-use, relative-socket, and fresh-request-ID corrections remain preserved.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `failed_proof`: attempt 8 validly packaged, signed, installed, and reached the LaunchServices topology. Sandboxed desktop PID `46289` failed before the argv helper with `command="ps" purpose="parent PID for 46289" error.code="EPERM" errno=-1 syscall="spawnSync ps" status/signal null` and absent stdout/stderr. The exact proof root `/private/tmp/meetless-mas-development-proof.tY0GlP` and diagnostic evidence `/private/tmp/meetless-mas-diagnostic.SnLDCy` remain read-only evidence; artifact/evidence roots were not inspected for secrets or cache child names.
-- `pending_ruling`: the accepted diagnostic correction and exact attempt-8 EPERM evidence reopen the packaged runtime boundary. Route A keeps vendor Paseo and daemon-worker unmodified: native validates `D→S→W→P→C`, with the policy-pinned daemon-worker as an unregistered intermediate and plugin-process as the registered plugin role. Registration, attestation, status, packaged leases, recursive pruning, and cleanup use generation/revision snapshots with exact owner-chain revalidation. Packaged leases now retain the exact peer PID and revalidate that chain immediately before and after each `withValidLease` action and before `beginExecution`; development leases retain their existing scalar path. The prior capture correction remains in force. It preserves direct-development behavior and is pending Lead review. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
+- `failed_proof`: attempt 9 packaged and signed successfully at accepted tip `bd2dcdf26e0a7d139dbe6203dd2186fcfaec57ef`, then the exact LaunchServices launch failed before readiness because the desktop-projected canonical app-container `MEETLESS_EXPORT_ROOT` was rejected when the daemon resolved the same MAS configuration. The retained proof root is `/private/tmp/meetless-mas-development-proof.SCg3ZA`; manifest SHA-256 is `b887565311c60c0315c6d379a1814f137b19cd8f0e6e225a3e9ce8728ab5e57e`. The original installed app was restored exactly and all excluded gates remained closed.
+- `pending_ruling`: ADR0005 requires MAS writable state to remain app-container owned and forbids redirects outside that boundary. The runtime config itself projects the accepted canonical container recording root into `MEETLESS_EXPORT_ROOT` for children, so an exact canonical value must round-trip; only a differing override is a redirect. The correction is limited to that equality boundary and positive/negative contract proof. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
 - `blocked_by`: no safe in-scope implementation dependency remains; no package, sign, install, launch, or external result is accepted by this candidate.
-- `next_action`: Lead reviews the immutable lease-use closeout correction from exact parent/base candidate `8ac474c2926c0f8f38c9b841127942869bc30e28`; only after acceptance may any separately authorized external packaged verification be considered.
+- `next_action`: Lead runs focused positive/negative MAS config proof and accepts an immutable correction candidate from base `bd2dcdf26e0a7d139dbe6203dd2186fcfaec57ef`; only then may a fresh external gate attempt be considered.
 
 ## Ownership And Authority
 
@@ -1337,6 +1337,33 @@ change is included.
 No package/sign/install/launch retry, retained-root or secret/cache inspection,
 external operation, or push is part of this frontier. The immutable candidate
 is pending Lead review; all external gates remain closed.
+
+### R5 MAS container export round-trip correction (2026-09-03; current frontier)
+
+`PLAN_RECONCILIATION v59` records attempt 9 and the exact correction boundary
+against accepted base `bd2dcdf26e0a7d139dbe6203dd2186fcfaec57ef`.
+Packaging, signing, profile, Electron, Mach-O, entitlement, package-contract,
+and pinned-Paseo validation passed. The sole LaunchServices attempt then
+stopped before readiness because the desktop's resolved MAS configuration
+published its canonical app-container recording root as
+`MEETLESS_EXPORT_ROOT`, while the daemon's second configuration resolution
+treated any present value as a forbidden redirect.
+
+ADR0005 keeps MAS writable state inside the app container and forbids an
+external recording-root override. The canonical resolved container recording
+root is therefore allowed to round-trip between owned processes; a differing
+value remains rejected with the existing security-scoped-export guidance. The
+native validation owner remains the focused MAS runtime package-contract test:
+positive proof resolves a child configuration from the parent-projected
+environment, while negative proof retains the external Documents redirect.
+
+The retained attempt-9 proof root is
+`/private/tmp/meetless-mas-development-proof.SCg3ZA`; the manifest SHA-256 is
+`b887565311c60c0315c6d379a1814f137b19cd8f0e6e225a3e9ce8728ab5e57e`.
+The prior app was restored exactly. No purchase, restore, premium, recording,
+transcription, TCC, UI, Convex, production, upload, submission, publication,
+App Review, push, secret disclosure, or RevenueCat mutation occurred. A new
+external gate attempt remains closed until Lead accepts repository proof.
 
 ### Risks And Recovery
 
