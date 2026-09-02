@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v59`
-- `current_frontier`: `R5-MAS-CONTAINER-EXPORT-ROUNDTRIP-CORRECTION`
-- `state`: `R5_MAS_CONTAINER_EXPORT_ROUNDTRIP_CORRECTION_PENDING_LEAD_PROOF`
+- `plan_revision`: `v60`
+- `current_frontier`: `R5-MAS-HOST-CONFIG-CAPTURE-HELPER-BINDING`
+- `state`: `R5_MAS_HOST_CONFIG_CAPTURE_HELPER_BINDING_PENDING_LEAD_PROOF`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable MAS container-export round-trip correction from accepted exact base `bd2dcdf26e0a7d139dbe6203dd2186fcfaec57ef`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted host-attestation, topology/state, lease-use, relative-socket, and fresh-request-ID corrections remain preserved.
+- `candidate`: pending immutable host-config capture-helper binding correction from accepted exact base `4096c3a6c5163531e110e45723dd42319f485aff`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `failed_proof`: attempt 9 packaged and signed successfully at accepted tip `bd2dcdf26e0a7d139dbe6203dd2186fcfaec57ef`, then the exact LaunchServices launch failed before readiness because the desktop-projected canonical app-container `MEETLESS_EXPORT_ROOT` was rejected when the daemon resolved the same MAS configuration. The retained proof root is `/private/tmp/meetless-mas-development-proof.SCg3ZA`; manifest SHA-256 is `b887565311c60c0315c6d379a1814f137b19cd8f0e6e225a3e9ce8728ab5e57e`. The original installed app was restored exactly and all excluded gates remained closed.
-- `pending_ruling`: ADR0005 requires MAS writable state to remain app-container owned and forbids redirects outside that boundary. The runtime config itself projects the accepted canonical container recording root into `MEETLESS_EXPORT_ROOT` for children, so an exact canonical value must round-trip; only a differing override is a redirect. The correction is limited to that equality boundary and positive/negative contract proof. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
+- `failed_proof`: attempt 10 retained root `/private/tmp/meetless-mas-development-proof.D0SWVP` has manifest SHA-256 `7282632de92ee03295397e2d1bdb8e0dca9c8f5e3007c50b11d9f7dcaceb9683`. Installed identity preflight failed before LaunchServices because the digest-verified packaged host configuration omitted the internal capture-helper path expected from `RuntimeConfig.paths.captureHelper`. No LaunchServices launch was attempted; all external gates remained closed.
+- `pending_ruling`: `installation-contract.json` remains the single authoritative packaged-resource owner. The correction derives internal `HostLaunchConfiguration.captureHelperPath` from its digest-verified `package.resources.captureHelper` through existing bundle containment, while strict v2 `host-config.json` neither emits nor accepts that field. Direct-DMG derives the same resource and development remains unchanged. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
 - `blocked_by`: no safe in-scope implementation dependency remains; no package, sign, install, launch, or external result is accepted by this candidate.
-- `next_action`: Lead runs focused positive/negative MAS config proof and accepts an immutable correction candidate from base `bd2dcdf26e0a7d139dbe6203dd2186fcfaec57ef`; only then may a fresh external gate attempt be considered.
+- `next_action`: Lead runs focused positive/negative host identity/package-contract proof and accepts an immutable correction candidate from base `4096c3a6c5163531e110e45723dd42319f485aff`; only then may a fresh external gate attempt be considered.
 
 ## Ownership And Authority
 
@@ -1364,6 +1364,45 @@ The prior app was restored exactly. No purchase, restore, premium, recording,
 transcription, TCC, UI, Convex, production, upload, submission, publication,
 App Review, push, secret disclosure, or RevenueCat mutation occurred. A new
 external gate attempt remains closed until Lead accepts repository proof.
+
+### R5 MAS host-config capture-helper binding (2026-09-03; current frontier)
+
+`PLAN_RECONCILIATION v60` records attempt 10 against accepted exact base
+`4096c3a6c5163531e110e45723dd42319f485aff`. Its retained root is
+`/private/tmp/meetless-mas-development-proof.D0SWVP` and its manifest SHA-256 is
+`7282632de92ee03295397e2d1bdb8e0dca9c8f5e3007c50b11d9f7dcaceb9683`.
+Installed identity preflight stopped before LaunchServices because native host
+configuration did not contain the capture-helper path expected by the packaged
+runtime. No LaunchServices launch was attempted.
+
+The accepted correction boundary keeps `installation-contract.json` as the
+single packaged-resource owner. After digest verification, the Node host
+resolver requires `package.resources.captureHelper`, resolves it with existing
+bundle containment, and projects only the absolute result into internal
+`HostLaunchConfiguration`. Strict schema-v2 `host-config.json` remains unchanged:
+the field is neither emitted nor accepted there. Omission, non-string, traversal,
+and absolute escape fail before child launch with ADR0004/artifact-contract and
+rebuild guidance. The unchanged MAS configuration equals the RuntimeConfig
+expectation; direct-DMG derives the same contract resource; development has no
+packaged helper field. Existing installation-contract digest mismatch proof is
+retained.
+
+Focused MAS/direct/host-identity contract proof, typecheck, MAS baseline
+validation, applicable Node syntax checks, diff/ancestry/path/authority checks,
+and a clean tracked worktree are required repository-only evidence. The authority
+digest remains `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`.
+Package, sign, install, launch, retained-root inspection, secret/cache inspection,
+R4 fixture mutation, push, and every external gate remain closed.
+
+Observed repository-only proof on 2026-09-03: the focused MAS, direct-DMG,
+host-config, host-identity, and packaged-attestation command passed 5 files and
+42 tests; `npm run typecheck` and `npm run validate:macos:app-store` passed;
+`git diff --check` passed. No changed JavaScript file required a separate Node
+syntax check. Checked-in CI does not invoke the focused correction command,
+no configured executable local hook enforces it, and branch protection remains
+unverified. The final ancestry, three-path manifest, unchanged authority files,
+recorded authority digest, and tracked-worktree state are checked at immutable
+candidate creation.
 
 ### Risks And Recovery
 

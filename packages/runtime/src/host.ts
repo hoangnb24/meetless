@@ -271,6 +271,7 @@ export function resolveHostConfiguration(
     throw new Error(`host configuration installation contract digest ${contractDigest} differs from ${parsed.installationContractSha256}`);
   }
   const contractValue = parseJsonRequired(contractBytes, contractPath);
+  const captureHelperPath = resolvePackagedCaptureHelperPath(contractValue, packageRoot);
   let contract: z.infer<typeof InstallationContractSchema>;
   try {
     contract = InstallationContractSchema.parse(contractValue);
@@ -330,12 +331,41 @@ export function resolveHostConfiguration(
     transcriptionStaging,
     nodePath: resolveBundleRelativePath(packageRoot, parsed.nodePath, "packaged node"),
     runtimeCliPath: resolveBundleRelativePath(packageRoot, parsed.runtimeCliPath, "packaged runtime CLI"),
+    captureHelperPath,
     identityPath,
     endpointPolicy: parsed.endpointPolicy,
     endpointWorkingDirectory: parsed.endpointWorkingDirectory,
     recordingEndpointName: parsed.recordingEndpointName,
     transcriptionEndpointName: parsed.transcriptionEndpointName,
   });
+}
+
+function resolvePackagedCaptureHelperPath(contractValue: unknown, packageRoot: string): string {
+  const packageValue = isRecord(contractValue) ? contractValue.package : undefined;
+  const resources = isRecord(packageValue) ? packageValue.resources : undefined;
+  const captureHelper = isRecord(resources) ? resources.captureHelper : undefined;
+  if (typeof captureHelper !== "string") {
+    throw packagedCaptureHelperContractError(
+      "installation contract package.resources.captureHelper is missing or is not a string",
+    );
+  }
+  try {
+    return resolveContainedPath(packageRoot, captureHelper, "packaged captureHelper");
+  } catch (error) {
+    throw packagedCaptureHelperContractError(
+      `installation contract package.resources.captureHelper is not a contained package resource: ${captureHelper}`,
+      error,
+    );
+  }
+}
+
+function packagedCaptureHelperContractError(reason: string, cause?: unknown): Error {
+  return new Error(
+    `${reason}. Authority: ADR0004 (docs/decisions/0004-recording-host-and-capture-permission-boundary.md) ` +
+      "and the digest-verified installation artifact contract. " +
+      "Next action: rebuild the complete macOS package so installation-contract.json binds the contained capture helper resource.",
+    cause === undefined ? undefined : { cause },
+  );
 }
 
 function resolvePackagedRuntimeRoot(

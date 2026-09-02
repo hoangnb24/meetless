@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -181,6 +182,9 @@ describe("Mac App Store runtime/package contract", () => {
       path.resolve(homedir(), MACOS_INSTALLATION_CONTRACT.userSupportRelativePath),
     );
     expect(configuration.nodePath).toBe(path.join(packageRoot, "runtime/node"));
+    expect(configuration.captureHelperPath).toBe(
+      path.join(packageRoot, MACOS_INSTALLATION_CONTRACT.package.resources.captureHelper),
+    );
   });
 
   test("keeps packaged bind arguments stable across ordinary, long ASCII, and long Unicode homes", async () => {
@@ -234,6 +238,7 @@ describe("Mac App Store runtime/package contract", () => {
     const marker = macAppStorePackagedMarker({ paseoCommit: FIXTURE_PASEO_COMMIT });
     await writeFile(path.join(packageRoot, "installation-contract.json"), macAppStoreInstallationContractBytes());
     await writeFile(path.join(packageRoot, "meetless-package.json"), `${JSON.stringify(marker, null, 2)}\n`);
+    await writePackagedResources(packageRoot, marker.resources);
 
     const configuration = resolveHostConfiguration(
       macAppStorePackagedHostConfiguration({ contractSha256 }),
@@ -250,6 +255,17 @@ describe("Mac App Store runtime/package contract", () => {
     expect(configuration.transcriptionSocket).toBe(
       path.join(configuration.runtimeRoot, contract.runtime.endpointPolicy.transcriptionEndpointName),
     );
+    expect(configuration.captureHelperPath).toBe(
+      path.join(packageRoot, contract.package.resources.captureHelper),
+    );
+    const runtimeConfiguration = resolveRuntimeConfig({
+      repositoryRoot: packageRoot,
+      userHome: FIXTURE_HOME,
+      listen: contract.listen,
+      rendererOrigin: contract.rendererOrigin,
+      environment: { MEETLESS_RUNTIME_ROOT: FIXTURE_RUNTIME_ROOT },
+    });
+    expect(configuration).toEqual(expectedHostConfiguration(runtimeConfiguration));
 
     expect(resolveHostConfiguration(
       macAppStorePackagedHostConfiguration({ contractSha256 }),
@@ -277,6 +293,74 @@ describe("Mac App Store runtime/package contract", () => {
       { runtimeRoot: FIXTURE_RUNTIME_ROOT },
     )).toThrow(/app-container support root must be supplied/);
   });
+
+  test("keeps capture helper internal and rejects invalid digest-bound resource bindings", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-mas-capture-helper-contract-"));
+    fixtureRoots.push(root);
+    const bundle = path.join(root, "Meetless.app");
+    const packageRoot = path.join(bundle, "Contents/Resources/meetless");
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(
+      path.join(packageRoot, "meetless-package.json"),
+      `${JSON.stringify(macAppStorePackagedMarker({ paseoCommit: FIXTURE_PASEO_COMMIT }), null, 2)}\n`,
+    );
+
+    const packagedConfiguration = macAppStorePackagedHostConfiguration();
+    expect(() => resolveHostConfiguration({
+      ...packagedConfiguration,
+      captureHelperPath: "native/macos-capture/meetless-capture",
+    }, bundle)).toThrow(/Unrecognized key.*captureHelperPath/s);
+
+    await writeFile(path.join(packageRoot, "installation-contract.json"), macAppStoreInstallationContractBytes());
+    expect(() => resolveHostConfiguration({
+      ...packagedConfiguration,
+      installationContractSha256: "0".repeat(64),
+    }, bundle)).toThrow(/installation contract digest .* differs from 0{64}/s);
+
+    const mutations: Array<[string, unknown]> = [
+      ["omitted", undefined],
+      ["non-string", 42],
+      ["empty", ""],
+      ["traversal", "../meetless-capture"],
+      ["absolute escape", "/private/tmp/meetless-capture"],
+    ];
+    for (const [label, captureHelper] of mutations) {
+      const contract = macAppStoreInstallationContract();
+      if (captureHelper === undefined) {
+        delete (contract.package.resources as Record<string, unknown>).captureHelper;
+      } else {
+        (contract.package.resources as Record<string, unknown>).captureHelper = captureHelper;
+      }
+      const contractBytes = Buffer.from(`${JSON.stringify(contract, null, 2)}\n`);
+      const contractSha256 = createHash("sha256").update(contractBytes).digest("hex");
+      await writeFile(path.join(packageRoot, "installation-contract.json"), contractBytes);
+      expect(
+        () => resolveHostConfiguration(
+          macAppStorePackagedHostConfiguration({ contractSha256 }),
+          bundle,
+        ),
+        label,
+      ).toThrow(
+        /package\.resources\.captureHelper.*Authority: ADR0004.*digest-verified installation artifact contract.*Next action: rebuild the complete macOS package/s,
+      );
+    }
+
+    const developmentConfiguration = {
+      schema: "MEETLESS_MACOS_HOST_CONFIG v2",
+      mode: "development",
+      bundleIdentifier: "com.meetless.app",
+      repositoryRoot: process.cwd(),
+      runtimeRoot: "/tmp/meetless-development-host",
+      listen: "127.0.0.1:6777",
+      rendererOrigin: "http://127.0.0.1:8082",
+      transcriptionSocket: "/tmp/meetless-development-host/transcription.sock",
+      transcriptionStaging: "/tmp/meetless-development-host/transcription",
+      nodePath: process.execPath,
+      runtimeCliPath: path.resolve("packages/runtime/dist/cli.js"),
+      identityPath: "/tmp/meetless-development-host/host-identity.json",
+    };
+    expect(resolveHostConfiguration(developmentConfiguration, bundle)).not.toHaveProperty("captureHelperPath");
+  });
 });
 
 async function createPackagedMasFixture(): Promise<string> {
@@ -289,7 +373,16 @@ async function createPackagedMasFixture(): Promise<string> {
 
   await writeFile(path.join(root, "installation-contract.json"), contractBytes);
   await writeFile(path.join(root, "meetless-package.json"), `${JSON.stringify(marker, null, 2)}\n`);
-  for (const [name, relativePath] of Object.entries(marker.resources)) {
+  await writePackagedResources(root, marker.resources);
+
+  expect(validateMacAppStorePackageContract(JSON.parse(contractBytes.toString("utf8")))).toBeTruthy();
+  expect(validateMacAppStorePackagedMarker(marker, { contractSha256 })).toBeTruthy();
+  expect(validateMacAppStorePackagedHostConfiguration(hostConfiguration, { contractSha256 })).toBeTruthy();
+  return root;
+}
+
+async function writePackagedResources(root: string, resources: Record<string, string>): Promise<void> {
+  for (const [name, relativePath] of Object.entries(resources)) {
     const target = path.join(root, relativePath);
     if (name === "rendererRoot") {
       await mkdir(target, { recursive: true });
@@ -298,9 +391,4 @@ async function createPackagedMasFixture(): Promise<string> {
       await writeFile(target, `${name}\n`);
     }
   }
-
-  expect(validateMacAppStorePackageContract(JSON.parse(contractBytes.toString("utf8")))).toBeTruthy();
-  expect(validateMacAppStorePackagedMarker(marker, { contractSha256 })).toBeTruthy();
-  expect(validateMacAppStorePackagedHostConfiguration(hostConfiguration, { contractSha256 })).toBeTruthy();
-  return root;
 }
