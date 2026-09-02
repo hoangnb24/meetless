@@ -41,6 +41,7 @@ import {
   parseUnsignedCodesignProfileDiagnostic,
   parseMacAppStoreDevelopmentArguments,
   prepareMacAppStoreDevelopmentInfo,
+  projectMacAppStoreDevelopmentEntitlementEvidence,
   resolveMacAppStoreDevelopmentEmbeddedProfilePath,
   resolveR5DevelopmentPaseoCommit,
   validateMacAppStoreDevelopmentInfo,
@@ -366,7 +367,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
       { expectedBundleIdentifier: null },
     );
     const entitlements = await readCodesignEntitlements(absolute, machOPolicy.entitlementPolicy, entry.path);
-    validateMachOEntitlements(entitlements, machOPolicy, entry.path);
+    const entitlementEvidence = validateMachOEntitlements(entitlements, machOPolicy, entry.path);
     validateMachOEntry(entry, entry.path);
     nestedSignatures.push({
       path: entry.path,
@@ -376,7 +377,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
       cdHash: signature.cdHash,
       architecture: entry.machOArchitecture,
       fileType: entry.machOFileType,
-      entitlementKeys: Object.keys(entitlements).sort(),
+      entitlementKeys: entitlementEvidence.entitlementKeys,
     });
   }
 
@@ -504,15 +505,12 @@ async function readCodesignEntitlements(
 }
 
 function validateMachOEntitlements(entitlements, policy, label) {
-  if (policy.entitlementPolicy === MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.NONE) {
-    if (entitlements !== null) {
-      throw developmentError(`${label} must not contain an entitlement plist or keys`);
-    }
-    return null;
-  }
-  if (entitlements === null) {
-    throw developmentError(`${label} is missing its required entitlement plist`);
-  }
+  const evidence = projectMacAppStoreDevelopmentEntitlementEvidence(
+    entitlements,
+    policy.entitlementPolicy,
+    label,
+  );
+  if (policy.entitlementPolicy === MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.NONE) return evidence;
   validateEntitlementKeys(
     entitlements,
     policy.expectedEntitlementKeys,
@@ -521,7 +519,7 @@ function validateMachOEntitlements(entitlements, policy, label) {
       ? { applicationGroup: `${R5_APP_STORE_TEAM_ID}.${R5_APP_STORE_BUNDLE_ID}` }
       : undefined,
   );
-  return entitlements;
+  return evidence;
 }
 
 async function assertUnsignedCodesignProfileData(profilePath) {

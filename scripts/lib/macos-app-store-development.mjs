@@ -92,8 +92,10 @@ export function parseMacAppStoreDevelopmentEntitlementResult(
   if (exitCode !== 0) {
     throw developmentError(`${label} entitlement inspection failed with exit code ${String(exitCode)}`);
   }
-  const expectedDiagnostics = `Executable=${resolvedExecutablePath}\n${MACOS_CODESIGN_ENTITLEMENT_WARNING}\n`;
-  if (String(stderr ?? "") !== expectedDiagnostics) {
+  const expectedExecutableDiagnostics = `Executable=${resolvedExecutablePath}\n`;
+  const expectedWarningDiagnostics = `${expectedExecutableDiagnostics}${MACOS_CODESIGN_ENTITLEMENT_WARNING}\n`;
+  const actualDiagnostics = String(stderr ?? "");
+  if (actualDiagnostics !== expectedExecutableDiagnostics && actualDiagnostics !== expectedWarningDiagnostics) {
     throw developmentError(`${label} entitlement inspection returned malformed codesign diagnostics`);
   }
   const entitlementPlist = String(stdout ?? "");
@@ -111,6 +113,29 @@ export function parseMacAppStoreDevelopmentEntitlementResult(
     throw developmentError(`${label} must not contain an entitlement plist or entitlement keys`);
   }
   return { kind: "plist", entitlementPolicy, plist: entitlementPlist };
+}
+
+export function projectMacAppStoreDevelopmentEntitlementEvidence(
+  entitlements,
+  entitlementPolicy,
+  label = "signed Mach-O",
+) {
+  if (!Object.values(MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES).includes(entitlementPolicy)) {
+    throw developmentError(`${label} has an unknown entitlement policy ${String(entitlementPolicy)}`);
+  }
+  if (entitlementPolicy === MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.NONE) {
+    if (entitlements !== null) {
+      throw developmentError(`${label} must not contain an entitlement plist or entitlement keys`);
+    }
+    return { entitlementKeys: [] };
+  }
+  if (entitlements === null) {
+    throw developmentError(`${label} is missing its required entitlement plist`);
+  }
+  if (!entitlements || typeof entitlements !== "object" || Array.isArray(entitlements)) {
+    throw developmentError(`${label} entitlements must be a dictionary`);
+  }
+  return { entitlementKeys: Object.keys(entitlements).sort() };
 }
 
 export function createMacAppStoreDevelopmentSigningOptions({ bundlePath, parentEntitlementsPath, childEntitlementsPath }) {

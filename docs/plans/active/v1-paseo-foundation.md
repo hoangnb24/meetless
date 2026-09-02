@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v44`
-- `current_frontier`: `R5-MAS-MACH-O-ENTITLEMENT-TYPE-CORRECTION`
-- `state`: `R5_MAS_POST_SIGN_ENTITLEMENT_VALIDATION_REOPENED`
+- `plan_revision`: `v45`
+- `current_frontier`: `R5-MAS-ENTITLEMENT-CONVERGENCE-CORRECTION`
+- `state`: `R5_MAS_POST_SIGN_ENTITLEMENT_CONVERGENCE_REOPENED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending one immutable Mach-O entitlement-type correction from exact base `81c9fe5e8fc2a28269dc88e9663e492c39900b7f`; accepted profile-signing correction `25257e4c96e743fd56ad80956bb1b31511e2c544`, checkpoint `81c9fe5`, and history through `13f20d2eb49549f72098d103e0a49d1900a9248e` remain preserved. No artifact or external result is accepted by this repository verdict.
+- `candidate`: pending one immutable entitlement-validation convergence correction from exact base `f914864f3e746662b58bdfe75fd852eb1e6f63c0`; the v44 Mach-O type-policy correction, accepted profile-signing correction `25257e4c96e743fd56ad80956bb1b31511e2c544`, checkpoint `81c9fe5`, and history through `13f20d2eb49549f72098d103e0a49d1900a9248e` remain preserved. No artifact or external result is accepted by this repository verdict.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `failed_proof`: retained read-only root `/private/tmp/meetless-mas-development-proof.GNud6q` records the signed artifact whose validator failure was caused by requiring child entitlements for every nested Mach-O. Its read-only inventory reports 43 thin arm64 Mach-Os: 16 `MH_EXECUTE`, 1 `MH_BUNDLE` (`Contents/Resources/meetless/node_modules/node-pty/prebuilds/darwin-arm64/pty.node`), and 26 `MH_DYLIB` including Sherpa and Electron framework libraries; the `MH_BUNDLE`/`MH_DYLIB` objects have no entitlement plist. Prior root `/private/tmp/meetless-mas-development-proof.GpvGZD` and its exact embedded-profile `Permission denied` failure remain retained history; profile bytes/CMS/fields passed, no MAS manifest was produced, `/Applications` was untouched, and no install or launch occurred.
-- `pending_ruling`: package readiness is reopened only at the post-sign/pre-install entitlement-validation boundary. The owner-authorized frontier still opens only dev MAS packaging, Apple Development signing, recoverable local installation, exact local launch, bounded readiness, and inherent RevenueCat public-SDK configure/read behavior. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and every other external gate remain closed.
-- `blocked_by`: no artifact, signing, install, launch, or cleanup result is accepted yet. The v43 post-sign premise was overbroad for authoritative `MH_BUNDLE`/`MH_DYLIB` data and is corrected prospectively here; prior history is not rewritten. Purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions remain forbidden.
-- `next_action`: Lead review of the one immutable v44 candidate; only after acceptance may a separately routed SERIAL package/sign/install/launch attempt proceed. Dependency order otherwise remains unchanged.
+- `failed_proof`: FAST closeout accepted the v44 authoritative Mach-O type policy but found two direct defects in the same post-sign validator boundary: NONE-policy evidence projection called `Object.keys(null)` for entitlement-free `MH_BUNDLE`/`MH_DYLIB` objects, and entitlement-result parsing required the known codesign deprecation warning instead of accepting the exact warning-free `Executable=` result. Retained read-only roots `/private/tmp/meetless-mas-development-proof.GNud6q` and `/private/tmp/meetless-mas-development-proof.GpvGZD` remain historical evidence; no package retry is claimed.
+- `pending_ruling`: package readiness is reopened only for this final post-sign/pre-install entitlement-validation convergence correction. The owner-authorized frontier still opens only dev MAS packaging, Apple Development signing, recoverable local installation, exact local launch, bounded readiness, and inherent RevenueCat public-SDK configure/read behavior. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and every other external gate remain closed.
+- `blocked_by`: no artifact, signing, install, launch, or cleanup result is accepted yet. The FAST findings are local integration defects, not a new architecture review or a package retry authorization. Purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions remain forbidden.
+- `next_action`: Lead review of the one immutable v45 candidate; only after acceptance may a separately routed SERIAL package/sign/install/launch attempt proceed. Dependency order otherwise remains unchanged.
 
 ## Ownership And Authority
 
@@ -1175,6 +1175,42 @@ audit independently confirmed the 43-entry 16/1/26 Mach-O split and thin arm64
 shape. No retained root, repository file, package artifact, install target, or
 external service was changed by these checks. Lead acceptance remains pending.
 
+### R5 MAS entitlement-validation convergence correction (2026-09-02; current frontier)
+
+Package readiness is reopened at exact base
+`f914864f3e746662b58bdfe75fd852eb1e6f63c0` for one final correction inside the
+native checked-in MAS package-validator boundary. FAST closeout accepted the
+v44 Mach-O type policy, then found two direct integration defects without
+reopening architecture review: NONE-policy evidence serialization called
+`Object.keys(null)` for a signed `MH_BUNDLE`/`MH_DYLIB` with no entitlement
+plist, and the exact codesign entitlement-result parser rejected a valid
+warning-free `Executable=<resolved path>` result because it required the known
+deprecation warning.
+
+The correction adds the smallest pure production seam for entitlement evidence:
+plist-backed policies project sorted entitlement keys, while the NONE policy
+projects an empty list from absent entitlements and rejects any present plist
+or keys. The parser still requires exit zero, the exact normalized `Executable=`
+target, and the exact output shape; it accepts only the known warning as an
+optional second diagnostic line. The package validator consumes this projection
+for nested signature evidence. Signer/options routing, identity/team/strict
+verification, thin arm64 inventory, parent/child key checks, profile byte/CMS
+validation, package contract, and all excluded gates remain unchanged.
+
+Deterministic proof covers plist and absent evidence projection, both warning
+forms, exact-target and output-shape failures, forbidden/missing entitlement
+states, and the existing MAS/profile/signing-contract regressions. No package
+command, signing or retry, install, launch, retained-root access, secret access,
+or external action is part of this frontier. The correction and plan remain
+pending Lead acceptance.
+
+Observed v45 repository proof on 2026-09-02: the focused MAS development suite
+passed 1 file and 12 tests; the three MAS/package/contract regression files
+passed 41 tests; `npm run typecheck`, `npm run validate:macos:app-store`, both
+changed Node syntax checks, and `git diff --check` passed. No broad signing
+fixture, package command, signing retry, install, launch, retained-root replay,
+secret access, or external action was run for this convergence correction.
+
 ### Risks And Recovery
 
 - App Sandbox may reject the current nested Electron, Node, helper, listener, or
@@ -1318,6 +1354,19 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v45`: package readiness is reopened at exact
+  base `f914864f3e746662b58bdfe75fd852eb1e6f63c0` for
+  `R5-MAS-ENTITLEMENT-CONVERGENCE-CORRECTION`. FAST closeout accepted the v44
+  authoritative Mach-O type policy but found two direct integration defects in
+  the same validator boundary: NONE-policy evidence projection invoked
+  `Object.keys(null)`, and entitlement diagnostics required the known warning
+  instead of accepting the exact warning-free `Executable=` result. The
+  correction is limited to the production projection/parser seam, package
+  evidence wiring, deterministic tests, and this plan. No package retry is
+  claimed; GpvGZD and GNud6q remain preserved read-only history, the authority
+  digest is unchanged, every external gate is closed, and Lead acceptance is
+  pending.
 
 - 2026-09-02 `PLAN_RECONCILIATION v44`: package readiness is reopened at exact
   base `81c9fe5e8fc2a28269dc88e9663e492c39900b7f` for

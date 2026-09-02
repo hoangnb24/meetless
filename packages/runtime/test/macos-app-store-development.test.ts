@@ -14,6 +14,7 @@ import {
   createMacAppStoreDevelopmentSigningOptions,
   parseMacAppStoreDevelopmentEntitlementResult,
   parseUnsignedCodesignProfileDiagnostic,
+  projectMacAppStoreDevelopmentEntitlementEvidence,
   resolveR5DevelopmentPaseoCommit,
   resolveR5DevelopmentProfilePath,
   resolveMacAppStoreDevelopmentEmbeddedProfilePath,
@@ -30,11 +31,11 @@ import {
 
 const CODESIGN_ENTITLEMENT_WARNING = "warning: Specifying ':' in the path is deprecated and will not work in a future release";
 
-function entitlementCommandResult(executablePath, stdout = "") {
+function entitlementCommandResult(executablePath, stdout = "", { warning = true } = {}) {
   return {
     exitCode: 0,
     stdout,
-    stderr: `Executable=${path.resolve(executablePath)}\n${CODESIGN_ENTITLEMENT_WARNING}\n`,
+    stderr: `Executable=${path.resolve(executablePath)}\n${warning ? `${CODESIGN_ENTITLEMENT_WARNING}\n` : ""}`,
   };
 }
 
@@ -250,6 +251,14 @@ describe("Mac App Store development package boundary", () => {
         { entitlementPolicy: policy.entitlementPolicy, executablePath, label },
       )).toEqual({ kind: "absent", entitlementPolicy: "none" });
     }
+    expect(parseMacAppStoreDevelopmentEntitlementResult(
+      entitlementCommandResult(profilePath, "", { warning: false }),
+      {
+        entitlementPolicy: noEntitlementObjects[0].policy.entitlementPolicy,
+        executablePath: profilePath,
+        label: "pty.node",
+      },
+    )).toEqual({ kind: "absent", entitlementPolicy: "none" });
 
     expect(() => parseMacAppStoreDevelopmentEntitlementResult(
       entitlementCommandResult(profilePath),
@@ -263,6 +272,31 @@ describe("Mac App Store development package boundary", () => {
       entitlementCommandResult(childPath, childPlist),
       { entitlementPolicy: childPolicy.entitlementPolicy, executablePath: childPath, label: "helper" },
     )).toMatchObject({ kind: "plist", entitlementPolicy: "child", plist: childPlist });
+    expect(parseMacAppStoreDevelopmentEntitlementResult(
+      entitlementCommandResult(childPath, childPlist, { warning: false }),
+      { entitlementPolicy: childPolicy.entitlementPolicy, executablePath: childPath, label: "helper" },
+    )).toMatchObject({ kind: "plist", entitlementPolicy: "child", plist: childPlist });
+    expect(projectMacAppStoreDevelopmentEntitlementEvidence({
+      "com.apple.security.app-sandbox": true,
+      "com.apple.security.inherit": true,
+    }, childPolicy.entitlementPolicy, "helper")).toEqual({
+      entitlementKeys: ["com.apple.security.app-sandbox", "com.apple.security.inherit"],
+    });
+    expect(projectMacAppStoreDevelopmentEntitlementEvidence(
+      null,
+      noEntitlementObjects[0].policy.entitlementPolicy,
+      "pty.node",
+    )).toEqual({ entitlementKeys: [] });
+    expect(() => projectMacAppStoreDevelopmentEntitlementEvidence(
+      null,
+      childPolicy.entitlementPolicy,
+      "helper",
+    )).toThrow(/missing its required entitlement plist/);
+    expect(() => projectMacAppStoreDevelopmentEntitlementEvidence(
+      { "com.apple.security.app-sandbox": true },
+      noEntitlementObjects[0].policy.entitlementPolicy,
+      "pty.node",
+    )).toThrow(/must not contain an entitlement plist or entitlement keys/);
     expect(() => validateEntitlementKeys({
       "com.apple.security.app-sandbox": true,
       "com.apple.security.inherit": true,
@@ -286,6 +320,10 @@ describe("Mac App Store development package boundary", () => {
     )).toThrow(/malformed plist output/);
     expect(() => parseMacAppStoreDevelopmentEntitlementResult(
       { ...entitlementCommandResult(profilePath), stderr: `${entitlementCommandResult(profilePath).stderr}unexpected\n` },
+      { entitlementPolicy: noEntitlementObjects[0].policy.entitlementPolicy, executablePath: profilePath, label: "pty.node" },
+    )).toThrow(/malformed codesign diagnostics/);
+    expect(() => parseMacAppStoreDevelopmentEntitlementResult(
+      { ...entitlementCommandResult(profilePath, "", { warning: false }), stderr: "Executable=/tmp/other\n" },
       { entitlementPolicy: noEntitlementObjects[0].policy.entitlementPolicy, executablePath: profilePath, label: "pty.node" },
     )).toThrow(/malformed codesign diagnostics/);
   });
