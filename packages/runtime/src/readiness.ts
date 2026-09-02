@@ -37,6 +37,12 @@ interface SpawnSyncErrorDiagnostic {
   message: string | number | null | undefined;
 }
 
+export interface SpawnSyncStreamDiagnostic {
+  state: "present" | "absent";
+  type: "string" | "buffer" | "null" | "undefined";
+  byteLength: number;
+}
+
 export interface SpawnSyncDiagnostic {
   command: string;
   inspectorPath: string;
@@ -44,8 +50,8 @@ export interface SpawnSyncDiagnostic {
   error: SpawnSyncErrorDiagnostic | undefined;
   status: number | null | undefined;
   signal: NodeJS.Signals | null | undefined;
-  stdout: string | null | undefined;
-  stderr: string | null | undefined;
+  stdout: SpawnSyncStreamDiagnostic;
+  stderr: SpawnSyncStreamDiagnostic;
 }
 
 export function projectSpawnSyncDiagnostic(input: {
@@ -69,8 +75,8 @@ export function projectSpawnSyncDiagnostic(input: {
     },
     status: result.status,
     signal: result.signal,
-    stdout: normalizeSpawnSyncOutput(result.stdout),
-    stderr: normalizeSpawnSyncOutput(result.stderr),
+    stdout: projectSpawnSyncStream(result.stdout),
+    stderr: projectSpawnSyncStream(result.stderr),
   };
 }
 
@@ -93,9 +99,24 @@ export function formatSpawnSyncDiagnostic(input: {
     `error.message=${diagnosticValue(diagnostic.error?.message)}`,
     `status=${diagnosticValue(diagnostic.status)}`,
     `signal=${diagnosticValue(diagnostic.signal)}`,
-    `stdout=${diagnosticValue(diagnostic.stdout)}`,
-    `stderr=${diagnosticValue(diagnostic.stderr)}`,
+    `stdout=${formatSpawnSyncStream(diagnostic.stdout)}`,
+    `stderr=${formatSpawnSyncStream(diagnostic.stderr)}`,
   ].join(" ");
+}
+
+export function projectSpawnSyncStream(output: SpawnSyncOutput): SpawnSyncStreamDiagnostic {
+  if (Buffer.isBuffer(output)) {
+    return { state: "present", type: "buffer", byteLength: output.byteLength };
+  }
+  if (typeof output === "string") {
+    return { state: "present", type: "string", byteLength: Buffer.byteLength(output, "utf8") };
+  }
+  if (output === null) return { state: "absent", type: "null", byteLength: 0 };
+  return { state: "absent", type: "undefined", byteLength: 0 };
+}
+
+function formatSpawnSyncStream(stream: SpawnSyncStreamDiagnostic): string {
+  return `{state=${stream.state},type=${stream.type},byteLength=${stream.byteLength}}`;
 }
 
 export function normalizeSpawnSyncOutput(output: SpawnSyncOutput): string | null | undefined {

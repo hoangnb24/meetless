@@ -474,8 +474,8 @@ describe("production recording readiness invariant", () => {
       error: fields,
       status: null,
       signal: null,
-      stdout: undefined,
-      stderr: undefined,
+      stdout: { state: "absent", type: "undefined", byteLength: 0 },
+      stderr: { state: "absent", type: "undefined", byteLength: 0 },
     });
     const diagnostic = formatSpawnSyncDiagnostic(input);
     expect(diagnostic).toContain(`error.code=${JSON.stringify(fields.code)}`);
@@ -483,8 +483,36 @@ describe("production recording readiness invariant", () => {
     expect(diagnostic).toContain(`error.syscall=${JSON.stringify(fields.syscall)}`);
     expect(diagnostic).toContain(`error.path=${JSON.stringify(fields.path)}`);
     expect(diagnostic).toContain(`error.message=${JSON.stringify(fields.message)}`);
-    expect(diagnostic).toContain("status=<null> signal=<null> stdout=<undefined> stderr=<undefined>");
+    expect(diagnostic).toContain("status=<null> signal=<null> stdout={state=absent,type=undefined,byteLength=0} stderr={state=absent,type=undefined,byteLength=0}");
     expect(() => formatSpawnSyncDiagnostic(input)).not.toThrow(/TypeError|trim/u);
+  });
+
+  test("omits raw stream content and bounds diagnostics for ps, native argv, lsof, codesign, and plutil outputs", () => {
+    const sentinel = "stream-secret-sentinel-do-not-log";
+    const oversizedString = `${sentinel}-${"s".repeat(1024 * 1024)}`;
+    const oversizedBuffer = Buffer.from(`${sentinel}-${"b".repeat(1024 * 1024)}`, "utf8");
+    const cases = [
+      { command: "ps", inspectorPath: "ps", stdout: oversizedString, stderr: undefined },
+      { command: "native argv inspector", inspectorPath: "/private/tmp/meetless-process-argv", stdout: oversizedBuffer, stderr: null },
+      { command: "lsof", inspectorPath: "lsof", stdout: null, stderr: oversizedString },
+      { command: "codesign", inspectorPath: "codesign", stdout: oversizedBuffer, stderr: oversizedString },
+      { command: "plutil", inspectorPath: "plutil", stdout: sentinel, stderr: Buffer.from(sentinel, "utf8") },
+    ];
+
+    for (const input of cases) {
+      const diagnostic = formatSpawnSyncDiagnostic({
+        command: input.command,
+        inspectorPath: input.inspectorPath,
+        purpose: "fixed startup inspection purpose",
+        result: { status: 1, signal: null, stdout: input.stdout, stderr: input.stderr },
+      });
+      expect(diagnostic).not.toContain(sentinel);
+      expect(diagnostic).not.toContain("s".repeat(1024));
+      expect(diagnostic).not.toContain("b".repeat(1024));
+      expect(diagnostic.length).toBeLessThan(2_048);
+      expect(diagnostic).toMatch(/stdout=\{state=(?:present|absent),type=(?:string|buffer|null|undefined),byteLength=\d+\}/u);
+      expect(diagnostic).toMatch(/stderr=\{state=(?:present|absent),type=(?:string|buffer|null|undefined),byteLength=\d+\}/u);
+    }
   });
 
   test("distinguishes nonzero exit, signal termination, empty output, and malformed output while failing closed", () => {
@@ -495,7 +523,7 @@ describe("production recording readiness invariant", () => {
       result: { status: 2, signal: null, stdout: Buffer.from("partial\n"), stderr: "permission denied\n" },
     });
     expect(nonzero).toContain("status=2 signal=<null>");
-    expect(nonzero).toContain('stdout="partial\\n" stderr="permission denied\\n"');
+    expect(nonzero).toContain("stdout={state=present,type=buffer,byteLength=8} stderr={state=present,type=string,byteLength=18}");
 
     const signaled = formatSpawnSyncDiagnostic({
       command: "native argv inspector",
@@ -504,6 +532,7 @@ describe("production recording readiness invariant", () => {
       result: { status: null, signal: "SIGTERM", stdout: null, stderr: null },
     });
     expect(signaled).toContain("status=<null> signal=\"SIGTERM\"");
+    expect(signaled).toContain("stdout={state=absent,type=null,byteLength=0} stderr={state=absent,type=null,byteLength=0}");
 
     expect(() => parseNativeArgumentVector(undefined, 31)).toThrow(/empty output for process PID 31/u);
     expect(() => parseNativeArgumentVector(Buffer.from("{not-json", "utf8"), 31)).toThrow(/malformed JSON for process PID 31/u);

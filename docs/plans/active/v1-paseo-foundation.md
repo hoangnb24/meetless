@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v53`
-- `current_frontier`: `R5-MAS-DEV-PROCESS-INSPECTOR-DIAGNOSTIC-CORRECTION`
-- `state`: `R5_MAS_PROCESS_INSPECTOR_DIAGNOSTIC_CORRECTION_PENDING_LEAD_REVIEW`
+- `plan_revision`: `v54`
+- `current_frontier`: `R5-MAS-DEV-PROCESS-INSPECTOR-DIAG-002-CORRECTION`
+- `state`: `R5_MAS_PROCESS_INSPECTOR_DIAG_002_CORRECTION_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable diagnostic correction from exact base `eabdaceab58c2f984f9b8f3a617f9d9da2c97a6c`; candidate commit placeholder is `<immutable-candidate-commit-pending>`. The accepted host identity/context correction at `eabdaceab58c2f984f9b8f3a617f9d9da2c97a6c`, Lead-accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a`, liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`, and integration checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3` remain preserved.
+- `candidate`: pending immutable DIAG-002 correction from exact parent/base `a6a46a56aeeff15a3b02f73a69a1566a1e5a8fd1`; candidate commit placeholder is `<immutable-candidate-commit-pending>`. Original correction base `eabdaceab58c2f984f9b8f3a617f9d9da2c97a6c`, accepted host identity/context correction, Lead-accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a`, liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`, and integration checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3` remain preserved.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: retained attempt-7 root `/private/tmp/meetless-mas-development-proof.lPh2Bk` reached packaged sandbox-inherit Node after the accepted identity correction passed semantic equality, but logged only the masked diagnostic `Cannot read properties of undefined (reading 'trim')`. The original spawn failure fields were not retained, so no underlying errno, code, or sandbox cause is proven. The signed thin arm64 helper’s static presence, executability, and signature do not prove MAS spawnability; no artifact child execution is claimed here. Attempt-5/6 package, install, launch, restoration, and disclosure-handling evidence remains preserved as historical context.
-- `pending_ruling`: this repository-only null-safe/lossless diagnostic correction is pending Lead review. After acceptance, exactly one controlled diagnostic MAS retry may decide whether the existing native argv inspector runs; no replacement topology or fallback is authorized. Purchase, restore, premium/provider actions, Convex, production, upload, submission, publication, App Review, and every other external gate remain closed.
+- `pending_ruling`: FAST closeout accepted DIAG-001, DIAG-003, and DIAG-004 and reopened only DIAG-002. This repository-only bounded stream-metadata correction is pending Lead review. After acceptance, exactly one controlled diagnostic MAS retry may decide whether the existing native argv inspector runs; no replacement topology or fallback is authorized. Purchase, restore, premium/provider actions, Convex, production, upload, submission, publication, App Review, and every other external gate remain closed.
 - `blocked_by`: no implementation dependency remains; no package, sign, install, launch-readiness, lifecycle, cleanup, or external result is accepted by this candidate.
-- `next_action`: Lead reviews the immutable candidate from exact base `eabdaceab58c2f984f9b8f3a617f9d9da2c97a6c`; only after acceptance may the owner route one controlled diagnostic MAS retry.
+- `next_action`: Lead reviews the immutable child candidate from exact parent/base `a6a46a56aeeff15a3b02f73a69a1566a1e5a8fd1`; only after acceptance may the owner route one controlled diagnostic MAS retry.
 
 ## Ownership And Authority
 
@@ -1433,6 +1433,33 @@ Observed convergence-correction validation on 2026-08-31:
   whether the existing native argv inspector remains viable; no fallback,
   retry loop, process.argv substitution, self-report, or new attestation
   architecture is authorized by this reconciliation.
+
+- 2026-09-02 `PLAN_RECONCILIATION v54` / `CONVERGENCE_RECONCILIATION v1`:
+  FAST closeout accepted DIAG-001, DIAG-003, and DIAG-004 and reopened only
+  DIAG-002. From exact parent/base
+  `a6a46a56aeeff15a3b02f73a69a1566a1e5a8fd1` (original correction base
+  `eabdaceab58c2f984f9b8f3a617f9d9da2c97a6c`), the child candidate
+  placeholder is `<immutable-candidate-commit-pending>`. This correction
+  changes only the shared formatted diagnostic projection and focused proof:
+  raw stdout/stderr bytes are omitted at every call site, while stream
+  presence/state, representation type, and byte length remain available.
+  Error name/code/errno/syscall/path/message, status, signal,
+  command/inspectorPath, and fixed safe purpose remain actionable; spawn
+  argument arrays and environment remain undisclosed.
+
+  Secret-sentinel and oversized string/Buffer proof covers ps, native argv,
+  lsof, codesign, and plutil-like streams. Valid argv parsing, exact topology,
+  and fail-closed empty/malformed/nonzero/signal behavior remain unchanged.
+  The single future diagnostic MAS retry remains closed pending Lead acceptance;
+  no fallback, retry loop, process.argv substitution, self-report, or new
+  attestation architecture is authorized. Authority digest remains
+  `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`.
+
+  No artifact execution, package/sign/install/launch action, secret/cache
+  listing, external mutation, or push occurred for this correction. All
+  package, sign, install, launch, purchase/restore, RevenueCat/Convex,
+  production, upload, submission, publication, and other external gates
+  remain closed pending Lead review.
 
 - 2026-09-02 `PLAN_RECONCILIATION v50` / `CONVERGENCE_RECONCILIATION v1`:
   From exact unchanged base `94999f10e1e7d841209a695392e259c1b185f0f9`,
