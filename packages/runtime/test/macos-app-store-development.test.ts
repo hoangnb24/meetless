@@ -9,7 +9,10 @@ import {
   R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME,
   R5_APP_STORE_DEVELOPMENT_PROFILE_NAME,
   R5_APP_STORE_DEVELOPMENT_PROFILE_UUID,
+  MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES,
+  classifyMacAppStoreDevelopmentMachO,
   createMacAppStoreDevelopmentSigningOptions,
+  parseMacAppStoreDevelopmentEntitlementResult,
   parseUnsignedCodesignProfileDiagnostic,
   resolveR5DevelopmentPaseoCommit,
   resolveR5DevelopmentProfilePath,
@@ -21,6 +24,19 @@ import {
   validateR5DevelopmentSignature,
   validateRevenueCatPublicSdkKey,
 } from "../../../scripts/lib/macos-app-store-development.mjs";
+import {
+  validateEntitlementKeys,
+} from "../../../scripts/lib/macos-app-store-contract.mjs";
+
+const CODESIGN_ENTITLEMENT_WARNING = "warning: Specifying ':' in the path is deprecated and will not work in a future release";
+
+function entitlementCommandResult(executablePath, stdout = "") {
+  return {
+    exitCode: 0,
+    stdout,
+    stderr: `Executable=${path.resolve(executablePath)}\n${CODESIGN_ENTITLEMENT_WARNING}\n`,
+  };
+}
 
 function profile() {
   return {
@@ -158,6 +174,120 @@ describe("Mac App Store development package boundary", () => {
     });
     expect(routed.filter(({ filePath }) => filePath !== bundlePath).every(({ options }) => options.entitlements === childEntitlementsPath)).toBe(true);
     expect(paths.slice(2).every((filePath) => !signingOptions.ignore(filePath))).toBe(true);
+  });
+
+  test("classifies Mach-O entitlement policy from authoritative file type", () => {
+    const outer = classifyMacAppStoreDevelopmentMachO({
+      path: "Contents/MacOS/MeetlessHost",
+      machOFileType: "MH_EXECUTE",
+    });
+    expect(outer).toEqual({
+      fileType: "MH_EXECUTE",
+      entitlementPolicy: MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.PARENT,
+      expectedEntitlementKeys: [
+        "com.apple.security.app-sandbox",
+        "com.apple.security.application-groups",
+        "com.apple.security.device.audio-input",
+        "com.apple.security.network.client",
+        "com.apple.security.network.server",
+      ],
+    });
+
+    const child = classifyMacAppStoreDevelopmentMachO({
+      path: "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/MacOS/Electron",
+      machOFileType: "MH_EXECUTE",
+    });
+    expect(child.entitlementPolicy).toBe(MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.CHILD);
+    expect(child.expectedEntitlementKeys).toEqual([
+      "com.apple.security.app-sandbox",
+      "com.apple.security.inherit",
+    ]);
+
+    expect(classifyMacAppStoreDevelopmentMachO({
+      path: "Contents/Resources/meetless/node_modules/node-pty/prebuilds/darwin-arm64/pty.node",
+      machOFileType: "MH_BUNDLE",
+    }).entitlementPolicy).toBe(MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.NONE);
+    expect(classifyMacAppStoreDevelopmentMachO({
+      path: "Contents/Resources/meetless/node_modules/sherpa-onnx-darwin-arm64/sherpa-onnx.node",
+      machOFileType: "MH_DYLIB",
+    }).entitlementPolicy).toBe(MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.NONE);
+    expect(classifyMacAppStoreDevelopmentMachO({
+      path: "Contents/Resources/meetless/node_modules/pty.node",
+      machOFileType: "MH_EXECUTE",
+    }).entitlementPolicy).toBe(MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.CHILD);
+
+    expect(() => classifyMacAppStoreDevelopmentMachO({
+      path: "Contents/Resources/meetless/node_modules/unknown.node",
+      machOFileType: null,
+    })).toThrow(/unknown or ambiguous Mach-O file type/);
+    expect(() => classifyMacAppStoreDevelopmentMachO({
+      path: "Contents/Resources/meetless/node_modules/unknown.node",
+      machOFileType: "MH_OBJECT",
+    })).toThrow(/unknown or ambiguous Mach-O file type/);
+    expect(() => classifyMacAppStoreDevelopmentMachO({
+      path: "Contents/MacOS/MeetlessHost",
+      machOFileType: "MH_DYLIB",
+    })).toThrow(/must be an MH_EXECUTE/);
+  });
+
+  test("requires exact entitlement command output and type-specific presence", () => {
+    const profilePath = "/tmp/Meetless.app/Contents/Resources/meetless/node_modules/node-pty/prebuilds/darwin-arm64/pty.node";
+    const noEntitlementObjects = [
+      {
+        path: profilePath,
+        label: "pty.node",
+        policy: classifyMacAppStoreDevelopmentMachO({ path: "pty.node", machOFileType: "MH_BUNDLE" }),
+      },
+      {
+        path: "/tmp/Meetless.app/Contents/Resources/meetless/node_modules/sherpa-onnx-darwin-arm64/sherpa-onnx.node",
+        label: "sherpa-onnx.node",
+        policy: classifyMacAppStoreDevelopmentMachO({ path: "sherpa-onnx.node", machOFileType: "MH_DYLIB" }),
+      },
+    ];
+    for (const { path: executablePath, label, policy } of noEntitlementObjects) {
+      expect(parseMacAppStoreDevelopmentEntitlementResult(
+        entitlementCommandResult(executablePath),
+        { entitlementPolicy: policy.entitlementPolicy, executablePath, label },
+      )).toEqual({ kind: "absent", entitlementPolicy: "none" });
+    }
+
+    expect(() => parseMacAppStoreDevelopmentEntitlementResult(
+      entitlementCommandResult(profilePath),
+      { entitlementPolicy: MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.CHILD, executablePath: profilePath, label: "executable" },
+    )).toThrow(/missing its required entitlement plist/);
+
+    const childPath = "/tmp/Meetless.app/Contents/MacOS/helper";
+    const childPolicy = classifyMacAppStoreDevelopmentMachO({ path: "helper", machOFileType: "MH_EXECUTE" });
+    const childPlist = "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>com.apple.security.app-sandbox</key><true/><key>com.apple.security.inherit</key><true/></dict></plist>\n";
+    expect(parseMacAppStoreDevelopmentEntitlementResult(
+      entitlementCommandResult(childPath, childPlist),
+      { entitlementPolicy: childPolicy.entitlementPolicy, executablePath: childPath, label: "helper" },
+    )).toMatchObject({ kind: "plist", entitlementPolicy: "child", plist: childPlist });
+    expect(() => validateEntitlementKeys({
+      "com.apple.security.app-sandbox": true,
+      "com.apple.security.inherit": true,
+      "com.apple.security.network.client": true,
+    }, childPolicy.expectedEntitlementKeys, "helper")).toThrow(/exactly/);
+
+    const signedBundlePlist = "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>com.apple.security.app-sandbox</key><true/></dict></plist>\n";
+    for (const { path: executablePath, label, policy } of noEntitlementObjects) {
+      expect(() => parseMacAppStoreDevelopmentEntitlementResult(
+        entitlementCommandResult(executablePath, signedBundlePlist),
+        { entitlementPolicy: policy.entitlementPolicy, executablePath, label },
+      )).toThrow(/must not contain an entitlement plist/);
+    }
+    expect(() => parseMacAppStoreDevelopmentEntitlementResult(
+      { exitCode: 1, stdout: "", stderr: "Permission denied\n" },
+      { entitlementPolicy: noEntitlementObjects[0].policy.entitlementPolicy, executablePath: profilePath, label: "pty.node" },
+    )).toThrow(/entitlement inspection failed/);
+    expect(() => parseMacAppStoreDevelopmentEntitlementResult(
+      entitlementCommandResult(profilePath, "not plist\n"),
+      { entitlementPolicy: noEntitlementObjects[0].policy.entitlementPolicy, executablePath: profilePath, label: "pty.node" },
+    )).toThrow(/malformed plist output/);
+    expect(() => parseMacAppStoreDevelopmentEntitlementResult(
+      { ...entitlementCommandResult(profilePath), stderr: `${entitlementCommandResult(profilePath).stderr}unexpected\n` },
+      { entitlementPolicy: noEntitlementObjects[0].policy.entitlementPolicy, executablePath: profilePath, label: "pty.node" },
+    )).toThrow(/malformed codesign diagnostics/);
   });
 
   test("accepts only the expected unsigned embedded-profile codesign diagnostic", () => {

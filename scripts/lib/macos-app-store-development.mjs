@@ -2,6 +2,10 @@ import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import {
+  MACOS_APP_STORE_CHILD_ENTITLEMENTS,
+  MACOS_APP_STORE_PARENT_ENTITLEMENTS,
+} from "./macos-app-store-contract.mjs";
 import { PASEO_DEPENDENCY } from "./paseo-dependency.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -15,6 +19,28 @@ export const R5_APP_STORE_DEVELOPMENT_IDENTITY = "Apple Development: Long Le (33
 export const R5_APP_STORE_TEAM_ID = "63M98WD275";
 export const R5_APP_STORE_BUNDLE_ID = "com.meetless.app";
 export const R5_REVENUECAT_INFO_PLIST_KEY = "MeetlessRevenueCatAPIKey";
+export const MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES = Object.freeze({
+  PARENT: "parent",
+  CHILD: "child",
+  NONE: "none",
+});
+
+const MACOS_APP_STORE_DEVELOPMENT_MACHO_POLICIES = Object.freeze({
+  parent: Object.freeze({
+    entitlementPolicy: MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.PARENT,
+    expectedEntitlementKeys: MACOS_APP_STORE_PARENT_ENTITLEMENTS,
+  }),
+  child: Object.freeze({
+    entitlementPolicy: MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.CHILD,
+    expectedEntitlementKeys: MACOS_APP_STORE_CHILD_ENTITLEMENTS,
+  }),
+  none: Object.freeze({
+    entitlementPolicy: MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.NONE,
+    expectedEntitlementKeys: Object.freeze([]),
+  }),
+});
+const MACOS_APP_STORE_DEVELOPMENT_MACHO_FILE_TYPES = new Set(["MH_EXECUTE", "MH_BUNDLE", "MH_DYLIB"]);
+const MACOS_CODESIGN_ENTITLEMENT_WARNING = "warning: Specifying ':' in the path is deprecated and will not work in a future release";
 
 export function resolveR5DevelopmentProfilePath(userHome = homedir()) {
   return path.join(
@@ -30,6 +56,61 @@ export function resolveR5DevelopmentProfilePath(userHome = homedir()) {
 
 export function resolveMacAppStoreDevelopmentEmbeddedProfilePath(bundlePath) {
   return path.resolve(bundlePath, "Contents", "embedded.provisionprofile");
+}
+
+export function classifyMacAppStoreDevelopmentMachO(entry, { outerMachOPath = "Contents/MacOS/MeetlessHost" } = {}) {
+  const relativePath = typeof entry?.path === "string" && entry.path ? entry.path : "Mach-O";
+  const fileType = entry?.machOFileType;
+  if (!MACOS_APP_STORE_DEVELOPMENT_MACHO_FILE_TYPES.has(fileType)) {
+    throw developmentError(`${relativePath} has an unknown or ambiguous Mach-O file type ${String(fileType)}`);
+  }
+  if (relativePath === outerMachOPath && fileType !== "MH_EXECUTE") {
+    throw developmentError(`${relativePath} must be an MH_EXECUTE Mach-O file`);
+  }
+  const entitlementPolicy = relativePath === outerMachOPath
+    ? MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.PARENT
+    : fileType === "MH_EXECUTE"
+      ? MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.CHILD
+      : MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.NONE;
+  return {
+    fileType,
+    ...MACOS_APP_STORE_DEVELOPMENT_MACHO_POLICIES[entitlementPolicy],
+  };
+}
+
+export function parseMacAppStoreDevelopmentEntitlementResult(
+  { exitCode, stdout = "", stderr = "" } = {},
+  { entitlementPolicy, executablePath, label = "signed Mach-O" } = {},
+) {
+  if (!Object.values(MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES).includes(entitlementPolicy)) {
+    throw developmentError(`${label} has an unknown entitlement policy ${String(entitlementPolicy)}`);
+  }
+  if (typeof executablePath !== "string" || !path.isAbsolute(executablePath)) {
+    throw developmentError(`${label} entitlement inspection requires an absolute executable path`);
+  }
+  const resolvedExecutablePath = path.resolve(executablePath);
+  if (exitCode !== 0) {
+    throw developmentError(`${label} entitlement inspection failed with exit code ${String(exitCode)}`);
+  }
+  const expectedDiagnostics = `Executable=${resolvedExecutablePath}\n${MACOS_CODESIGN_ENTITLEMENT_WARNING}\n`;
+  if (String(stderr ?? "") !== expectedDiagnostics) {
+    throw developmentError(`${label} entitlement inspection returned malformed codesign diagnostics`);
+  }
+  const entitlementPlist = String(stdout ?? "");
+  if (entitlementPlist === "") {
+    if (entitlementPolicy !== MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.NONE) {
+      throw developmentError(`${label} is missing its required entitlement plist`);
+    }
+    return { kind: "absent", entitlementPolicy };
+  }
+  const trimmedPlist = entitlementPlist.trim();
+  if (!(trimmedPlist.startsWith("<?xml") || trimmedPlist.startsWith("<plist")) || !trimmedPlist.endsWith("</plist>")) {
+    throw developmentError(`${label} entitlement inspection returned malformed plist output`);
+  }
+  if (entitlementPolicy === MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.NONE) {
+    throw developmentError(`${label} must not contain an entitlement plist or entitlement keys`);
+  }
+  return { kind: "plist", entitlementPolicy, plist: entitlementPlist };
 }
 
 export function createMacAppStoreDevelopmentSigningOptions({ bundlePath, parentEntitlementsPath, childEntitlementsPath }) {

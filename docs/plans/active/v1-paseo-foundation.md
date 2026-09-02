@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v43`
-- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-4`
-- `state`: `R5_MAS_PROFILE_SIGNING_ACCEPTED_DEV_EXTERNAL_GATE_AUTHORIZED`
+- `plan_revision`: `v44`
+- `current_frontier`: `R5-MAS-MACH-O-ENTITLEMENT-TYPE-CORRECTION`
+- `state`: `R5_MAS_POST_SIGN_ENTITLEMENT_VALIDATION_REOPENED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead accepted immutable embedded-profile signing correction `25257e4c96e743fd56ad80956bb1b31511e2c544`, whose exact parent/base is `8311c9928a899b74833608eef1980bac12f66f04`; accepted history through `13f20d2eb49549f72098d103e0a49d1900a9248e` remains preserved. No artifact or external result is accepted by this repository verdict.
+- `candidate`: pending one immutable Mach-O entitlement-type correction from exact base `81c9fe5e8fc2a28269dc88e9663e492c39900b7f`; accepted profile-signing correction `25257e4c96e743fd56ad80956bb1b31511e2c544`, checkpoint `81c9fe5`, and history through `13f20d2eb49549f72098d103e0a49d1900a9248e` remain preserved. No artifact or external result is accepted by this repository verdict.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `failed_proof`: retained read-only root `/private/tmp/meetless-mas-development-proof.GpvGZD`; exact command `npm run package:macos:app-store:development` failed during MAS bundle signing because `Contents/embedded.provisionprofile` was passed to `codesign` with child entitlements and returned `Permission denied`. The observed command was `codesign --sign Apple Development: Long Le (335C7MY4H4) --force --timestamp=none --entitlements /Users/tubakhuym/projects/supervisors/meetless/native/macos-host/MeetlessAppStoreChild.entitlements.plist /private/tmp/meetless-mas-development-proof.GpvGZD/release/macos/Meetless.app/Contents/embedded.provisionprofile`; embedded mode was `0400`, profile bytes matched the snapshot, and profile CMS/fields remained valid. No MAS manifest was produced; `/Applications` was untouched, no install or launch occurred, and no retry was made.
-- `pending_ruling`: the owner-authorized frontier opens only dev MAS packaging, Apple Development signing, recoverable local installation, exact local launch, bounded readiness, and inherent RevenueCat public-SDK configure/read behavior. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and every other external gate remain closed.
-- `blocked_by`: no artifact, signing, install, launch, or cleanup result is accepted yet. Three unchanged generic-signature tests retain stale authority-wording regex expectations; 40 peer tests pass and independent close-out ruled the drift unrelated to signer safety or build-retry readiness. Purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions remain forbidden.
-- `next_action`: execute one fresh SERIAL package/sign/install/launch attempt from the accepted integration tip, restore the pre-existing app after bounded verification, and return exact evidence for Lead acceptance. Dependency order otherwise remains unchanged.
+- `failed_proof`: retained read-only root `/private/tmp/meetless-mas-development-proof.GNud6q` records the signed artifact whose validator failure was caused by requiring child entitlements for every nested Mach-O. Its read-only inventory reports 43 thin arm64 Mach-Os: 16 `MH_EXECUTE`, 1 `MH_BUNDLE` (`Contents/Resources/meetless/node_modules/node-pty/prebuilds/darwin-arm64/pty.node`), and 26 `MH_DYLIB` including Sherpa and Electron framework libraries; the `MH_BUNDLE`/`MH_DYLIB` objects have no entitlement plist. Prior root `/private/tmp/meetless-mas-development-proof.GpvGZD` and its exact embedded-profile `Permission denied` failure remain retained history; profile bytes/CMS/fields passed, no MAS manifest was produced, `/Applications` was untouched, and no install or launch occurred.
+- `pending_ruling`: package readiness is reopened only at the post-sign/pre-install entitlement-validation boundary. The owner-authorized frontier still opens only dev MAS packaging, Apple Development signing, recoverable local installation, exact local launch, bounded readiness, and inherent RevenueCat public-SDK configure/read behavior. Purchase, restore, production, annual-product, provider, deployment, upload, submission, publication, and every other external gate remain closed.
+- `blocked_by`: no artifact, signing, install, launch, or cleanup result is accepted yet. The v43 post-sign premise was overbroad for authoritative `MH_BUNDLE`/`MH_DYLIB` data and is corrected prospectively here; prior history is not rewritten. Purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions remain forbidden.
+- `next_action`: Lead review of the one immutable v44 candidate; only after acceptance may a separately routed SERIAL package/sign/install/launch attempt proceed. Dependency order otherwise remains unchanged.
 
 ## Ownership And Authority
 
@@ -1123,6 +1123,58 @@ Observed deterministic repository proof on 2026-09-02:
 - The non-signing subset of `packages/runtime/test/macos-package-signature.test.ts` passed 38 tests with 5 skipped; the two disposable ad-hoc signing tests were excluded by this frontier's no-real-signing rule, and three pre-existing diagnostic assertions remain incompatible with the current `docs/specs/macos-artifact-validation.md` authority wording.
 - `npm run validate:macos:app-store`, both changed-file `node --check` commands, and `git diff --check` passed. No package, download, signing, signing retry, install, launch, or external action was run. The correction and this plan reconciliation remain pending Lead acceptance.
 
+### R5 MAS authoritative Mach-O entitlement-type correction (2026-09-02; current frontier)
+
+Package readiness is reopened at exact base
+`81c9fe5e8fc2a28269dc88e9663e492c39900b7f`, preserving accepted profile-signing
+correction `25257e4c96e743fd56ad80956bb1b31511e2c544`, checkpoint `81c9fe5`, and
+history through `13f20d2eb49549f72098d103e0a49d1900a9248e`. The retained
+read-only root `/private/tmp/meetless-mas-development-proof.GNud6q` contains the
+exact signed artifact behind this correction: 43 thin arm64 Mach-Os, split as
+16 `MH_EXECUTE`, 1 `MH_BUNDLE` (`node-pty` `pty.node`), and 26 `MH_DYLIB`
+(including Sherpa and Electron framework libraries). The prior
+`/private/tmp/meetless-mas-development-proof.GpvGZD` embedded-profile failure
+remains historical evidence and is not mutated.
+
+The exact retained-artifact failure was the post-sign entitlement read for the
+signed `pty.node` `MH_BUNDLE`: `codesign --display --entitlements :-` returned
+only its `Executable=` diagnostic and warning, with no entitlement plist, and
+the validator rejected that absence as if it were an executable. The same
+overbroad requirement covered signed `MH_DYLIB` objects.
+
+The post-sign validator now classifies each inventoried Mach-O from its
+authoritative `machOFileType`. The outer app and exact `Contents/MacOS/MeetlessHost`
+executable require the exact parent entitlement keys; every other `MH_EXECUTE`
+requires the exact inherited child keys; `MH_BUNDLE` and `MH_DYLIB` require
+strict certificate-backed signing and thin arm64 evidence but no entitlement
+plist or keys. Unknown or ambiguous types fail closed. Generic non-Mach-O data
+does not enter this loop, and Electron `.app` containers remain distinct from
+their contained executable checks. The existing signer, exact embedded-profile
+ignore seam, immutable snapshot, profile byte/CMS validation, identity/team
+checks, strict/deep verification, package contract, and inventory authority are
+unchanged.
+
+A pure MAS type-policy/classification/parser seam accepts the exact macOS
+`codesign --display --entitlements :-` no-entitlements result only for the
+`MH_BUNDLE`/`MH_DYLIB` policy. Missing executable entitlements, entitlement
+plists/keys on bundle/dylib objects, permission/error output, and malformed
+diagnostics are rejected distinctly. Deterministic tests cover outer/child
+policy, missing/wrong child entitlements, absent/present bundle/dylib
+entitlements, unknown types, extension counterexamples, and parser failures.
+An optional retained-artifact audit is read-only; clean proof does not depend on
+that root. No inventory/source authority changes, package/sign retry, install,
+launch, or external action is part of this frontier. This correction and plan
+reconciliation remain pending Lead acceptance.
+
+Observed v44 repository proof on 2026-09-02: the focused MAS suite passed 1 file
+and 12 tests; the MAS/package/contract regression passed 3 files and 41 tests;
+and the selected non-signing nearest signing-boundary tests passed 19 tests with
+24 skipped. `npm run typecheck`, `npm run validate:macos:app-store`, both changed
+Node syntax checks, and `git diff --check` passed. The read-only GNud6q inventory
+audit independently confirmed the 43-entry 16/1/26 Mach-O split and thin arm64
+shape. No retained root, repository file, package artifact, install target, or
+external service was changed by these checks. Lead acceptance remains pending.
+
 ### Risks And Recovery
 
 - App Sandbox may reject the current nested Electron, Node, helper, listener, or
@@ -1266,6 +1318,22 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v44`: package readiness is reopened at exact
+  base `81c9fe5e8fc2a28269dc88e9663e492c39900b7f` for
+  `R5-MAS-MACH-O-ENTITLEMENT-TYPE-CORRECTION`. Accepted profile-signing
+  correction `25257e4c96e743fd56ad80956bb1b31511e2c544`, checkpoint `81c9fe5`,
+  accepted history through `13f20d2`, and authority digest
+  `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3` remain
+  unchanged. Retained root `GNud6q` records the exact overbroad post-sign
+  entitlement failure and the signed 16/1/26 `MH_EXECUTE`/`MH_BUNDLE`/`MH_DYLIB`
+  counts; `GpvGZD` remains preserved prior failure history. The correction uses
+  only existing inventory `machOFileType`, adds the pure type-policy and
+  entitlement-result parser seam, and leaves signer/options routing unchanged.
+  Deterministic positive/negative proof and optional read-only retained-artifact
+  audit are required; clean proof does not depend on a retained root. Every
+  external gate remains closed, dependency order is unchanged, and this
+  candidate is pending Lead acceptance.
 
 - 2026-09-02 `PLAN_RECONCILIATION v43`: Lead accepted immutable correction
   `25257e4c96e743fd56ad80956bb1b31511e2c544` after focused MAS and package

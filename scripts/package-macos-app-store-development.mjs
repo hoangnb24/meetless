@@ -30,11 +30,14 @@ import {
 import { resolveMacOSDmgPaths } from "./lib/macos-dmg-contract.mjs";
 import {
   MACOS_APP_STORE_DEVELOPMENT_AUTHORITY,
+  MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES,
   R5_APP_STORE_BUNDLE_ID,
   R5_APP_STORE_DEVELOPMENT_IDENTITY,
   R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME,
   R5_APP_STORE_TEAM_ID,
+  classifyMacAppStoreDevelopmentMachO,
   createMacAppStoreDevelopmentSigningOptions,
+  parseMacAppStoreDevelopmentEntitlementResult,
   parseUnsignedCodesignProfileDiagnostic,
   parseMacAppStoreDevelopmentArguments,
   prepareMacAppStoreDevelopmentInfo,
@@ -291,7 +294,12 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
   );
   const outerInfo = parsePlistDocument(await readFile(path.join(contentsPath, "Info.plist"), "utf8"), "signed outer Info.plist");
   validateMacAppStoreDevelopmentInfo(outerInfo, { publicSdkKey });
-  const actualParent = await readCodesignEntitlements(bundlePath);
+  const actualParent = await readCodesignEntitlements(
+    bundlePath,
+    MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.PARENT,
+    "signed parent app",
+    { expectedExecutablePath: path.join(bundlePath, "Contents", "MacOS", "MeetlessHost") },
+  );
   validateEntitlementKeys(
     actualParent,
     MACOS_APP_STORE_PARENT_ENTITLEMENTS,
@@ -319,8 +327,21 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
   const outerMachOPath = "Contents/MacOS/MeetlessHost";
   const outerMachOEntry = machoEntries.find((entry) => entry.path === outerMachOPath);
   if (!outerMachOEntry) throw developmentError("signed package is missing the outer MeetlessHost Mach-O executable");
+  const outerMachOPolicy = classifyMacAppStoreDevelopmentMachO(outerMachOEntry, { outerMachOPath });
   validateMachOEntry(outerMachOEntry, "outer MeetlessHost");
-  await run("codesign", ["--verify", "--strict", "--verbose=2", path.join(bundlePath, outerMachOPath)]);
+  const outerMachOAbsolutePath = path.join(bundlePath, outerMachOPath);
+  await run("codesign", ["--verify", "--strict", "--verbose=2", outerMachOAbsolutePath]);
+  validateR5DevelopmentSignature(
+    await readCodesignDisplay(outerMachOAbsolutePath),
+    "outer MeetlessHost",
+    { expectedBundleIdentifier: null },
+  );
+  const outerMachOEntitlements = await readCodesignEntitlements(
+    outerMachOAbsolutePath,
+    outerMachOPolicy.entitlementPolicy,
+    "outer MeetlessHost",
+  );
+  validateMachOEntitlements(outerMachOEntitlements, outerMachOPolicy, "outer MeetlessHost");
   const electronEntry = machoEntries.find((entry) => entry.path === nestedElectronRelativePath);
   if (!electronEntry) throw developmentError("signed package is missing the MAS Electron executable");
   validateR5DevelopmentElectronFileOutput(await runFile(nestedElectronExecutablePath));
@@ -337,14 +358,15 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
   const nestedSignatures = [];
   for (const entry of machoEntries.filter((candidate) => candidate.path !== outerMachOPath)) {
     const absolute = path.join(bundlePath, entry.path);
+    const machOPolicy = classifyMacAppStoreDevelopmentMachO(entry, { outerMachOPath });
     await run("codesign", ["--verify", "--strict", "--verbose=2", absolute]);
     const signature = validateR5DevelopmentSignature(
       await readCodesignDisplay(absolute),
       entry.path,
       { expectedBundleIdentifier: null },
     );
-    const entitlements = await readCodesignEntitlements(absolute);
-    validateEntitlementKeys(entitlements, MACOS_APP_STORE_CHILD_ENTITLEMENTS, entry.path);
+    const entitlements = await readCodesignEntitlements(absolute, machOPolicy.entitlementPolicy, entry.path);
+    validateMachOEntitlements(entitlements, machOPolicy, entry.path);
     validateMachOEntry(entry, entry.path);
     nestedSignatures.push({
       path: entry.path,
@@ -455,9 +477,51 @@ async function readCodesignDisplay(target) {
   return `${result.stdout}\n${result.stderr}`;
 }
 
-async function readCodesignEntitlements(target) {
-  const result = await run("codesign", ["--display", "--entitlements", ":-", target]);
-  return parsePlistDocument(`${result.stdout}\n${result.stderr}`, `${target} signed entitlements`);
+async function readCodesignEntitlements(
+  target,
+  entitlementPolicy,
+  label = target,
+  { expectedExecutablePath = target } = {},
+) {
+  let result;
+  try {
+    const commandResult = await run("codesign", ["--display", "--entitlements", ":-", target]);
+    result = { exitCode: 0, stdout: commandResult.stdout, stderr: commandResult.stderr };
+  } catch (error) {
+    result = {
+      exitCode: Number.isInteger(error?.code) ? error.code : null,
+      stdout: error?.stdout,
+      stderr: error?.stderr,
+    };
+  }
+  const parsed = parseMacAppStoreDevelopmentEntitlementResult(result, {
+    entitlementPolicy,
+    executablePath: expectedExecutablePath,
+    label,
+  });
+  if (parsed.kind === "absent") return null;
+  return parsePlistDocument(parsed.plist, `${label} signed entitlements`);
+}
+
+function validateMachOEntitlements(entitlements, policy, label) {
+  if (policy.entitlementPolicy === MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.NONE) {
+    if (entitlements !== null) {
+      throw developmentError(`${label} must not contain an entitlement plist or keys`);
+    }
+    return null;
+  }
+  if (entitlements === null) {
+    throw developmentError(`${label} is missing its required entitlement plist`);
+  }
+  validateEntitlementKeys(
+    entitlements,
+    policy.expectedEntitlementKeys,
+    label,
+    policy.entitlementPolicy === MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.PARENT
+      ? { applicationGroup: `${R5_APP_STORE_TEAM_ID}.${R5_APP_STORE_BUNDLE_ID}` }
+      : undefined,
+  );
+  return entitlements;
 }
 
 async function assertUnsignedCodesignProfileData(profilePath) {
