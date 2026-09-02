@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v49`
+- `plan_revision`: `v50`
 - `current_frontier`: `R5-MAS-RUNTIME-IPC-LIVENESS-CONVERGENCE`
-- `state`: `R5_MAS_RUNTIME_IPC_CLOSEOUT_REOPENED`
+- `state`: `R5_MAS_RUNTIME_IPC_CLOSEOUT_CORRECTION_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: IPC topology candidate `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a` from exact base `0477b10b8eaea19244fa694c567b8a601714591a` remains unaccepted pending one bounded liveness/proof convergence correction. Attempt-5 package/sign/install/start/restore evidence and accepted history through `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6` remain preserved.
+- `candidate`: IPC liveness correction candidate `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7` from exact base `94999f10e1e7d841209a695392e259c1b185f0f9` remains unaccepted pending Lead review. It preserves the unaccepted topology candidate `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a` from exact original base `0477b10b8eaea19244fa694c567b8a601714591a` beneath the plan-only convergence history. Attempt-5 package/sign/install/start/restore evidence and accepted history through `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6` remain preserved.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: retained attempt-5 proof root `/private/tmp/meetless-mas-development-proof.D97ICp` contains a fully signed and validated dev MAS artifact. Its exact install and native-signature preflight passed, but the host exited before daemon/renderer readiness because the app-container transcription socket expanded to 113 UTF-8 bytes while the Darwin binding accepts at most 103. The old app was restored exactly. Attempt-created MAS container/group roots, RevenueCat cache, and host lock remain retained evidence. One operator residue listing exposed a full public SDK-key-bearing cache filename; it was not frozen into evidence, but the no-disclosure handling condition was violated and must not be repeated.
-- `pending_ruling`: FAST closeout accepted the relative endpoint topology and composition, but reopened native and Node stale/active liveness checks because they probe the overlong canonical path instead of the short bind argument. Package and signing readiness remain accepted evidence; launch and every excluded external gate remain closed.
-- `blocked_by`: IPC-003 and IPC-005 remain open. Both lifecycle owners must probe liveness through the authoritative short bind argument while retaining canonical paths for stat/marker/permissions/unlink, and clean long-root real bind/reclaim plus cross-language golden-vector proof must pass.
-- `next_action`: one final SERIAL convergence correction is limited to native/plugin liveness, direct tests, golden vectors, current diagnostics, and plan reconciliation. Lead performs deterministic acceptance afterward; no new architecture review or external retry is implied.
+- `pending_ruling`: the bounded IPC-003/IPC-005 correction is implemented in candidate `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`. Native and Node stale/active probes now use each validated packaged endpoint's short `bindArgument`; canonical paths remain for containment, identity, stat, marker, permissions, and unlink. Stable endpoint/package/host diagnostics cite the accepted authorities and current `MEETLESS_RUNTIME_ENDPOINTS v1` contract. Package and signing readiness remain accepted evidence; launch and every excluded external gate remain closed.
+- `blocked_by`: none; Lead review remains pending. The candidate's required local endpoint, lifecycle, cross-language, direct-DMG, MAS contract, native, D97 contract-only, typecheck, syntax, diff, ancestry, and changed-path proof was run without package/sign/install/launch or external action.
+- `next_action`: Lead performs deterministic acceptance of candidate `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`; no new architecture review or external retry is implied.
 
 ## Ownership And Authority
 
@@ -1354,6 +1354,28 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v50` / `CONVERGENCE_RECONCILIATION v1`:
+  From exact unchanged base `94999f10e1e7d841209a695392e259c1b185f0f9`,
+  candidate `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7` closes the bounded
+  IPC-003/IPC-005 correction without changing the accepted relative topology.
+  Native transcription and Node recording stale/active probes validate their
+  packaged composition and use the same short `bindArgument` as bind/connect;
+  canonical paths remain limited to containment, identity, stat, marker,
+  permission, and unlink checks. Real long-ASCII/Unicode-root bind/connect,
+  stale reclaim, active-owner rejection, wrong-CWD, foreign-entry preservation,
+  shutdown cleanup, and shared runtime/plugin/client/native golden-vector proof
+  pass. Stable endpoint/package/host diagnostics cite ADR0003/ADR0004/ADR0005
+  and the accepted `MEETLESS_RUNTIME_ENDPOINTS v1` package/runtime contract,
+  with no plan-revision coupling. Direct-DMG and MAS package/host contract
+  regressions, native `MeetlessHostTests`, typecheck, syntax, diff, and
+  ancestry checks pass. The read-only D97 contract replay rejects its old host
+  configuration before launch because the versioned endpoint policy is missing.
+  All prior residues, failures, exact old-app restoration, public-key handling
+  violation, authority digest, and excluded gates remain preserved; no package,
+  sign, install, launch, secret/cache inspection, retained-root mutation,
+  external action, R4 fixture change, or push occurred. Candidate remains
+  pending Lead review.
 
 - 2026-09-02 `PLAN_RECONCILIATION v49` / `CONVERGENCE_RECONCILIATION v1`:
   FAST closeout accepted IPC-001 and the selected relative AF_UNIX topology,
