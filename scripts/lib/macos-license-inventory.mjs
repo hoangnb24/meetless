@@ -355,7 +355,7 @@ function sourcePaths(id) {
   return [...common, "package.json", "release/macos"];
 }
 
-function buildArtifactMembers(id, paths, context) {
+export function buildArtifactMembers(id, paths, context) {
   const selected = paths.filter((relativePath) => {
     if (id === "native-binaries") return context.machoPaths.has(relativePath);
     if (id === "capture-helper") return relativePath === "Contents/Resources/meetless/native/macos-capture/meetless-capture";

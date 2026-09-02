@@ -28,6 +28,7 @@ import {
   MACOS_LICENSE_INVENTORY_PATH,
   MACOS_LICENSE_INVENTORY_SCHEMA,
   REQUIRED_LICENSE_COMPONENTS,
+  buildArtifactMembers,
   buildMacOSLicenseInventory,
   classifyArtifactPath,
   collectMacOSPackageMetadata,
@@ -370,6 +371,72 @@ describe("macOS package composition manifest", () => {
     }
     expect(isNpmPackageManifestPath(nestedPackageJson)).toBe(true);
     expect(classifyArtifactPath(`${runtimeRoot}/node_modules/sherpa-onnx-darwin-arm64/package.json`, { type: "file" })).toBe("sherpa-model-assets");
+  });
+
+  it("executes clean-checkout native source projection and provenance coverage", () => {
+    const manifest = completeManifestWithNativePackages();
+    const native = manifest.inventory.components.find((component) => component.id === "native-binaries");
+    const nativePackageRoots = [
+      "Contents/Resources/meetless/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64",
+      "Contents/Resources/meetless/node_modules/@esbuild/darwin-arm64",
+      "Contents/Resources/meetless/node_modules/convex/node_modules/@esbuild/darwin-arm64",
+      "Contents/Resources/meetless/node_modules/convex/node_modules/node-pty",
+    ];
+
+    expect(validateLicenseInventoryCoverage(
+      manifest.inventory,
+      manifest.entries,
+      manifest.licenseInventory,
+      manifest.macho,
+    )).toEqual({ mappedPaths: manifest.entries.length, components: REQUIRED_LICENSE_COMPONENTS.length });
+    for (const root of nativePackageRoots) {
+      const descendants = manifest.entries.filter(({ path: artifactPath }) => artifactPath.startsWith(`${root}/`));
+      expect(descendants.length).toBeGreaterThan(0);
+      expect(descendants.every((entry) => classifyArtifactPath(entry.path, entry, new Set(manifest.macho)) === "native-binaries")).toBe(true);
+      expect(isNpmPackageManifestPath(`${root}/package.json`)).toBe(true);
+    }
+
+    expect(isNpmPackageManifestPath(`${nativePackageRoots[2]}/lib/package.json`)).toBe(false);
+    expect(classifyArtifactPath("Contents/Resources/meetless/node_modules/convex/package.json", { type: "file" })).toBe("js-closure");
+    expect(classifyArtifactPath("Contents/Resources/meetless/node_modules/sherpa-onnx-darwin-arm64/package.json", { type: "file" })).toBe("sherpa-model-assets");
+    expect(native.provenance.artifactMembers.map((member) => member.artifactPath)).toEqual([...manifest.macho].sort());
+    expect(native.provenance.artifactMembers.every((member) => manifest.macho.includes(member.artifactPath))).toBe(true);
+    expect(native.provenance.artifactMembers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        artifactPath: `${nativePackageRoots[1]}/bin/esbuild`,
+        sourcePaths: ["node_modules/@esbuild/darwin-arm64"],
+      }),
+      expect.objectContaining({
+        artifactPath: `${nativePackageRoots[2]}/bin/esbuild`,
+        sourcePaths: ["node_modules/convex/node_modules/@esbuild/darwin-arm64"],
+      }),
+      expect.objectContaining({
+        artifactPath: `${nativePackageRoots[3]}/prebuilds/darwin-arm64/pty.node`,
+        sourcePaths: ["node_modules/convex/node_modules/node-pty"],
+      }),
+    ]));
+    expect(native.provenance.artifactMembers.flatMap((member) => member.sourcePaths)).not.toContain(
+      "node_modules/convex/node_modules",
+    );
+    expect(native.provenance.artifactMembers.find((member) => member.artifactPath.endsWith("/package.json"))).toBeUndefined();
+
+    const nestedPackageJson = `${nativePackageRoots[2]}/package.json`;
+    const omitted = structuredClone(manifest.inventory);
+    const omittedNative = omitted.components.find((component) => component.id === "native-binaries");
+    omittedNative.provenance.packageMembers = omittedNative.provenance.packageMembers.filter((member) => member.packageJsonPath !== nestedPackageJson);
+    expect(() => validateLicenseInventoryCoverage(omitted, manifest.entries, null, manifest.macho)).toThrow(
+      /package member .*convex\/node_modules\/@esbuild\/darwin-arm64\/package\.json has no provenance record/,
+    );
+
+    const misassigned = structuredClone(manifest.inventory);
+    const misassignedNative = misassigned.components.find((component) => component.id === "native-binaries");
+    const nestedMember = misassignedNative.provenance.packageMembers.find((member) => member.packageJsonPath === nestedPackageJson);
+    misassignedNative.provenance.packageMembers = misassignedNative.provenance.packageMembers.filter((member) => member.packageJsonPath !== nestedPackageJson);
+    const misassignedJs = misassigned.components.find((component) => component.id === "js-closure");
+    misassignedJs.provenance.packageMembers = [{ ...nestedMember, component: "js-closure" }];
+    expect(() => validateLicenseInventoryCoverage(misassigned, manifest.entries, null, manifest.macho)).toThrow(
+      /js-closure child member .*convex\/node_modules\/@esbuild\/darwin-arm64\/package\.json is outside its component scope/,
+    );
   });
 
   it.runIf(existsSync(retainedFailedArtifactPath) && existsSync(retainedFailedInventoryPath))(
@@ -870,6 +937,122 @@ function completeManifest() {
   const candidate = { ...manifest, artifactDigest: digestManifest({ ...manifest, artifactDigest: undefined }) };
   Object.defineProperty(candidate, "inventory", { value: inventory, enumerable: false });
   return candidate;
+}
+
+function completeManifestWithNativePackages() {
+  const manifest = completeManifest();
+  const runtimeRoot = "Contents/Resources/meetless";
+  const packages = [
+    {
+      name: "@anthropic-ai/claude-agent-sdk-darwin-arm64",
+      root: `${runtimeRoot}/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64`,
+      descendants: ["package.json", "README.md", "claude"],
+      macho: "claude",
+    },
+    {
+      name: "@esbuild/darwin-arm64",
+      root: `${runtimeRoot}/node_modules/@esbuild/darwin-arm64`,
+      descendants: ["package.json", "README.md", "bin/esbuild"],
+      macho: "bin/esbuild",
+    },
+    {
+      name: "@esbuild/darwin-arm64",
+      root: `${runtimeRoot}/node_modules/convex/node_modules/@esbuild/darwin-arm64`,
+      descendants: ["package.json", "lib/package.json", "bin/esbuild"],
+      macho: "bin/esbuild",
+    },
+    {
+      name: "node-pty",
+      root: `${runtimeRoot}/node_modules/convex/node_modules/node-pty`,
+      descendants: ["package.json", "lib/index.js", "prebuilds/darwin-arm64/pty.node"],
+      macho: "prebuilds/darwin-arm64/pty.node",
+    },
+  ];
+  const entries = packages.flatMap(({ root, descendants }) => descendants.map((descendant) => ({
+    path: `${root}/${descendant}`,
+    type: "file",
+    size: 1,
+    sha256: hash(`${root}/${descendant}`),
+  })));
+  const packageMembers = packages.map(({ name, root }) => {
+    const sourcePath = root.slice(`${runtimeRoot}/`.length);
+    const packageJsonPath = `${root}/package.json`;
+    return {
+      memberType: "npm-package",
+      component: "native-binaries",
+      artifactPath: root,
+      packageJsonPath,
+      sourcePath,
+      name,
+      version: "1.0.0",
+      declaredLicense: "MIT",
+      noticePaths: [],
+      lockEvidence: {
+        matched: true,
+        status: "matched",
+        lockFile: "package-lock.json",
+        lockPath: sourcePath,
+        canonicalPath: sourcePath,
+        matchMode: "canonical-path",
+        packageName: name,
+        paths: [sourcePath],
+        version: "1.0.0",
+        license: "MIT",
+        licenses: null,
+        integrity: "sha512-synthetic",
+        resolved: "https://registry.example.invalid/synthetic-1.0.0.tgz",
+        licenseMetadataStatus: "available",
+      },
+    };
+  }).sort((left, right) => left.packageJsonPath.localeCompare(right.packageJsonPath));
+  manifest.entries = [...manifest.entries, ...entries];
+  manifest.macho = packages.map(({ root, macho }) => `${root}/${macho}`);
+
+  const native = manifest.inventory.components.find((component) => component.id === "native-binaries");
+  native.artifactPathScope.paths.push(...entries.map((entry) => entry.path));
+  native.artifactPathScope.paths.sort();
+  native.artifactPathScope.count = native.artifactPathScope.paths.length;
+  native.provenance.packageMembers = packageMembers;
+  native.provenance.artifactMembers = buildArtifactMembers("native-binaries", native.artifactPathScope.paths, {
+    entries: manifest.entries,
+    machoPaths: new Set(manifest.macho),
+  });
+
+  const excludedPaths = [...new Set([MACOS_LICENSE_INVENTORY_PATH, ...manifest.macho])].sort((left, right) => left.localeCompare(right));
+  manifest.inventory.artifact.entryBinding.excludedPaths = excludedPaths;
+  manifest.inventory.artifact.entryBinding.digest = digestArtifactEntries(manifest.entries, { excludedPaths });
+  for (const component of manifest.inventory.components) {
+    component.provenance.versionOrHash.artifactScopeSha256 = digestComponentEntries(
+      manifest.entries,
+      component.artifactPathScope.paths,
+      { excludedPaths },
+    );
+  }
+
+  const packageInputs = manifest.packageInputs;
+  packageInputs.packageMembers = packageMembers;
+  packageInputs.packageMemberDigest = digestJson(packageMembers);
+  packageInputs.artifactInput.excludedPaths = excludedPaths;
+  packageInputs.artifactInput.digest = digestArtifactEntries(manifest.entries, { excludedPaths });
+  packageInputs.artifactInput.entryCount = manifest.entries.filter((entry) => !excludedPaths.includes(entry.path)).length;
+  packageInputs.digest = digestJson({ ...packageInputs, digest: undefined });
+  const packageInputBinding = manifest.inventory.artifact.packageInputBinding;
+  packageInputBinding.digest = packageInputs.digest;
+  packageInputBinding.artifactInputDigest = packageInputs.artifactInput.digest;
+  packageInputBinding.packageMemberDigest = packageInputs.packageMemberDigest;
+  packageInputBinding.packageMemberCount = packageMembers.length;
+  manifest.inventory.summary.artifactEntryCount = manifest.entries.length;
+  manifest.inventory.summary.componentPathCounts = Object.fromEntries(
+    manifest.inventory.components.map((component) => [component.id, component.artifactPathScope.paths.length]),
+  );
+  manifest.inventory.summary.packageMemberCount = packageMembers.length;
+  manifest.inventory.summary.packageMemberDigest = packageInputs.packageMemberDigest;
+  manifest.licenseInventory.excludedPaths = excludedPaths;
+  manifest.licenseInventory.artifactEntryDigest = manifest.inventory.artifact.entryBinding.digest;
+  manifest.licenseInventory.packageInputDigest = packageInputs.digest;
+  manifest.licenseInventory.packageInputArtifactDigest = packageInputs.artifactInput.digest;
+  manifest.artifactDigest = digestManifest({ ...manifest, artifactDigest: undefined });
+  return manifest;
 }
 
 function completeManifestWithMembers() {

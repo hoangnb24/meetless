@@ -2,15 +2,15 @@
 
 ## Current State
 
-- `plan_revision`: `v39`
-- `current_frontier`: `R5-MAS-NESTED-NATIVE-COMPONENT-SCOPE-CORRECTION`
-- `state`: `R5_MAS_PACKAGE_READINESS_REOPENED_PRE_SIGNING`
+- `plan_revision`: `v40`
+- `current_frontier`: `R5-MAS-NATIVE-SCOPE-003-CLEAN-CHECKOUT-PROOF`
+- `state`: `R5_MAS_NATIVE_SCOPE_003_CLEAN_CHECKOUT_PROOF_REOPENED_PRE_SIGNING`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: a new immutable nested-native component-scope correction candidate is prepared from exact original/current base `189d7d490d33498e9bb392a1f31fa30d2ce92781`; Lead acceptance remains open and its exact commit is reported at handoff. Accepted correction `57b1020aa30f31b611141f5cc1e020ce8d3baf0c` and plan checkpoint `189d7d490d33498e9bb392a1f31fa30d2ce92781` remain historical accepted evidence. No artifact or external result is accepted by this repository verdict.
+- `candidate`: one immutable clean-checkout proof correction is prepared from exact correction base `34467fdd375fb7433d1a720759fb69684bed95a9`, in the original family based at `189d7d490d33498e9bb392a1f31fa30d2ce92781`; Lead acceptance remains open and its exact commit is reported at handoff. Close-out accepted `NATIVE-SCOPE-001`, `NATIVE-SCOPE-002`, and `NATIVE-SCOPE-004`; only `NATIVE-SCOPE-003` remains open. `57b1020aa30f31b611141f5cc1e020ce8d3baf0c`, `189d7d490d33498e9bb392a1f31fa30d2ce92781`, retained failed proof `Ffw0bs`, and unaccepted correction `34467fdd375fb7433d1a720759fb69684bed95a9` remain preserved as historical correction evidence. No artifact or external result is accepted by this repository verdict.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: retained read-only root `/private/tmp/meetless-mas-development-proof.Ffw0bs`; direct artifact validation failed with `native-binaries child member Contents/Resources/meetless/node_modules/convex/node_modules/@esbuild/darwin-arm64/package.json is outside its component scope` before MAS injection, signing, installation, or launch. `/Applications` was untouched and no launch occurred.
-- `pending_ruling`: the shared exact npm package-root resolver correction and its positive/negative retained-artifact proof are pending Lead acceptance; package validation/readiness remains reopened before signing. The owner-authorized dev MAS package/sign/install/launch path may resume only as a separately routed retry after that acceptance.
+- `pending_ruling`: the shared exact npm package-root resolver/classification behavior remains intact; only the unconditional clean-checkout source-projection/inventory coverage and omitted/misassigned provenance proof for `NATIVE-SCOPE-003` is pending Lead acceptance. Package validation/readiness remains reopened before signing. The owner-authorized dev MAS package/sign/install/launch path may resume only as a separately routed retry after that acceptance.
 - `blocked_by`: every external gate remains closed until the new candidate is accepted and a retry is separately routed: MAS package/download/signing, installation, launch, purchase, restore, App Review, publication, production deployment, secret/admin-key use, RevenueCat mutation, Convex operations, and real transcription-provider actions.
 - `next_action`: Lead inspects the new immutable candidate; only after acceptance may a separately routed fresh package/sign/install/launch attempt proceed. Dependency order otherwise remains unchanged.
 
@@ -1047,39 +1047,43 @@ matched `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`.
 No checked-in CI workflow or executable local hook invokes the MAS packager;
 branch protection was not queried and was not changed.
 
-### R5 nested-native package component-scope correction (2026-09-02; current frontier)
+### R5 NATIVE-SCOPE-003 clean-checkout proof correction (2026-09-02; current frontier)
 
-Package validation/readiness is reopened at exact original/current base
-`189d7d490d33498e9bb392a1f31fa30d2ce92781` after the retained read-only proof
-root `/private/tmp/meetless-mas-development-proof.Ffw0bs` failed before MAS
-injection, signing, installation, or launch. The exact diagnostic was:
+Package validation/readiness remains reopened at exact correction base
+`34467fdd375fb7433d1a720759fb69684bed95a9` in the original family based at
+`189d7d490d33498e9bb392a1f31fa30d2ce92781`. The prior candidate is not accepted
+because its full inventory/source projection proof was conditional on retained
+root `/private/tmp/meetless-mas-development-proof.Ffw0bs`; that root's exact
+diagnostic was:
 `native-binaries child member Contents/Resources/meetless/node_modules/convex/node_modules/@esbuild/darwin-arm64/package.json is outside its component scope`.
-The direct artifact/manifest bind was to accepted checkpoint `189d7d4` and
+The failure occurred before MAS injection, signing, installation, or launch;
 `/Applications` was untouched.
 
-The correction introduces one pure resolver based on the last
-`/node_modules/` boundary, parsing scoped and unscoped package names. The exact
-native package set is `@anthropic-ai/claude-agent-sdk-darwin-arm64`,
-`@esbuild/darwin-arm64`, and `node-pty`; every exact package subtree is mapped
-to `native-binaries` for component scope and package/license provenance at both
-top-level and nested locations. Artifact-member provenance remains limited to
-actual Mach-O/native artifact paths, while Convex and unrelated dependencies
-remain `js-closure`; Sherpa package/model ownership and its native overlap rule
-remain unchanged. No Convex-specific package input or hard-coded nested source
-path was added, and static component authority summaries remain unchanged.
+The already-correct resolver/classification behavior is preserved. This
+correction exports the existing pure artifact-member builder as the smallest
+test seam and adds one unconditional deterministic synthetic fixture through
+the production source-root projection and inventory coverage validator. The
+fixture covers exact top-level and nested `@esbuild/darwin-arm64`, nested
+unscoped `node-pty`, Anthropic descendants, Mach-O-only artifact members,
+exact full source roots, Convex `js-closure` and Sherpa model ownership, and
+omitted/misassigned package provenance failures. No failed artifact is copied
+or checked in.
 
-The shared resolver correction and bounded proof are pending Lead acceptance.
-Positive proof covers top-level/nested esbuild, Anthropic, node-pty, exact
-manifest recognition, exact package-root source paths, and in-memory inventory
-coverage for the retained artifact; the stable scope-only counts move native
-`61` to `63` and js `14966` to `14964`. Negative proof covers near-match
-Darwin names, ordinary esbuild and nested Convex dependencies, deeper
-`lib/package.json`, Sherpa ownership, omitted/misassigned nested evidence, and
-the former truncated source roots. No package manifest or lockfile changed.
-The accepted correction `57b1020aa30f31b611141f5cc1e020ce8d3baf0c` and plan
-checkpoint `189d7d490d33498e9bb392a1f31fa30d2ce92781` remain historical accepted
-evidence. Every external gate stays closed until new acceptance and a
-separately routed retry; dependency order otherwise remains unchanged.
+Positive proof covers top-level/nested esbuild, nested node-pty, Anthropic,
+exact manifest recognition, exact package-root source paths, Mach-O-only
+selection, and unconditional in-memory inventory coverage. Negative proof
+covers near-match Darwin names, ordinary esbuild and nested Convex
+dependencies, deeper `lib/package.json`, Sherpa ownership, omitted/misassigned
+nested evidence, and the former truncated source roots. The retained exact-
+artifact test remains optional historical evidence only; clean-checkout proof
+does not depend on it. No package manifest, lockfile, package composer,
+validator consumer, authority document, or static component summary changed.
+Close-out accepted `NATIVE-SCOPE-001`, `NATIVE-SCOPE-002`, and
+`NATIVE-SCOPE-004`; only `NATIVE-SCOPE-003` is reopened pending Lead acceptance.
+The preserved `57b1020`, `189d7d4`, failed root `Ffw0bs`, and `34467fd` remain
+historical correction evidence, not acceptance of this candidate. Every
+external gate stays closed until new acceptance and a separately routed retry;
+dependency order otherwise remains unchanged.
 
 ### Risks And Recovery
 
@@ -1132,11 +1136,12 @@ separately routed retry; dependency order otherwise remains unchanged.
   regression, syntax, MAS baseline, typecheck/build, and frozen-authority
   digest. It remains implementation evidence for accepted candidate
   `6fe924d68c7bbb0f560ffbfed1501f67a66e0ea8`.
-- Current nested-native component-scope correction proof: the shared exact npm
-  package-root resolver's positive/negative classification and manifest cases,
-  package metadata/source-root assertions, omitted/misassigned provenance
-  failures, regenerated in-memory coverage for retained root `Ffw0bs`, focused
-  Vitest, Node syntax, and diff check. The MAS packaging entrypoint and all
+- Current `NATIVE-SCOPE-003` proof correction: the unconditional clean-checkout
+  synthetic fixture exercises the production artifact-member source projection,
+  Mach-O-only selection, exact native package roots, full inventory coverage,
+  and omitted/misassigned provenance failures; the retained root `Ffw0bs` test
+  remains optional historical proof. Focused Vitest, Node syntax, and diff
+  check are required. The MAS packaging entrypoint and all
   package/download/sign/install/launch/purchase/restore operations remain
   unrun.
 - External: App Store Connect processing, App Review submission, and public listing.
@@ -1223,6 +1228,19 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v40`: close-out accepted
+  `NATIVE-SCOPE-001`, `NATIVE-SCOPE-002`, and `NATIVE-SCOPE-004`; only
+  `NATIVE-SCOPE-003` is reopened for unconditional clean-checkout proof. The
+  correction starts at exact base
+  `34467fdd375fb7433d1a720759fb69684bed95a9`, in original family base
+  `189d7d490d33498e9bb392a1f31fa30d2ce92781`, and adds one deterministic
+  synthetic path through production source projection and inventory coverage,
+  including omitted/misassigned provenance rejection. The correction and proof
+  are pending Lead acceptance. `57b1020`, `189d7d4`, failed proof root `Ffw0bs`,
+  and `34467fd` remain preserved as unaccepted correction evidence. Every
+  external gate remains closed until acceptance and a separately routed retry;
+  dependency order is unchanged.
 
 - 2026-09-02 `PLAN_RECONCILIATION v39`: package validation/readiness is reopened
   at exact original/current base `189d7d490d33498e9bb392a1f31fa30d2ce92781`
