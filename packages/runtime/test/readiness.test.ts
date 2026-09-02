@@ -12,8 +12,11 @@ import {
   RECORDING_READINESS_AUTHORITY,
   assertAttestedProcessOwnership,
   assertPreOwnerRecordingReady,
+  formatSpawnSyncDiagnostic,
   inspectNativeArgumentVector,
+  parseNativeArgumentVector,
   prepareCollisionEvidence,
+  projectSpawnSyncDiagnostic,
   requestRecordingRuntimeReadiness,
   type DaemonMeetlessPluginAttestation,
   type RuntimeReadinessReport,
@@ -444,6 +447,67 @@ describe("production recording readiness invariant", () => {
     } finally {
       await stopChild(child);
     }
+  });
+
+  test("keeps a valid native argv JSON vector lossless across Buffer output", () => {
+    const expected = ["/Applications/Meetless.app/Contents/MacOS/meetless-capture", "", " ", "--label=value with spaces"];
+    expect(parseNativeArgumentVector(Buffer.from(`${JSON.stringify(expected)}\n`, "utf8"), 31)).toEqual(expected);
+  });
+
+  test.each([
+    ["missing command", { name: "Error", code: "ENOENT", errno: -2, syscall: "spawn missing-command", path: "/missing-command", message: "spawn missing-command ENOENT" }],
+    ["permission denied", { name: "Error", code: "EACCES", errno: -13, syscall: "spawn /private/tmp/meetless-process-argv", path: "/private/tmp/meetless-process-argv", message: "spawn /private/tmp/meetless-process-argv EACCES" }],
+  ] as const)("retains %s spawnSync error fields when streams are undefined", (_label, fields) => {
+    const error = Object.assign(new Error(fields.message), fields);
+    const result = { error, status: null, signal: null, stdout: undefined, stderr: undefined };
+    const input = {
+      command: "native argv inspector",
+      inspectorPath: fields.path,
+      purpose: "argv for process PID 31",
+      result,
+    };
+
+    expect(projectSpawnSyncDiagnostic(input)).toMatchObject({
+      command: input.command,
+      inspectorPath: input.inspectorPath,
+      purpose: input.purpose,
+      error: fields,
+      status: null,
+      signal: null,
+      stdout: undefined,
+      stderr: undefined,
+    });
+    const diagnostic = formatSpawnSyncDiagnostic(input);
+    expect(diagnostic).toContain(`error.code=${JSON.stringify(fields.code)}`);
+    expect(diagnostic).toContain(`error.errno=${fields.errno}`);
+    expect(diagnostic).toContain(`error.syscall=${JSON.stringify(fields.syscall)}`);
+    expect(diagnostic).toContain(`error.path=${JSON.stringify(fields.path)}`);
+    expect(diagnostic).toContain(`error.message=${JSON.stringify(fields.message)}`);
+    expect(diagnostic).toContain("status=<null> signal=<null> stdout=<undefined> stderr=<undefined>");
+    expect(() => formatSpawnSyncDiagnostic(input)).not.toThrow(/TypeError|trim/u);
+  });
+
+  test("distinguishes nonzero exit, signal termination, empty output, and malformed output while failing closed", () => {
+    const nonzero = formatSpawnSyncDiagnostic({
+      command: "lsof",
+      inspectorPath: "lsof",
+      purpose: "executable identity for process PID 31",
+      result: { status: 2, signal: null, stdout: Buffer.from("partial\n"), stderr: "permission denied\n" },
+    });
+    expect(nonzero).toContain("status=2 signal=<null>");
+    expect(nonzero).toContain('stdout="partial\\n" stderr="permission denied\\n"');
+
+    const signaled = formatSpawnSyncDiagnostic({
+      command: "native argv inspector",
+      inspectorPath: "/private/tmp/meetless-process-argv",
+      purpose: "argv for process PID 31",
+      result: { status: null, signal: "SIGTERM", stdout: null, stderr: null },
+    });
+    expect(signaled).toContain("status=<null> signal=\"SIGTERM\"");
+
+    expect(() => parseNativeArgumentVector(undefined, 31)).toThrow(/empty output for process PID 31/u);
+    expect(() => parseNativeArgumentVector(Buffer.from("{not-json", "utf8"), 31)).toThrow(/malformed JSON for process PID 31/u);
+    expect(() => parseNativeArgumentVector("{\"argv\":[]}", 31)).toThrow(/invalid vector for process PID 31/u);
   });
 
   test("exact no-argument native process invocation passes production helper ownership", async () => {

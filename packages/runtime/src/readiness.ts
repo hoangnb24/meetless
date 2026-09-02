@@ -18,6 +18,108 @@ import { readConsumedUiTestMarkerSync } from "./ui-test-envelope.js";
 
 export const RECORDING_READINESS_AUTHORITY = "docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md and docs/decisions/0004-recording-host-and-capture-permission-boundary.md";
 
+export type SpawnSyncOutput = Buffer | string | null | undefined;
+
+export interface SpawnSyncInspectionResult {
+  error?: unknown;
+  status?: number | null;
+  signal?: NodeJS.Signals | null;
+  stdout?: SpawnSyncOutput;
+  stderr?: SpawnSyncOutput;
+}
+
+interface SpawnSyncErrorDiagnostic {
+  name: string | number | null | undefined;
+  code: string | number | null | undefined;
+  errno: string | number | null | undefined;
+  syscall: string | number | null | undefined;
+  path: string | number | null | undefined;
+  message: string | number | null | undefined;
+}
+
+export interface SpawnSyncDiagnostic {
+  command: string;
+  inspectorPath: string;
+  purpose: string;
+  error: SpawnSyncErrorDiagnostic | undefined;
+  status: number | null | undefined;
+  signal: NodeJS.Signals | null | undefined;
+  stdout: string | null | undefined;
+  stderr: string | null | undefined;
+}
+
+export function projectSpawnSyncDiagnostic(input: {
+  command: string;
+  inspectorPath: string;
+  purpose: string;
+  result: SpawnSyncInspectionResult;
+}): SpawnSyncDiagnostic {
+  const { result } = input;
+  return {
+    command: input.command,
+    inspectorPath: input.inspectorPath,
+    purpose: input.purpose,
+    error: result.error == null ? undefined : {
+      name: readErrorField(result.error, "name"),
+      code: readErrorField(result.error, "code"),
+      errno: readErrorField(result.error, "errno"),
+      syscall: readErrorField(result.error, "syscall"),
+      path: readErrorField(result.error, "path"),
+      message: readErrorField(result.error, "message"),
+    },
+    status: result.status,
+    signal: result.signal,
+    stdout: normalizeSpawnSyncOutput(result.stdout),
+    stderr: normalizeSpawnSyncOutput(result.stderr),
+  };
+}
+
+export function formatSpawnSyncDiagnostic(input: {
+  command: string;
+  inspectorPath: string;
+  purpose: string;
+  result: SpawnSyncInspectionResult;
+}): string {
+  const diagnostic = projectSpawnSyncDiagnostic(input);
+  return [
+    `command=${diagnosticValue(diagnostic.command)}`,
+    `inspectorPath=${diagnosticValue(diagnostic.inspectorPath)}`,
+    `purpose=${diagnosticValue(diagnostic.purpose)}`,
+    `error.name=${diagnosticValue(diagnostic.error?.name)}`,
+    `error.code=${diagnosticValue(diagnostic.error?.code)}`,
+    `error.errno=${diagnosticValue(diagnostic.error?.errno)}`,
+    `error.syscall=${diagnosticValue(diagnostic.error?.syscall)}`,
+    `error.path=${diagnosticValue(diagnostic.error?.path)}`,
+    `error.message=${diagnosticValue(diagnostic.error?.message)}`,
+    `status=${diagnosticValue(diagnostic.status)}`,
+    `signal=${diagnosticValue(diagnostic.signal)}`,
+    `stdout=${diagnosticValue(diagnostic.stdout)}`,
+    `stderr=${diagnosticValue(diagnostic.stderr)}`,
+  ].join(" ");
+}
+
+export function normalizeSpawnSyncOutput(output: SpawnSyncOutput): string | null | undefined {
+  if (Buffer.isBuffer(output)) return output.toString("utf8");
+  return output;
+}
+
+function readErrorField(error: unknown, field: string): string | number | null | undefined {
+  if (error == null) return undefined;
+  try {
+    const value = (error as Record<string, unknown>)[field];
+    if (value == null || typeof value === "string" || typeof value === "number") return value;
+    return String(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function diagnosticValue(value: string | number | null | undefined): string {
+  if (value === undefined) return "<undefined>";
+  if (value === null) return "<null>";
+  return typeof value === "string" ? JSON.stringify(value) : String(value);
+}
+
 type ReadinessOperation = "status" | "prepareCollision" | "validateCollision";
 type ProcessEntry = { pid: number; ppid: number; command: string };
 
@@ -650,11 +752,27 @@ function readinessFailure(stage: string, config: RuntimeConfig, error: unknown):
 
 function inspectProcesses(): ProcessEntry[] {
   const inspected = spawnSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
-  if (inspected.error || inspected.status !== 0) throw new Error("Cannot inspect runtime process tree");
-  return inspected.stdout.split("\n").flatMap((line) => {
+  const diagnostic = {
+    command: "ps",
+    inspectorPath: "ps",
+    purpose: "runtime process tree",
+    result: inspected,
+  };
+  if (inspected.error || inspected.status !== 0) {
+    throw new Error(`cannot inspect runtime process tree: ${formatSpawnSyncDiagnostic(diagnostic)}`);
+  }
+  const stdout = normalizeSpawnSyncOutput(inspected.stdout);
+  if (stdout == null || stdout.trim().length === 0) {
+    throw new Error(`runtime process tree inspector returned empty output: ${formatSpawnSyncDiagnostic(diagnostic)}`);
+  }
+  const processes = stdout.split("\n").flatMap((line) => {
     const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/u.exec(line);
     return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), command: match[3]! }] : [];
   });
+  if (processes.length === 0) {
+    throw new Error(`runtime process tree inspector returned malformed output: ${formatSpawnSyncDiagnostic(diagnostic)}`);
+  }
+  return processes;
 }
 
 const defaultLiveProcessInspection: LiveProcessInspection = {
@@ -662,14 +780,24 @@ const defaultLiveProcessInspection: LiveProcessInspection = {
     const inspected = spawnSync("lsof", ["-nP", "-a", "-p", String(pid), "-d", "txt", "-Fn"], {
       encoding: "utf8",
     });
+    const diagnostic = {
+      command: "lsof",
+      inspectorPath: "lsof",
+      purpose: `executable path for process PID ${pid}`,
+      result: inspected,
+    };
     if (inspected.error || inspected.status !== 0) {
-      throw new Error(`cannot inspect executable for capture helper PID ${pid} with lsof`);
+      throw new Error(`cannot inspect executable for process PID ${pid} with lsof: ${formatSpawnSyncDiagnostic(diagnostic)}`);
     }
-    const lines = inspected.stdout.split("\n");
+    const stdout = normalizeSpawnSyncOutput(inspected.stdout);
+    if (stdout == null || stdout.trim().length === 0) {
+      throw new Error(`lsof returned empty output for process PID ${pid}: ${formatSpawnSyncDiagnostic(diagnostic)}`);
+    }
+    const lines = stdout.split("\n");
     const textIndex = lines.indexOf("ftxt");
     const executable = textIndex >= 0 ? lines[textIndex + 1] : undefined;
     if (!executable?.startsWith("n/") || executable.length <= 2) {
-      throw new Error(`lsof did not report an executable for capture helper PID ${pid}`);
+      throw new Error(`lsof returned malformed executable output for process PID ${pid}: ${formatSpawnSyncDiagnostic(diagnostic)}`);
     }
     return executable.slice(1);
   },
@@ -678,21 +806,42 @@ const defaultLiveProcessInspection: LiveProcessInspection = {
 
 export async function inspectNativeArgumentVector(pid: number): Promise<string[]> {
   if (process.platform !== "darwin") {
-    throw new Error(`native capture-helper argv inspection requires macOS, received ${process.platform}`);
+    throw new Error(`native argv inspection requires macOS, received ${process.platform}`);
   }
   const inspector = path.join(REPOSITORY_ROOT, "packages/runtime/dist/meetless-process-argv");
   const inspected = spawnSync(inspector, [String(pid)], { encoding: "utf8" });
+  const diagnostic = {
+    command: "native argv inspector",
+    inspectorPath: inspector,
+    purpose: `argv for process PID ${pid}`,
+    result: inspected,
+  };
   if (inspected.error || inspected.status !== 0) {
-    const reason = inspected.stderr.trim() || inspected.error?.message || `exit ${inspected.status ?? "unknown"}`;
     throw new Error(
-      `cannot inspect native argv for capture helper PID ${pid}: ${reason}. ` +
+      `cannot inspect native argv for process PID ${pid}: ${formatSpawnSyncDiagnostic(diagnostic)}. ` +
       `Run npm run build:native, then restart the isolated runtime.`,
     );
   }
+  try {
+    return parseNativeArgumentVector(inspected.stdout, pid);
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}: ${formatSpawnSyncDiagnostic(diagnostic)}`);
+  }
+}
+
+export function parseNativeArgumentVector(output: SpawnSyncOutput, pid: number): string[] {
+  const text = normalizeSpawnSyncOutput(output);
+  if (text == null || text.trim().length === 0) {
+    throw new Error(`native argv inspector returned empty output for process PID ${pid}`);
+  }
   let decoded: unknown;
-  try { decoded = JSON.parse(inspected.stdout); } catch { decoded = null; }
+  try {
+    decoded = JSON.parse(text);
+  } catch {
+    throw new Error(`native argv inspector returned malformed JSON for process PID ${pid}`);
+  }
   if (!Array.isArray(decoded) || decoded.length === 0 || decoded.some((value) => typeof value !== "string")) {
-    throw new Error(`native argv inspector returned an invalid vector for capture helper PID ${pid}`);
+    throw new Error(`native argv inspector returned an invalid vector for process PID ${pid}`);
   }
   return decoded as string[];
 }

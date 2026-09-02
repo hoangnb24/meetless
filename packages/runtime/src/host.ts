@@ -6,7 +6,12 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import { MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH, type RuntimeConfig } from "./config.js";
-import { inspectNativeArgumentVector, RECORDING_READINESS_AUTHORITY } from "./readiness.js";
+import {
+  formatSpawnSyncDiagnostic,
+  inspectNativeArgumentVector,
+  normalizeSpawnSyncOutput,
+  RECORDING_READINESS_AUTHORITY,
+} from "./readiness.js";
 import {
   MEETLESS_RUNTIME_ENDPOINTS_SCHEMA,
   MEETLESS_RUNTIME_ENDPOINT_WORKING_DIRECTORY,
@@ -691,12 +696,24 @@ async function inspectProcess(pid: number): Promise<ProcessIdentity> {
   const inspected = spawnSync("lsof", ["-nP", "-a", "-p", String(pid), "-d", "txt", "-FDsin"], {
     encoding: "utf8",
   });
-  if (inspected.error || inspected.status !== 0) throw new Error(`cannot inspect executable for PID ${pid}`);
-  const entry = inspected.stdout.split("ftxt\n").slice(1).map((block) =>
+  const diagnostic = {
+    command: "lsof",
+    inspectorPath: "lsof",
+    purpose: `executable identity for process PID ${pid}`,
+    result: inspected,
+  };
+  if (inspected.error || inspected.status !== 0) {
+    throw new Error(`cannot inspect executable for process PID ${pid}: ${formatSpawnSyncDiagnostic(diagnostic)}`);
+  }
+  const stdout = normalizeSpawnSyncOutput(inspected.stdout);
+  if (stdout == null || stdout.trim().length === 0) {
+    throw new Error(`lsof returned empty executable output for process PID ${pid}: ${formatSpawnSyncDiagnostic(diagnostic)}`);
+  }
+  const entry = stdout.split("ftxt\n").slice(1).map((block) =>
     Object.fromEntries(block.split("\n").filter(Boolean).map((line) => [line[0], line.slice(1)])),
   ).find((fields) => fields.n && fields.D && fields.i && fields.s);
   if (!entry?.n?.startsWith("/") || !entry.D || !entry.i || !entry.s) {
-    throw new Error(`lsof did not report an executable for PID ${pid}`);
+    throw new Error(`lsof returned malformed executable output for process PID ${pid}: ${formatSpawnSyncDiagnostic(diagnostic)}`);
   }
   return {
     pid,
@@ -712,17 +729,30 @@ async function inspectProcess(pid: number): Promise<ProcessIdentity> {
 function inspectRequired(command: string, arguments_: string[], fact: string): string {
   const result = spawnSync(command, arguments_, { encoding: "utf8" });
   if (result.error || result.status !== 0) {
-    throw new Error(`cannot inspect Meetless host ${fact}: ${result.stderr.trim() || result.error?.message || result.status}`);
+    throw new Error(`cannot inspect Meetless host ${fact}: ${formatSpawnSyncDiagnostic({
+      command,
+      inspectorPath: command,
+      purpose: fact,
+      result,
+    })}`);
   }
-  return result.stdout.trim();
+  const stdout = normalizeSpawnSyncOutput(result.stdout);
+  return (stdout ?? "").trim();
 }
 
 function inspectRequiredOutput(command: string, arguments_: string[], fact: string): string {
   const result = spawnSync(command, arguments_, { encoding: "utf8" });
   if (result.error || result.status !== 0) {
-    throw new Error(`cannot inspect Meetless host ${fact}: ${result.stderr.trim() || result.error?.message || result.status}`);
+    throw new Error(`cannot inspect Meetless host ${fact}: ${formatSpawnSyncDiagnostic({
+      command,
+      inspectorPath: command,
+      purpose: fact,
+      result,
+    })}`);
   }
-  return `${result.stdout}\n${result.stderr}`.trim();
+  const stdout = normalizeSpawnSyncOutput(result.stdout);
+  const stderr = normalizeSpawnSyncOutput(result.stderr);
+  return `${stdout ?? ""}\n${stderr ?? ""}`.trim();
 }
 
 function hostFailure(reason: string): Error {
