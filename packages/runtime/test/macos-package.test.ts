@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -27,9 +28,15 @@ import {
   MACOS_LICENSE_INVENTORY_PATH,
   MACOS_LICENSE_INVENTORY_SCHEMA,
   REQUIRED_LICENSE_COMPONENTS,
+  buildMacOSLicenseInventory,
+  classifyArtifactPath,
+  collectMacOSPackageMetadata,
+  collectWorkspaceMembers,
   digestArtifactEntries,
   digestComponentEntries,
+  isNpmPackageManifestPath,
   isVerifiedNoticeName,
+  resolveNpmPackageRoot,
 } from "../../../scripts/lib/macos-license-inventory.mjs";
 import { buildMacOSPackageInputSpecs, MACOS_PACKAGE_INPUT_AUTHORITY, MACOS_PACKAGE_INPUT_SCHEMA, digestJson, validateMacOSPackageInputDocument } from "../../../scripts/lib/macos-package-inputs.mjs";
 import { MACOS_LOCAL_PACKAGES, validateMacOSPackageComposition } from "../../../scripts/lib/macos-package-composition.mjs";
@@ -45,6 +52,9 @@ import {
 } from "../../../scripts/candidate-snapshot.mjs";
 
 const symlinkFixtureRoots = new Set<string>();
+const retainedFailedProofRoot = "/private/tmp/meetless-mas-development-proof.Ffw0bs";
+const retainedFailedArtifactPath = path.join(retainedFailedProofRoot, "release/macos/Meetless.app");
+const retainedFailedInventoryPath = path.join(retainedFailedArtifactPath, MACOS_LICENSE_INVENTORY_PATH);
 
 afterEach(async () => {
   await Promise.all([...symlinkFixtureRoots].map((root) => rm(root, { recursive: true, force: true })));
@@ -304,6 +314,161 @@ describe("macOS package composition manifest", () => {
       /@meetless\/plugin[\s\S]*@meetless\/managed-transcription-foundation[\s\S]*localPackages\/selection/,
     );
   });
+
+  it("uses one exact npm package identity for native scope and package manifests", () => {
+    const runtimeRoot = "Contents/Resources/meetless";
+    const nativePackages = [
+      {
+        name: "@anthropic-ai/claude-agent-sdk-darwin-arm64",
+        root: `${runtimeRoot}/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64`,
+        descendants: ["README.md", "package.json", "claude"],
+      },
+      {
+        name: "@esbuild/darwin-arm64",
+        root: `${runtimeRoot}/node_modules/@esbuild/darwin-arm64`,
+        descendants: ["README.md", "package.json", "bin/esbuild"],
+      },
+      {
+        name: "@esbuild/darwin-arm64",
+        root: `${runtimeRoot}/node_modules/convex/node_modules/@esbuild/darwin-arm64`,
+        descendants: ["README.md", "package.json", "bin/esbuild"],
+      },
+      {
+        name: "node-pty",
+        root: `${runtimeRoot}/node_modules/node-pty`,
+        descendants: ["README.md", "package.json", "lib/index.js"],
+      },
+    ];
+
+    for (const package_ of nativePackages) {
+      expect(resolveNpmPackageRoot(package_.root)).toEqual({ name: package_.name, root: package_.root });
+      expect(classifyArtifactPath(package_.root, { type: "file" })).toBe("native-binaries");
+      expect(isNpmPackageManifestPath(`${package_.root}/package.json`)).toBe(true);
+      for (const descendant of package_.descendants) {
+        const artifactPath = `${package_.root}/${descendant}`;
+        expect(resolveNpmPackageRoot(artifactPath)).toEqual({ name: package_.name, root: package_.root });
+        expect(classifyArtifactPath(artifactPath, { type: "file" })).toBe("native-binaries");
+      }
+    }
+
+    const nestedPackageJson = `${runtimeRoot}/node_modules/convex/node_modules/@esbuild/darwin-arm64/package.json`;
+    expect(isNpmPackageManifestPath(`${runtimeRoot}/node_modules/convex/node_modules/@esbuild/darwin-arm64/lib/package.json`)).toBe(false);
+    expect(classifyArtifactPath(`${runtimeRoot}/node_modules/convex/node_modules/@esbuild/darwin-arm64/lib/package.json`, { type: "file" })).toBe("native-binaries");
+    expect(resolveNpmPackageRoot(`${runtimeRoot}/node_modules/convex/node_modules/@esbuild/darwin-arm64-extra/package.json`)).toEqual({
+      name: "@esbuild/darwin-arm64-extra",
+      root: `${runtimeRoot}/node_modules/convex/node_modules/@esbuild/darwin-arm64-extra`,
+    });
+
+    for (const artifactPath of [
+      `${runtimeRoot}/node_modules/convex/package.json`,
+      `${runtimeRoot}/node_modules/convex/node_modules/@esbuild/darwin-x64/package.json`,
+      `${runtimeRoot}/node_modules/convex/node_modules/@esbuild/darwin-arm64-extra/package.json`,
+      `${runtimeRoot}/node_modules/convex/node_modules/esbuild/package.json`,
+      `${runtimeRoot}/node_modules/convex/node_modules/ws/index.js`,
+    ]) {
+      expect(classifyArtifactPath(artifactPath, { type: "file" })).toBe("js-closure");
+    }
+    expect(isNpmPackageManifestPath(nestedPackageJson)).toBe(true);
+    expect(classifyArtifactPath(`${runtimeRoot}/node_modules/sherpa-onnx-darwin-arm64/package.json`, { type: "file" })).toBe("sherpa-model-assets");
+  });
+
+  it.runIf(existsSync(retainedFailedArtifactPath) && existsSync(retainedFailedInventoryPath))(
+    "regenerates retained failed-artifact inventory coverage with exact nested native provenance",
+    async () => {
+      const manifest = JSON.parse(await readFile(path.join(retainedFailedProofRoot, "release/macos/composition-manifest.json"), "utf8"));
+      const priorInventory = JSON.parse(await readFile(retainedFailedInventoryPath, "utf8"));
+      const runtimeRoot = "Contents/Resources/meetless";
+      const topLevelEsbuildRoot = `${runtimeRoot}/node_modules/@esbuild/darwin-arm64`;
+      const nestedEsbuildRoot = `${runtimeRoot}/node_modules/convex/node_modules/@esbuild/darwin-arm64`;
+      const anthropicRoot = `${runtimeRoot}/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64`;
+      const nodePtyRoot = `${runtimeRoot}/node_modules/node-pty`;
+      const machoPaths = new Set(manifest.macho);
+      const candidateSnapshot = {
+        ...manifest.candidateSnapshot,
+        dependencyArtifacts: { paseo: { expectedCommit: manifest.candidateSnapshot.paseoCommit } },
+      };
+      const workspaceMembers = await collectWorkspaceMembers(retainedFailedArtifactPath);
+      const packageMetadata = await collectMacOSPackageMetadata(
+        path.join(retainedFailedArtifactPath, "Contents/Resources/meetless"),
+        process.cwd(),
+        workspaceMembers,
+      );
+      const packageMembers = [...packageMetadata.members].sort((left, right) => left.packageJsonPath.localeCompare(right.packageJsonPath));
+      const packageInputManifest = {
+        ...manifest.packageInputs,
+        packageMembers,
+        packageMemberDigest: digestJson(packageMembers),
+        digest: undefined,
+      };
+      packageInputManifest.digest = digestJson(packageInputManifest);
+
+      const regenerated = await buildMacOSLicenseInventory({
+        bundlePath: retainedFailedArtifactPath,
+        repositoryRoot: process.cwd(),
+        candidateSnapshot,
+        packageInputManifest,
+        packageMetadata,
+      });
+      expect(validateLicenseInventoryCoverage(regenerated, manifest.entries, null, manifest.macho)).toEqual({
+        mappedPaths: manifest.entries.length,
+        components: REQUIRED_LICENSE_COMPONENTS.length,
+      });
+
+      expect(priorInventory.summary.componentPathCounts["native-binaries"]).toBe(61);
+      expect(priorInventory.summary.componentPathCounts["js-closure"]).toBe(14966);
+      expect(regenerated.summary.componentPathCounts["native-binaries"]).toBe(63);
+      expect(regenerated.summary.componentPathCounts["js-closure"]).toBe(14964);
+
+      const pathsUnder = (root: string) => manifest.entries.filter(({ path: artifactPath }: { path: string }) => artifactPath.startsWith(`${root}/`));
+      for (const root of [topLevelEsbuildRoot, nestedEsbuildRoot, anthropicRoot, nodePtyRoot]) {
+        const descendants = pathsUnder(root);
+        expect(descendants.length).toBeGreaterThan(0);
+        expect(descendants.every((entry: { path: string; type: string }) => classifyArtifactPath(entry.path, entry, machoPaths) === "native-binaries")).toBe(true);
+      }
+
+      const nestedPackageJson = `${nestedEsbuildRoot}/package.json`;
+      expect(isNpmPackageManifestPath(nestedPackageJson)).toBe(true);
+      expect(packageMetadata.members.find((member) => member.artifactPath === nestedEsbuildRoot)).toMatchObject({
+        component: "native-binaries",
+        packageJsonPath: nestedPackageJson,
+        sourcePath: "node_modules/convex/node_modules/@esbuild/darwin-arm64",
+      });
+      expect(packageMetadata.members.find((member) => member.name === "convex")).toMatchObject({ component: "js-closure" });
+      expect(packageMetadata.members.find((member) => member.name === "sherpa-onnx-darwin-arm64")).toMatchObject({ component: "sherpa-model-assets" });
+
+      const native = regenerated.components.find((component) => component.id === "native-binaries");
+      expect(native?.provenance.packageMembers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ packageJsonPath: nestedPackageJson, component: "native-binaries" }),
+      ]));
+      expect(native?.provenance.artifactMembers.every((member: { artifactPath: string }) => manifest.macho.includes(member.artifactPath))).toBe(true);
+      const nestedEsbuildBinary = manifest.macho.find((artifactPath: string) => artifactPath.startsWith(`${nestedEsbuildRoot}/`));
+      expect(nestedEsbuildBinary).toBeDefined();
+      expect(native?.provenance.artifactMembers.find((member: { artifactPath: string }) => member.artifactPath === nestedEsbuildBinary)).toMatchObject({
+        sourcePaths: ["node_modules/convex/node_modules/@esbuild/darwin-arm64"],
+      });
+      expect(native?.provenance.artifactMembers.find((member: { artifactPath: string }) => member.artifactPath === nestedPackageJson)).toBeUndefined();
+      expect(native?.provenance.artifactMembers.find((member: { artifactPath: string }) => member.artifactPath.startsWith(`${nodePtyRoot}/`))).toMatchObject({
+        sourcePaths: ["node_modules/node-pty"],
+      });
+
+      const omitted = structuredClone(regenerated);
+      const omittedNative = omitted.components.find((component) => component.id === "native-binaries");
+      omittedNative.provenance.packageMembers = omittedNative.provenance.packageMembers.filter((member) => member.packageJsonPath !== nestedPackageJson);
+      expect(() => validateLicenseInventoryCoverage(omitted, manifest.entries, null, manifest.macho)).toThrow(
+        /package member .*convex\/node_modules\/@esbuild\/darwin-arm64\/package\.json has no provenance record/,
+      );
+
+      const misassigned = structuredClone(regenerated);
+      const misassignedNative = misassigned.components.find((component) => component.id === "native-binaries");
+      const nestedMember = misassignedNative.provenance.packageMembers.find((member) => member.packageJsonPath === nestedPackageJson);
+      misassignedNative.provenance.packageMembers = misassignedNative.provenance.packageMembers.filter((member) => member.packageJsonPath !== nestedPackageJson);
+      const misassignedJs = misassigned.components.find((component) => component.id === "js-closure");
+      misassignedJs.provenance.packageMembers = [...(misassignedJs.provenance.packageMembers ?? []), { ...nestedMember, component: "js-closure" }];
+      expect(() => validateLicenseInventoryCoverage(misassigned, manifest.entries, null, manifest.macho)).toThrow(
+        /js-closure child member .*convex\/node_modules\/@esbuild\/darwin-arm64\/package\.json is outside its component scope/,
+      );
+    },
+  );
 
   it("domain-separates package-source identity and excludes only the two published M7 evidence files", () => {
     const head = "b".repeat(40);

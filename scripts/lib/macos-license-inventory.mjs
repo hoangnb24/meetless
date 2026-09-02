@@ -30,10 +30,24 @@ export const REQUIRED_LICENSE_COMPONENTS = [
   "unzip-crx-3",
 ];
 
+const NATIVE_NPM_PACKAGES = new Set([
+  "@anthropic-ai/claude-agent-sdk-darwin-arm64",
+  "@esbuild/darwin-arm64",
+  "node-pty",
+]);
+
 const AUTHORITY_ACTION =
   "Human/legal owner review must decide the required notice, Corresponding Source, build/install, and AGPL network-interaction obligations before binary release";
 
-export async function writeMacOSLicenseInventory({ bundlePath, repositoryRoot, candidateSnapshot, packageInputManifest, packageMetadata, mediaSources }) {
+export async function writeMacOSLicenseInventory(options) {
+  const inventory = await buildMacOSLicenseInventory(options);
+  const inventoryPath = path.join(options.bundlePath, MACOS_LICENSE_INVENTORY_PATH);
+  await mkdir(path.dirname(inventoryPath), { recursive: true, mode: 0o755 });
+  await writeFile(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`, { mode: 0o644 });
+  return inventory;
+}
+
+export async function buildMacOSLicenseInventory({ bundlePath, repositoryRoot, candidateSnapshot, packageInputManifest, packageMetadata, mediaSources }) {
   const entries = await enumeratePackageEntries(bundlePath);
   const machoEntries = await inspectPackageMachOEntries(bundlePath, entries);
   const machoPaths = new Set(machoEntries.map((entry) => entry.path));
@@ -115,9 +129,6 @@ export async function writeMacOSLicenseInventory({ bundlePath, repositoryRoot, c
     },
   };
 
-  const inventoryPath = path.join(bundlePath, MACOS_LICENSE_INVENTORY_PATH);
-  await mkdir(path.dirname(inventoryPath), { recursive: true, mode: 0o755 });
-  await writeFile(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`, { mode: 0o644 });
   return inventory;
 }
 
@@ -146,13 +157,28 @@ export function classifyArtifactPath(relativePath, entry = {}, machoPaths = new 
   return "unresolved";
 }
 
-export function isNpmPackageManifestPath(relativePath) {
+export function resolveNpmPackageRoot(relativePath) {
+  if (typeof relativePath !== "string") return null;
+  const normalizedPath = relativePath.replaceAll("\\", "/");
   const marker = "/node_modules/";
-  const start = relativePath.lastIndexOf(marker);
-  if (start < 0 || !relativePath.endsWith("/package.json")) return false;
-  const packageRelativePath = relativePath.slice(start + marker.length, -"/package.json".length);
-  const segments = packageRelativePath.split("/").filter(Boolean);
-  return segments.length === 1 || (segments.length === 2 && segments[0].startsWith("@"));
+  const markerIndex = normalizedPath.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const packageSegments = normalizedPath.slice(markerIndex + marker.length).split("/");
+  const packageSegmentCount = packageSegments[0]?.startsWith("@") ? 2 : 1;
+  if (
+    packageSegments.length < packageSegmentCount ||
+    packageSegments.slice(0, packageSegmentCount).some((segment) => !segment || segment === "." || segment === "..")
+  ) return null;
+  const name = packageSegments.slice(0, packageSegmentCount).join("/");
+  return {
+    name,
+    root: `${normalizedPath.slice(0, markerIndex + marker.length)}${name}`,
+  };
+}
+
+export function isNpmPackageManifestPath(relativePath) {
+  const packageRoot = resolveNpmPackageRoot(relativePath);
+  return packageRoot !== null && relativePath.replaceAll("\\", "/") === `${packageRoot.root}/package.json`;
 }
 
 export function isWorkspacePackageManifestPath(relativePath) {
@@ -206,12 +232,9 @@ function isSherpaPath(relativePath) {
 }
 
 function isNativePath(relativePath, entry, machoPaths) {
+  const packageRoot = resolveNpmPackageRoot(relativePath);
+  if (packageRoot && NATIVE_NPM_PACKAGES.has(packageRoot.name)) return true;
   if (machoPaths.has(relativePath)) return true;
-  if (
-    relativePath.startsWith("Contents/Resources/meetless/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/") ||
-    relativePath.startsWith("Contents/Resources/meetless/node_modules/@esbuild/darwin-arm64/") ||
-    relativePath.startsWith("Contents/Resources/meetless/node_modules/node-pty/")
-  ) return true;
   if (/\.(?:dylib|dll|exe|node)$/iu.test(relativePath)) return true;
   return entry.type === "file" && relativePath.endsWith("/meetless-process-argv");
 }
@@ -360,7 +383,8 @@ function artifactMemberType(id) {
 }
 
 function artifactMemberSourcePaths(id, artifactPath, context) {
-  const packageSource = artifactPath.match(/Contents\/Resources\/meetless\/(node_modules\/[^/]+(?:\/[^/]+)?)/u)?.[1];
+  const packageRoot = resolveNpmPackageRoot(artifactPath);
+  const packageSource = packageRoot?.root.replace("Contents/Resources/meetless/", "");
   if (id === "native-binaries") {
     if (artifactPath === "Contents/MacOS/MeetlessHost") return ["native/macos-host"];
     if (artifactPath.endsWith("/meetless-process-argv")) return ["packages/runtime/native/process-argv.swift"];
@@ -697,7 +721,7 @@ export async function collectMacOSPackageMetadata(packageRoot, repositoryRoot, w
       .sort();
     const lockPath = `node_modules/${relative}`.replaceAll(path.sep, "/");
     const lockMatch = findLockMatch(manifest.name, manifest.version, lockPath, rootLock, paseoLock);
-    const component = packageComponent(manifest.name, artifactRoot);
+    const component = packageComponent(artifactRoot);
     members.push({
       memberType: "npm-package",
       component,
@@ -731,16 +755,14 @@ export async function collectMacOSPackageMetadata(packageRoot, repositoryRoot, w
   };
 }
 
-function packageComponent(name, artifactRoot) {
-  if (name === "unzip-crx-3" || artifactRoot.includes("/unzip-crx-3/")) return "unzip-crx-3";
-  if (name === "sherpa-onnx-node" || name === "sherpa-onnx-darwin-arm64" || artifactRoot.includes("/sherpa-onnx-node/") || artifactRoot.includes("/sherpa-onnx-darwin-arm64/")) return "sherpa-model-assets";
-  if (artifactRoot.includes("/@getpaseo/") || artifactRoot.includes("/@paseo/")) return "paseo";
-  if (artifactRoot.includes("/@meetless/")) return "meetless";
-  if (
-    artifactRoot.endsWith("/@anthropic-ai/claude-agent-sdk-darwin-arm64") || artifactRoot.includes("/@anthropic-ai/claude-agent-sdk-darwin-arm64/") ||
-    artifactRoot.endsWith("/@esbuild/darwin-arm64") || artifactRoot.includes("/@esbuild/darwin-arm64/") ||
-    artifactRoot.endsWith("/node-pty") || artifactRoot.includes("/node-pty/")
-  ) return "native-binaries";
+function packageComponent(artifactRoot) {
+  const packageRoot = resolveNpmPackageRoot(artifactRoot);
+  const name = packageRoot?.name;
+  if (name === "unzip-crx-3") return "unzip-crx-3";
+  if (name === "sherpa-onnx-node" || name === "sherpa-onnx-darwin-arm64") return "sherpa-model-assets";
+  if (name?.startsWith("@getpaseo/") || name?.startsWith("@paseo/")) return "paseo";
+  if (name?.startsWith("@meetless/")) return "meetless";
+  if (name && NATIVE_NPM_PACKAGES.has(name)) return "native-binaries";
   return "js-closure";
 }
 
