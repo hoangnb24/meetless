@@ -1552,8 +1552,49 @@ private func testPackagedProcessRegistrationChain() throws {
     ) != nil,
     "plugin must restore helper ownership before worker-chain pruning proof"
   )
+  guard let packagedLease = state.issueLease(
+    peerPID: pluginPID,
+    authorizer: RuntimePeerAuthorizer(),
+    requireRegistered: true
+  ) else {
+    check(false, "a stable registered plugin must issue a packaged lease")
+    return
+  }
+  var packagedLeaseActionRan = false
+  check(
+    state.withValidLease(packagedLease, {
+      packagedLeaseActionRan = true
+      return true
+    }) == true && packagedLeaseActionRan,
+    "a stable registered plugin lease must validate before and after its action"
+  )
+  guard let packagedExecution = state.beginExecution(packagedLease) else {
+    check(false, "a stable registered plugin lease must begin execution")
+    return
+  }
+  state.finishExecution(packagedExecution)
+  guard let stalePackagedLease = state.issueLease(
+    peerPID: pluginPID,
+    authorizer: RuntimePeerAuthorizer(),
+    requireRegistered: true
+  ) else {
+    check(false, "a registered plugin must issue a lease before deterministic reparenting")
+    return
+  }
   terminateNativeProcessFixture(workerPID)
   waitForNativeProcessFixtureExit(workerPID)
+  var staleLeaseActionRan = false
+  check(
+    state.withValidLease(stalePackagedLease, {
+      staleLeaseActionRan = true
+      return true
+    }) == nil && !staleLeaseActionRan,
+    "a worker termination must invalidate a packaged lease before its action without waiting for prune"
+  )
+  check(
+    state.beginExecution(stalePackagedLease) == nil,
+    "beginExecution must reject a packaged lease after its worker chain is reparented"
+  )
   guard let afterWorkerExit = state.registrationStatus(
     peerPID: desktopPID,
     requestId: "registration-status-after-worker-exit",
@@ -1996,6 +2037,14 @@ private func testRuntimeAuthorizationStateSnapshot() {
   check(state.snapshot() == getpid(), "runtime authorization state must publish a live PID snapshot")
   let lease = state.issueLease(peerPID: getpid(), authorizer: RuntimePeerAuthorizer())
   check(lease != nil, "live runtime identity must issue a generation-bound lease")
+  if let lease {
+    check(state.withValidLease(lease, { true }) == true, "development lease must retain its existing use path")
+    if let execution = state.beginExecution(lease) {
+      state.finishExecution(execution)
+    } else {
+      check(false, "development lease must retain its existing execution path")
+    }
+  }
   state.publish(getpid())
   if let lease {
     check(state.withValidLease(lease, { true }) == nil, "runtime replacement must invalidate the prior generation lease")

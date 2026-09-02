@@ -1198,7 +1198,8 @@ final class RuntimeAuthorizationState {
     let candidate = RuntimeAuthorizationLease(
       runtimePID: pid,
       generation: generation,
-      revision: requireRegistered ? revision : nil
+      revision: requireRegistered ? revision : nil,
+      packagedPeerPID: requireRegistered ? peerPID : nil
     )
     lock.unlock()
     let authorized: Bool
@@ -1623,22 +1624,17 @@ final class RuntimeAuthorizationState {
   }
 
   func withValidLease<T>(_ lease: RuntimeAuthorizationLease, _ action: () -> T) -> T? {
-    lock.lock()
-    guard isValidLocked(lease) else {
-      lock.unlock()
-      return nil
-    }
-    lock.unlock()
+    guard isCurrentLeaseForUse(lease) else { return nil }
 
     let result = action()
 
-    lock.lock()
-    let remainsValid = isValidLocked(lease)
-    lock.unlock()
-    return remainsValid ? result : nil
+    return isCurrentLeaseForUse(lease) ? result : nil
   }
 
   func beginExecution(_ lease: RuntimeAuthorizationLease) -> RuntimeAuthorizationExecution? {
+    if lease.packagedPeerPID != nil {
+      guard isCurrentLeaseForUse(lease) else { return nil }
+    }
     lock.lock()
     defer { lock.unlock() }
     guard isValidLocked(lease) else { return nil }
@@ -1665,6 +1661,28 @@ final class RuntimeAuthorizationState {
           liveRuntimePIDLocked() == lease.runtimePID else { return false }
     if let leaseRevision = lease.revision, revision != leaseRevision { return false }
     return true
+  }
+
+  private func isCurrentLeaseForUse(_ lease: RuntimeAuthorizationLease) -> Bool {
+    lock.lock()
+    guard isValidLocked(lease) else {
+      lock.unlock()
+      return false
+    }
+    let packagedPeerPID = lease.packagedPeerPID
+    lock.unlock()
+
+    guard let packagedPeerPID else { return true }
+    guard isCurrentPackagedPeer(
+      peerPID: packagedPeerPID,
+      runtimePID: lease.runtimePID,
+      generation: lease.generation
+    ) else { return false }
+
+    lock.lock()
+    let remainsValid = isValidLocked(lease)
+    lock.unlock()
+    return remainsValid
   }
 
   private func liveRuntimePIDLocked() -> pid_t? {
@@ -2110,6 +2128,7 @@ struct RuntimeAuthorizationLease {
   let runtimePID: pid_t
   let generation: UInt64
   let revision: UInt64?
+  let packagedPeerPID: pid_t?
 }
 
 struct RuntimeAuthorizationExecution {

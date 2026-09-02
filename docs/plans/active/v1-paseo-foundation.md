@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v57`
-- `current_frontier`: `R5-MAS-HOST-ATTESTATION-TOPOLOGY-STATE-CONVERGENCE`
-- `state`: `R5_MAS_HOST_ATTESTATION_TOPOLOGY_STATE_CONVERGENCE_PENDING_LEAD_REVIEW`
+- `plan_revision`: `v58`
+- `current_frontier`: `R5-MAS-HOST-ATTESTATION-LEASE-USE-CLOSEOUT`
+- `state`: `R5_MAS_HOST_ATTESTATION_LEASE_USE_CLOSEOUT_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable topology/state-convergence correction from exact parent/base candidate `7ea0b2c3c2ddf873db8f996721bff4605de64490`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted DIAG-002 correction, host identity/context history, Lead-accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a`, liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`, integration checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3`, and prior capture relative-socket/fresh-request-ID correction remain preserved. Original frontier base is `c69f26ee500e7cfa403139a99a4d81ed0b1ef5bf`.
+- `candidate`: pending immutable lease-use closeout correction from exact parent/base candidate `8ac474c2926c0f8f38c9b841127942869bc30e28`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted DIAG-002 correction, host identity/context history, Lead-accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a`, liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`, integration checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3`, capture relative-socket/fresh-request-ID correction, and topology/state convergence remain preserved. Original frontier base is `c69f26ee500e7cfa403139a99a4d81ed0b1ef5bf`.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: attempt 8 validly packaged, signed, installed, and reached the LaunchServices topology. Sandboxed desktop PID `46289` failed before the argv helper with `command="ps" purpose="parent PID for 46289" error.code="EPERM" errno=-1 syscall="spawnSync ps" status/signal null` and absent stdout/stderr. The exact proof root `/private/tmp/meetless-mas-development-proof.tY0GlP` and diagnostic evidence `/private/tmp/meetless-mas-diagnostic.SnLDCy` remain read-only evidence; artifact/evidence roots were not inspected for secrets or cache child names.
-- `pending_ruling`: the accepted diagnostic correction and exact attempt-8 EPERM evidence reopen the packaged runtime boundary. Route A keeps vendor Paseo and daemon-worker unmodified: native validates `D→S→W→P→C`, with the policy-pinned daemon-worker as an unregistered intermediate and plugin-process as the registered plugin role. Registration, attestation, status, packaged leases, recursive pruning, and cleanup use generation/revision snapshots with exact owner-chain revalidation. The prior capture correction remains in force. It preserves direct-development behavior and is pending Lead review. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
+- `pending_ruling`: the accepted diagnostic correction and exact attempt-8 EPERM evidence reopen the packaged runtime boundary. Route A keeps vendor Paseo and daemon-worker unmodified: native validates `D→S→W→P→C`, with the policy-pinned daemon-worker as an unregistered intermediate and plugin-process as the registered plugin role. Registration, attestation, status, packaged leases, recursive pruning, and cleanup use generation/revision snapshots with exact owner-chain revalidation. Packaged leases now retain the exact peer PID and revalidate that chain immediately before and after each `withValidLease` action and before `beginExecution`; development leases retain their existing scalar path. The prior capture correction remains in force. It preserves direct-development behavior and is pending Lead review. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
 - `blocked_by`: no safe in-scope implementation dependency remains; no package, sign, install, launch, or external result is accepted by this candidate.
-- `next_action`: Lead reviews the immutable topology/state-convergence correction from exact parent/base candidate `7ea0b2c3c2ddf873db8f996721bff4605de64490`; only after acceptance may any separately authorized external packaged verification be considered.
+- `next_action`: Lead reviews the immutable lease-use closeout correction from exact parent/base candidate `8ac474c2926c0f8f38c9b841127942869bc30e28`; only after acceptance may any separately authorized external packaged verification be considered.
 
 ## Ownership And Authority
 
@@ -1306,6 +1306,35 @@ capture relative-socket/fresh-request-ID correction remain unchanged.
 Focused native host/capture, runtime/plugin, typecheck, package/isolation,
 MAS-baseline, syntax, and diff validation are repository-only proof. No
 package/sign/install/launch retry, retained-root or secret/cache inspection,
+external operation, or push is part of this frontier. The immutable candidate
+is pending Lead review; all external gates remain closed.
+
+### R5 packaged host-attestation lease-use closeout (2026-09-03; current frontier)
+
+`PLAN_RECONCILIATION v58` records the accepted `HOST-ATTEST-LEASE-008-USE`
+correction against exact parent/base candidate
+`8ac474c2926c0f8f38c9b841127942869bc30e28`, preserving original frontier base
+`c69f26ee500e7cfa403139a99a4d81ed0b1ef5bf` and authority digest
+`fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`.
+
+Packaged leases retain the exact registered peer PID alongside their existing
+launch generation and revision. `withValidLease` reuses the native bounded
+snapshot/retry chain validator immediately before and immediately after its
+unlocked action; `beginExecution` requires the same current packaged peer
+validation before creating an execution. Development leases retain their
+existing scalar validation path. No periodic reaper result is used as lease
+authorization, and no arbitrary action runs while the state lock is held.
+
+The native executable fixture proof first succeeds with a stable registered
+`P→W→S` lease through both action and execution paths, then terminates `W` and
+proves the previously issued lease is rejected before its action and by
+`beginExecution` without an intervening status/prune call. Existing topology,
+revision/race, relative-socket/fresh-request-ID, development-lease, recursive
+cleanup, native host/capture, typecheck, and diff proof remain required. No
+protocol, TypeScript, vendor, endpoint, topology, package/signing, or authority
+change is included.
+
+No package/sign/install/launch retry, retained-root or secret/cache inspection,
 external operation, or push is part of this frontier. The immutable candidate
 is pending Lead review; all external gates remain closed.
 
