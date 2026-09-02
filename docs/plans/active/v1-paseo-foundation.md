@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v50`
-- `current_frontier`: `R5-MAS-RUNTIME-IPC-LIVENESS-CONVERGENCE`
-- `state`: `R5_MAS_RUNTIME_IPC_CLOSEOUT_CORRECTION_PENDING_LEAD_REVIEW`
+- `plan_revision`: `v51`
+- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-6`
+- `state`: `R5_MAS_DEVELOPMENT_EXTERNAL_GATE_READY`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: IPC liveness correction candidate `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7` from exact base `94999f10e1e7d841209a695392e259c1b185f0f9` remains unaccepted pending Lead review. It preserves the unaccepted topology candidate `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a` from exact original base `0477b10b8eaea19244fa694c567b8a601714591a` beneath the plan-only convergence history. Attempt-5 package/sign/install/start/restore evidence and accepted history through `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6` remain preserved.
+- `candidate`: Lead accepted IPC topology `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a` and liveness convergence `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`; current accepted integration tip is the v50 plan checkpoint `39013a89d1c63fdbbedbf45097fc6e076bf964a3`. Attempt-5 package/sign/install/start/restore evidence and accepted history through `07d11ecdef9a1d75837b23a7c31173d4f36ae7e6` remain preserved.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: retained attempt-5 proof root `/private/tmp/meetless-mas-development-proof.D97ICp` contains a fully signed and validated dev MAS artifact. Its exact install and native-signature preflight passed, but the host exited before daemon/renderer readiness because the app-container transcription socket expanded to 113 UTF-8 bytes while the Darwin binding accepts at most 103. The old app was restored exactly. Attempt-created MAS container/group roots, RevenueCat cache, and host lock remain retained evidence. One operator residue listing exposed a full public SDK-key-bearing cache filename; it was not frozen into evidence, but the no-disclosure handling condition was violated and must not be repeated.
-- `pending_ruling`: the bounded IPC-003/IPC-005 correction is implemented in candidate `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`. Native and Node stale/active probes now use each validated packaged endpoint's short `bindArgument`; canonical paths remain for containment, identity, stat, marker, permissions, and unlink. Stable endpoint/package/host diagnostics cite the accepted authorities and current `MEETLESS_RUNTIME_ENDPOINTS v1` contract. Package and signing readiness remain accepted evidence; launch and every excluded external gate remain closed.
-- `blocked_by`: none; Lead review remains pending. The candidate's required local endpoint, lifecycle, cross-language, direct-DMG, MAS contract, native, D97 contract-only, typecheck, syntax, diff, ancestry, and changed-path proof was run without package/sign/install/launch or external action.
-- `next_action`: Lead performs deterministic acceptance of candidate `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7`; no new architecture review or external retry is implied.
+- `pending_ruling`: the owner-authorized gate is open only for a fresh dev MAS package, Apple Development sign, recoverable local install, exact LaunchServices start, bounded readiness, owned stop, and restoration attempt. Purchase, restore, premium/provider actions, Convex, production, upload, submission, publication, App Review, and every other external gate remain closed.
+- `blocked_by`: no implementation dependency remains; no attempt-6 artifact, install, launch-readiness, lifecycle, or cleanup result is accepted yet.
+- `next_action`: one fresh SERIAL external operator executes attempt 6 from the accepted tip, reuses no prior proof root, avoids all secret/cache-name listing, and restores the pre-existing app after bounded verification or any failure.
 
 ## Ownership And Authority
 
@@ -1354,6 +1354,19 @@ Observed convergence-correction validation on 2026-08-31:
   preserves the accepted installation-only harness capability.
 
 ## Reconciliation Record
+
+- 2026-09-02 `PLAN_RECONCILIATION v51`: Lead accepted endpoint topology
+  `180dbdd24ac8a9cf0396c88fe17cbab04ce0254a` and liveness convergence
+  `62b49fe30b2f37c35504ee9c8ff58d3fcbf82ce7` at integration checkpoint
+  `39013a89d1c63fdbbedbf45097fc6e076bf964a3`. Lead personally inspected the
+  exact ancestry, authorized changed paths, short-bind/canonical-cleanup delta,
+  shared golden vectors, and plan-only checkpoint; reran 52 focused endpoint,
+  client, and lifecycle tests, 59 direct-DMG/MAS/host/readiness contract tests,
+  native `MeetlessHostTests`, typecheck, syntax, stale-diagnostic, and diff
+  checks. All passed. Attempt 6 now opens only the owner-authorized dev MAS
+  package/sign/recoverable-install/exact-launch/bounded-readiness/owned-stop/
+  restore lifecycle. No attempt-6 external result is accepted yet and every
+  excluded gate remains closed.
 
 - 2026-09-02 `PLAN_RECONCILIATION v50` / `CONVERGENCE_RECONCILIATION v1`:
   From exact unchanged base `94999f10e1e7d841209a695392e259c1b185f0f9`,
