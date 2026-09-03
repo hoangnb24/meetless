@@ -20,7 +20,7 @@ private let meetlessMasGateLockFilename = ".meetless-mas-gate.lock"
 private let meetlessMasGateActiveFilename = ".meetless-mas-gate-session.active"
 private let meetlessMasGateActiveIntentSuffix = ".active-intent"
 private let meetlessMasGateHandoffFilename = "host-handoff.json"
-private let meetlessMasGateTransactionSchema = "MAS_GATE_SESSION_TRANSACTION v1"
+private let meetlessMasGateTransactionSchema = "MAS_GATE_SESSION_TRANSACTION v2"
 private let meetlessMasGateHandoffSchema = "MAS_GATE_HOST_HANDOFF v1"
 
 struct MeetlessLaunchCoordinator<Configuration> {
@@ -627,7 +627,6 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     removeOwnedRegistryIfReleased(registry)
     if lockDescriptor >= 0 {
       _ = lockf(lockDescriptor, F_ULOCK, 0)
-      flock(lockDescriptor, LOCK_UN)
       close(lockDescriptor)
       lockDescriptor = -1
       masGateLockIdentity = nil
@@ -982,15 +981,8 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     guard lockDescriptor >= 0 else {
       throw hostPreflightError("cannot open the stable MAS gate lock")
     }
-    guard flock(lockDescriptor, LOCK_EX | LOCK_NB) == 0 else {
-      let owner = (try? String(contentsOfFile: lockPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) ?? "unknown owner"
-      close(lockDescriptor)
-      lockDescriptor = -1
-      throw hostPreflightError("MeetlessHost start rejected because the stable MAS gate lock is held by \(owner)")
-    }
     guard lockf(lockDescriptor, F_TLOCK, 0) == 0 else {
       let owner = (try? String(contentsOfFile: lockPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) ?? "unknown owner"
-      flock(lockDescriptor, LOCK_UN)
       close(lockDescriptor)
       lockDescriptor = -1
       throw hostPreflightError("MeetlessHost start rejected because the stable MAS gate lock is held by \(owner)")
@@ -1018,7 +1010,6 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       )
     } catch {
       _ = lockf(lockDescriptor, F_ULOCK, 0)
-      flock(lockDescriptor, LOCK_UN)
       close(lockDescriptor)
       lockDescriptor = -1
       masGateLockIdentity = nil
@@ -1039,7 +1030,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     let journal = try JSONDecoder().decode(MasGateSessionJournal.self, from: readRequiredData(journalPath, label: "MAS transaction journal"))
     let handoff = try JSONDecoder().decode(MasGateHostHandoff.self, from: readRequiredData(handoffPath, label: "MAS host handoff"))
     guard journal.schema == meetlessMasGateTransactionSchema,
-          journal.version == 1,
+          journal.version == 2,
           journal.ownerToken.range(of: "^[A-Za-z0-9_-]{40,80}$", options: .regularExpression) != nil,
           handoff.ownerToken.range(of: "^[A-Za-z0-9_-]{40,80}$", options: .regularExpression) != nil,
           journal.ownerToken == handoff.ownerToken,
@@ -1212,7 +1203,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     let expectedArchivePath = URL(fileURLWithPath: parentPath)
       .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).archived").path
     guard journal.schema == meetlessMasGateTransactionSchema,
-          journal.version == 1,
+          journal.version == 2,
           journal.runId.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", options: .regularExpression) != nil,
           journal.canonicalRuntimeRoot == runtimeRoot,
           journal.parentPath == parentPath,
@@ -1330,7 +1321,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     let expectedConstructionPath = URL(fileURLWithPath: parentPath)
       .appendingPathComponent(".meetless-mas-gate-session.\(runID).active-building").path
     guard journal.schema == meetlessMasGateTransactionSchema,
-          journal.version == 1,
+          journal.version == 2,
           journal.ownerToken.range(of: "^[A-Za-z0-9_-]{40,80}$", options: .regularExpression) != nil,
           journal.runId == runID,
           journal.canonicalRuntimeRoot == runtimeRoot,
@@ -1380,7 +1371,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     let expectedFreshRetainedPath = URL(fileURLWithPath: parentPath)
       .appendingPathComponent(".meetless-mas-gate-session.\(runID).fresh-retained").path
     guard journal.schema == meetlessMasGateTransactionSchema,
-          journal.version == 1,
+          journal.version == 2,
           journal.ownerToken.range(of: "^[A-Za-z0-9_-]{40,80}$", options: .regularExpression) != nil,
           journal.runId == runID,
           journal.canonicalRuntimeRoot == runtimeRoot,

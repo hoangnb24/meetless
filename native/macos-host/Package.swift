@@ -7,6 +7,7 @@ let package = Package(
   products: [
     .executable(name: "MeetlessHost", targets: ["MeetlessHost"]),
     .executable(name: "MeetlessHostTests", targets: ["MeetlessHostTests"]),
+    .executable(name: "MeetlessMasGateMutation", targets: ["MeetlessMasGateMutation"]),
   ],
   dependencies: [
     .package(url: "https://github.com/RevenueCat/purchases-ios-spm.git", exact: "5.87.1"),
@@ -21,6 +22,7 @@ let package = Package(
         "MeetlessAppStore.entitlements.plist",
         "MeetlessAppStoreChild.entitlements.plist",
         "host-entry",
+        "mas-gate-mutation",
         "TranscriptionCapabilityTests.swift",
       ],
       sources: ["MeetlessHost.swift", "RevenueCatCapability.swift", "TranscriptionCapability.swift", "ManagedAuthCapability.swift"],
@@ -41,6 +43,7 @@ let package = Package(
         "MeetlessAppStore.entitlements.plist",
         "MeetlessAppStoreChild.entitlements.plist",
         "host-entry",
+        "mas-gate-mutation",
         "MeetlessHost.swift",
         "RevenueCatCapability.swift",
         "TranscriptionCapability.swift",
@@ -49,6 +52,11 @@ let package = Package(
         "Package.resolved",
       ],
       sources: ["TranscriptionCapabilityTests.swift"]
+    ),
+    .executableTarget(
+      name: "MeetlessMasGateMutation",
+      path: "mas-gate-mutation",
+      sources: ["main.swift"]
     ),
   ],
   swiftLanguageModes: [.v5]

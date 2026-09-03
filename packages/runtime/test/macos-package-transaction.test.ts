@@ -1,15 +1,19 @@
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   newPackageTransactionId,
+  fingerprintPath,
   packageTransactionPaths,
   recoverPackageTransaction,
   replacePackageBundle,
   serializeSortedJson,
   restorePackageTransaction,
 } from "../../../scripts/lib/macos-package-transaction.mjs";
+import { acquireMasGateLock } from "../../../scripts/lib/macos-mas-gate-lock.mjs";
+import { freezeMasGateArtifactBinding } from "../../../scripts/lib/mas-gate-artifact-binding.mjs";
 import {
   archiveMasGateSessionTransaction,
   beginMasGateSessionTransaction,
@@ -263,10 +267,235 @@ describe("macOS package replacement transaction", () => {
       identityPath: root.identityPath,
     })).rejects.toThrow(/identity changed outside package transaction/);
   });
+
+  it("carries a complete immutable artifact binding through staging and installation", async () => {
+    const root = await setup({ identity: false });
+    const manifestPath = path.join(root.root, "app-store-development-manifest.json");
+    const publicKey = "test-public-sdk-key-never-journaled";
+    const binding = await makeBinding(root.source, manifestPath, publicKey);
+    const transaction = await replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-binding-owner",
+      runId: newPackageTransactionId(),
+      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      artifactBinding: binding,
+    });
+
+    expect(transaction.schema).toBe("MAS_PACKAGE_TRANSACTION v4");
+    expect(Object.isFrozen(transaction.artifactBinding)).toBe(true);
+    expect(transaction.artifactBinding).not.toHaveProperty("publicSdkKey");
+    expect(JSON.stringify(transaction)).not.toContain(publicKey);
+    expect(transaction.sourceFingerprint).toBe(binding.bundleFingerprint);
+    expect(transaction.stagingFingerprint).toBe(binding.bundleFingerprint);
+    expect(transaction.candidateFingerprint).toBe(binding.bundleFingerprint);
+    await expect(fingerprintPath(root.target)).resolves.toBe(binding.bundleFingerprint);
+  });
+
+  it("retains a same-content destination collision instead of deleting it during recovery", async () => {
+    const root = await setup({ identity: false });
+    const manifestPath = path.join(root.root, "app-store-development-collision.json");
+    const binding = await makeBinding(root.source, manifestPath, "test-public-sdk-key-collision");
+    const runId = newPackageTransactionId();
+    await expect(replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-collision-owner",
+      runId,
+      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      artifactBinding: binding,
+      beforeRename: async ({ label, destination }: { label: string; destination: string }) => {
+        if (label === "package staging install rename") {
+          await cp(root.source, destination, { recursive: true, force: false, errorOnExist: true, verbatimSymlinks: true });
+        }
+      },
+    })).rejects.toThrow(/EEXIST/);
+
+    const journal = packageTransactionPaths(root.target, runId).journal;
+    await expect(recoverPackageTransaction(journal, {
+      ownerToken: "M7-collision-owner",
+      target: root.target,
+      identityPath: root.identityPath,
+      requireArtifactBinding: true,
+    })).rejects.toThrow(/unowned candidate-content collision/);
+    await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("candidate\n");
+    await expect(readFile(path.join(root.source, "Contents", "marker"), "utf8")).resolves.toBe("candidate\n");
+    await expect(readFile(path.join(packageTransactionPaths(root.target, runId).staging, "Contents", "marker"), "utf8")).resolves.toBe("candidate\n");
+    await expect(readFile(path.join(packageTransactionPaths(root.target, runId).backup, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
+  });
+
+  it("retains a same-content identity collision instead of deleting it during recovery", async () => {
+    const root = await setup({ identity: false });
+    const manifestPath = path.join(root.root, "app-store-development-identity-collision.json");
+    const binding = await makeBinding(root.source, manifestPath, "test-public-sdk-key-identity-collision");
+    const installedIdentity = { bundleIdentifier: "com.meetless.app", bundleRealPath: root.source };
+    const runId = newPackageTransactionId();
+    await expect(replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-identity-collision-owner",
+      runId,
+      inspect: async () => installedIdentity,
+      artifactBinding: binding,
+      afterRenameSyscall: async ({ label }: { label: string }) => {
+        if (label === "package identity publication rename") {
+          await rm(root.identityPath, { force: true });
+          await writeFile(root.identityPath, serializeSortedJson(installedIdentity), { mode: 0o600 });
+        }
+      },
+    })).rejects.toThrow(/published package identity differs from the transaction-owned temporary identity/);
+
+    const journal = packageTransactionPaths(root.target, runId).journal;
+    await expect(recoverPackageTransaction(journal, {
+      ownerToken: "M7-identity-collision-owner",
+      target: root.target,
+      identityPath: root.identityPath,
+      requireArtifactBinding: true,
+    })).rejects.toThrow(/unowned same-content collision/);
+    await expect(readFile(root.identityPath, "utf8")).resolves.toBe(serializeSortedJson(installedIdentity).toString("utf8"));
+    await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("candidate\n");
+    await expect(readFile(path.join(root.source, "Contents", "marker"), "utf8")).resolves.toBe("candidate\n");
+    await expect(readFile(path.join(packageTransactionPaths(root.target, runId).backup, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
+  });
+
+  it("rejects source mutation after staged validation before moving the prior app", async () => {
+    const root = await setup({ identity: false });
+    const manifestPath = path.join(root.root, "app-store-development-manifest.json");
+    const binding = await makeBinding(root.source, manifestPath, "test-public-sdk-key");
+    let mutated = false;
+    const runId = newPackageTransactionId();
+    await expect(replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-binding-owner",
+      runId,
+      inspect: async (bundlePath: string) => {
+        if (!mutated) {
+          mutated = true;
+          await writeFile(path.join(root.source, "Contents", "marker"), "changed-after-validation\n");
+        }
+        return { bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath };
+      },
+      artifactBinding: binding,
+    })).rejects.toThrow(/validated MAS artifact source changed/);
+    await recoverPackageTransaction(packageTransactionPaths(root.target, runId).journal, {
+      ownerToken: "M7-binding-owner",
+      target: root.target,
+      identityPath: root.identityPath,
+    });
+    await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
+    await expect(lstat(root.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects manifest mutation after staged validation before moving the prior app", async () => {
+    const root = await setup({ identity: false });
+    const manifestPath = path.join(root.root, "app-store-development-manifest.json");
+    const binding = await makeBinding(root.source, manifestPath, "test-public-sdk-key");
+    const runId = newPackageTransactionId();
+    await expect(replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-binding-owner",
+      runId,
+      inspect: async () => {
+        await writeFile(manifestPath, "changed after validation\n");
+        return { bundleIdentifier: "com.meetless.app", bundleRealPath: root.source };
+      },
+      artifactBinding: binding,
+    })).rejects.toThrow(/validated MAS manifest changed/);
+    await recoverPackageTransaction(packageTransactionPaths(root.target, runId).journal, {
+      ownerToken: "M7-binding-owner",
+      target: root.target,
+      identityPath: root.identityPath,
+    });
+    await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
+    await expect(lstat(root.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("recovers a package move after the native holder dies after syscall and before acknowledgement", async () => {
+    const root = await setup({ identity: false });
+    const lease = await acquireMasGateLock({ parentPath: path.dirname(root.target) });
+    const runId = newPackageTransactionId();
+    try {
+      await expect(replacePackageBundle({
+        source: root.source,
+        target: root.target,
+        identityPath: root.identityPath,
+        ownerToken: "M7-death-owner",
+        runId,
+        inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+        lockLease: lease,
+        afterRenameSyscall: ({ label }: { label: string }) => {
+          if (label === "package staging install rename") {
+            process.kill(lease.holderPid, "SIGKILL");
+            return new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          return undefined;
+        },
+      })).rejects.toThrow(/holder exited|applied before its acknowledgement|MAS gate lock/);
+    } finally {
+      await lease.release();
+    }
+    await recoverPackageTransaction(packageTransactionPaths(root.target, runId).journal, {
+      ownerToken: "M7-death-owner",
+      target: root.target,
+      identityPath: root.identityPath,
+    });
+    await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
+    await expect(readFile(root.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("journals identity construction before no-replace publication and recovers either helper death point", async () => {
+    for (const deathPoint of ["before", "after"]) {
+      const root = await setup({ identity: false });
+      const manifestPath = path.join(root.root, `app-store-development-${deathPoint}.json`);
+      const binding = await makeBinding(root.source, manifestPath, `test-public-sdk-key-${deathPoint}`);
+      const lease = await acquireMasGateLock({ parentPath: path.dirname(root.target) });
+      const runId = newPackageTransactionId();
+      try {
+        await expect(replacePackageBundle({
+          source: root.source,
+          target: root.target,
+          identityPath: root.identityPath,
+          ownerToken: `M7-identity-death-${deathPoint}`,
+          runId,
+          inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+          artifactBinding: binding,
+          lockLease: lease,
+          beforeRename: deathPoint === "before" ? () => process.kill(lease.holderPid, "SIGKILL") : undefined,
+          afterRenameSyscall: deathPoint === "after" ? ({ label }: { label: string }) => {
+            if (label === "package identity publication rename") {
+              process.kill(lease.holderPid, "SIGKILL");
+              return new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            return undefined;
+          } : undefined,
+        })).rejects.toThrow(/holder exited|applied before its acknowledgement|MAS gate lock/);
+      } finally {
+        await lease.release();
+      }
+      const journal = packageTransactionPaths(root.target, runId).journal;
+      await recoverPackageTransaction(journal, {
+        ownerToken: `M7-identity-death-${deathPoint}`,
+        target: root.target,
+        identityPath: root.identityPath,
+        requireArtifactBinding: true,
+      });
+      const temporaryIdentityPath = `${root.identityPath}.m7.${runId}.identity.tmp`;
+      await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
+      await expect(lstat(root.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(lstat(`${root.identityPath}.m7.${runId}.identity.tmp`)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
 });
 
-async function setup() {
-  const root = await mkdtemp(path.join(tmpdir(), "meetless-m7-package-transaction-test-"));
+async function setup({ identity = true } = {}) {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-m7-package-transaction-test-")));
   roots.push(root);
   const source = path.join(root, "source.app");
   const target = path.join(root, "Applications", "Meetless.app");
@@ -275,6 +504,28 @@ async function setup() {
   await writeFile(path.join(source, "Contents", "marker"), "candidate\n");
   await mkdir(path.join(target, "Contents"), { recursive: true });
   await writeFile(path.join(target, "Contents", "marker"), "prior\n");
-  await writeFile(identityPath, "prior identity\n");
-  return { source, target, identityPath };
+  if (identity) await writeFile(identityPath, "prior identity\n");
+  return { root, source, target, identityPath };
+}
+
+async function makeBinding(source: string, manifestPath: string, publicKey: string) {
+  const manifestBytes = Buffer.from("retained manifest fixture\n");
+  await writeFile(manifestPath, manifestBytes, { mode: 0o600 });
+  const bundleFingerprint = await fingerprintPath(source);
+  if (!bundleFingerprint) throw new Error("fixture source fingerprint is missing");
+  return freezeMasGateArtifactBinding({
+    schema: "MAS_GATE_ARTIFACT_BINDING v1",
+    version: 1,
+    manifestPath,
+    manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+    bundlePath: source,
+    bundleFingerprint,
+    artifactDigest: "a".repeat(64),
+    candidateSnapshotDigest: "b".repeat(64),
+    packageInputDigest: "c".repeat(64),
+    artifactInputDigest: "d".repeat(64),
+    licenseDigest: "e".repeat(64),
+    signatureDigest: "f".repeat(64),
+    publicSdkKeySha256: createHash("sha256").update(publicKey).digest("hex"),
+  });
 }

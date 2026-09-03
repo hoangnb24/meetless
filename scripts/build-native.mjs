@@ -22,6 +22,10 @@ await run("swift", ["build", "-c", "release", "--package-path", "native/macos-ho
 const hostArtifact = path.join(repositoryRoot, "native/macos-host/.build/release/MeetlessHost");
 await assertRevenueCatLinkedHost(hostArtifact);
 process.stdout.write(`RevenueCat-linked MeetlessHost artifact: ${hostArtifact}\n`);
+await run("swift", ["build", "-c", "release", "--package-path", "native/macos-host", "--product", "MeetlessMasGateMutation"]);
+const mutationArtifact = path.join(repositoryRoot, "native/macos-host/.build/release/MeetlessMasGateMutation");
+await assertArm64MachO(mutationArtifact, "MAS mutation helper");
+process.stdout.write(`Native MAS mutation helper artifact: ${mutationArtifact}\n`);
 await run("xcrun", [
   "swiftc",
   "-O",
@@ -53,6 +57,15 @@ async function assertRevenueCatLinkedHost(candidate) {
       `SwiftPM host artifact has no linked RevenueCat symbols: ${candidate}. ` +
       "Build the native host through native/macos-host/Package.swift; do not use the #else fallback.",
     );
+  }
+}
+
+async function assertArm64MachO(candidate, label) {
+  const inspected = await stat(candidate).catch(() => null);
+  if (!inspected?.isFile()) throw new Error(`SwiftPM did not produce the required ${label} at ${candidate}`);
+  const { stdout: fileOutput } = await execFileAsync("file", [candidate], { cwd: repositoryRoot, env: environment });
+  if (!/Mach-O 64-bit executable arm64/u.test(fileOutput)) {
+    throw new Error(`${label} is not an arm64 Mach-O executable: ${candidate}`);
   }
 }
 

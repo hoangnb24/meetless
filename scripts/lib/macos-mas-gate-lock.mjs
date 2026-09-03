@@ -6,12 +6,16 @@ import { fileURLToPath } from "node:url";
 
 export const MAS_GATE_LOCK_SCHEMA = "MAS_GATE_LOCK v1";
 export const MAS_GATE_LOCK_BASENAME = ".meetless-mas-gate.lock";
-export const MAS_GATE_LOCK_HOLDER_ARGUMENT = "--hold-mas-gate-lock";
-export const MAS_GATE_LOCK_COMMAND = "/usr/bin/lockf";
+export const MAS_GATE_LOCK_MUTATION_SCHEMA = "MAS_GATE_MUTATION v1";
+export const MAS_GATE_LOCK_MUTATION_VERSION = 1;
+export const MAS_GATE_LOCK_COMMAND = "MeetlessMasGateMutation";
+export const MAS_GATE_LOCK_HOLDER_EXITED_CODE = "MAS-GATE-HOLDER-EXITED";
 
 const modulePath = fileURLToPath(import.meta.url);
+const mutationHelperPath = path.resolve(path.dirname(modulePath), "../../native/macos-host/.build/release/MeetlessMasGateMutation");
 const MAS_GATE_LOCK_LEASE = Symbol("MAS_GATE_LOCK_LEASE");
 const LIVE_MAS_GATE_LOCK_LEASES = new WeakSet();
+const REQUEST_TIMEOUT_MS = 10_000;
 
 /**
  * Return the one stable kernel-lock path for a runtime-root parent. The lock
@@ -24,29 +28,25 @@ export function masGateLockPath(parentPath) {
 }
 
 /**
- * Hold the same fcntl/lockf advisory lock used by the native host. The child
- * process owns the descriptor so a parent crash releases the kernel lock;
- * the returned lease is plain control data plus an explicit release method.
+ * Start the persistent native mutation session. The helper owns the same
+ * lockf descriptor as MeetlessHost and every protected renameatx_np call, so a Node
+ * liveness check cannot become a later JavaScript filesystem mutation.
  */
 export async function acquireMasGateLock({ parentPath, blocking = false } = {}) {
   const requestedLockPath = typeof parentPath === "string" && parentPath.length > 0
     ? path.join(path.resolve(parentPath), MAS_GATE_LOCK_BASENAME)
     : "<unknown>";
+  if (blocking) throw lockFailure(requestedLockPath, "blocking MAS gate lock acquisition is not supported; retry the bounded operation");
   try {
     const canonicalParent = canonicalAbsolute(parentPath, "MAS gate lock parent");
     await assertLockParent(canonicalParent);
     const lockPath = masGateLockPath(canonicalParent);
     await prepareLockFile(lockPath, canonicalParent);
-
-    const lockArguments = blocking
-      ? ["-k", lockPath, process.execPath, modulePath, MAS_GATE_LOCK_HOLDER_ARGUMENT]
-      : ["-t", "0", "-k", lockPath, process.execPath, modulePath, MAS_GATE_LOCK_HOLDER_ARGUMENT];
-    const child = spawn(MAS_GATE_LOCK_COMMAND, lockArguments, {
+    const child = spawn(mutationHelperPath, [`--parent=${canonicalParent}`, `--lock=${lockPath}`], {
       cwd: canonicalParent,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
     });
-
     const lease = await waitForLock(child, lockPath);
     try {
       const lockIdentity = await assertHeldLockFile(lockPath, canonicalParent);
@@ -59,27 +59,20 @@ export async function acquireMasGateLock({ parentPath, blocking = false } = {}) 
     }
   } catch (error) {
     if (error?.code === "MAS-GATE-CLEANUP-001") throw error;
-    throw lockFailure(requestedLockPath, `kernel lock acquisition failed: ${describe(error)}`, error);
+    throw lockFailure(requestedLockPath, `native mutation-session acquisition failed: ${describe(error)}`, error);
   }
 }
 
 export async function withMasGateLock(options, operation) {
   if (typeof operation !== "function") throw new Error("MAS gate lock operation must be a function");
   const supplied = options?.lockLease;
-  if (supplied && !LIVE_MAS_GATE_LOCK_LEASES.has(supplied)) {
-    throw lockFailure(String(options?.parentPath ?? "<unknown>"), "the supplied MAS gate lock lease is not kernel-backed");
-  }
+  if (supplied) assertMasGateMutationLease(supplied);
   const lease = supplied ?? await acquireMasGateLock(options);
-  if (!lease || !LIVE_MAS_GATE_LOCK_LEASES.has(lease) || typeof lease.release !== "function" || typeof lease.assertHeld !== "function" ||
-      lease.lockPath !== masGateLockPath(options.parentPath)) {
-    throw lockFailure(String(options?.parentPath ?? "<unknown>"), "the supplied MAS gate lock lease is not bound to the exact live holder and runtime-root parent");
+  if (lease.lockPath !== masGateLockPath(options.parentPath)) {
+    throw lockFailure(String(options?.parentPath ?? "<unknown>"), "the supplied MAS gate lock lease is not bound to the exact live native mutation session");
   }
   let ownsLease = !supplied;
   try {
-    // A caller-supplied object can retain the lock-file inode after its
-    // kernel lease has been released or its holder has died.  The live
-    // holder assertion is part of the lease contract, before any caller
-    // operation is allowed to inspect or mutate transaction state.
     await lease.assertHeld();
     await assertHeldLockFile(lease.lockPath, canonicalAbsolute(options.parentPath, "MAS gate lock parent"), lease.lockIdentity);
     return await operation(lease);
@@ -91,9 +84,22 @@ export async function withMasGateLock(options, operation) {
   }
 }
 
+export function assertMasGateMutationLease(lease) {
+  if (!lease || !LIVE_MAS_GATE_LOCK_LEASES.has(lease) || typeof lease.release !== "function" ||
+      typeof lease.assertHeld !== "function" || typeof lease.renameNoReplace !== "function") {
+    throw lockFailure(String(lease?.lockPath ?? "<unknown>"), "the supplied MAS gate lock lease is not kernel-backed");
+  }
+  return lease;
+}
+
+export function isMasGateMutationHolderDeath(error) {
+  return error?.code === MAS_GATE_LOCK_HOLDER_EXITED_CODE;
+}
+
 export async function writeMasGateLockMetadata(lease, metadata) {
-  if (!lease || !LIVE_MAS_GATE_LOCK_LEASES.has(lease) || typeof lease.lockPath !== "string" || typeof lease.assertHeld !== "function") {
-    throw new Error("MAS gate lock metadata requires a live lock lease");
+  if (!lease || !LIVE_MAS_GATE_LOCK_LEASES.has(lease) || typeof lease.lockPath !== "string" ||
+      typeof lease.assertHeld !== "function") {
+    throw new Error("MAS gate lock metadata requires a live native mutation-session lease");
   }
   await lease.assertHeld();
   await assertHeldLockFile(lease.lockPath, path.dirname(lease.lockPath), lease.lockIdentity);
@@ -111,114 +117,205 @@ export async function writeMasGateLockMetadata(lease, metadata) {
 async function waitForLock(child, lockPath) {
   let ready = false;
   let settled = false;
-  let stdout = "";
-  let stderr = "";
-  let protocolBuffer = "";
   let holderProcessExited = false;
-  const pendingAssertions = [];
+  let protocolBuffer = "";
   let resolveReady;
   let rejectReady;
+  const pending = new Map();
   const readyPromise = new Promise((resolve, reject) => {
     resolveReady = resolve;
     rejectReady = reject;
   });
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
+  const failPending = (error) => {
+    for (const request of pending.values()) {
+      clearTimeout(request.timeout);
+      request.reject(error);
+    }
+    pending.clear();
+  };
   child.stdout.on("data", (chunk) => {
-    stdout += chunk;
     protocolBuffer += chunk;
+    if (protocolBuffer.length > 256 * 1024) {
+      const error = lockFailure(lockPath, "native mutation-session protocol output exceeded its bound");
+      failPending(error);
+      if (!settled) {
+        settled = true;
+        rejectReady(error);
+      }
+      child.kill("SIGKILL");
+      return;
+    }
     const lines = protocolBuffer.split("\n");
     protocolBuffer = lines.pop() ?? "";
     for (const line of lines) {
-      if (!ready && line === "locked") {
+      if (!line) continue;
+      let message;
+      try { message = JSON.parse(line); } catch {
+        const error = lockFailure(lockPath, "native mutation-session returned malformed JSON");
+        failPending(error);
+        if (!settled) {
+          settled = true;
+          rejectReady(error);
+        }
+        child.kill("SIGKILL");
+        return;
+      }
+      if (message.kind === "ready") {
+        if (ready || message.schema !== MAS_GATE_LOCK_MUTATION_SCHEMA || message.version !== MAS_GATE_LOCK_MUTATION_VERSION) {
+          const error = lockFailure(lockPath, "native mutation-session returned an invalid ready record");
+          if (!settled) {
+            settled = true;
+            rejectReady(error);
+          }
+          child.kill("SIGKILL");
+          return;
+        }
         ready = true;
         resolveReady();
-      } else if (line === "asserted") {
-        pendingAssertions.shift()?.resolve();
+        continue;
       }
+      if (message.kind === "fatal") {
+        const error = lockFailure(lockPath, `native mutation-session failed: ${message.code ?? "unknown"} ${message.message ?? ""}`);
+        failPending(error);
+        if (!settled) {
+          settled = true;
+          rejectReady(error);
+        }
+        continue;
+      }
+      const request = pending.get(message.requestId);
+      if (!request) continue;
+      if (message.kind === "mutation-applied") {
+        request.mutationApplied = true;
+        request.mutationAppliedPromise = Promise.resolve().then(() => (
+          typeof request.onMutationApplied === "function" ? request.onMutationApplied(message) : undefined
+        )).then(async () => {
+          // Let the child close event run before acknowledging a mutation.
+          // This keeps a holder death between the native syscall and the
+          // protocol response on the recovery path, even when both native
+          // records arrive in one stdout chunk.
+          await new Promise((resolve) => setImmediate(resolve));
+        }).catch((error) => {
+          request.mutationCallbackError = error;
+        });
+        continue;
+      }
+      if (message.kind !== "response") continue;
+      const settle = () => {
+        if (!pending.has(message.requestId)) return;
+        pending.delete(message.requestId);
+        clearTimeout(request.timeout);
+        if (request.mutationCallbackError) request.reject(request.mutationCallbackError);
+        else if (message.ok === true) request.resolve(message);
+        else request.reject(protocolError(lockPath, message));
+      };
+      if (request.mutationAppliedPromise) request.mutationAppliedPromise.then(settle);
+      else settle();
     }
   });
-  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+    if (stderr.length > 32 * 1024) stderr = stderr.slice(-32 * 1024);
+  });
   child.once("error", (error) => {
-    if (settled) return;
-    settled = true;
-    rejectReady(lockFailure(lockPath, `lockf could not start: ${error.message}`, error));
+    const failure = lockFailure(lockPath, `native mutation-session could not start: ${error.message}`, error);
+    failPending(failure);
+    if (!settled) {
+      settled = true;
+      rejectReady(failure);
+    }
   });
   child.once("close", (code, signal) => {
     holderProcessExited = true;
-    for (const pending of pendingAssertions.splice(0)) {
-      pending.reject(lockFailure(lockPath, "the MAS gate lock holder exited during a live assertion"));
+    const detail = stderr.trim() || `exit ${code ?? "unknown"}${signal ? `/${signal}` : ""}`;
+    const failure = holderExitFailure(lockPath, `native mutation-session holder exited: ${detail}`);
+    failPending(failure);
+    if (!ready && !settled) {
+      settled = true;
+      rejectReady(failure);
     }
-    if (ready) return;
-    if (settled) return;
-    settled = true;
-    const detail = stderr.trim() || stdout.trim() || `exit ${code ?? "unknown"}${signal ? `/${signal}` : ""}`;
-    rejectReady(lockFailure(lockPath, `kernel lock acquisition was not completed: ${detail}`));
   });
   await readyPromise;
 
   let released = false;
-  const assertHeld = async () => {
-    if (released || holderProcessExited || child.exitCode !== null || child.signalCode !== null) {
-      throw lockFailure(lockPath, "the MAS gate lock lease is no longer held");
+  const send = (command, payload = {}, { onMutationApplied } = {}) => {
+    if (released) {
+      return Promise.reject(lockFailure(lockPath, "the native mutation-session lease is no longer held"));
     }
-    await assertKernelLockHeld(lockPath);
-    if (released || holderProcessExited || child.exitCode !== null || child.signalCode !== null) {
-      throw lockFailure(lockPath, "the MAS gate lock lease holder exited during assertion");
+    if (holderProcessExited || child.exitCode !== null || child.signalCode !== null) {
+      return Promise.reject(holderExitFailure(lockPath, "the native mutation-session holder exited; the lease is no longer held"));
     }
-    await new Promise((resolve, reject) => {
-      pendingAssertions.push({ resolve, reject });
-      child.stdin.write("assert\n", (error) => {
-        if (error) {
-          const index = pendingAssertions.findIndex((pending) => pending.resolve === resolve);
-          if (index >= 0) pendingAssertions.splice(index, 1);
-          reject(lockFailure(lockPath, `the MAS gate lock holder assertion could not be sent: ${error.message}`, error));
-        }
-      });
+    if (pending.size >= 32) return Promise.reject(lockFailure(lockPath, "native mutation-session command bound exceeded"));
+    const requestId = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        pending.delete(requestId);
+        reject(lockFailure(lockPath, `native mutation-session command ${command} exceeded its bound`));
+      }, REQUEST_TIMEOUT_MS);
+      pending.set(requestId, { resolve, reject, timeout, onMutationApplied });
+      try {
+        child.stdin.write(`${JSON.stringify({
+          schema: MAS_GATE_LOCK_MUTATION_SCHEMA,
+          version: MAS_GATE_LOCK_MUTATION_VERSION,
+          requestId,
+          command,
+          ...payload,
+        })}\n`);
+      } catch (error) {
+        clearTimeout(timeout);
+        pending.delete(requestId);
+        reject(lockFailure(lockPath, `native mutation-session command could not be sent: ${error.message}`, error));
+      }
     });
   };
   const lease = {
     [MAS_GATE_LOCK_LEASE]: true,
     lockPath,
     holderPid: child.pid,
-    assertHeld,
+    lockIdentity: null,
+    assertHeld: async () => {
+      await send("assert-held");
+      if (released) throw lockFailure(lockPath, "native mutation-session lease was released during assertion");
+      if (holderProcessExited) throw holderExitFailure(lockPath, "native mutation-session holder exited during assertion");
+      await assertHeldLockFile(lockPath, path.dirname(lockPath), lease.lockIdentity);
+    },
+    renameNoReplace: async (source, destination, { onMutationApplied } = {}) => {
+      await lease.assertHeld();
+      await send("rename-excl", {
+        source: canonicalAbsolute(source, "protected move source"),
+        destination: canonicalAbsolute(destination, "protected move destination"),
+      }, { onMutationApplied });
+    },
     async release() {
       if (released) return;
+      if (child.exitCode !== null || child.signalCode !== null) {
+        released = true;
+        LIVE_MAS_GATE_LOCK_LEASES.delete(lease);
+        return;
+      }
+      try { await send("release"); } catch { /* death already releases the kernel lock */ }
       released = true;
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      child.stdin.end("release\n");
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      await new Promise((resolve) => {
-        if (child.exitCode !== null || child.signalCode !== null) resolve();
-        else child.once("close", resolve);
-      });
+      LIVE_MAS_GATE_LOCK_LEASES.delete(lease);
+      if (child.exitCode === null && child.signalCode === null) child.stdin.end();
+      await waitForChildClose(child);
     },
   };
   LIVE_MAS_GATE_LOCK_LEASES.add(lease);
   return lease;
 }
 
-/**
- * lockf(1) has no query operation for the current holder.  A non-blocking
- * probe therefore proves that the lock remains held while the lease's own
- * holder challenge below proves that this live lease is the holder.  A
- * released or killed holder cannot authorize a filesystem operation merely
- * because its lock-file inode still exists.
- */
-async function assertKernelLockHeld(lockPath) {
-  const probe = spawn(MAS_GATE_LOCK_COMMAND, ["-t", "0", "-k", lockPath, "/usr/bin/true"], {
-    stdio: "ignore",
-    env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
-  });
-  const result = await new Promise((resolve, reject) => {
-    probe.once("error", reject);
-    probe.once("close", (code, signal) => resolve({ code, signal }));
-  });
-  if (result.code === 75) return;
-  throw lockFailure(
-    lockPath,
-    `the kernel lock is not held by this lease (probe exit ${result.code ?? "unknown"}${result.signal ? `/${result.signal}` : ""})`,
-  );
+async function waitForChildClose(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise((resolve) => child.once("close", resolve));
+}
+
+function protocolError(lockPath, message) {
+  const error = lockFailure(lockPath, `native mutation-session command failed: ${message.code ?? "unknown"} ${message.message ?? ""}`);
+  error.code = message.code ?? "MAS_GATE_MUTATION_FAILED";
+  return error;
 }
 
 async function assertLockParent(parentPath) {
@@ -274,33 +371,24 @@ function canonicalAbsolute(value, label) {
 }
 
 function currentUid() {
-  if (typeof process.getuid !== "function") throw new Error("MAS gate lock ownership requires process UID support");
+  if (typeof process.getuid !== "function") throw new Error("MAS gate lock requires process UID support");
   return process.getuid();
 }
 
 function lockFailure(lockPath, reason, cause) {
-  const error = new Error(`MAS-GATE-CLEANUP-001: repository-authorized MAS gate lock failed for ${lockPath}. Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md and docs/decisions/0005-mac-app-store-and-revenuecat.md. Next action: leave every runtime root intact; run MAS gate status/recovery. Reason: ${reason}`);
-  error.code = "MAS-GATE-CLEANUP-001";
+  const error = new Error(
+    `MAS gate lock failed for ${lockPath}: ${reason}. ` +
+    "Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md and docs/decisions/0005-mac-app-store-and-revenuecat.md. " +
+    "Next action: leave every runtime root intact and run MAS gate status/recovery.",
+  );
   if (cause) error.cause = cause;
   return error;
 }
 
-function describe(error) { return error instanceof Error ? error.message : String(error); }
-
-if (process.argv[1] && path.resolve(process.argv[1]) === modulePath && process.argv[2] === MAS_GATE_LOCK_HOLDER_ARGUMENT) {
-  const holderParentPid = process.ppid;
-  process.stdout.write("locked\n");
-  process.stdin.resume();
-  process.stdin.setEncoding("utf8");
-  process.stdin.on("data", (chunk) => {
-    if (chunk.includes("assert")) {
-      if (process.ppid !== holderParentPid) {
-        process.stderr.write("lock holder parent exited\n");
-        process.exit(73);
-      }
-      process.stdout.write("asserted\n");
-    }
-    if (chunk.includes("release")) process.exit(0);
-  });
-  process.stdin.on("end", () => process.exit(0));
+function holderExitFailure(lockPath, reason, cause) {
+  const error = lockFailure(lockPath, reason, cause);
+  error.code = MAS_GATE_LOCK_HOLDER_EXITED_CODE;
+  return error;
 }
+
+function describe(error) { return error instanceof Error ? error.message : String(error); }

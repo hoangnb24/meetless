@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v64`
+- `plan_revision`: `v65`
 - `current_frontier`: `R5-MAS-RUNTIME-STATE-TRANSACTION-CLOSEOUT-CORRECTION`
 - `state`: `R5_MAS_RUNTIME_STATE_TRANSACTION_CLOSEOUT_CORRECTION_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable MAS runtime-state closeout correction from exact base `975db2cc93c827fec24d58f361e94edd3dce84e8`; the `975db2c` closeout candidate was rejected/reopened and remains unaccepted. Candidate commit placeholder is `<immutable-correction-commit-pending>`. The original convergence base is `4a32dfe8d8979e956dc6501334971363279de2bd`; the prior accepted base is `b3ff5ec83908201a40be9715df34c238d4eea498`. The accepted package-source Node proof, identity serializer/proof, bounded registration diagnostics, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
-- `authority_contract_sha256`: `48dfb029c22bb9618f94fc41f5b28b827586a223afcc88e7bbd8d00806fb986c` (base digest was `27240982f076a744cbda7c13d6d2f1b5318d733a10fceeaeb1cb315c82619c84`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
+- `candidate`: pending immutable MAS runtime-state closeout correction from exact base `8c6efffeb05a53100044aea8fbcf85e74304afee`; the `8c6efff` closeout candidate is unaccepted pending Lead review. Candidate commit placeholder is `<immutable-correction-commit-pending>`. The historical rejected closeout base is `975db2cc93c827fec24d58f361e94edd3dce84e8`; the original convergence base is `4a32dfe8d8979e956dc6501334971363279de2bd`; the prior accepted base is `b3ff5ec83908201a40be9715df34c238d4eea498`. The accepted package-source Node proof, identity serializer/proof, bounded registration diagnostics, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
+- `authority_contract_sha256`: `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91` (old correction-base digest was `48dfb029c22bb9618f94fc41f5b28b827586a223afcc88e7bbd8d00806fb986c`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: this closeout correction must be Lead-reviewed before any future package, install, launch, or external gate. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
+- `pending_ruling`: this immutable child correction must be Lead-reviewed before any future package, install, launch, or external gate. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
 - `blocked_by`: no safe in-scope implementation dependency remains; no package, sign, install, launch, or external result is accepted by this candidate.
-- `next_action`: Lead reviews and accepts or rejects the immutable child of exact base `975db2cc93c827fec24d58f361e94edd3dce84e8`; only after acceptance and a new explicit owner gate may any future package/install/launch attempt be considered.
+- `next_action`: Lead reviews and accepts or rejects the immutable child of exact base `8c6efffeb05a53100044aea8fbcf85e74304afee`; only after acceptance and a new explicit owner gate may any future package/install/launch attempt be considered.
 
 ## Ownership And Authority
 
@@ -1478,8 +1478,8 @@ unverified. Authority digest remains
 
 ### R5 MAS runtime-state transaction closeout correction (2026-09-03; current frontier)
 
-`PLAN_RECONCILIATION v64` records the owner-confirmed Attempt 12 incident and
-the closeout rejection/reopen of candidate `975db2c` for
+`PLAN_RECONCILIATION v65` records the owner-confirmed Attempt 12 incident and
+the closeout correction child of exact base `8c6efff` for
 `R5-MAS-RUNTIME-STATE-TRANSACTION-CLOSEOUT-CORRECTION`.
 Attempt 12 used a marker-authorized recursive runtime cleanup shape that mixed
 approximately 829 MB of attempt-created state with approximately 37 MB of
@@ -1494,7 +1494,7 @@ install, launch, and external gates remain closed, and no retry is authorized.
 
 The correction treats the entire exact contract-derived app-container runtime
 root as one opaque preservation unit. The plain-data
-`MAS_GATE_SESSION_TRANSACTION v1` boundary publishes a durable parent-side
+`MAS_GATE_SESSION_TRANSACTION v2` boundary publishes a durable parent-side
 construction intent before creating the construction directory, journals the
 directory before active-slot publication, and keeps the journal outside the
 movable root. Recovery can recreate the exact absent construction directory or
@@ -1503,11 +1503,17 @@ retained and reported, never deleted. It validates exact root/parent/identity
 binding, current ownership, same-device topology, no-live-runtime evidence, and
 an explicit positive free-space preflight minimum (not a reservation or
 peak-use guarantee), then atomically renames the whole prior root into
-same-volume quarantine. Every root rename reserves an absent destination with
-an exclusive private directory and refuses a target that appears or changes;
-there is no copy fallback. It creates a secure fresh root with package identity
-absent. The package transaction continues to own only the `/Applications`
-bundle and identity bytes.
+same-volume quarantine. Every protected move is executed by the persistent
+native `MeetlessMasGateMutation` session while it holds the same sibling
+`lockf` kernel lock as `MeetlessHost`, using macOS `renameatx_np` with
+`RENAME_EXCL | RENAME_NOFOLLOW_ANY`. The absence check is diagnostic only: a
+post-check file, directory, or symlink collision returns kernel `EEXIST` and
+preserves both source and destination. There is no reservation or ordinary
+protected-rename fallback. Helper death before the syscall leaves the source
+untouched; death after the syscall is recovered by inspecting both paths. It
+creates a secure fresh root with package identity absent. The package
+transaction continues to own only the `/Applications` bundle and identity
+bytes.
 
 A stable kernel-backed sibling lock now binds the MAS coordinator and native
 host. Every supplied gate lease must still prove its live kernel holder before
@@ -1516,8 +1522,10 @@ transaction requires a one-time durable handoff bound to owner/run,
 exact fresh-root identity, active slot, identity path, and installed
 bundle/executable identity. The host claims and holds the lock for its
 lifetime, while the gate reacquires it only after stop and explicit absence
-proof. With no active transaction, normal direct or production startup remains
-valid while holding the same lock. MAS process evidence is matched to the
+proof. JavaScript issues only bounded mutation commands and cannot mutate a
+protected name after a one-time liveness check. With no active transaction,
+normal direct or production startup remains valid while holding the same lock.
+MAS process evidence is matched to the
 exact H→D→S→W→P→C production topology: the supervisor is the titled
 `Paseo Supervisor` process, and W is the exact
 `vendor/paseo/packages/server/dist/server/server/daemon-worker.js` argv entry;
@@ -1528,12 +1536,34 @@ contract and do not claim MAS protection; the MAS-development coordinator is
 the only repository-authorized MAS install/LaunchServices/stop/restore route.
 
 The MAS install coordinator requires the exact release manifest and performs
-the full read-only MAS artifact validation before acquiring the transaction or
-mutating `/Applications`: manifest and pinned direct-composition binding,
-bundle/team/signer/profile, entitlement closure, Mach-O/Electron shape,
-package contract/marker/configuration, inventory digests, and closed external
-gate claims. The production CLI does not accept a bundle path as a substitute
-for that manifest and validator; injected validation is a local test seam only.
+the complete read-only MAS artifact validation before acquiring the transaction
+or mutating `/Applications`: license/notices/package-inputs, symlink/load-path,
+signer/profile/entitlements/Mach-O/Electron, contract/marker/pinned candidate
+inputs, exact expected RevenueCat public SDK-key comparison, and closed
+external-gate claims. It reuses the complete package-validator primitives for
+the retained direct composition and final bundle closure rather than creating
+a second policy implementation. The validator returns a frozen plain
+`MAS_GATE_ARTIFACT_BINDING v1` with manifest hash, canonical bundle
+path/fingerprint, artifact/candidate/package-input/artifact-input/license/
+signature digests, and public-key SHA-256 only. The package transaction
+`MAS_PACKAGE_TRANSACTION v4` receives that DTO, journals the device/inode
+identity of transaction-owned package roots and temporary identity files, and
+constrains cleanup intent to deterministic transaction-owned siblings. It
+rechecks source/manifest before staging and before moving the prior
+`/Applications` app, validates the staged copy, and requires the installed
+fingerprint and root identity to equal validated staging. The production CLI
+does not accept a bundle path as a substitute for that manifest and validator;
+injected validation is a local test seam only.
+
+Architecture acceptance for this correction is the smallest observable chain:
+complete artifact validator → frozen plain artifact binding → MAS coordinator
+→ JavaScript runtime/package transaction policies → native mutation port. The
+native helper remains because Node has no proven same-holder macOS
+`renameatx_np` no-replace capability; it may be removed only after an equivalent
+Node capability is independently proven with the same lock-holder and crash
+proof. The smallest proof is a live-holder exclusive rename, typed collision
+preservation, pre/post-syscall holder-death recovery, source/staged/installed
+identity agreement, and package-first rollback before runtime restore.
 
 Restore ordering is stop/absence proof, package rollback and identity removal,
 lock reacquisition, fresh-root detach to retained evidence, prior-root or
@@ -1555,19 +1585,18 @@ LaunchServices, and remote state are retained/reported and never cleaned or
 claimed rolled back. Arbitrary same-UID shell deletion and external systems
 remain outside repository enforcement.
 
-The `975db2c` closeout candidate was rejected because construction creation,
-lease liveness, no-replace destinations, stop authority, actual W topology,
-and pre-install manifest validation were not sufficiently bound. This child
-corrects those findings and is pending Lead review from exact base
-`975db2cc93c827fec24d58f361e94edd3dce84e8`; the original convergence base is
-`4a32dfe8d8979e956dc6501334971363279de2bd`, and the prior accepted base is
-`b3ff5ec83908201a40be9715df34c238d4eea498`. The authority digest at the
-reopened base was
-`27240982f076a744cbda7c13d6d2f1b5318d733a10fceeaeb1cb315c82619c84`; the
-closeout-candidate digest is recorded in `Current State` after this ADR
-amendment. These are SHA-256 values of the ordered path/hash manifest for
-ADR0003, amended ADR0005, product monetization, and macOS artifact-validation
-authority files.
+The historical `975db2c` closeout candidate was rejected because construction
+creation, lease liveness, no-replace destinations, stop authority, actual W
+topology, and pre-install manifest validation were not sufficiently bound.
+This child corrects those findings and is pending Lead review from exact base
+`8c6efffeb05a53100044aea8fbcf85e74304afee`; the historical rejected closeout
+base was `975db2cc93c827fec24d58f361e94edd3dce84e8`, the original convergence
+base is `4a32dfe8d8979e956dc6501334971363279de2bd`, and the prior accepted base
+is `b3ff5ec83908201a40be9715df34c238d4eea498`. The old authority digest was
+`48dfb029c22bb9618f94fc41f5b28b827586a223afcc88e7bbd8d00806fb986c`; the new
+digest is `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`.
+Both are SHA-256 values of the ordered path/hash manifest for ADR0003, amended
+ADR0005, product monetization, and macOS artifact-validation authority files.
 
 No MAS package/sign/install/LaunchServices launch or restore was executed for
 this correction; no `/Applications`, real MAS root, secret, cache, R4

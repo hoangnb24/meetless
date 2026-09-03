@@ -590,7 +590,7 @@ function validateResolutionEvidenceShape(evidence, label) {
   }
 }
 
-async function validateNoticeEvidence(inventory, bundlePath, repositoryRoot) {
+export async function validateNoticeEvidence(inventory, bundlePath, repositoryRoot) {
   for (const component of inventory.components) {
     for (const record of component.shippedNotice.records) {
       const artifactPath = path.join(bundlePath, record.artifactPath);

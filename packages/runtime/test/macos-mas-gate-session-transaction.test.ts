@@ -27,6 +27,7 @@ import {
   recoverMasGateSessionTransaction,
   restoreMasGateSessionTransaction,
 } from "../../../scripts/lib/macos-mas-gate-session-transaction.mjs";
+import { acquireMasGateLock } from "../../../scripts/lib/macos-mas-gate-lock.mjs";
 
 const execFile = promisify(execFileCallback);
 const testRoots: string[] = [];
@@ -43,8 +44,8 @@ describe("MAS runtime-root preservation transaction", () => {
     const beforeAttestation = await attestMasGateRuntimeRoot(fixture.runtime, { requireOwnerUid: true });
     const transaction = await begin(fixture);
 
-    expect(transaction.schema).toBe("MAS_GATE_SESSION_TRANSACTION v1");
-    expect(transaction.version).toBe(1);
+    expect(transaction.schema).toBe("MAS_GATE_SESSION_TRANSACTION v2");
+    expect(transaction.version).toBe(2);
     expect(transaction.stateScope).toBe("runtime-root-only");
     expect(transaction.ownerToken).toMatch(/^[A-Za-z0-9_-]{40,80}$/u);
     expect(transaction.priorExists).toBe(true);
@@ -144,8 +145,6 @@ describe("MAS runtime-root preservation transaction", () => {
     "journal-published",
     "active-journal-published",
     "rename-active-publish",
-    "rename-reservation-intent-journaled",
-    "rename-reservation-journaled",
     "fresh-mkdir",
     "fresh-identity-journaled",
     "rename-quarantine",
@@ -174,17 +173,17 @@ describe("MAS runtime-root preservation transaction", () => {
     await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
   });
 
-  it("uses no-replace reservations for every root rename destination", async () => {
+  it("uses the native no-replace move for every root destination", async () => {
     const activePublication = await createFixture({ prior: true });
     let activeCollisionPath = "";
     await expect(begin(activePublication, {
-      beforeRenameReservation: async ({ label, target }: { label: string; target: string }) => {
+      beforeRename: async ({ label, target }: { label: string; target: string }) => {
         if (label === "active transaction publish rename") {
           activeCollisionPath = target;
           await createTargetCollision(target, "keep active target\n");
         }
       },
-    })).rejects.toThrow(/newly appearing bytes|reserve|replacement/);
+    })).rejects.toThrow(/EEXIST|both source and destination|preserve/);
     expect(activeCollisionPath).not.toBe("");
     await expect(readFile(path.join(activeCollisionPath, "collision"), "utf8")).resolves.toBe("keep active target\n");
     await expect(readFile(path.join(activePublication.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
@@ -192,13 +191,13 @@ describe("MAS runtime-root preservation transaction", () => {
     const quarantine = await createFixture({ prior: true });
     let quarantineCollisionPath = "";
     await expect(begin(quarantine, {
-      beforeRenameReservation: async ({ label, target }: { label: string; target: string }) => {
+      beforeRename: async ({ label, target }: { label: string; target: string }) => {
         if (label === "runtime quarantine rename") {
           quarantineCollisionPath = target;
           await createTargetCollision(target, "keep quarantine target\n");
         }
       },
-    })).rejects.toThrow(/newly appearing bytes|reserve|replacement/);
+    })).rejects.toThrow(/EEXIST|both source and destination|preserve/);
     expect(quarantineCollisionPath).not.toBe("");
     await expect(readFile(path.join(quarantineCollisionPath, "collision"), "utf8")).resolves.toBe("keep quarantine target\n");
     await expect(readFile(path.join(quarantine.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
@@ -208,13 +207,13 @@ describe("MAS runtime-root preservation transaction", () => {
     await writeFile(path.join(freshDetach.runtime, "fresh.txt"), "fresh\n");
     let freshCollisionPath = "";
     await expect(restoreMasGateSessionTransaction(freshTransaction, runtimeOptions(freshDetach, {
-      beforeRenameReservation: async ({ label, target }: { label: string; target: string }) => {
+      beforeRename: async ({ label, target }: { label: string; target: string }) => {
         if (label === "fresh runtime detach rename") {
           freshCollisionPath = target;
           await createTargetCollision(target, "keep fresh target\n");
         }
       },
-    }))).rejects.toThrow(/newly appearing bytes|reserve|replacement/);
+    }))).rejects.toThrow(/EEXIST|both source and destination|preserve/);
     expect(freshCollisionPath).not.toBe("");
     await expect(readFile(path.join(freshCollisionPath, "collision"), "utf8")).resolves.toBe("keep fresh target\n");
     await expect(readFile(path.join(freshDetach.runtime, "fresh.txt"), "utf8")).resolves.toBe("fresh\n");
@@ -223,13 +222,13 @@ describe("MAS runtime-root preservation transaction", () => {
     const priorTransaction = await begin(priorRestore);
     let priorCollisionPath = "";
     await expect(restoreMasGateSessionTransaction(priorTransaction, runtimeOptions(priorRestore, {
-      beforeRenameReservation: async ({ label, target }: { label: string; target: string }) => {
+      beforeRename: async ({ label, target }: { label: string; target: string }) => {
         if (label === "prior runtime restore rename") {
           priorCollisionPath = target;
           await createTargetCollision(target, "keep canonical target\n");
         }
       },
-    }))).rejects.toThrow(/newly appearing bytes|reserve|replacement/);
+    }))).rejects.toThrow(/EEXIST|both source and destination|preserve/);
     expect(priorCollisionPath).not.toBe("");
     await expect(readFile(path.join(priorCollisionPath, "collision"), "utf8")).resolves.toBe("keep canonical target\n");
     await expect(readFile(path.join(priorRestore.runtime, "opaque.bin"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -240,93 +239,36 @@ describe("MAS runtime-root preservation transaction", () => {
     await restoreMasGateSessionTransaction(archiveTransaction, runtimeOptions(archive));
     let archiveCollisionPath = "";
     await expect(archiveMasGateSessionTransaction(archiveTransaction, runtimeOptions(archive, {
-      beforeRenameReservation: async ({ label, target }: { label: string; target: string }) => {
+      beforeRename: async ({ label, target }: { label: string; target: string }) => {
         if (label === "completed session archive rename") {
           archiveCollisionPath = target;
           await createTargetCollision(target, "keep archive target\n");
         }
       },
-    }))).rejects.toThrow(/newly appearing bytes|reserve|replacement/);
+    }))).rejects.toThrow(/EEXIST|both source and destination|preserve/);
     expect(archiveCollisionPath).not.toBe("");
     await expect(readFile(path.join(archiveCollisionPath, "collision"), "utf8")).resolves.toBe("keep archive target\n");
     await expect(readFile(path.join(archive.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
   });
 
-  it("refuses bytes injected after each destination reservation and retains both sides", async () => {
+  it.each(["file", "directory", "symlink"] as const)("returns kernel EEXIST for a post-check %s collision", async (kind) => {
     const active = await createFixture({ prior: true });
     let activeTarget = "";
-    await expect(begin(active, {
+    const failure = await begin(active, {
       beforeRename: async ({ label, target }: { label: string; target: string }) => {
         if (label === "active transaction publish rename") {
           activeTarget = target;
-          await writeFile(path.join(target, "collision"), "keep active target\n", { mode: 0o600 });
+          await createTypedTargetCollision(target, kind, "keep active target\n");
         }
       },
-    })).rejects.toThrow(/newly appearing bytes/);
+    }).then(() => null, (error) => error);
+    expect(failure).toMatchObject({
+      code: MAS_GATE_CLEANUP_DIAGNOSTIC_CODE,
+      cause: { code: "EEXIST" },
+    });
     expect(activeTarget).not.toBe("");
-    await expect(readFile(path.join(activeTarget, "collision"), "utf8")).resolves.toBe("keep active target\n");
+    await assertTypedTargetCollision(activeTarget, kind, "keep active target\n");
     await expect(readFile(path.join(active.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
-
-    const quarantine = await createFixture({ prior: true });
-    let quarantineTarget = "";
-    await expect(begin(quarantine, {
-      beforeRename: async ({ label, target }: { label: string; target: string }) => {
-        if (label === "runtime quarantine rename") {
-          quarantineTarget = target;
-          await writeFile(path.join(target, "collision"), "keep quarantine target\n", { mode: 0o600 });
-        }
-      },
-    })).rejects.toThrow(/newly appearing bytes/);
-    expect(quarantineTarget).not.toBe("");
-    await expect(readFile(path.join(quarantineTarget, "collision"), "utf8")).resolves.toBe("keep quarantine target\n");
-    await expect(readFile(path.join(quarantine.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
-
-    const freshDetach = await createFixture({ prior: true });
-    const freshTransaction = await begin(freshDetach);
-    await writeFile(path.join(freshDetach.runtime, "fresh.txt"), "fresh\n");
-    let freshTarget = "";
-    await expect(restoreMasGateSessionTransaction(freshTransaction, runtimeOptions(freshDetach, {
-      beforeRename: async ({ label, target }: { label: string; target: string }) => {
-        if (label === "fresh runtime detach rename") {
-          freshTarget = target;
-          await writeFile(path.join(target, "collision"), "keep fresh target\n", { mode: 0o600 });
-        }
-      },
-    }))).rejects.toThrow(/newly appearing bytes/);
-    expect(freshTarget).not.toBe("");
-    await expect(readFile(path.join(freshTarget, "collision"), "utf8")).resolves.toBe("keep fresh target\n");
-    await expect(readFile(path.join(freshDetach.runtime, "fresh.txt"), "utf8")).resolves.toBe("fresh\n");
-
-    const priorRestore = await createFixture({ prior: true });
-    const priorTransaction = await begin(priorRestore);
-    let priorTarget = "";
-    await expect(restoreMasGateSessionTransaction(priorTransaction, runtimeOptions(priorRestore, {
-      beforeRename: async ({ label, target }: { label: string; target: string }) => {
-        if (label === "prior runtime restore rename") {
-          priorTarget = target;
-          await writeFile(path.join(target, "collision"), "keep canonical target\n", { mode: 0o600 });
-        }
-      },
-    }))).rejects.toThrow(/newly appearing bytes/);
-    expect(priorTarget).not.toBe("");
-    await expect(readFile(path.join(priorTarget, "collision"), "utf8")).resolves.toBe("keep canonical target\n");
-    await expect(readFile(path.join(priorTransaction.quarantinePath, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
-
-    const archive = await createFixture({ prior: true });
-    const archiveTransaction = await begin(archive);
-    await restoreMasGateSessionTransaction(archiveTransaction, runtimeOptions(archive));
-    let archiveTarget = "";
-    await expect(archiveMasGateSessionTransaction(archiveTransaction, runtimeOptions(archive, {
-      beforeRename: async ({ label, target }: { label: string; target: string }) => {
-        if (label === "completed session archive rename") {
-          archiveTarget = target;
-          await writeFile(path.join(target, "collision"), "keep archive target\n", { mode: 0o600 });
-        }
-      },
-    }))).rejects.toThrow(/newly appearing bytes/);
-    expect(archiveTarget).not.toBe("");
-    await expect(readFile(path.join(archiveTarget, "collision"), "utf8")).resolves.toBe("keep archive target\n");
-    await expect(readFile(path.join(archive.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
   });
 
   it("rejects an active transaction whose sibling directory mode changed", async () => {
@@ -423,16 +365,48 @@ describe("MAS runtime-root preservation transaction", () => {
     await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
   });
 
-  it("retains both roots and reports an actionable ambiguity after a reservation mkdir SIGKILL", async () => {
+  it("recovers when the native lock holder dies before the protected syscall", async () => {
     const fixture = await createFixture({ prior: true });
-    const result = await runHardExitBegin(fixture, "rename-reservation-mkdir");
-    expect(result.signal).toBe("SIGKILL");
+    const lease = await acquireMasGateLock({ parentPath: fixture.parent });
+    try {
+      await expect(begin(fixture, {
+        lockLease: lease,
+        beforeRename: async ({ label }: { label: string }) => {
+          if (label === "active transaction publish rename") process.kill(lease.holderPid, "SIGKILL");
+        },
+      })).rejects.toMatchObject({ code: MAS_GATE_CLEANUP_DIAGNOSTIC_CODE });
+    } finally {
+      await lease.release();
+    }
+    await expect(lstat(fixture.runtime)).resolves.toBeDefined();
     const status = await readMasGateSessionStatus(runtimeOptions(fixture));
     expect(status).toMatchObject({ status: "recovery-required", phase: "prepared" });
-    await expect(recoverMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture))).rejects.toThrow(/both the fixed active transaction slot/);
+    const recovered = await recoverMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture));
+    expect(recovered.phase).toBe("restored");
     await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
-    await expect(readdir(status.constructionPath)).resolves.not.toHaveLength(0);
-    await expect(readdir(status.activePath)).resolves.toEqual([]);
+  });
+
+  it("recovers when the native lock holder dies after the syscall before acknowledgement", async () => {
+    const fixture = await createFixture({ prior: true });
+    const lease = await acquireMasGateLock({ parentPath: fixture.parent });
+    try {
+      await expect(begin(fixture, {
+        lockLease: lease,
+        afterRenameSyscall: async ({ label }: { label: string }) => {
+          if (label === "runtime quarantine rename") {
+            process.kill(lease.holderPid, "SIGKILL");
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+        },
+      })).rejects.toMatchObject({ code: MAS_GATE_CLEANUP_DIAGNOSTIC_CODE });
+    } finally {
+      await lease.release();
+    }
+    const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+    expect(status).toMatchObject({ status: "active", phase: "quarantine-intent" });
+    const recovered = await recoverMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture));
+    expect(recovered.phase).toBe("restored");
+    await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
   });
 
   it.each(["rename-fresh-retained", "rename-prior-restore"]) (
@@ -650,13 +624,14 @@ describe("MAS runtime-root preservation transaction", () => {
   });
 
   it("rejects reintroduction of recursive runtime cleanup in both package proof runners", async () => {
-    const [packageProof, acceptanceProof, transactionSource, coordinatorSource, cliSource, nativeSource, installerSource, launcherSource, stopperSource, packageJsonSource] = await Promise.all([
+    const [packageProof, acceptanceProof, transactionSource, coordinatorSource, cliSource, nativeSource, mutationSource, installerSource, launcherSource, stopperSource, packageJsonSource] = await Promise.all([
       readFile("scripts/prove-macos-package.mjs", "utf8"),
       readFile("scripts/prove-macos-package-acceptance.mjs", "utf8"),
       readFile("scripts/lib/macos-mas-gate-session-transaction.mjs", "utf8"),
       readFile("scripts/macos-mas-development-gate.mjs", "utf8"),
       readFile("scripts/macos-mas-gate-session.mjs", "utf8"),
       readFile("native/macos-host/MeetlessHost.swift", "utf8"),
+      readFile("native/macos-host/mas-gate-mutation/main.swift", "utf8"),
       readFile("scripts/install-macos-host.mjs", "utf8"),
       readFile("scripts/launch-macos-host.mjs", "utf8"),
       readFile("scripts/stop-macos-host.mjs", "utf8"),
@@ -678,6 +653,9 @@ describe("MAS runtime-root preservation transaction", () => {
     }
     expect(transactionSource).not.toMatch(/\b(?:rm|rmSync|cp|cpSync)\b/u);
     expect(transactionSource).not.toMatch(/recursive\s*:\s*true/u);
+    expect(transactionSource).toContain("renameNoReplace");
+    expect(transactionSource).not.toContain("renameReservation");
+    expect(transactionSource).not.toContain("beforeRenameReservation");
     expect(coordinatorSource).not.toMatch(/\b(?:rm|rmSync|cp|cpSync)\b/u);
     expect(coordinatorSource).not.toMatch(/recursive\s*:\s*true/u);
     expect(coordinatorSource).toContain("macAppStoreInstallationContract");
@@ -688,6 +666,7 @@ describe("MAS runtime-root preservation transaction", () => {
     expect(coordinatorSource).toContain("Paseo Supervisor");
     expect(coordinatorSource).toContain("Paseo Daemon");
     expect(coordinatorSource).toContain("validateMasDevelopmentArtifact");
+    expect(coordinatorSource).toContain("artifactBinding");
     expect(coordinatorSource).toContain("--manifest=");
     expect(cliSource).toContain("masDevelopmentRuntimeContext");
     expect(cliSource).toContain("restoreMasDevelopmentGate");
@@ -702,7 +681,11 @@ describe("MAS runtime-root preservation transaction", () => {
     }
     expect(stopperSource).not.toContain("MEETLESS_MAS_COORDINATOR_AUTHORITY");
     expect(coordinatorSource).not.toContain("MEETLESS_MAS_COORDINATOR_AUTHORITY");
-    expect(cliSource).toContain("required-free-bytes");
+    expect(coordinatorSource).toContain("required-free-bytes");
+    expect(cliSource).not.toMatch(/beginMasGateSessionTransaction|\bbegin\b/u);
+    expect(mutationSource).toContain("renameatx_np");
+    expect(mutationSource).toContain("RENAME_EXCL");
+    expect(mutationSource).toContain("RENAME_NOFOLLOW_ANY");
   });
 });
 
@@ -816,4 +799,34 @@ async function createFixture({ prior }: { prior: boolean }): Promise<Fixture> {
 async function createTargetCollision(target: string, contents: string) {
   await mkdir(target, { mode: 0o700 });
   await writeFile(path.join(target, "collision"), contents, { mode: 0o600 });
+}
+
+async function createTypedTargetCollision(target: string, kind: "file" | "directory" | "symlink", contents: string) {
+  if (kind === "file") {
+    await writeFile(target, contents, { mode: 0o600 });
+    return;
+  }
+  if (kind === "directory") {
+    await createTargetCollision(target, contents);
+    return;
+  }
+  const pointedPath = `${target}.pointed-file`;
+  await writeFile(pointedPath, contents, { mode: 0o600 });
+  await symlink(pointedPath, target);
+}
+
+async function assertTypedTargetCollision(target: string, kind: "file" | "directory" | "symlink", contents: string) {
+  const info = await lstat(target);
+  if (kind === "file") {
+    expect(info.isFile()).toBe(true);
+    await expect(readFile(target, "utf8")).resolves.toBe(contents);
+    return;
+  }
+  if (kind === "directory") {
+    expect(info.isDirectory()).toBe(true);
+    await expect(readFile(path.join(target, "collision"), "utf8")).resolves.toBe(contents);
+    return;
+  }
+  expect(info.isSymbolicLink()).toBe(true);
+  await expect(readFile(target, "utf8")).resolves.toBe(contents);
 }

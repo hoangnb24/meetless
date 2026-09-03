@@ -292,7 +292,7 @@ describe("Meetless-owned production host invariant", () => {
     expect(installer).toContain("/usr/bin/lockf");
     expect(installer).toContain("MEETLESS_HOST_INSTALL_LOCK_HELD");
     expect(await readFile("native/macos-host/MeetlessHost.swift", "utf8"))
-      .toMatch(/flock\(lockDescriptor, LOCK_EX \| LOCK_NB\)/u);
+      .toMatch(/lockf\(lockDescriptor, F_TLOCK, 0\)/u);
     const plist = await readFile("native/macos-host/Info.plist", "utf8");
     expect(plist).toMatch(/<key>CFBundleIdentifier<\/key>\s*<string>com\.meetless\.app<\/string>/u);
     expect(plist).toMatch(/<key>LSMinimumSystemVersion<\/key>\s*<string>15\.0<\/string>/u);

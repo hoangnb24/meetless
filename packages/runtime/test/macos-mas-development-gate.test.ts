@@ -1,4 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -23,6 +24,8 @@ import {
   masGateLockPath,
   withMasGateLock,
 } from "../../../scripts/lib/macos-mas-gate-lock.mjs";
+import { fingerprintPath } from "../../../scripts/lib/macos-package-transaction.mjs";
+import { freezeMasGateArtifactBinding } from "../../../scripts/lib/mas-gate-artifact-binding.mjs";
 
 const roots: string[] = [];
 const execFile = promisify(execFileCallback);
@@ -153,17 +156,17 @@ describe("MAS development gate coordinator", () => {
 
     const released = await acquireMasGateLock({ parentPath: parent });
     await released.release();
-    await expect(released.assertHeld()).rejects.toThrow(/no longer held|kernel lock/);
+    await expect(released.assertHeld()).rejects.toThrow(/no longer held|kernel lock|not kernel-backed/);
     await expect(withMasGateLock({ parentPath: parent, lockLease: released }, async () => {
       throw new Error("filesystem operation must not run");
-    })).rejects.toThrow(/no longer held|kernel lock/);
+    })).rejects.toThrow(/no longer held|kernel lock|not kernel-backed/);
 
     const killed = await acquireMasGateLock({ parentPath: parent });
     process.kill(killed.holderPid, "SIGKILL");
-    await expect(killed.assertHeld()).rejects.toThrow(/no longer held|kernel lock/);
+    await expect(killed.assertHeld()).rejects.toThrow(/no longer held|kernel lock|holder exited/);
     await expect(withMasGateLock({ parentPath: parent, lockLease: killed }, async () => {
       throw new Error("filesystem operation must not run");
-    })).rejects.toThrow(/no longer held|kernel lock/);
+    })).rejects.toThrow(/no longer held|kernel lock|holder exited|not kernel-backed/);
 
     const genuine = await acquireMasGateLock({ parentPath: parent });
     expect(Object.isFrozen(genuine)).toBe(true);
@@ -308,6 +311,85 @@ describe("MAS development gate coordinator", () => {
       context,
       dependencies: { validateArtifact: async () => ({ status: "passed" }) },
     })).rejects.toThrow(/MAS development manifest/);
+  });
+
+  it("passes the complete immutable binding into the runtime and package composition seams", async () => {
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-binding-composition-test-")));
+    roots.push(base);
+    const context = masDevelopmentRuntimeContext({ userHome: base });
+    await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
+    await mkdir(context.runtimeRoot, { recursive: true, mode: 0o700 });
+    await writeFile(path.join(context.runtimeRoot, "opaque-state"), "preserve me\n");
+
+    const proofRoot = path.join(base, "proof");
+    const releaseRoot = path.join(proofRoot, "release", "macos");
+    const bundle = path.join(releaseRoot, "Meetless.app");
+    const manifestPath = path.join(releaseRoot, "app-store-development-manifest.json");
+    await mkdir(bundle, { recursive: true });
+    const manifestBytes = Buffer.from(JSON.stringify({
+      schema: "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1",
+      bundlePath: "release/macos/Meetless.app",
+      directComposition: { path: "release/macos/composition-manifest.direct.json" },
+    }));
+    await mkdir(releaseRoot, { recursive: true });
+    await writeFile(manifestPath, manifestBytes, { mode: 0o600 });
+    const bundleFingerprint = await fingerprintPath(bundle);
+    if (!bundleFingerprint) throw new Error("binding fixture bundle fingerprint is missing");
+    const publicKey = "test-public-sdk-key-not-crossing-the-boundary";
+    const artifactBinding = freezeMasGateArtifactBinding({
+      schema: "MAS_GATE_ARTIFACT_BINDING v1",
+      version: 1,
+      manifestPath,
+      manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+      bundlePath: bundle,
+      bundleFingerprint,
+      artifactDigest: "a".repeat(64),
+      candidateSnapshotDigest: "b".repeat(64),
+      packageInputDigest: "c".repeat(64),
+      artifactInputDigest: "d".repeat(64),
+      licenseDigest: "e".repeat(64),
+      signatureDigest: "f".repeat(64),
+      publicSdkKeySha256: createHash("sha256").update(publicKey).digest("hex"),
+    });
+    const installed = {
+      bundleIdentifier: context.contract.bundleIdentifier,
+      bundlePath: context.bundlePath,
+      bundleRealPath: context.bundlePath,
+      executablePath: context.executablePath,
+      designatedRequirement: "identifier \\\"com.meetless.app\\\"",
+      cdHash: "a".repeat(40),
+      binarySha256: "b".repeat(64),
+      binaryDevice: 1,
+      binaryInode: 3,
+      binarySize: 10,
+    };
+    let packageInput: Record<string, unknown> | null = null;
+    const result = await installMasDevelopmentGate({
+      manifestPath,
+      bundlePath: bundle,
+      requiredFreeBytes: 1,
+      context,
+      dependencies: {
+        processRows: async () => [],
+        listeners: async () => [],
+        sockets: async () => [],
+        openHandles: async () => [],
+        validateArtifact: async () => ({ status: "passed", artifactBinding }),
+        inspectBundle: async () => installed,
+        replacePackageBundle: async (input: Record<string, unknown>) => {
+          packageInput = input;
+          return { schema: "MAS_PACKAGE_TRANSACTION v4", version: 4, artifactBinding: input.artifactBinding };
+        },
+      },
+    });
+
+    expect(result.status).toBe("installed");
+    expect(result.session.schema).toBe("MAS_GATE_SESSION_TRANSACTION v2");
+    expect(packageInput?.artifactBinding).toBe(result.packageTransaction.artifactBinding);
+    expect(Object.isFrozen(packageInput?.artifactBinding)).toBe(true);
+    expect(JSON.stringify(packageInput)).not.toContain(publicKey);
+    await expect(readFile(path.join(context.runtimeRoot, "opaque-state"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(path.join(result.session.quarantinePath, "opaque-state"), "utf8")).resolves.toBe("preserve me\n");
   });
 
   it("binds a one-time host handoff to the owner, run, fresh-root identity, exact bundle, and exact executable", () => {
