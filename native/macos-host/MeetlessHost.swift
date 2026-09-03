@@ -242,6 +242,28 @@ private struct MasGateSessionJournal: Decodable {
   let freshRootIdentity: MasGateRootIdentity?
 }
 
+private struct StrictMasGateCodingKey: CodingKey {
+  let stringValue: String
+  let intValue: Int? = nil
+
+  init?(stringValue: String) {
+    self.stringValue = stringValue
+  }
+
+  init?(intValue: Int) {
+    return nil
+  }
+}
+
+private func assertStrictMasGateKeys(_ decoder: Decoder, allowed: Set<String>, label: String) throws {
+  let container = try decoder.container(keyedBy: StrictMasGateCodingKey.self)
+  if let unknown = container.allKeys.map(\.stringValue).first(where: { !allowed.contains($0) }) {
+    throw DecodingError.dataCorrupted(
+      .init(codingPath: decoder.codingPath, debugDescription: "\(label) contains unknown field \(unknown)")
+    )
+  }
+}
+
 private struct MasGateSessionIndexEntry: Decodable {
   let runId: String
   let activePath: String
@@ -250,6 +272,40 @@ private struct MasGateSessionIndexEntry: Decodable {
   let quarantinePath: String
   let freshRetainedPath: String
   let archivePath: String
+
+  private enum CodingKeys: String, CodingKey {
+    case runId, activePath, constructionPath, constructionIntentPath, quarantinePath, freshRetainedPath, archivePath
+  }
+
+  init(
+    runId: String,
+    activePath: String,
+    constructionPath: String,
+    constructionIntentPath: String,
+    quarantinePath: String,
+    freshRetainedPath: String,
+    archivePath: String
+  ) {
+    self.runId = runId
+    self.activePath = activePath
+    self.constructionPath = constructionPath
+    self.constructionIntentPath = constructionIntentPath
+    self.quarantinePath = quarantinePath
+    self.freshRetainedPath = freshRetainedPath
+    self.archivePath = archivePath
+  }
+
+  init(from decoder: Decoder) throws {
+    try assertStrictMasGateKeys(decoder, allowed: ["runId", "activePath", "constructionPath", "constructionIntentPath", "quarantinePath", "freshRetainedPath", "archivePath"], label: "MAS session index entry")
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    runId = try container.decode(String.self, forKey: .runId)
+    activePath = try container.decode(String.self, forKey: .activePath)
+    constructionPath = try container.decode(String.self, forKey: .constructionPath)
+    constructionIntentPath = try container.decode(String.self, forKey: .constructionIntentPath)
+    quarantinePath = try container.decode(String.self, forKey: .quarantinePath)
+    freshRetainedPath = try container.decode(String.self, forKey: .freshRetainedPath)
+    archivePath = try container.decode(String.self, forKey: .archivePath)
+  }
 }
 
 private struct MasGateSessionIndex: Decodable {
@@ -261,6 +317,23 @@ private struct MasGateSessionIndex: Decodable {
   let indexPath: String
   let indexIntentPath: String
   let entries: [MasGateSessionIndexEntry]
+
+  private enum CodingKeys: String, CodingKey {
+    case schema, version, runtimeRoot, parentPath, activePath, indexPath, indexIntentPath, entries
+  }
+
+  init(from decoder: Decoder) throws {
+    try assertStrictMasGateKeys(decoder, allowed: ["schema", "version", "runtimeRoot", "parentPath", "activePath", "indexPath", "indexIntentPath", "entries"], label: "MAS session index")
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    schema = try container.decode(String.self, forKey: .schema)
+    version = try container.decode(Int.self, forKey: .version)
+    runtimeRoot = try container.decode(String.self, forKey: .runtimeRoot)
+    parentPath = try container.decode(String.self, forKey: .parentPath)
+    activePath = try container.decode(String.self, forKey: .activePath)
+    indexPath = try container.decode(String.self, forKey: .indexPath)
+    indexIntentPath = try container.decode(String.self, forKey: .indexIntentPath)
+    entries = try container.decode([MasGateSessionIndexEntry].self, forKey: .entries)
+  }
 }
 
 private struct MasGateSessionIndexIntent: Decodable {
@@ -276,6 +349,27 @@ private struct MasGateSessionIndexIntent: Decodable {
   let before: MasGateSessionIndex?
   let after: MasGateSessionIndex
   let transaction: MasGateSessionJournal
+
+  private enum CodingKeys: String, CodingKey {
+    case schema, version, state, operation, runtimeRoot, parentPath, indexPath, sourcePath, destinationPath, before, after, transaction
+  }
+
+  init(from decoder: Decoder) throws {
+    try assertStrictMasGateKeys(decoder, allowed: ["schema", "version", "state", "operation", "runtimeRoot", "parentPath", "indexPath", "sourcePath", "destinationPath", "before", "after", "transaction"], label: "MAS session index intent")
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    schema = try container.decode(String.self, forKey: .schema)
+    version = try container.decode(Int.self, forKey: .version)
+    state = try container.decode(String.self, forKey: .state)
+    operation = try container.decode(String.self, forKey: .operation)
+    runtimeRoot = try container.decode(String.self, forKey: .runtimeRoot)
+    parentPath = try container.decode(String.self, forKey: .parentPath)
+    indexPath = try container.decode(String.self, forKey: .indexPath)
+    sourcePath = try container.decodeIfPresent(String.self, forKey: .sourcePath)
+    destinationPath = try container.decodeIfPresent(String.self, forKey: .destinationPath)
+    before = try container.decodeIfPresent(MasGateSessionIndex.self, forKey: .before)
+    after = try container.decode(MasGateSessionIndex.self, forKey: .after)
+    transaction = try container.decode(MasGateSessionJournal.self, forKey: .transaction)
+  }
 }
 
 private struct MasGateHostHandoff: Codable {

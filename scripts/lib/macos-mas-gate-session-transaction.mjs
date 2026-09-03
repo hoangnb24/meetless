@@ -15,10 +15,12 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import {
+  assertMasGateMutationLease,
   masGateLockPath,
   writeMasGateLockMetadata,
   withMasGateLock,
 } from "./macos-mas-gate-lock.mjs";
+import { assertMasGateArtifactBinding } from "./mas-gate-artifact-binding.mjs";
 
 export const MAS_GATE_SESSION_TRANSACTION_SCHEMA = "MAS_GATE_SESSION_TRANSACTION v2";
 export const MAS_GATE_SESSION_TRANSACTION_VERSION = 2;
@@ -27,6 +29,7 @@ export const MAS_GATE_SESSION_INDEX_SCHEMA = "MAS_GATE_SESSION_INDEX v1";
 export const MAS_GATE_SESSION_INDEX_VERSION = 1;
 export const MAS_GATE_SESSION_INDEX_INTENT_SCHEMA = "MAS_GATE_SESSION_INDEX_INTENT v1";
 export const MAS_GATE_SESSION_INDEX_INTENT_VERSION = 1;
+export const MAS_GATE_SESSION_INDEX_INITIALIZATION_AUTHORITY = "MAS_GATE_SESSION_INDEX_INITIALIZATION_AUTHORITY_ATTEMPT_13 v1";
 export const MAS_GATE_CLEANUP_DIAGNOSTIC_CODE = "MAS-GATE-CLEANUP-001";
 export const MAS_GATE_CLEANUP_DIAGNOSTIC =
   `${MAS_GATE_CLEANUP_DIAGNOSTIC_CODE}: repository-authorized MAS gate cleanup owns only the ` +
@@ -53,6 +56,8 @@ export const MAS_GATE_SESSION_PHASES = Object.freeze([
 ]);
 
 export const MAS_GATE_SESSION_FAULT_POINTS = Object.freeze([
+  "index-initialize",
+  "index-initialize-published",
   "index-intent",
   "index-intent-journaled",
   "index-published",
@@ -97,6 +102,74 @@ const OWNER_TOKEN_BYTES = 32;
 const POSIX_MODE_MASK = 0o7777;
 const MAX_SESSION_INDEX_ENTRIES = 256;
 const MAX_FIXED_RECORD_BYTES = 1024 * 1024;
+
+/**
+ * Establish the fixed locator for the first coordinator install. This seam
+ * deliberately cannot acquire a lock or infer artifact validation: callers
+ * must present the live native lease and the frozen binding returned by the
+ * complete MAS artifact validator. The final publication is exclusive, so a
+ * destination collision is never replaced.
+ */
+export async function initializeMasGateSessionIndex({
+  installAuthorization,
+  validatedArtifactBinding,
+  lockLease,
+  ...options
+} = {}) {
+  try {
+    if (installAuthorization !== MAS_GATE_SESSION_INDEX_INITIALIZATION_AUTHORITY) {
+      throw failClosed("fixed MAS session index initialization requires the coordinator install authorization");
+    }
+    if (!validatedArtifactBinding || !Object.isFrozen(validatedArtifactBinding)) {
+      throw failClosed("fixed MAS session index initialization requires the complete immutable MAS artifact binding");
+    }
+    try {
+      assertMasGateArtifactBinding(validatedArtifactBinding);
+    } catch (error) {
+      throw failClosed("fixed MAS session index initialization requires a complete MAS artifact binding", error);
+    }
+    assertMasGateMutationLease(lockLease);
+    await lockLease.assertHeld();
+    const lockedOptions = { ...options, lockLease };
+    const context = await validateContext(options, "index initialization");
+    const paths = fixedTransactionPaths(context);
+    const [indexInfo, intentInfo, activeInfo] = await Promise.all([
+      inspectedPath(paths.indexPath),
+      inspectedPath(paths.indexIntentPath),
+      inspectedPath(paths.activePath),
+    ]);
+    if (indexInfo) {
+      const index = await readSessionIndex(paths.indexPath, context);
+      if (activeInfo) {
+        throw failClosed("cannot initialize the fixed MAS session index while fixed active-slot evidence exists; run exact status/recovery reconciliation");
+      }
+      if (intentInfo) {
+        const intent = await readSessionIndexIntent(paths.indexIntentPath, context, lockedOptions);
+        if (!intent || intent.state !== "committed" || !sameSessionIndex(index, intent.after)) {
+          throw failClosed("cannot initialize the fixed MAS session index while its intent is pending or disagrees with the exact index; run exact status/recovery reconciliation");
+        }
+      }
+      await lockLease.assertHeld();
+      return { status: "existing", index };
+    }
+    if (intentInfo || activeInfo) {
+      throw failClosed("cannot initialize the fixed MAS session index while fixed index-intent or active-slot evidence exists; run exact status/recovery reconciliation");
+    }
+
+    const index = emptySessionIndex(context);
+    await maybeFault(lockedOptions, null, "index-initialize", "before initial fixed session index publication");
+    await publishInitialSessionIndex(context, index, lockedOptions);
+    await maybeFault(lockedOptions, null, "index-initialize-published", "after initial fixed session index publication");
+    await lockLease.assertHeld();
+    const published = await readSessionIndex(paths.indexPath, context);
+    if (!published || !sameSessionIndex(published, index)) {
+      throw failClosed("initial fixed MAS session index publication did not re-read as its exact durable result");
+    }
+    return { status: "initialized", index: published };
+  } catch (error) {
+    throw asCleanupError("could not initialize the fixed MAS session index", error);
+  }
+}
 
 /**
  * Begin the one active MAS runtime-root transaction for a contract-derived
@@ -371,7 +444,20 @@ export async function readMasGateSessionStatus(options = {}) {
     return await withMasGateLock({ ...options, parentPath: parentPathHint(options) }, async () => {
       const context = await validateContext(options, "status");
       const paths = fixedTransactionPaths(context);
-      const locatorState = await readSessionLocatorState(context, options);
+      const locatorState = await readSessionLocatorState(context, options, { allowUninitialized: true });
+      if (locatorState.uninitialized) {
+        return {
+          status: "uninitialized",
+          state: "absent-safe",
+          runtimeRoot: context.runtimeRoot,
+          parentPath: context.parentPath,
+          activePath: paths.activePath,
+          indexPath: paths.indexPath,
+          indexIntentPath: paths.indexIntentPath,
+          archived: [],
+          stateScope: "runtime-root-only",
+        };
+      }
       const entries = locatorState.entries;
       const building = await findBuildingTransactions(context, options, entries, locatorState.pendingIntent?.transaction);
       const intents = await findConstructionIntents(context, options, entries);
@@ -562,6 +648,20 @@ function fixedTransactionPaths(context) {
   };
 }
 
+function emptySessionIndex(context) {
+  const paths = fixedTransactionPaths(context);
+  return {
+    schema: MAS_GATE_SESSION_INDEX_SCHEMA,
+    version: MAS_GATE_SESSION_INDEX_VERSION,
+    runtimeRoot: context.runtimeRoot,
+    parentPath: context.parentPath,
+    activePath: paths.activePath,
+    indexPath: paths.indexPath,
+    indexIntentPath: paths.indexIntentPath,
+    entries: [],
+  };
+}
+
 function sessionIndexEntry(context, runId) {
   const paths = transactionPaths(context, normalizeRunId(runId));
   return {
@@ -576,6 +676,9 @@ function sessionIndexEntry(context, runId) {
 }
 
 function appendSessionIndexEntry(index, context, runId) {
+  if (index.entries.length >= MAX_SESSION_INDEX_ENTRIES) {
+    throw failClosed(`fixed MAS session index capacity ${MAX_SESSION_INDEX_ENTRIES} is exhausted; retain every indexed session and reconcile before another begin`);
+  }
   if (index.entries.some((entry) => entry.runId === runId)) {
     throw failClosed("fixed MAS session index already contains the requested run ID");
   }
@@ -612,10 +715,25 @@ function createSessionIndexIntent(
   };
 }
 
-async function readSessionLocatorState(context, options) {
+async function readSessionLocatorState(context, options, { allowUninitialized = false } = {}) {
   const paths = fixedTransactionPaths(context);
   const index = await readSessionIndex(paths.indexPath, context);
   if (!index) {
+    const [intentInfo, activeInfo] = await Promise.all([
+      inspectedPath(paths.indexIntentPath),
+      inspectedPath(paths.activePath),
+    ]);
+    if (intentInfo || activeInfo) {
+      throw failClosed("the fixed MAS session index is missing while fixed index-intent or active-slot evidence exists; preserve every byte and run exact reconciliation");
+    }
+    if (allowUninitialized) {
+      return {
+        index: null,
+        pendingIntent: null,
+        entries: [],
+        uninitialized: true,
+      };
+    }
     throw failClosed("the fixed MAS session index is missing; an unregistered legacy v2 construction cannot be safely discovered without parent enumeration; preserve every byte and run manual reconciliation");
   }
   const intent = await readSessionIndexIntent(paths.indexIntentPath, context, options);
@@ -749,6 +867,46 @@ async function writeFixedJsonRecord(recordPath, value, context) {
   } catch (error) {
     if (isCode(error, "EXDEV") || isCode(error, "EBUSY") || isCode(error, "EPERM") || isCode(error, "ENOSPC")) {
       throw failClosed(`fixed MAS record publication failed with ${error.code}; leave every sibling intact`, error);
+    }
+    throw error;
+  } finally {
+    const leftover = await inspectedPath(temporaryPath);
+    if (leftover) await unlink(temporaryPath).catch(() => undefined);
+  }
+}
+
+async function publishInitialSessionIndex(context, index, options) {
+  const recordPath = fixedTransactionPaths(context).indexPath;
+  if (await inspectedPath(recordPath)) {
+    throw failClosed(`initial fixed MAS session index destination already exists; preserve it and run exact reconciliation: ${recordPath}`);
+  }
+  const temporaryPath = `${recordPath}.${process.pid}.${randomUUID()}.tmp`;
+  const bytes = Buffer.from(`${JSON.stringify(index, null, 2)}\n`);
+  try {
+    await writeFile(temporaryPath, bytes, { flag: "wx", mode: 0o600 });
+    const temporaryInfo = await lstat(temporaryPath);
+    if (temporaryInfo.isSymbolicLink() || !temporaryInfo.isFile() || temporaryInfo.uid !== currentUid() ||
+        temporaryInfo.nlink !== 1 || (temporaryInfo.mode & POSIX_MODE_MASK) !== 0o600 || temporaryInfo.dev !== Number(context.parentDevice) ||
+        temporaryInfo.size > MAX_FIXED_RECORD_BYTES) {
+      throw failClosed("temporary initial MAS session index is not one bounded secure same-device regular file");
+    }
+    const handle = await open(temporaryPath, "r");
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await syncDirectory(context.parentPath);
+    await renameWithDurability(
+      temporaryPath,
+      recordPath,
+      context.parentPath,
+      "initial fixed MAS session index publication",
+      options,
+    );
+  } catch (error) {
+    if (isCode(error, "EXDEV") || isCode(error, "EBUSY") || isCode(error, "EPERM") || isCode(error, "ENOSPC")) {
+      throw failClosed(`initial fixed MAS session index publication failed with ${error.code}; leave every sibling intact`, error);
     }
     throw error;
   } finally {
@@ -1862,7 +2020,13 @@ async function assertJournalFile(journalPath, label) {
 async function maybeFault(options, transaction, point, description) {
   const requested = options.faultAt;
   const matches = requested === point || requested === `after-${point}` || requested === `after:${point}`;
-  const callbackMatch = typeof options.faultInjector === "function" ? await options.faultInjector({ point, phase: transaction.phase, transaction: journalSummary(transaction) }) : false;
+  const callbackMatch = typeof options.faultInjector === "function"
+    ? await options.faultInjector({
+      point,
+      phase: transaction?.phase ?? point,
+      transaction: transaction ? journalSummary(transaction) : null,
+    })
+    : false;
   if (!matches && !callbackMatch) return;
   if (options.faultAction === "hard-exit" || options.hardExitOnFault === true) {
     process.kill(process.pid, "SIGKILL");

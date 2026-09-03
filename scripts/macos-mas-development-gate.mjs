@@ -60,9 +60,11 @@ import {
 } from "./lib/mas-gate-artifact-binding.mjs";
 import {
   MAS_GATE_CLEANUP_DIAGNOSTIC_CODE,
+  MAS_GATE_SESSION_INDEX_INITIALIZATION_AUTHORITY,
   archiveMasGateSessionTransaction,
   assertMasGateSessionReady,
   beginMasGateSessionTransaction,
+  initializeMasGateSessionIndex,
   readMasGateSessionStatus,
   restoreMasGateSessionTransaction,
 } from "./lib/macos-mas-gate-session-transaction.mjs";
@@ -296,6 +298,12 @@ export async function installMasDevelopmentGate({
   let session;
   let packageTransaction;
   try {
+    await initializeMasGateSessionIndex({
+      ...masGateRuntimeOptions(context, { dependencies, lockLease: lease }),
+      installAuthorization: MAS_GATE_SESSION_INDEX_INITIALIZATION_AUTHORITY,
+      validatedArtifactBinding: validation.artifactBinding,
+      lockLease: lease,
+    });
     session = await beginMasGateSessionTransaction({
       ...masGateRuntimeOptions(context, { requiredFreeBytes, lockLease: lease, dependencies }),
     });

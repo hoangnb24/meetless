@@ -17,6 +17,10 @@ import { freezeMasGateArtifactBinding } from "../../../scripts/lib/mas-gate-arti
 import {
   archiveMasGateSessionTransaction,
   beginMasGateSessionTransaction,
+  MAS_GATE_SESSION_INDEX_BASENAME,
+  MAS_GATE_SESSION_INDEX_INTENT_BASENAME,
+  MAS_GATE_SESSION_INDEX_SCHEMA,
+  MAS_GATE_SESSION_INDEX_VERSION,
   restoreMasGateSessionTransaction,
 } from "../../../scripts/lib/macos-mas-gate-session-transaction.mjs";
 
@@ -89,6 +93,20 @@ describe("macOS package replacement transaction", () => {
     const source = path.join(root, "source.app");
     const target = path.join(root, "Applications", "Meetless.app");
     await mkdir(path.join(runtime, "prior"), { recursive: true });
+    await writeFile(
+      path.join(parent, MAS_GATE_SESSION_INDEX_BASENAME),
+      `${JSON.stringify({
+        schema: MAS_GATE_SESSION_INDEX_SCHEMA,
+        version: MAS_GATE_SESSION_INDEX_VERSION,
+        runtimeRoot: runtime,
+        parentPath: parent,
+        activePath: path.join(parent, ".meetless-mas-gate-session.active"),
+        indexPath: path.join(parent, MAS_GATE_SESSION_INDEX_BASENAME),
+        indexIntentPath: path.join(parent, MAS_GATE_SESSION_INDEX_INTENT_BASENAME),
+        entries: [],
+      }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
     await writeFile(path.join(runtime, "prior", "opaque.txt"), "prior runtime\n");
     await writeFile(identityPath, "prior identity\n");
     const runtimeTransaction = await beginMasGateSessionTransaction({

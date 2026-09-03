@@ -20,17 +20,20 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   MAS_GATE_CLEANUP_DIAGNOSTIC_CODE,
   MAS_GATE_SESSION_INDEX_BASENAME,
+  MAS_GATE_SESSION_INDEX_INITIALIZATION_AUTHORITY,
   MAS_GATE_SESSION_INDEX_SCHEMA,
   MAS_GATE_SESSION_INDEX_VERSION,
   archiveMasGateSessionTransaction,
   assertMasGateSessionReady,
   attestMasGateRuntimeRoot,
   beginMasGateSessionTransaction,
+  initializeMasGateSessionIndex,
   readMasGateSessionStatus,
   recoverMasGateSessionTransaction,
   restoreMasGateSessionTransaction,
 } from "../../../scripts/lib/macos-mas-gate-session-transaction.mjs";
 import { acquireMasGateLock } from "../../../scripts/lib/macos-mas-gate-lock.mjs";
+import { freezeMasGateArtifactBinding } from "../../../scripts/lib/mas-gate-artifact-binding.mjs";
 
 const execFile = promisify(execFileCallback);
 const testRoots: string[] = [];
@@ -98,6 +101,22 @@ describe("MAS runtime-root preservation transaction", () => {
     await archiveMasGateSessionTransaction(restored, runtimeOptions(fixture));
     await expect(lstat(restored.freshRetainedPath)).resolves.toBeDefined();
     await expect(readMasGateSessionStatus(runtimeOptions(fixture))).resolves.toMatchObject({ status: "archived" });
+  });
+
+  it("reports a prompt typed uninitialized state when the exact fixed records are absent", async () => {
+    const fixture = await createFixture({ prior: false, index: false });
+    const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+    expect(status).toMatchObject({
+      status: "uninitialized",
+      state: "absent-safe",
+      runtimeRoot: fixture.runtime,
+      parentPath: fixture.parent,
+      activePath: path.join(fixture.parent, ".meetless-mas-gate-session.active"),
+      indexPath: path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME),
+      indexIntentPath: path.join(fixture.parent, ".meetless-mas-gate-session.index-intent"),
+      stateScope: "runtime-root-only",
+    });
+    expect(status).not.toHaveProperty("journalPath");
   });
 
   it("quarantines a stale marker mixed with state instead of treating the marker as subtree ownership", async () => {
@@ -222,16 +241,181 @@ describe("MAS runtime-root preservation transaction", () => {
     await expect(readFile(transaction.journalPath, "utf8")).resolves.toContain(transaction.runId);
   });
 
-  it("fails closed for an unregistered legacy active construction instead of reporting absence", async () => {
-    const fixture = await createFixture({ prior: false });
+  it("leaves an unregistered legacy active construction untouched and reports only fixed-scope initialization state", async () => {
+    const fixture = await createFixture({ prior: false, index: false });
     const indexPath = path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME);
     await rm(indexPath, { force: true });
     const legacy = path.join(fixture.parent, ".meetless-mas-gate-session.legacy.active-building");
     await mkdir(legacy, { mode: 0o700 });
     await writeFile(path.join(legacy, "opaque-state"), "legacy\n", { mode: 0o600 });
-    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).rejects.toThrow(/legacy|enumeration|reconciliation/iu);
+    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).resolves.toMatchObject({
+      status: "uninitialized",
+      state: "absent-safe",
+    });
+    await expect(begin(fixture)).rejects.toThrow(/fixed MAS session index is missing/iu);
     await expect(readFile(path.join(legacy, "opaque-state"), "utf8")).resolves.toBe("legacy\n");
   });
+
+  it.each(["index-intent", "active-slot"])(
+    "fails closed for a missing index with fixed %s evidence without mutating it",
+    async (evidence) => {
+      const fixture = await createFixture({ prior: false, index: false });
+      const evidencePath = evidence === "index-intent"
+        ? path.join(fixture.parent, ".meetless-mas-gate-session.index-intent")
+        : path.join(fixture.parent, ".meetless-mas-gate-session.active");
+      if (evidence === "index-intent") await writeFile(evidencePath, "fixed evidence\n", { mode: 0o600 });
+      else await mkdir(evidencePath, { mode: 0o700 });
+      const before = evidence === "index-intent" ? await readFile(evidencePath) : await lstat(evidencePath);
+      await expect(readMasGateSessionStatus(runtimeOptions(fixture))).rejects.toThrow(/fixed (?:index-intent|active-slot)|reconciliation/iu);
+      if (evidence === "index-intent") await expect(readFile(evidencePath)).resolves.toEqual(before);
+      else await expect(lstat(evidencePath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+    },
+  );
+
+  it("requires the fixed index for public begin and every recovery operation", async () => {
+    const uninitialized = await createFixture({ prior: false, index: false });
+    await expect(begin(uninitialized)).rejects.toThrow(/fixed MAS session index is missing/iu);
+
+    for (const operation of ["recover", "restore", "archive"] as const) {
+      const fixture = await createFixture({ prior: true });
+      const transaction = await begin(fixture);
+      const journalBefore = await readFile(transaction.journalPath);
+      await rm(path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME), { force: true });
+      const invoke = {
+        recover: () => recoverMasGateSessionTransaction(transaction.journalPath, runtimeOptions(fixture)),
+        restore: () => restoreMasGateSessionTransaction(transaction.journalPath, runtimeOptions(fixture)),
+        archive: () => archiveMasGateSessionTransaction(transaction.journalPath, runtimeOptions(fixture)),
+      }[operation];
+      await expect(invoke()).rejects.toThrow(/fixed MAS session index|fixed .*evidence/iu);
+      await expect(readFile(transaction.journalPath)).resolves.toEqual(journalBefore);
+    }
+  });
+
+  it("initializes one exact empty fixed index under the live lease and permits the first begin", async () => {
+    const fixture = await createFixture({ prior: false, index: false });
+    const first = await initialize(fixture);
+    expect(first.status).toBe("initialized");
+    expect(first.index).toMatchObject({
+      schema: MAS_GATE_SESSION_INDEX_SCHEMA,
+      version: MAS_GATE_SESSION_INDEX_VERSION,
+      runtimeRoot: fixture.runtime,
+      parentPath: fixture.parent,
+      entries: [],
+    });
+    const indexPath = path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME);
+    const firstBytes = await readFile(indexPath);
+    const second = await initialize(fixture);
+    expect(second.status).toBe("existing");
+    await expect(readFile(indexPath)).resolves.toEqual(firstBytes);
+
+    const transaction = await begin(fixture);
+    expect(transaction.schema).toBe("MAS_GATE_SESSION_TRANSACTION v2");
+    const restored = await restoreMasGateSessionTransaction(transaction, runtimeOptions(fixture));
+    await archiveMasGateSessionTransaction(restored, runtimeOptions(fixture));
+  });
+
+  it.each(["malformed-index", "index-collision", "fixed-index-intent", "fixed-active-slot"])(
+    "fails closed without mutation for initial fixed-index evidence: %s",
+    async (kind) => {
+      const fixture = await createFixture({ prior: false, index: false });
+      const indexPath = path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME);
+      const intentPath = path.join(fixture.parent, ".meetless-mas-gate-session.index-intent");
+      const activePath = path.join(fixture.parent, ".meetless-mas-gate-session.active");
+      let evidencePath = indexPath;
+      if (kind === "malformed-index") {
+        await writeFile(indexPath, "{not-json\n", { mode: 0o600 });
+      } else if (kind === "index-collision") {
+        await mkdir(indexPath, { mode: 0o700 });
+        await writeFile(path.join(indexPath, "collision"), "keep index collision\n", { mode: 0o600 });
+      } else if (kind === "fixed-index-intent") {
+        evidencePath = intentPath;
+        await writeFile(intentPath, "keep intent evidence\n", { mode: 0o600 });
+      } else {
+        evidencePath = activePath;
+        await mkdir(activePath, { mode: 0o700 });
+      }
+      const before = kind === "index-collision"
+        ? await readFile(path.join(indexPath, "collision"))
+        : kind === "fixed-active-slot"
+          ? await lstat(activePath)
+          : await readFile(evidencePath);
+      await expect(initialize(fixture)).rejects.toThrow(/fixed MAS session index|fixed index-intent|active-slot|collision|malformed|regular file/iu);
+      if (kind === "index-collision") await expect(readFile(path.join(indexPath, "collision"))).resolves.toEqual(before);
+      else if (kind === "fixed-active-slot") await expect(lstat(activePath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+      else await expect(readFile(evidencePath)).resolves.toEqual(before);
+      await expect(lstat(`${indexPath}.tmp`)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("preserves an exact index destination when a collision appears after the initial probe", async () => {
+    const fixture = await createFixture({ prior: false, index: false });
+    const collision = Buffer.from("post-probe collision\n");
+    await expect(initialize(fixture, {
+      beforeRename: async ({ target }: { target: string }) => {
+        await writeFile(target, collision, { mode: 0o600 });
+      },
+    })).rejects.toThrow(/both source and destination|collision|destination/iu);
+    await expect(readFile(path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME))).resolves.toEqual(collision);
+  });
+
+  it("never resets a populated indexed session", async () => {
+    const fixture = await createFixture({ prior: false, index: false });
+    await initialize(fixture);
+    const transaction = await begin(fixture);
+    const restored = await restoreMasGateSessionTransaction(transaction, runtimeOptions(fixture));
+    const archived = await archiveMasGateSessionTransaction(restored, runtimeOptions(fixture));
+    const indexPath = path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME);
+    const before = await readFile(indexPath);
+    const existing = await initialize(fixture);
+    expect(existing.status).toBe("existing");
+    expect(existing.index.entries).toHaveLength(1);
+    await expect(readFile(indexPath)).resolves.toEqual(before);
+    await expect(lstat(archived.archivePath)).resolves.toBeDefined();
+  });
+
+  it("rejects a 257th begin before index publication and keeps the 256-entry state usable", async () => {
+    const fixture = await createCapacityFixture();
+    const indexPath = path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME);
+    const before = await readFile(indexPath);
+    await expect(begin(fixture, { runId: "capacity-overflow" })).rejects.toThrow(/capacity 256|exhausted/iu);
+    await expect(readFile(indexPath)).resolves.toEqual(before);
+    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).resolves.toMatchObject({
+      status: "archived",
+      archived: expect.arrayContaining([expect.any(Object)]),
+    });
+    const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+    expect(status.archived).toHaveLength(256);
+    await expect(begin(fixture, { runId: "capacity-overflow-again" })).rejects.toThrow(/capacity 256|exhausted/iu);
+    await expect(readFile(indexPath)).resolves.toEqual(before);
+  });
+
+  it.each(["index-initialize", "index-initialize-published"])(
+    "survives a subprocess crash at the initial index boundary %s without losing the record",
+    async (faultAt) => {
+      const fixture = await createFixture({ prior: false, index: false });
+      const result = await runHardExitInitialize(fixture, faultAt);
+      expect(result.signal).toBe("SIGKILL");
+      const indexPath = path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME);
+      if (faultAt === "index-initialize") {
+        await expect(readMasGateSessionStatus(runtimeOptions(fixture))).resolves.toMatchObject({
+          status: "uninitialized",
+          state: "absent-safe",
+        });
+        await expect(lstat(indexPath)).rejects.toMatchObject({ code: "ENOENT" });
+      } else {
+        await expect(readMasGateSessionStatus(runtimeOptions(fixture))).resolves.toMatchObject({ status: "absent" });
+        const before = await readFile(indexPath);
+        expect(JSON.parse(before.toString("utf8")).entries).toEqual([]);
+        const second = await initialize(fixture);
+        expect(second.status).toBe("existing");
+        await expect(readFile(indexPath)).resolves.toEqual(before);
+      }
+      if (faultAt === "index-initialize") await initialize(fixture);
+      const transaction = await begin(fixture);
+      const restored = await restoreMasGateSessionTransaction(transaction, runtimeOptions(fixture));
+      await archiveMasGateSessionTransaction(restored, runtimeOptions(fixture));
+    },
+  );
 
   it.each([
     "journal-published",
@@ -784,6 +968,8 @@ describe("MAS runtime-root preservation transaction", () => {
     expect(transactionSource).not.toMatch(/\b(?:rm|rmSync|cp|cpSync)\b/u);
     expect(transactionSource).not.toMatch(/recursive\s*:\s*true/u);
     expect(transactionSource).toContain("renameNoReplace");
+    expect(transactionSource).toContain("index.entries.length >= MAX_SESSION_INDEX_ENTRIES");
+    expect(transactionSource).toContain("initializeMasGateSessionIndex");
     expect(transactionSource).not.toMatch(/readdir\(\s*context\.parentPath/u);
     expect(transactionSource).not.toContain("renameReservation");
     expect(transactionSource).not.toContain("beforeRenameReservation");
@@ -791,6 +977,8 @@ describe("MAS runtime-root preservation transaction", () => {
     expect(coordinatorSource).not.toMatch(/recursive\s*:\s*true/u);
     expect(coordinatorSource).toContain("macAppStoreInstallationContract");
     expect(coordinatorSource).toContain("acquireMasGateLock");
+    expect(coordinatorSource).toContain("MAS_GATE_SESSION_INDEX_INITIALIZATION_AUTHORITY");
+    expect(coordinatorSource).toContain("validatedArtifactBinding");
     expect(coordinatorSource).toContain("restoreInRequiredOrder");
     expect(coordinatorSource).toContain("inspectNativeArgumentVector");
     expect(coordinatorSource).toContain("daemon-worker.js");
@@ -801,9 +989,11 @@ describe("MAS runtime-root preservation transaction", () => {
     expect(coordinatorSource).toContain("--manifest=");
     expect(cliSource).toContain("masDevelopmentRuntimeContext");
     expect(cliSource).toContain("restoreMasDevelopmentGate");
+    expect(cliSource).not.toContain("initializeMasGateSessionIndex");
     expect(nativeSource).not.toMatch(/removeItem\([^)]*runtimeRoot[^)]*recursive/su);
     expect(nativeSource).not.toMatch(/copyItem\([^)]*runtimeRoot/su);
     expect(nativeSource).not.toContain("contentsOfDirectory");
+    expect(nativeSource).toContain("assertStrictMasGateKeys");
     for (const source of [installerSource, launcherSource, stopperSource]) {
       expect(source).toContain("MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH");
       expect(source).toContain("assertDirectRuntimeTarget");
@@ -823,6 +1013,39 @@ describe("MAS runtime-root preservation transaction", () => {
 
 async function begin(fixture: Fixture, overrides: Record<string, unknown> = {}) {
   return beginMasGateSessionTransaction({ ...runtimeOptions(fixture), ...overrides });
+}
+
+function testArtifactBinding() {
+  const digest = "f".repeat(64);
+  return freezeMasGateArtifactBinding({
+    schema: "MAS_GATE_ARTIFACT_BINDING v1",
+    version: 1,
+    manifestPath: path.resolve("release/macos/app-store-development-manifest.json"),
+    bundlePath: path.resolve("release/macos/Meetless.app"),
+    manifestSha256: digest,
+    bundleFingerprint: digest,
+    artifactDigest: digest,
+    candidateSnapshotDigest: digest,
+    packageInputDigest: digest,
+    artifactInputDigest: digest,
+    licenseDigest: digest,
+    signatureDigest: digest,
+    publicSdkKeySha256: digest,
+  });
+}
+
+async function initialize(fixture: Fixture, overrides: Record<string, unknown> = {}) {
+  const lease = await acquireMasGateLock({ parentPath: fixture.parent });
+  try {
+    return await initializeMasGateSessionIndex({
+      ...runtimeOptions(fixture, overrides),
+      installAuthorization: MAS_GATE_SESSION_INDEX_INITIALIZATION_AUTHORITY,
+      validatedArtifactBinding: testArtifactBinding(),
+      lockLease: lease,
+    });
+  } finally {
+    await lease.release();
+  }
 }
 
 function runtimeOptions(fixture: Fixture, overrides: Record<string, unknown> = {}) {
@@ -855,6 +1078,19 @@ async function runHardExitBegin(fixture: Fixture, faultAt: string) {
     `const options = ${JSON.stringify(input)};`,
     `const absent = ${JSON.stringify(absentRuntimeLiteral(input.runtimeRoot as string, input.runtimeRootParent as string))};`,
     `await beginMasGateSessionTransaction({ ...options, faultAt: ${JSON.stringify(faultAt)}, faultAction: "hard-exit", assertNoLiveOwnedRuntime: async () => absent });`,
+  ].join("\n"));
+}
+
+async function runHardExitInitialize(fixture: Fixture, faultAt: string) {
+  const input = childRuntimeOptions(fixture);
+  const binding = testArtifactBinding();
+  return runHardExit([
+    `import { initializeMasGateSessionIndex, MAS_GATE_SESSION_INDEX_INITIALIZATION_AUTHORITY } from ${JSON.stringify(new URL("../../../scripts/lib/macos-mas-gate-session-transaction.mjs", import.meta.url).href)};`,
+    `import { acquireMasGateLock } from ${JSON.stringify(new URL("../../../scripts/lib/macos-mas-gate-lock.mjs", import.meta.url).href)};`,
+    `import { freezeMasGateArtifactBinding } from ${JSON.stringify(new URL("../../../scripts/lib/mas-gate-artifact-binding.mjs", import.meta.url).href)};`,
+    `const options = ${JSON.stringify(input)};`,
+    `const lease = await acquireMasGateLock({ parentPath: options.runtimeRootParent });`,
+    `await initializeMasGateSessionIndex({ ...options, faultAt: ${JSON.stringify(faultAt)}, faultAction: "hard-exit", installAuthorization: MAS_GATE_SESSION_INDEX_INITIALIZATION_AUTHORITY, validatedArtifactBinding: freezeMasGateArtifactBinding(${JSON.stringify(binding)}), lockLease: lease });`,
   ].join("\n"));
 }
 
@@ -908,7 +1144,7 @@ type Fixture = {
   identityPath: string;
 };
 
-async function createFixture({ prior }: { prior: boolean }): Promise<Fixture> {
+async function createFixture({ prior, index = true }: { prior: boolean; index?: boolean }): Promise<Fixture> {
   const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-gate-session-test-")));
   testRoots.push(base);
   const parent = path.join(base, "support");
@@ -925,21 +1161,126 @@ async function createFixture({ prior }: { prior: boolean }): Promise<Fixture> {
     await writeFile(identityPath, "prior identity\n", { mode: 0o600 });
     await chmod(runtime, 0o750);
   }
+  if (index) {
+    await writeFile(
+      path.join(parent, MAS_GATE_SESSION_INDEX_BASENAME),
+      `${JSON.stringify({
+        schema: MAS_GATE_SESSION_INDEX_SCHEMA,
+        version: MAS_GATE_SESSION_INDEX_VERSION,
+        runtimeRoot: runtime,
+        parentPath: parent,
+        activePath: path.join(parent, ".meetless-mas-gate-session.active"),
+        indexPath: path.join(parent, MAS_GATE_SESSION_INDEX_BASENAME),
+        indexIntentPath: path.join(parent, ".meetless-mas-gate-session.index-intent"),
+        entries: [],
+      }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  }
+  return { base, parent, runtime, identityPath };
+}
+
+async function createCapacityFixture(): Promise<Fixture> {
+  const fixture = await createFixture({ prior: false, index: false });
+  const entries = [];
+  const phaseHistory = [
+    "construction-intent",
+    "prepared",
+    "quarantine-intent",
+    "quarantined",
+    "fresh-intent",
+    "fresh-created",
+    "ready",
+    "detach-intent",
+    "fresh-retained",
+    "restore-intent",
+    "restored",
+    "archive-intent",
+    "archived",
+  ];
+  for (let index = 0; index < 256; index += 1) {
+    const runId = `capacity-${String(index).padStart(3, "0")}`;
+    const constructionPath = path.join(fixture.parent, `.meetless-mas-gate-session.${runId}.active-building`);
+    const constructionIntentPath = path.join(fixture.parent, `.meetless-mas-gate-session.${runId}.active-intent`);
+    const quarantinePath = path.join(fixture.parent, `.meetless-mas-gate-session.${runId}.quarantine`);
+    const freshRetainedPath = path.join(fixture.parent, `.meetless-mas-gate-session.${runId}.fresh-retained`);
+    const archivePath = path.join(fixture.parent, `.meetless-mas-gate-session.${runId}.archived`);
+    await mkdir(freshRetainedPath, { mode: 0o700 });
+    await mkdir(archivePath, { mode: 0o700 });
+    const retained = await lstat(freshRetainedPath);
+    const identity = {
+      type: "directory",
+      mode: Number(retained.mode),
+      uid: Number(retained.uid),
+      gid: Number(retained.gid),
+      dev: Number(retained.dev),
+      ino: Number(retained.ino),
+      nlink: Number(retained.nlink),
+      size: Number(retained.size),
+    };
+    const journal = {
+      schema: "MAS_GATE_SESSION_TRANSACTION v2",
+      version: 2,
+      ownerToken: "a".repeat(40),
+      runId,
+      canonicalRuntimeRoot: fixture.runtime,
+      runtimeRoot: fixture.runtime,
+      canonicalPath: fixture.runtime,
+      parentPath: fixture.parent,
+      parent: fixture.parent,
+      lockPath: path.join(fixture.parent, ".meetless-mas-gate.lock"),
+      activePath: path.join(fixture.parent, ".meetless-mas-gate-session.active"),
+      active: path.join(fixture.parent, ".meetless-mas-gate-session.active"),
+      constructionPath,
+      quarantinePath,
+      quarantine: quarantinePath,
+      freshRetainedPath,
+      freshRetained: freshRetainedPath,
+      archivePath,
+      constructionIntentPath,
+      constructionIntent: constructionIntentPath,
+      journalPath: path.join(archivePath, "transaction.json"),
+      identityRelativePath,
+      identityPath: fixture.identityPath,
+      identity: { relativePath: identityRelativePath, path: fixture.identityPath },
+      priorExists: false,
+      priorRootIdentity: null,
+      priorAggregateAttestation: null,
+      prior: { exists: false, rootIdentity: null, aggregateAttestation: null },
+      freshRootIdentity: identity,
+      freshRetainedRootIdentity: identity,
+      requiredFreeBytes: "1",
+      observedFreeBytes: "1",
+      stateScope: "runtime-root-only",
+      phase: "archived",
+      phaseHistory,
+    };
+    await writeFile(journal.journalPath, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+    entries.push({
+      runId,
+      activePath: journal.activePath,
+      constructionPath,
+      constructionIntentPath,
+      quarantinePath,
+      freshRetainedPath,
+      archivePath,
+    });
+  }
   await writeFile(
-    path.join(parent, MAS_GATE_SESSION_INDEX_BASENAME),
+    path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME),
     `${JSON.stringify({
       schema: MAS_GATE_SESSION_INDEX_SCHEMA,
       version: MAS_GATE_SESSION_INDEX_VERSION,
-      runtimeRoot: runtime,
-      parentPath: parent,
-      activePath: path.join(parent, ".meetless-mas-gate-session.active"),
-      indexPath: path.join(parent, MAS_GATE_SESSION_INDEX_BASENAME),
-      indexIntentPath: path.join(parent, ".meetless-mas-gate-session.index-intent"),
-      entries: [],
+      runtimeRoot: fixture.runtime,
+      parentPath: fixture.parent,
+      activePath: path.join(fixture.parent, ".meetless-mas-gate-session.active"),
+      indexPath: path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME),
+      indexIntentPath: path.join(fixture.parent, ".meetless-mas-gate-session.index-intent"),
+      entries,
     }, null, 2)}\n`,
     { mode: 0o600 },
   );
-  return { base, parent, runtime, identityPath };
+  return fixture;
 }
 
 async function createTargetCollision(target: string, contents: string) {

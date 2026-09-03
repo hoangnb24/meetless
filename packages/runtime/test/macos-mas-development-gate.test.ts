@@ -310,6 +310,11 @@ describe("MAS development gate coordinator", () => {
     roots.push(base);
     const context = masDevelopmentRuntimeContext({ userHome: base });
     await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
+    await expect(readMasGateSessionStatus(masGateRuntimeOptions(context))).resolves.toMatchObject({
+      status: "uninitialized",
+      state: "absent-safe",
+      activePath: context.activePath,
+    });
     await seedMasSessionIndex(context);
     await expect(readMasGateSessionStatus(masGateRuntimeOptions(context))).resolves.toMatchObject({
       status: "absent",
@@ -627,6 +632,8 @@ describe("MAS development gate coordinator", () => {
     expect(forgedValidatorCalled).toBe(false);
     await expect(readFile(prior, "utf8")).resolves.toBe("prior\n");
     await expect(lstat(context.activePath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(path.join(context.parentPath, MAS_GATE_SESSION_INDEX_BASENAME))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(context.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(installMasDevelopmentGate({
       manifestPath,
       bundlePath: bundle,
