@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v61`
-- `current_frontier`: `R5-MAS-ATTEMPT11-RUNTIME-DIAGNOSTIC-IDENTITY-CONVERGENCE`
-- `state`: `R5_MAS_ATTEMPT11_RUNTIME_DIAGNOSTIC_IDENTITY_CONVERGENCE_PENDING_LEAD_REVIEW`
+- `plan_revision`: `v62`
+- `current_frontier`: `R5-MAS-REGISTRATION-DIAGNOSTIC-PACKAGE-NODE-PROOF`
+- `state`: `R5_MAS_REGISTRATION_DIAGNOSTIC_PACKAGE_NODE_PROOF_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable Attempt-11 runtime diagnostic and identity-byte convergence correction from accepted exact base `5dd30f4acb8bcc0d9aaf79d9d2039d7630c6d964`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted host-config capture-helper binding, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
+- `candidate`: pending immutable package-source Node proof correction from unaccepted exact parent `487f847cb00291e2fe64f991c62b183b89b2b18a` and original accepted base `5dd30f4acb8bcc0d9aaf79d9d2039d7630c6d964`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted identity serializer/proof, bounded registration diagnostics, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 11 retained root `/private/tmp/meetless-mas-development-proof.TmI7ud` has manifest SHA-256 `93cc1e289c487b34d28ba77e60e7163a390b3b38bb346f532d5255b34552d8c5`. Host PID `14710` reached runtime creation but no accepted D/S/W/P; registration returned a generic rejection, and recovery first observed a byte mismatch before successful exact-byte restoration. No external gate was opened.
-- `pending_ruling`: the native registration policy remains fail-closed while protocol rejection exposes only bounded role/stage/check/normalized-OS categories; the Node transaction serializer must reproduce MeetlessHost's canonical Foundation JSON bytes, while recovery remains exact-byte-only. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
+- `pending_ruling`: the native real-Node fixture consumes and proves the exact `process.execPath` source used by `package-macos.mjs`, while the accepted registration diagnostics and identity serializer/proof remain unchanged. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
 - `blocked_by`: no safe in-scope implementation dependency remains; no package, sign, install, launch, or external result is accepted by this candidate.
-- `next_action`: Lead reviews the bounded diagnostic, exact-byte serializer, and real repository runtime/node detached-daemon proof, then accepts or rejects the immutable candidate from base `5dd30f4acb8bcc0d9aaf79d9d2039d7630c6d964`; only then may a fresh external gate attempt be considered.
+- `next_action`: Lead reviews and accepts or rejects the immutable child of `487f847cb00291e2fe64f991c62b183b89b2b18a`; only after acceptance may a separately authorized external gate be considered.
 
 ## Ownership And Authority
 
@@ -1433,6 +1433,48 @@ The authority digest remains
 sign, install, launch, retained-root inspection, secret/cache inspection, R4
 fixture mutation, push, and every external gate remain closed. The candidate is
 pending Lead review.
+
+### R5 package-source Node proof closeout (2026-09-03; current frontier)
+
+`PLAN_RECONCILIATION v62` records Lead's bounded closeout ruling for
+`R5-MAS-REGISTRATION-DIAGNOSTIC-PACKAGE-NODE-PROOF`. `IDENTITY-BYTES-001`, its
+serializer proof, and the categorical `REG-DIAG` implementation remain
+accepted and unchanged. A full live production D→S→W→P bootstrap is explicitly
+outside this native correction because it would start broader runtime/plugin
+services and remains owned by a separately authorized external gate.
+
+The repository proof now composes three inspectable levels. First,
+`scripts/build-native.mjs` passes its exact `process.execPath` through the
+test-only `MEETLESS_TEST_PACKAGE_NODE_SOURCE` binding to both debug and release
+`MeetlessHostTests`. The native fixture requires an absolute canonical,
+executable, non-empty regular file whose device/inode/size/hash identity equals
+the live parent Node executable, then copies exactly that source to the package
+contract's `runtime/node`, verifies source stability plus copied size/hash
+before launch, and observes the detached daemon's exact package-contained
+configured path, real path, argv, size, and hash. Pure negative cases reject an
+absent, relative, non-canonical, non-executable, or wrong-source binding before
+the real-node fixture can spawn. Second, the existing synthetic/native
+H→D→S→W→P→C policy and race cases remain exercised by the same native test
+binary. Third, focused package composition proof structurally inspects the
+production composer and confirms `process.execPath` is copied to the contract's
+`runtime/node` destination; existing host-attestation/topology and MAS contract
+validation remain composed around it.
+
+Observed repository-only proof on 2026-09-03: `npm run build:native` built and
+passed `MeetlessHostTests` in debug and release with the explicit package-node
+binding; the focused macOS package, packaged-host-attestation, and host command
+passed 3 files and 48 tests; `npm run typecheck` and
+`npm run validate:macos:app-store` passed; `node --check
+scripts/build-native.mjs` and `git diff --check` passed. The native positive run
+exercised exact package-source D→S detached registration, and its pure
+validation covered all five required negative bindings. No package, sign,
+install, launch, recording/helper action, `/Applications` mutation,
+secret/cache inspection, retained-root inspection, R4 change, push, or external
+action occurred. Every external gate remains closed. Local owning-command
+enforcement is observed; no configured executable local hook or checked-in CI
+invocation was found, and branch-protection enforcement remains externally
+unverified. Authority digest remains
+`fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`.
 
 ### Risks And Recovery
 

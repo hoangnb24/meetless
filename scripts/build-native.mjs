@@ -11,6 +11,10 @@ const environment = {
   SWIFTPM_MODULECACHE_OVERRIDE: "/private/tmp/meetless-swift-module-cache",
   CLANG_MODULE_CACHE_PATH: "/private/tmp/meetless-clang-module-cache",
 };
+const nativeTestEnvironment = {
+  ...environment,
+  MEETLESS_TEST_PACKAGE_NODE_SOURCE: process.execPath,
+};
 
 await mkdir(path.join(repositoryRoot, "packages/runtime/dist"), { recursive: true });
 await run("swift", ["build", "-c", "release", "--package-path", "native/macos-capture"]);
@@ -25,8 +29,10 @@ await run("xcrun", [
   "-o",
   "packages/runtime/dist/meetless-process-argv",
 ]);
+await run("swift", ["build", "-c", "debug", "--package-path", "native/macos-host", "--product", "MeetlessHostTests"]);
+await run(path.join(repositoryRoot, "native/macos-host/.build/debug/MeetlessHostTests"), [], nativeTestEnvironment);
 await run("swift", ["build", "-c", "release", "--package-path", "native/macos-host", "--product", "MeetlessHostTests"]);
-await run(path.join(repositoryRoot, "native/macos-host/.build/release/MeetlessHostTests"), []);
+await run(path.join(repositoryRoot, "native/macos-host/.build/release/MeetlessHostTests"), [], nativeTestEnvironment);
 
 async function assertRevenueCatLinkedHost(candidate) {
   const inspected = await stat(candidate).catch(() => null);
@@ -50,9 +56,9 @@ async function assertRevenueCatLinkedHost(candidate) {
   }
 }
 
-function run(command, arguments_) {
+function run(command, arguments_, childEnvironment = environment) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, arguments_, { cwd: repositoryRoot, env: environment, stdio: "inherit" });
+    const child = spawn(command, arguments_, { cwd: repositoryRoot, env: childEnvironment, stdio: "inherit" });
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (code === 0) resolve();

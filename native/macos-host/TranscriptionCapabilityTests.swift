@@ -835,26 +835,132 @@ private func nativeCaptureHelperExecutable() -> String {
     .path
 }
 
-private func nativeNodeExecutable() throws -> URL {
-  let lookup = Process()
-  lookup.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-  lookup.arguments = ["node"]
-  let output = Pipe()
-  lookup.standardOutput = output
-  lookup.standardError = FileHandle.nullDevice
-  try lookup.run()
-  lookup.waitUntilExit()
-  guard lookup.terminationStatus == 0,
-        let value = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-          .trimmingCharacters(in: .whitespacesAndNewlines),
-        !value.isEmpty else {
-    throw NSError(domain: "MeetlessHostTests", code: 60, userInfo: [NSLocalizedDescriptionKey: "the actual Node executable is unavailable"])
+private let packageBuilderNodeSourceEnvironment = "MEETLESS_TEST_PACKAGE_NODE_SOURCE"
+
+private struct PackageBuilderNodeIdentity: Equatable {
+  let path: String
+  let device: UInt64
+  let inode: UInt64
+  let byteLength: Int
+  let sha256: String
+}
+
+private func packageBuilderNodeError(_ message: String) -> NSError {
+  NSError(
+    domain: "MeetlessHostTests",
+    code: 60,
+    userInfo: [NSLocalizedDescriptionKey: "package-builder Node source \(message); run npm run build:native so scripts/build-native.mjs binds its process.execPath"]
+  )
+}
+
+private func executableRegularFileIdentity(atPath path: String) throws -> PackageBuilderNodeIdentity {
+  guard path.hasPrefix("/") else {
+    throw packageBuilderNodeError("must be an absolute path")
   }
-  let executable = URL(fileURLWithPath: value).resolvingSymlinksInPath()
-  guard FileManager.default.isExecutableFile(atPath: executable.path) else {
-    throw NSError(domain: "MeetlessHostTests", code: 61, userInfo: [NSLocalizedDescriptionKey: "the actual Node executable is not executable"])
+  let lexical = URL(fileURLWithPath: path).standardizedFileURL.path
+  let canonical = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+  guard path == lexical, path == canonical else {
+    throw packageBuilderNodeError("must be one canonical path without traversal or symlink indirection")
   }
-  return executable
+  var information = stat()
+  guard lstat(path, &information) == 0,
+        (information.st_mode & S_IFMT) == S_IFREG,
+        information.st_size > 0 else {
+    throw packageBuilderNodeError("must identify one non-empty regular file")
+  }
+  guard access(path, X_OK) == 0 else {
+    throw packageBuilderNodeError("must identify an executable regular file")
+  }
+  let bytes = try Data(contentsOf: URL(fileURLWithPath: path))
+  return PackageBuilderNodeIdentity(
+    path: path,
+    device: UInt64(information.st_dev),
+    inode: UInt64(information.st_ino),
+    byteLength: bytes.count,
+    sha256: fixtureSHA256(bytes)
+  )
+}
+
+private func packageBuilderNodeSource(
+  environment: [String: String],
+  expectedIdentity: PackageBuilderNodeIdentity
+) throws -> (URL, PackageBuilderNodeIdentity) {
+  guard let path = environment[packageBuilderNodeSourceEnvironment], !path.isEmpty else {
+    throw packageBuilderNodeError("is absent from \(packageBuilderNodeSourceEnvironment)")
+  }
+  let identity = try executableRegularFileIdentity(atPath: path)
+  guard identity == expectedIdentity else {
+    throw packageBuilderNodeError("does not match the Node process executing scripts/build-native.mjs")
+  }
+  return (URL(fileURLWithPath: identity.path), identity)
+}
+
+private func runningPackageBuilderNodeIdentity() throws -> PackageBuilderNodeIdentity {
+  let parentIdentity = try inspectMeetlessProcessIdentity(getppid())
+  let identity = try executableRegularFileIdentity(atPath: parentIdentity.realPath)
+  guard identity.device == UInt64(parentIdentity.device),
+        identity.inode == UInt64(parentIdentity.inode),
+        identity.byteLength == parentIdentity.byteLength,
+        identity.sha256 == parentIdentity.sha256 else {
+    throw packageBuilderNodeError("does not match the live parent process executable identity")
+  }
+  return identity
+}
+
+private func expectPackageBuilderNodeFailure(
+  _ expectedMessage: String,
+  environment: [String: String],
+  expectedIdentity: PackageBuilderNodeIdentity
+) {
+  do {
+    _ = try packageBuilderNodeSource(environment: environment, expectedIdentity: expectedIdentity)
+    check(false, "package-builder Node validation must reject \(expectedMessage)")
+  } catch {
+    check(
+      error.localizedDescription.contains(expectedMessage),
+      "package-builder Node validation must diagnose \(expectedMessage), got: \(error.localizedDescription)"
+    )
+  }
+}
+
+private func testPackageBuilderNodeSourceValidation(expectedIdentity: PackageBuilderNodeIdentity) throws {
+  let fileManager = FileManager.default
+  let root = URL(fileURLWithPath: NSTemporaryDirectory())
+    .appendingPathComponent("meetless-package-node-validation-" + UUID().uuidString)
+  try fileManager.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+  defer { try? fileManager.removeItem(at: root) }
+  let nonExecutable = root.appendingPathComponent("node")
+  try writeFixtureData(Data("not executable\n".utf8), to: nonExecutable, permissions: 0o600)
+  let sourceURL = URL(fileURLWithPath: expectedIdentity.path)
+  let sourceDirectory = sourceURL.deletingLastPathComponent()
+  let nonCanonical = sourceDirectory.path + "/../" + sourceDirectory.lastPathComponent + "/" + sourceURL.lastPathComponent
+
+  let valid = try packageBuilderNodeSource(
+    environment: [packageBuilderNodeSourceEnvironment: expectedIdentity.path],
+    expectedIdentity: expectedIdentity
+  )
+  check(valid.1 == expectedIdentity, "package-builder Node validation must accept the exact bound process.execPath identity")
+  expectPackageBuilderNodeFailure("is absent", environment: [:], expectedIdentity: expectedIdentity)
+  expectPackageBuilderNodeFailure(
+    "must be an absolute path",
+    environment: [packageBuilderNodeSourceEnvironment: "node"],
+    expectedIdentity: expectedIdentity
+  )
+  expectPackageBuilderNodeFailure(
+    "must be one canonical path",
+    environment: [packageBuilderNodeSourceEnvironment: nonCanonical],
+    expectedIdentity: expectedIdentity
+  )
+  expectPackageBuilderNodeFailure(
+    "must identify an executable regular file",
+    environment: [packageBuilderNodeSourceEnvironment: nonExecutable.path],
+    expectedIdentity: expectedIdentity
+  )
+  expectPackageBuilderNodeFailure(
+    "does not match the Node process",
+    environment: [packageBuilderNodeSourceEnvironment: "/usr/bin/true"],
+    expectedIdentity: expectedIdentity
+  )
 }
 
 private func copyResolvedFixtureItem(from source: URL, to destination: URL) throws {
@@ -931,6 +1037,11 @@ private func terminateDetachedNativeProcessFixture(_ pid: pid_t?) {
 
 private func testRealNodeDetachedDaemonRegistration() throws {
   let fileManager = FileManager.default
+  let expectedNodeIdentity = try runningPackageBuilderNodeIdentity()
+  let (nodeSource, nodeSourceIdentity) = try packageBuilderNodeSource(
+    environment: ProcessInfo.processInfo.environment,
+    expectedIdentity: expectedNodeIdentity
+  )
   let root = fileManager.homeDirectoryForCurrentUser
     .appendingPathComponent(".meetless-real-node-" + UUID().uuidString)
     .appendingPathComponent("meetless-real-node-" + UUID().uuidString)
@@ -1003,9 +1114,20 @@ private func testRealNodeDetachedDaemonRegistration() throws {
     permissions: 0o644
   )
 
-  let nodeSource = try nativeNodeExecutable()
   let nodePath = packageRoot.appendingPathComponent(nodeRelative)
-  try copyResolvedFixtureItem(from: nodeSource, to: nodePath)
+  try fileManager.createDirectory(
+    at: nodePath.deletingLastPathComponent(),
+    withIntermediateDirectories: true,
+    attributes: [.posixPermissions: 0o755]
+  )
+  try fileManager.copyItem(at: nodeSource, to: nodePath)
+  let copiedNodeIdentity = try executableRegularFileIdentity(atPath: nodePath.path)
+  let stableNodeSourceIdentity = try executableRegularFileIdentity(atPath: nodeSource.path)
+  guard stableNodeSourceIdentity == nodeSourceIdentity,
+        copiedNodeIdentity.byteLength == nodeSourceIdentity.byteLength,
+        copiedNodeIdentity.sha256 == nodeSourceIdentity.sha256 else {
+    throw packageBuilderNodeError("bytes, size, or digest changed while copying to the package contract runtime/node destination")
+  }
   let electronSource = repositoryRoot.appendingPathComponent("node_modules/electron/dist/Electron.app/Contents/MacOS/Electron")
   let electronPath = packageRoot.appendingPathComponent(electronRelative)
   var electronIsDirectory = ObjCBool(false)
@@ -1151,6 +1273,8 @@ private func testRealNodeDetachedDaemonRegistration() throws {
   check(daemonIdentity.configuredPath == nodePath.path, "actual packaged daemon must use the package-contained Node executable")
   check(daemonIdentity.realPath == nodePath.path, "actual packaged daemon real path must remain the package-contained Node executable")
   check(daemonIdentity.argv == [nodePath.path, runtimeCliPath.path, "daemon"], "actual packaged daemon argv must match the exact packaged CLI identity")
+  check(daemonIdentity.byteLength == copiedNodeIdentity.byteLength, "actual packaged daemon size must match the exact copied process.execPath bytes")
+  check(daemonIdentity.sha256 == copiedNodeIdentity.sha256, "actual packaged daemon digest must match the exact copied process.execPath bytes")
   check(daemonIdentity.device > 0, "actual packaged daemon identity must report its device")
   check(daemonIdentity.inode > 0, "actual packaged daemon identity must report its inode")
   check(daemonIdentity.byteLength > 0, "actual packaged daemon identity must report its byte length")
@@ -3105,6 +3229,13 @@ private struct TranscriptionCapabilityTests {
     do { try testPackagedProcessRegistrationChain() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: packaged process registration chain: \(error)\n".utf8))
+    }
+    do {
+      let expectedNodeIdentity = try runningPackageBuilderNodeIdentity()
+      try testPackageBuilderNodeSourceValidation(expectedIdentity: expectedNodeIdentity)
+    } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: package-builder Node source validation: \(error)\n".utf8))
     }
     do { try testRealNodeDetachedDaemonRegistration() } catch {
       failures += 1

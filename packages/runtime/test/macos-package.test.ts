@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import * as ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertNoForbiddenLoadPath,
@@ -63,6 +64,53 @@ afterEach(async () => {
 });
 
 describe("macOS package composition manifest", () => {
+  it("copies the package builder process.execPath to the contracted runtime/node destination", async () => {
+    const [source, contractBytes] = await Promise.all([
+      readFile("scripts/package-macos.mjs", "utf8"),
+      readFile("scripts/lib/macos-package-contract.json", "utf8"),
+    ]);
+    const syntax = ts.createSourceFile("package-macos.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    const createRuntimeTree = syntax.statements.find((statement): statement is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(statement) && statement.name?.text === "createRuntimeTree"
+    );
+    expect(createRuntimeTree).toBeDefined();
+    const nodes: ts.Node[] = [];
+    const visit = (node: ts.Node): void => {
+      nodes.push(node);
+      ts.forEachChild(node, visit);
+    };
+    visit(createRuntimeTree!);
+
+    const packagedNode = nodes.find((node): node is ts.VariableDeclaration =>
+      ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "packagedNode"
+    );
+    const packagedNodeInitializer = packagedNode?.initializer;
+    expect(packagedNodeInitializer && ts.isCallExpression(packagedNodeInitializer)).toBe(true);
+    if (!packagedNodeInitializer || !ts.isCallExpression(packagedNodeInitializer)) throw new Error("packagedNode initializer is not a call");
+    expect(
+      ts.isPropertyAccessExpression(packagedNodeInitializer.expression) &&
+      ts.isIdentifier(packagedNodeInitializer.expression.expression) &&
+      packagedNodeInitializer.expression.expression.text === "path" &&
+      packagedNodeInitializer.expression.name.text === "join"
+    ).toBe(true);
+    expect(packagedNodeInitializer.arguments).toHaveLength(3);
+    expect(ts.isIdentifier(packagedNodeInitializer.arguments[0]) && packagedNodeInitializer.arguments[0].text).toBe("packageRoot");
+    expect(ts.isStringLiteral(packagedNodeInitializer.arguments[1]) && packagedNodeInitializer.arguments[1].text).toBe("runtime");
+    expect(ts.isStringLiteral(packagedNodeInitializer.arguments[2]) && packagedNodeInitializer.arguments[2].text).toBe("node");
+    const copyCall = nodes.find((node): node is ts.CallExpression =>
+      ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "copyFileIfPresent" &&
+      ts.isIdentifier(node.arguments[1]) && node.arguments[1].text === "packagedNode"
+    );
+    const copySource = copyCall?.arguments[0];
+    expect(
+      copySource && ts.isPropertyAccessExpression(copySource) && ts.isIdentifier(copySource.expression) &&
+      copySource.expression.text === "process" && copySource.name.text === "execPath"
+    ).toBe(true);
+
+    const contract = JSON.parse(contractBytes);
+    expect(contract.package.resources.nodeBinary).toBe("runtime/node");
+  });
+
   it("accepts a deterministic hashed file entry and candidate binding", () => {
     const manifest = completeManifest();
     expect(validateManifestDocument(manifest)).toEqual(manifest);
