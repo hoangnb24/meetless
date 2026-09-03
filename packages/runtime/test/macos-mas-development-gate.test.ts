@@ -1,15 +1,19 @@
-import { lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createMasHostHandoff,
   inspectMasLiveState,
+  installMasDevelopmentGate,
   launchMasDevelopmentGate,
   masDevelopmentRuntimeContext,
   masGateRuntimeOptions,
   masLiveAbsentObservation,
   restoreInRequiredOrder,
+  stopMasDevelopmentGate,
   validateMasHostHandoff,
 } from "../../../scripts/macos-mas-development-gate.mjs";
 import { beginMasGateSessionTransaction } from "../../../scripts/lib/macos-mas-gate-session-transaction.mjs";
@@ -17,9 +21,11 @@ import {
   MAS_GATE_LOCK_BASENAME,
   acquireMasGateLock,
   masGateLockPath,
+  withMasGateLock,
 } from "../../../scripts/lib/macos-mas-gate-lock.mjs";
 
 const roots: string[] = [];
+const execFile = promisify(execFileCallback);
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -90,6 +96,19 @@ describe("MAS development gate coordinator", () => {
 
     const host = { pid: 43, ppid: 1, executablePath: context.executablePath, arguments: [context.executablePath] };
     await expect(inspectMasLiveState(context, { ...base, processRows: async () => [host] })).resolves.toMatchObject({ status: "live" });
+    for (const row of [
+      { pid: 44, ppid: 43, executablePath: context.packagePaths.nodePath, arguments: [context.packagePaths.nodePath, context.packagePaths.runtimeCliPath, "desktop"] },
+      { pid: 45, ppid: 43, executablePath: context.packagePaths.nodePath, arguments: [context.packagePaths.nodePath, context.packagePaths.runtimeCliPath, "daemon"] },
+      { pid: 46, ppid: 45, executablePath: context.packagePaths.nodePath, arguments: [context.packagePaths.nodePath, context.packagePaths.daemonWorkerPath, "daemon"] },
+      { pid: 47, ppid: 45, executablePath: context.packagePaths.nodePath, arguments: [context.packagePaths.nodePath, context.packagePaths.pluginPath] },
+      { pid: 48, ppid: 43, executablePath: context.packagePaths.captureHelperPath, arguments: [context.packagePaths.captureHelperPath] },
+    ]) {
+      await expect(inspectMasLiveState(context, { ...base, processRows: async () => [row] })).resolves.toMatchObject({ status: "live", processes: [row] });
+    }
+    await expect(inspectMasLiveState(context, {
+      ...base,
+      processRows: async () => [{ pid: 49, ppid: 43, executablePath: context.packagePaths.nodePath, arguments: [context.packagePaths.nodePath, "/private/unknown-role.js"] }],
+    })).resolves.toMatchObject({ status: "live" });
     await expect(inspectMasLiveState(context, {
       ...base,
       processRows: async () => [],
@@ -124,6 +143,35 @@ describe("MAS development gate coordinator", () => {
     const second = await acquireMasGateLock({ parentPath: parent });
     await second.release();
     await expect(lstat(masGateLockPath(parent))).resolves.toMatchObject({ isFile: expect.any(Function) });
+  });
+
+  it("requires a live kernel-holder assertion for every supplied lease", async () => {
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-lease-test-")));
+    roots.push(base);
+    const parent = path.join(base, "support");
+    await mkdir(parent, { mode: 0o700 });
+
+    const released = await acquireMasGateLock({ parentPath: parent });
+    await released.release();
+    await expect(released.assertHeld()).rejects.toThrow(/no longer held|kernel lock/);
+    await expect(withMasGateLock({ parentPath: parent, lockLease: released }, async () => {
+      throw new Error("filesystem operation must not run");
+    })).rejects.toThrow(/no longer held|kernel lock/);
+
+    const killed = await acquireMasGateLock({ parentPath: parent });
+    process.kill(killed.holderPid, "SIGKILL");
+    await expect(killed.assertHeld()).rejects.toThrow(/no longer held|kernel lock/);
+    await expect(withMasGateLock({ parentPath: parent, lockLease: killed }, async () => {
+      throw new Error("filesystem operation must not run");
+    })).rejects.toThrow(/no longer held|kernel lock/);
+
+    const genuine = await acquireMasGateLock({ parentPath: parent });
+    expect(Object.isFrozen(genuine)).toBe(true);
+    const spoofed = { ...genuine };
+    await expect(withMasGateLock({ parentPath: parent, lockLease: spoofed }, async () => {
+      throw new Error("filesystem operation must not run");
+    })).rejects.toThrow(/not kernel-backed|live holder/);
+    await genuine.release();
   });
 
   it("releases the gate lock before waiting for the native host to claim the durable handoff", async () => {
@@ -180,6 +228,86 @@ describe("MAS development gate coordinator", () => {
     expect(launchCalled).toBe(true);
     expect(result.status).toBe("launch-claimed");
     expect(result.handoff.state).toBe("claimed");
+  });
+
+  it("stops only the exact owned host through the coordinator and never through an ambient authority string", async () => {
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-stop-test-")));
+    roots.push(base);
+    const context = masDevelopmentRuntimeContext({ userHome: base });
+    await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
+    const host = { pid: 43, ppid: 1, executablePath: context.executablePath, arguments: [context.executablePath] };
+    let live = true;
+    const dependencies = {
+      processRows: async () => live ? [host] : [],
+      listeners: async () => [],
+      sockets: async () => [],
+      openHandles: async () => [],
+      stopProcess: async (pid: number) => {
+        expect(pid).toBe(host.pid);
+        live = false;
+      },
+      waitForProcessExit: async () => undefined,
+    };
+    await expect(stopMasDevelopmentGate({ context, dependencies })).resolves.toMatchObject({ status: "stopped" });
+
+    const masRoot = context.runtimeRoot;
+    const forged = await execFile(process.execPath, ["scripts/stop-macos-host.mjs"], {
+      cwd: path.resolve("."),
+      env: {
+        ...process.env,
+        HOME: base,
+        MEETLESS_RUNTIME_ROOT: masRoot,
+        MEETLESS_LISTEN: context.contract.listen,
+        MEETLESS_MAS_COORDINATOR_AUTHORITY: "MAS_GATE_COORDINATOR v1",
+      },
+    }).catch((error) => error);
+    expect(forged.code).not.toBe(0);
+    expect(`${forged.stderr ?? ""}${forged.stdout ?? ""}`).toMatch(/refuses the MAS app-container runtime root/);
+  });
+
+  it("requires the exact MAS manifest and validates it before any transaction/package mutation", async () => {
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-install-test-")));
+    roots.push(base);
+    const context = masDevelopmentRuntimeContext({ userHome: base });
+    await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
+    const proofRoot = path.join(base, "proof");
+    const releaseRoot = path.join(proofRoot, "release", "macos");
+    const bundle = path.join(releaseRoot, "Meetless.app");
+    const manifestPath = path.join(releaseRoot, "app-store-development-manifest.json");
+    await mkdir(bundle, { recursive: true });
+    await writeFile(manifestPath, `${JSON.stringify({
+      schema: "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1",
+      bundlePath: "release/macos/Meetless.app",
+      directComposition: { path: "release/macos/composition-manifest.direct.json" },
+    })}\n`, { mode: 0o600 });
+    const prior = path.join(context.runtimeRoot, "prior.txt");
+    await mkdir(context.runtimeRoot, { recursive: true });
+    await writeFile(prior, "prior\n");
+    let validatorCalled = false;
+    await expect(installMasDevelopmentGate({
+      manifestPath,
+      bundlePath: bundle,
+      requiredFreeBytes: 1,
+      context,
+      dependencies: {
+        validateArtifact: async ({ manifestPath: receivedManifest, bundlePath: receivedBundle }: { manifestPath: string; bundlePath: string }) => {
+          validatorCalled = true;
+          expect(receivedManifest).toBe(manifestPath);
+          expect(receivedBundle).toBe(bundle);
+          throw new Error("validator rejection");
+        },
+      },
+    })).rejects.toThrow(/validator rejection/);
+    expect(validatorCalled).toBe(true);
+    await expect(readFile(prior, "utf8")).resolves.toBe("prior\n");
+    await expect(lstat(context.activePath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(installMasDevelopmentGate({
+      manifestPath: path.join(releaseRoot, "missing.json"),
+      bundlePath: bundle,
+      requiredFreeBytes: 1,
+      context,
+      dependencies: { validateArtifact: async () => ({ status: "passed" }) },
+    })).rejects.toThrow(/MAS development manifest/);
   });
 
   it("binds a one-time host handoff to the owner, run, fresh-root identity, exact bundle, and exact executable", () => {

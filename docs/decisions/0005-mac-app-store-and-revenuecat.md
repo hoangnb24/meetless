@@ -196,11 +196,18 @@ receive an explicit positive free-space requirement. The gate holds that lock
 through mutation. It atomically renames the entire existing root into
 same-volume quarantine, creates a secure fresh root, and records intent and
 rename transitions in a journal outside the root with durable atomic writes.
-The secure construction directory is fully journaled before publication to the
-fixed active slot, so recovery never treats an empty active slot as proof that
-no transaction exists. There is no copy fallback and no recursive removal in
-this boundary. Unexpected concurrency, physical boundary ambiguity, or a
-changed lock identity retains every remaining root and fails closed.
+The parent-side construction intent is durably published before construction
+directory creation, and the construction directory is journaled before
+publication to the fixed active slot. This makes the post-mkdir/pre-first-
+journal crash window discoverable: recovery may recreate the exact absent
+directory or adopt only the exact empty construction path bound to that intent;
+unexpected bytes remain retained and make the session fail closed. Each root
+rename first journals an intent for an exclusive private destination
+reservation; a target appearing between the absence check and reservation, or
+changing before rename, is never replaced. There is no copy fallback and no
+recursive removal in this boundary. Unexpected concurrency, physical boundary
+ambiguity, or a changed lock identity retains every remaining root and fails
+closed.
 
 The native host participates in the same stable sibling lock. With no active
 transaction, ordinary direct/production startup remains valid while holding
@@ -208,9 +215,16 @@ that lock. With an active transaction, startup requires a one-time durable
 handoff bound to the exact owner token, run, fresh-root identity, active slot,
 MAS bundle identity, executable bytes, and identity path; the host claims and
 holds the lock for its lifetime. The gate may reacquire it only after explicit
-stop and absence proof. Handoff replay, wrong-root, wrong-bundle, wrong-owner,
-lock contention, live descendants, listener/socket/open-handle evidence, and
-unknown process inspection all fail closed.
+stop and absence proof, and every repository lease caller must verify its live
+kernel holder before filesystem work. The MAS coordinator recognizes the
+production H→D→S→W→P→C topology by exact executable/argv evidence, including
+the titled `Paseo Supervisor` process and the exact packaged
+`vendor/paseo/packages/server/dist/server/server/daemon-worker.js` worker;
+listeners, sockets, and open handles are part of the absence observation.
+Handoff replay, wrong-root, wrong-bundle, wrong-owner, lock contention, live
+descendants, incomplete/malformed evidence, and unknown process inspection all
+fail closed. The generic stop command has no ambient MAS-authority bypass and
+always refuses the MAS root; only the MAS coordinator owns the stop capability.
 
 After proven stop and package rollback, the boundary reacquires the stable lock,
 atomically detaches the fresh root to retained session evidence, and restores
@@ -232,6 +246,18 @@ This rollback claim is limited to the entire canonical runtime root. App-group
 state, Preferences/Caches outside that root, Keychain, TCC, StoreKit/RevenueCat,
 LaunchServices, and remote state are retained and reported; they are neither
 cleaned nor claimed rolled back by this transaction.
+
+The repository-authorized MAS installation coordinator requires the exact
+release manifest and completes the existing full read-only MAS artifact
+validation before beginning the runtime transaction or mutating `/Applications`.
+That validation binds the direct-composition provenance, package contract,
+marker, host configuration, bundle/team/signer/profile, parent/child
+entitlement closure, thin arm64 Mach-O/Electron closure, inventory digests, and
+public SDK-key presence without exposing key material. An injected validator is
+a test seam only; the production command uses the full validator. This
+repository boundary does not reserve disk capacity, prevent arbitrary same-UID
+shell deletion, establish CI or branch protection, or prove a real MAS
+package/sign/install/launch. Those remain separate owner-authorized gates.
 
 ### Attempt 12 incident classification
 

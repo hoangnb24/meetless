@@ -120,6 +120,7 @@ describe("MAS runtime-root preservation transaction", () => {
   });
 
   it.each([
+    "construction-intent-journaled",
     "prepared",
     "quarantine-intent",
     "quarantined",
@@ -128,25 +129,23 @@ describe("MAS runtime-root preservation transaction", () => {
     "ready",
   ])("recovers after the begin fault point %s", async (faultAt) => {
     const fixture = await createFixture({ prior: true });
-    let failedJournalPath: string | null = null;
     await expect(begin(fixture, { faultAt })).rejects.toMatchObject({ code: MAS_GATE_CLEANUP_DIAGNOSTIC_CODE });
     const status = await readMasGateSessionStatus(runtimeOptions(fixture));
-    if (status.status === "active") {
-      failedJournalPath = status.journalPath;
-      const recovered = await recoverMasGateSessionTransaction(failedJournalPath, runtimeOptions(fixture));
-      expect(recovered.phase).toBe("restored");
-      await expect(recoverMasGateSessionTransaction(failedJournalPath, runtimeOptions(fixture))).resolves.toMatchObject({ phase: "restored" });
-      expect(await attestMasGateRuntimeRoot(fixture.runtime, { requireOwnerUid: true })).toEqual(
-        await attestMasGateRuntimeRoot(fixture.runtime, { requireOwnerUid: true }),
-      );
-    }
-    expect(failedJournalPath).not.toBeNull();
+    expect(["active", "recovery-required"]).toContain(status.status);
+    const recovered = await recoverMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture));
+    expect(recovered.phase).toBe("restored");
+    await expect(recoverMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture))).resolves.toMatchObject({ phase: "restored" });
+    expect(await attestMasGateRuntimeRoot(fixture.runtime, { requireOwnerUid: true })).toEqual(
+      recovered.priorAggregateAttestation,
+    );
   });
 
   it.each([
     "journal-published",
     "active-journal-published",
     "rename-active-publish",
+    "rename-reservation-intent-journaled",
+    "rename-reservation-journaled",
     "fresh-mkdir",
     "fresh-identity-journaled",
     "rename-quarantine",
@@ -161,19 +160,180 @@ describe("MAS runtime-root preservation transaction", () => {
     expect(await attestMasGateRuntimeRoot(fixture.runtime, { requireOwnerUid: true })).toEqual(before);
   });
 
-  it("retains an unjournaled active construction after a mkdir crash and fails closed with recovery guidance", async () => {
+  it("recovers a construction directory created before its first directory journal", async () => {
     const fixture = await createFixture({ prior: true });
     await expect(begin(fixture, { faultAt: "active-mkdir" })).rejects.toMatchObject({ code: MAS_GATE_CLEANUP_DIAGNOSTIC_CODE });
-    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).rejects.toThrow(/construction transaction journal is missing/);
+    const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+    expect(status).toMatchObject({ status: "recovery-required", phase: "construction-intent" });
+    expect(status.journalPath).toMatch(/\.active-intent$/u);
     const entries = await readdir(fixture.parent);
     expect(entries.some((name) => name.endsWith(".active-building"))).toBe(true);
+    expect(await readdir(status.constructionPath)).toEqual([]);
+    const recovered = await recoverMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture));
+    expect(recovered.phase).toBe("restored");
     await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+  });
+
+  it("uses no-replace reservations for every root rename destination", async () => {
+    const activePublication = await createFixture({ prior: true });
+    let activeCollisionPath = "";
+    await expect(begin(activePublication, {
+      beforeRenameReservation: async ({ label, target }: { label: string; target: string }) => {
+        if (label === "active transaction publish rename") {
+          activeCollisionPath = target;
+          await createTargetCollision(target, "keep active target\n");
+        }
+      },
+    })).rejects.toThrow(/newly appearing bytes|reserve|replacement/);
+    expect(activeCollisionPath).not.toBe("");
+    await expect(readFile(path.join(activeCollisionPath, "collision"), "utf8")).resolves.toBe("keep active target\n");
+    await expect(readFile(path.join(activePublication.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+
+    const quarantine = await createFixture({ prior: true });
+    let quarantineCollisionPath = "";
+    await expect(begin(quarantine, {
+      beforeRenameReservation: async ({ label, target }: { label: string; target: string }) => {
+        if (label === "runtime quarantine rename") {
+          quarantineCollisionPath = target;
+          await createTargetCollision(target, "keep quarantine target\n");
+        }
+      },
+    })).rejects.toThrow(/newly appearing bytes|reserve|replacement/);
+    expect(quarantineCollisionPath).not.toBe("");
+    await expect(readFile(path.join(quarantineCollisionPath, "collision"), "utf8")).resolves.toBe("keep quarantine target\n");
+    await expect(readFile(path.join(quarantine.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+
+    const freshDetach = await createFixture({ prior: true });
+    const freshTransaction = await begin(freshDetach);
+    await writeFile(path.join(freshDetach.runtime, "fresh.txt"), "fresh\n");
+    let freshCollisionPath = "";
+    await expect(restoreMasGateSessionTransaction(freshTransaction, runtimeOptions(freshDetach, {
+      beforeRenameReservation: async ({ label, target }: { label: string; target: string }) => {
+        if (label === "fresh runtime detach rename") {
+          freshCollisionPath = target;
+          await createTargetCollision(target, "keep fresh target\n");
+        }
+      },
+    }))).rejects.toThrow(/newly appearing bytes|reserve|replacement/);
+    expect(freshCollisionPath).not.toBe("");
+    await expect(readFile(path.join(freshCollisionPath, "collision"), "utf8")).resolves.toBe("keep fresh target\n");
+    await expect(readFile(path.join(freshDetach.runtime, "fresh.txt"), "utf8")).resolves.toBe("fresh\n");
+
+    const priorRestore = await createFixture({ prior: true });
+    const priorTransaction = await begin(priorRestore);
+    let priorCollisionPath = "";
+    await expect(restoreMasGateSessionTransaction(priorTransaction, runtimeOptions(priorRestore, {
+      beforeRenameReservation: async ({ label, target }: { label: string; target: string }) => {
+        if (label === "prior runtime restore rename") {
+          priorCollisionPath = target;
+          await createTargetCollision(target, "keep canonical target\n");
+        }
+      },
+    }))).rejects.toThrow(/newly appearing bytes|reserve|replacement/);
+    expect(priorCollisionPath).not.toBe("");
+    await expect(readFile(path.join(priorCollisionPath, "collision"), "utf8")).resolves.toBe("keep canonical target\n");
+    await expect(readFile(path.join(priorRestore.runtime, "opaque.bin"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(path.join(priorTransaction.quarantinePath, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+
+    const archive = await createFixture({ prior: true });
+    const archiveTransaction = await begin(archive);
+    await restoreMasGateSessionTransaction(archiveTransaction, runtimeOptions(archive));
+    let archiveCollisionPath = "";
+    await expect(archiveMasGateSessionTransaction(archiveTransaction, runtimeOptions(archive, {
+      beforeRenameReservation: async ({ label, target }: { label: string; target: string }) => {
+        if (label === "completed session archive rename") {
+          archiveCollisionPath = target;
+          await createTargetCollision(target, "keep archive target\n");
+        }
+      },
+    }))).rejects.toThrow(/newly appearing bytes|reserve|replacement/);
+    expect(archiveCollisionPath).not.toBe("");
+    await expect(readFile(path.join(archiveCollisionPath, "collision"), "utf8")).resolves.toBe("keep archive target\n");
+    await expect(readFile(path.join(archive.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+  });
+
+  it("refuses bytes injected after each destination reservation and retains both sides", async () => {
+    const active = await createFixture({ prior: true });
+    let activeTarget = "";
+    await expect(begin(active, {
+      beforeRename: async ({ label, target }: { label: string; target: string }) => {
+        if (label === "active transaction publish rename") {
+          activeTarget = target;
+          await writeFile(path.join(target, "collision"), "keep active target\n", { mode: 0o600 });
+        }
+      },
+    })).rejects.toThrow(/newly appearing bytes/);
+    expect(activeTarget).not.toBe("");
+    await expect(readFile(path.join(activeTarget, "collision"), "utf8")).resolves.toBe("keep active target\n");
+    await expect(readFile(path.join(active.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+
+    const quarantine = await createFixture({ prior: true });
+    let quarantineTarget = "";
+    await expect(begin(quarantine, {
+      beforeRename: async ({ label, target }: { label: string; target: string }) => {
+        if (label === "runtime quarantine rename") {
+          quarantineTarget = target;
+          await writeFile(path.join(target, "collision"), "keep quarantine target\n", { mode: 0o600 });
+        }
+      },
+    })).rejects.toThrow(/newly appearing bytes/);
+    expect(quarantineTarget).not.toBe("");
+    await expect(readFile(path.join(quarantineTarget, "collision"), "utf8")).resolves.toBe("keep quarantine target\n");
+    await expect(readFile(path.join(quarantine.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+
+    const freshDetach = await createFixture({ prior: true });
+    const freshTransaction = await begin(freshDetach);
+    await writeFile(path.join(freshDetach.runtime, "fresh.txt"), "fresh\n");
+    let freshTarget = "";
+    await expect(restoreMasGateSessionTransaction(freshTransaction, runtimeOptions(freshDetach, {
+      beforeRename: async ({ label, target }: { label: string; target: string }) => {
+        if (label === "fresh runtime detach rename") {
+          freshTarget = target;
+          await writeFile(path.join(target, "collision"), "keep fresh target\n", { mode: 0o600 });
+        }
+      },
+    }))).rejects.toThrow(/newly appearing bytes/);
+    expect(freshTarget).not.toBe("");
+    await expect(readFile(path.join(freshTarget, "collision"), "utf8")).resolves.toBe("keep fresh target\n");
+    await expect(readFile(path.join(freshDetach.runtime, "fresh.txt"), "utf8")).resolves.toBe("fresh\n");
+
+    const priorRestore = await createFixture({ prior: true });
+    const priorTransaction = await begin(priorRestore);
+    let priorTarget = "";
+    await expect(restoreMasGateSessionTransaction(priorTransaction, runtimeOptions(priorRestore, {
+      beforeRename: async ({ label, target }: { label: string; target: string }) => {
+        if (label === "prior runtime restore rename") {
+          priorTarget = target;
+          await writeFile(path.join(target, "collision"), "keep canonical target\n", { mode: 0o600 });
+        }
+      },
+    }))).rejects.toThrow(/newly appearing bytes/);
+    expect(priorTarget).not.toBe("");
+    await expect(readFile(path.join(priorTarget, "collision"), "utf8")).resolves.toBe("keep canonical target\n");
+    await expect(readFile(path.join(priorTransaction.quarantinePath, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+
+    const archive = await createFixture({ prior: true });
+    const archiveTransaction = await begin(archive);
+    await restoreMasGateSessionTransaction(archiveTransaction, runtimeOptions(archive));
+    let archiveTarget = "";
+    await expect(archiveMasGateSessionTransaction(archiveTransaction, runtimeOptions(archive, {
+      beforeRename: async ({ label, target }: { label: string; target: string }) => {
+        if (label === "completed session archive rename") {
+          archiveTarget = target;
+          await writeFile(path.join(target, "collision"), "keep archive target\n", { mode: 0o600 });
+        }
+      },
+    }))).rejects.toThrow(/newly appearing bytes/);
+    expect(archiveTarget).not.toBe("");
+    await expect(readFile(path.join(archiveTarget, "collision"), "utf8")).resolves.toBe("keep archive target\n");
+    await expect(readFile(path.join(archive.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
   });
 
   it("rejects an active transaction whose sibling directory mode changed", async () => {
     const fixture = await createFixture({ prior: true });
     await expect(begin(fixture, { faultAt: "prepared" })).rejects.toThrow(/injected MAS gate session/);
-    await chmod(path.join(fixture.parent, ".meetless-mas-gate-session.active"), 0o755);
+    const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+    await chmod(status.constructionPath, 0o755);
     await expect(readMasGateSessionStatus(runtimeOptions(fixture))).rejects.toThrow(/secure directory/);
     await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
   });
@@ -255,8 +415,24 @@ describe("MAS runtime-root preservation transaction", () => {
     const fixture = await createFixture({ prior: true });
     const result = await runHardExitBegin(fixture, "active-mkdir");
     expect(result.signal).toBe("SIGKILL");
-    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).rejects.toThrow(/construction transaction journal is missing/);
+    const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+    expect(status).toMatchObject({ status: "recovery-required", phase: "construction-intent" });
+    expect(status.journalPath).toMatch(/\.active-intent$/u);
+    const recovered = await recoverMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture));
+    expect(recovered.phase).toBe("restored");
     await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+  });
+
+  it("retains both roots and reports an actionable ambiguity after a reservation mkdir SIGKILL", async () => {
+    const fixture = await createFixture({ prior: true });
+    const result = await runHardExitBegin(fixture, "rename-reservation-mkdir");
+    expect(result.signal).toBe("SIGKILL");
+    const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+    expect(status).toMatchObject({ status: "recovery-required", phase: "prepared" });
+    await expect(recoverMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture))).rejects.toThrow(/both the fixed active transaction slot/);
+    await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+    await expect(readdir(status.constructionPath)).resolves.not.toHaveLength(0);
+    await expect(readdir(status.activePath)).resolves.toEqual([]);
   });
 
   it.each(["rename-fresh-retained", "rename-prior-restore"]) (
@@ -507,8 +683,12 @@ describe("MAS runtime-root preservation transaction", () => {
     expect(coordinatorSource).toContain("macAppStoreInstallationContract");
     expect(coordinatorSource).toContain("acquireMasGateLock");
     expect(coordinatorSource).toContain("restoreInRequiredOrder");
-    expect(coordinatorSource).toContain("MEETLESS_RUNTIME_ROOT: context.runtimeRoot");
-    expect(coordinatorSource).toContain("+D\", context.runtimeRoot");
+    expect(coordinatorSource).toContain("inspectNativeArgumentVector");
+    expect(coordinatorSource).toContain("daemon-worker.js");
+    expect(coordinatorSource).toContain("Paseo Supervisor");
+    expect(coordinatorSource).toContain("Paseo Daemon");
+    expect(coordinatorSource).toContain("validateMasDevelopmentArtifact");
+    expect(coordinatorSource).toContain("--manifest=");
     expect(cliSource).toContain("masDevelopmentRuntimeContext");
     expect(cliSource).toContain("restoreMasDevelopmentGate");
     expect(nativeSource).not.toMatch(/removeItem\([^)]*runtimeRoot[^)]*recursive/su);
@@ -520,8 +700,8 @@ describe("MAS runtime-root preservation transaction", () => {
       expect(source).toContain("MEETLESS_RUNTIME_ROOT");
       expect(source).not.toContain("MEETLESS_RUNTIME_ROOT === undefined");
     }
-    expect(stopperSource).toContain("MEETLESS_MAS_COORDINATOR_AUTHORITY");
-    expect(coordinatorSource).toContain("MEETLESS_MAS_COORDINATOR_AUTHORITY: MAS_GATE_COORDINATOR_SCHEMA");
+    expect(stopperSource).not.toContain("MEETLESS_MAS_COORDINATOR_AUTHORITY");
+    expect(coordinatorSource).not.toContain("MEETLESS_MAS_COORDINATOR_AUTHORITY");
     expect(cliSource).toContain("required-free-bytes");
   });
 });
@@ -631,4 +811,9 @@ async function createFixture({ prior }: { prior: boolean }): Promise<Fixture> {
     await chmod(runtime, 0o750);
   }
   return { base, parent, runtime, identityPath };
+}
+
+async function createTargetCollision(target: string, contents: string) {
+  await mkdir(target, { mode: 0o700 });
+  await writeFile(path.join(target, "collision"), contents, { mode: 0o600 });
 }

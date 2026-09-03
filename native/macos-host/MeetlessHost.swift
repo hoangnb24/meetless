@@ -18,6 +18,7 @@ private let meetlessAppStoreRuntimeRootRelativePath = "\(meetlessAppStoreContain
 private let meetlessAppStoreRecordingExportsRelativePath = "\(meetlessAppStoreContainerSupportRelativePath)/Meetless/recordings"
 private let meetlessMasGateLockFilename = ".meetless-mas-gate.lock"
 private let meetlessMasGateActiveFilename = ".meetless-mas-gate-session.active"
+private let meetlessMasGateActiveIntentSuffix = ".active-intent"
 private let meetlessMasGateHandoffFilename = "host-handoff.json"
 private let meetlessMasGateTransactionSchema = "MAS_GATE_SESSION_TRANSACTION v1"
 private let meetlessMasGateHandoffSchema = "MAS_GATE_HOST_HANDOFF v1"
@@ -220,6 +221,7 @@ private struct MasGateSessionJournal: Decodable {
   let lockPath: String
   let activePath: String
   let constructionPath: String
+  let constructionIntentPath: String?
   let quarantinePath: String
   let freshRetainedPath: String
   let archivePath: String?
@@ -1203,6 +1205,8 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).quarantine").path
     let expectedConstructionPath = URL(fileURLWithPath: parentPath)
       .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).active-building").path
+    let expectedConstructionIntentPath = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId)\(meetlessMasGateActiveIntentSuffix)").path
     let expectedFreshRetainedPath = URL(fileURLWithPath: parentPath)
       .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).fresh-retained").path
     let expectedArchivePath = URL(fileURLWithPath: parentPath)
@@ -1215,6 +1219,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
           journal.lockPath == URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateLockFilename).path,
           journal.activePath == activePath,
           journal.constructionPath == expectedConstructionPath,
+          journal.constructionIntentPath == expectedConstructionIntentPath,
           journal.quarantinePath == expectedQuarantinePath else {
       throw hostPreflightError("MAS active transaction journal is not bound to the exact runtime parent")
     }
@@ -1251,6 +1256,24 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       if name == meetlessMasGateActiveFilename {
         if activePresent { continue }
         throw hostPreflightError("the MAS active transaction appeared while the host was checking the sibling topology")
+      }
+      if name.hasSuffix(meetlessMasGateActiveIntentSuffix) {
+        let runID = String(name.dropFirst(".meetless-mas-gate-session.".count).dropLast(meetlessMasGateActiveIntentSuffix.count))
+        guard runID.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", options: .regularExpression) != nil else {
+          throw hostPreflightError("an active MAS construction intent has an invalid run ID")
+        }
+        let intentPath = URL(fileURLWithPath: parentPath).appendingPathComponent(name).path
+        if activeRunID == runID && activePresent {
+          try assertConstructionIntentMasTransactionArtifact(intentPath, runtimeRoot: runtimeRoot, parentPath: parentPath, runID: runID)
+          continue
+        }
+        let archivedPath = URL(fileURLWithPath: parentPath)
+          .appendingPathComponent(".meetless-mas-gate-session.\(runID).archived").path
+        if !activePresent && names.contains(URL(fileURLWithPath: archivedPath).lastPathComponent) {
+          try assertConstructionIntentMasTransactionArtifact(intentPath, runtimeRoot: runtimeRoot, parentPath: parentPath, runID: runID)
+          continue
+        }
+        throw hostPreflightError("an active MAS construction intent has no matching active or archived transaction")
       }
       if name.hasSuffix(".archived") {
         let runID = String(name.dropFirst(".meetless-mas-gate-session.".count).dropLast(".archived".count))
@@ -1293,6 +1316,36 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     guard resolved == path else { throw hostPreflightError("MAS quarantine root resolves through a symlink") }
   }
 
+  private func assertConstructionIntentMasTransactionArtifact(
+    _ intentPath: String,
+    runtimeRoot: String,
+    parentPath: String,
+    runID: String
+  ) throws {
+    try assertSecureFile(intentPath, label: "MAS construction intent journal")
+    let journal = try JSONDecoder().decode(
+      MasGateSessionJournal.self,
+      from: readRequiredData(intentPath, label: "MAS construction intent journal")
+    )
+    let expectedConstructionPath = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(runID).active-building").path
+    guard journal.schema == meetlessMasGateTransactionSchema,
+          journal.version == 1,
+          journal.ownerToken.range(of: "^[A-Za-z0-9_-]{40,80}$", options: .regularExpression) != nil,
+          journal.runId == runID,
+          journal.canonicalRuntimeRoot == runtimeRoot,
+          journal.parentPath == parentPath,
+          journal.lockPath == URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateLockFilename).path,
+          journal.activePath == URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateActiveFilename).path,
+          journal.constructionPath == expectedConstructionPath,
+          journal.constructionIntentPath == intentPath,
+          journal.stateScope == "runtime-root-only",
+          journal.phase == "construction-intent",
+          try lstatPath(expectedConstructionPath, label: "MAS construction directory") == nil else {
+      throw hostPreflightError("MAS construction intent is not bound to the exact empty construction window")
+    }
+  }
+
   private func assertArchivedMasTransactionArtifact(
     _ archivePath: String,
     runtimeRoot: String,
@@ -1320,6 +1373,8 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     )
     let expectedConstructionPath = URL(fileURLWithPath: parentPath)
       .appendingPathComponent(".meetless-mas-gate-session.\(runID).active-building").path
+    let expectedConstructionIntentPath = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(runID)\(meetlessMasGateActiveIntentSuffix)").path
     let expectedQuarantinePath = URL(fileURLWithPath: parentPath)
       .appendingPathComponent(".meetless-mas-gate-session.\(runID).quarantine").path
     let expectedFreshRetainedPath = URL(fileURLWithPath: parentPath)
@@ -1333,6 +1388,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
           journal.lockPath == URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateLockFilename).path,
           journal.activePath == URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateActiveFilename).path,
           journal.constructionPath == expectedConstructionPath,
+          journal.constructionIntentPath == expectedConstructionIntentPath,
           journal.quarantinePath == expectedQuarantinePath,
           journal.freshRetainedPath == expectedFreshRetainedPath,
           journal.archivePath == archivePath,

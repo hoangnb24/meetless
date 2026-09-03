@@ -11,6 +11,7 @@ export const MAS_GATE_LOCK_COMMAND = "/usr/bin/lockf";
 
 const modulePath = fileURLToPath(import.meta.url);
 const MAS_GATE_LOCK_LEASE = Symbol("MAS_GATE_LOCK_LEASE");
+const LIVE_MAS_GATE_LOCK_LEASES = new WeakSet();
 
 /**
  * Return the one stable kernel-lock path for a runtime-root parent. The lock
@@ -50,6 +51,7 @@ export async function acquireMasGateLock({ parentPath, blocking = false } = {}) 
     try {
       const lockIdentity = await assertHeldLockFile(lockPath, canonicalParent);
       lease.lockIdentity = lockIdentity;
+      Object.freeze(lease);
       return lease;
     } catch (error) {
       await lease.release();
@@ -64,15 +66,21 @@ export async function acquireMasGateLock({ parentPath, blocking = false } = {}) 
 export async function withMasGateLock(options, operation) {
   if (typeof operation !== "function") throw new Error("MAS gate lock operation must be a function");
   const supplied = options?.lockLease;
-  if (supplied && supplied[MAS_GATE_LOCK_LEASE] !== true) {
+  if (supplied && !LIVE_MAS_GATE_LOCK_LEASES.has(supplied)) {
     throw lockFailure(String(options?.parentPath ?? "<unknown>"), "the supplied MAS gate lock lease is not kernel-backed");
   }
   const lease = supplied ?? await acquireMasGateLock(options);
-  if (!lease || typeof lease.release !== "function" || lease.lockPath !== masGateLockPath(options.parentPath)) {
-    throw new Error("MAS gate lock lease is not bound to the exact runtime-root parent");
+  if (!lease || !LIVE_MAS_GATE_LOCK_LEASES.has(lease) || typeof lease.release !== "function" || typeof lease.assertHeld !== "function" ||
+      lease.lockPath !== masGateLockPath(options.parentPath)) {
+    throw lockFailure(String(options?.parentPath ?? "<unknown>"), "the supplied MAS gate lock lease is not bound to the exact live holder and runtime-root parent");
   }
   let ownsLease = !supplied;
   try {
+    // A caller-supplied object can retain the lock-file inode after its
+    // kernel lease has been released or its holder has died.  The live
+    // holder assertion is part of the lease contract, before any caller
+    // operation is allowed to inspect or mutate transaction state.
+    await lease.assertHeld();
     await assertHeldLockFile(lease.lockPath, canonicalAbsolute(options.parentPath, "MAS gate lock parent"), lease.lockIdentity);
     return await operation(lease);
   } finally {
@@ -84,10 +92,10 @@ export async function withMasGateLock(options, operation) {
 }
 
 export async function writeMasGateLockMetadata(lease, metadata) {
-  if (!lease || lease[MAS_GATE_LOCK_LEASE] !== true || typeof lease.lockPath !== "string" || typeof lease.assertHeld !== "function") {
+  if (!lease || !LIVE_MAS_GATE_LOCK_LEASES.has(lease) || typeof lease.lockPath !== "string" || typeof lease.assertHeld !== "function") {
     throw new Error("MAS gate lock metadata requires a live lock lease");
   }
-  lease.assertHeld();
+  await lease.assertHeld();
   await assertHeldLockFile(lease.lockPath, path.dirname(lease.lockPath), lease.lockIdentity);
   const bytes = Buffer.from(`${JSON.stringify({ schema: MAS_GATE_LOCK_SCHEMA, ...metadata })}\n`);
   const handle = await open(lease.lockPath, fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW);
@@ -105,6 +113,9 @@ async function waitForLock(child, lockPath) {
   let settled = false;
   let stdout = "";
   let stderr = "";
+  let protocolBuffer = "";
+  let holderProcessExited = false;
+  const pendingAssertions = [];
   let resolveReady;
   let rejectReady;
   const readyPromise = new Promise((resolve, reject) => {
@@ -115,9 +126,16 @@ async function waitForLock(child, lockPath) {
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
     stdout += chunk;
-    if (!ready && stdout.split("\n").includes("locked")) {
-      ready = true;
-      resolveReady();
+    protocolBuffer += chunk;
+    const lines = protocolBuffer.split("\n");
+    protocolBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!ready && line === "locked") {
+        ready = true;
+        resolveReady();
+      } else if (line === "asserted") {
+        pendingAssertions.shift()?.resolve();
+      }
     }
   });
   child.stderr.on("data", (chunk) => { stderr += chunk; });
@@ -127,6 +145,10 @@ async function waitForLock(child, lockPath) {
     rejectReady(lockFailure(lockPath, `lockf could not start: ${error.message}`, error));
   });
   child.once("close", (code, signal) => {
+    holderProcessExited = true;
+    for (const pending of pendingAssertions.splice(0)) {
+      pending.reject(lockFailure(lockPath, "the MAS gate lock holder exited during a live assertion"));
+    }
     if (ready) return;
     if (settled) return;
     settled = true;
@@ -136,14 +158,30 @@ async function waitForLock(child, lockPath) {
   await readyPromise;
 
   let released = false;
-  return {
+  const assertHeld = async () => {
+    if (released || holderProcessExited || child.exitCode !== null || child.signalCode !== null) {
+      throw lockFailure(lockPath, "the MAS gate lock lease is no longer held");
+    }
+    await assertKernelLockHeld(lockPath);
+    if (released || holderProcessExited || child.exitCode !== null || child.signalCode !== null) {
+      throw lockFailure(lockPath, "the MAS gate lock lease holder exited during assertion");
+    }
+    await new Promise((resolve, reject) => {
+      pendingAssertions.push({ resolve, reject });
+      child.stdin.write("assert\n", (error) => {
+        if (error) {
+          const index = pendingAssertions.findIndex((pending) => pending.resolve === resolve);
+          if (index >= 0) pendingAssertions.splice(index, 1);
+          reject(lockFailure(lockPath, `the MAS gate lock holder assertion could not be sent: ${error.message}`, error));
+        }
+      });
+    });
+  };
+  const lease = {
     [MAS_GATE_LOCK_LEASE]: true,
     lockPath,
-    assertHeld() {
-      if (released || child.exitCode !== null || child.signalCode !== null) {
-        throw lockFailure(lockPath, "the MAS gate lock lease is no longer held");
-      }
-    },
+    holderPid: child.pid,
+    assertHeld,
     async release() {
       if (released) return;
       released = true;
@@ -156,6 +194,31 @@ async function waitForLock(child, lockPath) {
       });
     },
   };
+  LIVE_MAS_GATE_LOCK_LEASES.add(lease);
+  return lease;
+}
+
+/**
+ * lockf(1) has no query operation for the current holder.  A non-blocking
+ * probe therefore proves that the lock remains held while the lease's own
+ * holder challenge below proves that this live lease is the holder.  A
+ * released or killed holder cannot authorize a filesystem operation merely
+ * because its lock-file inode still exists.
+ */
+async function assertKernelLockHeld(lockPath) {
+  const probe = spawn(MAS_GATE_LOCK_COMMAND, ["-t", "0", "-k", lockPath, "/usr/bin/true"], {
+    stdio: "ignore",
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+  });
+  const result = await new Promise((resolve, reject) => {
+    probe.once("error", reject);
+    probe.once("close", (code, signal) => resolve({ code, signal }));
+  });
+  if (result.code === 75) return;
+  throw lockFailure(
+    lockPath,
+    `the kernel lock is not held by this lease (probe exit ${result.code ?? "unknown"}${result.signal ? `/${result.signal}` : ""})`,
+  );
 }
 
 async function assertLockParent(parentPath) {
@@ -225,10 +288,18 @@ function lockFailure(lockPath, reason, cause) {
 function describe(error) { return error instanceof Error ? error.message : String(error); }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === modulePath && process.argv[2] === MAS_GATE_LOCK_HOLDER_ARGUMENT) {
+  const holderParentPid = process.ppid;
   process.stdout.write("locked\n");
   process.stdin.resume();
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk) => {
+    if (chunk.includes("assert")) {
+      if (process.ppid !== holderParentPid) {
+        process.stderr.write("lock holder parent exited\n");
+        process.exit(73);
+      }
+      process.stdout.write("asserted\n");
+    }
     if (chunk.includes("release")) process.exit(0);
   });
   process.stdin.on("end", () => process.exit(0));

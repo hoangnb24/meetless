@@ -98,9 +98,7 @@ async function assertDirectRuntimeTarget(runtimeRoot) {
   const lexicalRoot = path.resolve(runtimeRoot);
   const resolvedRoot = await resolvePathThroughExistingAncestor(lexicalRoot);
   const isProtectedMasPath = (candidate) => candidate === masRoot || candidate.startsWith(`${masRoot}${path.sep}`);
-  const isExactMasRoot = lexicalRoot === masRoot;
   if (isProtectedMasPath(lexicalRoot) || isProtectedMasPath(resolvedRoot ?? "")) {
-    if (isExactMasRoot && process.env.MEETLESS_MAS_COORDINATOR_AUTHORITY === "MAS_GATE_COORDINATOR v1") return;
     throw new Error(
       `runtime:host:stop refuses the MAS app-container runtime root ${masRoot}. ` +
       "Use npm run runtime:mas:development stop/restore so stop and absence are proved by the MAS coordinator. " +
