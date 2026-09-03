@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,6 +10,11 @@ import {
   serializeSortedJson,
   restorePackageTransaction,
 } from "../../../scripts/lib/macos-package-transaction.mjs";
+import {
+  archiveMasGateSessionTransaction,
+  beginMasGateSessionTransaction,
+  restoreMasGateSessionTransaction,
+} from "../../../scripts/lib/macos-mas-gate-session-transaction.mjs";
 
 const roots: string[] = [];
 
@@ -58,6 +63,66 @@ afterEach(async () => {
 });
 
 describe("macOS package replacement transaction", () => {
+  it("rolls back package identity before restoring the prior runtime root", async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-m7-composition-test-")));
+    roots.push(root);
+    const parent = path.join(root, "support");
+    const runtime = path.join(parent, "Meetless");
+    const identityPath = path.join(runtime, "host-identity.json");
+    const source = path.join(root, "source.app");
+    const target = path.join(root, "Applications", "Meetless.app");
+    await mkdir(path.join(runtime, "prior"), { recursive: true });
+    await writeFile(path.join(runtime, "prior", "opaque.txt"), "prior runtime\n");
+    await writeFile(identityPath, "prior identity\n");
+    const runtimeTransaction = await beginMasGateSessionTransaction({
+      runtimeRoot: runtime,
+      contractRuntimeRoot: runtime,
+      runtimeRootParent: parent,
+      identityRelativePath: "host-identity.json",
+      identityPath,
+      requiredFreeBytes: 1,
+      assertNoLiveOwnedRuntime: async () => false,
+    });
+    await mkdir(path.join(source, "Contents"), { recursive: true });
+    await writeFile(path.join(source, "Contents", "marker"), "candidate\n");
+    const packageTransaction = await replacePackageBundle({
+      source,
+      target,
+      identityPath,
+      ownerToken: "M7-composition-owner",
+      runId: newPackageTransactionId(),
+      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+    });
+    await expect(readFile(identityPath, "utf8")).resolves.toContain("com.meetless.app");
+
+    await restorePackageTransaction(packageTransaction, {
+      ownerToken: "M7-composition-owner",
+      target,
+      identityPath,
+    });
+    await expect(lstat(identityPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await restoreMasGateSessionTransaction(runtimeTransaction, {
+      runtimeRoot: runtime,
+      contractRuntimeRoot: runtime,
+      runtimeRootParent: parent,
+      activePath: runtimeTransaction.activePath,
+      identityRelativePath: "host-identity.json",
+      identityPath,
+      assertNoLiveOwnedRuntime: async () => false,
+    });
+    await expect(readFile(path.join(runtime, "prior", "opaque.txt"), "utf8")).resolves.toBe("prior runtime\n");
+    await expect(readFile(identityPath, "utf8")).resolves.toBe("prior identity\n");
+    await archiveMasGateSessionTransaction(runtimeTransaction, {
+      runtimeRoot: runtime,
+      contractRuntimeRoot: runtime,
+      runtimeRootParent: parent,
+      activePath: runtimeTransaction.activePath,
+      identityRelativePath: "host-identity.json",
+      identityPath,
+      assertNoLiveOwnedRuntime: async () => false,
+    });
+  });
+
   it("recovers replacement interruption at every published state", async () => {
     const root = await setup();
     const { source, target, identityPath } = root;

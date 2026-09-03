@@ -1,6 +1,6 @@
 # 0005 Distribute Meetless Through The Mac App Store With RevenueCat
 
-Date: 2026-08-30; amended 2026-08-31
+Date: 2026-08-30; amended 2026-09-03
 
 ## Status
 
@@ -178,6 +178,52 @@ authenticated host boundary. API keys, receipts, transaction details, and raw
 native errors do not enter ordinary logs or durable meeting state. RevenueCat's
 public Apple SDK key is supplied at build time and may be embedded in the app;
 secret keys are forbidden from the bundle and repository.
+
+### MAS runtime-root preservation
+
+The canonical app-container runtime root is one app-owned preservation unit.
+Repository-authorized MAS/package gate operations must never recursively delete
+that root or any subtree. A marker inside the root proves only that marker; it
+does not prove ownership of the surrounding state. The package transaction
+continues to own only the `/Applications` bundle and package identity.
+
+Before a gate writes runtime state, installs, or launches, a plain-data
+`MAS_GATE_SESSION_TRANSACTION v1` boundary must acquire its fixed sibling
+transaction slot, validate the exact contract-derived root and parent, reject
+symlink/path/device/ownership ambiguity, prove no live owned runtime through its
+caller-supplied adapter, and receive an explicit positive free-space requirement.
+It atomically renames the entire existing root into same-volume quarantine,
+creates a secure fresh root, and records intent and rename transitions in a
+journal outside the root with durable atomic writes. There is no copy fallback
+and no recursive removal in this boundary. Without a host lock protocol,
+unexpected concurrency is handled by retaining the roots and failing closed.
+
+After proven stop and package rollback, the boundary atomically detaches the
+fresh root to retained session evidence and restores the exact prior root or
+prior absence. The fresh root and journal remain retained by default. A
+completed session may later be archived by sibling rename to free the fixed
+active slot; deleting retained evidence is outside this decision and requires a
+separate owner-authorized policy. The journal and aggregate attestation record
+only the runtime-root transaction contract, metadata, file-byte digests, literal
+symlink targets, and hardlink equivalence needed to detect mutation; they do not
+record child inventories, credentials, receipts, or raw private content.
+
+This rollback claim is limited to the entire canonical runtime root. App-group
+state, Preferences/Caches outside that root, Keychain, TCC, StoreKit/RevenueCat,
+LaunchServices, and remote state are retained and reported; they are neither
+cleaned nor claimed rolled back by this transaction.
+
+### Attempt 12 incident classification
+
+Attempt 12 is classified as unrecoverable loss caused by an unauthorized shape
+of repository-authorized MAS cleanup: approximately 829 MB of attempt-created
+runtime state was mixed with approximately 37 MB of pre-existing state, and the
+aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner
+confirmed that no external or manual backup exists. No reconstruction is
+claimed. The attempt produced no accepted readiness evidence, all package,
+install, launch, and external gates remain closed, and no retry is authorized.
+The preservation boundary above is a lasting correction required before any
+future gate.
 
 ### R5 repository owner decisions
 

@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v62`
-- `current_frontier`: `R5-MAS-REGISTRATION-DIAGNOSTIC-PACKAGE-NODE-PROOF`
-- `state`: `R5_MAS_REGISTRATION_DIAGNOSTIC_PACKAGE_NODE_PROOF_PENDING_LEAD_REVIEW`
+- `plan_revision`: `v63`
+- `current_frontier`: `R5-MAS-RUNTIME-STATE-PRESERVATION-TRANSACTION`
+- `state`: `R5_MAS_RUNTIME_STATE_PRESERVATION_TRANSACTION_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable package-source Node proof correction from unaccepted exact parent `487f847cb00291e2fe64f991c62b183b89b2b18a` and original accepted base `5dd30f4acb8bcc0d9aaf79d9d2039d7630c6d964`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted identity serializer/proof, bounded registration diagnostics, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
-- `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
+- `candidate`: pending immutable MAS runtime-state preservation transaction correction from exact base `b3ff5ec83908201a40be9715df34c238d4eea498`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted package-source Node proof, identity serializer/proof, bounded registration diagnostics, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
+- `authority_contract_sha256`: `e5c5cfa6a7802cd88701918902b6a0e70d31518cc6210cef3aad93f38a3a8be5` (ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `failed_proof`: Attempt 11 retained root `/private/tmp/meetless-mas-development-proof.TmI7ud` has manifest SHA-256 `93cc1e289c487b34d28ba77e60e7163a390b3b38bb346f532d5255b34552d8c5`. Host PID `14710` reached runtime creation but no accepted D/S/W/P; registration returned a generic rejection, and recovery first observed a byte mismatch before successful exact-byte restoration. No external gate was opened.
-- `pending_ruling`: the native real-Node fixture consumes and proves the exact `process.execPath` source used by `package-macos.mjs`, while the accepted registration diagnostics and identity serializer/proof remain unchanged. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
+- `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
+- `pending_ruling`: the new plain-data runtime-root transaction must be Lead-reviewed before any future package, install, launch, or external gate. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
 - `blocked_by`: no safe in-scope implementation dependency remains; no package, sign, install, launch, or external result is accepted by this candidate.
-- `next_action`: Lead reviews and accepts or rejects the immutable child of `487f847cb00291e2fe64f991c62b183b89b2b18a`; only after acceptance may a separately authorized external gate be considered.
+- `next_action`: Lead reviews and accepts or rejects the immutable child of exact base `b3ff5ec83908201a40be9715df34c238d4eea498`; only after acceptance and a new explicit owner gate may any future package/install/launch attempt be considered.
 
 ## Ownership And Authority
 
@@ -1475,6 +1475,64 @@ enforcement is observed; no configured executable local hook or checked-in CI
 invocation was found, and branch-protection enforcement remains externally
 unverified. Authority digest remains
 `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`.
+
+### R5 MAS runtime-state preservation transaction (2026-09-03; current frontier)
+
+`PLAN_RECONCILIATION v63` records the owner-confirmed Attempt 12 incident and
+the binding correction for `R5-MAS-RUNTIME-STATE-PRESERVATION-TRANSACTION`.
+Attempt 12 used a marker-authorized recursive runtime cleanup shape that mixed
+approximately 829 MB of attempt-created state with approximately 37 MB of
+pre-existing MAS state; the aggregate fell from approximately 37,632 KB to
+approximately 24 KB. Its artifact root was
+`/private/tmp/meetless-mas-development-proof.pwHECm`, its manifest SHA-256 was
+`3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, its
+launch PID was `18597`, and its brief record was `16777/no 18082`. No
+accepted readiness was established. The owner confirmed no external/manual
+backup; the loss is unrecoverable and no reconstruction is claimed. Package,
+install, launch, and external gates remain closed, and no retry is authorized.
+
+The accepted correction treats the entire exact contract-derived app-container
+runtime root as one preservation unit. `MAS_GATE_SESSION_TRANSACTION v1` uses a
+fixed sibling active slot and durable journal outside the root, validates the
+exact root/parent/identity binding, current ownership, same-device topology,
+no-live-runtime adapter, and explicit positive free-space input, then atomically
+renames the whole prior root into same-volume quarantine. It creates a secure
+fresh root with identity absent, lets the existing package transaction continue
+to own only the bundle and identity, and restores only after package rollback
+and proven stop. Recovery is monotonic and idempotent; fresh state and the
+journal are retained, while the prior root or prior absence is restored. A
+completed session is archived by sibling rename only; retained-evidence garbage
+collection is not part of this frontier.
+
+The aggregate attestation is lstat-based and covers file-byte digests, literal
+symlink targets, type/metadata, device/inode/link metadata, and internal
+hardlink equivalence without recording child inventories, secrets, receipts,
+or cache names. Special files, nested device changes, path aliases, symlinks,
+root swaps, owner/device/inode/attestation changes, live processes, insufficient
+space, filesystem rename errors, malformed/non-monotonic journals, and both or
+neither terminal roots fail closed while retaining remaining bytes. The claim
+is runtime-root-only: app-group state, Preferences/Caches outside the root,
+Keychain, TCC, StoreKit/RevenueCat, LaunchServices, and remote state are
+retained/reported and never cleaned or claimed rolled back. Repository-owned
+proof runners no longer recursively remove their marker-checked runtime root;
+external export deletion keeps its existing exact lease boundary. The canonical
+CLI derives the MAS app-container root from the checked-in contract and requires
+an explicit free-space input for `begin`; `status`, `recover`, `restore`, and
+`archive` preserve the fixed active slot/evidence boundary. Arbitrary same-UID
+shell deletion remains outside repository enforcement.
+
+Personally observed repository proof for this candidate includes 34 focused
+transaction/package tests, including opaque metadata/symlink/hardlink state,
+prior absence, stale markers, every journal/rename/mkdir/detach/restore/archive
+fault point, subprocess hard-exit recovery, root/journal/path/identity/live/
+space/filesystem-error negatives, and structural rejection of recursive
+runtime cleanup in both proof runners. The new authority digest is
+`e5c5cfa6a7802cd88701918902b6a0e70d31518cc6210cef3aad93f38a3a8be5`, replacing
+the previously recorded `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`;
+the new value is the SHA-256 of the ordered path/hash manifest for ADR0003,
+amended ADR0005, product monetization, and macOS artifact-validation authority.
+The immutable candidate is pending Lead review from exact base
+`b3ff5ec83908201a40be9715df34c238d4eea498`.
 
 ### Risks And Recovery
 

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { existsSync as pathExists, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -8,6 +8,14 @@ import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateMacOSPackage } from "./validate-macos-package.mjs";
 import { inspectHostBundle } from "../packages/runtime/dist/host.js";
+import {
+  archiveMasGateSessionTransaction,
+  assertMasGateSessionReady,
+  beginMasGateSessionTransaction,
+  readMasGateSessionStatus,
+  recoverMasGateSessionTransaction,
+  restoreMasGateSessionTransaction,
+} from "./lib/macos-mas-gate-session-transaction.mjs";
 import {
   fingerprintPath,
   newPackageTransactionId,
@@ -17,11 +25,16 @@ import {
   replacePackageBundle,
   restorePackageTransaction,
 } from "./lib/macos-package-transaction.mjs";
-import { MACOS_PACKAGE_RENDERER_ORIGIN, acceptedMacOSPackagePaths } from "./lib/macos-package-contract.mjs";
+import {
+  MACOS_INSTALLATION_CONTRACT,
+  MACOS_PACKAGE_RENDERER_ORIGIN,
+  acceptedMacOSPackagePaths,
+} from "./lib/macos-package-contract.mjs";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const manifestPath = path.resolve(process.argv[2] ?? path.join(repositoryRoot, "release/macos/composition-manifest.json"));
+const manifestArgument = process.argv.slice(2).find((argument) => !argument.startsWith("--"));
+const manifestPath = path.resolve(manifestArgument ?? path.join(repositoryRoot, "release/macos/composition-manifest.json"));
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 const releaseRoot = path.dirname(manifestPath);
 const candidateBundle = path.resolve(releaseRoot, manifest.bundlePath);
@@ -36,6 +49,7 @@ const proofOwnerPrefix = "MEETLESS_M7_PACKAGE_PROOF_v1:";
 const proofRunId = randomUUID();
 const proofOwner = `${proofOwnerPrefix}${proofRunId}`;
 const packageRuntimeOwnerPath = path.join(runtimeRoot, "package-proof-owner.json");
+const requiredFreeBytes = readRequiredFreeBytes(process.argv.slice(2));
 
 const lockHeld = await acquireProofLock();
 if (lockHeld) await main();
@@ -69,6 +83,7 @@ async function main() {
   assertNoExactHost(canonicalBundle);
   assertNoUnrelatedHost(canonicalBundle);
   await recoverStaleProofTransactions();
+  await recoverStaleMasGateSession();
   const validation = await validateMacOSPackage(manifestPath, {
     repositoryRoot,
     signingMode: "local-ad-hoc",
@@ -91,6 +106,7 @@ async function main() {
   let cleanupError = null;
   let stopSucceeded = false;
   let runtimePrepared = false;
+  let runtimeSession = null;
   let defaultAfter = null;
   let topology = null;
   let readiness = null;
@@ -99,8 +115,10 @@ async function main() {
   let sentinelAfter = null;
   let installed = null;
   try {
-    await prepareProofRuntime();
+    runtimeSession = await beginMasGateSessionTransaction(runtimeSessionOptions());
     runtimePrepared = true;
+    await prepareProofRuntime();
+    await assertMasGateSessionReady(runtimeSession, runtimeSessionOptions());
     await proveTransactionRecovery();
 
     const replacementRunId = newPackageTransactionId();
@@ -215,15 +233,17 @@ async function main() {
       );
     }
 
-    if (safeToRestore && !transaction && runtimePrepared) {
+    if (safeToRestore && !transaction && runtimePrepared && runtimeSession) {
       try {
-        await removeProofRuntime();
+        await restoreMasGateSessionTransaction(runtimeSession, runtimeSessionOptions());
+        await archiveMasGateSessionTransaction(runtimeSession, runtimeSessionOptions());
         runtimePrepared = false;
+        runtimeSession = null;
       } catch (error) {
         cleanupError ??= error;
       }
     } else if (runtimePrepared && !cleanupError) {
-      cleanupError = new Error("package proof runtime was left in place because the stop/ownership guard was not proven");
+      cleanupError = new Error("package proof runtime preservation session was left active because the stop/ownership guard was not proven");
     }
 
     try {
@@ -235,7 +255,7 @@ async function main() {
 
   if (primaryError) throw primaryError;
   if (cleanupError) throw cleanupError;
-  if (!transaction && !runtimePrepared && stopSucceeded) {
+  if (!transaction && !runtimePrepared && !runtimeSession && stopSucceeded) {
     const result = {
       status: "passed",
       artifactDigest: validation.artifactDigest,
@@ -253,7 +273,8 @@ async function main() {
         pluginSource: readiness.daemonPlugin.sourcePath,
       },
       renderer: rendererProof,
-      recovery: "transaction interruption and replacement recovery passed in isolated temp roots; canonical artifact restored byte-for-byte",
+      recovery: "transaction interruption and replacement recovery passed in isolated temp roots; canonical artifact and prior runtime root restored byte-for-byte while the fresh run root and journal were retained",
+      runtimeRootPreserved: true,
       defaultStoreUnchanged: true,
       defaultExportsUnchanged: true,
       isolatedProofStateUnchanged: true,
@@ -293,15 +314,38 @@ async function exists(candidate) {
   return pathExists(candidate);
 }
 
-async function prepareProofRuntime() {
-  if (await exists(runtimeRoot)) {
-    const owner = await readFile(packageRuntimeOwnerPath, "utf8").then((value) => JSON.parse(value), () => null);
-    if (!owner || owner.schema !== "MEETLESS_M7_PACKAGE_PROOF_RUNTIME_v1" || owner.ownerToken?.startsWith(proofOwnerPrefix) !== true) {
-      throw new Error(`Refusing to remove unowned package proof runtime ${runtimeRoot}`);
-    }
-    assertNoPackagedRuntimeProcesses();
-    await rm(runtimeRoot, { recursive: true, force: true });
+function runtimeSessionOptions() {
+  return {
+    runtimeRoot,
+    contractRuntimeRoot: runtimeRoot,
+    runtimeRootParent: path.dirname(runtimeRoot),
+    activePath: path.join(path.dirname(runtimeRoot), ".meetless-mas-gate-session.active"),
+    identityRelativePath: MACOS_INSTALLATION_CONTRACT.identityRelativePath,
+    identityPath,
+    requiredFreeBytes,
+    assertNoLiveOwnedRuntime: async () => {
+      assertNoExactHost(canonicalBundle);
+      assertNoPackagedRuntimeProcesses();
+      return false;
+    },
+  };
+}
+
+async function recoverStaleMasGateSession() {
+  const status = await readMasGateSessionStatus(runtimeSessionOptions());
+  if (status.status !== "active" && status.status !== "recovery-required") return;
+  const recovered = await recoverMasGateSessionTransaction(status.journalPath, runtimeSessionOptions());
+  if (recovered.phase === "restored") {
+    await archiveMasGateSessionTransaction(recovered, runtimeSessionOptions());
   }
+}
+
+async function prepareProofRuntime() {
+  const root = await lstatRuntimeRoot();
+  if ((root.mode & 0o777) !== 0o700 || root.uid !== currentUid()) {
+    throw new Error(`fresh package proof runtime is not a secure exact-run root: ${runtimeRoot}`);
+  }
+  if (await exists(identityPath)) throw new Error(`package proof identity path was not absent in the fresh runtime: ${identityPath}`);
   await mkdir(path.join(runtimeRoot, "meeting-store"), { recursive: true, mode: 0o700 });
   await writeFile(packageRuntimeOwnerPath, `${JSON.stringify({
     schema: "MEETLESS_M7_PACKAGE_PROOF_RUNTIME_v1",
@@ -316,19 +360,12 @@ async function seedIsolatedProofState() {
   return readFile(path.join(runtimeRoot, "meeting-store", "M7-proof-sentinel.txt"));
 }
 
-async function removeProofRuntime() {
-  if (!(await exists(runtimeRoot))) return;
-  const owner = JSON.parse(await readFile(packageRuntimeOwnerPath, "utf8"));
-  if (
-    owner.schema !== "MEETLESS_M7_PACKAGE_PROOF_RUNTIME_v1" ||
-    owner.ownerToken !== proofOwner ||
-    owner.runtimeRoot !== runtimeRoot
-  ) {
-    throw new Error(`Refusing to remove unowned package proof runtime ${runtimeRoot}`);
-  }
-  assertNoExactHost(canonicalBundle);
-  assertNoPackagedRuntimeProcesses();
-  await rm(runtimeRoot, { recursive: true, force: true });
+async function lstatRuntimeRoot() {
+  const inspected = await lstat(runtimeRoot).catch((error) => {
+    throw new Error(`fresh package proof runtime is unavailable at ${runtimeRoot}: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  if (inspected.isSymbolicLink() || !inspected.isDirectory()) throw new Error(`fresh package proof runtime is not one directory: ${runtimeRoot}`);
+  return inspected;
 }
 
 async function proveTransactionRecovery() {
@@ -578,4 +615,20 @@ function delay(milliseconds) {
 
 function message(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function currentUid() {
+  if (typeof process.getuid !== "function") throw new Error("package proof requires process UID support");
+  return process.getuid();
+}
+
+function readRequiredFreeBytes(arguments_) {
+  const argument = arguments_.find((value) => value.startsWith("--required-free-bytes="));
+  if (argument === undefined) return undefined;
+  const raw = argument.slice("--required-free-bytes=".length);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("--required-free-bytes must be an explicit positive integer; no disk budget is selected by this proof runner");
+  }
+  return value;
 }
