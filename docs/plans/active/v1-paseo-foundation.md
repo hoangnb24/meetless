@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v67`
-- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-13`
-- `state`: `OWNER_AUTHORIZED_PENDING_SERIAL_OPERATOR`
+- `plan_revision`: `v68`
+- `current_frontier`: `R5-MAS-SERIAL-PREFLIGHT-CORRECTION`
+- `state`: `PEER_READY_FOR_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead-accepted MAS runtime-state and artifact-binding correction `ca26b6c045bbbb1c86aa46b2a0a0966205d645cd`, exact child of `103a7a777c7b3cf61570cc971bec117cb18de8ad` and descendant of the original family base `8c6efffeb05a53100044aea8fbcf85e74304afee`. The historical rejected closeout base is `975db2cc93c827fec24d58f361e94edd3dce84e8`; the original convergence base is `4a32dfe8d8979e956dc6501334971363279de2bd`; the prior accepted base was `b3ff5ec83908201a40be9715df34c238d4eea498`. The accepted package-source Node proof, identity serializer/proof, bounded registration diagnostics, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
+- `candidate`: bounded serial-preflight correction from exact base/current HEAD `3b68fb22c4453b2e66e6da934e44387c3d6e0964`, retaining accepted implementation ancestor `ca26b6c045bbbb1c86aa46b2a0a0966205d645cd`. The immutable candidate commit is reported by `PEER_DISPOSITION v1`; the prior accepted package-source Node proof, identity serializer/proof, bounded registration diagnostics, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: the owner authorized one Attempt 13 retry after Lead acceptance. Authorization is limited to dev-only MAS packaging, Apple Development signing, transactionally recoverable local install, exact LaunchServices launch, bounded readiness observation, owned stop, and package/runtime restoration. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: no repository implementation dependency remains before the bounded recovery audit and one serial Attempt 13 operator run.
-- `next_action`: staff one fresh serial external operator to run the frozen recovery audit, exact package command, immutable artifact validation, coordinator-owned install/launch/stop/restore, and complete residue report. Any contract or runtime failure returns `REOPEN_REQUEST`; no code correction is mixed into the gate.
+- `pending_ruling`: Attempt 13 package command was not run; its one owner authorization remains unused, and retry is deferred until Lead accepts this correction. The original external-action limits remain closed.
+- `blocked_by`: Lead review of the immutable serial-preflight correction candidate; no safe package/sign/install/launch action is in scope for this frontier.
+- `next_action`: Lead inspect the exact candidate and disposition. If accepted, a fresh serial operator may resume the already-authorized Attempt 13 boundary; any contract or runtime failure returns `REOPEN_REQUEST`.
 
 ## Ownership And Authority
 
@@ -1641,6 +1641,72 @@ transcription/provider/TCC/recording/export, RevenueCat mutation or secret
 activity, Convex, production/annual action, upload/submission/publication/App
 Review, or push. A failure returns to repository correction review without an
 automatic retry.
+
+### R5 MAS serial preflight correction (2026-09-03; current frontier)
+
+`FRONTIER_BRIEF v1 — SERIAL PREFLIGHT CORRECTION` is a bounded child of exact
+base/current HEAD `3b68fb22c4453b2e66e6da934e44387c3d6e0964`, with accepted
+implementation ancestor `ca26b6c045bbbb1c86aa46b2a0a0966205d645cd`. The
+authority digest remains
+`ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
+
+The correction replaces MAS container-Application-Support-parent discovery
+with exact fixed probes. A durable `MAS_GATE_SESSION_INDEX v1` locator and
+`MAS_GATE_SESSION_INDEX_INTENT v1` record use fixed paths and bounded
+`lstat`/read validation; Node transaction discovery and native host preflight
+do not enumerate the parent. The fixed active slot and existing v2
+run-derived sibling paths remain unchanged. The index is locator-only: each
+located construction intent, journal, quarantine, retained root, and archive
+still receives the existing complete v2 binding and state checks. Unknown or
+unregistered siblings are ignored and never mutated. Root moves retain the
+native exclusive no-replace boundary, so exact destination collisions remain
+fail-closed. Existing v2 journals and retained archives are not migrated or
+deleted.
+
+An absent or invalid fixed index is deliberately not treated as an empty
+parent: an unregistered legacy v2 active construction therefore fails closed
+with reconciliation guidance. This preserves the no-enumeration guarantee but
+means MAS provisioning must establish the exact empty index before the first
+transaction; this correction does not add a bootstrap or legacy migration
+authority. The index is bounded to 256 retained session locators; capacity
+exhaustion also fails closed while retained evidence remains untouched.
+
+The coordinator now exports `readMasGateSessionStatus`, and the session CLI
+continues to import status through that coordinator. Process rows accept empty
+string elements in a non-empty string argv array, while empty/null/non-string
+argv and malformed pid/ppid/executable evidence remain invalid. Exact owned
+H→D→S→W→P→C vectors remain exact; MAS path tokens stay live/ambiguous, and
+unrelated Paseo/MeetlessHostTests rows neither block nor become stoppable.
+
+The provisional write scope permits exactly seven paths: the MAS transaction
+module, MAS coordinator, native host, the two focused runtime tests, the
+native-proof test path if needed, and this plan. This candidate changes six of
+those paths; the native-proof test path was not needed because native
+debug/release proof and the source guard cover the new boundary. No mutation
+helper, package transaction, validator binding, direct-DMG,
+package/sign/install/launch, authority, or external-action file was changed.
+
+Observed repository-only proof for this candidate:
+
+- focused transaction tests: 79 passed, including subprocess crashes before
+  and after fixed index-intent publication, construction mkdir/journal, root
+  renames, archive rename, collision preservation, malformed/missing/stale/
+  path-mismatched/overflow locators, legacy active construction, and untouched
+  unregistered siblings;
+- focused coordinator tests: 16 passed, including coordinator status export,
+  safe status fixture, empty argv elements for unrelated rows, exact MAS argv
+  ambiguity, and no signal for a non-exact host;
+- `npm run build:native`: production host/mutation artifacts and debug/release
+  native host tests passed;
+- `npm run typecheck`, `npm run validate:macos:app-store`, both modified
+  module `node --check` commands, `git diff --check`, and both MAS/session CLI
+  `--help` commands passed.
+
+No real MAS root, `/Applications`, package/sign/install/launch, process stop,
+secret/cache inspection, or external action was performed. Runtime-root
+attestation may still enumerate the opaque runtime root itself; the prohibited
+parent-level enumeration is absent. Native MAS locator behavior was compiled
+and source-checked but not exercised against a real sandbox container.
 
 ### Risks And Recovery
 

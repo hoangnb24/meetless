@@ -13,12 +13,19 @@ import {
   masDevelopmentRuntimeContext,
   masGateRuntimeOptions,
   masLiveAbsentObservation,
+  readMasGateSessionStatus,
   restoreInRequiredOrder,
   stopMasDevelopmentGate,
   validateMasDevelopmentInstallArtifact,
   validateMasHostHandoff,
 } from "../../../scripts/macos-mas-development-gate.mjs";
-import { beginMasGateSessionTransaction } from "../../../scripts/lib/macos-mas-gate-session-transaction.mjs";
+import {
+  MAS_GATE_SESSION_INDEX_BASENAME,
+  MAS_GATE_SESSION_INDEX_INTENT_BASENAME,
+  MAS_GATE_SESSION_INDEX_SCHEMA,
+  MAS_GATE_SESSION_INDEX_VERSION,
+  beginMasGateSessionTransaction,
+} from "../../../scripts/lib/macos-mas-gate-session-transaction.mjs";
 import {
   MAS_GATE_LOCK_BASENAME,
   acquireMasGateLock,
@@ -55,6 +62,24 @@ const execFile = promisify(execFileCallback);
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
+
+async function seedMasSessionIndex(context: ReturnType<typeof masDevelopmentRuntimeContext>) {
+  const indexPath = path.join(context.parentPath, MAS_GATE_SESSION_INDEX_BASENAME);
+  await writeFile(
+    indexPath,
+    `${JSON.stringify({
+      schema: MAS_GATE_SESSION_INDEX_SCHEMA,
+      version: MAS_GATE_SESSION_INDEX_VERSION,
+      runtimeRoot: context.runtimeRoot,
+      parentPath: context.parentPath,
+      activePath: context.activePath,
+      indexPath,
+      indexIntentPath: path.join(context.parentPath, MAS_GATE_SESSION_INDEX_INTENT_BASENAME),
+      entries: [],
+    }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+}
 
 async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: string; manifestPath: string }) {
   const proofRoot = path.dirname(path.dirname(path.dirname(manifestPath)));
@@ -279,6 +304,19 @@ describe("MAS development gate coordinator", () => {
     expect(() => masDevelopmentRuntimeContext({ userHome: "/Users/example", contract: directContract })).toThrow(/exact macAppStoreInstallationContract/);
   });
 
+  it("exports the transaction status reader and reports a bounded empty status fixture", async () => {
+    expect(readMasGateSessionStatus).toBeTypeOf("function");
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-status-export-test-")));
+    roots.push(base);
+    const context = masDevelopmentRuntimeContext({ userHome: base });
+    await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
+    await seedMasSessionIndex(context);
+    await expect(readMasGateSessionStatus(masGateRuntimeOptions(context))).resolves.toMatchObject({
+      status: "absent",
+      activePath: context.activePath,
+    });
+  });
+
   it("returns only an exact absent observation and rejects malformed process/listener evidence", async () => {
     const context = masDevelopmentRuntimeContext({ userHome: "/Users/example" });
     const empty = {
@@ -301,6 +339,22 @@ describe("MAS development gate coordinator", () => {
       ...empty,
       processRows: async () => [{ pid: 42, ppid: 1, executablePath: "", arguments: [] }],
     })).rejects.toThrow(/malformed process evidence/);
+    await expect(inspectMasLiveState(context, {
+      ...empty,
+      processRows: async () => [{ pid: Number.MAX_SAFE_INTEGER + 1, ppid: 1, executablePath: "/usr/bin/tool", arguments: ["/usr/bin/tool"] }],
+    })).rejects.toThrow(/malformed process evidence/);
+    await expect(inspectMasLiveState(context, {
+      ...empty,
+      processRows: async () => [{ pid: 42, ppid: 1, executablePath: "/usr/bin/tool", arguments: ["/usr/bin/tool", null] }],
+    })).rejects.toThrow(/malformed process evidence/);
+    await expect(inspectMasLiveState(context, {
+      ...empty,
+      processRows: async () => [{ pid: 42, ppid: 1, executablePath: "/usr/bin/Paseo Supervisor", arguments: ["/usr/bin/Paseo Supervisor", ""] }],
+    })).resolves.toMatchObject({ status: "absent", processes: [] });
+    await expect(inspectMasLiveState(context, {
+      ...empty,
+      processRows: async () => [{ pid: 43, ppid: 1, executablePath: "/usr/bin/MeetlessHostTests", arguments: ["/usr/bin/MeetlessHostTests", ""] }],
+    })).resolves.toMatchObject({ status: "absent", processes: [] });
     await expect(inspectMasLiveState(context, {
       ...empty,
       listeners: async () => undefined,
@@ -330,6 +384,15 @@ describe("MAS development gate coordinator", () => {
 
     const host = { pid: 43, ppid: 1, executablePath: context.executablePath, arguments: [context.executablePath] };
     await expect(inspectMasLiveState(context, { ...base, processRows: async () => [host] })).resolves.toMatchObject({ status: "live" });
+    for (const row of [
+      { ...host, pid: 50, arguments: [context.executablePath, ""] },
+      { ...host, pid: 51, arguments: [context.executablePath, "extra"] },
+    ]) {
+      await expect(inspectMasLiveState(context, { ...base, processRows: async () => [row] })).resolves.toMatchObject({
+        status: "live",
+        processes: [row],
+      });
+    }
     for (const row of [
       { pid: 44, ppid: 43, executablePath: context.packagePaths.nodePath, arguments: [context.packagePaths.nodePath, context.packagePaths.runtimeCliPath, "desktop"] },
       { pid: 45, ppid: 43, executablePath: context.packagePaths.nodePath, arguments: [context.packagePaths.nodePath, context.packagePaths.runtimeCliPath, "daemon"] },
@@ -413,6 +476,7 @@ describe("MAS development gate coordinator", () => {
     roots.push(base);
     const context = masDevelopmentRuntimeContext({ userHome: base });
     await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
+    await seedMasSessionIndex(context);
     const absent = masLiveAbsentObservation(context);
     const options = {
       runtimeRoot: context.runtimeRoot,
@@ -483,6 +547,20 @@ describe("MAS development gate coordinator", () => {
       waitForProcessExit: async () => undefined,
     };
     await expect(stopMasDevelopmentGate({ context, dependencies })).resolves.toMatchObject({ status: "stopped" });
+
+    let signalled = false;
+    const nonExactHost = { ...host, arguments: [context.executablePath, ""] };
+    await expect(stopMasDevelopmentGate({
+      context,
+      dependencies: {
+        processRows: async () => [nonExactHost],
+        listeners: async () => [],
+        sockets: async () => [],
+        openHandles: async () => [],
+        stopProcess: async () => { signalled = true; },
+      },
+    })).rejects.toThrow(/exact LaunchServices host process/);
+    expect(signalled).toBe(false);
 
     const masRoot = context.runtimeRoot;
     const forged = await execFile(process.execPath, ["scripts/stop-macos-host.mjs"], {
@@ -580,6 +658,7 @@ describe("MAS development gate coordinator", () => {
     const context = masDevelopmentRuntimeContext({ userHome: base });
     await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
     await mkdir(context.runtimeRoot, { recursive: true, mode: 0o700 });
+    await seedMasSessionIndex(context);
     const prior = path.join(context.runtimeRoot, "prior.txt");
     await writeFile(prior, "prior\n");
     const bundle = path.resolve("release/macos/Meetless.app");
@@ -667,6 +746,7 @@ describe("MAS development gate coordinator", () => {
     const context = masDevelopmentRuntimeContext({ userHome: base });
     await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
     await mkdir(context.runtimeRoot, { recursive: true, mode: 0o700 });
+    await seedMasSessionIndex(context);
     await writeFile(path.join(context.runtimeRoot, "opaque-state"), "preserve me\n");
 
     const bundle = path.resolve("release/macos/Meetless.app");

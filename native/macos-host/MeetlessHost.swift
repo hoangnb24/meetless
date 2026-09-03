@@ -18,10 +18,21 @@ private let meetlessAppStoreRuntimeRootRelativePath = "\(meetlessAppStoreContain
 private let meetlessAppStoreRecordingExportsRelativePath = "\(meetlessAppStoreContainerSupportRelativePath)/Meetless/recordings"
 private let meetlessMasGateLockFilename = ".meetless-mas-gate.lock"
 private let meetlessMasGateActiveFilename = ".meetless-mas-gate-session.active"
+private let meetlessMasGateIndexFilename = ".meetless-mas-gate-session.index"
+private let meetlessMasGateIndexIntentFilename = ".meetless-mas-gate-session.index-intent"
 private let meetlessMasGateActiveIntentSuffix = ".active-intent"
 private let meetlessMasGateHandoffFilename = "host-handoff.json"
 private let meetlessMasGateTransactionSchema = "MAS_GATE_SESSION_TRANSACTION v2"
+private let meetlessMasGateIndexSchema = "MAS_GATE_SESSION_INDEX v1"
+private let meetlessMasGateIndexIntentSchema = "MAS_GATE_SESSION_INDEX_INTENT v1"
 private let meetlessMasGateHandoffSchema = "MAS_GATE_HOST_HANDOFF v1"
+private let meetlessMasGateMaxIndexEntries = 256
+private let meetlessMasGateMaxFixedRecordBytes = 1024 * 1024
+private let meetlessMasGateSessionPhases: Set<String> = [
+  "construction-intent", "prepared", "quarantine-intent", "quarantined",
+  "fresh-intent", "fresh-created", "ready", "detach-intent", "fresh-retained",
+  "restore-intent", "restored", "archive-intent", "archived"
+]
 
 struct MeetlessLaunchCoordinator<Configuration> {
   let locationCheck: () throws -> Void
@@ -229,6 +240,42 @@ private struct MasGateSessionJournal: Decodable {
   let stateScope: String
   let phase: String
   let freshRootIdentity: MasGateRootIdentity?
+}
+
+private struct MasGateSessionIndexEntry: Decodable {
+  let runId: String
+  let activePath: String
+  let constructionPath: String
+  let constructionIntentPath: String
+  let quarantinePath: String
+  let freshRetainedPath: String
+  let archivePath: String
+}
+
+private struct MasGateSessionIndex: Decodable {
+  let schema: String
+  let version: Int
+  let runtimeRoot: String
+  let parentPath: String
+  let activePath: String
+  let indexPath: String
+  let indexIntentPath: String
+  let entries: [MasGateSessionIndexEntry]
+}
+
+private struct MasGateSessionIndexIntent: Decodable {
+  let schema: String
+  let version: Int
+  let state: String
+  let operation: String
+  let runtimeRoot: String
+  let parentPath: String
+  let indexPath: String
+  let sourcePath: String?
+  let destinationPath: String?
+  let before: MasGateSessionIndex?
+  let after: MasGateSessionIndex
+  let transaction: MasGateSessionJournal
 }
 
 private struct MasGateHostHandoff: Codable {
@@ -1237,66 +1284,385 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     activePresent: Bool,
     allowedQuarantinePath: String? = nil
   ) throws {
-    let names = try FileManager.default.contentsOfDirectory(atPath: parentPath)
-    let activeRunID: String? = allowedQuarantinePath.flatMap { quarantinePath in
-      let name = URL(fileURLWithPath: quarantinePath).lastPathComponent
-      guard name.hasPrefix(".meetless-mas-gate-session."), name.hasSuffix(".quarantine") else { return nil }
-      return String(name.dropFirst(".meetless-mas-gate-session.".count).dropLast(".quarantine".count))
+    // Direct-DMG/production startup has a different runtime contract and does
+    // not participate in the MAS locator protocol. The MAS app-container root
+    // is the only path for which an absent locator is a fail-closed state: an
+    // older dynamic construction cannot be safely discovered without scanning
+    // the opaque Application Support parent.
+    guard meetlessAppStoreContainerSupportRoot(for: runtimeRoot) != nil else { return }
+
+    let locator = try readMasGateSessionLocator(parentPath: parentPath, runtimeRoot: runtimeRoot)
+    if let intent = locator.intent, intent.state == "pending" {
+      throw hostPreflightError("the fixed MAS session index intent is pending; run the exact gate status/recovery command before host startup")
     }
-    for name in names where name.hasPrefix(".meetless-mas-gate-session.") {
-      if name == meetlessMasGateActiveFilename {
-        if activePresent { continue }
-        throw hostPreflightError("the MAS active transaction appeared while the host was checking the sibling topology")
-      }
-      if name.hasSuffix(meetlessMasGateActiveIntentSuffix) {
-        let runID = String(name.dropFirst(".meetless-mas-gate-session.".count).dropLast(meetlessMasGateActiveIntentSuffix.count))
-        guard runID.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", options: .regularExpression) != nil else {
-          throw hostPreflightError("an active MAS construction intent has an invalid run ID")
-        }
-        let intentPath = URL(fileURLWithPath: parentPath).appendingPathComponent(name).path
-        if activeRunID == runID && activePresent {
-          try assertConstructionIntentMasTransactionArtifact(intentPath, runtimeRoot: runtimeRoot, parentPath: parentPath, runID: runID)
-          continue
-        }
-        let archivedPath = URL(fileURLWithPath: parentPath)
-          .appendingPathComponent(".meetless-mas-gate-session.\(runID).archived").path
-        if !activePresent && names.contains(URL(fileURLWithPath: archivedPath).lastPathComponent) {
-          try assertConstructionIntentMasTransactionArtifact(intentPath, runtimeRoot: runtimeRoot, parentPath: parentPath, runID: runID)
-          continue
-        }
-        throw hostPreflightError("an active MAS construction intent has no matching active or archived transaction")
-      }
-      if name.hasSuffix(".archived") {
-        let runID = String(name.dropFirst(".meetless-mas-gate-session.".count).dropLast(".archived".count))
-        guard runID.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", options: .regularExpression) != nil else {
-          throw hostPreflightError("an archived MAS transaction has an invalid run ID")
-        }
-        if activeRunID == runID {
-          throw hostPreflightError("both active and archived artifacts for one MAS transaction are present")
-        }
-        try assertArchivedMasTransactionArtifact(
-          URL(fileURLWithPath: parentPath).appendingPathComponent(name).path,
+
+    let activeRunID = allowedQuarantinePath.flatMap { masGateRunID(from: $0, suffix: ".quarantine") }
+    if activePresent && activeRunID == nil {
+      throw hostPreflightError("the fixed active MAS transaction has no exact registered quarantine locator")
+    }
+
+    let activeJournal: MasGateSessionJournal? = activePresent
+      ? try readMasGateJournal(
+          URL(fileURLWithPath: parentPath)
+            .appendingPathComponent(meetlessMasGateActiveFilename)
+            .appendingPathComponent("transaction.json").path,
           runtimeRoot: runtimeRoot,
           parentPath: parentPath,
-          runID: runID
+          activePath: URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateActiveFilename).path
         )
+      : nil
+    if let activeJournal, !locator.index.entries.contains(where: { $0.runId == activeJournal.runId }) {
+      throw hostPreflightError("the fixed active MAS transaction is not registered in the exact session index")
+    }
+
+    for entry in locator.index.entries {
+      try assertMasGateSessionIndexEntry(entry, runtimeRoot: runtimeRoot, parentPath: parentPath)
+      let construction = try lstatPath(entry.constructionPath, label: "MAS indexed construction path")
+      let constructionIntent = try lstatPath(entry.constructionIntentPath, label: "MAS indexed construction intent")
+      let quarantine = try lstatPath(entry.quarantinePath, label: "MAS indexed quarantine root")
+      let freshRetained = try lstatPath(entry.freshRetainedPath, label: "MAS indexed fresh retained root")
+      let archive = try lstatPath(entry.archivePath, label: "MAS indexed archive")
+
+      if let activeJournal, activeJournal.runId == entry.runId {
+        if archive != nil { throw hostPreflightError("both active and archived transaction slots are present for one indexed MAS session") }
+        if construction != nil { throw hostPreflightError("indexed MAS active transaction still has its construction root") }
+        if constructionIntent != nil {
+          try assertConstructionIntentMasTransactionArtifact(
+            entry.constructionIntentPath,
+            runtimeRoot: runtimeRoot,
+            parentPath: parentPath,
+            runID: entry.runId
+          )
+        }
+        if quarantine != nil { try assertQuarantineMasTransactionArtifact(entry.quarantinePath, parentPath: parentPath) }
+        if let freshRetained { try assertFreshRetainedMasTransactionArtifact(freshRetained, entry: entry, journal: activeJournal, parentPath: parentPath) }
         continue
       }
-      if name.hasSuffix(".quarantine"),
-         let allowedQuarantinePath,
-         URL(fileURLWithPath: parentPath).appendingPathComponent(name).path == allowedQuarantinePath {
-        try assertQuarantineMasTransactionArtifact(allowedQuarantinePath, parentPath: parentPath)
+
+      if archive != nil {
+        if activeRunID == entry.runId { throw hostPreflightError("both active and archived artifacts for one MAS transaction are present") }
+        try assertArchivedMasTransactionArtifact(
+          entry.archivePath,
+          runtimeRoot: runtimeRoot,
+          parentPath: parentPath,
+          runID: entry.runId
+        )
+        if construction != nil { throw hostPreflightError("an archived MAS transaction still has its construction root") }
+        if constructionIntent != nil {
+          try assertConstructionIntentMasTransactionArtifact(
+            entry.constructionIntentPath,
+            runtimeRoot: runtimeRoot,
+            parentPath: parentPath,
+            runID: entry.runId
+          )
+        }
+        if quarantine != nil { try assertQuarantineMasTransactionArtifact(entry.quarantinePath, parentPath: parentPath) }
         continue
       }
-      throw hostPreflightError("an unexpected MAS gate transaction artifact is present at \(name); run gate recovery before host startup")
+
+      if construction != nil || constructionIntent != nil || quarantine != nil || freshRetained != nil {
+        throw hostPreflightError("an indexed MAS transaction has no exact active or archived journal; preserve every byte and run gate recovery")
+      }
+      throw hostPreflightError("an indexed MAS session locator has no exact v2 transaction artifact; preserve every byte and run reconciliation")
+    }
+
+    if activePresent && activeJournal == nil {
+      throw hostPreflightError("the fixed active MAS transaction journal is unavailable")
+    }
+  }
+
+  private func readMasGateSessionLocator(
+    parentPath: String,
+    runtimeRoot: String
+  ) throws -> (index: MasGateSessionIndex, intent: MasGateSessionIndexIntent?) {
+    let parentURL = URL(fileURLWithPath: parentPath).standardizedFileURL
+    let activePath = parentURL.appendingPathComponent(meetlessMasGateActiveFilename).path
+    let indexPath = parentURL.appendingPathComponent(meetlessMasGateIndexFilename).path
+    let indexIntentPath = parentURL.appendingPathComponent(meetlessMasGateIndexIntentFilename).path
+    guard let index = try readMasGateRecord(indexPath, label: "MAS session index", parentPath: parentPath) as MasGateSessionIndex? else {
+      throw hostPreflightError("the fixed MAS session index is missing; an unregistered legacy construction cannot be safely discovered without parent enumeration, so run manual reconciliation")
+    }
+    try assertMasGateSessionIndex(
+      index,
+      runtimeRoot: runtimeRoot,
+      parentPath: parentPath,
+      activePath: activePath,
+      indexPath: indexPath,
+      indexIntentPath: indexIntentPath
+    )
+    let intent = try readMasGateRecord(indexIntentPath, label: "MAS session index intent", parentPath: parentPath) as MasGateSessionIndexIntent?
+    if let intent {
+      try assertMasGateSessionIndexIntent(
+        intent,
+        runtimeRoot: runtimeRoot,
+        parentPath: parentPath,
+        activePath: activePath,
+        indexPath: indexPath,
+        index: index
+      )
+    }
+    return (index, intent)
+  }
+
+  private func readMasGateRecord<T: Decodable>(
+    _ path: String,
+    label: String,
+    parentPath: String
+  ) throws -> T? {
+    guard let information = try lstatPath(path, label: label) else { return nil }
+    var parent = stat()
+    guard lstat(parentPath, &parent) == 0,
+          (information.st_mode & S_IFMT) == S_IFREG,
+          information.st_uid == getuid(),
+          information.st_nlink == 1,
+          (information.st_mode & 0o7777) == 0o600,
+          information.st_dev == parent.st_dev,
+          information.st_size >= 0,
+          information.st_size <= Int64(meetlessMasGateMaxFixedRecordBytes) else {
+      throw hostPreflightError("\(label) is not one bounded secure same-device regular file")
+    }
+    let data = try readRequiredData(path, label: label)
+    guard data.count <= meetlessMasGateMaxFixedRecordBytes else {
+      throw hostPreflightError("\(label) exceeds the bounded fixed-record size")
+    }
+    do {
+      return try JSONDecoder().decode(T.self, from: data)
+    } catch {
+      throw hostPreflightError("\(label) is malformed: \(error.localizedDescription)")
+    }
+  }
+
+  private func assertMasGateSessionIndex(
+    _ index: MasGateSessionIndex,
+    runtimeRoot: String,
+    parentPath: String,
+    activePath: String,
+    indexPath: String,
+    indexIntentPath: String
+  ) throws {
+    guard index.schema == meetlessMasGateIndexSchema,
+          index.version == 1,
+          index.runtimeRoot == runtimeRoot,
+          index.parentPath == parentPath,
+          index.activePath == activePath,
+          index.indexPath == indexPath,
+          index.indexIntentPath == indexIntentPath,
+          index.entries.count <= meetlessMasGateMaxIndexEntries else {
+      throw hostPreflightError("MAS session index is not bound to the exact fixed runtime context")
+    }
+    var runIDs = Set<String>()
+    for entry in index.entries {
+      try assertMasGateSessionIndexEntry(entry, runtimeRoot: runtimeRoot, parentPath: parentPath)
+      guard runIDs.insert(entry.runId).inserted else {
+        throw hostPreflightError("MAS session index contains a duplicate run ID")
+      }
+    }
+  }
+
+  private func assertMasGateSessionIndexEntry(
+    _ entry: MasGateSessionIndexEntry,
+    runtimeRoot: String,
+    parentPath: String
+  ) throws {
+    let activePath = URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateActiveFilename).path
+    let expectedConstruction = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(entry.runId).active-building").path
+    let expectedIntent = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(entry.runId)\(meetlessMasGateActiveIntentSuffix)").path
+    let expectedQuarantine = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(entry.runId).quarantine").path
+    let expectedFreshRetained = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(entry.runId).fresh-retained").path
+    let expectedArchive = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(entry.runId).archived").path
+    guard entry.runId.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", options: .regularExpression) != nil,
+          entry.activePath == activePath,
+          entry.constructionPath == expectedConstruction,
+          entry.constructionIntentPath == expectedIntent,
+          entry.quarantinePath == expectedQuarantine,
+          entry.freshRetainedPath == expectedFreshRetained,
+          entry.archivePath == expectedArchive,
+          !entry.activePath.isEmpty,
+          !runtimeRoot.isEmpty else {
+      throw hostPreflightError("MAS session index contains a path-mismatched locator")
+    }
+  }
+
+  private func assertMasGateSessionIndexIntent(
+    _ intent: MasGateSessionIndexIntent,
+    runtimeRoot: String,
+    parentPath: String,
+    activePath: String,
+    indexPath: String,
+    index: MasGateSessionIndex
+  ) throws {
+    guard intent.schema == meetlessMasGateIndexIntentSchema,
+          intent.version == 1,
+          intent.state == "pending" || intent.state == "committed",
+          intent.operation == "register" || intent.operation == "archive",
+          intent.runtimeRoot == runtimeRoot,
+          intent.parentPath == parentPath,
+          intent.indexPath == indexPath,
+          let before = intent.before else {
+      throw hostPreflightError("MAS session index intent is malformed or disagrees with the fixed index")
+    }
+    try assertMasGateSessionIndex(
+      intent.after,
+      runtimeRoot: runtimeRoot,
+      parentPath: parentPath,
+      activePath: activePath,
+      indexPath: indexPath,
+      indexIntentPath: URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateIndexIntentFilename).path
+    )
+    try assertMasGateSessionIndex(
+      before,
+      runtimeRoot: runtimeRoot,
+      parentPath: parentPath,
+      activePath: activePath,
+      indexPath: indexPath,
+      indexIntentPath: URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateIndexIntentFilename).path
+    )
+    try assertMasGateSessionJournal(intent.transaction, runtimeRoot: runtimeRoot, parentPath: parentPath, activePath: activePath)
+    if intent.state == "pending" {
+      guard sameMasGateSessionIndex(index, before) || sameMasGateSessionIndex(index, intent.after) else {
+        throw hostPreflightError("pending MAS session index intent disagrees with both durable index states")
+      }
+    } else if !sameMasGateSessionIndex(index, intent.after) {
+      throw hostPreflightError("committed MAS session index intent is not its exact durable result")
+    }
+    if intent.operation == "register" {
+      guard intent.sourcePath == nil, intent.destinationPath == nil else {
+        throw hostPreflightError("MAS registration index intent carries an unexpected move path")
+      }
+    } else {
+      guard intent.sourcePath == activePath,
+            intent.destinationPath == intent.transaction.archivePath,
+            let destination = intent.destinationPath,
+            destination == URL(fileURLWithPath: parentPath)
+              .appendingPathComponent(".meetless-mas-gate-session.\(intent.transaction.runId).archived").path else {
+        throw hostPreflightError("MAS archive index intent is not the exact active-to-archive move")
+      }
+    }
+  }
+
+  private func assertMasGateSessionJournal(
+    _ journal: MasGateSessionJournal,
+    runtimeRoot: String,
+    parentPath: String,
+    activePath: String
+  ) throws {
+    let entry = MasGateSessionIndexEntry(
+      runId: journal.runId,
+      activePath: activePath,
+      constructionPath: URL(fileURLWithPath: parentPath)
+        .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).active-building").path,
+      constructionIntentPath: URL(fileURLWithPath: parentPath)
+        .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId)\(meetlessMasGateActiveIntentSuffix)").path,
+      quarantinePath: URL(fileURLWithPath: parentPath)
+        .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).quarantine").path,
+      freshRetainedPath: URL(fileURLWithPath: parentPath)
+        .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).fresh-retained").path,
+      archivePath: URL(fileURLWithPath: parentPath)
+        .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).archived").path
+    )
+    try assertMasGateSessionIndexEntry(entry, runtimeRoot: runtimeRoot, parentPath: parentPath)
+    guard journal.schema == meetlessMasGateTransactionSchema,
+          journal.version == 2,
+          journal.ownerToken.range(of: "^[A-Za-z0-9_-]{40,80}$", options: .regularExpression) != nil,
+          journal.canonicalRuntimeRoot == runtimeRoot,
+          journal.parentPath == parentPath,
+          journal.lockPath == URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateLockFilename).path,
+          journal.activePath == activePath,
+          journal.constructionPath == entry.constructionPath,
+          journal.constructionIntentPath == entry.constructionIntentPath,
+          journal.quarantinePath == entry.quarantinePath,
+          journal.freshRetainedPath == entry.freshRetainedPath,
+          journal.archivePath == nil || journal.archivePath == entry.archivePath,
+          journal.stateScope == "runtime-root-only",
+          meetlessMasGateSessionPhases.contains(journal.phase) else {
+      throw hostPreflightError("MAS transaction journal is not a complete exact v2 journal")
+    }
+  }
+
+  private func readMasGateJournal(
+    _ path: String,
+    runtimeRoot: String,
+    parentPath: String,
+    activePath: String
+  ) throws -> MasGateSessionJournal {
+    try assertSecureFile(path, label: "MAS transaction journal")
+    guard let journal = try readMasGateRecord(path, label: "MAS transaction journal", parentPath: parentPath) as MasGateSessionJournal? else {
+      throw hostPreflightError("MAS transaction journal is unavailable")
+    }
+    try assertMasGateSessionJournal(journal, runtimeRoot: runtimeRoot, parentPath: parentPath, activePath: activePath)
+    return journal
+  }
+
+  private func sameMasGateSessionIndex(_ left: MasGateSessionIndex, _ right: MasGateSessionIndex) -> Bool {
+    left.schema == right.schema &&
+      left.version == right.version &&
+      left.runtimeRoot == right.runtimeRoot &&
+      left.parentPath == right.parentPath &&
+      left.activePath == right.activePath &&
+      left.indexPath == right.indexPath &&
+      left.indexIntentPath == right.indexIntentPath &&
+      left.entries.count == right.entries.count &&
+      zip(left.entries, right.entries).allSatisfy { leftEntry, rightEntry in
+        leftEntry.runId == rightEntry.runId &&
+          leftEntry.activePath == rightEntry.activePath &&
+          leftEntry.constructionPath == rightEntry.constructionPath &&
+          leftEntry.constructionIntentPath == rightEntry.constructionIntentPath &&
+          leftEntry.quarantinePath == rightEntry.quarantinePath &&
+          leftEntry.freshRetainedPath == rightEntry.freshRetainedPath &&
+          leftEntry.archivePath == rightEntry.archivePath
+      }
+  }
+
+  private func masGateRunID(from path: String, suffix: String) -> String? {
+    let name = URL(fileURLWithPath: path).lastPathComponent
+    let prefix = ".meetless-mas-gate-session."
+    guard name.hasPrefix(prefix), name.hasSuffix(suffix) else { return nil }
+    let runID = String(name.dropFirst(prefix.count).dropLast(suffix.count))
+    guard runID.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", options: .regularExpression) != nil else { return nil }
+    return runID
+  }
+
+  private func assertFreshRetainedMasTransactionArtifact(
+    _ information: stat,
+    entry: MasGateSessionIndexEntry,
+    journal: MasGateSessionJournal,
+    parentPath: String
+  ) throws {
+    var parent = stat()
+    guard (information.st_mode & S_IFMT) == S_IFDIR,
+          information.st_uid == getuid(),
+          (information.st_mode & 0o7777) == 0o700,
+          lstat(parentPath, &parent) == 0,
+          information.st_dev == parent.st_dev,
+          let freshRootIdentity = journal.freshRootIdentity else {
+      throw hostPreflightError("MAS indexed fresh retained root is not one exact secure v2 root")
+    }
+    let retainedIdentity = MasGateRootIdentity(
+      type: "directory",
+      mode: Int64(information.st_mode),
+      uid: Int64(information.st_uid),
+      gid: Int64(information.st_gid),
+      dev: Int64(information.st_dev),
+      ino: Int64(information.st_ino),
+      nlink: Int64(information.st_nlink),
+      size: Int64(information.st_size)
+    )
+    guard entry.freshRetainedPath == URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).fresh-retained").path,
+          sameMasGateStableRootIdentity(retainedIdentity, freshRootIdentity) else {
+      throw hostPreflightError("MAS indexed fresh retained root identity changed outside its transaction")
     }
   }
 
   private func assertQuarantineMasTransactionArtifact(_ path: String, parentPath: String) throws {
     guard let information = try lstatPath(path, label: "MAS quarantine root"),
           (information.st_mode & S_IFMT) == S_IFDIR,
-          information.st_uid == getuid(),
-          (information.st_mode & 0o7777) == 0o700 else {
+          information.st_uid == getuid() else {
       throw hostPreflightError("MAS quarantine root is not one owned directory")
     }
     var parent = stat()

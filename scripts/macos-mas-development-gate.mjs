@@ -84,6 +84,8 @@ export const MAS_GATE_COORDINATOR_SCHEMA = "MAS_GATE_COORDINATOR v1";
 export const MAS_GATE_HOST_HANDOFF_SCHEMA = "MAS_GATE_HOST_HANDOFF v1";
 export const MAS_GATE_HOST_HANDOFF_FILENAME = "host-handoff.json";
 
+export { readMasGateSessionStatus };
+
 const execFileAsync = promisify(execFile);
 const modulePath = fileURLToPath(import.meta.url);
 const repositoryRoot = path.resolve(path.dirname(modulePath), "..");
@@ -252,10 +254,10 @@ export async function inspectMasLiveState(context, dependencies = {}) {
 function assertProcessRows(rows) {
   if (!Array.isArray(rows)) throw coordinatorError("MAS process inspection did not return a complete process list");
   for (const row of rows) {
-    if (!row || typeof row !== "object" || !Number.isInteger(row.pid) || row.pid < 1 ||
-        !Number.isInteger(row.ppid) || row.ppid < 0 || typeof row.executablePath !== "string" ||
+    if (!row || typeof row !== "object" || !Number.isSafeInteger(row.pid) || row.pid < 1 ||
+        !Number.isSafeInteger(row.ppid) || row.ppid < 0 || typeof row.executablePath !== "string" ||
         !row.executablePath || !path.isAbsolute(row.executablePath) || !Array.isArray(row.arguments) ||
-        row.arguments.length === 0 || row.arguments.some((argument) => typeof argument !== "string" || !argument)) {
+        row.arguments.length === 0 || row.arguments.some((argument) => typeof argument !== "string")) {
       throw coordinatorError("MAS process inspection returned malformed process evidence");
     }
   }
@@ -1339,7 +1341,7 @@ async function readProcessRows(context) {
 }
 
 function processRowIsOwned(row, context) {
-  if (!row || !Number.isInteger(row.pid) || row.pid <= 1 || !Number.isInteger(row.ppid) ||
+  if (!row || !Number.isSafeInteger(row.pid) || row.pid <= 1 || !Number.isSafeInteger(row.ppid) ||
       typeof row.executablePath !== "string" || !Array.isArray(row.arguments)) return false;
   const exactPaths = Object.values(context.packagePaths).concat(Object.values(context.runtimePaths), [context.runtimeRoot, context.bundlePath]);
   if (exactPaths.some((candidate) => pathTokenMatches(row.executablePath, candidate) || row.arguments.some((token) => pathTokenMatches(token, candidate)))) return true;
