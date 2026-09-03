@@ -21,6 +21,7 @@ import {
 } from "./validate-macos-package.mjs";
 import { validateMacOSPackageInputDocument } from "./lib/macos-package-inputs.mjs";
 import {
+  MACOS_APP_STORE_CONTRACT,
   MACOS_APP_STORE_CHILD_ENTITLEMENTS,
   MACOS_APP_STORE_PARENT_ENTITLEMENTS,
   validateEntitlementKeys,
@@ -159,6 +160,13 @@ export function masDevelopmentRuntimeContext({ userHome = homedir(), contract = 
   };
 }
 
+function masGatePackageLockOptions(context) {
+  return {
+    parentPath: context.parentPath,
+    packageParentPath: path.dirname(context.bundlePath),
+  };
+}
+
 function assertMasDevelopmentContext(context) {
   if (!context || typeof context !== "object" || Array.isArray(context)) {
     throw coordinatorError("MAS coordinator context is missing");
@@ -282,7 +290,7 @@ export async function installMasDevelopmentGate({
     dependencies,
   });
   if (requiredFreeBytes === undefined) throw coordinatorError("install requires an explicit --required-free-bytes input; it is advisory preflight only, not a reservation or peak-use guarantee");
-  let lease = await acquireMasGateLock({ parentPath: context.parentPath });
+  let lease = await acquireMasGateLock(masGatePackageLockOptions(context));
   let session;
   let packageTransaction;
   try {
@@ -290,6 +298,7 @@ export async function installMasDevelopmentGate({
       ...masGateRuntimeOptions(context, { requiredFreeBytes, lockLease: lease, dependencies }),
     });
     await assertMasGateSessionReady(session, masGateRuntimeOptions(context, { lockLease: lease, dependencies }));
+    await lease.bindRuntimeRoot(context.runtimeRoot);
     const inspectBundle = dependencies.inspectBundle ?? ((target) => inspectHostBundle(target, {
       runtimeRoot: context.runtimeRoot,
       containerSupportRoot: context.parentPath,
@@ -304,6 +313,7 @@ export async function installMasDevelopmentGate({
       inspect: inspectBundle,
       artifactBinding: validation.artifactBinding,
       lockParentPath: context.parentPath,
+      runtimeRootPath: context.runtimeRoot,
       lockLease: lease,
     });
     const installed = await inspectBundle(context.bundlePath);
@@ -328,7 +338,7 @@ export async function installMasDevelopmentGate({
         // acknowledgement. Reacquire the same stable sibling lock before
         // inspecting or rolling back either transaction.
         await lease.release();
-        lease = await acquireMasGateLock({ parentPath: context.parentPath });
+        lease = await acquireMasGateLock(masGatePackageLockOptions(context));
       }
       let candidatePackageTransaction = packageTransaction;
       const packageJournalPath = session?.runId ? packageTransactionPaths(context.bundlePath, session.runId).journal : null;
@@ -342,6 +352,7 @@ export async function installMasDevelopmentGate({
           identityPath: context.identityPath,
           requireArtifactBinding: true,
           lockParentPath: context.parentPath,
+          runtimeRootPath: context.runtimeRoot,
           lockLease: lease,
         });
       }
@@ -496,39 +507,42 @@ async function waitForProcessExit(pid) {
   throw coordinatorError(`timed out waiting for owned MAS host PID ${pid} to exit`);
 }
 
-async function validateMasDevelopmentInstallArtifact({ manifestPath, bundlePath, context, dependencies }) {
+const ARTIFACT_VALIDATION_ADAPTER_NAMES = new Set([
+  "readSecureFile",
+  "assertSecureFile",
+  "assertSecureDirectory",
+  "runMacOSCommand",
+  "enumeratePackageEntries",
+  "inspectPackageMachOEntries",
+  "inspectMachO",
+]);
+
+function normalizeArtifactValidationAdapters(value) {
+  if (value === undefined) return Object.freeze({});
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw coordinatorError("MAS artifact validation adapters must be one plain object");
+  }
+  for (const [name, adapter] of Object.entries(value)) {
+    if (!ARTIFACT_VALIDATION_ADAPTER_NAMES.has(name) || typeof adapter !== "function") {
+      throw coordinatorError(`MAS artifact validation adapter ${name} is not an allowed low-level function`);
+    }
+  }
+  return Object.freeze({ ...value });
+}
+
+export async function validateMasDevelopmentInstallArtifact({ manifestPath, bundlePath, context, dependencies }) {
+  const adapters = normalizeArtifactValidationAdapters(dependencies?.artifactValidationAdapters);
+  const readArtifactFile = adapters.readSecureFile ?? readSecureFile;
   let manifest;
   let manifestBytes;
   let proofRoot;
   try {
-    manifestBytes = await readSecureFile(manifestPath, "MAS development manifest");
+    manifestBytes = await readArtifactFile(manifestPath, "MAS development manifest");
     manifest = parseJsonObject(manifestBytes, "MAS development manifest");
     proofRoot = assertMasDevelopmentManifestBinding(manifest, manifestPath, bundlePath);
   } catch (error) {
     if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) throw error;
     throw coordinatorError(`MAS artifact manifest validation failed before runtime/package mutation: ${describe(error)}`, error);
-  }
-
-  const validator = dependencies.validateArtifact;
-  if (validator !== undefined) {
-    if (typeof validator !== "function") throw coordinatorError("injected MAS artifact validator is not callable");
-    let result;
-    try {
-      result = await validator({ manifestPath, bundlePath, context, manifest, proofRoot });
-    } catch (error) {
-      throw coordinatorError(`injected MAS artifact validator failed before runtime/package mutation: ${describe(error)}`, error);
-    }
-    if (!result || result.status !== "passed") {
-      throw coordinatorError("injected MAS artifact validator did not return an explicit passed result");
-    }
-    let artifactBinding;
-    try {
-      artifactBinding = freezeMasGateArtifactBinding(result.artifactBinding ?? result.binding);
-      assertMasGateArtifactBinding(artifactBinding, { manifestPath, bundlePath });
-    } catch (error) {
-      throw coordinatorError(`injected MAS artifact validator did not return a complete artifact binding: ${describe(error)}`, error);
-    }
-    return { ...result, artifactBinding };
   }
 
   try {
@@ -539,6 +553,7 @@ async function validateMasDevelopmentInstallArtifact({ manifestPath, bundlePath,
       manifestBytes,
       proofRoot,
       expectedPublicSdkKey: resolveExpectedRevenueCatPublicSdkKey(dependencies),
+      adapters,
     });
   } catch (error) {
     if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) throw error;
@@ -550,13 +565,21 @@ async function validateMasDevelopmentInstallArtifact({ manifestPath, bundlePath,
  * This is the production install preflight.  It reuses the repository's
  * versioned MAS validators at the artifact boundary and performs the same
  * read-only bundle/signature/Mach-O checks used when the development artifact
- * is produced.  The injected validator above is a test seam only; a caller
- * cannot omit the manifest binding or make inspectHostBundle the sole proof.
+ * is produced. Low-level readers and owner-tool command output may be made
+ * deterministic for fixture tests, but no caller can supply a validation
+ * result or artifact binding.
  */
-async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manifest, manifestBytes, proofRoot, expectedPublicSdkKey }) {
+async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manifest, manifestBytes, proofRoot, expectedPublicSdkKey, adapters = {} }) {
+  const readArtifactFile = adapters.readSecureFile ?? readSecureFile;
+  const secureDirectory = adapters.assertSecureDirectory ?? assertSecureDirectory;
+  const secureFile = adapters.assertSecureFile ?? assertSecureFile;
+  const runOwnerCommand = adapters.runMacOSCommand ?? runMacOSCommand;
+  const enumerateEntries = adapters.enumeratePackageEntries ?? enumeratePackageEntries;
+  const inspectMachOEntriesEvidence = adapters.inspectPackageMachOEntries ?? inspectPackageMachOEntries;
+  const inspectMachOEvidence = adapters.inspectMachO ?? inspectMachO;
   validateMasManifestDocument(manifest);
   const directCompositionPath = path.resolve(proofRoot, manifest.directComposition.path);
-  const directCompositionBytes = await readSecureFile(directCompositionPath, "retained direct composition manifest");
+  const directCompositionBytes = await readArtifactFile(directCompositionPath, "retained direct composition manifest");
   if (sha256(directCompositionBytes) !== manifest.directComposition.sha256) {
     throw new Error("retained direct composition manifest bytes do not match the MAS manifest");
   }
@@ -571,7 +594,7 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
     throw new Error("MAS manifest is not bound to the retained direct composition artifact digest");
   }
   validateMacOSPackageInputDocument(directComposition.packageInputs, directComposition.candidateSnapshot);
-  const bundleInfo = await assertSecureDirectory(bundlePath, "MAS development bundle");
+  const bundleInfo = await secureDirectory(bundlePath, "MAS development bundle");
   const bundleRealPath = await realpath(bundlePath);
   if (bundleRealPath !== bundlePath) throw new Error("MAS development bundle root resolves through a symlink");
   const contentsPath = path.join(bundlePath, "Contents");
@@ -583,23 +606,23 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
   const packageMarkerPath = path.join(packageRoot, "meetless-package.json");
   const hostConfigPath = path.join(contentsPath, "Resources", "host-config.json");
 
-  const outerInfo = parsePlistDocument(await readSecureFile(path.join(contentsPath, "Info.plist"), "signed outer Info.plist"), "signed outer Info.plist");
+  const outerInfo = parsePlistDocument(await readArtifactFile(path.join(contentsPath, "Info.plist"), "signed outer Info.plist"), "signed outer Info.plist");
   validateMacAppStoreDevelopmentInfo(outerInfo, { publicSdkKey: expectedPublicSdkKey });
   if (outerInfo[R5_REVENUECAT_INFO_PLIST_KEY] !== expectedPublicSdkKey) {
     throw new Error("signed outer Info.plist RevenueCat public SDK key differs from the expected authority");
   }
   if (manifest.revenueCatPublicSdkKeyEmbedded !== true) throw new Error("MAS manifest does not attest the public RevenueCat SDK key in the outer Info.plist");
 
-  const contractBytes = await readSecureFile(packageContractPath, "packaged MAS installation contract");
+  const contractBytes = await readArtifactFile(packageContractPath, "packaged MAS installation contract");
   const contract = parseJsonObject(contractBytes, "packaged MAS installation contract");
   const contractSha256 = sha256(contractBytes);
   validateMacAppStorePackageContract(contract);
-  const marker = parseJsonObject(await readSecureFile(packageMarkerPath, "packaged MAS marker"), "packaged MAS marker");
+  const marker = parseJsonObject(await readArtifactFile(packageMarkerPath, "packaged MAS marker"), "packaged MAS marker");
   validateMacAppStorePackagedMarker(marker, { contractSha256 });
   if (marker.paseoCommit !== directComposition.candidateSnapshot?.paseoCommit) {
     throw new Error("packaged MAS marker is not bound to the pinned direct composition commit");
   }
-  const hostConfiguration = parseJsonObject(await readSecureFile(hostConfigPath, "packaged MAS host configuration"), "packaged MAS host configuration");
+  const hostConfiguration = parseJsonObject(await readArtifactFile(hostConfigPath, "packaged MAS host configuration"), "packaged MAS host configuration");
   validateMacAppStorePackagedHostConfiguration(hostConfiguration, { contractSha256 });
   const packagedContract = {
     schema: contract.schema,
@@ -614,7 +637,7 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
   }
 
   const inventoryPath = path.resolve(bundlePath, directComposition.licenseInventory.path);
-  const inventoryBytes = await readSecureFile(inventoryPath, "packaged MAS license inventory");
+  const inventoryBytes = await readArtifactFile(inventoryPath, "packaged MAS license inventory");
   if (sha256(inventoryBytes) !== directComposition.licenseInventory.sha256) {
     throw new Error("packaged MAS license inventory bytes differ from the validated direct composition");
   }
@@ -630,9 +653,9 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
   await validateNoticeEvidence(inventory, bundlePath, repositoryRoot);
   await validateResolutionEvidencePaths(inventory, repositoryRoot);
 
-  await runMacOSCommand("codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundlePath]);
+  await runOwnerCommand("codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundlePath]);
   const outerSignature = validateR5DevelopmentSignature(
-    await readCodesignDisplay(bundlePath),
+    await readCodesignDisplay(bundlePath, runOwnerCommand),
     "Meetless.app",
   );
   if (manifest.signature.bundleIdentifier !== outerSignature.identifier ||
@@ -647,16 +670,17 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
     MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.PARENT,
     "signed parent app",
     outerExecutablePath,
+    runOwnerCommand,
   );
 
   const profilePath = resolveMacAppStoreDevelopmentEmbeddedProfilePath(bundlePath);
-  await assertSecureFile(profilePath, "embedded development provisioning profile", { mode: 0o400 });
+  await secureFile(profilePath, "embedded development provisioning profile", { mode: 0o400 });
   if (path.basename(profilePath) === R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME) {
     throw new Error("embedded development provisioning profile has the mutable selected-profile filename");
   }
-  const profileBytes = await readSecureFile(profilePath, "embedded development provisioning profile");
+  const profileBytes = await readArtifactFile(profilePath, "embedded development provisioning profile");
   const profile = validateR5DevelopmentProfile(
-    parsePlistDocument((await runMacOSCommand("security", ["cms", "-D", "-i", profilePath])).stdout, "embedded development provisioning profile"),
+    parsePlistDocument((await runOwnerCommand("security", ["cms", "-D", "-i", profilePath])).stdout, "embedded development provisioning profile"),
   );
   if (profile.Name !== R5_APP_STORE_DEVELOPMENT_PROFILE_NAME || profile.UUID !== R5_APP_STORE_DEVELOPMENT_PROFILE_UUID ||
       (profile.ExpirationDate instanceof Date ? profile.ExpirationDate.toISOString() : new Date(profile.ExpirationDate).toISOString()) !== manifest.provisioningProfile.expirationDate ||
@@ -664,11 +688,11 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
       JSON.stringify(profile.ProvisionedDevices ?? []) !== JSON.stringify([R5_APP_STORE_DEVELOPMENT_DEVICE_UDID])) {
     throw new Error("embedded development provisioning profile differs from the exact MAS manifest evidence");
   }
-  await assertUnsignedCodesignProfile(profilePath);
+  await assertUnsignedCodesignProfile(profilePath, runOwnerCommand);
 
-  const entries = await enumeratePackageEntries(bundlePath);
+  const entries = await enumerateEntries(bundlePath);
   await validatePackageSymlinkClosure(bundlePath, entries);
-  const machoEntries = await inspectPackageMachOEntries(bundlePath, entries, { ownerMode: true });
+  const machoEntries = await inspectMachOEntriesEvidence(bundlePath, entries, { ownerMode: true });
   if (sha256(Buffer.from(JSON.stringify(entries))) !== manifest.artifact.sha256 ||
       entries.length !== manifest.artifact.entryCount || machoEntries.length !== manifest.artifact.machoEntryCount) {
     throw new Error("MAS manifest artifact inventory differs from the signed bundle");
@@ -678,9 +702,9 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
   if (!outerMachOEntry) throw new Error("signed MAS package is missing the outer MeetlessHost Mach-O");
   const outerPolicy = classifyMacAppStoreDevelopmentMachO(outerMachOEntry, { outerMachOPath: "Contents/MacOS/MeetlessHost" });
   validateThinArm64MachO(outerMachOEntry, "outer MeetlessHost");
-  validateR5DevelopmentSignature(await readCodesignDisplay(outerExecutablePath), "outer MeetlessHost", { expectedBundleIdentifier: null });
+  validateR5DevelopmentSignature(await readCodesignDisplay(outerExecutablePath, runOwnerCommand), "outer MeetlessHost", { expectedBundleIdentifier: null });
   validateMachOEntitlementsForGate(
-    await readCodesignEntitlementsForGate(outerExecutablePath, outerPolicy.entitlementPolicy, "outer MeetlessHost"),
+    await readCodesignEntitlementsForGate(outerExecutablePath, outerPolicy.entitlementPolicy, "outer MeetlessHost", outerExecutablePath, runOwnerCommand),
     outerPolicy,
     "outer MeetlessHost",
   );
@@ -691,14 +715,14 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
   const electronEntry = machoEntries.find((entry) => entry.path === nestedElectronRelativePath);
   if (!electronEntry) throw new Error("signed MAS package is missing the MAS Electron executable");
   validateThinArm64MachO(electronEntry, "MAS Electron");
-  validateR5DevelopmentElectronFileOutput((await runMacOSCommand("file", [nestedElectronExecutablePath])).stdout);
-  validateR5DevelopmentElectronInfo(parsePlistDocument(await readSecureFile(path.join(nestedElectronAppPath, "Contents", "Info.plist"), "signed Electron MAS Info.plist"), "signed Electron MAS Info.plist"));
+  validateR5DevelopmentElectronFileOutput((await runOwnerCommand("file", [nestedElectronExecutablePath])).stdout);
+  validateR5DevelopmentElectronInfo(parsePlistDocument(await readArtifactFile(path.join(nestedElectronAppPath, "Contents", "Info.plist"), "signed Electron MAS Info.plist"), "signed Electron MAS Info.plist"));
   for (const entry of machoEntries.filter((candidate) => candidate.path !== outerMachOEntry.path)) {
     const absolute = path.resolve(bundlePath, entry.path);
     const policy = classifyMacAppStoreDevelopmentMachO(entry, { outerMachOPath: outerMachOEntry.path });
     validateThinArm64MachO(entry, entry.path);
-    const signature = validateR5DevelopmentSignature(await readCodesignDisplay(absolute), entry.path, { expectedBundleIdentifier: null });
-    const entitlements = await readCodesignEntitlementsForGate(absolute, policy.entitlementPolicy, entry.path);
+    const signature = validateR5DevelopmentSignature(await readCodesignDisplay(absolute, runOwnerCommand), entry.path, { expectedBundleIdentifier: null });
+    const entitlements = await readCodesignEntitlementsForGate(absolute, policy.entitlementPolicy, entry.path, absolute, runOwnerCommand);
     validateMachOEntitlementsForGate(entitlements, policy, entry.path);
     if (policy.entitlementPolicy === MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.CHILD) {
       if (childEntitlements !== null && JSON.stringify(childEntitlements) !== JSON.stringify(entitlements)) {
@@ -747,7 +771,7 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
   const inspectedMachO = [];
   for (const entry of machoEntries) {
     const absolute = path.resolve(bundlePath, entry.path);
-    const inspected = await inspectMachO(absolute, { ownerMode: true });
+    const inspected = await inspectMachOEvidence(absolute, { ownerMode: true });
     if (!inspected) throw new Error(`signed MAS Mach-O disappeared from the validated inventory: ${entry.path}`);
     inspectedMachO.push({ relative: entry.path, binary: absolute, fileOutput: entry.fileOutput, ...inspected });
   }
@@ -804,11 +828,10 @@ function resolveExpectedRevenueCatPublicSdkKey(dependencies = {}) {
 }
 
 function validateMasManifestDocument(manifest) {
-  const contract = macAppStoreInstallationContract();
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest) ||
       manifest.schema !== "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1" ||
       manifest.authority !== MACOS_APP_STORE_DEVELOPMENT_AUTHORITY ||
-      manifest.target !== contract.target ||
+      manifest.target !== MACOS_APP_STORE_CONTRACT.target ||
       manifest.bundleIdentifier !== R5_APP_STORE_BUNDLE_ID ||
       manifest.teamId !== R5_APP_STORE_TEAM_ID ||
       manifest.signingIdentity !== R5_APP_STORE_DEVELOPMENT_IDENTITY ||
@@ -835,9 +858,9 @@ function validateMasManifestDocument(manifest) {
       manifest.entitlements.applicationGroup !== `${R5_APP_STORE_TEAM_ID}.${R5_APP_STORE_BUNDLE_ID}`) {
     throw new Error("MAS manifest parent/child entitlement policy evidence is missing");
   }
-  if (!manifest.electron || manifest.electron.version !== contract.electron.version ||
-      manifest.electron.platform !== contract.electron.platform || manifest.electron.arch !== contract.electron.arch ||
-      manifest.electron.archiveName !== contract.electron.archiveName || manifest.electron.architecture !== "arm64" ||
+  if (!manifest.electron || manifest.electron.version !== MACOS_APP_STORE_CONTRACT.electron.version ||
+      manifest.electron.platform !== MACOS_APP_STORE_CONTRACT.electron.platform || manifest.electron.arch !== MACOS_APP_STORE_CONTRACT.electron.arch ||
+      manifest.electron.archiveName !== MACOS_APP_STORE_CONTRACT.electron.archiveName || manifest.electron.architecture !== "arm64" ||
       manifest.electron.thin !== true || typeof manifest.electron.executable !== "string") {
     throw new Error("MAS manifest Electron/Mach-O evidence is not exact");
   }
@@ -930,15 +953,15 @@ async function runMacOSCommand(command, arguments_) {
   });
 }
 
-async function readCodesignDisplay(target) {
-  const result = await runMacOSCommand("codesign", ["--display", "--verbose=4", target]);
+async function readCodesignDisplay(target, runCommand = runMacOSCommand) {
+  const result = await runCommand("codesign", ["--display", "--verbose=4", target]);
   return `${result.stdout}\n${result.stderr}`;
 }
 
-async function readCodesignEntitlementsForGate(target, entitlementPolicy, label, expectedExecutablePath = target) {
+async function readCodesignEntitlementsForGate(target, entitlementPolicy, label, expectedExecutablePath = target, runCommand = runMacOSCommand) {
   let result;
   try {
-    const commandResult = await runMacOSCommand("codesign", ["--display", "--entitlements", ":-", target]);
+    const commandResult = await runCommand("codesign", ["--display", "--entitlements", ":-", target]);
     result = { exitCode: 0, stdout: commandResult.stdout, stderr: commandResult.stderr };
   } catch (error) {
     result = {
@@ -955,9 +978,9 @@ async function readCodesignEntitlementsForGate(target, entitlementPolicy, label,
   return parsed.kind === "absent" ? null : parsePlistDocument(parsed.plist, `${label} signed entitlements`);
 }
 
-async function assertUnsignedCodesignProfile(profilePath) {
+async function assertUnsignedCodesignProfile(profilePath, runCommand = runMacOSCommand) {
   try {
-    const result = await runMacOSCommand("codesign", ["--display", "--verbose=2", profilePath]);
+    const result = await runCommand("codesign", ["--display", "--verbose=2", profilePath]);
     return parseUnsignedCodesignProfileDiagnostic({ exitCode: 0, stdout: result.stdout, stderr: result.stderr }, "embedded development provisioning profile");
   } catch (error) {
     const exitCode = Number.isInteger(error?.code) ? error.code : Number(error?.code);
@@ -1011,7 +1034,7 @@ export async function restoreMasDevelopmentGate({
         // Stop proof releases the host lease before returning. Reacquire the
         // same sibling lock for package mutation so a new native host cannot
         // claim an available handoff between absence proof and rollback.
-        const packageLease = await acquireMasGateLock({ parentPath: context.parentPath });
+        const packageLease = await acquireMasGateLock(masGatePackageLockOptions(context));
         try {
           const status = await readMasGateSessionStatus(masGateRuntimeOptions(context, { dependencies, lockLease: packageLease }));
           if (status.status !== "active" && status.status !== "recovery-required") {
@@ -1040,6 +1063,7 @@ export async function restoreMasDevelopmentGate({
               identityPath: context.identityPath,
               requireArtifactBinding: true,
               lockParentPath: context.parentPath,
+              runtimeRootPath: context.runtimeRoot,
               lockLease: packageLease,
               assertNoLiveHost: async () => {
                 const observation = await inspectMasLiveState(context, dependencies);
@@ -1448,6 +1472,10 @@ function currentUid() {
 
 function isNonNegativeInteger(value) {
   return Number.isSafeInteger(value) && value >= 0;
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function coordinatorError(reason, cause) {

@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v65`
+- `plan_revision`: `v66`
 - `current_frontier`: `R5-MAS-RUNTIME-STATE-TRANSACTION-CLOSEOUT-CORRECTION`
 - `state`: `R5_MAS_RUNTIME_STATE_TRANSACTION_CLOSEOUT_CORRECTION_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable MAS runtime-state closeout correction from exact base `8c6efffeb05a53100044aea8fbcf85e74304afee`; the `8c6efff` closeout candidate is unaccepted pending Lead review. Candidate commit placeholder is `<immutable-correction-commit-pending>`. The historical rejected closeout base is `975db2cc93c827fec24d58f361e94edd3dce84e8`; the original convergence base is `4a32dfe8d8979e956dc6501334971363279de2bd`; the prior accepted base is `b3ff5ec83908201a40be9715df34c238d4eea498`. The accepted package-source Node proof, identity serializer/proof, bounded registration diagnostics, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
-- `authority_contract_sha256`: `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91` (old correction-base digest was `48dfb029c22bb9618f94fc41f5b28b827586a223afcc88e7bbd8d00806fb986c`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
+- `candidate`: pending immutable MAS runtime-state closeout correction from exact base `103a7a777c7b3cf61570cc971bec117cb18de8ad`; this serial correction remains unaccepted pending Lead review and is a child of the original family base `8c6efffeb05a53100044aea8fbcf85e74304afee`. Candidate commit placeholder is `<immutable-correction-commit-pending>`. The historical rejected closeout base is `975db2cc93c827fec24d58f361e94edd3dce84e8`; the original convergence base is `4a32dfe8d8979e956dc6501334971363279de2bd`; the prior accepted base is `b3ff5ec83908201a40be9715df34c238d4eea498`. The accepted package-source Node proof, identity serializer/proof, bounded registration diagnostics, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
+- `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: this immutable child correction must be Lead-reviewed before any future package, install, launch, or external gate. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
 - `blocked_by`: no safe in-scope implementation dependency remains; no package, sign, install, launch, or external result is accepted by this candidate.
-- `next_action`: Lead reviews and accepts or rejects the immutable child of exact base `8c6efffeb05a53100044aea8fbcf85e74304afee`; only after acceptance and a new explicit owner gate may any future package/install/launch attempt be considered.
+- `next_action`: Lead reviews and accepts or rejects the immutable child of exact base `103a7a777c7b3cf61570cc971bec117cb18de8ad`; only after acceptance and a new explicit owner gate may any future package/install/launch attempt be considered.
 
 ## Ownership And Authority
 
@@ -1478,8 +1478,8 @@ unverified. Authority digest remains
 
 ### R5 MAS runtime-state transaction closeout correction (2026-09-03; current frontier)
 
-`PLAN_RECONCILIATION v65` records the owner-confirmed Attempt 12 incident and
-the closeout correction child of exact base `8c6efff` for
+`PLAN_RECONCILIATION v66` records the owner-confirmed Attempt 12 incident and
+the serial closeout correction child of exact base `103a7a7` for
 `R5-MAS-RUNTIME-STATE-TRANSACTION-CLOSEOUT-CORRECTION`.
 Attempt 12 used a marker-authorized recursive runtime cleanup shape that mixed
 approximately 829 MB of attempt-created state with approximately 37 MB of
@@ -1514,6 +1514,16 @@ untouched; death after the syscall is recovered by inspecting both paths. It
 creates a secure fresh root with package identity absent. The package
 transaction continues to own only the `/Applications` bundle and identity
 bytes.
+
+The native helper resolves protected paths from trusted descriptors. It opens
+the filesystem root once and traverses each absolute ancestor with
+descriptor-relative `openat(..., O_NOFOLLOW)`. Before `renameatx_np`, the
+resolved parents are mechanically checked against the authorized path class:
+`runtime-sibling` is the held lock parent, `package-sibling` is the pinned
+package parent, and `runtime-child` is beneath the bound runtime-root
+descriptor. A replaced ancestor therefore fails on symlink or descriptor
+identity mismatch before the syscall, while final destination races remain
+kernel `EEXIST` failures that preserve both objects.
 
 A stable kernel-backed sibling lock now binds the MAS coordinator and native
 host. Every supplied gate lease must still prove its live kernel holder before
@@ -1552,8 +1562,12 @@ constrains cleanup intent to deterministic transaction-owned siblings. It
 rechecks source/manifest before staging and before moving the prior
 `/Applications` app, validates the staged copy, and requires the installed
 fingerprint and root identity to equal validated staging. The production CLI
-does not accept a bundle path as a substitute for that manifest and validator;
-injected validation is a local test seam only.
+does not accept a bundle path as a substitute for that manifest and validator.
+The coordinator has no injected validator result, artifact binding, or callback:
+complete validation always executes, including the exact expected RevenueCat
+public-key comparison. Fixture tests may inject only bounded low-level file,
+stat, inventory, Mach-O, or owner-tool evidence readers; those adapters cannot
+authorize quarantine or replace final bundle realpath/fingerprint checks.
 
 Architecture acceptance for this correction is the smallest observable chain:
 complete artifact validator → frozen plain artifact binding → MAS coordinator
@@ -1589,12 +1603,13 @@ The historical `975db2c` closeout candidate was rejected because construction
 creation, lease liveness, no-replace destinations, stop authority, actual W
 topology, and pre-install manifest validation were not sufficiently bound.
 This child corrects those findings and is pending Lead review from exact base
+`103a7a777c7b3cf61570cc971bec117cb18de8ad`, within the original family base
 `8c6efffeb05a53100044aea8fbcf85e74304afee`; the historical rejected closeout
 base was `975db2cc93c827fec24d58f361e94edd3dce84e8`, the original convergence
 base is `4a32dfe8d8979e956dc6501334971363279de2bd`, and the prior accepted base
 is `b3ff5ec83908201a40be9715df34c238d4eea498`. The old authority digest was
-`48dfb029c22bb9618f94fc41f5b28b827586a223afcc88e7bbd8d00806fb986c`; the new
-digest is `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`.
+`8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; the new
+digest is `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
 Both are SHA-256 values of the ordered path/hash manifest for ADR0003, amended
 ADR0005, product monetization, and macOS artifact-validation authority files.
 

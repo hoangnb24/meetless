@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 
 export const MAS_GATE_LOCK_SCHEMA = "MAS_GATE_LOCK v1";
 export const MAS_GATE_LOCK_BASENAME = ".meetless-mas-gate.lock";
-export const MAS_GATE_LOCK_MUTATION_SCHEMA = "MAS_GATE_MUTATION v1";
-export const MAS_GATE_LOCK_MUTATION_VERSION = 1;
+export const MAS_GATE_LOCK_MUTATION_SCHEMA = "MAS_GATE_MUTATION v2";
+export const MAS_GATE_LOCK_MUTATION_VERSION = 2;
 export const MAS_GATE_LOCK_COMMAND = "MeetlessMasGateMutation";
 export const MAS_GATE_LOCK_HOLDER_EXITED_CODE = "MAS-GATE-HOLDER-EXITED";
 
@@ -32,22 +32,23 @@ export function masGateLockPath(parentPath) {
  * lockf descriptor as MeetlessHost and every protected renameatx_np call, so a Node
  * liveness check cannot become a later JavaScript filesystem mutation.
  */
-export async function acquireMasGateLock({ parentPath, blocking = false } = {}) {
+export async function acquireMasGateLock({ parentPath, packageParentPath = parentPath, blocking = false } = {}) {
   const requestedLockPath = typeof parentPath === "string" && parentPath.length > 0
     ? path.join(path.resolve(parentPath), MAS_GATE_LOCK_BASENAME)
     : "<unknown>";
   if (blocking) throw lockFailure(requestedLockPath, "blocking MAS gate lock acquisition is not supported; retry the bounded operation");
   try {
     const canonicalParent = canonicalAbsolute(parentPath, "MAS gate lock parent");
+    const canonicalPackageParent = canonicalAbsolute(packageParentPath, "MAS gate package parent");
     await assertLockParent(canonicalParent);
     const lockPath = masGateLockPath(canonicalParent);
     await prepareLockFile(lockPath, canonicalParent);
-    const child = spawn(mutationHelperPath, [`--parent=${canonicalParent}`, `--lock=${lockPath}`], {
+    const child = spawn(mutationHelperPath, [`--parent=${canonicalParent}`, `--lock=${lockPath}`, `--package-parent=${canonicalPackageParent}`], {
       cwd: canonicalParent,
       stdio: ["pipe", "pipe", "pipe"],
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
     });
-    const lease = await waitForLock(child, lockPath);
+    const lease = await waitForLock(child, lockPath, canonicalPackageParent);
     try {
       const lockIdentity = await assertHeldLockFile(lockPath, canonicalParent);
       lease.lockIdentity = lockIdentity;
@@ -86,7 +87,8 @@ export async function withMasGateLock(options, operation) {
 
 export function assertMasGateMutationLease(lease) {
   if (!lease || !LIVE_MAS_GATE_LOCK_LEASES.has(lease) || typeof lease.release !== "function" ||
-      typeof lease.assertHeld !== "function" || typeof lease.renameNoReplace !== "function") {
+      typeof lease.assertHeld !== "function" || typeof lease.bindRuntimeRoot !== "function" ||
+      typeof lease.renameNoReplace !== "function") {
     throw lockFailure(String(lease?.lockPath ?? "<unknown>"), "the supplied MAS gate lock lease is not kernel-backed");
   }
   return lease;
@@ -114,7 +116,7 @@ export async function writeMasGateLockMetadata(lease, metadata) {
   }
 }
 
-async function waitForLock(child, lockPath) {
+async function waitForLock(child, lockPath, packageParentPath) {
   let ready = false;
   let settled = false;
   let holderProcessExited = false;
@@ -163,7 +165,7 @@ async function waitForLock(child, lockPath) {
         return;
       }
       if (message.kind === "ready") {
-        if (ready || message.schema !== MAS_GATE_LOCK_MUTATION_SCHEMA || message.version !== MAS_GATE_LOCK_MUTATION_VERSION) {
+        if (ready || message.schema !== MAS_GATE_LOCK_MUTATION_SCHEMA || message.version !== MAS_GATE_LOCK_MUTATION_VERSION || message.packageParentPath !== packageParentPath) {
           const error = lockFailure(lockPath, "native mutation-session returned an invalid ready record");
           if (!settled) {
             settled = true;
@@ -274,6 +276,7 @@ async function waitForLock(child, lockPath) {
   const lease = {
     [MAS_GATE_LOCK_LEASE]: true,
     lockPath,
+    packageParentPath,
     holderPid: child.pid,
     lockIdentity: null,
     assertHeld: async () => {
@@ -282,11 +285,18 @@ async function waitForLock(child, lockPath) {
       if (holderProcessExited) throw holderExitFailure(lockPath, "native mutation-session holder exited during assertion");
       await assertHeldLockFile(lockPath, path.dirname(lockPath), lease.lockIdentity);
     },
-    renameNoReplace: async (source, destination, { onMutationApplied } = {}) => {
+    bindRuntimeRoot: async (runtimeRootPath) => {
+      const canonicalRoot = canonicalAbsolute(runtimeRootPath, "protected runtime root");
+      await lease.assertHeld();
+      await send("bind-runtime-root", { runtimeRootPath: canonicalRoot });
+    },
+    renameNoReplace: async (source, destination, { pathClass, authorizedParentPath, authorizedRootPath, onMutationApplied } = {}) => {
+      const mutation = mutationPathClassPayload(pathClass, { authorizedParentPath, authorizedRootPath });
       await lease.assertHeld();
       await send("rename-excl", {
         source: canonicalAbsolute(source, "protected move source"),
         destination: canonicalAbsolute(destination, "protected move destination"),
+        ...mutation,
       }, { onMutationApplied });
     },
     async release() {
@@ -368,6 +378,34 @@ function canonicalAbsolute(value, label) {
     throw new Error(`${label} must be one exact canonical absolute path`);
   }
   return value;
+}
+
+function mutationPathClassPayload(pathClass, { authorizedParentPath = undefined, authorizedRootPath = undefined } = {}) {
+  if (pathClass === "runtime-sibling") {
+    if (authorizedParentPath !== undefined || authorizedRootPath !== undefined) {
+      throw new Error("runtime-sibling protected move cannot carry an authorized path override");
+    }
+    return { pathClass };
+  }
+  if (pathClass === "package-sibling") {
+    if (typeof authorizedParentPath !== "string" || authorizedRootPath !== undefined) {
+      throw new Error("package-sibling protected move requires its exact authorized parent path");
+    }
+    return {
+      pathClass,
+      authorizedParentPath: canonicalAbsolute(authorizedParentPath, "authorized package parent"),
+    };
+  }
+  if (pathClass === "runtime-child") {
+    if (typeof authorizedRootPath !== "string" || authorizedParentPath !== undefined) {
+      throw new Error("runtime-child protected move requires its exact authorized runtime root path");
+    }
+    return {
+      pathClass,
+      authorizedRootPath: canonicalAbsolute(authorizedRootPath, "authorized runtime root"),
+    };
+  }
+  throw new Error("protected move requires one recognized path class");
 }
 
 function currentUid() {

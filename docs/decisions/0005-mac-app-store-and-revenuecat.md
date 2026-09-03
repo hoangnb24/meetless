@@ -210,6 +210,14 @@ fallback authorizes the move; a race returns kernel `EEXIST` and preserves both
 source and destination. Native-helper death before the syscall leaves the
 source untouched; death after the syscall is recovered by inspecting both
 paths. There is no copy fallback and no recursive removal in this boundary.
+Before that syscall, the helper starts from a trusted filesystem-root
+descriptor and traverses every pathname component with descriptor-relative
+`openat` and `O_NOFOLLOW`. A `runtime-sibling` move must resolve both parents
+to the held lock-parent descriptor; a `package-sibling` move must resolve both
+parents to the pinned package-parent descriptor; and a `runtime-child` move
+must resolve both parents beneath the previously bound runtime-root
+descriptor. A pathname ancestor replaced by a symlink or another directory
+therefore fails the authorized descriptor/path-class check before mutation.
 Unexpected concurrency, physical boundary ambiguity, or a changed lock
 identity retains every remaining root and fails closed.
 
@@ -270,8 +278,12 @@ receives that DTO, rechecks the source and manifest before staging and before
 moving the prior `/Applications` bundle, validates the staged copy, and
 requires the installed fingerprint and root identity to equal validated
 staging. Package rollback precedes runtime-root restore; every failure retains
-or restores pre-existing state and fails closed. An injected validator is a
-test seam only; the production command uses the full validator.
+or restores pre-existing state and fails closed. The coordinator has no
+caller-supplied validator result, artifact binding, or validator callback:
+complete validation always executes, including the exact expected RevenueCat
+public-key comparison. Fixture tests may inject only bounded low-level file,
+stat, inventory, Mach-O, or owner-tool evidence readers; those adapters cannot
+authorize quarantine or replace the final bundle realpath/fingerprint checks.
 This repository boundary does not reserve disk capacity, prevent arbitrary
 same-UID shell deletion, establish CI or branch protection, or prove a real
 MAS package/sign/install/launch. Those remain separate owner-authorized gates.

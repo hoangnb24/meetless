@@ -271,6 +271,44 @@ describe("MAS runtime-root preservation transaction", () => {
     await expect(readFile(path.join(active.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
   });
 
+  it.each(["symlink", "identity"] as const)(
+    "rejects a package-parent %s ancestor swap before the protected syscall and preserves source plus collision",
+    async (swap) => {
+      const fixture = await createFixture({ prior: false });
+      const packageAncestor = path.join(fixture.base, "package-container");
+      const packageParent = path.join(packageAncestor, "Applications");
+      const replacedAncestor = `${packageAncestor}.replaced`;
+      await mkdir(packageParent, { recursive: true, mode: 0o700 });
+      const lease = await acquireMasGateLock({ parentPath: fixture.parent, packageParentPath: packageParent });
+      try {
+        await writeFile(path.join(packageParent, "source.txt"), "source\n", { mode: 0o600 });
+        await writeFile(path.join(packageParent, "destination.txt"), "collision\n", { mode: 0o600 });
+        await rename(packageAncestor, replacedAncestor);
+        if (swap === "symlink") {
+          await symlink(replacedAncestor, packageAncestor);
+        } else {
+          await mkdir(packageParent, { recursive: true, mode: 0o700 });
+          await writeFile(path.join(packageParent, "source.txt"), "source\n", { mode: 0o600 });
+          await writeFile(path.join(packageParent, "destination.txt"), "collision\n", { mode: 0o600 });
+        }
+
+        await expect(lease.renameNoReplace(
+          path.join(packageParent, "source.txt"),
+          path.join(packageParent, "destination.txt"),
+          { pathClass: "package-sibling", authorizedParentPath: packageParent },
+        )).rejects.toThrow(/ELOOP|ENOTDIR|EPERM|identity|symlink/);
+
+        const preservedRoot = swap === "symlink" ? path.join(replacedAncestor, "Applications") : packageParent;
+        await expect(readFile(path.join(preservedRoot, "source.txt"), "utf8")).resolves.toBe("source\n");
+        await expect(readFile(path.join(preservedRoot, "destination.txt"), "utf8")).resolves.toBe("collision\n");
+      } finally {
+        await lease.release();
+        await rm(packageAncestor, { recursive: true, force: true });
+        await rename(replacedAncestor, packageAncestor);
+      }
+    },
+  );
+
   it("rejects an active transaction whose sibling directory mode changed", async () => {
     const fixture = await createFixture({ prior: true });
     await expect(begin(fixture, { faultAt: "prepared" })).rejects.toThrow(/injected MAS gate session/);

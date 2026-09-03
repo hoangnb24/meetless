@@ -28,11 +28,15 @@ async function withPackageMutationLease(input, options, operation) {
   assertCanonicalPackagePath(target, "package mutation target");
   const lockParentPath = options?.lockParentPath ?? path.dirname(target);
   assertCanonicalPackagePath(lockParentPath, "package mutation lock parent");
+  const packageParentPath = path.dirname(target);
   const expectedLockPath = masGateLockPath(lockParentPath);
   if (supplied) {
     assertMasGateMutationLease(supplied);
     if (supplied.lockPath !== expectedLockPath) {
       throw new Error("package mutation supplied a native mutation-session lease for a different lock parent");
+    }
+    if (supplied.packageParentPath !== packageParentPath) {
+      throw new Error("package mutation supplied a native mutation-session lease for a different package parent");
     }
     await supplied.assertHeld();
     return operation(supplied);
@@ -40,6 +44,7 @@ async function withPackageMutationLease(input, options, operation) {
   await mkdir(path.dirname(target), { recursive: true, mode: 0o755 });
   const lease = await acquireMasGateLock({
     parentPath: lockParentPath,
+    packageParentPath,
   });
   try {
     return await operation(lease);
@@ -58,6 +63,8 @@ async function replacePackageBundleWithLease(input) {
   assertCanonicalPackagePath(source, "package source");
   assertCanonicalPackagePath(target, "package target");
   assertCanonicalPackagePath(identityPath, "package identity path");
+  const runtimeRootPath = runtimeRootPathFor(input);
+  await input.lockLease.bindRuntimeRoot(runtimeRootPath);
   const artifactBinding = input.artifactBinding ? freezeMasGateArtifactBinding(input.artifactBinding) : null;
   if (artifactBinding) {
     assertMasGateArtifactBinding(artifactBinding, { bundlePath: source });
@@ -151,6 +158,8 @@ async function replacePackageBundleWithLease(input) {
       destination: paths.backup,
     });
     await input.lockLease.renameNoReplace(target, paths.backup, {
+      pathClass: "package-sibling",
+      authorizedParentPath: path.dirname(target),
       onMutationApplied: (message) => input.afterRenameSyscall?.({
         label: "package prior-target backup rename",
         source: target,
@@ -176,6 +185,8 @@ async function replacePackageBundleWithLease(input) {
     destination: target,
   });
   await input.lockLease.renameNoReplace(paths.staging, target, {
+    pathClass: "package-sibling",
+    authorizedParentPath: path.dirname(target),
     onMutationApplied: (message) => input.afterRenameSyscall?.({
       label: "package staging install rename",
       source: paths.staging,
@@ -230,6 +241,8 @@ async function replacePackageBundleWithLease(input) {
         source: identityTemporaryPath,
         destination: identityPath,
       }),
+      pathClass: "runtime-child",
+      authorizedRootPath: runtimeRootPath,
     });
     const publishedIdentity = await packagePathIdentity(identityPath);
     if (!samePackageIdentity(publishedIdentity, transaction.identityTemporaryIdentity)) {
@@ -253,6 +266,7 @@ export async function recoverPackageTransaction(transactionOrJournal, options = 
   assertTransaction(transaction, options);
   return withPackageMutationLease(transaction, options, async (lockLease) => {
     const lockedOptions = { ...options, lockLease };
+    await lockLease.bindRuntimeRoot(runtimeRootPathFor(transaction, options));
     if (lockedOptions.assertNoLiveHost) await lockedOptions.assertNoLiveHost();
     if (transaction.state === "finalizing" || transaction.state === "finalized") {
       await finishFinalization(transaction, lockedOptions);
@@ -267,6 +281,7 @@ export async function restorePackageTransaction(transaction, options = {}) {
   assertTransaction(transaction, options);
   return withPackageMutationLease(transaction, options, async (lockLease) => {
     const lockedOptions = { ...options, lockLease };
+    await lockLease.bindRuntimeRoot(runtimeRootPathFor(transaction, options));
     if (lockedOptions.assertNoLiveHost) await lockedOptions.assertNoLiveHost();
     if (transaction.state !== "prepared" && transaction.state !== "staged" && transaction.state !== "target-backed-up" &&
         transaction.state !== "candidate-installed" && transaction.state !== "identity-published" && transaction.state !== "committed" && transaction.state !== "restoring" &&
@@ -283,6 +298,7 @@ export async function finalizePackageTransaction(transaction, options = {}) {
   assertTransaction(transaction, options);
   return withPackageMutationLease(transaction, options, async (lockLease) => {
     const lockedOptions = { ...options, lockLease };
+    await lockLease.bindRuntimeRoot(runtimeRootPathFor(transaction, options));
     if (lockedOptions.assertNoLiveHost) await lockedOptions.assertNoLiveHost();
     if (transaction.state !== "committed" && transaction.state !== "finalizing" && transaction.state !== "finalized") {
       throw new Error(`cannot finalize a package transaction in state ${transaction.state}`);
@@ -375,7 +391,7 @@ async function restoreToPrevious(transaction, options = {}) {
         throw new Error("refusing package recovery; prior package backup is missing or changed");
       }
       await assertOwnedPath(transaction.paths.backup, expectedPrior, "prior package backup", priorIdentity);
-      await lockLease.renameNoReplace(transaction.paths.backup, transaction.target);
+      await lockLease.renameNoReplace(transaction.paths.backup, transaction.target, packageRenameOptions(transaction.target));
       await assertOwnedPath(transaction.target, expectedPrior, "restored prior package", priorIdentity);
       await transition(transaction, "target-restored", faultAt);
     } else if (currentTarget === expectedPrior) {
@@ -521,7 +537,7 @@ async function removeOwnedPath(transaction, candidate, expectedFingerprint, labe
   transaction.cleanupIdentity = expectedIdentity;
   await writeJournal(transaction);
   if (await exists(candidate)) {
-    await lease.renameNoReplace(candidate, disposable);
+    await lease.renameNoReplace(candidate, disposable, protectedRenameOptions(transaction, candidate, disposable));
   }
   await assertOwnedPath(disposable, expectedFingerprint, `${label} disposable`, expectedIdentity);
   await rm(disposable, { recursive: true, force: true });
@@ -537,7 +553,7 @@ async function moveOwnedPath(transaction, source, destination, expectedFingerpri
   if (!expectedIdentity) throw new Error(`cannot move ${label} without its durable ownership identity`);
   await assertOwnedPath(source, expectedFingerprint, label, expectedIdentity);
   if (await exists(destination)) throw new Error(`refusing to move ${label}; destination already exists`);
-  await lease.renameNoReplace(source, destination);
+  await lease.renameNoReplace(source, destination, protectedRenameOptions(transaction, source, destination));
   await assertOwnedPath(destination, expectedFingerprint, `moved ${label}`, expectedIdentity);
 }
 
@@ -568,7 +584,13 @@ async function reconcilePendingCleanup(transaction, lease) {
   if (sourceFingerprint === null && disposableFingerprint === null) {
     throw new Error("refusing package recovery; cleanup source and disposable are both missing");
   }
-  if (sourceFingerprint !== null) await lease.renameNoReplace(transaction.cleanupSource, transaction.cleanupPath);
+  if (sourceFingerprint !== null) {
+    await lease.renameNoReplace(
+      transaction.cleanupSource,
+      transaction.cleanupPath,
+      protectedRenameOptions(transaction, transaction.cleanupSource, transaction.cleanupPath),
+    );
+  }
   await assertOwnedPath(transaction.cleanupPath, transaction.cleanupFingerprint, "cleanup disposable", transaction.cleanupIdentity);
   await rm(transaction.cleanupPath, { recursive: true, force: true });
   transaction.cleanupPath = null;
@@ -825,6 +847,9 @@ async function writeBytesAtomic(filePath, bytes, {
   onTemporaryReady = null,
   onMutationApplied = null,
   beforeMutation = null,
+  pathClass = null,
+  authorizedParentPath = undefined,
+  authorizedRootPath = undefined,
 } = {}) {
   await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
   const temporary = temporaryPath ?? `${filePath}.${process.pid}.${randomUUID()}.tmp`;
@@ -836,7 +861,12 @@ async function writeBytesAtomic(filePath, bytes, {
     if (noReplace) {
       if (!lease || typeof lease.renameNoReplace !== "function") throw new Error("no-replace identity publication requires the live native mutation-session lease");
       if (beforeMutation) await beforeMutation();
-      await lease.renameNoReplace(temporary, filePath, { onMutationApplied });
+      await lease.renameNoReplace(temporary, filePath, {
+        pathClass,
+        authorizedParentPath,
+        authorizedRootPath,
+        onMutationApplied,
+      });
     } else {
       await rename(temporary, filePath);
     }
@@ -901,6 +931,34 @@ function fingerprintFileBytes(bytes) {
     size: bytes.byteLength,
     sha256: digest(bytes),
   }])));
+}
+
+function runtimeRootPathFor(value, options = {}) {
+  const candidate = value?.runtimeRootPath ?? options.runtimeRootPath ?? path.dirname(value?.identityPath ?? "");
+  assertCanonicalPackagePath(candidate, "package transaction runtime root");
+  return candidate;
+}
+
+function packageRenameOptions(target) {
+  return {
+    pathClass: "package-sibling",
+    authorizedParentPath: path.dirname(target),
+  };
+}
+
+function protectedRenameOptions(transaction, source, destination) {
+  const packageParentPath = path.dirname(transaction.target);
+  if (path.dirname(source) === packageParentPath && path.dirname(destination) === packageParentPath) {
+    return packageRenameOptions(transaction.target);
+  }
+  const runtimeRootPath = path.dirname(transaction.identityPath);
+  if (path.dirname(source) === runtimeRootPath && path.dirname(destination) === runtimeRootPath) {
+    return {
+      pathClass: "runtime-child",
+      authorizedRootPath: runtimeRootPath,
+    };
+  }
+  throw new Error("package protected move is outside the authorized package/runtime path classes");
 }
 
 export function serializeSortedJson(value) {

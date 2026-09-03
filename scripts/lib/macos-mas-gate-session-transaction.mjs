@@ -1349,6 +1349,7 @@ async function renameWithDurability(source, target, parentPath, label, options =
     }
     await lease.assertHeld();
     await lease.renameNoReplace(source, target, {
+      pathClass: "runtime-sibling",
       onMutationApplied: (message) => options.afterRenameSyscall?.({
         label,
         source,
