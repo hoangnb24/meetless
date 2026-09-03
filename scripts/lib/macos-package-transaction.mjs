@@ -373,15 +373,49 @@ function digest(bytes) {
 }
 
 export function serializeSortedJson(value) {
-  const encoded = JSON.stringify(sortJsonKeys(value), null, 2);
+  const encoded = writeFoundationJsonValue(value, 0, "root");
   if (encoded === undefined) throw new Error("cannot serialize package identity as JSON");
   return Buffer.from(`${encoded}\n`);
 }
 
-function sortJsonKeys(value) {
-  if (Array.isArray(value)) return value.map(sortJsonKeys);
-  if (value === null || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.keys(value).sort().map((key) => [key, sortJsonKeys(value[key])]),
-  );
+function writeFoundationJsonValue(value, indent, context) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) {
+    const values = value.map((entry, index) =>
+      writeFoundationJsonValue(entry, indent + 2, `${context}[${index}]`) ?? "null",
+    );
+    const childIndent = " ".repeat(indent + 2);
+    const currentIndent = " ".repeat(indent);
+    return values.length === 0
+      ? `[\n\n${currentIndent}]`
+      : `[\n${values.map((entry) => `${childIndent}${entry}`).join(",\n")}\n${currentIndent}]`;
+  }
+  if (typeof value === "string") return writeFoundationJsonString(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") {
+    const encoded = JSON.stringify(value);
+    if (encoded === undefined) throw new Error(`cannot serialize package identity value at ${context}`);
+    return encoded;
+  }
+  if (value === undefined || typeof value === "function" || typeof value === "symbol") return undefined;
+  if (typeof value !== "object") throw new Error(`cannot serialize package identity value at ${context}`);
+
+  const entries = [];
+  for (const key of Object.keys(value).sort()) {
+    const encoded = writeFoundationJsonValue(value[key], indent + 2, `${context}.${key}`);
+    if (encoded !== undefined) entries.push([key, encoded]);
+  }
+  const childIndent = " ".repeat(indent + 2);
+  const currentIndent = " ".repeat(indent);
+  return entries.length === 0
+    ? `{\n\n${currentIndent}}`
+    : `{\n${entries.map(([key, encoded]) => `${childIndent}${writeFoundationJsonString(key)} : ${encoded}`).join(",\n")}\n${currentIndent}}`;
+}
+
+function writeFoundationJsonString(value) {
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) throw new Error("cannot serialize package identity string");
+  let result = "";
+  for (const character of encoded) result += character === "/" ? "\\/" : character;
+  return result;
 }

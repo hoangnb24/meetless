@@ -2,21 +2,21 @@
 
 ## Current State
 
-- `plan_revision`: `v60`
-- `current_frontier`: `R5-MAS-HOST-CONFIG-CAPTURE-HELPER-BINDING`
-- `state`: `R5_MAS_HOST_CONFIG_CAPTURE_HELPER_BINDING_PENDING_LEAD_PROOF`
+- `plan_revision`: `v61`
+- `current_frontier`: `R5-MAS-ATTEMPT11-RUNTIME-DIAGNOSTIC-IDENTITY-CONVERGENCE`
+- `state`: `R5_MAS_ATTEMPT11_RUNTIME_DIAGNOSTIC_IDENTITY_CONVERGENCE_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable host-config capture-helper binding correction from accepted exact base `4096c3a6c5163531e110e45723dd42319f485aff`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
+- `candidate`: pending immutable Attempt-11 runtime diagnostic and identity-byte convergence correction from accepted exact base `5dd30f4acb8bcc0d9aaf79d9d2039d7630c6d964`; candidate commit placeholder is `<immutable-correction-commit-pending>`. The accepted host-config capture-helper binding, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
 - `authority_contract_sha256`: `fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
-- `failed_proof`: attempt 10 retained root `/private/tmp/meetless-mas-development-proof.D0SWVP` has manifest SHA-256 `7282632de92ee03295397e2d1bdb8e0dca9c8f5e3007c50b11d9f7dcaceb9683`. Installed identity preflight failed before LaunchServices because the digest-verified packaged host configuration omitted the internal capture-helper path expected from `RuntimeConfig.paths.captureHelper`. No LaunchServices launch was attempted; all external gates remained closed.
-- `pending_ruling`: `installation-contract.json` remains the single authoritative packaged-resource owner. The correction derives internal `HostLaunchConfiguration.captureHelperPath` from its digest-verified `package.resources.captureHelper` through existing bundle containment, while strict v2 `host-config.json` neither emits nor accepts that field. Direct-DMG derives the same resource and development remains unchanged. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
+- `failed_proof`: Attempt 11 retained root `/private/tmp/meetless-mas-development-proof.TmI7ud` has manifest SHA-256 `93cc1e289c487b34d28ba77e60e7163a390b3b38bb346f532d5255b34552d8c5`. Host PID `14710` reached runtime creation but no accepted D/S/W/P; registration returned a generic rejection, and recovery first observed a byte mismatch before successful exact-byte restoration. No external gate was opened.
+- `pending_ruling`: the native registration policy remains fail-closed while protocol rejection exposes only bounded role/stage/check/normalized-OS categories; the Node transaction serializer must reproduce MeetlessHost's canonical Foundation JSON bytes, while recovery remains exact-byte-only. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
 - `blocked_by`: no safe in-scope implementation dependency remains; no package, sign, install, launch, or external result is accepted by this candidate.
-- `next_action`: Lead runs focused positive/negative host identity/package-contract proof and accepts an immutable correction candidate from base `4096c3a6c5163531e110e45723dd42319f485aff`; only then may a fresh external gate attempt be considered.
+- `next_action`: Lead reviews the bounded diagnostic, exact-byte serializer, and real repository runtime/node detached-daemon proof, then accepts or rejects the immutable candidate from base `5dd30f4acb8bcc0d9aaf79d9d2039d7630c6d964`; only then may a fresh external gate attempt be considered.
 
 ## Ownership And Authority
 
-Date: 2026-08-30; reconciled 2026-09-02
+Date: 2026-08-30; reconciled 2026-09-03
 
 - Owner: `v1-paseo-foundation` owns the managed-transcription foundation contract,
   residual M7, paused `M7-F29-NOTARIZE-STAPLE-VERIFY`, and TCC R3.
@@ -1403,6 +1403,36 @@ no configured executable local hook enforces it, and branch protection remains
 unverified. The final ancestry, three-path manifest, unchanged authority files,
 recorded authority digest, and tracked-worktree state are checked at immutable
 candidate creation.
+
+### R5 Attempt-11 runtime diagnostic and identity-byte convergence (2026-09-03; current frontier)
+
+`PLAN_RECONCILIATION v61` records Attempt 11 proof root
+`/private/tmp/meetless-mas-development-proof.TmI7ud`, manifest SHA-256
+`93cc1e289c487b34d28ba77e60e7163a390b3b38bb346f532d5255b34552d8c5`, and host
+PID `14710`. Runtime creation was observed, but no accepted D/S/W/P was
+observed; registration returned a generic rejection. Recovery first observed
+a byte mismatch and then successfully restored the exact prior bytes. These
+facts are recorded from the supplied proof summary; the retained proof root is
+not inspected by this correction.
+
+The correction keeps registration fail-closed and adds a bounded local failure
+category at the protocol edge: role, stage, check, and a normalized OS code
+only. Generic malformed requests remain distinct, no shared last-error state is
+introduced, and shutdown `EPERM` handling remains fail-closed. The transaction
+serializer recursively reproduces the MeetlessHost Foundation JSON byte profile
+(sorted keys, Foundation spacing, default slash escaping, two-space LF
+formatting, and one terminal LF). Recovery continues to accept only exact prior
+or exact canonical-next identity bytes. Native and Node golden vectors cover
+complete identity fields, nested configuration, paths/slashes, escaped content,
+arrays, numbers, and omitted optional fields; mutation and alternate-formatting
+proof remains rejected. A real repository Node runtime with a detached daemon is
+also exercised by the native test composition.
+
+The authority digest remains
+`fd54201d964757aedc5c4b33fd04bab64057bad3f6b35a8e820e7339a3bc56f3`. Package,
+sign, install, launch, retained-root inspection, secret/cache inspection, R4
+fixture mutation, push, and every external gate remain closed. The candidate is
+pending Lead review.
 
 ### Risks And Recovery
 

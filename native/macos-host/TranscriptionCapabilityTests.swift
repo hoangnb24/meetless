@@ -19,11 +19,96 @@ private struct RuntimeEndpointGoldenVector: Decodable {
   let composition: MeetlessRuntimeEndpointComposition
 }
 
+private struct FoundationJSONGoldenConfiguration: Encodable {
+  let repositoryRoot: String
+  let runtimeRoot: String
+  let listen: String
+  let rendererOrigin: String
+  let transcriptionSocket: String
+  let transcriptionStaging: String
+  let nodePath: String
+  let runtimeCliPath: String
+  let captureHelperPath: String?
+  let identityPath: String
+  let endpointPolicy: String?
+  let endpointWorkingDirectory: String?
+  let recordingEndpointName: String?
+  let transcriptionEndpointName: String?
+}
+
+private struct FoundationJSONGoldenIdentity: Encodable {
+  let version: Int
+  let bundleIdentifier: String
+  let bundlePath: String
+  let bundleRealPath: String
+  let executablePath: String
+  let designatedRequirement: String
+  let cdHash: String
+  let binarySha256: String
+  let binaryDevice: Int
+  let binaryInode: Int
+  let binarySize: Int
+  let configuration: FoundationJSONGoldenConfiguration
+}
+
+private enum FoundationJSONGoldenArrayValue: Encodable {
+  case string(String)
+  case integer(Int)
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.singleValueContainer()
+    switch self {
+    case .string(let value): try container.encode(value)
+    case .integer(let value): try container.encode(value)
+    }
+  }
+}
+
+private struct FoundationJSONGoldenNested: Encodable {
+  let z: String
+  let a: String
+}
+
+private struct FoundationJSONGoldenProfile: Encodable {
+  let array: [FoundationJSONGoldenArrayValue]
+  let emptyArray: [String]
+  let emptyObject: [String: String]
+  let escaped: String
+  let nested: FoundationJSONGoldenNested
+  let optionalOmitted: String?
+
+  private enum CodingKeys: String, CodingKey {
+    case array
+    case emptyArray
+    case emptyObject
+    case escaped
+    case nested
+    case nullValue
+    case optionalOmitted
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(array, forKey: .array)
+    try container.encode(emptyArray, forKey: .emptyArray)
+    try container.encode(emptyObject, forKey: .emptyObject)
+    try container.encode(escaped, forKey: .escaped)
+    try container.encode(nested, forKey: .nested)
+    try container.encodeNil(forKey: .nullValue)
+    try container.encodeIfPresent(optionalOmitted, forKey: .optionalOmitted)
+  }
+}
+
 private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
   if !condition() {
     failures += 1
     FileHandle.standardError.write(Data("FAIL: \(message)\n".utf8))
   }
+}
+
+private func diagnosticFailure(_ decision: MeetlessChildRegistrationDecision) -> MeetlessProcessRegistrationFailure? {
+  if case .rejected(let failure) = decision { return failure }
+  return nil
 }
 
 private func expectThrow(_ message: String, _ action: () throws -> Void) {
@@ -352,6 +437,63 @@ private func testBoundedRequestLine() {
   check(readBoundedLine(descriptors[1], maximumBytes: 32) == nil, "oversized request line must be rejected")
 }
 
+private func foundationJSONGoldenData<T: Encodable>(_ value: T) throws -> Data {
+  let encoder = JSONEncoder()
+  encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+  return try encoder.encode(value) + Data([10])
+}
+
+private func testFoundationJSONIdentityGoldenVector() throws {
+  let configuration = FoundationJSONGoldenConfiguration(
+    repositoryRoot: "/Users/example/Meetless / source",
+    runtimeRoot: "/Users/example/Library/Application Support/Meetless",
+    listen: "127.0.0.1:16777",
+    rendererOrigin: "http://127.0.0.1:18082/path/a/b",
+    transcriptionSocket: "/Users/example/Library/Application Support/Meetless/transcription.sock",
+    transcriptionStaging: "/Users/example/Library/Application Support/Meetless/meeting-store/transcription-ranges",
+    nodePath: "/Users/example/Meetless / source/runtime/node",
+    runtimeCliPath: "/Users/example/Meetless / source/packages/runtime/dist/cli.js",
+    captureHelperPath: nil,
+    identityPath: "/Users/example/Library/Application Support/Meetless/paseo-home/server-id",
+    endpointPolicy: nil,
+    endpointWorkingDirectory: nil,
+    recordingEndpointName: nil,
+    transcriptionEndpointName: nil
+  )
+  let identity = FoundationJSONGoldenIdentity(
+    version: 1,
+    bundleIdentifier: "com.meetless.app",
+    bundlePath: "/Applications/Meetless.app",
+    bundleRealPath: "/Applications/Meetless.app",
+    executablePath: "/Applications/Meetless.app/Contents/MacOS/MeetlessHost",
+    designatedRequirement: "identifier \"com.meetless.app\": path \"https://example.test/a/b\" literal marker",
+    cdHash: String(repeating: "a", count: 40),
+    binarySha256: String(repeating: "b", count: 64),
+    binaryDevice: 42,
+    binaryInode: 987654321,
+    binarySize: 123456,
+    configuration: configuration
+  )
+  let profile = FoundationJSONGoldenProfile(
+    array: [.string("a/b"), .string("quote\": / and \\\\backslash"), .integer(17)],
+    emptyArray: [],
+    emptyObject: [:],
+    escaped: "</script> \"quoted\": value \\\\ newline\n separator\u{2028}",
+    nested: FoundationJSONGoldenNested(z: "last", a: "first"),
+    optionalOmitted: nil
+  )
+  let identityData = try foundationJSONGoldenData(identity)
+  let profileData = try foundationJSONGoldenData(profile)
+  check(
+    identityData == Data(base64Encoded: "ewogICJiaW5hcnlEZXZpY2UiIDogNDIsCiAgImJpbmFyeUlub2RlIiA6IDk4NzY1NDMyMSwKICAiYmluYXJ5U2hhMjU2IiA6ICJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiIiwKICAiYmluYXJ5U2l6ZSIgOiAxMjM0NTYsCiAgImJ1bmRsZUlkZW50aWZpZXIiIDogImNvbS5tZWV0bGVzcy5hcHAiLAogICJidW5kbGVQYXRoIiA6ICJcL0FwcGxpY2F0aW9uc1wvTWVldGxlc3MuYXBwIiwKICAiYnVuZGxlUmVhbFBhdGgiIDogIlwvQXBwbGljYXRpb25zXC9NZWV0bGVzcy5hcHAiLAogICJjZEhhc2giIDogImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLAogICJjb25maWd1cmF0aW9uIiA6IHsKICAgICJpZGVudGl0eVBhdGgiIDogIlwvVXNlcnNcL2V4YW1wbGVcL0xpYnJhcnlcL0FwcGxpY2F0aW9uIFN1cHBvcnRcL01lZXRsZXNzXC9wYXNlby1ob21lXC9zZXJ2ZXItaWQiLAogICAgImxpc3RlbiIgOiAiMTI3LjAuMC4xOjE2Nzc3IiwKICAgICJub2RlUGF0aCIgOiAiXC9Vc2Vyc1wvZXhhbXBsZVwvTWVldGxlc3MgXC8gc291cmNlXC9ydW50aW1lXC9ub2RlIiwKICAgICJyZW5kZXJlck9yaWdpbiIgOiAiaHR0cDpcL1wvMTI3LjAuMC4xOjE4MDgyXC9wYXRoXC9hXC9iIiwKICAgICJyZXBvc2l0b3J5Um9vdCIgOiAiXC9Vc2Vyc1wvZXhhbXBsZVwvTWVldGxlc3MgXC8gc291cmNlIiwKICAgICJydW50aW1lQ2xpUGF0aCIgOiAiXC9Vc2Vyc1wvZXhhbXBsZVwvTWVldGxlc3MgXC8gc291cmNlXC9wYWNrYWdlc1wvcnVudGltZVwvZGlzdFwvY2xpLmpzIiwKICAgICJydW50aW1lUm9vdCIgOiAiXC9Vc2Vyc1wvZXhhbXBsZVwvTGlicmFyeVwvQXBwbGljYXRpb24gU3VwcG9ydFwvTWVldGxlc3MiLAogICAgInRyYW5zY3JpcHRpb25Tb2NrZXQiIDogIlwvVXNlcnNcL2V4YW1wbGVcL0xpYnJhcnlcL0FwcGxpY2F0aW9uIFN1cHBvcnRcL01lZXRsZXNzXC90cmFuc2NyaXB0aW9uLnNvY2siLAogICAgInRyYW5zY3JpcHRpb25TdGFnaW5nIiA6ICJcL1VzZXJzXC9leGFtcGxlXC9MaWJyYXJ5XC9BcHBsaWNhdGlvbiBTdXBwb3J0XC9NZWV0bGVzc1wvbWVldGluZy1zdG9yZVwvdHJhbnNjcmlwdGlvbi1yYW5nZXMiCiAgfSwKICAiZGVzaWduYXRlZFJlcXVpcmVtZW50IiA6ICJpZGVudGlmaWVyIFwiY29tLm1lZXRsZXNzLmFwcFwiOiBwYXRoIFwiaHR0cHM6XC9cL2V4YW1wbGUudGVzdFwvYVwvYlwiIGxpdGVyYWwgbWFya2VyIiwKICAiZXhlY3V0YWJsZVBhdGgiIDogIlwvQXBwbGljYXRpb25zXC9NZWV0bGVzcy5hcHBcL0NvbnRlbnRzXC9NYWNPU1wvTWVldGxlc3NIb3N0IiwKICAidmVyc2lvbiIgOiAxCn0K"),
+    "Swift Foundation JSONEncoder identity bytes must match the Node golden vector"
+  )
+  check(
+    profileData == Data(base64Encoded: "ewogICJhcnJheSIgOiBbCiAgICAiYVwvYiIsCiAgICAicXVvdGVcIjogXC8gYW5kIFxcXFxiYWNrc2xhc2giLAogICAgMTcKICBdLAogICJlbXB0eUFycmF5IiA6IFsKCiAgXSwKICAiZW1wdHlPYmplY3QiIDogewoKICB9LAogICJlc2NhcGVkIiA6ICI8XC9zY3JpcHQ+IFwicXVvdGVkXCI6IHZhbHVlIFxcXFwgbmV3bGluZVxuIHNlcGFyYXRvcuKAqCIsCiAgIm5lc3RlZCIgOiB7CiAgICAiYSIgOiAiZmlyc3QiLAogICAgInoiIDogImxhc3QiCiAgfSwKICAibnVsbFZhbHVlIiA6IG51bGwKfQo="),
+    "Swift Foundation JSONEncoder recursive bytes must match the Node golden vector"
+  )
+}
+
 private func nativeProcessFixtureExecutable() throws -> String {
   try inspectMeetlessProcessIdentity(getpid()).configuredPath
 }
@@ -445,6 +587,37 @@ private func runNativeProcessFixture(_ role: String) {
     if let response,
        let data = try? JSONSerialization.data(withJSONObject: response) {
       try? data.write(to: URL(fileURLWithPath: responsePath), options: .atomic)
+    }
+    if let diagnosticResponsePath = environment["MEETLESS_NATIVE_PROCESS_DIAGNOSTIC_RESPONSE"],
+       let response,
+       let generation = (response["generation"] as? NSNumber)?.uint64Value,
+       var expectedIdentity = response["identity"] as? [String: Any],
+       let childPID = (response["processPid"] as? NSNumber)?.int32Value {
+      expectedIdentity["configuredPath"] = "/private/tmp/MEETLESS_SECRET_SENTINEL"
+      expectedIdentity["realPath"] = "/private/tmp/MEETLESS_SECRET_SENTINEL"
+      expectedIdentity["argv"] = ["/private/tmp/MEETLESS_SECRET_SENTINEL"]
+      let diagnosticRequest: [String: Any] = [
+        "version": meetlessHostProcessProtocolVersion,
+        "requestId": "transport-diagnostic-registration",
+        "operation": "registerChild",
+        "generation": NSNumber(value: generation + 1),
+        "ownerToken": "MEETLESS_SECRET_OWNER_SENTINEL",
+        "registrationToken": "MEETLESS_SECRET_REGISTRATION_SENTINEL",
+        "role": "daemon",
+        "childPid": childPID,
+        "expectedIdentity": expectedIdentity,
+        "policy": [
+          "runtimeRoot": "/private/tmp/MEETLESS_SECRET_RUNTIME_SENTINEL",
+          "endpointPolicy": "MEETLESS_SECRET_POLICY_SENTINEL",
+          "endpointWorkingDirectory": "runtime-root",
+          "recordingEndpointName": "recording.sock",
+          "transcriptionEndpointName": "transcription.sock",
+        ],
+      ]
+      if let diagnosticResponse = try? requestNativeHostProcessProtocol(socketPath: socketPath, request: diagnosticRequest),
+         let data = try? JSONSerialization.data(withJSONObject: diagnosticResponse) {
+        try? data.write(to: URL(fileURLWithPath: diagnosticResponsePath), options: .atomic)
+      }
     }
     while true { sleep(1) }
   }
@@ -581,11 +754,13 @@ private func testNativeProcessProtocolTransport() throws {
   try capability.start()
   defer { capability.stop() }
   let responsePath = root.appendingPathComponent("desktop-attestation.json").path
+  let diagnosticResponsePath = root.appendingPathComponent("registration-diagnostic.json").path
   var environment = ProcessInfo.processInfo.environment
   environment["MEETLESS_NATIVE_PROCESS_FIXTURE"] = "desktop"
   environment["MEETLESS_NATIVE_PROCESS_PROTOCOL_ONLY"] = "1"
   environment["MEETLESS_NATIVE_PROCESS_PROTOCOL_SOCKET"] = socketPath
   environment["MEETLESS_NATIVE_PROCESS_PROTOCOL_RESPONSE"] = responsePath
+  environment["MEETLESS_NATIVE_PROCESS_DIAGNOSTIC_RESPONSE"] = diagnosticResponsePath
   let desktop = Process()
   desktop.executableURL = URL(fileURLWithPath: executable)
   desktop.arguments = [runtimeCli, "desktop"]
@@ -615,6 +790,27 @@ private func testNativeProcessProtocolTransport() throws {
   check((response["processPid"] as? NSNumber)?.int32Value == desktop.processIdentifier, "transport attestation must bind the socket peer PID")
   check(response["challenge"] as? String == "transport-desktop-challenge", "transport attestation must echo the exact challenge")
   check((response["ownerToken"] as? String)?.isEmpty == false, "transport attestation must issue a bounded owner token")
+  let diagnosticDeadline = Date().addingTimeInterval(5)
+  var diagnosticResponse: [String: Any]?
+  while Date() < diagnosticDeadline {
+    if let data = try? Data(contentsOf: URL(fileURLWithPath: diagnosticResponsePath)),
+       let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+      diagnosticResponse = decoded
+      break
+    }
+    usleep(10_000)
+  }
+  check(
+    diagnosticResponse?["ok"] as? Bool == false &&
+      diagnosticResponse?["error"] as? String == "role=daemon;stage=authorization;check=stale-generation;os=none",
+    "transport registration rejection must expose only its bounded categorical diagnostic"
+  )
+  if let diagnosticData = try? JSONSerialization.data(withJSONObject: diagnosticResponse ?? [:]),
+     let diagnosticText = String(data: diagnosticData, encoding: .utf8) {
+    for sentinel in ["MEETLESS_SECRET_SENTINEL", "MEETLESS_SECRET_OWNER_SENTINEL", "MEETLESS_SECRET_REGISTRATION_SENTINEL", "MEETLESS_SECRET_RUNTIME_SENTINEL", "MEETLESS_SECRET_POLICY_SENTINEL"] {
+      check(!diagnosticText.contains(sentinel), "transport diagnostic must not expose sentinel \(sentinel)")
+    }
+  }
   let wrongPeer = try requestNativeHostProcessProtocol(
     socketPath: socketPath,
     request: [
@@ -637,6 +833,328 @@ private func nativeCaptureHelperExecutable() -> String {
     .appendingPathComponent("macos-capture/.build/release/meetless-capture")
     .standardizedFileURL
     .path
+}
+
+private func nativeNodeExecutable() throws -> URL {
+  let lookup = Process()
+  lookup.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+  lookup.arguments = ["node"]
+  let output = Pipe()
+  lookup.standardOutput = output
+  lookup.standardError = FileHandle.nullDevice
+  try lookup.run()
+  lookup.waitUntilExit()
+  guard lookup.terminationStatus == 0,
+        let value = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+          .trimmingCharacters(in: .whitespacesAndNewlines),
+        !value.isEmpty else {
+    throw NSError(domain: "MeetlessHostTests", code: 60, userInfo: [NSLocalizedDescriptionKey: "the actual Node executable is unavailable"])
+  }
+  let executable = URL(fileURLWithPath: value).resolvingSymlinksInPath()
+  guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+    throw NSError(domain: "MeetlessHostTests", code: 61, userInfo: [NSLocalizedDescriptionKey: "the actual Node executable is not executable"])
+  }
+  return executable
+}
+
+private func copyResolvedFixtureItem(from source: URL, to destination: URL) throws {
+  let fileManager = FileManager.default
+  try fileManager.createDirectory(
+    at: destination.deletingLastPathComponent(),
+    withIntermediateDirectories: true,
+    attributes: [.posixPermissions: 0o755]
+  )
+  try fileManager.copyItem(at: source.resolvingSymlinksInPath(), to: destination)
+}
+
+private func linkFixtureItem(from source: URL, to destination: URL) throws {
+  let fileManager = FileManager.default
+  try fileManager.createDirectory(
+    at: destination.deletingLastPathComponent(),
+    withIntermediateDirectories: true,
+    attributes: [.posixPermissions: 0o755]
+  )
+  try fileManager.createSymbolicLink(atPath: destination.path, withDestinationPath: source.path)
+}
+
+private func writeFixtureData(_ data: Data, to destination: URL, permissions: NSNumber = 0o600) throws {
+  let fileManager = FileManager.default
+  try fileManager.createDirectory(
+    at: destination.deletingLastPathComponent(),
+    withIntermediateDirectories: true,
+    attributes: [.posixPermissions: 0o700]
+  )
+  try data.write(to: destination, options: .atomic)
+  try fileManager.setAttributes([.posixPermissions: permissions], ofItemAtPath: destination.path)
+}
+
+private func fixtureSHA256(_ data: Data) -> String {
+  SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
+private func waitForRealNodeDaemonRegistration(
+  state: RuntimeAuthorizationState,
+  timeout: TimeInterval = 10
+) -> MeetlessProcessRegistrationStatus? {
+  let deadline = Date().addingTimeInterval(timeout)
+  while Date() < deadline {
+    let snapshot = state.processRegistrationSnapshotForTesting()
+    if let registeredDaemon = snapshot.first(where: { $0.role == "daemon" && $0.attested }),
+       let identity = try? inspectMeetlessProcessIdentity(registeredDaemon.pid) {
+      return MeetlessProcessRegistrationStatus(
+        role: registeredDaemon.role,
+        pid: registeredDaemon.pid,
+        attested: registeredDaemon.attested,
+        identity: MeetlessProcessIdentityWire(
+          configuredPath: identity.configuredPath,
+          realPath: identity.realPath,
+          device: identity.device,
+          inode: identity.inode,
+          byteLength: identity.byteLength,
+          sha256: identity.sha256,
+          argv: identity.argv
+        )
+      )
+    }
+    usleep(25_000)
+  }
+  return nil
+}
+
+private func terminateDetachedNativeProcessFixture(_ pid: pid_t?) {
+  guard let pid, pid > 1 else { return }
+  _ = kill(-pid, SIGTERM)
+  usleep(50_000)
+  _ = kill(-pid, SIGKILL)
+  terminateNativeProcessFixture(pid)
+}
+
+private func testRealNodeDetachedDaemonRegistration() throws {
+  let fileManager = FileManager.default
+  let root = fileManager.homeDirectoryForCurrentUser
+    .appendingPathComponent(".meetless-real-node-" + UUID().uuidString)
+    .appendingPathComponent("meetless-real-node-" + UUID().uuidString)
+  try fileManager.createDirectory(
+    at: root,
+    withIntermediateDirectories: true,
+    attributes: [.posixPermissions: 0o700]
+  )
+  var desktop: Process?
+  var daemonPID: pid_t?
+  var capability: MeetlessTranscriptionCapability?
+  defer {
+    terminateDetachedNativeProcessFixture(daemonPID)
+    if let desktop {
+      terminateNativeProcessFixture(desktop.processIdentifier)
+      if desktop.isRunning { desktop.waitUntilExit() }
+    }
+    capability?.stop()
+    try? fileManager.removeItem(at: root)
+  }
+
+  let repositoryRoot = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .standardizedFileURL
+  let packageRoot = root.appendingPathComponent("package")
+  let home = root.appendingPathComponent("home")
+  let runtimeRoot = home.appendingPathComponent("Library/Application Support/Meetless")
+  let temporaryDirectory = root.appendingPathComponent("tmp")
+  try fileManager.createDirectory(at: packageRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+  try fileManager.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+  try fileManager.createDirectory(at: runtimeRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+  try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+
+  let runtimeDist = packageRoot.appendingPathComponent("packages/runtime/dist")
+  try copyResolvedFixtureItem(
+    from: repositoryRoot.appendingPathComponent("packages/runtime/dist"),
+    to: runtimeDist
+  )
+  try linkFixtureItem(
+    from: repositoryRoot.appendingPathComponent("packages/meetless-plugin"),
+    to: packageRoot.appendingPathComponent("packages/meetless-plugin")
+  )
+  try linkFixtureItem(
+    from: repositoryRoot.appendingPathComponent("vendor/paseo"),
+    to: packageRoot.appendingPathComponent("vendor/paseo")
+  )
+  try linkFixtureItem(
+    from: repositoryRoot.appendingPathComponent("node_modules"),
+    to: packageRoot.appendingPathComponent("node_modules")
+  )
+
+  let contractSource = repositoryRoot.appendingPathComponent("scripts/lib/macos-package-contract.json")
+  let contractData = try Data(contentsOf: contractSource)
+  guard let contract = try JSONSerialization.jsonObject(with: contractData) as? [String: Any],
+        let packageContract = contract["package"] as? [String: Any],
+        let contractResources = packageContract["resources"] as? [String: String] else {
+    throw NSError(domain: "MeetlessHostTests", code: 62, userInfo: [NSLocalizedDescriptionKey: "the package contract resources are not a JSON object"])
+  }
+  let rendererRelative = contractResources["rendererRoot"]!
+  let electronRelative = contractResources["electronBinary"]!
+  let nodeRelative = contractResources["nodeBinary"]!
+  let captureHelperRelative = contractResources["captureHelper"]!
+  let ffmpegRelative = contractResources["ffmpeg"]!
+  let ffprobeRelative = contractResources["ffprobe"]!
+  try writeFixtureData(
+    contractData,
+    to: packageRoot.appendingPathComponent("installation-contract.json"),
+    permissions: 0o644
+  )
+
+  let nodeSource = try nativeNodeExecutable()
+  let nodePath = packageRoot.appendingPathComponent(nodeRelative)
+  try copyResolvedFixtureItem(from: nodeSource, to: nodePath)
+  let electronSource = repositoryRoot.appendingPathComponent("node_modules/electron/dist/Electron.app/Contents/MacOS/Electron")
+  let electronPath = packageRoot.appendingPathComponent(electronRelative)
+  var electronIsDirectory = ObjCBool(false)
+  let electronAvailable = fileManager.fileExists(atPath: electronSource.path, isDirectory: &electronIsDirectory) && !electronIsDirectory.boolValue
+  try copyResolvedFixtureItem(
+    from: electronAvailable ? electronSource : nodeSource,
+    to: electronPath
+  )
+  let captureHelperSource = URL(fileURLWithPath: nativeCaptureHelperExecutable())
+  let captureHelperPath = packageRoot.appendingPathComponent(captureHelperRelative)
+  try copyResolvedFixtureItem(from: captureHelperSource, to: captureHelperPath)
+  let rendererRoot = packageRoot.appendingPathComponent(rendererRelative)
+  try fileManager.createDirectory(at: rendererRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+  try Data("<!doctype html><title>Meetless fixture</title>".utf8).write(to: rendererRoot.appendingPathComponent("index.html"))
+  let mediaRoot = packageRoot.appendingPathComponent("runtime/media")
+  try fileManager.createDirectory(at: mediaRoot.appendingPathComponent("bin"), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+  try fileManager.createDirectory(at: mediaRoot.appendingPathComponent("lib"), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+  try copyResolvedFixtureItem(
+    from: URL(fileURLWithPath: "/usr/bin/true"),
+    to: packageRoot.appendingPathComponent(ffmpegRelative)
+  )
+  try copyResolvedFixtureItem(
+    from: URL(fileURLWithPath: "/usr/bin/true"),
+    to: packageRoot.appendingPathComponent(ffprobeRelative)
+  )
+
+  let markerJSON = "{\"schema\":\"MEETLESS_MACOS_PACKAGE v2\",\"target\":\"macos-arm64\",\"bundleIdentifier\":\"com.meetless.app\",\"paseoCommit\":\"7618cda71e2836f9ba7e821286504841203cb745\",\"listen\":\"127.0.0.1:16777\",\"rendererOrigin\":\"http://127.0.0.1:18082\",\"installationContract\":\"installation-contract.json\",\"installationContractSha256\":\"" + fixtureSHA256(contractData) + "\",\"hostBundlePath\":\"/Applications/Meetless.app\",\"resources\":{\"rendererRoot\":\"" + rendererRelative + "\",\"electronBinary\":\"" + electronRelative + "\",\"nodeBinary\":\"" + nodeRelative + "\",\"captureHelper\":\"" + captureHelperRelative + "\",\"ffmpeg\":\"" + ffmpegRelative + "\",\"ffprobe\":\"" + ffprobeRelative + "\"}}\n"
+  try writeFixtureData(
+    Data(markerJSON.utf8),
+    to: packageRoot.appendingPathComponent("meetless-package.json"),
+    permissions: 0o644
+  )
+
+  let runtimeCliPath = packageRoot.appendingPathComponent("packages/runtime/dist/cli.js")
+  let identityPath = runtimeRoot.appendingPathComponent("host-identity.json")
+  let transcriptionSocket = runtimeRoot.appendingPathComponent("transcription.sock")
+  let transcriptionStaging = runtimeRoot.appendingPathComponent("meeting-store/transcription-ranges")
+  let daemonWorkerPath = packageRoot.appendingPathComponent("vendor/paseo/packages/server/dist/server/server/daemon-worker.js")
+  let pluginPath = packageRoot.appendingPathComponent("vendor/paseo/packages/server/dist/server/server/plugins/plugin-process.js")
+  let configuration: [String: Any] = [
+    "repositoryRoot": packageRoot.path,
+    "runtimeRoot": runtimeRoot.path,
+    "listen": "127.0.0.1:16777",
+    "rendererOrigin": "http://127.0.0.1:18082",
+    "transcriptionSocket": transcriptionSocket.path,
+    "transcriptionStaging": transcriptionStaging.path,
+    "nodePath": nodePath.path,
+    "runtimeCliPath": runtimeCliPath.path,
+    "captureHelperPath": captureHelperPath.path,
+    "identityPath": identityPath.path,
+    "endpointPolicy": meetlessRuntimeEndpointSchema,
+    "endpointWorkingDirectory": meetlessRuntimeEndpointWorkingDirectory,
+    "recordingEndpointName": "paseo-home/recording-control.sock",
+    "transcriptionEndpointName": "transcription.sock",
+  ]
+  let hostIdentity = try fixtureHostIdentity()
+  let identityDocument: [String: Any] = [
+    "version": 1,
+    "bundleIdentifier": hostIdentity.bundleIdentifier,
+    "bundlePath": hostIdentity.bundlePath,
+    "bundleRealPath": hostIdentity.bundleRealPath,
+    "executablePath": hostIdentity.executablePath,
+    "designatedRequirement": hostIdentity.designatedRequirement,
+    "cdHash": hostIdentity.cdHash,
+    "binarySha256": hostIdentity.binarySha256,
+    "binaryDevice": hostIdentity.binaryDevice,
+    "binaryInode": hostIdentity.binaryInode,
+    "binarySize": hostIdentity.binarySize,
+    "configuration": configuration,
+  ]
+  try writeFixtureData(
+    JSONSerialization.data(withJSONObject: identityDocument, options: [.prettyPrinted, .sortedKeys]),
+    to: identityPath
+  )
+
+  let policy = MeetlessProcessRegistrationPolicy(
+    runtimeRoot: runtimeRoot.path,
+    endpointPolicy: meetlessRuntimeEndpointSchema,
+    endpointWorkingDirectory: meetlessRuntimeEndpointWorkingDirectory,
+    recordingEndpointName: "paseo-home/recording-control.sock",
+    transcriptionEndpointName: "transcription.sock",
+    nodePath: nodePath.path,
+    runtimeCliPath: runtimeCliPath.path,
+    daemonWorkerPath: daemonWorkerPath.path,
+    daemonWorkerArguments: [nodePath.path, daemonWorkerPath.path, "daemon"],
+    pluginPath: pluginPath.path,
+    pluginArguments: [nodePath.path, pluginPath.path],
+    captureHelperPath: captureHelperPath.path
+  )
+  let endpoint = try meetlessPackagedEndpoint(
+    role: "transcription",
+    name: "transcription.sock",
+    runtimeRoot: runtimeRoot.path
+  )
+  let state = RuntimeAuthorizationState()
+  let nativeCapability = MeetlessTranscriptionCapability(
+    endpoint: endpoint,
+    workingDirectory: runtimeRoot.path,
+    stagingDirectory: transcriptionStaging.path,
+    runtimeAuthorization: state,
+    processPolicy: policy,
+    hostIdentity: hostIdentity,
+    hostPID: getpid()
+  )
+  capability = nativeCapability
+  let previousDirectory = fileManager.currentDirectoryPath
+  guard fileManager.changeCurrentDirectoryPath(runtimeRoot.path) else {
+    throw NSError(domain: "MeetlessHostTests", code: 63, userInfo: [NSLocalizedDescriptionKey: "the real-node fixture could not enter its runtime root"])
+  }
+  defer { _ = fileManager.changeCurrentDirectoryPath(previousDirectory) }
+  try nativeCapability.start()
+
+  var childEnvironment: [String: String] = [
+    "HOME": home.path,
+    "TMPDIR": temporaryDirectory.path,
+    "MEETLESS_LISTEN": "127.0.0.1:16777",
+  ]
+  for name in ["PATH", "LANG", "LC_ALL", "USER", "LOGNAME"] {
+    if let value = ProcessInfo.processInfo.environment[name] { childEnvironment[name] = value }
+  }
+  let process = Process()
+  process.executableURL = nodePath
+  process.arguments = [runtimeCliPath.path, "desktop"]
+  process.currentDirectoryURL = URL(fileURLWithPath: runtimeRoot.path)
+  process.environment = childEnvironment
+  process.standardInput = FileHandle.nullDevice
+  process.standardOutput = FileHandle.nullDevice
+  process.standardError = FileHandle.nullDevice
+  try process.run()
+  desktop = process
+  let desktopPID = process.processIdentifier
+  state.publish(desktopPID)
+
+  guard let daemonRegistration = waitForRealNodeDaemonRegistration(state: state) else {
+    check(false, "actual packaged Node desktop must register and attest its detached daemon through native host protocol")
+    return
+  }
+  daemonPID = daemonRegistration.pid
+  let daemonIdentity = daemonRegistration.identity.identity
+  check(daemonRegistration.attested, "actual packaged daemon registration must be native-attested")
+  check(nativeProcessIsAlive(desktopPID), "actual packaged desktop must remain alive while its detached daemon is registered")
+  check(liveParentPID(daemonRegistration.pid) == desktopPID, "actual packaged daemon must remain a direct child of the desktop despite detached process-group ownership")
+  check(daemonIdentity.configuredPath == nodePath.path, "actual packaged daemon must use the package-contained Node executable")
+  check(daemonIdentity.realPath == nodePath.path, "actual packaged daemon real path must remain the package-contained Node executable")
+  check(daemonIdentity.argv == [nodePath.path, runtimeCliPath.path, "daemon"], "actual packaged daemon argv must match the exact packaged CLI identity")
+  check(daemonIdentity.device > 0, "actual packaged daemon identity must report its device")
+  check(daemonIdentity.inode > 0, "actual packaged daemon identity must report its inode")
+  check(daemonIdentity.byteLength > 0, "actual packaged daemon identity must report its byte length")
+  check(!daemonIdentity.sha256.isEmpty, "actual packaged daemon identity must report its binary digest")
 }
 
 private func captureHelperEnvironment(
@@ -932,6 +1450,55 @@ private func testPackagedProcessRegistrationChain() throws {
   check(liveParentPID(workerPID) == daemonPID, "daemon worker must remain a direct daemon child")
   check(workerIdentity.configuredPath == executable, "daemon worker executable identity must match the node path")
   check(workerIdentity.argv == [executable, workerPath, "daemon"], "daemon worker argv must match the pinned worker entrypoint")
+  let diagnosticParentState = RuntimeAuthorizationState()
+  diagnosticParentState.configure(processPolicy: policy, hostIdentity: hostIdentity, hostPID: getpid())
+  diagnosticParentState.publish(desktopPID)
+  guard let diagnosticDesktop = diagnosticParentState.attestDesktop(
+    peerPID: desktopPID,
+    requestId: "diagnostic-desktop",
+    challenge: "diagnostic-challenge"
+  ) else {
+    check(false, "diagnostic state must attest the existing desktop before classifying child registration failures")
+    return
+  }
+  let diagnosticWirePolicy = wirePolicy
+  let diagnosticParentFailure = diagnosticFailure(diagnosticParentState.registerChildDiagnosed(
+    peerPID: desktopPID,
+    requestId: "diagnostic-parent-mismatch",
+    generation: diagnosticDesktop.generation,
+    ownerToken: diagnosticDesktop.ownerToken,
+    registrationToken: "diagnostic-parent-token",
+    role: "daemon",
+    childPID: workerPID,
+    expectedIdentity: daemonIdentity,
+    policy: diagnosticWirePolicy
+  ))
+  check(
+    diagnosticParentFailure == MeetlessProcessRegistrationFailure(
+      role: .daemon,
+      stage: .inspection,
+      check: .parentMismatch,
+      osCode: .none
+    ),
+    "registration diagnostics must classify a non-direct child as a parent mismatch"
+  )
+  let diagnosticInspectionFailure = diagnosticFailure(diagnosticParentState.registerChildDiagnosed(
+    peerPID: desktopPID,
+    requestId: "diagnostic-process-inspection",
+    generation: diagnosticDesktop.generation,
+    ownerToken: diagnosticDesktop.ownerToken,
+    registrationToken: "diagnostic-process-token",
+    role: "daemon",
+    childPID: Int32.max,
+    expectedIdentity: daemonIdentity,
+    policy: diagnosticWirePolicy
+  ))
+  check(
+    diagnosticInspectionFailure?.check == .processInspectionUnavailable &&
+      (diagnosticInspectionFailure?.osCode == .esrch || diagnosticInspectionFailure?.osCode == .unknown),
+    "registration diagnostics must classify unavailable process inspection with a normalized OS code"
+  )
+  check(meetlessNormalizedOSCode(EPERM) == .eperm, "registration diagnostics must normalize EPERM without exposing raw OS text")
   var daemonToken = "daemon-registration-token"
   func registerDaemon(
     requestId: String,
@@ -955,6 +1522,107 @@ private func testPackagedProcessRegistrationChain() throws {
       policy: policy ?? wirePolicy
     ) != nil
   }
+  check(
+    diagnosticFailure(state.registerChildDiagnosed(
+      peerPID: desktopPID,
+      requestId: "diagnostic-stale-generation",
+      generation: desktopAttestation.generation + 1,
+      ownerToken: desktopAttestation.ownerToken,
+      registrationToken: "diagnostic-stale-token",
+      role: "daemon",
+      childPID: daemonPID,
+      expectedIdentity: daemonIdentity,
+      policy: wirePolicy
+    )) == MeetlessProcessRegistrationFailure(
+      role: .daemon,
+      stage: .authorization,
+      check: .staleGeneration,
+      osCode: .none
+    ),
+    "registration diagnostics must classify stale generations"
+  )
+  check(
+    diagnosticFailure(state.registerChildDiagnosed(
+      peerPID: desktopPID,
+      requestId: "diagnostic-policy-mismatch",
+      generation: desktopAttestation.generation,
+      ownerToken: desktopAttestation.ownerToken,
+      registrationToken: "diagnostic-policy-token",
+      role: "daemon",
+      childPID: daemonPID,
+      expectedIdentity: daemonIdentity,
+      policy: MeetlessHostProcessPolicyWire(
+        runtimeRoot: "/private/diagnostic-policy-mismatch",
+        endpointPolicy: wirePolicy.endpointPolicy,
+        endpointWorkingDirectory: wirePolicy.endpointWorkingDirectory,
+        recordingEndpointName: wirePolicy.recordingEndpointName,
+        transcriptionEndpointName: wirePolicy.transcriptionEndpointName
+      )
+    )) == MeetlessProcessRegistrationFailure(
+      role: .daemon,
+      stage: .authorization,
+      check: .policyMismatch,
+      osCode: .none
+    ),
+    "registration diagnostics must classify policy mismatches"
+  )
+  check(
+    diagnosticFailure(state.registerChildDiagnosed(
+      peerPID: desktopPID,
+      requestId: "diagnostic-child-identity",
+      generation: desktopAttestation.generation,
+      ownerToken: desktopAttestation.ownerToken,
+      registrationToken: "diagnostic-child-token",
+      role: "daemon",
+      childPID: daemonPID,
+      expectedIdentity: replacingProcessIdentity(daemonIdentity, configuredPath: "/private/diagnostic-child-identity"),
+      policy: wirePolicy
+    )) == MeetlessProcessRegistrationFailure(
+      role: .daemon,
+      stage: .authorization,
+      check: .childIdentityMismatch,
+      osCode: .none
+    ),
+    "registration diagnostics must classify child identity mismatches"
+  )
+  check(
+    diagnosticFailure(state.registerChildDiagnosed(
+      peerPID: desktopPID,
+      requestId: "diagnostic-role-mismatch",
+      generation: desktopAttestation.generation,
+      ownerToken: desktopAttestation.ownerToken,
+      registrationToken: "diagnostic-role-token",
+      role: "capture-helper",
+      childPID: daemonPID,
+      expectedIdentity: replacingProcessIdentity(daemonIdentity, argv: [executable]),
+      policy: wirePolicy
+    )) == MeetlessProcessRegistrationFailure(
+      role: .captureHelper,
+      stage: .ownership,
+      check: .roleMismatch,
+      osCode: .none
+    ),
+    "registration diagnostics must classify role mismatches"
+  )
+  check(
+    diagnosticFailure(state.registerChildDiagnosed(
+      peerPID: desktopPID,
+      requestId: "diagnostic-token-mismatch",
+      generation: desktopAttestation.generation,
+      ownerToken: "diagnostic-wrong-owner-token",
+      registrationToken: "diagnostic-token-mismatch-token",
+      role: "daemon",
+      childPID: daemonPID,
+      expectedIdentity: daemonIdentity,
+      policy: wirePolicy
+    )) == MeetlessProcessRegistrationFailure(
+      role: .daemon,
+      stage: .ownership,
+      check: .tokenMismatch,
+      osCode: .none
+    ),
+    "registration diagnostics must classify owner-token mismatches"
+  )
   check(!registerDaemon(requestId: "stale-generation", generation: desktopAttestation.generation + 1), "stale daemon registration generation must be rejected")
   check(
     !registerDaemon(
@@ -1050,6 +1718,25 @@ private func testPackagedProcessRegistrationChain() throws {
     return
   }
   check(daemonRegistration.pid == daemonPID, "daemon registration must preserve the spawned child PID")
+  check(
+    diagnosticFailure(state.registerChildDiagnosed(
+      peerPID: desktopPID,
+      requestId: "diagnostic-duplicate-role",
+      generation: desktopAttestation.generation,
+      ownerToken: desktopAttestation.ownerToken,
+      registrationToken: "diagnostic-duplicate-token",
+      role: "daemon",
+      childPID: daemonPID,
+      expectedIdentity: daemonIdentity,
+      policy: wirePolicy
+    )) == MeetlessProcessRegistrationFailure(
+      role: .daemon,
+      stage: .authorization,
+      check: .duplicateRoleOrSlot,
+      osCode: .none
+    ),
+    "registration diagnostics must classify duplicate role or slot registrations"
+  )
   check(!registerDaemon(requestId: "conflicting-daemon-registration"), "conflicting duplicate child registration must be rejected")
   check(!registerDaemon(requestId: "replayed-daemon-registration"), "replayed child registration request must be rejected")
   check(
@@ -1090,6 +1777,25 @@ private func testPackagedProcessRegistrationChain() throws {
   check(liveParentPID(pluginPID) == workerPID, "plugin fixture must remain a direct worker child")
   check(pluginIdentity.configuredPath == executable, "plugin fixture executable identity must match the node path")
   check(pluginIdentity.argv == [executable, pluginPath], "plugin fixture argv must match the plugin-process entrypoint")
+  check(
+    diagnosticFailure(state.registerChildDiagnosed(
+      peerPID: daemonPID,
+      requestId: "diagnostic-owner-chain",
+      generation: desktopAttestation.generation,
+      ownerToken: daemonToken,
+      registrationToken: "diagnostic-owner-chain-token",
+      role: "plugin",
+      childPID: pluginPID,
+      expectedIdentity: pluginIdentity,
+      policy: wirePolicy
+    )) == MeetlessProcessRegistrationFailure(
+      role: .plugin,
+      stage: .ownership,
+      check: .ownerChainFailure,
+      osCode: .none
+    ),
+    "registration diagnostics must classify a missing pinned worker owner chain"
+  )
   var pluginToken = "plugin-registration-token"
   check(
     state.registerChild(
@@ -2384,6 +3090,10 @@ private struct TranscriptionCapabilityTests {
     }
     testPeerAncestry()
     testBoundedRequestLine()
+    do { try testFoundationJSONIdentityGoldenVector() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: Foundation JSON identity golden vector: \(error)\n".utf8))
+    }
     do { try testNativeProcessProtocolTransport() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: native process protocol transport: \(error)\n".utf8))
@@ -2395,6 +3105,10 @@ private struct TranscriptionCapabilityTests {
     do { try testPackagedProcessRegistrationChain() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: packaged process registration chain: \(error)\n".utf8))
+    }
+    do { try testRealNodeDetachedDaemonRegistration() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: real Node detached daemon registration: \(error)\n".utf8))
     }
     do { try testRealSocketStatusResponse() } catch {
       failures += 1

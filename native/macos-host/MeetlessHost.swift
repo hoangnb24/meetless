@@ -1075,6 +1075,11 @@ final class RuntimeAuthorizationState {
     let expectedParentIdentity: MeetlessProcessIdentity
   }
 
+  private enum RegistrationCandidateInspection {
+    case accepted(identity: MeetlessProcessIdentity, owner: ProcessOwnerEvidence)
+    case rejected(MeetlessProcessRegistrationFailure)
+  }
+
   private struct AuthorizationSnapshot {
     let generation: UInt64
     let revision: UInt64
@@ -1285,6 +1290,12 @@ final class RuntimeAuthorizationState {
     return nil
   }
 
+  func processRegistrationSnapshotForTesting() -> [(role: String, pid: pid_t, attested: Bool)] {
+    lock.lock()
+    defer { lock.unlock() }
+    return registrations.values.map { (role: $0.role, pid: $0.pid, attested: $0.attested) }
+  }
+
   func registerChild(
     peerPID: pid_t,
     requestId: String,
@@ -1296,40 +1307,233 @@ final class RuntimeAuthorizationState {
     expectedIdentity: MeetlessProcessIdentity,
     policy requestedPolicy: MeetlessHostProcessPolicyWire
   ) -> MeetlessChildRegistrationResult? {
-    guard validProtocolToken(requestId), validProtocolToken(ownerToken), validProtocolToken(registrationToken), validProcessIdentity(expectedIdentity),
-          validProcessRole(role), childPID > 1 else { return nil }
+    switch registerChildDiagnosed(
+      peerPID: peerPID,
+      requestId: requestId,
+      generation: requestedGeneration,
+      ownerToken: ownerToken,
+      registrationToken: registrationToken,
+      role: role,
+      childPID: childPID,
+      expectedIdentity: expectedIdentity,
+      policy: requestedPolicy
+    ) {
+    case .accepted(let registration): return registration
+    case .rejected: return nil
+    }
+  }
 
-    guard pruneDeadRegistrations() else { return nil }
+  func registerChildDiagnosed(
+    peerPID: pid_t,
+    requestId: String,
+    generation requestedGeneration: UInt64,
+    ownerToken: String,
+    registrationToken: String,
+    role: String,
+    childPID: pid_t,
+    expectedIdentity: MeetlessProcessIdentity,
+    policy requestedPolicy: MeetlessHostProcessPolicyWire
+  ) -> MeetlessChildRegistrationDecision {
+    let diagnosticRole = MeetlessProcessRegistrationFailure.role(for: role)
+    guard validProtocolToken(requestId),
+          validProtocolToken(ownerToken),
+          validProtocolToken(registrationToken),
+          validProcessIdentity(expectedIdentity),
+          childPID > 1 else {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .input,
+        check: .malformed,
+        osCode: .none
+      ))
+    }
+    guard validProcessRole(role) else {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .input,
+        check: .roleMismatch,
+        osCode: .none
+      ))
+    }
+
+    guard pruneDeadRegistrations() else {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .inspection,
+        check: .processInspectionUnavailable,
+        osCode: .unknown
+      ))
+    }
     lock.lock()
-    guard generation == requestedGeneration,
-          liveRuntimePIDLocked() != nil,
-          let processPolicy,
-          policyMatches(requestedPolicy, processPolicy),
-          useRequestIDLocked(requestId),
-          registrationToken != ownerToken,
-          !usedRegistrationTokens.contains(registrationToken),
-          expectedIdentityMatchesPolicy(expectedIdentity, role: role, policy: processPolicy),
-          registrations[childPID] == nil,
+    guard generation == requestedGeneration else {
+      lock.unlock()
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .authorization,
+        check: .staleGeneration,
+        osCode: .none
+      ))
+    }
+    guard liveRuntimePIDLocked() != nil else {
+      lock.unlock()
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .ownership,
+        check: .ownerChainFailure,
+        osCode: .none
+      ))
+    }
+    guard let processPolicy else {
+      lock.unlock()
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .ownership,
+        check: .ownerChainFailure,
+        osCode: .none
+      ))
+    }
+    guard policyMatches(requestedPolicy, processPolicy) else {
+      lock.unlock()
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .authorization,
+        check: .policyMismatch,
+        osCode: .none
+      ))
+    }
+    guard useRequestIDLocked(requestId) else {
+      lock.unlock()
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .authorization,
+        check: .tokenMismatch,
+        osCode: .none
+      ))
+    }
+    guard registrationToken != ownerToken,
+          !usedRegistrationTokens.contains(registrationToken) else {
+      lock.unlock()
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .authorization,
+        check: .tokenMismatch,
+        osCode: .none
+      ))
+    }
+    guard expectedIdentityMatchesPolicy(expectedIdentity, role: role, policy: processPolicy) else {
+      lock.unlock()
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .authorization,
+        check: .childIdentityMismatch,
+        osCode: .none
+      ))
+    }
+    guard registrations[childPID] == nil,
           !registrations.values.contains(where: { $0.role == role }) else {
       lock.unlock()
-      return nil
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .authorization,
+        check: .duplicateRoleOrSlot,
+        osCode: .none
+      ))
     }
     lock.unlock()
 
     for _ in 0..<3 {
-      let observedParentPID = liveParentPID(childPID)
+      let parentObservation = inspectLiveParentPID(childPID)
+      guard let observedParentPID = parentObservation.pid else {
+        return .rejected(MeetlessProcessRegistrationFailure(
+          role: diagnosticRole,
+          stage: .inspection,
+          check: .processInspectionUnavailable,
+          osCode: parentObservation.osCode
+        ))
+      }
       lock.lock()
-      guard generation == requestedGeneration,
-            liveRuntimePIDLocked() != nil,
-            let snapshot = authorizationSnapshotLocked(),
-            policyMatches(requestedPolicy, snapshot.processPolicy),
-            expectedIdentityMatchesPolicy(expectedIdentity, role: role, policy: snapshot.processPolicy),
-            registrations[childPID] == nil,
-            !registrations.values.contains(where: { $0.role == role }),
-            usedRegistrationTokens.count < 256,
+      guard generation == requestedGeneration else {
+        lock.unlock()
+        return .rejected(MeetlessProcessRegistrationFailure(
+          role: diagnosticRole,
+          stage: .authorization,
+          check: .staleGeneration,
+          osCode: .none
+        ))
+      }
+      guard liveRuntimePIDLocked() != nil else {
+        lock.unlock()
+        return .rejected(MeetlessProcessRegistrationFailure(
+          role: diagnosticRole,
+          stage: .ownership,
+          check: .ownerChainFailure,
+          osCode: .none
+        ))
+      }
+      guard let snapshot = authorizationSnapshotLocked() else {
+        lock.unlock()
+        return .rejected(MeetlessProcessRegistrationFailure(
+          role: diagnosticRole,
+          stage: .ownership,
+          check: .ownerChainFailure,
+          osCode: .none
+        ))
+      }
+      guard policyMatches(requestedPolicy, snapshot.processPolicy) else {
+        lock.unlock()
+        return .rejected(MeetlessProcessRegistrationFailure(
+          role: diagnosticRole,
+          stage: .authorization,
+          check: .policyMismatch,
+          osCode: .none
+        ))
+      }
+      guard expectedIdentityMatchesPolicy(expectedIdentity, role: role, policy: snapshot.processPolicy) else {
+        lock.unlock()
+        return .rejected(MeetlessProcessRegistrationFailure(
+          role: diagnosticRole,
+          stage: .authorization,
+          check: .childIdentityMismatch,
+          osCode: .none
+        ))
+      }
+      guard registrations[childPID] == nil,
+            !registrations.values.contains(where: { $0.role == role }) else {
+        lock.unlock()
+        return .rejected(MeetlessProcessRegistrationFailure(
+          role: diagnosticRole,
+          stage: .authorization,
+          check: .duplicateRoleOrSlot,
+          osCode: .none
+        ))
+      }
+      guard usedRegistrationTokens.count < 256,
             !usedRegistrationTokens.contains(registrationToken) else {
         lock.unlock()
-        return nil
+        return .rejected(MeetlessProcessRegistrationFailure(
+          role: diagnosticRole,
+          stage: .authorization,
+          check: .tokenMismatch,
+          osCode: .none
+        ))
+      }
+      guard registrationRoleMatchesOwner(peerPID: peerPID, role: role, snapshot: snapshot) else {
+        lock.unlock()
+        return .rejected(MeetlessProcessRegistrationFailure(
+          role: diagnosticRole,
+          stage: .ownership,
+          check: .roleMismatch,
+          osCode: .none
+        ))
+      }
+      guard registrationOwnerTokenMatches(peerPID: peerPID, role: role, ownerToken: ownerToken, snapshot: snapshot) else {
+        lock.unlock()
+        return .rejected(MeetlessProcessRegistrationFailure(
+          role: diagnosticRole,
+          stage: .ownership,
+          check: .tokenMismatch,
+          osCode: .none
+        ))
       }
       guard let ownerPlan = registrationOwnerPlanLocked(
         peerPID: peerPID,
@@ -1340,16 +1544,27 @@ final class RuntimeAuthorizationState {
         snapshot: snapshot
       ) else {
         lock.unlock()
-        return nil
+        return .rejected(MeetlessProcessRegistrationFailure(
+          role: diagnosticRole,
+          stage: .ownership,
+          check: .ownerChainFailure,
+          osCode: .none
+        ))
       }
       lock.unlock()
 
-      guard inspectRegistrationCandidate(
+      switch inspectRegistrationCandidateDiagnosed(
+        role: role,
         childPID: childPID,
         expectedIdentity: expectedIdentity,
         ownerPlan: ownerPlan,
         snapshot: snapshot
-      ) != nil else { return nil }
+      ) {
+      case .accepted:
+        break
+      case .rejected(let failure):
+        return .rejected(failure)
+      }
       notifyInspectionHook()
 
       lock.lock()
@@ -1363,12 +1578,19 @@ final class RuntimeAuthorizationState {
       }
       lock.unlock()
 
-      guard let finalObservation = inspectRegistrationCandidate(
+      let finalObservation: RegistrationCandidateInspection
+      switch inspectRegistrationCandidateDiagnosed(
+        role: role,
         childPID: childPID,
         expectedIdentity: expectedIdentity,
         ownerPlan: ownerPlan,
         snapshot: snapshot
-      ) else { return nil }
+      ) {
+      case .accepted(let identity, let owner):
+        finalObservation = .accepted(identity: identity, owner: owner)
+      case .rejected(let failure):
+        return .rejected(failure)
+      }
 
       lock.lock()
       guard isCurrentStateLocked(snapshot),
@@ -1379,8 +1601,15 @@ final class RuntimeAuthorizationState {
         lock.unlock()
         continue
       }
+      let owner: ProcessOwnerEvidence
+      switch finalObservation {
+      case .accepted(_, let candidateOwner): owner = candidateOwner
+      case .rejected:
+        lock.unlock()
+        continue
+      }
       registrations[childPID] = RegisteredChild(
-        owner: finalObservation.owner,
+        owner: owner,
         role: role,
         pid: childPID,
         expectedIdentity: expectedIdentity,
@@ -1390,14 +1619,19 @@ final class RuntimeAuthorizationState {
       usedRegistrationTokens.insert(registrationToken)
       revision &+= 1
       lock.unlock()
-      return MeetlessChildRegistrationResult(
+      return .accepted(MeetlessChildRegistrationResult(
         generation: snapshot.generation,
         role: role,
         pid: childPID,
         registrationToken: registrationToken
-      )
+      ))
     }
-    return nil
+    return .rejected(MeetlessProcessRegistrationFailure(
+      role: diagnosticRole,
+      stage: .inspection,
+      check: .processInspectionUnavailable,
+      osCode: .unknown
+    ))
   }
 
   func attestRegisteredProcess(
@@ -1412,7 +1646,7 @@ final class RuntimeAuthorizationState {
     lock.lock()
     guard generation == requestedGeneration,
           liveRuntimePIDLocked() != nil,
-          useRequestIDLocked(requestId),
+          useRequestIDLocked(requestId, advancesRevision: false),
           let registration = registrations[peerPID],
           registration.role == role,
           registration.registrationToken == registrationToken,
@@ -1488,7 +1722,7 @@ final class RuntimeAuthorizationState {
           peerPID == runtimePID,
           desktopAttested,
           desktopOwnerToken == ownerToken,
-          useRequestIDLocked(requestId) else {
+          useRequestIDLocked(requestId, advancesRevision: false) else {
       lock.unlock()
       return nil
     }
@@ -1690,9 +1924,9 @@ final class RuntimeAuthorizationState {
     return pid
   }
 
-  private func useRequestIDLocked(_ requestId: String) -> Bool {
+  private func useRequestIDLocked(_ requestId: String, advancesRevision: Bool = true) -> Bool {
     guard usedRequestIDs.count < 256, usedRequestIDs.insert(requestId).inserted else { return false }
-    revision &+= 1
+    if advancesRevision { revision &+= 1 }
     return true
   }
 
@@ -1795,6 +2029,40 @@ final class RuntimeAuthorizationState {
     return nil
   }
 
+  private func registrationRoleMatchesOwner(
+    peerPID: pid_t,
+    role: String,
+    snapshot: AuthorizationSnapshot
+  ) -> Bool {
+    if peerPID == snapshot.runtimePID { return role == "daemon" }
+    if role == "plugin" { return true }
+    guard let registration = snapshot.registrations[peerPID] else { return false }
+    if registration.role == "daemon" { return role == "plugin" }
+    if registration.role == "plugin" { return role == "capture-helper" }
+    return false
+  }
+
+  private func registrationOwnerTokenMatches(
+    peerPID: pid_t,
+    role: String,
+    ownerToken: String,
+    snapshot: AuthorizationSnapshot
+  ) -> Bool {
+    if peerPID == snapshot.runtimePID {
+      return role == "daemon" && snapshot.desktopAttested && snapshot.desktopOwnerToken == ownerToken
+    }
+    if role == "plugin" {
+      return snapshot.registrations.values.contains {
+        $0.role == "daemon" && $0.attested && $0.registrationToken == ownerToken
+      }
+    }
+    guard let registration = snapshot.registrations[peerPID], registration.attested else { return false }
+    if role == "capture-helper" && registration.role == "plugin" {
+      return registration.registrationToken == ownerToken
+    }
+    return false
+  }
+
   private func isPackagedPeerAuthorizedLocked(_ peerPID: pid_t) -> Bool {
     if peerPID == runtimePID { return desktopAttested }
     return registrations[peerPID]?.attested == true
@@ -1858,20 +2126,110 @@ final class RuntimeAuthorizationState {
     return (identity, currentHostIdentity)
   }
 
-  private func inspectRegistrationCandidate(
+  private func inspectRegistrationCandidateDiagnosed(
+    role: String,
     childPID: pid_t,
     expectedIdentity: MeetlessProcessIdentity,
     ownerPlan: RegistrationOwnerPlan,
     snapshot: AuthorizationSnapshot
-  ) -> (identity: MeetlessProcessIdentity, owner: ProcessOwnerEvidence)? {
-    guard liveParentPID(childPID) == ownerPlan.pid,
-          let liveIdentity = try? inspectMeetlessProcessIdentity(childPID),
-          liveIdentity == expectedIdentity,
-          liveParentPID(ownerPlan.pid) == ownerPlan.parentPID,
-          let ownerIdentity = try? inspectMeetlessProcessIdentity(ownerPlan.pid),
-          processIdentityMatchesShape(ownerIdentity, ownerPlan.expectedIdentity),
-          let parentIdentity = try? inspectMeetlessProcessIdentity(ownerPlan.parentPID),
-          parentIdentity == ownerPlan.expectedParentIdentity else { return nil }
+  ) -> RegistrationCandidateInspection {
+    let diagnosticRole = MeetlessProcessRegistrationFailure.role(for: role)
+    let childParent = inspectLiveParentPID(childPID)
+    guard let childParentPID = childParent.pid else {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .inspection,
+        check: .processInspectionUnavailable,
+        osCode: childParent.osCode
+      ))
+    }
+    guard childParentPID == ownerPlan.pid else {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .inspection,
+        check: .parentMismatch,
+        osCode: .none
+      ))
+    }
+
+    let liveIdentity: MeetlessProcessIdentity
+    do {
+      liveIdentity = try inspectMeetlessProcessIdentity(childPID)
+    } catch {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .inspection,
+        check: .processInspectionUnavailable,
+        osCode: normalizedInspectionCode(error)
+      ))
+    }
+    guard liveIdentity == expectedIdentity else {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .inspection,
+        check: .childIdentityMismatch,
+        osCode: .none
+      ))
+    }
+
+    let ownerParent = inspectLiveParentPID(ownerPlan.pid)
+    guard let ownerParentPID = ownerParent.pid else {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .inspection,
+        check: .processInspectionUnavailable,
+        osCode: ownerParent.osCode
+      ))
+    }
+    guard ownerParentPID == ownerPlan.parentPID else {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .inspection,
+        check: .ownerChainFailure,
+        osCode: .none
+      ))
+    }
+
+    let ownerIdentity: MeetlessProcessIdentity
+    do {
+      ownerIdentity = try inspectMeetlessProcessIdentity(ownerPlan.pid)
+    } catch {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .inspection,
+        check: .processInspectionUnavailable,
+        osCode: normalizedInspectionCode(error)
+      ))
+    }
+    guard processIdentityMatchesShape(ownerIdentity, ownerPlan.expectedIdentity) else {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .inspection,
+        check: .ownerChainFailure,
+        osCode: .none
+      ))
+    }
+
+    let parentIdentity: MeetlessProcessIdentity
+    do {
+      parentIdentity = try inspectMeetlessProcessIdentity(ownerPlan.parentPID)
+    } catch {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .inspection,
+        check: .processInspectionUnavailable,
+        osCode: normalizedInspectionCode(error)
+      ))
+    }
+    guard parentIdentity == ownerPlan.expectedParentIdentity else {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .inspection,
+        check: .ownerChainFailure,
+        osCode: .none
+      ))
+    }
+
     let owner = ProcessOwnerEvidence(
       role: ownerPlan.role,
       pid: ownerPlan.pid,
@@ -1880,8 +2238,22 @@ final class RuntimeAuthorizationState {
       parentIdentity: parentIdentity
     )
     var visited = Set<pid_t>()
-    guard validateOwnerEvidence(owner, snapshot: snapshot, visited: &visited) else { return nil }
-    return (liveIdentity, owner)
+    guard validateOwnerEvidence(owner, snapshot: snapshot, visited: &visited) else {
+      return .rejected(MeetlessProcessRegistrationFailure(
+        role: diagnosticRole,
+        stage: .ownership,
+        check: .ownerChainFailure,
+        osCode: .none
+      ))
+    }
+    return .accepted(identity: liveIdentity, owner: owner)
+  }
+
+  private func normalizedInspectionCode(_ error: Error) -> MeetlessNormalizedOSCode {
+    guard let inspectionError = error as? MeetlessProcessInspectionError else { return .unknown }
+    switch inspectionError {
+    case .unavailable(let osCode): return osCode
+    }
   }
 
   private func inspectRegisteredProcess(

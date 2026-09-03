@@ -123,6 +123,68 @@ struct MeetlessChildRegistrationResult {
   let registrationToken: String
 }
 
+enum MeetlessProcessRegistrationDiagnosticRole: String {
+  case daemon
+  case plugin
+  case captureHelper = "capture-helper"
+  case unknown
+}
+
+enum MeetlessProcessRegistrationDiagnosticStage: String {
+  case input
+  case authorization
+  case ownership
+  case inspection
+}
+
+enum MeetlessProcessRegistrationDiagnosticCheck: String {
+  case malformed
+  case staleGeneration = "stale-generation"
+  case tokenMismatch = "token-mismatch"
+  case roleMismatch = "role-mismatch"
+  case policyMismatch = "policy-mismatch"
+  case duplicateRoleOrSlot = "duplicate-role-or-slot"
+  case parentMismatch = "parent-mismatch"
+  case childIdentityMismatch = "child-identity-mismatch"
+  case ownerChainFailure = "owner-chain-failure"
+  case processInspectionUnavailable = "process-inspection-unavailable"
+}
+
+enum MeetlessNormalizedOSCode: String {
+  case none
+  case eperm = "EPERM"
+  case eacces = "EACCES"
+  case enoent = "ENOENT"
+  case esrch = "ESRCH"
+  case einval = "EINVAL"
+  case eio = "EIO"
+  case unknown
+}
+
+struct MeetlessProcessRegistrationFailure: Equatable {
+  let role: MeetlessProcessRegistrationDiagnosticRole
+  let stage: MeetlessProcessRegistrationDiagnosticStage
+  let check: MeetlessProcessRegistrationDiagnosticCheck
+  let osCode: MeetlessNormalizedOSCode
+
+  var protocolReason: String {
+    "role=\(role.rawValue);stage=\(stage.rawValue);check=\(check.rawValue);os=\(osCode.rawValue)"
+  }
+
+  static func role(for value: String) -> MeetlessProcessRegistrationDiagnosticRole {
+    MeetlessProcessRegistrationDiagnosticRole(rawValue: value) ?? .unknown
+  }
+}
+
+enum MeetlessChildRegistrationDecision {
+  case accepted(MeetlessChildRegistrationResult)
+  case rejected(MeetlessProcessRegistrationFailure)
+}
+
+enum MeetlessProcessInspectionError: Error, Equatable {
+  case unavailable(MeetlessNormalizedOSCode)
+}
+
 struct MeetlessRegisteredProcessAttestationResult {
   let generation: UInt64
   let role: String
@@ -614,29 +676,33 @@ final class MeetlessTranscriptionCapability {
             let role = request["role"] as? String,
             let childPID = signedInteger(request["childPid"]),
             let expected = processIdentityWire(request["expectedIdentity"]),
-            let policy = processPolicyWire(request["policy"]),
-            let registration = runtimeAuthorization.registerChild(
-              peerPID: peerPID,
-              requestId: requestId,
-              generation: generation,
-              ownerToken: ownerToken,
-              registrationToken: registrationToken,
-              role: role,
-              childPID: childPID,
-              expectedIdentity: expected.identity,
-              policy: policy
-            ) else {
-        writeHostProcessError(client, requestId: requestId, reason: "child registration failed closed")
+            let policy = processPolicyWire(request["policy"]) else {
+        writeHostProcessError(client, requestId: requestId, reason: "child registration request malformed")
         return
       }
-      writeHostProcessRegistration(
-        client,
+      switch runtimeAuthorization.registerChildDiagnosed(
+        peerPID: peerPID,
         requestId: requestId,
-        generation: registration.generation,
-        role: registration.role,
-        pid: registration.pid,
-        registrationToken: registration.registrationToken
-      )
+        generation: generation,
+        ownerToken: ownerToken,
+        registrationToken: registrationToken,
+        role: role,
+        childPID: childPID,
+        expectedIdentity: expected.identity,
+        policy: policy
+      ) {
+      case .accepted(let registration):
+        writeHostProcessRegistration(
+          client,
+          requestId: requestId,
+          generation: registration.generation,
+          role: registration.role,
+          pid: registration.pid,
+          registrationToken: registration.registrationToken
+        )
+      case .rejected(let failure):
+        writeHostProcessError(client, requestId: requestId, failure: failure)
+      }
       return
     }
     if operation == "processAttestation" {
@@ -928,6 +994,14 @@ final class MeetlessTranscriptionCapability {
     ])
   }
 
+  private func writeHostProcessError(
+    _ descriptor: Int32,
+    requestId: String,
+    failure: MeetlessProcessRegistrationFailure
+  ) {
+    writeHostProcessError(descriptor, requestId: requestId, reason: failure.protocolReason)
+  }
+
   private func writeHostProcessObject(_ descriptor: Int32, _ response: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: response),
           data.count <= meetlessMaximumRequestLineBytes else { return }
@@ -1147,32 +1221,47 @@ func socketPeerPID(_ descriptor: Int32) -> pid_t? {
   return pid
 }
 
-func liveParentPID(_ pid: pid_t) -> pid_t? {
+struct MeetlessParentPIDObservation {
+  let pid: pid_t?
+  let osCode: MeetlessNormalizedOSCode
+}
+
+func inspectLiveParentPID(_ pid: pid_t) -> MeetlessParentPIDObservation {
   var info = proc_bsdinfo()
   let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.size)
   let actualSize = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, expectedSize)
-  guard actualSize == expectedSize else { return nil }
-  return pid_t(info.pbi_ppid)
+  guard actualSize == expectedSize else {
+    return MeetlessParentPIDObservation(pid: nil, osCode: meetlessNormalizedOSCode(errno))
+  }
+  return MeetlessParentPIDObservation(pid: pid_t(info.pbi_ppid), osCode: .none)
+}
+
+func liveParentPID(_ pid: pid_t) -> pid_t? {
+  inspectLiveParentPID(pid).pid
 }
 
 func inspectMeetlessProcessIdentity(_ pid: pid_t) throws -> MeetlessProcessIdentity {
-  guard pid > 1 else { throw capabilityError("process PID is invalid") }
+  guard pid > 1 else { throw MeetlessProcessInspectionError.unavailable(.einval) }
   var pathBuffer = [UInt8](repeating: 0, count: Int(MAXPATHLEN))
   let pathLength = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
-  guard pathLength > 0 else { throw capabilityError("process executable path is unavailable") }
+  guard pathLength > 0 else {
+    throw MeetlessProcessInspectionError.unavailable(meetlessNormalizedOSCode(errno))
+  }
   let executablePath = String(decoding: pathBuffer.prefix(Int(pathLength)), as: UTF8.self)
   let realPath = URL(fileURLWithPath: executablePath).resolvingSymlinksInPath().standardizedFileURL.path
   var information = stat()
-  guard lstat(executablePath, &information) == 0,
-        (information.st_mode & S_IFMT) == S_IFREG,
+  guard lstat(executablePath, &information) == 0 else {
+    throw MeetlessProcessInspectionError.unavailable(meetlessNormalizedOSCode(errno))
+  }
+  guard (information.st_mode & S_IFMT) == S_IFREG,
         information.st_size > 0 else {
-    throw capabilityError("process executable is not a regular file")
+    throw MeetlessProcessInspectionError.unavailable(.none)
   }
   let binary: Data
   do {
     binary = try Data(contentsOf: URL(fileURLWithPath: executablePath))
   } catch {
-    throw capabilityError("process executable cannot be read")
+    throw MeetlessProcessInspectionError.unavailable(.unknown)
   }
   return MeetlessProcessIdentity(
     configuredPath: executablePath,
@@ -1191,19 +1280,19 @@ private func inspectMeetlessProcessArguments(_ pid: pid_t) throws -> [String] {
   guard sysctl(&mib, UInt32(mib.count), nil, &size, nil, 0) == 0,
         size > MemoryLayout<Int32>.size,
         size <= 256 * 1024 else {
-    throw capabilityError("process argv is unavailable")
+    throw MeetlessProcessInspectionError.unavailable(meetlessNormalizedOSCode(errno))
   }
   var bytes = [UInt8](repeating: 0, count: size)
   guard sysctl(&mib, UInt32(mib.count), &bytes, &size, nil, 0) == 0,
         size >= MemoryLayout<Int32>.size else {
-    throw capabilityError("process argv cannot be read")
+    throw MeetlessProcessInspectionError.unavailable(meetlessNormalizedOSCode(errno))
   }
   if size < bytes.count { bytes.removeSubrange(size..<bytes.count) }
   let argc = bytes.withUnsafeBytes { raw -> Int32 in
     raw.loadUnaligned(as: Int32.self)
   }
   guard argc > 0, argc <= Int32(meetlessMaximumProcessArgumentCount) else {
-    throw capabilityError("process argv count is outside the bounded protocol")
+    throw MeetlessProcessInspectionError.unavailable(.none)
   }
   var cursor = MemoryLayout<Int32>.size
   while cursor < bytes.count && bytes[cursor] != 0 { cursor += 1 }
@@ -1215,8 +1304,20 @@ private func inspectMeetlessProcessArguments(_ pid: pid_t) throws -> [String] {
     arguments.append(String(decoding: bytes[start..<cursor], as: UTF8.self))
     cursor += 1
   }
-  guard arguments.count == Int(argc) else { throw capabilityError("process argv ended before argc") }
+  guard arguments.count == Int(argc) else { throw MeetlessProcessInspectionError.unavailable(.none) }
   return arguments
+}
+
+func meetlessNormalizedOSCode(_ code: Int32) -> MeetlessNormalizedOSCode {
+  switch code {
+  case EPERM: return .eperm
+  case EACCES: return .eacces
+  case ENOENT: return .enoent
+  case ESRCH: return .esrch
+  case EINVAL: return .einval
+  case EIO: return .eio
+  default: return .unknown
+  }
 }
 
 func readBoundedLine(_ descriptor: Int32, maximumBytes: Int) -> String? {
