@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v66`
-- `current_frontier`: `R5-MAS-RUNTIME-STATE-TRANSACTION-CLOSEOUT-CORRECTION`
-- `state`: `R5_MAS_RUNTIME_STATE_TRANSACTION_CLOSEOUT_CORRECTION_PENDING_LEAD_REVIEW`
+- `plan_revision`: `v67`
+- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-13`
+- `state`: `OWNER_AUTHORIZED_PENDING_SERIAL_OPERATOR`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: pending immutable MAS runtime-state closeout correction from exact base `103a7a777c7b3cf61570cc971bec117cb18de8ad`; this serial correction remains unaccepted pending Lead review and is a child of the original family base `8c6efffeb05a53100044aea8fbcf85e74304afee`. Candidate commit placeholder is `<immutable-correction-commit-pending>`. The historical rejected closeout base is `975db2cc93c827fec24d58f361e94edd3dce84e8`; the original convergence base is `4a32dfe8d8979e956dc6501334971363279de2bd`; the prior accepted base is `b3ff5ec83908201a40be9715df34c238d4eea498`. The accepted package-source Node proof, identity serializer/proof, bounded registration diagnostics, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
+- `candidate`: Lead-accepted MAS runtime-state and artifact-binding correction `ca26b6c045bbbb1c86aa46b2a0a0966205d645cd`, exact child of `103a7a777c7b3cf61570cc971bec117cb18de8ad` and descendant of the original family base `8c6efffeb05a53100044aea8fbcf85e74304afee`. The historical rejected closeout base is `975db2cc93c827fec24d58f361e94edd3dce84e8`; the original convergence base is `4a32dfe8d8979e956dc6501334971363279de2bd`; the prior accepted base was `b3ff5ec83908201a40be9715df34c238d4eea498`. The accepted package-source Node proof, identity serializer/proof, bounded registration diagnostics, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export round-trip corrections remain preserved.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: this immutable child correction must be Lead-reviewed before any future package, install, launch, or external gate. Package, sign, install, launch, purchase/restore, premium/provider, Convex, production, upload, submission, publication, and every other external gate remain closed.
-- `blocked_by`: no safe in-scope implementation dependency remains; no package, sign, install, launch, or external result is accepted by this candidate.
-- `next_action`: Lead reviews and accepts or rejects the immutable child of exact base `103a7a777c7b3cf61570cc971bec117cb18de8ad`; only after acceptance and a new explicit owner gate may any future package/install/launch attempt be considered.
+- `pending_ruling`: the owner authorized one Attempt 13 retry after Lead acceptance. Authorization is limited to dev-only MAS packaging, Apple Development signing, transactionally recoverable local install, exact LaunchServices launch, bounded readiness observation, owned stop, and package/runtime restoration. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
+- `blocked_by`: no repository implementation dependency remains before the bounded recovery audit and one serial Attempt 13 operator run.
+- `next_action`: staff one fresh serial external operator to run the frozen recovery audit, exact package command, immutable artifact validation, coordinator-owned install/launch/stop/restore, and complete residue report. Any contract or runtime failure returns `REOPEN_REQUEST`; no code correction is mixed into the gate.
 
 ## Ownership And Authority
 
@@ -1616,7 +1616,31 @@ ADR0005, product monetization, and macOS artifact-validation authority files.
 No MAS package/sign/install/LaunchServices launch or restore was executed for
 this correction; no `/Applications`, real MAS root, secret, cache, R4
 fixture, external system, CI, or branch-protection result was inspected or
-mutated. All external gates remain closed and no Attempt 13 is authorized.
+mutated during implementation.
+
+### Lead acceptance and Attempt 13 authorization (2026-09-03)
+
+Lead accepted correction `ca26b6c045bbbb1c86aa46b2a0a0966205d645cd`,
+whose exact parent is `103a7a777c7b3cf61570cc971bec117cb18de8ad`.
+The accepted correction delta is limited to nine paths and closes the final
+descriptor-ancestor and unconditional-validator findings. Lead inspection
+confirmed descriptor-relative `openat(..., O_NOFOLLOW)` traversal, exact
+runtime/package path classes, native `renameatx_np(RENAME_EXCL |
+RENAME_NOFOLLOW_ANY)`, and the absence of a caller-supplied validator result.
+Lead reran the focused coordinator/runtime/package proof: three files and 91
+tests passed. The writer additionally observed native debug/release proof,
+six descriptor/collision tests, thirteen full-validator tests, typecheck, MAS
+baseline validation, syntax checks, and diff checks passing.
+
+The owner subsequently authorized exactly one Attempt 13 retry. This opens
+only dev-only MAS packaging, the accepted Apple Development signing identity,
+transactional local installation, one exact LaunchServices launch, bounded
+readiness inspection, owned shutdown, and deterministic package/runtime
+restoration. It does not open purchase/restore, premium UI/status, real
+transcription/provider/TCC/recording/export, RevenueCat mutation or secret
+activity, Convex, production/annual action, upload/submission/publication/App
+Review, or push. A failure returns to repository correction review without an
+automatic retry.
 
 ### Risks And Recovery
 
