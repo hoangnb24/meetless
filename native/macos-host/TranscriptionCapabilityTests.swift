@@ -180,8 +180,8 @@ private func testLaunchCoordinatorLifecycle() {
         check(false, "canonical launch must complete the coordinator: \(error)")
       }
       check(
-        events == ["location", "process", "configuration", "resources", "identity", "configuration-ready", "lock", "capability", "runtime"],
-        "canonical launch must preserve the location, preflight, identity, lock, capability, and runtime order"
+        events == ["location", "process", "configuration", "resources", "configuration-ready", "lock", "identity", "capability", "runtime"],
+        "canonical launch must acquire the shared lock before identity publication, capability, and runtime startup"
       )
       check(guidanceMessage == nil, "canonical launch must not show alternate-path guidance")
     }

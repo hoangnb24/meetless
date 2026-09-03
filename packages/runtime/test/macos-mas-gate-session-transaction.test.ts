@@ -107,6 +107,19 @@ describe("MAS runtime-root preservation transaction", () => {
   });
 
   it.each([
+    ".meetless-mas-gate-session.orphan.quarantine",
+    ".meetless-mas-gate-session.orphan.fresh-retained",
+    ".meetless-mas-gate-session.orphan.unknown",
+  ])("fails closed for an unexpected sibling transaction artifact %s without removing it", async (name) => {
+    const fixture = await createFixture({ prior: true });
+    const artifact = path.join(fixture.parent, name);
+    await mkdir(artifact, { mode: 0o700 });
+    await writeFile(path.join(artifact, "opaque-state"), "retain me\n", { mode: 0o600 });
+    await expect(begin(fixture)).rejects.toThrow(/unexpected MAS transaction artifact/);
+    await expect(readFile(path.join(artifact, "opaque-state"), "utf8")).resolves.toBe("retain me\n");
+  });
+
+  it.each([
     "prepared",
     "quarantine-intent",
     "quarantined",
@@ -128,6 +141,41 @@ describe("MAS runtime-root preservation transaction", () => {
       );
     }
     expect(failedJournalPath).not.toBeNull();
+  });
+
+  it.each([
+    "journal-published",
+    "active-journal-published",
+    "rename-active-publish",
+    "fresh-mkdir",
+    "fresh-identity-journaled",
+    "rename-quarantine",
+  ])("recovers after the physical begin boundary %s", async (faultAt) => {
+    const fixture = await createFixture({ prior: true });
+    const before = await attestMasGateRuntimeRoot(fixture.runtime, { requireOwnerUid: true });
+    await expect(begin(fixture, { faultAt })).rejects.toMatchObject({ code: MAS_GATE_CLEANUP_DIAGNOSTIC_CODE });
+    const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+    expect(["active", "recovery-required"]).toContain(status.status);
+    const recovered = await recoverMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture));
+    expect(recovered.phase).toBe("restored");
+    expect(await attestMasGateRuntimeRoot(fixture.runtime, { requireOwnerUid: true })).toEqual(before);
+  });
+
+  it("retains an unjournaled active construction after a mkdir crash and fails closed with recovery guidance", async () => {
+    const fixture = await createFixture({ prior: true });
+    await expect(begin(fixture, { faultAt: "active-mkdir" })).rejects.toMatchObject({ code: MAS_GATE_CLEANUP_DIAGNOSTIC_CODE });
+    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).rejects.toThrow(/construction transaction journal is missing/);
+    const entries = await readdir(fixture.parent);
+    expect(entries.some((name) => name.endsWith(".active-building"))).toBe(true);
+    await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+  });
+
+  it("rejects an active transaction whose sibling directory mode changed", async () => {
+    const fixture = await createFixture({ prior: true });
+    await expect(begin(fixture, { faultAt: "prepared" })).rejects.toThrow(/injected MAS gate session/);
+    await chmod(path.join(fixture.parent, ".meetless-mas-gate-session.active"), 0o755);
+    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).rejects.toThrow(/secure directory/);
+    await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
   });
 
   it.each(["detach-intent", "fresh-retained", "restore-intent", "restored"] as const)(
@@ -157,7 +205,9 @@ describe("MAS runtime-root preservation transaction", () => {
       });
       const status = await readMasGateSessionStatus(runtimeOptions(fixture));
       const journalPath = status.status === "active" ? status.journalPath : status.archived[0].journalPath;
-      const recovered = await recoverMasGateSessionTransaction(journalPath, runtimeOptions(fixture));
+      const archived = await restoreMasGateSessionTransaction(journalPath, runtimeOptions(fixture));
+      expect(archived.phase).toBe("archived");
+      const recovered = await recoverMasGateSessionTransaction(archived, runtimeOptions(fixture));
       expect(recovered.phase).toBe("archived");
       expect(await readMasGateSessionStatus(runtimeOptions(fixture))).toMatchObject({ status: "archived" });
     },
@@ -170,8 +220,9 @@ describe("MAS runtime-root preservation transaction", () => {
     delete childInput.assertNoLiveOwnedRuntime;
     const code = [
       `import { beginMasGateSessionTransaction, restoreMasGateSessionTransaction } from ${JSON.stringify(moduleUrl)};`,
-      `const transaction = await beginMasGateSessionTransaction({ ...${JSON.stringify(childInput)}, assertNoLiveOwnedRuntime: async () => false });`,
-      `await restoreMasGateSessionTransaction(transaction, { ...${JSON.stringify({ ...childInput, faultAt: "fresh-retained", faultAction: "hard-exit" })}, assertNoLiveOwnedRuntime: async () => false });`,
+      `const absent = { status: "absent", runtimeRoot: ${JSON.stringify(childInput.runtimeRoot)}, parentPath: ${JSON.stringify(childInput.runtimeRootParent)}, stateScope: "runtime-root-only", processes: [], listeners: [], sockets: [], openHandles: [] };`,
+      `const transaction = await beginMasGateSessionTransaction({ ...${JSON.stringify(childInput)}, assertNoLiveOwnedRuntime: async () => absent });`,
+      `await restoreMasGateSessionTransaction(transaction, { ...${JSON.stringify({ ...childInput, faultAt: "fresh-retained", faultAction: "hard-exit" })}, assertNoLiveOwnedRuntime: async () => absent });`,
     ].join("\n");
     const result = await execFile(process.execPath, ["--input-type=module", "-e", code], { cwd: path.resolve(".") }).catch((error) => error);
     expect(result.signal).toBe("SIGKILL");
@@ -182,6 +233,62 @@ describe("MAS runtime-root preservation transaction", () => {
     expect(await readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).toBe("opaque\n");
     expect(await readdir(recovered.freshRetainedPath)).toEqual([]);
   });
+
+  it.each([
+    "journal-published",
+    "active-journal-published",
+    "rename-active-publish",
+    "fresh-mkdir",
+    "fresh-identity-journaled",
+    "rename-quarantine",
+  ])("recovers a subprocess SIGKILL at the physical begin boundary %s", async (faultAt) => {
+    const fixture = await createFixture({ prior: true });
+    const result = await runHardExitBegin(fixture, faultAt);
+    expect(result.signal).toBe("SIGKILL");
+    const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+    const recovered = await recoverMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture));
+    expect(recovered.phase).toBe("restored");
+    await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+  });
+
+  it("retains a subprocess SIGKILL between active mkdir and its first journal publication", async () => {
+    const fixture = await createFixture({ prior: true });
+    const result = await runHardExitBegin(fixture, "active-mkdir");
+    expect(result.signal).toBe("SIGKILL");
+    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).rejects.toThrow(/construction transaction journal is missing/);
+    await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+  });
+
+  it.each(["rename-fresh-retained", "rename-prior-restore"]) (
+    "recovers a subprocess SIGKILL at the physical restore boundary %s",
+    async (faultAt) => {
+      const fixture = await createFixture({ prior: true });
+      const transaction = await begin(fixture);
+      await writeFile(path.join(fixture.runtime, "run-only.txt"), "run\n");
+      const result = await runHardExitRestore(fixture, transaction.journalPath, faultAt);
+      expect(result.signal).toBe("SIGKILL");
+      const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+      const recovered = await recoverMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture));
+      expect(recovered.phase).toBe("restored");
+      await expect(attestMasGateRuntimeRoot(fixture.runtime, { requireOwnerUid: true })).resolves.toEqual(transaction.priorAggregateAttestation);
+    },
+  );
+
+  it.each(["rename-archive", "archive-renamed"] as const)(
+    "recovers a subprocess SIGKILL at archive boundary %s with the fixed active slot reusable",
+    async (faultAt) => {
+      const fixture = await createFixture({ prior: true });
+      const transaction = await begin(fixture);
+      await restoreMasGateSessionTransaction(transaction, runtimeOptions(fixture));
+      const result = await runHardExitArchive(fixture, transaction.journalPath, faultAt);
+      expect(result.signal).toBe("SIGKILL");
+      const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+      expect(status.status).toBe("recovery-required");
+      const recovered = await recoverMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture));
+      expect(recovered.phase).toBe("archived");
+      await expect(readMasGateSessionStatus(runtimeOptions(fixture))).resolves.toMatchObject({ status: "archived" });
+    },
+  );
 
   it("fails closed for token/path/attestation, live, free-space, aliases, symlink roots, and external hardlinks", async () => {
     const fixture = await createFixture({ prior: true });
@@ -222,6 +329,32 @@ describe("MAS runtime-root preservation transaction", () => {
     await expect(restoreMasGateSessionTransaction(status.journalPath, runtimeOptions(fixture, {
       assertNoLiveOwnedRuntime: async () => true,
     }))).rejects.toThrow(/live owned runtime/);
+    await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+  });
+
+  it.each([
+    undefined,
+    false,
+    {},
+    { status: "absent" },
+    { status: "absent", runtimeRoot: "wrong", parentPath: "wrong", stateScope: "runtime-root-only", processes: [], listeners: [], sockets: [], openHandles: [] },
+  ])("rejects an ambiguous live-runtime result %j without moving prior bytes", async (observation) => {
+    const fixture = await createFixture({ prior: true });
+    await expect(begin(fixture, { assertNoLiveOwnedRuntime: async () => observation })).rejects.toMatchObject({
+      code: MAS_GATE_CLEANUP_DIAGNOSTIC_CODE,
+    });
+    await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+  });
+
+  it("rejects live-runtime inspection errors such as EPERM without moving prior bytes", async () => {
+    const fixture = await createFixture({ prior: true });
+    await expect(begin(fixture, {
+      assertNoLiveOwnedRuntime: async () => {
+        const error = new Error("permission denied");
+        Object.assign(error, { code: "EPERM" });
+        throw error;
+      },
+    })).rejects.toThrow(/live-owned-runtime validation failed.*EPERM/);
     await expect(readFile(path.join(fixture.runtime, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
   });
 
@@ -275,7 +408,7 @@ describe("MAS runtime-root preservation transaction", () => {
 
     const journalPathFixture = await createFixture({ prior: true });
     const journalPathTransaction = await begin(journalPathFixture);
-    await expect(restoreMasGateSessionTransaction({ ...journalPathTransaction, journalPath: path.join(journalPathFixture.parent, "wrong.json") }, runtimeOptions(journalPathFixture))).rejects.toThrow(/journal path/);
+    await expect(restoreMasGateSessionTransaction({ ...journalPathTransaction, journalPath: path.join(journalPathFixture.parent, "wrong.json") }, runtimeOptions(journalPathFixture))).rejects.toThrow(/transaction journal is missing/);
   });
 
   it("retains roots when terminal recovery sees both or neither prior roots", async () => {
@@ -341,23 +474,54 @@ describe("MAS runtime-root preservation transaction", () => {
   });
 
   it("rejects reintroduction of recursive runtime cleanup in both package proof runners", async () => {
-    const [packageProof, acceptanceProof, transactionSource, cliSource] = await Promise.all([
+    const [packageProof, acceptanceProof, transactionSource, coordinatorSource, cliSource, nativeSource, installerSource, launcherSource, stopperSource, packageJsonSource] = await Promise.all([
       readFile("scripts/prove-macos-package.mjs", "utf8"),
       readFile("scripts/prove-macos-package-acceptance.mjs", "utf8"),
       readFile("scripts/lib/macos-mas-gate-session-transaction.mjs", "utf8"),
+      readFile("scripts/macos-mas-development-gate.mjs", "utf8"),
       readFile("scripts/macos-mas-gate-session.mjs", "utf8"),
+      readFile("native/macos-host/MeetlessHost.swift", "utf8"),
+      readFile("scripts/install-macos-host.mjs", "utf8"),
+      readFile("scripts/launch-macos-host.mjs", "utf8"),
+      readFile("scripts/stop-macos-host.mjs", "utf8"),
+      readFile("package.json", "utf8"),
     ]);
+    const packageScripts = JSON.parse(packageJsonSource).scripts;
+    expect(packageScripts["runtime:mas:development"]).toBe("node scripts/macos-mas-development-gate.mjs");
+    expect(packageScripts["runtime:host"]).toBe("node scripts/launch-macos-host.mjs");
+    expect(packageScripts["runtime:host:stop"]).toBe("node scripts/stop-macos-host.mjs");
+    expect(packageScripts["host:install"]).toContain("node scripts/install-macos-host.mjs");
+    for (const name of Object.keys(packageScripts)) {
+      if (name.startsWith("runtime:mas")) expect(name).toBe("runtime:mas:development");
+    }
     for (const source of [packageProof, acceptanceProof]) {
-      expect(source).not.toMatch(/\b(?:rm|rmSync)\s*\(\s*runtimeRoot/u);
-      expect(source).not.toMatch(/\b(?:rm|rmSync)\s*\(\s*path\.join\(\s*runtimeRoot/u);
-      expect(source).not.toMatch(/\b(?:rm|rmSync)\s*\([^)]*paseo-home[^)]*\)/su);
-      expect(source).not.toMatch(/\b(?:rm|rmSync)\s*\([^;]*runtimeRoot[^;]*recursive\s*:\s*true/su);
+      expect(source).toContain("acceptedMacOSPackagePaths");
+      expect(source).toContain("Direct-DMG proof authority only");
+      expect(source).not.toContain("macos-mas-gate-session-transaction");
+      expect(source).not.toContain("macAppStoreInstallationContract");
     }
     expect(transactionSource).not.toMatch(/\b(?:rm|rmSync|cp|cpSync)\b/u);
     expect(transactionSource).not.toMatch(/recursive\s*:\s*true/u);
-    expect(cliSource).not.toMatch(/\b(?:rm|rmSync|cp|cpSync)\b/u);
-    expect(cliSource).not.toMatch(/recursive\s*:\s*true/u);
-    expect(cliSource).toContain("macAppStoreInstallationContract");
+    expect(coordinatorSource).not.toMatch(/\b(?:rm|rmSync|cp|cpSync)\b/u);
+    expect(coordinatorSource).not.toMatch(/recursive\s*:\s*true/u);
+    expect(coordinatorSource).toContain("macAppStoreInstallationContract");
+    expect(coordinatorSource).toContain("acquireMasGateLock");
+    expect(coordinatorSource).toContain("restoreInRequiredOrder");
+    expect(coordinatorSource).toContain("MEETLESS_RUNTIME_ROOT: context.runtimeRoot");
+    expect(coordinatorSource).toContain("+D\", context.runtimeRoot");
+    expect(cliSource).toContain("masDevelopmentRuntimeContext");
+    expect(cliSource).toContain("restoreMasDevelopmentGate");
+    expect(nativeSource).not.toMatch(/removeItem\([^)]*runtimeRoot[^)]*recursive/su);
+    expect(nativeSource).not.toMatch(/copyItem\([^)]*runtimeRoot/su);
+    for (const source of [installerSource, launcherSource, stopperSource]) {
+      expect(source).toContain("MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH");
+      expect(source).toContain("assertDirectRuntimeTarget");
+      expect(source).toContain("candidate.startsWith(`${masRoot}${path.sep}`)");
+      expect(source).toContain("MEETLESS_RUNTIME_ROOT");
+      expect(source).not.toContain("MEETLESS_RUNTIME_ROOT === undefined");
+    }
+    expect(stopperSource).toContain("MEETLESS_MAS_COORDINATOR_AUTHORITY");
+    expect(coordinatorSource).toContain("MEETLESS_MAS_COORDINATOR_AUTHORITY: MAS_GATE_COORDINATOR_SCHEMA");
     expect(cliSource).toContain("required-free-bytes");
   });
 });
@@ -375,9 +539,71 @@ function runtimeOptions(fixture: Fixture, overrides: Record<string, unknown> = {
     identityRelativePath,
     identityPath: fixture.identityPath,
     requiredFreeBytes: 1,
-    assertNoLiveOwnedRuntime: async () => false,
+    assertNoLiveOwnedRuntime: async () => ({
+      status: "absent",
+      runtimeRoot: fixture.runtime,
+      parentPath: fixture.parent,
+      stateScope: "runtime-root-only",
+      processes: [],
+      listeners: [],
+      sockets: [],
+      openHandles: [],
+    }),
     ...overrides,
   };
+}
+
+async function runHardExitBegin(fixture: Fixture, faultAt: string) {
+  const input = childRuntimeOptions(fixture);
+  return runHardExit([
+    `import { beginMasGateSessionTransaction } from ${JSON.stringify(new URL("../../../scripts/lib/macos-mas-gate-session-transaction.mjs", import.meta.url).href)};`,
+    `const options = ${JSON.stringify(input)};`,
+    `const absent = ${JSON.stringify(absentRuntimeLiteral(input.runtimeRoot as string, input.runtimeRootParent as string))};`,
+    `await beginMasGateSessionTransaction({ ...options, faultAt: ${JSON.stringify(faultAt)}, faultAction: "hard-exit", assertNoLiveOwnedRuntime: async () => absent });`,
+  ].join("\n"));
+}
+
+async function runHardExitRestore(fixture: Fixture, journalPath: string, faultAt: string) {
+  const input = childRuntimeOptions(fixture);
+  return runHardExit([
+    `import { restoreMasGateSessionTransaction } from ${JSON.stringify(new URL("../../../scripts/lib/macos-mas-gate-session-transaction.mjs", import.meta.url).href)};`,
+    `const options = ${JSON.stringify(input)};`,
+    `const absent = ${JSON.stringify(absentRuntimeLiteral(input.runtimeRoot as string, input.runtimeRootParent as string))};`,
+    `await restoreMasGateSessionTransaction(${JSON.stringify(journalPath)}, { ...options, faultAt: ${JSON.stringify(faultAt)}, faultAction: "hard-exit", assertNoLiveOwnedRuntime: async () => absent });`,
+  ].join("\n"));
+}
+
+async function runHardExitArchive(fixture: Fixture, journalPath: string, faultAt: string) {
+  const input = childRuntimeOptions(fixture);
+  return runHardExit([
+    `import { archiveMasGateSessionTransaction } from ${JSON.stringify(new URL("../../../scripts/lib/macos-mas-gate-session-transaction.mjs", import.meta.url).href)};`,
+    `const options = ${JSON.stringify(input)};`,
+    `const absent = ${JSON.stringify(absentRuntimeLiteral(input.runtimeRoot as string, input.runtimeRootParent as string))};`,
+    `await archiveMasGateSessionTransaction(${JSON.stringify(journalPath)}, { ...options, faultAt: ${JSON.stringify(faultAt)}, faultAction: "hard-exit", assertNoLiveOwnedRuntime: async () => absent });`,
+  ].join("\n"));
+}
+
+function childRuntimeOptions(fixture: Fixture) {
+  const options = runtimeOptions(fixture);
+  delete (options as { assertNoLiveOwnedRuntime?: unknown }).assertNoLiveOwnedRuntime;
+  return options;
+}
+
+function absentRuntimeLiteral(runtimeRoot: string, parentPath: string) {
+  return {
+    status: "absent",
+    runtimeRoot,
+    parentPath,
+    stateScope: "runtime-root-only",
+    processes: [],
+    listeners: [],
+    sockets: [],
+    openHandles: [],
+  };
+}
+
+async function runHardExit(source: string) {
+  return execFile(process.execPath, ["--input-type=module", "-e", source], { cwd: path.resolve(".") }).catch((error) => error);
 }
 
 type Fixture = {

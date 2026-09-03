@@ -1,12 +1,18 @@
 import { spawnSync } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
 import { assertInstalledHostIdentity } from "../packages/runtime/dist/host.js";
-import { resolveRuntimeConfig } from "../packages/runtime/dist/config.js";
+import {
+  MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH,
+  resolveRuntimeConfig,
+} from "../packages/runtime/dist/config.js";
 
 const config = resolveRuntimeConfig({
   runtimeRoot: process.env.MEETLESS_RUNTIME_ROOT,
   listen: process.env.MEETLESS_LISTEN,
 });
+await assertDirectRuntimeTarget(config.paths.root);
 const identity = await assertInstalledHostIdentity(config);
 const inspected = spawnSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
 if (inspected.error || inspected.status !== 0) throw new Error("Cannot inspect the MeetlessHost process");
@@ -85,4 +91,36 @@ async function released() {
     if (listener.stdout.trim()) return false;
   }
   return socketGone && transcriptionSocketGone;
+}
+
+async function assertDirectRuntimeTarget(runtimeRoot) {
+  const masRoot = path.resolve(homedir(), ...MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH.split("/"));
+  const lexicalRoot = path.resolve(runtimeRoot);
+  const resolvedRoot = await resolvePathThroughExistingAncestor(lexicalRoot);
+  const isProtectedMasPath = (candidate) => candidate === masRoot || candidate.startsWith(`${masRoot}${path.sep}`);
+  const isExactMasRoot = lexicalRoot === masRoot;
+  if (isProtectedMasPath(lexicalRoot) || isProtectedMasPath(resolvedRoot ?? "")) {
+    if (isExactMasRoot && process.env.MEETLESS_MAS_COORDINATOR_AUTHORITY === "MAS_GATE_COORDINATOR v1") return;
+    throw new Error(
+      `runtime:host:stop refuses the MAS app-container runtime root ${masRoot}. ` +
+      "Use npm run runtime:mas:development stop/restore so stop and absence are proved by the MAS coordinator. " +
+      "Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md and docs/decisions/0005-mac-app-store-and-revenuecat.md.",
+    );
+  }
+}
+
+async function resolvePathThroughExistingAncestor(candidate) {
+  const suffix = [];
+  let current = candidate;
+  while (true) {
+    const resolved = await realpath(current).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (resolved) return path.join(resolved, ...suffix);
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    suffix.unshift(path.basename(current));
+    current = parent;
+  }
 }

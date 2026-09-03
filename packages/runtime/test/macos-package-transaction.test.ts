@@ -62,6 +62,19 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
+function absentRuntime(runtimeRoot: string, parentPath: string) {
+  return {
+    status: "absent",
+    runtimeRoot,
+    parentPath,
+    stateScope: "runtime-root-only",
+    processes: [],
+    listeners: [],
+    sockets: [],
+    openHandles: [],
+  };
+}
+
 describe("macOS package replacement transaction", () => {
   it("rolls back package identity before restoring the prior runtime root", async () => {
     const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-m7-composition-test-")));
@@ -81,7 +94,7 @@ describe("macOS package replacement transaction", () => {
       identityRelativePath: "host-identity.json",
       identityPath,
       requiredFreeBytes: 1,
-      assertNoLiveOwnedRuntime: async () => false,
+      assertNoLiveOwnedRuntime: async () => absentRuntime(runtime, parent),
     });
     await mkdir(path.join(source, "Contents"), { recursive: true });
     await writeFile(path.join(source, "Contents", "marker"), "candidate\n");
@@ -108,7 +121,7 @@ describe("macOS package replacement transaction", () => {
       activePath: runtimeTransaction.activePath,
       identityRelativePath: "host-identity.json",
       identityPath,
-      assertNoLiveOwnedRuntime: async () => false,
+      assertNoLiveOwnedRuntime: async () => absentRuntime(runtime, parent),
     });
     await expect(readFile(path.join(runtime, "prior", "opaque.txt"), "utf8")).resolves.toBe("prior runtime\n");
     await expect(readFile(identityPath, "utf8")).resolves.toBe("prior identity\n");
@@ -119,7 +132,7 @@ describe("macOS package replacement transaction", () => {
       activePath: runtimeTransaction.activePath,
       identityRelativePath: "host-identity.json",
       identityPath,
-      assertNoLiveOwnedRuntime: async () => false,
+      assertNoLiveOwnedRuntime: async () => absentRuntime(runtime, parent),
     });
   });
 

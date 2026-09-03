@@ -34,6 +34,7 @@
     "runtime:desktop": "node packages/runtime/dist/cli.js desktop",
     "runtime:host": "node scripts/launch-macos-host.mjs",
     "runtime:host:stop": "node scripts/stop-macos-host.mjs",
+    "runtime:mas:development": "node scripts/macos-mas-development-gate.mjs",
     "runtime:web": "npm run start:web --workspace=@meetless/app -- --port 8082",
     "runtime:status": "node packages/runtime/dist/cli.js status",
     "runtime:stop": "node packages/runtime/dist/cli.js stop",

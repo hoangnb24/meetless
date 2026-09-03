@@ -1,7 +1,7 @@
 import { execFile, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,10 @@ import {
   inspectHostBundle,
   trustedHostInspectionContext,
 } from "../packages/runtime/dist/host.js";
-import { resolveRuntimeConfig } from "../packages/runtime/dist/config.js";
+import {
+  MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH,
+  resolveRuntimeConfig,
+} from "../packages/runtime/dist/config.js";
 import {
   finalizePackageTransaction,
   newPackageTransactionId,
@@ -27,6 +30,7 @@ const config = resolveRuntimeConfig({
   runtimeRoot: process.env.MEETLESS_RUNTIME_ROOT,
   listen: process.env.MEETLESS_LISTEN,
 });
+await assertDirectRuntimeTarget(config.paths.root);
 const target = config.host.bundle;
 const identityPath = config.host.identity;
 const inspectionContext = trustedHostInspectionContext(config);
@@ -38,8 +42,40 @@ if (!nodePath || (config.packaged && !path.isAbsolute(nodePath))) {
     "Next action: rebuild the packaged resource manifest before installation.",
   );
 }
-const exclusionPath = path.join(config.paths.root, "meetless-host.lock");
+// The installer and native host share one stable sibling lock. The runtime
+// root may be renamed by the MAS gate, so the lock cannot live inside it.
+const exclusionPath = path.join(path.dirname(config.paths.root), ".meetless-mas-gate.lock");
 const exclusionMarker = "MEETLESS_HOST_INSTALL_LOCK_HELD";
+
+async function assertDirectRuntimeTarget(runtimeRoot) {
+  const masRoot = path.resolve(homedir(), ...MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH.split("/"));
+  const lexicalRoot = path.resolve(runtimeRoot);
+  const resolvedRoot = await resolvePathThroughExistingAncestor(lexicalRoot);
+  const isProtectedMasPath = (candidate) => candidate === masRoot || candidate.startsWith(`${masRoot}${path.sep}`);
+  if (isProtectedMasPath(lexicalRoot) || isProtectedMasPath(resolvedRoot ?? "")) {
+    throw new Error(
+      `host:install refuses the MAS app-container runtime root ${masRoot}. ` +
+      "Use npm run runtime:mas:development so the whole root is isolated before package identity writes. " +
+      "Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md and docs/decisions/0005-mac-app-store-and-revenuecat.md.",
+    );
+  }
+}
+
+async function resolvePathThroughExistingAncestor(candidate) {
+  const suffix = [];
+  let current = candidate;
+  while (true) {
+    const resolved = await realpath(current).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (resolved) return path.join(resolved, ...suffix);
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    suffix.unshift(path.basename(current));
+    current = parent;
+  }
+}
 
 await mkdir(config.paths.root, { recursive: true, mode: 0o700 });
 if (process.env[exclusionMarker] !== exclusionPath) {

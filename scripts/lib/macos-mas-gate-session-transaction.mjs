@@ -14,6 +14,11 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import {
+  masGateLockPath,
+  writeMasGateLockMetadata,
+  withMasGateLock,
+} from "./macos-mas-gate-lock.mjs";
 
 export const MAS_GATE_SESSION_TRANSACTION_SCHEMA = "MAS_GATE_SESSION_TRANSACTION v1";
 export const MAS_GATE_SESSION_TRANSACTION_VERSION = 1;
@@ -43,6 +48,16 @@ export const MAS_GATE_SESSION_PHASES = Object.freeze([
 ]);
 
 export const MAS_GATE_SESSION_FAULT_POINTS = Object.freeze([
+  "active-mkdir",
+  "active-journal-published",
+  "rename-active-publish",
+  "fresh-mkdir",
+  "fresh-identity-journaled",
+  "rename-quarantine",
+  "rename-fresh-retained",
+  "rename-prior-restore",
+  "rename-archive",
+  "journal-published",
   "prepared",
   "quarantine-intent",
   "quarantined",
@@ -59,6 +74,7 @@ export const MAS_GATE_SESSION_FAULT_POINTS = Object.freeze([
 ]);
 
 const ACTIVE_BASENAME = ".meetless-mas-gate-session.active";
+const ACTIVE_BUILDING_SUFFIX = ".active-building";
 const JOURNAL_BASENAME = "transaction.json";
 const QUARANTINE_PREFIX = ".meetless-mas-gate-session.";
 const QUARANTINE_SUFFIX = ".quarantine";
@@ -74,73 +90,92 @@ const POSIX_MODE_MASK = 0o7777;
  */
 export async function beginMasGateSessionTransaction(options = {}) {
   try {
-    const context = await validateContext(options, "begin");
-    await assertNoLiveOwnedRuntime(options, context, "before runtime quarantine");
-    const space = await inspectFreeSpace(context.parentPath, options.requiredFreeBytes);
-    const prior = await inspectPriorRoot(context);
-    const runId = normalizeRunId(options.runId ?? randomUUID());
-    const ownerToken = randomBytes(OWNER_TOKEN_BYTES).toString("base64url");
-    const paths = transactionPaths(context, runId);
+    const parentPath = parentPathHint(options);
+    return await withMasGateLock({ ...options, parentPath }, async (lockLease) => {
+      const context = await validateContext(options, "begin");
+      await assertNoLiveOwnedRuntime(options, context, "before runtime quarantine");
+      const space = await inspectFreeSpace(context.parentPath, options.requiredFreeBytes);
+      const prior = await inspectPriorRoot(context);
+      const runId = normalizeRunId(options.runId ?? randomUUID());
+      const ownerToken = randomBytes(OWNER_TOKEN_BYTES).toString("base64url");
+      const paths = transactionPaths(context, runId);
 
-    await assertAbsent(paths.activePath, "active transaction slot");
-    await assertAbsent(paths.quarantinePath, "runtime quarantine");
-    await assertAbsent(paths.freshRetainedPath, "fresh retained runtime");
-    await assertAbsent(paths.archivePath, "archived transaction slot");
-    const archived = await findArchivedTransactions(context, options);
-    if (archived.some((candidate) => candidate.phase !== "archived")) {
-      throw failClosed("an incomplete retained transaction requires recovery before a new active session can begin");
-    }
+      await assertAbsent(paths.activePath, "active transaction slot");
+      await assertAbsent(paths.constructionPath, "active transaction construction slot");
+      await assertAbsent(paths.quarantinePath, "runtime quarantine");
+      await assertAbsent(paths.freshRetainedPath, "fresh retained runtime");
+      await assertAbsent(paths.archivePath, "archived transaction slot");
+      const building = await findBuildingTransactions(context, options);
+      if (building.length > 0) throw failClosed("an incomplete active transaction construction requires recovery before a new session can begin");
+      const archived = await findArchivedTransactions(context, options);
+      if (archived.some((candidate) => candidate.phase !== "archived")) {
+        throw failClosed("an incomplete retained transaction requires recovery before a new active session can begin");
+      }
+      await assertSiblingArtifactTopology(context, options);
 
-    const transaction = {
-      schema: MAS_GATE_SESSION_TRANSACTION_SCHEMA,
-      version: MAS_GATE_SESSION_TRANSACTION_VERSION,
-      ownerToken,
-      runId,
-      canonicalRuntimeRoot: context.runtimeRoot,
-      runtimeRoot: context.runtimeRoot,
-      canonicalPath: context.runtimeRoot,
-      parentPath: context.parentPath,
-      parent: context.parentPath,
-      activePath: paths.activePath,
-      active: paths.activePath,
-      quarantinePath: paths.quarantinePath,
-      quarantine: paths.quarantinePath,
-      freshRetainedPath: paths.freshRetainedPath,
-      freshRetained: paths.freshRetainedPath,
-      archivePath: null,
-      journalPath: paths.journalPath,
-      identityRelativePath: context.identityRelativePath,
-      identityPath: context.identityPath,
-      identity: {
-        relativePath: context.identityRelativePath,
-        path: context.identityPath,
-      },
-      priorExists: prior.exists,
-      priorRootIdentity: prior.exists ? prior.rootIdentity : null,
-      priorAggregateAttestation: prior.exists ? prior.aggregateAttestation : null,
-      prior: {
-        exists: prior.exists,
-        rootIdentity: prior.exists ? prior.rootIdentity : null,
-        aggregateAttestation: prior.exists ? prior.aggregateAttestation : null,
-      },
-      freshRootIdentity: null,
-      freshRetainedRootIdentity: null,
-      requiredFreeBytes: space.requiredFreeBytes,
-      observedFreeBytes: space.observedFreeBytes,
-      stateScope: "runtime-root-only",
-      phase: "prepared",
-      phaseHistory: ["prepared"],
-    };
+      const transaction = {
+        schema: MAS_GATE_SESSION_TRANSACTION_SCHEMA,
+        version: MAS_GATE_SESSION_TRANSACTION_VERSION,
+        ownerToken,
+        runId,
+        canonicalRuntimeRoot: context.runtimeRoot,
+        runtimeRoot: context.runtimeRoot,
+        canonicalPath: context.runtimeRoot,
+        parentPath: context.parentPath,
+        parent: context.parentPath,
+        lockPath: masGateLockPath(context.parentPath),
+        activePath: paths.activePath,
+        active: paths.activePath,
+        constructionPath: paths.constructionPath,
+        quarantinePath: paths.quarantinePath,
+        quarantine: paths.quarantinePath,
+        freshRetainedPath: paths.freshRetainedPath,
+        freshRetained: paths.freshRetainedPath,
+        archivePath: null,
+        journalPath: path.join(paths.constructionPath, JOURNAL_BASENAME),
+        identityRelativePath: context.identityRelativePath,
+        identityPath: context.identityPath,
+        identity: {
+          relativePath: context.identityRelativePath,
+          path: context.identityPath,
+        },
+        priorExists: prior.exists,
+        priorRootIdentity: prior.exists ? prior.rootIdentity : null,
+        priorAggregateAttestation: prior.exists ? prior.aggregateAttestation : null,
+        prior: {
+          exists: prior.exists,
+          rootIdentity: prior.exists ? prior.rootIdentity : null,
+          aggregateAttestation: prior.exists ? prior.aggregateAttestation : null,
+        },
+        freshRootIdentity: null,
+        freshRetainedRootIdentity: null,
+        requiredFreeBytes: space.requiredFreeBytes,
+        observedFreeBytes: space.observedFreeBytes,
+        stateScope: "runtime-root-only",
+        phase: "prepared",
+        phaseHistory: ["prepared"],
+      };
 
-    throwInjectedFsError(options, "mkdir-active");
-    await mkdir(paths.activePath, { recursive: false, mode: 0o700 });
-    await syncDirectory(context.parentPath);
-    await assertOwnedSecureDirectory(paths.activePath, "active transaction slot");
-    await writeJournal(transaction, options);
-    await maybeFault(options, transaction, "prepared", "after active lock and journal");
-    await advancePreparation(transaction, options, context);
-    await assertReady(transaction, options, context);
-    return transaction;
+      throwInjectedFsError(options, "mkdir-active");
+      await mkdir(paths.constructionPath, { recursive: false, mode: 0o700 });
+      await syncDirectory(context.parentPath);
+      await assertOwnedSecureDirectory(paths.constructionPath, "active transaction construction slot", context.parentDevice);
+      await maybeFault(options, transaction, "active-mkdir", "after active construction directory creation");
+      await writeJournal(transaction, options);
+      await maybeFault(options, transaction, "active-journal-published", "after construction journal publication");
+      await promoteActiveConstruction(transaction, options, context);
+      await maybeFault(options, transaction, "prepared", "after active lock and journal");
+      await advancePreparation(transaction, options, context);
+      await assertReady(transaction, options, context);
+      await writeMasGateLockMetadata(lockLease, {
+        role: "gate",
+        ownerToken: transaction.ownerToken,
+        runId: transaction.runId,
+        canonicalRuntimeRoot: transaction.canonicalRuntimeRoot,
+        phase: transaction.phase,
+      });
+      return transaction;
+    });
   } catch (error) {
     throw asCleanupError("could not begin the runtime-root preservation transaction", error);
   }
@@ -152,31 +187,34 @@ export async function beginMasGateSessionTransaction(options = {}) {
  */
 export async function recoverMasGateSessionTransaction(transactionOrJournal, options = {}) {
   try {
-    const transaction = await loadTransaction(transactionOrJournal, options);
-    const context = await validateContext({
-      ...options,
-      runtimeRoot: transaction.canonicalRuntimeRoot,
-      contractRuntimeRoot: options.contractRuntimeRoot ?? transaction.canonicalRuntimeRoot,
-      runtimeRootParent: options.runtimeRootParent ?? transaction.parentPath,
-      identityPath: options.identityPath ?? transaction.identityPath,
-      identityRelativePath: options.identityRelativePath ?? transaction.identityRelativePath,
-      activePath: options.activePath ?? transaction.activePath,
-    }, "recover");
-    assertTransaction(transaction, context, options);
-    await assertNoLiveOwnedRuntime(options, context, "before runtime recovery");
+    return await withMasGateLock({ ...options, parentPath: parentPathHint(options) }, async () => {
+      const transaction = await loadTransaction(transactionOrJournal, options);
+      const context = await validateContext({
+        ...options,
+        runtimeRoot: transaction.canonicalRuntimeRoot,
+        contractRuntimeRoot: options.contractRuntimeRoot ?? options.contract?.runtimeRoot,
+        runtimeRootParent: options.runtimeRootParent ?? options.contractRuntimeParent ?? options.contract?.parent,
+        identityPath: options.identityPath ?? options.contract?.identityPath,
+        identityRelativePath: options.identityRelativePath ?? options.contract?.identityRelativePath,
+        activePath: options.activePath,
+      }, "recover");
+      assertTransaction(transaction, context, options);
+      await assertSiblingArtifactTopology(context, options, transaction);
+      await assertNoLiveOwnedRuntime(options, context, "before runtime recovery");
 
-    if (phaseRank(transaction.phase) < phaseRank("ready")) {
-      await advancePreparation(transaction, options, context);
-    }
-    if (phaseRank(transaction.phase) < phaseRank("restored")) {
-      await restoreInternal(transaction, options, context);
-    }
-    if (transaction.phase === "archive-intent") {
-      await completeArchive(transaction, options, context);
-    }
-    if (transaction.phase === "restored") await assertRestoredState(transaction, context);
-    if (transaction.phase === "archived") await assertArchivedState(transaction, context);
-    return transaction;
+      if (phaseRank(transaction.phase) < phaseRank("ready")) {
+        await advancePreparation(transaction, options, context);
+      }
+      if (phaseRank(transaction.phase) < phaseRank("restored")) {
+        await restoreInternal(transaction, options, context);
+      }
+      if (transaction.phase === "archive-intent") {
+        await completeArchive(transaction, options, context);
+      }
+      if (transaction.phase === "restored") await assertRestoredState(transaction, context);
+      if (transaction.phase === "archived") await assertArchivedState(transaction, context);
+      return transaction;
+    });
   } catch (error) {
     throw asCleanupError("could not recover the runtime-root preservation transaction", error);
   }
@@ -188,31 +226,39 @@ export async function recoverMasGateSessionTransaction(transactionOrJournal, opt
  */
 export async function restoreMasGateSessionTransaction(transactionOrJournal, options = {}) {
   try {
-    const transaction = await loadTransaction(transactionOrJournal, options);
-    const context = await validateContext({
-      ...options,
-      runtimeRoot: transaction.canonicalRuntimeRoot,
-      contractRuntimeRoot: options.contractRuntimeRoot ?? transaction.canonicalRuntimeRoot,
-      runtimeRootParent: options.runtimeRootParent ?? transaction.parentPath,
-      identityPath: options.identityPath ?? transaction.identityPath,
-      identityRelativePath: options.identityRelativePath ?? transaction.identityRelativePath,
-      activePath: options.activePath ?? transaction.activePath,
-    }, "restore");
-    assertTransaction(transaction, context, options);
-    await assertNoLiveOwnedRuntime(options, context, "before runtime restore");
+    return await withMasGateLock({ ...options, parentPath: parentPathHint(options) }, async () => {
+      const transaction = await loadTransaction(transactionOrJournal, options);
+      const context = await validateContext({
+        ...options,
+        runtimeRoot: transaction.canonicalRuntimeRoot,
+        contractRuntimeRoot: options.contractRuntimeRoot ?? options.contract?.runtimeRoot,
+        runtimeRootParent: options.runtimeRootParent ?? options.contractRuntimeParent ?? options.contract?.parent,
+        identityPath: options.identityPath ?? options.contract?.identityPath,
+        identityRelativePath: options.identityRelativePath ?? options.contract?.identityRelativePath,
+        activePath: options.activePath,
+      }, "restore");
+      assertTransaction(transaction, context, options);
+      await assertSiblingArtifactTopology(context, options, transaction);
+      await assertNoLiveOwnedRuntime(options, context, "before runtime restore");
 
-    if (transaction.phase === "archived") {
-      await assertArchivedState(transaction, context);
+      if (transaction.phase === "archived") {
+        await assertArchivedState(transaction, context);
+        return transaction;
+      }
+      if (transaction.phase === "archive-intent") {
+        await completeArchive(transaction, options, context);
+        await assertArchivedState(transaction, context);
+        return transaction;
+      }
+      if (phaseRank(transaction.phase) < phaseRank("ready")) {
+        await advancePreparation(transaction, options, context);
+      }
+      if (phaseRank(transaction.phase) < phaseRank("restored")) {
+        await restoreInternal(transaction, options, context);
+      }
+      await assertRestoredState(transaction, context);
       return transaction;
-    }
-    if (phaseRank(transaction.phase) < phaseRank("ready")) {
-      await advancePreparation(transaction, options, context);
-    }
-    if (phaseRank(transaction.phase) < phaseRank("restored")) {
-      await restoreInternal(transaction, options, context);
-    }
-    await assertRestoredState(transaction, context);
-    return transaction;
+    });
   } catch (error) {
     throw asCleanupError("could not restore the prior runtime root", error);
   }
@@ -224,28 +270,31 @@ export async function restoreMasGateSessionTransaction(transactionOrJournal, opt
  */
 export async function archiveMasGateSessionTransaction(transactionOrJournal, options = {}) {
   try {
-    const transaction = await loadTransaction(transactionOrJournal, options);
-    const context = await validateContext({
-      ...options,
-      runtimeRoot: transaction.canonicalRuntimeRoot,
-      contractRuntimeRoot: options.contractRuntimeRoot ?? transaction.canonicalRuntimeRoot,
-      runtimeRootParent: options.runtimeRootParent ?? transaction.parentPath,
-      identityPath: options.identityPath ?? transaction.identityPath,
-      identityRelativePath: options.identityRelativePath ?? transaction.identityRelativePath,
-      activePath: options.activePath ?? transaction.activePath,
-    }, "archive");
-    assertTransaction(transaction, context, options);
-    if (transaction.phase === "archived") {
-      await assertArchivedState(transaction, context);
+    return await withMasGateLock({ ...options, parentPath: parentPathHint(options) }, async () => {
+      const transaction = await loadTransaction(transactionOrJournal, options);
+      const context = await validateContext({
+        ...options,
+        runtimeRoot: transaction.canonicalRuntimeRoot,
+        contractRuntimeRoot: options.contractRuntimeRoot ?? options.contract?.runtimeRoot,
+        runtimeRootParent: options.runtimeRootParent ?? options.contractRuntimeParent ?? options.contract?.parent,
+        identityPath: options.identityPath ?? options.contract?.identityPath,
+        identityRelativePath: options.identityRelativePath ?? options.contract?.identityRelativePath,
+        activePath: options.activePath,
+      }, "archive");
+      assertTransaction(transaction, context, options);
+      await assertSiblingArtifactTopology(context, options, transaction);
+      if (transaction.phase === "archived") {
+        await assertArchivedState(transaction, context);
+        return transaction;
+      }
+      if (transaction.phase !== "restored" && transaction.phase !== "archive-intent") {
+        throw failClosed(`cannot archive a session in phase ${transaction.phase}`);
+      }
+      await assertRestoredRoots(transaction, context);
+      await completeArchive(transaction, options, context);
+      if (transaction.phase === "archived") await assertArchivedState(transaction, context);
       return transaction;
-    }
-    if (transaction.phase !== "restored" && transaction.phase !== "archive-intent") {
-      throw failClosed(`cannot archive a session in phase ${transaction.phase}`);
-    }
-    await assertRestoredRoots(transaction, context);
-    await completeArchive(transaction, options, context);
-    if (transaction.phase === "archived") await assertArchivedState(transaction, context);
-    return transaction;
+    });
   } catch (error) {
     throw asCleanupError("could not archive the completed runtime-root transaction", error);
   }
@@ -257,55 +306,80 @@ export async function archiveMasGateSessionTransaction(transactionOrJournal, opt
  */
 export async function readMasGateSessionStatus(options = {}) {
   try {
-    const context = await validateContext(options, "status");
-    const paths = fixedTransactionPaths(context);
-    const activeInfo = await inspectedPath(paths.activePath);
-    if (activeInfo !== null) {
-      if (!activeInfo.isDirectory() || activeInfo.isSymbolicLink()) {
-        throw failClosed("the fixed active transaction slot is not one owned directory");
+    return await withMasGateLock({ ...options, parentPath: parentPathHint(options) }, async () => {
+      const context = await validateContext(options, "status");
+      const paths = fixedTransactionPaths(context);
+      const building = await findBuildingTransactions(context, options);
+      const archived = await findArchivedTransactions(context, options);
+      const activeInfo = await inspectedPath(paths.activePath);
+      if (activeInfo !== null) {
+        if (building.length > 0) throw failClosed("both the fixed active transaction slot and an active construction root are present; preserve every byte and resolve the ambiguity");
+        if (!activeInfo.isDirectory() || activeInfo.isSymbolicLink()) {
+          throw failClosed("the fixed active transaction slot is not one owned directory");
+        }
+        await assertOwnedSecureDirectory(paths.activePath, "active transaction slot", context.parentDevice);
+        const journalInfo = await inspectedPath(paths.journalPath);
+        if (!journalInfo) throw failClosed("the fixed active transaction slot has no durable journal");
+        await assertJournalFile(paths.journalPath, "active transaction journal");
+        const transaction = await loadTransaction(paths.journalPath, options);
+        assertTransaction(transaction, context, options);
+        await assertSiblingArtifactTopology(context, options, transaction);
+        if (transaction.phase === "archived") throw failClosed("an archived transaction journal remained in the fixed active slot");
+        if (transaction.phase === "ready") await assertReadyRoot(transaction, context);
+        if (transaction.phase === "restored") await assertRestoredState(transaction, context);
+        if (transaction.phase === "archive-intent") await assertRestoredRoots(transaction, context);
+        return {
+          status: transaction.phase === "archived" ? "archived" : "active",
+          phase: transaction.phase,
+          journalPath: paths.journalPath,
+          activePath: transaction.activePath,
+          quarantinePath: transaction.quarantinePath,
+          freshRetainedPath: transaction.freshRetainedPath,
+          archivePath: transaction.archivePath,
+          runId: transaction.runId,
+          stateScope: transaction.stateScope,
+        };
       }
-      const journalInfo = await inspectedPath(paths.journalPath);
-      if (!journalInfo) throw failClosed("the fixed active transaction slot has no durable journal");
-      await assertJournalFile(paths.journalPath, "active transaction journal");
-      const transaction = await loadTransaction(paths.journalPath, options);
-      assertTransaction(transaction, context, options);
-      if (transaction.phase === "archived") throw failClosed("an archived transaction journal remained in the fixed active slot");
-      if (transaction.phase === "ready") await assertReady(transaction, options, context);
-      if (transaction.phase === "restored") await assertRestoredState(transaction, context);
-      if (transaction.phase === "archive-intent") await assertRestoredRoots(transaction, context);
-      return {
-        status: transaction.phase === "archived" ? "archived" : "active",
-        phase: transaction.phase,
-        journalPath: transaction.journalPath,
-        activePath: transaction.activePath,
-        quarantinePath: transaction.quarantinePath,
-        freshRetainedPath: transaction.freshRetainedPath,
-        archivePath: transaction.archivePath,
-        runId: transaction.runId,
-        stateScope: transaction.stateScope,
-      };
-    }
 
-    const archived = await findArchivedTransactions(context, options);
-    for (const transaction of archived) {
-      if (transaction.phase === "archived") await assertArchivedState(transaction, context);
-      if (transaction.phase === "archive-intent") await assertRestoredRoots(transaction, context);
-    }
-    const recovery = archived.find((transaction) => transaction.phase !== "archived");
-    return {
-      status: recovery ? "recovery-required" : archived.length > 0 ? "archived" : "absent",
-      phase: recovery?.phase,
-      journalPath: recovery?.journalPath,
-      activePath: paths.activePath,
-      archived: archived.map((transaction) => ({
-        phase: transaction.phase,
-        journalPath: transaction.journalPath,
-        freshRetainedPath: transaction.freshRetainedPath,
-        archivePath: transaction.archivePath,
-        runId: transaction.runId,
-        stateScope: transaction.stateScope,
-      })),
-    };
+      if (building.length > 1) throw failClosed("multiple active transaction construction roots are present; retain every root and recover only after resolving the ambiguity");
+      if (building.length === 1) {
+        const transaction = building[0];
+        await assertSiblingArtifactTopology(context, options, transaction);
+        return {
+          status: "recovery-required",
+          phase: transaction.phase,
+          journalPath: transaction.journalPath,
+          activePath: paths.activePath,
+          constructionPath: transaction.constructionPath,
+          quarantinePath: transaction.quarantinePath,
+          freshRetainedPath: transaction.freshRetainedPath,
+          archivePath: transaction.archivePath,
+          runId: transaction.runId,
+          stateScope: transaction.stateScope,
+        };
+      }
+
+      await assertSiblingArtifactTopology(context, options);
+      for (const transaction of archived) {
+        if (transaction.phase === "archived") await assertArchivedState(transaction, context);
+        if (transaction.phase === "archive-intent") await assertRestoredRoots(transaction, context);
+      }
+      const recovery = archived.find((transaction) => transaction.phase !== "archived");
+      return {
+        status: recovery ? "recovery-required" : archived.length > 0 ? "archived" : "absent",
+        phase: recovery?.phase,
+        journalPath: recovery?.journalPath,
+        activePath: paths.activePath,
+        archived: archived.map((transaction) => ({
+          phase: transaction.phase,
+          journalPath: transaction.journalPath,
+          freshRetainedPath: transaction.freshRetainedPath,
+          archivePath: transaction.archivePath,
+          runId: transaction.runId,
+          stateScope: transaction.stateScope,
+        })),
+      };
+    });
   } catch (error) {
     throw asCleanupError("could not read runtime-root preservation status", error);
   }
@@ -318,21 +392,24 @@ export async function readMasGateSessionStatus(options = {}) {
  */
 export async function assertMasGateSessionReady(transactionOrJournal, options = {}) {
   try {
-    const transaction = await loadTransaction(transactionOrJournal, options);
-    const context = await validateContext({
-      ...options,
-      runtimeRoot: transaction.canonicalRuntimeRoot,
-      contractRuntimeRoot: options.contractRuntimeRoot ?? transaction.canonicalRuntimeRoot,
-      runtimeRootParent: options.runtimeRootParent ?? transaction.parentPath,
-      identityPath: options.identityPath ?? transaction.identityPath,
-      identityRelativePath: options.identityRelativePath ?? transaction.identityRelativePath,
-      activePath: options.activePath ?? transaction.activePath,
-    }, "ready");
-    assertTransaction(transaction, context, options);
-    if (transaction.phase !== "ready") throw failClosed(`runtime transaction is not ready for writes: ${transaction.phase}`);
-    await assertNoLiveOwnedRuntime(options, context, "before package/runtime write");
-    await assertReady(transaction, options, context);
-    return transaction;
+    return await withMasGateLock({ ...options, parentPath: parentPathHint(options) }, async () => {
+      const transaction = await loadTransaction(transactionOrJournal, options);
+      const context = await validateContext({
+        ...options,
+        runtimeRoot: transaction.canonicalRuntimeRoot,
+        contractRuntimeRoot: options.contractRuntimeRoot ?? options.contract?.runtimeRoot,
+        runtimeRootParent: options.runtimeRootParent ?? options.contractRuntimeParent ?? options.contract?.parent,
+        identityPath: options.identityPath ?? options.contract?.identityPath,
+        identityRelativePath: options.identityRelativePath ?? options.contract?.identityRelativePath,
+        activePath: options.activePath,
+      }, "ready");
+      assertTransaction(transaction, context, options);
+      await assertSiblingArtifactTopology(context, options, transaction);
+      if (transaction.phase !== "ready") throw failClosed(`runtime transaction is not ready for writes: ${transaction.phase}`);
+      await assertNoLiveOwnedRuntime(options, context, "before package/runtime write");
+      await assertReadyRoot(transaction, context);
+      return transaction;
+    });
   } catch (error) {
     throw asCleanupError("could not prove the runtime-root write boundary", error);
   }
@@ -358,6 +435,7 @@ function transactionPaths(context, runId) {
   const fixed = fixedTransactionPaths(context);
   return {
     ...fixed,
+    constructionPath: path.join(context.parentPath, `${QUARANTINE_PREFIX}${runId}${ACTIVE_BUILDING_SUFFIX}`),
     quarantinePath: path.join(context.parentPath, `${QUARANTINE_PREFIX}${runId}${QUARANTINE_SUFFIX}`),
     freshRetainedPath: path.join(context.parentPath, `${QUARANTINE_PREFIX}${runId}${FRESH_RETAINED_SUFFIX}`),
     archivePath: path.join(context.parentPath, `${QUARANTINE_PREFIX}${runId}${ARCHIVE_SUFFIX}`),
@@ -370,6 +448,41 @@ function fixedTransactionPaths(context) {
     activePath,
     journalPath: path.join(activePath, JOURNAL_BASENAME),
   };
+}
+
+async function promoteActiveConstruction(transaction, options, context) {
+  const active = await inspectedPath(transaction.activePath);
+  const construction = await inspectedPath(transaction.constructionPath);
+  if (active && construction) throw failClosed("both the fixed active transaction slot and its construction root are present");
+  if (active) {
+    if (active.isSymbolicLink() || !active.isDirectory()) throw failClosed("fixed active transaction slot is not one secure directory");
+    await assertOwnedSecureDirectory(transaction.activePath, "active transaction slot", context.parentDevice);
+    transaction.journalPath = path.join(transaction.activePath, JOURNAL_BASENAME);
+    await assertJournalFile(transaction.journalPath, "active transaction journal");
+    return;
+  }
+  if (!construction) throw failClosed("active transaction construction root disappeared before publication");
+  if (construction.isSymbolicLink() || !construction.isDirectory()) throw failClosed("active transaction construction root is not one secure directory");
+  await assertJournalFile(path.join(transaction.constructionPath, JOURNAL_BASENAME), "construction transaction journal");
+  await renameWithDurability(
+    transaction.constructionPath,
+    transaction.activePath,
+    context.parentPath,
+    "active transaction publish rename",
+    options,
+    transaction,
+  );
+  transaction.journalPath = path.join(transaction.activePath, JOURNAL_BASENAME);
+  await assertOwnedSecureDirectory(transaction.activePath, "active transaction slot", context.parentDevice);
+  await writeJournal(transaction, options);
+}
+
+function parentPathHint(options) {
+  const value = options?.runtimeRootParent ?? options?.contractRuntimeParent ??
+    options?.contract?.parent ?? (typeof options?.contractRuntimeRoot === "string" ? path.dirname(options.contractRuntimeRoot) : null) ??
+    (typeof options?.runtimeRoot === "string" ? path.dirname(options.runtimeRoot) : null);
+  if (typeof value !== "string") throw failClosed("runtime-root parent is required before acquiring the MAS gate lock");
+  return value;
 }
 
 async function validateContext(options, operation) {
@@ -422,10 +535,12 @@ async function validateContext(options, operation) {
   if (existingRoot && existingRoot.dev !== (await lstat(parentPath)).dev) {
     throw failClosed("canonical runtime root and its parent are on different devices");
   }
+  if (existingRoot) await assertNoSymlinkAncestors(identityPath, runtimeRoot);
 
   return {
     runtimeRoot,
     parentPath,
+    parentDevice: integerValue((await lstat(parentPath)).dev),
     identityRelativePath,
     identityPath,
     activePath,
@@ -491,6 +606,8 @@ async function inspectPriorRoot(context) {
 
 async function advancePreparation(transaction, options, context) {
   assertTransaction(transaction, context, options);
+  await promoteActiveConstruction(transaction, options, context);
+  assertTransaction(transaction, context, options);
 
   if (phaseRank(transaction.phase) < phaseRank("quarantined")) {
     if (transaction.phase === "prepared") await transition(transaction, "quarantine-intent", options);
@@ -521,7 +638,7 @@ async function reconcileQuarantine(transaction, context, options) {
       return;
     }
     await assertAttestation(context.runtimeRoot, transaction.priorAggregateAttestation, "canonical prior root");
-    await renameWithDurability(context.runtimeRoot, transaction.quarantinePath, context.parentPath, "runtime quarantine rename", options);
+    await renameWithDurability(context.runtimeRoot, transaction.quarantinePath, context.parentPath, "runtime quarantine rename", options, transaction);
     if (await inspectedPath(context.runtimeRoot)) throw failClosed("canonical runtime root remained after quarantine rename");
     await assertAttestation(transaction.quarantinePath, transaction.priorAggregateAttestation, "quarantine prior root");
     return;
@@ -534,10 +651,13 @@ async function reconcileQuarantine(transaction, context, options) {
 
 async function reconcileFreshCreation(transaction, context, options) {
   const canonical = await inspectedPath(context.runtimeRoot);
+  let freshIdentityJournaled = false;
   if (canonical) {
     if (canonical.isSymbolicLink() || !canonical.isDirectory()) throw failClosed("fresh canonical runtime root is not one directory");
     if (!transaction.freshRootIdentity) {
-      throw failClosed("fresh canonical runtime root exists without a durable fresh-root identity");
+      assertFreshCanonicalDirectory(canonical, context);
+      transaction.freshRootIdentity = identityOf(canonical);
+      freshIdentityJournaled = true;
     }
     assertRootIdentity(canonical, transaction.freshRootIdentity, "fresh canonical runtime root");
   } else {
@@ -545,13 +665,16 @@ async function reconcileFreshCreation(transaction, context, options) {
     throwInjectedFsError(options, "mkdir-fresh");
     await mkdir(context.runtimeRoot, { recursive: false, mode: 0o700 });
     await syncDirectory(context.parentPath);
+    await maybeFault(options, transaction, "fresh-mkdir", "after fresh canonical runtime-root directory creation");
     const fresh = await lstat(context.runtimeRoot);
-    if (fresh.isSymbolicLink() || !fresh.isDirectory()) throw failClosed("fresh canonical runtime root is not one directory");
-    if (fresh.uid !== currentUid() || (fresh.mode & POSIX_MODE_MASK) !== 0o700) {
-      throw failClosed("fresh canonical runtime root does not have exact run ownership and mode");
-    }
-    if (fresh.dev !== (await lstat(context.parentPath)).dev) throw failClosed("fresh canonical runtime root is on a different device");
+    assertFreshCanonicalDirectory(fresh, context);
     transaction.freshRootIdentity = identityOf(fresh);
+    freshIdentityJournaled = true;
+  }
+
+  if (freshIdentityJournaled) {
+    await writeJournal(transaction, options);
+    await maybeFault(options, transaction, "fresh-identity-journaled", "after the fresh root identity was durably journaled");
   }
 
   if (await inspectedPath(transaction.quarantinePath) !== null && !transaction.priorExists) {
@@ -570,7 +693,21 @@ async function reconcileFreshCreation(transaction, context, options) {
   assertRootIdentity(await lstat(context.runtimeRoot), transaction.freshRootIdentity, "fresh canonical runtime root");
 }
 
+function assertFreshCanonicalDirectory(info, context) {
+  if (info.isSymbolicLink() || !info.isDirectory()) throw failClosed("fresh canonical runtime root is not one directory");
+  if (info.uid !== currentUid() || (info.mode & POSIX_MODE_MASK) !== 0o700) {
+    throw failClosed("fresh canonical runtime root does not have exact run ownership and mode");
+  }
+  if (info.dev !== context.parentDevice) throw failClosed("fresh canonical runtime root is on a different device");
+}
+
 async function assertReady(transaction, options, context) {
+  if (transaction.phase !== "ready") throw failClosed(`runtime transaction is not ready: ${transaction.phase}`);
+  await assertNoLiveOwnedRuntime(options, context, "at the runtime-root write boundary");
+  await assertReadyRoot(transaction, context);
+}
+
+async function assertReadyRoot(transaction, context) {
   if (transaction.phase !== "ready") throw failClosed(`runtime transaction is not ready: ${transaction.phase}`);
   const canonical = await lstat(context.runtimeRoot).catch((error) => {
     if (isCode(error, "ENOENT")) throw failClosed("fresh canonical runtime root is missing at the write boundary");
@@ -587,7 +724,8 @@ async function assertReady(transaction, options, context) {
 }
 
 async function assertRestoredState(transaction, context) {
-  await assertOwnedSecureDirectory(transaction.activePath, "active transaction slot");
+  await assertOwnedSecureDirectory(transaction.activePath, "active transaction slot", context.parentDevice);
+  if (await inspectedPath(transaction.constructionPath)) throw failClosed("active transaction construction root remained after publication");
   await assertJournalFile(transaction.journalPath, "active transaction journal");
   await assertRestoredRoots(transaction, context);
 }
@@ -595,7 +733,8 @@ async function assertRestoredState(transaction, context) {
 async function assertArchivedState(transaction, context) {
   await assertRestoredRoots(transaction, context);
   if (await inspectedPath(transaction.activePath)) throw failClosed("fixed active transaction slot remained after archive");
-  await assertOwnedSecureDirectory(transaction.archivePath, "archived transaction slot");
+  if (await inspectedPath(transaction.constructionPath)) throw failClosed("active transaction construction root remained after archive");
+  await assertOwnedSecureDirectory(transaction.archivePath, "archived transaction slot", context.parentDevice);
   await assertJournalFile(transaction.journalPath, "archived transaction journal");
 }
 
@@ -613,15 +752,15 @@ async function assertRestoredRoots(transaction, context) {
 
   const retained = await inspectedPath(transaction.freshRetainedPath);
   if (!retained) throw failClosed("retained fresh runtime root is missing after restore");
-  assertFreshRetainedRoot(retained, transaction);
+  assertFreshRetainedRoot(retained, transaction, context.parentDevice);
   if (transaction.freshRetainedRootIdentity && !sameIdentity(identityOf(retained), transaction.freshRetainedRootIdentity)) {
     throw failClosed("retained fresh runtime root identity changed outside the transaction");
   }
 }
 
 async function restoreInternal(transaction, options, context) {
-  await assertIdentityAbsentBeforeRestore(transaction, context);
   if (phaseRank(transaction.phase) < phaseRank("detach-intent")) {
+    await assertIdentityAbsentBeforeRestore(transaction, context);
     await assertNoLiveOwnedRuntime(options, context, "before fresh-root detach");
     await transition(transaction, "detach-intent", options);
   }
@@ -640,6 +779,7 @@ async function restoreInternal(transaction, options, context) {
 }
 
 async function assertIdentityAbsentBeforeRestore(transaction, context) {
+  await assertNoSymlinkAncestors(context.identityPath, context.runtimeRoot);
   if (await inspectedPath(context.identityPath) !== null) {
     throw failClosed(
       `package identity remains in the fresh runtime for session ${transaction.runId}; complete package rollback before runtime restore`,
@@ -653,16 +793,16 @@ async function reconcileFreshDetach(transaction, context, options) {
   if (canonical && retained) throw failClosed("both fresh canonical and fresh retained runtime roots are present");
   if (!canonical && !retained) throw failClosed("neither fresh canonical nor fresh retained runtime root is present");
   if (retained) {
-    assertFreshRetainedRoot(retained, transaction);
+    assertFreshRetainedRoot(retained, transaction, context.parentDevice);
     transaction.freshRetainedRootIdentity = identityOf(retained);
     return;
   }
   if (canonical.isSymbolicLink() || !canonical.isDirectory()) throw failClosed("fresh canonical runtime root is not one directory");
   assertRootIdentity(canonical, transaction.freshRootIdentity, "fresh canonical runtime root before detach");
-  await renameWithDurability(context.runtimeRoot, transaction.freshRetainedPath, context.parentPath, "fresh runtime detach rename", options);
+  await renameWithDurability(context.runtimeRoot, transaction.freshRetainedPath, context.parentPath, "fresh runtime detach rename", options, transaction);
   if (await inspectedPath(context.runtimeRoot)) throw failClosed("fresh canonical runtime root remained after detach");
   const moved = await lstat(transaction.freshRetainedPath);
-  assertFreshRetainedRoot(moved, transaction);
+  assertFreshRetainedRoot(moved, transaction, context.parentDevice);
   transaction.freshRetainedRootIdentity = identityOf(moved);
 }
 
@@ -678,7 +818,7 @@ async function reconcilePriorRestore(transaction, options, context) {
       return;
     }
     await assertAttestation(transaction.quarantinePath, transaction.priorAggregateAttestation, "quarantine prior root");
-    await renameWithDurability(transaction.quarantinePath, context.runtimeRoot, context.parentPath, "prior runtime restore rename", options);
+    await renameWithDurability(transaction.quarantinePath, context.runtimeRoot, context.parentPath, "prior runtime restore rename", options, transaction);
     await assertAttestation(context.runtimeRoot, transaction.priorAggregateAttestation, "restored canonical prior root");
     return;
   }
@@ -717,8 +857,8 @@ async function completeArchive(transaction, options, context) {
   if (!active && !archive) throw failClosed("neither active nor archived transaction slot is present");
   if (active) {
     if (active.isSymbolicLink() || !active.isDirectory()) throw failClosed("active transaction slot is not one directory");
-    await assertOwnedSecureDirectory(transaction.activePath, "active transaction slot");
-    await renameWithDurability(transaction.activePath, transaction.archivePath, context.parentPath, "completed session archive rename", options);
+    await assertOwnedSecureDirectory(transaction.activePath, "active transaction slot", context.parentDevice);
+    await renameWithDurability(transaction.activePath, transaction.archivePath, context.parentPath, "completed session archive rename", options, transaction);
     if (await inspectedPath(transaction.activePath)) throw failClosed("fixed active transaction slot remained after archive rename");
     await maybeFault(options, transaction, "archive-renamed", "after completed session archive rename");
   } else {
@@ -726,26 +866,28 @@ async function completeArchive(transaction, options, context) {
   }
 
   transaction.journalPath = path.join(transaction.archivePath, JOURNAL_BASENAME);
-  await assertOwnedSecureDirectory(transaction.archivePath, "archived transaction slot");
+  await assertOwnedSecureDirectory(transaction.archivePath, "archived transaction slot", context.parentDevice);
   if (transaction.phase !== "archived") await transition(transaction, "archived", options);
 }
 
 async function loadTransaction(transactionOrJournal, options) {
+  let journalPath;
   if (typeof transactionOrJournal === "string") {
-    const journalPath = canonicalAbsolute(transactionOrJournal, "transaction journal path");
-    await assertJournalFile(journalPath, "transaction journal");
-    let decoded;
-    try {
-      decoded = JSON.parse(await readFile(journalPath, "utf8"));
-    } catch (error) {
-      throw failClosed("transaction journal is malformed or unreadable", error);
-    }
-    decoded.journalPath = journalPath;
-    return decoded;
+    journalPath = canonicalAbsolute(transactionOrJournal, "transaction journal path");
+  } else {
+    if (!transactionOrJournal || typeof transactionOrJournal !== "object") throw failClosed("transaction journal data is missing");
+    journalPath = transactionOrJournal.journalPath ?? path.join(transactionOrJournal.activePath ?? "", JOURNAL_BASENAME);
   }
-  if (!transactionOrJournal || typeof transactionOrJournal !== "object") throw failClosed("transaction journal data is missing");
-  if (!transactionOrJournal.journalPath) transactionOrJournal.journalPath = path.join(transactionOrJournal.activePath ?? "", JOURNAL_BASENAME);
-  return transactionOrJournal;
+  journalPath = canonicalAbsolute(journalPath, "transaction journal path");
+  await assertJournalFile(journalPath, "transaction journal");
+  let decoded;
+  try {
+    decoded = JSON.parse(await readFile(journalPath, "utf8"));
+  } catch (error) {
+    throw failClosed("transaction journal is malformed or unreadable", error);
+  }
+  decoded.journalPath = journalPath;
+  return decoded;
 }
 
 function assertTransaction(transaction, context, options = {}) {
@@ -764,9 +906,13 @@ function assertTransaction(transaction, context, options = {}) {
   if (transaction.canonicalPath !== context.runtimeRoot) throw failClosed("transaction canonical path is not exact");
   if (transaction.parentPath !== context.parentPath) throw failClosed("transaction parent path differs from the contract-derived parent");
   if (transaction.parent !== context.parentPath) throw failClosed("transaction parent record is not exact");
+  if (transaction.lockPath !== masGateLockPath(context.parentPath) || pathInside(transaction.lockPath, context.runtimeRoot)) {
+    throw failClosed("transaction lock path is not the exact stable sibling lock");
+  }
   if (transaction.activePath !== context.activePath) throw failClosed("transaction active path differs from the fixed active slot");
   if (transaction.active !== context.activePath) throw failClosed("transaction active record is not exact");
   const expected = transactionPaths(context, transaction.runId);
+  if (transaction.constructionPath !== expected.constructionPath) throw failClosed("transaction construction path is not the exact run-derived sibling");
   if (transaction.quarantinePath !== expected.quarantinePath || transaction.freshRetainedPath !== expected.freshRetainedPath) {
     throw failClosed("transaction quarantine or retained path is not the exact run-derived sibling");
   }
@@ -784,6 +930,7 @@ function assertTransaction(transaction, context, options = {}) {
   }
   const validJournalPaths = new Set([
     path.join(transaction.activePath, JOURNAL_BASENAME),
+    path.join(transaction.constructionPath, JOURNAL_BASENAME),
     ...(transaction.archivePath ? [path.join(transaction.archivePath, JOURNAL_BASENAME)] : []),
   ]);
   if (!validJournalPaths.has(transaction.journalPath)) throw failClosed("transaction journal path is not the active or archived journal");
@@ -862,10 +1009,12 @@ function sameAggregate(actual, expected) {
     sameIdentity(actual.root, expected.root);
 }
 
-function assertFreshRetainedRoot(info, transaction) {
+function assertFreshRetainedRoot(info, transaction, expectedDevice) {
   if (info.isSymbolicLink() || !info.isDirectory()) throw failClosed("fresh retained runtime root is not one directory");
   assertRootIdentity(info, transaction.freshRootIdentity, "fresh retained runtime root");
-  if (info.uid !== currentUid() || (info.mode & POSIX_MODE_MASK) !== 0o700) throw failClosed("fresh retained runtime root ownership or mode changed");
+  if (info.uid !== currentUid() || (info.mode & POSIX_MODE_MASK) !== 0o700 || (expectedDevice !== undefined && info.dev !== expectedDevice)) {
+    throw failClosed("fresh retained runtime root ownership, mode, or device changed");
+  }
 }
 
 function assertRootIdentity(actual, expected, label) {
@@ -1002,6 +1151,11 @@ async function visitRoot(root, candidate, expectedDevice, entries) {
   const names = await readdir(candidate);
   names.sort();
   for (const name of names) await visitRoot(root, path.join(candidate, name), expectedDevice, entries);
+  const afterNames = await readdir(candidate);
+  afterNames.sort();
+  if (JSON.stringify(afterNames) !== JSON.stringify(names)) {
+    throw failClosed(`runtime directory ${relative} changed while it was being attested`);
+  }
   const after = await lstat(candidate);
   assertStableIdentity(info, after, `runtime directory ${relative}`);
 }
@@ -1035,13 +1189,14 @@ async function syncDirectory(directory) {
   }
 }
 
-async function renameWithDurability(source, target, parentPath, label, options = {}) {
+async function renameWithDurability(source, target, parentPath, label, options = {}, transaction = null) {
   try {
     await assertNoSymlinkPath(source, label);
     await assertAbsent(target, label);
     throwInjectedFsError(options, renameOperationFor(label));
     await rename(source, target);
     await syncDirectory(parentPath);
+    if (transaction) await maybeFault(options, transaction, renameOperationFor(label), `after ${label}`);
   } catch (error) {
     if (isCode(error, "EXDEV")) throw failClosed(`${label} failed with EXDEV; no copy fallback is allowed`, error);
     if (isCode(error, "EBUSY") || isCode(error, "EPERM") || isCode(error, "ENOSPC")) {
@@ -1070,7 +1225,7 @@ async function writeJournal(transaction, options = {}) {
   try {
     await writeFile(temporaryPath, bytes, { flag: "wx", mode: 0o600 });
     const temporaryInfo = await lstat(temporaryPath);
-    if (!temporaryInfo.isFile() || temporaryInfo.isSymbolicLink() || temporaryInfo.uid !== currentUid() || (temporaryInfo.mode & POSIX_MODE_MASK) !== 0o600) {
+    if (!temporaryInfo.isFile() || temporaryInfo.isSymbolicLink() || temporaryInfo.uid !== currentUid() || temporaryInfo.nlink !== 1 || (temporaryInfo.mode & POSIX_MODE_MASK) !== 0o600) {
       throw failClosed("temporary transaction journal is not one secure regular file");
     }
     const handle = await open(temporaryPath, "r");
@@ -1081,8 +1236,10 @@ async function writeJournal(transaction, options = {}) {
     }
     await syncDirectory(parentPath);
     await assertJournalTargetSafe(journalPath);
+    throwInjectedFsError(options, "journal-publish");
     await rename(temporaryPath, journalPath);
     await syncDirectory(parentPath);
+    await maybeFault(options, transaction, "journal-published", "after durable journal publication");
   } catch (error) {
     if (isCode(error, "EXDEV") || isCode(error, "EBUSY") || isCode(error, "EPERM") || isCode(error, "ENOSPC")) {
       throw failClosed(`durable journal transition failed with ${error.code}; leave all roots intact`, error);
@@ -1098,6 +1255,7 @@ function assertJournalPathShape(transaction) {
   if (!transaction.journalPath || !path.isAbsolute(transaction.journalPath)) throw failClosed("transaction journal path is missing");
   const allowed = [
     path.join(transaction.activePath, JOURNAL_BASENAME),
+    path.join(transaction.constructionPath, JOURNAL_BASENAME),
     ...(transaction.archivePath ? [path.join(transaction.archivePath, JOURNAL_BASENAME)] : []),
   ];
   if (!allowed.includes(transaction.journalPath)) throw failClosed("transaction journal path is not canonical");
@@ -1106,7 +1264,7 @@ function assertJournalPathShape(transaction) {
 async function assertJournalTargetSafe(journalPath) {
   const info = await inspectedPath(journalPath);
   if (!info) return;
-  if (info.isSymbolicLink() || !info.isFile() || info.uid !== currentUid() || (info.mode & POSIX_MODE_MASK) !== 0o600) {
+  if (info.isSymbolicLink() || !info.isFile() || info.uid !== currentUid() || info.nlink !== 1 || (info.mode & POSIX_MODE_MASK) !== 0o600) {
     throw failClosed("transaction journal target is not one secure regular file");
   }
 }
@@ -1116,7 +1274,7 @@ async function assertJournalFile(journalPath, label) {
     if (isCode(error, "ENOENT")) throw failClosed(`${label} is missing`);
     throw error;
   });
-  if (info.isSymbolicLink() || !info.isFile() || info.uid !== currentUid() || (info.mode & POSIX_MODE_MASK) !== 0o600) {
+  if (info.isSymbolicLink() || !info.isFile() || info.uid !== currentUid() || info.nlink !== 1 || (info.mode & POSIX_MODE_MASK) !== 0o600) {
     throw failClosed(`${label} is not one secure regular file`);
   }
 }
@@ -1159,9 +1317,27 @@ async function assertNoLiveOwnedRuntime(options, context, stage) {
   } catch (error) {
     throw failClosed(`live-owned-runtime validation failed at ${stage}`, error);
   }
-  if (result === true || result?.live === true || result?.ownedRuntimeLive === true || result?.status === "live") {
-    throw failClosed(`a live owned runtime was observed at ${stage}; refusing to move any root`);
+  if (!isValidatedAbsentObservation(result, context)) {
+    if (result?.status === "live" || result === true || result?.live === true || result?.ownedRuntimeLive === true) {
+      throw failClosed(`a live owned runtime was observed at ${stage}; refusing to move any root`);
+    }
+    throw failClosed(`live-owned-runtime validation was not an explicit absent result at ${stage}`);
   }
+}
+
+function isValidatedAbsentObservation(result, context) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return false;
+  const expectedKeys = ["status", "runtimeRoot", "parentPath", "stateScope", "processes", "listeners", "sockets", "openHandles"].sort();
+  const actualKeys = Object.keys(result).sort();
+  if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) return false;
+  return result.status === "absent" &&
+    result.runtimeRoot === context.runtimeRoot &&
+    result.parentPath === context.parentPath &&
+    result.stateScope === "runtime-root-only" &&
+    Array.isArray(result.processes) && result.processes.length === 0 &&
+    Array.isArray(result.listeners) && result.listeners.length === 0 &&
+    Array.isArray(result.sockets) && result.sockets.length === 0 &&
+    Array.isArray(result.openHandles) && result.openHandles.length === 0;
 }
 
 async function assertAbsent(candidate, label) {
@@ -1177,15 +1353,66 @@ async function assertNoSymlinkPath(candidate, label) {
   if (info.isSymbolicLink()) throw failClosed(`${label} source is a symlink`);
 }
 
-async function assertOwnedSecureDirectory(candidate, label) {
+async function assertNoSymlinkAncestors(candidate, root) {
+  let current = path.dirname(candidate);
+  while (pathInside(current, root) && current !== root) {
+    const info = await inspectedPath(current);
+    if (!info) break;
+    if (info.isSymbolicLink()) throw failClosed(`path alias through a symlink at ${current}`);
+    if (!info.isDirectory()) throw failClosed(`path ancestor is not a directory at ${current}`);
+    current = path.dirname(current);
+  }
+}
+
+async function assertOwnedSecureDirectory(candidate, label, expectedDevice) {
   const info = await lstat(candidate).catch((error) => {
     if (isCode(error, "ENOENT")) throw failClosed(`${label} is missing`);
     throw error;
   });
-  if (info.isSymbolicLink() || !info.isDirectory() || info.uid !== currentUid() || (info.mode & POSIX_MODE_MASK) !== 0o700) {
+  if (info.isSymbolicLink() || !info.isDirectory() || info.uid !== currentUid() || (info.mode & POSIX_MODE_MASK) !== 0o700 || (expectedDevice !== undefined && info.dev !== expectedDevice)) {
     throw failClosed(`${label} is not one secure directory owned by the current run`);
   }
   return info;
+}
+
+async function assertSiblingArtifactTopology(context, options, transaction = null) {
+  const archiveOptions = { ...options };
+  delete archiveOptions.ownerToken;
+  const archived = await findArchivedTransactions(context, archiveOptions);
+  const allowedNames = new Set([path.basename(context.activePath)]);
+  for (const candidate of archived) {
+    for (const artifact of [
+      candidate.constructionPath,
+      candidate.quarantinePath,
+      candidate.freshRetainedPath,
+      candidate.archivePath,
+    ]) {
+      if (artifact) allowedNames.add(path.basename(artifact));
+    }
+  }
+  if (transaction) {
+    for (const candidate of [
+      transaction.constructionPath,
+      transaction.quarantinePath,
+      transaction.freshRetainedPath,
+      transaction.archivePath,
+    ]) {
+      if (candidate) allowedNames.add(path.basename(candidate));
+    }
+  }
+  const archivedNames = new Set(archived.map((candidate) => path.basename(candidate.archivePath)));
+  const names = await readdir(context.parentPath);
+  for (const name of names.filter((candidate) => candidate.startsWith(QUARANTINE_PREFIX))) {
+    if (name.endsWith(ARCHIVE_SUFFIX)) {
+      if (!archivedNames.has(name)) {
+        throw failClosed(`unexpected archived MAS transaction artifact ${path.join(context.parentPath, name)}; preserve every byte and recover only the exact transaction`);
+      }
+      continue;
+    }
+    if (!allowedNames.has(name)) {
+      throw failClosed(`unexpected MAS transaction artifact ${path.join(context.parentPath, name)}; preserve every byte and recover only the exact transaction`);
+    }
+  }
 }
 
 async function findArchivedTransactions(context, options) {
@@ -1196,10 +1423,34 @@ async function findArchivedTransactions(context, options) {
     const archivePath = path.join(context.parentPath, name);
     const info = await lstat(archivePath);
     if (info.isSymbolicLink() || !info.isDirectory()) throw failClosed("an archived transaction path is a symlink or non-directory");
+    await assertOwnedSecureDirectory(archivePath, "archived transaction slot", context.parentDevice);
     const journalPath = path.join(archivePath, JOURNAL_BASENAME);
     await assertJournalFile(journalPath, "archived transaction journal");
     const transaction = await loadTransaction(journalPath, options);
+    transaction.journalPath = journalPath;
     assertTransaction(transaction, context, options);
+    transactions.push(transaction);
+  }
+  return transactions;
+}
+
+async function findBuildingTransactions(context, options) {
+  const names = await readdir(context.parentPath);
+  const matches = names.filter((name) => name.startsWith(QUARANTINE_PREFIX) && name.endsWith(ACTIVE_BUILDING_SUFFIX));
+  const transactions = [];
+  for (const name of matches.sort()) {
+    const constructionPath = path.join(context.parentPath, name);
+    const info = await lstat(constructionPath);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw failClosed("an active transaction construction path is a symlink or non-directory");
+    }
+    await assertOwnedSecureDirectory(constructionPath, "active transaction construction slot", context.parentDevice);
+    const journalPath = path.join(constructionPath, JOURNAL_BASENAME);
+    await assertJournalFile(journalPath, "construction transaction journal");
+    const transaction = await loadTransaction(journalPath, options);
+    transaction.journalPath = journalPath;
+    assertTransaction(transaction, context, options);
+    if (transaction.constructionPath !== constructionPath) throw failClosed("active construction journal path does not match its exact sibling");
     transactions.push(transaction);
   }
   return transactions;
@@ -1309,6 +1560,7 @@ function isCode(error, code) {
 }
 
 function renameOperationFor(label) {
+  if (label.includes("active transaction")) return "rename-active-publish";
   if (label.includes("quarantine")) return "rename-quarantine";
   if (label.includes("detach")) return "rename-fresh-retained";
   if (label.includes("restore")) return "rename-prior-restore";

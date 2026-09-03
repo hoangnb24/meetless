@@ -189,24 +189,44 @@ continues to own only the `/Applications` bundle and package identity.
 
 Before a gate writes runtime state, installs, or launches, a plain-data
 `MAS_GATE_SESSION_TRANSACTION v1` boundary must acquire its fixed sibling
-transaction slot, validate the exact contract-derived root and parent, reject
-symlink/path/device/ownership ambiguity, prove no live owned runtime through its
-caller-supplied adapter, and receive an explicit positive free-space requirement.
-It atomically renames the entire existing root into same-volume quarantine,
-creates a secure fresh root, and records intent and rename transitions in a
-journal outside the root with durable atomic writes. There is no copy fallback
-and no recursive removal in this boundary. Without a host lock protocol,
-unexpected concurrency is handled by retaining the roots and failing closed.
+transaction slot and the stable kernel-backed sibling lock, validate the exact
+contract-derived root and parent, reject symlink/path/device/ownership
+ambiguity, prove no live owned runtime through its caller-supplied adapter, and
+receive an explicit positive free-space requirement. The gate holds that lock
+through mutation. It atomically renames the entire existing root into
+same-volume quarantine, creates a secure fresh root, and records intent and
+rename transitions in a journal outside the root with durable atomic writes.
+The secure construction directory is fully journaled before publication to the
+fixed active slot, so recovery never treats an empty active slot as proof that
+no transaction exists. There is no copy fallback and no recursive removal in
+this boundary. Unexpected concurrency, physical boundary ambiguity, or a
+changed lock identity retains every remaining root and fails closed.
 
-After proven stop and package rollback, the boundary atomically detaches the
-fresh root to retained session evidence and restores the exact prior root or
-prior absence. The fresh root and journal remain retained by default. A
-completed session may later be archived by sibling rename to free the fixed
-active slot; deleting retained evidence is outside this decision and requires a
-separate owner-authorized policy. The journal and aggregate attestation record
-only the runtime-root transaction contract, metadata, file-byte digests, literal
-symlink targets, and hardlink equivalence needed to detect mutation; they do not
-record child inventories, credentials, receipts, or raw private content.
+The native host participates in the same stable sibling lock. With no active
+transaction, ordinary direct/production startup remains valid while holding
+that lock. With an active transaction, startup requires a one-time durable
+handoff bound to the exact owner token, run, fresh-root identity, active slot,
+MAS bundle identity, executable bytes, and identity path; the host claims and
+holds the lock for its lifetime. The gate may reacquire it only after explicit
+stop and absence proof. Handoff replay, wrong-root, wrong-bundle, wrong-owner,
+lock contention, live descendants, listener/socket/open-handle evidence, and
+unknown process inspection all fail closed.
+
+After proven stop and package rollback, the boundary reacquires the stable lock,
+atomically detaches the fresh root to retained session evidence, and restores
+the exact prior root or prior absence. Package identity rollback therefore
+precedes runtime restoration. The fresh root and journal remain retained by
+default. A completed session may later be archived by sibling rename to free
+the fixed active slot; deleting retained evidence is outside this decision and
+requires a separate owner-authorized policy. The journal and aggregate
+attestation record only the runtime-root transaction contract, metadata,
+file-byte digests, literal symlink targets, and hardlink equivalence needed to
+detect mutation; they do not record child inventories, credentials, receipts,
+or raw private content. Recovery is monotonic and idempotent across every
+mkdir, rename, and journal-publication boundary; if exact intent is unavailable
+or roots are both, neither, swapped, or changed, all bytes are retained and
+the actionable `MAS-GATE-CLEANUP-001` diagnostic directs the operator to leave
+roots intact and run status/recovery.
 
 This rollback claim is limited to the entire canonical runtime root. App-group
 state, Preferences/Caches outside that root, Keychain, TCC, StoreKit/RevenueCat,

@@ -16,6 +16,11 @@ private let meetlessDirectRuntimeRootRelativePath = "Library/Application Support
 private let meetlessAppStoreContainerSupportRelativePath = "Library/Containers/com.meetless.app/Data/Library/Application Support"
 private let meetlessAppStoreRuntimeRootRelativePath = "\(meetlessAppStoreContainerSupportRelativePath)/Meetless"
 private let meetlessAppStoreRecordingExportsRelativePath = "\(meetlessAppStoreContainerSupportRelativePath)/Meetless/recordings"
+private let meetlessMasGateLockFilename = ".meetless-mas-gate.lock"
+private let meetlessMasGateActiveFilename = ".meetless-mas-gate-session.active"
+private let meetlessMasGateHandoffFilename = "host-handoff.json"
+private let meetlessMasGateTransactionSchema = "MAS_GATE_SESSION_TRANSACTION v1"
+private let meetlessMasGateHandoffSchema = "MAS_GATE_HOST_HANDOFF v1"
 
 struct MeetlessLaunchCoordinator<Configuration> {
   let locationCheck: () throws -> Void
@@ -40,9 +45,9 @@ struct MeetlessLaunchCoordinator<Configuration> {
     try processCheck()
     let configuration = try configurationCheck()
     try resourceCheck(configuration)
-    try identity(configuration)
     configurationReady(configuration)
     try lock(configuration)
+    try identity(configuration)
     try capability(configuration)
     try runtime(configuration)
     return configuration
@@ -185,6 +190,70 @@ private struct HostIdentityDocument: Codable {
   let binaryInode: Int
   let binarySize: Int
   let configuration: HostConfiguration
+}
+
+private struct MasGateRootIdentity: Codable {
+  let type: String
+  let mode: Int64
+  let uid: Int64
+  let gid: Int64
+  let dev: Int64
+  let ino: Int64
+  let nlink: Int64
+  let size: Int64
+}
+
+private struct MasGateLockIdentity {
+  let dev: Int64
+  let ino: Int64
+  let mode: Int64
+  let uid: Int64
+}
+
+private struct MasGateSessionJournal: Decodable {
+  let schema: String
+  let version: Int
+  let ownerToken: String
+  let runId: String
+  let canonicalRuntimeRoot: String
+  let parentPath: String
+  let lockPath: String
+  let activePath: String
+  let constructionPath: String
+  let quarantinePath: String
+  let freshRetainedPath: String
+  let archivePath: String?
+  let priorExists: Bool
+  let stateScope: String
+  let phase: String
+  let freshRootIdentity: MasGateRootIdentity?
+}
+
+private struct MasGateHostHandoff: Codable {
+  let schema: String
+  let version: Int
+  let ownerToken: String
+  let runId: String
+  var state: String
+  let phase: String
+  let canonicalRuntimeRoot: String
+  let parentPath: String
+  let activePath: String
+  let freshRootIdentity: MasGateRootIdentity
+  let identityRelativePath: String
+  let identityPath: String
+  let bundlePath: String
+  let bundleRealPath: String
+  let executablePath: String
+  let bundleIdentifier: String
+  let designatedRequirement: String
+  let cdHash: String
+  let binarySha256: String
+  let binaryDevice: Int64
+  let binaryInode: Int64
+  let binarySize: Int64
+  var claimedByPid: Int32?
+  var claimedAt: String?
 }
 
 struct MeetlessExecutableIdentity {
@@ -405,7 +474,17 @@ private func writeIdentityAtomically(_ data: Data, to identityPath: String, runt
   defer { try? manager.removeItem(at: temporaryURL) }
   try data.write(to: temporaryURL, options: [.atomic])
   try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporaryURL.path)
-  if manager.fileExists(atPath: identityURL.path) {
+  var existingInformation = stat()
+  let identityExists = lstat(identityURL.path, &existingInformation) == 0
+  if !identityExists && errno != ENOENT {
+    throw hostPreflightError("cannot inspect the recorded host identity without following a symlink")
+  }
+  if identityExists {
+    guard (existingInformation.st_mode & S_IFMT) == S_IFREG,
+          existingInformation.st_uid == getuid(),
+          (existingInformation.st_mode & 0o7777) == 0o600 else {
+      throw hostPreflightError("recorded host identity is not one secure regular file")
+    }
     _ = try manager.replaceItemAt(identityURL, withItemAt: temporaryURL)
   } else {
     try manager.moveItem(at: temporaryURL, to: identityURL)
@@ -420,6 +499,8 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
   private var configuration: HostConfiguration?
   private var transcriptionCapability: MeetlessTranscriptionCapability?
   private var publishedHostIdentity: MeetlessHostIdentityAttestation?
+  private var masGateHandoff: MasGateHostHandoff?
+  private var masGateLockIdentity: MasGateLockIdentity?
   private let runtimeAuthorization = RuntimeAuthorizationState()
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -442,7 +523,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
           self.publishedHostIdentity = try self.publishIdentity(configuration)
         },
         configurationReady: { configuration in self.configuration = configuration },
-        lock: { configuration in try self.acquireRuntimeLock(configuration.runtimeRoot) },
+        lock: { configuration in try self.acquireRuntimeLock(configuration) },
         capability: { configuration in
           self.installSignalHandlers()
           if configuration.endpointPolicy != nil {
@@ -543,9 +624,11 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     if let runtime, runtime.isRunning { runtime.waitUntilExit() }
     removeOwnedRegistryIfReleased(registry)
     if lockDescriptor >= 0 {
+      _ = lockf(lockDescriptor, F_ULOCK, 0)
       flock(lockDescriptor, LOCK_UN)
       close(lockDescriptor)
       lockDescriptor = -1
+      masGateLockIdentity = nil
     }
     try? runtimeLog?.close()
     runtimeLog = nil
@@ -807,7 +890,26 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       binarySize: executableIdentity.size,
       configuration: configuration
     )
-    if FileManager.default.fileExists(atPath: configuration.identityPath) {
+    if let handoff = masGateHandoff {
+      guard identity.bundleIdentifier == handoff.bundleIdentifier,
+            identity.bundlePath == handoff.bundlePath,
+            identity.bundleRealPath == handoff.bundleRealPath,
+            identity.executablePath == handoff.executablePath,
+            identity.designatedRequirement == handoff.designatedRequirement,
+            identity.cdHash == handoff.cdHash,
+            identity.binarySha256 == handoff.binarySha256,
+            Int64(identity.binaryDevice) == handoff.binaryDevice,
+            Int64(identity.binaryInode) == handoff.binaryInode,
+            Int64(identity.binarySize) == handoff.binarySize else {
+        throw hostPreflightError("published host identity differs from the claimed MAS host handoff")
+      }
+    }
+    if let identityInfo = try lstatPath(configuration.identityPath, label: "recorded host identity") {
+      guard (identityInfo.st_mode & S_IFMT) == S_IFREG,
+            identityInfo.st_uid == getuid(),
+            (identityInfo.st_mode & 0o7777) == 0o600 else {
+        throw hostPreflightError("recorded host identity is not one secure regular file")
+      }
       let previousData = try readRequiredData(configuration.identityPath, label: "recorded host identity")
       let previous = try JSONDecoder().decode(HostIdentityDocument.self, from: previousData)
       let stableIdentity =
@@ -863,26 +965,515 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     alert.runModal()
   }
 
-  private func acquireRuntimeLock(_ runtimeRoot: String) throws {
-    try FileManager.default.createDirectory(
-      atPath: runtimeRoot,
-      withIntermediateDirectories: true,
-      attributes: [.posixPermissions: 0o700]
-    )
-    let lockPath = URL(fileURLWithPath: runtimeRoot).appendingPathComponent("meetless-host.lock").path
-    lockDescriptor = open(lockPath, O_CREAT | O_RDWR, 0o600)
-    guard lockDescriptor >= 0, flock(lockDescriptor, LOCK_EX | LOCK_NB) == 0 else {
-      let owner = (try? String(contentsOfFile: lockPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) ?? "unknown owner"
-      throw NSError(
-        domain: "MeetlessHost",
-        code: 3,
-        userInfo: [NSLocalizedDescriptionKey: "MeetlessHost start rejected because the shared install/start lock is held by \(owner); retry after the exact installer or host exits"]
-      )
+  private func acquireRuntimeLock(_ configuration: HostConfiguration) throws {
+    let runtimeURL = URL(fileURLWithPath: configuration.runtimeRoot).standardizedFileURL
+    let parentURL = runtimeURL.deletingLastPathComponent().standardizedFileURL
+    let parentPath = parentURL.path
+    let runtimeRoot = runtimeURL.path
+    try assertSecureDirectory(parentPath, label: "runtime-root parent")
+    let lockPath = parentURL.appendingPathComponent(meetlessMasGateLockFilename).path
+    if let existing = try lstatPath(lockPath, label: "MAS gate lock"),
+       (existing.st_mode & S_IFMT) != S_IFREG {
+      throw hostPreflightError("MAS gate lock is not one regular file")
     }
-    let identity = "{\"role\":\"host\",\"pid\":\(getpid())}\n"
-    ftruncate(lockDescriptor, 0)
-    _ = identity.withCString { write(lockDescriptor, $0, strlen($0)) }
-    fsync(lockDescriptor)
+    lockDescriptor = open(lockPath, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
+    guard lockDescriptor >= 0 else {
+      throw hostPreflightError("cannot open the stable MAS gate lock")
+    }
+    guard flock(lockDescriptor, LOCK_EX | LOCK_NB) == 0 else {
+      let owner = (try? String(contentsOfFile: lockPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) ?? "unknown owner"
+      close(lockDescriptor)
+      lockDescriptor = -1
+      throw hostPreflightError("MeetlessHost start rejected because the stable MAS gate lock is held by \(owner)")
+    }
+    guard lockf(lockDescriptor, F_TLOCK, 0) == 0 else {
+      let owner = (try? String(contentsOfFile: lockPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) ?? "unknown owner"
+      flock(lockDescriptor, LOCK_UN)
+      close(lockDescriptor)
+      lockDescriptor = -1
+      throw hostPreflightError("MeetlessHost start rejected because the stable MAS gate lock is held by \(owner)")
+    }
+    do {
+      masGateLockIdentity = try assertStableMasGateLock(lockPath, descriptor: lockDescriptor)
+      let activePath = parentURL.appendingPathComponent(meetlessMasGateActiveFilename).path
+      let active = try lstatPath(activePath, label: "MAS active transaction")
+      if active != nil {
+        try assertSecureDirectory(activePath, label: "MAS active transaction", requirePrivateMode: true)
+        try assertSameDevice(activePath, parentPath, label: "MAS active transaction")
+        let allowedQuarantinePath = try activeTransactionQuarantinePath(activePath, runtimeRoot: runtimeRoot, parentPath: parentPath)
+        try assertNoPendingMasConstruction(parentPath, runtimeRoot: runtimeRoot, activePresent: true, allowedQuarantinePath: allowedQuarantinePath)
+      } else {
+        try assertNoPendingMasConstruction(parentPath, runtimeRoot: runtimeRoot, activePresent: false)
+        try createDirectRuntimeRootIfAbsent(runtimeRoot, parentPath: parentPath)
+      }
+      if active != nil {
+        masGateHandoff = try claimMasGateHandoff(configuration, activePath: activePath, parentPath: parentPath)
+      }
+      try writeRuntimeLockMetadata(
+        lockDescriptor,
+        runtimeRoot: runtimeRoot,
+        handoff: masGateHandoff
+      )
+    } catch {
+      _ = lockf(lockDescriptor, F_ULOCK, 0)
+      flock(lockDescriptor, LOCK_UN)
+      close(lockDescriptor)
+      lockDescriptor = -1
+      masGateLockIdentity = nil
+      throw error
+    }
+  }
+
+  private func claimMasGateHandoff(
+    _ configuration: HostConfiguration,
+    activePath: String,
+    parentPath: String
+  ) throws -> MasGateHostHandoff {
+    try assertStableMasGateLockPath(lockDescriptor)
+    let journalPath = URL(fileURLWithPath: activePath).appendingPathComponent("transaction.json").path
+    let handoffPath = URL(fileURLWithPath: activePath).appendingPathComponent(meetlessMasGateHandoffFilename).path
+    try assertSecureFile(journalPath, label: "MAS transaction journal")
+    try assertSecureFile(handoffPath, label: "MAS host handoff")
+    let journal = try JSONDecoder().decode(MasGateSessionJournal.self, from: readRequiredData(journalPath, label: "MAS transaction journal"))
+    let handoff = try JSONDecoder().decode(MasGateHostHandoff.self, from: readRequiredData(handoffPath, label: "MAS host handoff"))
+    guard journal.schema == meetlessMasGateTransactionSchema,
+          journal.version == 1,
+          journal.ownerToken.range(of: "^[A-Za-z0-9_-]{40,80}$", options: .regularExpression) != nil,
+          handoff.ownerToken.range(of: "^[A-Za-z0-9_-]{40,80}$", options: .regularExpression) != nil,
+          journal.ownerToken == handoff.ownerToken,
+          journal.runId == handoff.runId,
+          journal.canonicalRuntimeRoot == configuration.runtimeRoot,
+          journal.parentPath == parentPath,
+          journal.lockPath == URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateLockFilename).path,
+          journal.activePath == activePath,
+          journal.stateScope == "runtime-root-only",
+          journal.phase == "ready",
+          let journalFreshRoot = journal.freshRootIdentity,
+          handoff.schema == meetlessMasGateHandoffSchema,
+          handoff.version == 1,
+          handoff.state == "available",
+          handoff.phase == "ready",
+          handoff.canonicalRuntimeRoot == configuration.runtimeRoot,
+          handoff.parentPath == parentPath,
+          handoff.activePath == activePath,
+          handoff.identityRelativePath == URL(fileURLWithPath: configuration.identityPath).pathComponents.dropFirst(URL(fileURLWithPath: configuration.runtimeRoot).pathComponents.count).joined(separator: "/"),
+          handoff.identityPath == configuration.identityPath,
+          handoff.bundleIdentifier == meetlessBundleIdentifier,
+          handoff.bundlePath == meetlessInstallPath,
+          handoff.bundleRealPath == meetlessInstallPath,
+          handoff.executablePath == URL(fileURLWithPath: meetlessInstallPath).appendingPathComponent("Contents/MacOS/MeetlessHost").path,
+          handoff.freshRootIdentity.type == "directory",
+          sameMasGateStableRootIdentity(journalFreshRoot, handoff.freshRootIdentity),
+          handoff.claimedByPid == nil,
+          handoff.claimedAt == nil else {
+      throw hostPreflightError("MAS host handoff is not bound to the exact ready transaction")
+    }
+    let rootIdentity = try masGateRootIdentity(configuration.runtimeRoot, parentPath: parentPath)
+    let runningBundlePath = URL(fileURLWithPath: Bundle.main.bundlePath).standardizedFileURL.path
+    let runningBundleRealPath = URL(fileURLWithPath: runningBundlePath).resolvingSymlinksInPath().standardizedFileURL.path
+    guard sameMasGateStableRootIdentity(rootIdentity, handoff.freshRootIdentity),
+          let bundleIdentifier = Bundle.main.bundleIdentifier,
+          bundleIdentifier == handoff.bundleIdentifier,
+          runningBundlePath == handoff.bundlePath,
+          runningBundleRealPath == handoff.bundleRealPath else {
+      throw hostPreflightError("MAS host handoff root or bundle identity changed before host claim")
+    }
+    let executablePath = URL(fileURLWithPath: runningBundlePath).appendingPathComponent("Contents/MacOS/MeetlessHost").path
+    guard executablePath == handoff.executablePath else {
+      throw hostPreflightError("MAS host handoff executable path is not exact")
+    }
+    let executable = try readRequiredData(executablePath, label: "MeetlessHost executable")
+    let executableIdentity = try inspectMeetlessExecutableIdentity(executablePath)
+    guard sha256(executable) == handoff.binarySha256,
+          Int64(executableIdentity.device) == handoff.binaryDevice,
+          Int64(executableIdentity.inode) == handoff.binaryInode,
+          Int64(executableIdentity.size) == handoff.binarySize,
+          handoff.designatedRequirement.isEmpty == false,
+          handoff.cdHash.range(of: "^[0-9a-f]{40}$", options: .regularExpression) != nil else {
+      throw hostPreflightError("MAS host handoff installed bundle bytes or signature identity changed")
+    }
+    guard let identityInfo = try lstatPath(configuration.identityPath, label: "MAS host identity"),
+          (identityInfo.st_mode & S_IFMT) == S_IFREG,
+          identityInfo.st_uid == getuid(),
+          (identityInfo.st_mode & 0o7777) == 0o600 else {
+      throw hostPreflightError("MAS host handoff identity bytes are absent in the fresh runtime root")
+    }
+    let identityDocument = try JSONDecoder().decode(
+      HostIdentityDocument.self,
+      from: readRequiredData(configuration.identityPath, label: "MAS host identity")
+    )
+    guard identityDocument.bundleIdentifier == handoff.bundleIdentifier,
+          identityDocument.bundlePath == handoff.bundlePath,
+          identityDocument.bundleRealPath == handoff.bundleRealPath,
+          identityDocument.executablePath == handoff.executablePath,
+          identityDocument.designatedRequirement == handoff.designatedRequirement,
+          identityDocument.cdHash == handoff.cdHash,
+          identityDocument.binarySha256 == handoff.binarySha256,
+          Int64(identityDocument.binaryDevice) == handoff.binaryDevice,
+          Int64(identityDocument.binaryInode) == handoff.binaryInode,
+          Int64(identityDocument.binarySize) == handoff.binarySize else {
+      throw hostPreflightError("MAS host identity bytes do not match the claimed installed bundle")
+    }
+    var claimed = handoff
+    claimed.state = "claimed"
+    claimed.claimedByPid = getpid()
+    claimed.claimedAt = ISO8601DateFormatter().string(from: Date())
+    try writeMasGateHandoff(claimed, to: handoffPath)
+    return claimed
+  }
+
+  private func writeMasGateHandoff(_ handoff: MasGateHostHandoff, to path: String) throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let data = try encoder.encode(handoff) + Data([10])
+    let temporary = URL(fileURLWithPath: path).deletingLastPathComponent()
+      .appendingPathComponent(".host-handoff-\(getpid())-\(UUID().uuidString).tmp").path
+    defer { try? FileManager.default.removeItem(atPath: temporary) }
+    try data.write(to: URL(fileURLWithPath: temporary), options: [])
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary)
+    let descriptor = open(temporary, O_RDONLY | O_NOFOLLOW)
+    guard descriptor >= 0 else { throw hostPreflightError("cannot open the claimed MAS host handoff") }
+    guard fsync(descriptor) == 0 else {
+      close(descriptor)
+      throw hostPreflightError("cannot durably write the claimed MAS host handoff")
+    }
+    close(descriptor)
+    try assertSecureFile(path, label: "claimed MAS host handoff")
+    guard Darwin.rename(temporary, path) == 0 else {
+      throw hostPreflightError("cannot atomically publish the claimed MAS host handoff")
+    }
+    try syncDirectory(URL(fileURLWithPath: path).deletingLastPathComponent().path)
+  }
+
+  private func writeRuntimeLockMetadata(_ descriptor: Int32, runtimeRoot: String, handoff: MasGateHostHandoff?) throws {
+    try assertStableMasGateLockPath(descriptor)
+    let role = handoff == nil ? "host" : "host-handoff"
+    let runID = handoff?.runId ?? ""
+    let object: [String: Any] = [
+      "schema": "MAS_GATE_LOCK v1",
+      "role": role,
+      "pid": Int(getpid()),
+      "runtimeRoot": runtimeRoot,
+      "runId": runID,
+    ]
+    guard JSONSerialization.isValidJSONObject(object),
+          let encoded = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+          let payload = String(data: encoded, encoding: .utf8).map({ $0 + "\n" }) else {
+      throw hostPreflightError("cannot encode stable MAS gate lock ownership")
+    }
+    guard ftruncate(descriptor, 0) == 0 else { throw hostPreflightError("cannot publish stable MAS gate lock ownership") }
+    let written = payload.withCString { write(descriptor, $0, strlen($0)) }
+    guard written == payload.utf8.count, fsync(descriptor) == 0 else {
+      throw hostPreflightError("cannot durably publish stable MAS gate lock ownership")
+    }
+  }
+
+  private func createDirectRuntimeRootIfAbsent(_ runtimeRoot: String, parentPath: String) throws {
+    if let existing = try lstatPath(runtimeRoot, label: "runtime root") {
+      guard (existing.st_mode & S_IFMT) == S_IFDIR else { throw hostPreflightError("runtime root is not one directory") }
+      try assertSecureDirectory(runtimeRoot, label: "runtime root")
+      var parent = stat()
+      guard lstat(parentPath, &parent) == 0, existing.st_dev == parent.st_dev else {
+        throw hostPreflightError("runtime root and its parent are not on the same device")
+      }
+      return
+    }
+    do {
+      try FileManager.default.createDirectory(
+        atPath: runtimeRoot,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+      )
+    } catch {
+      if try lstatPath(runtimeRoot, label: "runtime root") == nil { throw error }
+    }
+    try assertSecureDirectory(runtimeRoot, label: "fresh direct runtime root")
+    var root = stat()
+    var parent = stat()
+    guard lstat(runtimeRoot, &root) == 0, lstat(parentPath, &parent) == 0, root.st_dev == parent.st_dev else {
+      throw hostPreflightError("runtime root and its parent are not on the same device")
+    }
+  }
+
+  private func activeTransactionQuarantinePath(_ activePath: String, runtimeRoot: String, parentPath: String) throws -> String? {
+    let journalPath = URL(fileURLWithPath: activePath).appendingPathComponent("transaction.json").path
+    try assertSecureFile(journalPath, label: "MAS transaction journal")
+    let journal = try JSONDecoder().decode(MasGateSessionJournal.self, from: readRequiredData(journalPath, label: "MAS transaction journal"))
+    let expectedQuarantinePath = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).quarantine").path
+    let expectedConstructionPath = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).active-building").path
+    let expectedFreshRetainedPath = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).fresh-retained").path
+    let expectedArchivePath = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(journal.runId).archived").path
+    guard journal.schema == meetlessMasGateTransactionSchema,
+          journal.version == 1,
+          journal.runId.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", options: .regularExpression) != nil,
+          journal.canonicalRuntimeRoot == runtimeRoot,
+          journal.parentPath == parentPath,
+          journal.lockPath == URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateLockFilename).path,
+          journal.activePath == activePath,
+          journal.constructionPath == expectedConstructionPath,
+          journal.quarantinePath == expectedQuarantinePath else {
+      throw hostPreflightError("MAS active transaction journal is not bound to the exact runtime parent")
+    }
+    guard journal.freshRetainedPath == expectedFreshRetainedPath,
+          journal.archivePath == nil || journal.archivePath == expectedArchivePath else {
+      throw hostPreflightError("MAS active transaction journal contains an unexpected retained or archive path")
+    }
+    if journal.phase == "ready" {
+      let quarantine = try lstatPath(journal.quarantinePath, label: "MAS quarantine root")
+      if journal.priorExists {
+        guard quarantine != nil else {
+          throw hostPreflightError("MAS ready transaction lost its quarantined prior runtime root")
+        }
+      } else if quarantine != nil {
+        throw hostPreflightError("MAS ready transaction has an unexpected quarantine root for recorded prior absence")
+      }
+    }
+    return journal.quarantinePath
+  }
+
+  private func assertNoPendingMasConstruction(
+    _ parentPath: String,
+    runtimeRoot: String,
+    activePresent: Bool,
+    allowedQuarantinePath: String? = nil
+  ) throws {
+    let names = try FileManager.default.contentsOfDirectory(atPath: parentPath)
+    let activeRunID: String? = allowedQuarantinePath.flatMap { quarantinePath in
+      let name = URL(fileURLWithPath: quarantinePath).lastPathComponent
+      guard name.hasPrefix(".meetless-mas-gate-session."), name.hasSuffix(".quarantine") else { return nil }
+      return String(name.dropFirst(".meetless-mas-gate-session.".count).dropLast(".quarantine".count))
+    }
+    for name in names where name.hasPrefix(".meetless-mas-gate-session.") {
+      if name == meetlessMasGateActiveFilename {
+        if activePresent { continue }
+        throw hostPreflightError("the MAS active transaction appeared while the host was checking the sibling topology")
+      }
+      if name.hasSuffix(".archived") {
+        let runID = String(name.dropFirst(".meetless-mas-gate-session.".count).dropLast(".archived".count))
+        guard runID.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", options: .regularExpression) != nil else {
+          throw hostPreflightError("an archived MAS transaction has an invalid run ID")
+        }
+        if activeRunID == runID {
+          throw hostPreflightError("both active and archived artifacts for one MAS transaction are present")
+        }
+        try assertArchivedMasTransactionArtifact(
+          URL(fileURLWithPath: parentPath).appendingPathComponent(name).path,
+          runtimeRoot: runtimeRoot,
+          parentPath: parentPath,
+          runID: runID
+        )
+        continue
+      }
+      if name.hasSuffix(".quarantine"),
+         let allowedQuarantinePath,
+         URL(fileURLWithPath: parentPath).appendingPathComponent(name).path == allowedQuarantinePath {
+        try assertQuarantineMasTransactionArtifact(allowedQuarantinePath, parentPath: parentPath)
+        continue
+      }
+      throw hostPreflightError("an unexpected MAS gate transaction artifact is present at \(name); run gate recovery before host startup")
+    }
+  }
+
+  private func assertQuarantineMasTransactionArtifact(_ path: String, parentPath: String) throws {
+    guard let information = try lstatPath(path, label: "MAS quarantine root"),
+          (information.st_mode & S_IFMT) == S_IFDIR,
+          information.st_uid == getuid(),
+          (information.st_mode & 0o7777) == 0o700 else {
+      throw hostPreflightError("MAS quarantine root is not one owned directory")
+    }
+    var parent = stat()
+    guard lstat(parentPath, &parent) == 0, information.st_dev == parent.st_dev else {
+      throw hostPreflightError("MAS quarantine root is on a different device")
+    }
+    let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    guard resolved == path else { throw hostPreflightError("MAS quarantine root resolves through a symlink") }
+  }
+
+  private func assertArchivedMasTransactionArtifact(
+    _ archivePath: String,
+    runtimeRoot: String,
+    parentPath: String,
+    runID: String
+  ) throws {
+    guard let archiveInformation = try lstatPath(archivePath, label: "MAS archived transaction"),
+          (archiveInformation.st_mode & S_IFMT) == S_IFDIR,
+          archiveInformation.st_uid == getuid(),
+          (archiveInformation.st_mode & 0o7777) == 0o700 else {
+      throw hostPreflightError("MAS archived transaction is not one secure directory")
+    }
+    var parent = stat()
+    guard lstat(parentPath, &parent) == 0, archiveInformation.st_dev == parent.st_dev else {
+      throw hostPreflightError("MAS archived transaction is on a different device")
+    }
+    let resolved = URL(fileURLWithPath: archivePath).resolvingSymlinksInPath().standardizedFileURL.path
+    guard resolved == archivePath else { throw hostPreflightError("MAS archived transaction resolves through a symlink") }
+
+    let journalPath = URL(fileURLWithPath: archivePath).appendingPathComponent("transaction.json").path
+    try assertSecureFile(journalPath, label: "MAS archived transaction journal")
+    let journal = try JSONDecoder().decode(
+      MasGateSessionJournal.self,
+      from: readRequiredData(journalPath, label: "MAS archived transaction journal")
+    )
+    let expectedConstructionPath = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(runID).active-building").path
+    let expectedQuarantinePath = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(runID).quarantine").path
+    let expectedFreshRetainedPath = URL(fileURLWithPath: parentPath)
+      .appendingPathComponent(".meetless-mas-gate-session.\(runID).fresh-retained").path
+    guard journal.schema == meetlessMasGateTransactionSchema,
+          journal.version == 1,
+          journal.ownerToken.range(of: "^[A-Za-z0-9_-]{40,80}$", options: .regularExpression) != nil,
+          journal.runId == runID,
+          journal.canonicalRuntimeRoot == runtimeRoot,
+          journal.parentPath == parentPath,
+          journal.lockPath == URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateLockFilename).path,
+          journal.activePath == URL(fileURLWithPath: parentPath).appendingPathComponent(meetlessMasGateActiveFilename).path,
+          journal.constructionPath == expectedConstructionPath,
+          journal.quarantinePath == expectedQuarantinePath,
+          journal.freshRetainedPath == expectedFreshRetainedPath,
+          journal.archivePath == archivePath,
+          journal.stateScope == "runtime-root-only",
+          journal.phase == "archived",
+          let freshRootIdentity = journal.freshRootIdentity else {
+      throw hostPreflightError("MAS archived transaction journal is not bound to one completed exact session")
+    }
+    let retainedIdentity = try masGateRootIdentity(journal.freshRetainedPath, parentPath: parentPath)
+    guard sameMasGateStableRootIdentity(retainedIdentity, freshRootIdentity) else {
+      throw hostPreflightError("MAS archived fresh-root evidence changed outside its transaction")
+    }
+  }
+
+  private func lstatPath(_ path: String, label: String) throws -> stat? {
+    var information = stat()
+    if lstat(path, &information) == 0 { return information }
+    if errno == ENOENT { return nil }
+    throw hostPreflightError("cannot inspect \(label) at \(path)")
+  }
+
+  private func assertStableMasGateLock(_ path: String, descriptor: Int32) throws -> MasGateLockIdentity {
+    var descriptorInformation = stat()
+    guard fstat(descriptor, &descriptorInformation) == 0 else {
+      throw hostPreflightError("cannot inspect the stable MAS gate lock descriptor")
+    }
+    let parentPath = URL(fileURLWithPath: path).deletingLastPathComponent().path
+    guard let parentInformation = try lstatPath(parentPath, label: "MAS gate lock parent") else {
+      throw hostPreflightError("MAS gate lock parent disappeared while the host was acquiring it")
+    }
+    guard let pathInformation = try lstatPath(path, label: "MAS gate lock"),
+          (pathInformation.st_mode & S_IFMT) == S_IFREG,
+          pathInformation.st_uid == getuid(),
+          (pathInformation.st_mode & 0o7777) == 0o600,
+          pathInformation.st_nlink == 1,
+          pathInformation.st_dev == parentInformation.st_dev,
+          pathInformation.st_dev == descriptorInformation.st_dev,
+          pathInformation.st_ino == descriptorInformation.st_ino,
+          pathInformation.st_mode == descriptorInformation.st_mode,
+          pathInformation.st_uid == descriptorInformation.st_uid else {
+      throw hostPreflightError("stable MAS gate lock path changed while the host was acquiring it")
+    }
+    return MasGateLockIdentity(
+      dev: Int64(descriptorInformation.st_dev),
+      ino: Int64(descriptorInformation.st_ino),
+      mode: Int64(descriptorInformation.st_mode),
+      uid: Int64(descriptorInformation.st_uid)
+    )
+  }
+
+  private func assertStableMasGateLockPath(_ descriptor: Int32) throws {
+    guard let configuration, let expected = masGateLockIdentity else {
+      throw hostPreflightError("stable MAS gate lock ownership is unavailable")
+    }
+    let lockPath = URL(fileURLWithPath: configuration.runtimeRoot).deletingLastPathComponent()
+      .appendingPathComponent(meetlessMasGateLockFilename).path
+    let current = try assertStableMasGateLock(lockPath, descriptor: descriptor)
+    guard current.dev == expected.dev,
+          current.ino == expected.ino,
+          current.mode == expected.mode,
+          current.uid == expected.uid else {
+      throw hostPreflightError("stable MAS gate lock identity changed during host ownership")
+    }
+  }
+
+  private func assertSecureDirectory(_ path: String, label: String, requirePrivateMode: Bool = false) throws {
+    guard let information = try lstatPath(path, label: label) else {
+      throw hostPreflightError("\(label) is unavailable")
+    }
+    let modeIsSecure = requirePrivateMode
+      ? (information.st_mode & 0o7777) == 0o700
+      : (information.st_mode & 0o022) == 0
+    guard (information.st_mode & S_IFMT) == S_IFDIR,
+          information.st_uid == getuid(),
+          modeIsSecure else {
+      throw hostPreflightError("\(label) is not one secure current-owner directory")
+    }
+    let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    guard resolved == path else { throw hostPreflightError("\(label) resolves through a symlink") }
+  }
+
+  private func assertSecureFile(_ path: String, label: String) throws {
+    guard let information = try lstatPath(path, label: label),
+          (information.st_mode & S_IFMT) == S_IFREG,
+          information.st_uid == getuid(),
+          information.st_nlink == 1,
+          (information.st_mode & 0o7777) == 0o600 else {
+      throw hostPreflightError("\(label) is not one secure regular file")
+    }
+  }
+
+  private func assertSameDevice(_ path: String, _ parentPath: String, label: String) throws {
+    guard let information = try lstatPath(path, label: label) else {
+      throw hostPreflightError("\(label) is unavailable")
+    }
+    var parent = stat()
+    guard lstat(parentPath, &parent) == 0, information.st_dev == parent.st_dev else {
+      throw hostPreflightError("\(label) is on a different device from its parent")
+    }
+  }
+
+  private func masGateRootIdentity(_ path: String, parentPath: String) throws -> MasGateRootIdentity {
+    guard let information = try lstatPath(path, label: "fresh MAS runtime root"),
+          (information.st_mode & S_IFMT) == S_IFDIR,
+          information.st_uid == getuid(),
+          (information.st_mode & 0o7777) == 0o700 else {
+      throw hostPreflightError("fresh MAS runtime root is not one secure directory")
+    }
+    var parent = stat()
+    guard lstat(parentPath, &parent) == 0, information.st_dev == parent.st_dev else {
+      throw hostPreflightError("fresh MAS runtime root is on a different device")
+    }
+    return MasGateRootIdentity(
+      type: "directory",
+      mode: Int64(information.st_mode),
+      uid: Int64(information.st_uid),
+      gid: Int64(information.st_gid),
+      dev: Int64(information.st_dev),
+      ino: Int64(information.st_ino),
+      nlink: Int64(information.st_nlink),
+      size: Int64(information.st_size)
+    )
+  }
+
+  private func syncDirectory(_ path: String) throws {
+    let descriptor = open(path, O_RDONLY | O_DIRECTORY)
+    guard descriptor >= 0 else { throw hostPreflightError("cannot open \(path) to durably publish MAS gate state") }
+    defer { close(descriptor) }
+    guard fsync(descriptor) == 0 else { throw hostPreflightError("cannot durably publish MAS gate state for \(path)") }
+  }
+
+  // Directory link count and size can change when the gate publishes the
+  // identity file; inode, device, ownership, and mode are the stable root
+  // identity needed to reject a path swap at host handoff.
+  private func sameMasGateStableRootIdentity(_ left: MasGateRootIdentity, _ right: MasGateRootIdentity) -> Bool {
+    left.type == right.type &&
+      left.mode == right.mode &&
+      left.uid == right.uid &&
+      left.gid == right.gid &&
+      left.dev == right.dev &&
+      left.ino == right.ino
   }
 
   private func loadOwnedRegistry() -> OwnedProcessRegistry? {
@@ -947,6 +1538,14 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     environment["MEETLESS_HOST_PID"] = String(getpid())
     environment["MEETLESS_HOST_BUNDLE_PATH"] = Bundle.main.bundlePath
     environment["MEETLESS_HOST_IDENTITY_PATH"] = configuration.identityPath
+    if let handoff = masGateHandoff {
+      environment["MEETLESS_MAS_GATE_RUN_ID"] = handoff.runId
+      environment["MEETLESS_MAS_GATE_HANDOFF_PATH"] = URL(fileURLWithPath: configuration.runtimeRoot)
+        .deletingLastPathComponent()
+        .appendingPathComponent(meetlessMasGateActiveFilename)
+        .appendingPathComponent(meetlessMasGateHandoffFilename)
+        .path
+    }
     environment["MEETLESS_TRANSCRIPTION_SOCKET"] = configuration.transcriptionSocket
     environment["MEETLESS_TRANSCRIPTION_STAGING"] = configuration.transcriptionStaging
     if let endpointPolicy = configuration.endpointPolicy,
