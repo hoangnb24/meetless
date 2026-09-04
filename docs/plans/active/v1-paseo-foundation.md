@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v73`
-- `current_frontier`: `APPS-PARENT-002-NATIVE`
-- `state`: `REPOSITORY_CORRECTION_PENDING_LEAD_REVIEW`
+- `plan_revision`: `v74`
+- `current_frontier`: `R5-MAS-AWAITING-FRESH-RETRY-AUTHORIZATION`
+- `state`: `REPOSITORY_CORRECTION_LEAD_ACCEPTED_EXTERNAL_GATE_CLOSED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead-accepted status read-only and first-use bootstrap correction `0d21c5336117fa1517fdc5032ac6bb5da274c481`, an immutable child of `12cecc38ae39a4b5e66016ddd637de020672f7d2`; its ancestry retains exact base `3b68fb22c4453b2e66e6da934e44387c3d6e0964` and accepted implementation ancestor `ca26b6c045bbbb1c86aa46b2a0a0966205d645cd`. Prior package-source, identity, bounded registration, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export corrections remain preserved.
+- `candidate`: Lead-accepted Applications-parent/runtime-owner correction `b3d96b4c1618423a16f18fe271bc9e565974800c`, an immutable child of `7871962f7c032ed18139d1280e35e4391e3ac709` and accepted integration tip `69c97239c8903cbb9fb06af01302ea2b4e1ed0e6`. It preserves the accepted status read-only, first-use bootstrap, package-source, identity, bounded registration, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export corrections.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 13 is consumed by the pre-install package-parent failure recorded below. The one-time initial fixed-index authorization — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` — is spent; no package/sign/install/restore/launch retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: Lead review of this native runtime-owner correction; any future package/install/restore/launch retry requires new owner authorization.
-- `next_action`: Lead review the immutable child of rejected candidate `7871962f7c032ed18139d1280e35e4391e3ac709`. If accepted, obtain fresh owner authorization before any new external gate attempt.
+- `blocked_by`: any future package/install/restore/launch retry requires fresh owner authorization.
+- `next_action`: obtain explicit owner authorization before opening a new MAS package/install/launch attempt; until then keep every external and excluded gate closed.
 
 ## Ownership And Authority
 
@@ -1864,6 +1864,18 @@ does not inspect or mutate real MAS state, `/Applications`, the exact lock,
 Trash, secrets/caches, processes, or external systems, and does not retry
 package/install/restore/launch or push. Authority digest remains
 `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
+
+Lead accepted candidate `b3d96b4c1618423a16f18fe271bc9e565974800c`
+on 2026-09-04 after verifying exact parentage and the two-path correction
+delta. Lead personally reran the three focused MAS transaction suites
+(`132/132`), `npm run build:native`, `npm run typecheck`, the MAS baseline
+validator, JavaScript syntax checks, and diff/worktree checks; all passed.
+Independent FAST closeout returned `CLOSEOUT_PASS` for
+`APPS-PARENT-002-NATIVE`, including the current-user positive, root-owned
+runtime negative, descriptor revalidation, and preservation of the exact
+`/Applications` package-parent exception. This is repository acceptance only.
+Attempt 13 remains consumed and no new package, install, restore, launch, or
+other external gate is authorized.
 
 ### Risks And Recovery
 
