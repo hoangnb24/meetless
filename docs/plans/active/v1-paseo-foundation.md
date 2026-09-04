@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v70`
-- `current_frontier`: `R5-MAS-STATUS-READONLY-CORRECTION`
-- `state`: `PEER_READY_FOR_LEAD_REVIEW`
+- `plan_revision`: `v71`
+- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-13`
+- `state`: `OWNER_AUTHORIZED_PENDING_SERIAL_OPERATOR`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: bounded status read-only correction, an immutable child of `12cecc38ae39a4b5e66016ddd637de020672f7d2` (the prior first-use correction overridden only for `STATUS-READONLY-007`; its ancestry retains exact base/current HEAD `3b68fb22c4453b2e66e6da934e44387c3d6e0964` and accepted implementation ancestor `ca26b6c045bbbb1c86aa46b2a0a0966205d645cd`). The child commit is reported by `PEER_DISPOSITION v1`; prior package-source, identity, bounded registration, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, MAS export, and first-use bootstrap corrections remain preserved.
+- `candidate`: Lead-accepted status read-only and first-use bootstrap correction `0d21c5336117fa1517fdc5032ac6bb5da274c481`, an immutable child of `12cecc38ae39a4b5e66016ddd637de020672f7d2`; its ancestry retains exact base `3b68fb22c4453b2e66e6da934e44387c3d6e0964` and accepted implementation ancestor `ca26b6c045bbbb1c86aa46b2a0a0966205d645cd`. Prior package-source, identity, bounded registration, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export corrections remain preserved.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: Owner authorization remains limited to the one-time initial fixed-index step for Attempt 13 — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` The Attempt 13 package command itself remains unrun; package/sign/install/launch and every external-action limit remain closed until Lead accepts this status correction.
-- `blocked_by`: Lead review of the immutable status read-only correction child; no safe package/sign/install/launch action is in scope for this frontier.
-- `next_action`: Lead inspect the exact immutable child and disposition. If accepted, a fresh serial operator may perform only the authorized Attempt 13 boundary; any contract or runtime failure returns `REOPEN_REQUEST`.
+- `pending_ruling`: Owner authorization remains limited to one Attempt 13 run and the one-time initial fixed-index step — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` The package command remains unrun. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
+- `blocked_by`: no repository implementation dependency remains before the bounded serial Attempt 13 operator run.
+- `next_action`: staff one fresh serial operator for the frozen recovery audit, exact package command, Lead artifact checkpoint, coordinator-owned install/launch/stop/restore, and complete residue report. Any contract or runtime failure returns `REOPEN_REQUEST`; no code correction is mixed into the gate.
 
 ## Ownership And Authority
 
