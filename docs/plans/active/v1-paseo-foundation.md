@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v79`
-- `current_frontier`: `R5-MAS-ATTEMPT14-LSOF-NOMATCH-CORRECTION`
-- `state`: `ATTEMPT_14_LSOF_NOMATCH_CORRECTION_PENDING`
+- `plan_revision`: `v80`
+- `current_frontier`: `R5-MAS-ATTEMPT14-RETAINED-TRANSACTION-RECOVERY`
+- `state`: `LSOF_CORRECTION_LEAD_ACCEPTED_RECOVERY_AUTHORIZATION_REQUIRED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: repository-only strict MAS lsof no-match correction, an immutable child of exact base `c27bd86ffb27f888da25cd02c6ec4e0f6fffeda3`; the immutable child is recorded in `PEER_DISPOSITION v1`. The accepted Applications-parent/runtime-owner candidate `b3d96b4c1618423a16f18fe271bc9e565974800c` remains an implementation ancestor.
+- `candidate`: Lead-accepted strict MAS lsof no-match correction `3ba7dc312b418133a99eb726787dbee156501db3`, an immutable child of accepted package-proof/recovery convergence `c27bd86ffb27f888da25cd02c6ec4e0f6fffeda3`. The accepted Applications-parent/runtime-owner candidate `b3d96b4c1618423a16f18fe271bc9e565974800c` remains an implementation ancestor.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 13 is consumed by the pre-install package-parent failure recorded below. The one-time initial fixed-index authorization — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` — is spent; no package/sign/install/restore/launch retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: Lead review and acceptance of the repository-only strict lsof no-match correction before any external Attempt 14 Phase 1 or Phase 2 action.
-- `next_action`: inspect the immutable strict-lsof child from exact base `c27bd86ffb27f888da25cd02c6ec4e0f6fffeda3`; keep package/sign/install/launch/stop/restore/archive and all external gates closed.
+- `blocked_by`: the previous recovery invocation was explicitly no-retry; one further corrected recovery invocation requires fresh owner authorization.
+- `next_action`: request authorization for exactly one coordinator restore of retained Attempt 14 run `2b2905cf-7acd-493f-9aa7-5a6401c1e2e4`; package/sign/install/launch and every excluded gate remain closed.
 
 ## Ownership And Authority
 
@@ -2027,6 +2027,17 @@ path inspection is authorized by this correction.
 Local, hook, CI, and branch-protection enforcement levels are recorded in the
 peer handoff; no hook, CI, or branch result is claimed unless directly
 observed.
+
+Lead accepted candidate `3ba7dc312b418133a99eb726787dbee156501db3`
+on 2026-09-04 after personally rerunning the complete focused MAS transaction
+set (`148/148`), typecheck, the MAS baseline validator, syntax, and diff checks.
+Independent FAST closeout returned `CLOSEOUT_PASS` for all three accepted lsof
+findings, including disposable real empty/held/missing-path behavior and the
+bounded negative result matrix. This is repository acceptance only. The first
+retained-run recovery invocation failed before rollback and was explicitly
+no-retry; all package/runtime roots remain retained. A further coordinator
+restore requires fresh owner authorization and must not include package,
+install, or launch.
 
 ### Risks And Recovery
 
