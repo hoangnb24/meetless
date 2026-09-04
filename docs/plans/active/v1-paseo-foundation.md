@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v97`
-- `current_frontier`: `R5-MAS-POST-ATTEMPT15-READINESS-DECISION`
-- `state`: `ATTEMPT15_DIAGNOSIS_COMPLETE_OWNER_SCOPE_DECISION_REQUIRED`
+- `plan_revision`: `v98`
+- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-16`
+- `state`: `ATTEMPT16_ONE_SHOT_AUTHORIZED_PHASE1_PACKAGE_CHECKPOINT`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` is terminal `archived`; prior app and runtime are canonical, and accepted corrections `0d3445b84d91053a1d0911ceaf184f7c2eb9dc51` and `8e3401a20972849ba61a5c5401ddd88fcb8d17ca` remain repository truth.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 15 is consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: any new package/install/launch attempt needs separate owner authorization; changing automatic speech-model download or relay startup requires a product-policy choice.
-- `next_action`: preserve current behavior for an isolated future readiness attempt unless the owner chooses to defer speech-model downloads and/or relay connection; do not invent a renderer correction from incomplete evidence.
+- `blocked_by`: none for Attempt 16 Phase 1; Phase 2 depends on Lead acceptance of the new artifact checkpoint.
+- `next_action`: package exactly once into a fresh proof root and run complete artifact plus fixed-path preflight validation without install or launch.
 
 ## Ownership And Authority
 
@@ -2398,6 +2398,27 @@ separately authorized signed MAS launch can prove the full live composition.
 The reconciled recommendation is to preserve current network behavior for one
 future isolated readiness attempt so that the already-corrected handoff remains
 the only changed variable; decide startup-network policy separately afterward.
+
+### R5 MAS Attempt 16 authorization (2026-09-04; current frontier)
+
+The owner accepted that recommendation with the exact statement `Giữ nguyên
+network behavior và cho phép Attempt 16 đúng một lần.` Lead binds it to one
+serial two-checkpoint development attempt. Phase 1 may invoke the MAS
+development package command exactly once in a fresh proof root and perform
+complete artifact plus fixed-path preflight validation. Phase 2 may proceed
+without another owner prompt only after Lead accepts that checkpoint; it may
+invoke one coordinator install, one LaunchServices launch/readiness sequence,
+and one coordinator recovery. A failure consumes the attempt and remains
+no-retry.
+
+Attempt 16 preserves the current local speech-model reconciliation and relay
+startup behavior so the accepted handoff/quarantine corrections are the only
+relevant changed variables. This is diagnostic acceptance of existing network
+behavior, not authority for new endpoints, credentials, purchase/restore,
+RevenueCat mutation/dashboard/cache-child inspection, Convex, production,
+recording/transcription/TCC/export, upload/submission/publication/App Review,
+push, or manual filesystem recovery. Attempt 14 and Attempt 15 terminal
+archives/fresh-retained evidence are not cleanup targets.
 
 ### Risks And Recovery
 
