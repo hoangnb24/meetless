@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -9,6 +9,7 @@ import {
   newPackageTransactionId,
   fingerprintPath,
   packageTransactionPaths,
+  readPackageRecoveryProof,
   recoverPackageTransaction,
   readPackageTransactionProof,
   replacePackageBundle,
@@ -335,7 +336,7 @@ describe("macOS package replacement transaction", () => {
     const ownerToken = "M7-test-owner";
     const inspect = async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath });
 
-    for (const state of ["staged", "target-backed-up", "candidate-installed", "identity-published", "committed"]) {
+    for (const state of ["prepared", "staged", "target-backed-up", "candidate-installed", "identity-published", "committed"]) {
       const runId = newPackageTransactionId();
       await expect(replacePackageBundle({ source, target, identityPath, ownerToken, runId, inspect, faultAt: state }))
         .rejects.toThrow(`injected package transaction interruption at ${state}`);
@@ -346,6 +347,397 @@ describe("macOS package replacement transaction", () => {
       });
       await expect(readFile(path.join(target, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
       await expect(readFile(identityPath, "utf8")).resolves.toBe("prior identity\n");
+    }
+  });
+
+  it("proves every known package rollback state from the fixed journal before resuming recovery", async () => {
+    for (const state of ["prepared", "staged", "target-backed-up", "candidate-installed", "identity-published", "committed"]) {
+      const root = await setup({ identity: false });
+      const manifestPath = path.join(root.root, `app-store-development-recovery-${state}.json`);
+      const binding = await makeBinding(root.source, manifestPath, `recovery-proof-${state}`);
+      const ownerToken = `M7-recovery-proof-${state}`;
+      const runId = newPackageTransactionId();
+      await expect(replacePackageBundle({
+        source: root.source,
+        target: root.target,
+        identityPath: root.identityPath,
+        ownerToken,
+        runId,
+        inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+        artifactBinding: binding,
+        faultAt: state,
+      })).rejects.toThrow(`injected package transaction interruption at ${state}`);
+
+      const proof = await readPackageRecoveryProof({
+        target: root.target,
+        identityPath: root.identityPath,
+        ownerToken,
+        runId,
+        runtimeRootPath: root.root,
+        expectedArtifactBinding: binding,
+      });
+      expect(proof).toMatchObject({ status: "recoverable", state, ownerToken, runId });
+      await recoverPackageTransaction(packageTransactionPaths(root.target, runId).journal, {
+        ownerToken,
+        target: root.target,
+        identityPath: root.identityPath,
+        runtimeRootPath: root.root,
+        requireRecoveryProof: true,
+        expectedArtifactBinding: binding,
+      });
+      await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
+      await expect(lstat(root.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+
+    for (const state of ["restoring", "target-displaced", "target-restored", "identity-restored"]) {
+      const root = await setup({ identity: false });
+      const manifestPath = path.join(root.root, `app-store-development-recovery-${state}.json`);
+      const binding = await makeBinding(root.source, manifestPath, `recovery-proof-${state}`);
+      const ownerToken = `M7-recovery-proof-${state}`;
+      const transaction = await replacePackageBundle({
+        source: root.source,
+        target: root.target,
+        identityPath: root.identityPath,
+        ownerToken,
+        runId: newPackageTransactionId(),
+        inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+        artifactBinding: binding,
+      });
+      await expect(restorePackageTransaction(transaction, {
+        ownerToken,
+        target: root.target,
+        identityPath: root.identityPath,
+        runtimeRootPath: root.root,
+        requireRecoveryProof: true,
+        expectedArtifactBinding: binding,
+        faultAt: state,
+      })).rejects.toThrow(`injected package transaction interruption at ${state}`);
+      const proof = await readPackageRecoveryProof({
+        target: root.target,
+        identityPath: root.identityPath,
+        ownerToken,
+        runId: transaction.runId,
+        runtimeRootPath: root.root,
+        expectedArtifactBinding: binding,
+      });
+      expect(proof).toMatchObject({ status: "recoverable", state });
+      await recoverPackageTransaction(packageTransactionPaths(root.target, transaction.runId).journal, {
+        ownerToken,
+        target: root.target,
+        identityPath: root.identityPath,
+        runtimeRootPath: root.root,
+        requireRecoveryProof: true,
+        expectedArtifactBinding: binding,
+      });
+      await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
+      await expect(lstat(root.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  it("keeps fresh-target package recovery bound to prior target absence", async () => {
+    const root = await setup({ identity: false });
+    await rm(root.target, { recursive: true });
+    const binding = await makeBinding(root.source, path.join(root.root, "app-store-development-fresh-target.json"), "fresh-target-proof");
+    const transaction = await replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-fresh-target-owner",
+      runId: newPackageTransactionId(),
+      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      artifactBinding: binding,
+    });
+    await expect(readPackageRecoveryProof({
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: transaction.ownerToken,
+      runId: transaction.runId,
+      runtimeRootPath: root.root,
+      expectedArtifactBinding: binding,
+    })).resolves.toMatchObject({ status: "recoverable", state: "committed" });
+    await expect(readPackageTransactionProof({
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: transaction.ownerToken,
+      runId: transaction.runId,
+      runtimeRootPath: root.root,
+      expectedArtifactBinding: binding,
+    })).resolves.toMatchObject({ status: "committed" });
+    await recoverPackageTransaction(transaction.paths.journal, {
+      ownerToken: transaction.ownerToken,
+      target: root.target,
+      identityPath: root.identityPath,
+      runtimeRootPath: root.root,
+      requireRecoveryProof: true,
+      expectedArtifactBinding: binding,
+    });
+    await expect(lstat(root.target)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(root.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("resumes an in-flight package cleanup intent before rollback", async () => {
+    const root = await setup({ identity: false });
+    const binding = await makeBinding(root.source, path.join(root.root, "app-store-development-cleanup.json"), "cleanup-proof");
+    const transaction = await replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-cleanup-owner",
+      runId: newPackageTransactionId(),
+      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      artifactBinding: binding,
+    });
+    const cleanupPath = `${transaction.target}.m7-cleanup-${transaction.runId}-${createHash("sha256")
+      .update(`${transaction.target}\0installed package`).digest("hex").slice(0, 16)}`;
+    const journal = JSON.parse((await readFile(transaction.paths.journal)).toString("utf8"));
+    journal.state = "restoring";
+    journal.cleanupPath = cleanupPath;
+    journal.cleanupSource = transaction.target;
+    journal.cleanupFingerprint = transaction.candidateFingerprint;
+    journal.cleanupIdentity = transaction.candidateIdentity;
+    await rename(transaction.target, cleanupPath);
+    await writeFile(transaction.paths.journal, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+
+    await expect(readPackageRecoveryProof({
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: transaction.ownerToken,
+      runId: transaction.runId,
+      runtimeRootPath: root.root,
+      expectedArtifactBinding: binding,
+    })).resolves.toMatchObject({ status: "recoverable", state: "restoring" });
+    await restorePackageTransaction(transaction, {
+      ownerToken: transaction.ownerToken,
+      target: root.target,
+      identityPath: root.identityPath,
+      runtimeRootPath: root.root,
+      requireRecoveryProof: true,
+      expectedArtifactBinding: binding,
+    });
+    await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
+    await expect(lstat(root.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(cleanupPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not treat a missing journal with a fixed package residue as absent", async () => {
+    const root = await setup({ identity: false });
+    const binding = await makeBinding(root.source, path.join(root.root, "app-store-development-missing-journal.json"), "missing-journal-proof");
+    const transaction = await replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-missing-journal-owner",
+      runId: newPackageTransactionId(),
+      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      artifactBinding: binding,
+    });
+    await rm(transaction.paths.journal);
+    await cp(root.source, transaction.paths.staging, { recursive: true });
+    await rm(root.identityPath);
+    const before = await capturePackageState(root, transaction);
+    const proofInput = {
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: transaction.ownerToken,
+      runId: transaction.runId,
+      runtimeRootPath: root.root,
+      expectedArtifactBinding: binding,
+      allowMissing: true,
+    };
+    await expect(readPackageRecoveryProof(proofInput)).rejects.toThrow(/journal is missing while package staging is present/);
+    await expect(restorePackageTransaction(transaction, {
+      ownerToken: transaction.ownerToken,
+      target: root.target,
+      identityPath: root.identityPath,
+      runtimeRootPath: root.root,
+      requireRecoveryProof: true,
+      expectedArtifactBinding: binding,
+    })).rejects.toThrow(/journal is missing at the fixed target\/run-derived path/);
+    await expect(capturePackageState(root, transaction)).resolves.toEqual(before);
+  });
+
+  it("rejects malformed, foreign, colliding, and impossible recovery states before any rollback mutation", async () => {
+    const cases: Array<{
+      label: string;
+      mutate: (root: PackageFixture, transaction: any, binding: any) => Promise<Record<string, unknown> | void>;
+      message: RegExp;
+      options?: (root: PackageFixture, transaction: any, binding: any) => Record<string, unknown>;
+    }> = [
+      {
+        label: "altered identity bytes",
+        mutate: async (root) => {
+          const bytes = await readFile(root.identityPath, "utf8");
+          await writeFile(root.identityPath, bytes.replace("com.meetless.app", "com.other.app"));
+        },
+        message: /published identity.*bytes, digest, or metadata/,
+      },
+      {
+        label: "altered identity format",
+        mutate: async (root) => {
+          const bytes = await readFile(root.identityPath, "utf8");
+          await writeFile(root.identityPath, JSON.stringify(JSON.parse(bytes)));
+        },
+        message: /published identity.*bytes, digest, or metadata/,
+      },
+      {
+        label: "missing identity",
+        mutate: async (root) => { await rm(root.identityPath); },
+        message: /published identity.*bytes, digest, or metadata/,
+      },
+      {
+        label: "replaced identity",
+        mutate: async (root) => {
+          const bytes = await readFile(root.identityPath);
+          await rm(root.identityPath);
+          await writeFile(root.identityPath, bytes, { mode: 0o600 });
+        },
+        message: /published identity.*bytes, digest, or metadata/,
+      },
+      {
+        label: "symlink identity",
+        mutate: async (root) => {
+          const bytes = await readFile(root.identityPath);
+          const destination = path.join(root.root, "identity-copy.json");
+          await writeFile(destination, bytes, { mode: 0o600 });
+          await rm(root.identityPath);
+          await symlink(destination, root.identityPath);
+        },
+        message: /published identity.*bytes, digest, or metadata/,
+      },
+      {
+        label: "staging collision",
+        mutate: async (root, transaction) => { await cp(root.source, transaction.paths.staging, { recursive: true }); },
+        message: /unexpected staging artifact or collision/,
+      },
+      {
+        label: "displaced collision",
+        mutate: async (root, transaction) => { await cp(root.source, transaction.paths.displaced, { recursive: true }); },
+        message: /unexpected displaced candidate or collision/,
+      },
+      {
+        label: "identity temporary collision",
+        mutate: async (root, transaction) => {
+          await writeFile(`${root.identityPath}.m7.${transaction.runId}.identity.tmp`, await readFile(root.identityPath), { mode: 0o600 });
+        },
+        message: /unjournaled identity temporary or collision/,
+      },
+      {
+        label: "malformed journal",
+        mutate: async (_root, transaction) => { await writeFile(transaction.paths.journal, "not-json\n"); },
+        message: /journal is malformed/,
+      },
+      {
+        label: "unknown state",
+        mutate: async (_root, transaction) => {
+          const record = JSON.parse((await readFile(transaction.paths.journal)).toString("utf8"));
+          record.state = "unknown-state";
+          await writeFile(transaction.paths.journal, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+        },
+        message: /unknown or non-rollback state/,
+      },
+      {
+        label: "impossible target-restored state",
+        mutate: async (_root, transaction) => {
+          const record = JSON.parse((await readFile(transaction.paths.journal)).toString("utf8"));
+          record.state = "target-restored";
+          await writeFile(transaction.paths.journal, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+        },
+        message: /unexpected prior-package backup|target-restored state is not the exact prior-target shape/,
+      },
+      {
+        label: "wrong owner",
+        mutate: async () => undefined,
+        message: /owner token mismatch/,
+        options: () => ({ ownerToken: "M7-foreign-owner" }),
+      },
+      {
+        label: "wrong artifact",
+        mutate: async () => undefined,
+        message: /artifact binding differs from the authorized artifact/,
+        options: (_root, _transaction, binding) => ({ expectedArtifactBinding: { ...binding, artifactDigest: "0".repeat(64) } }),
+      },
+      {
+        label: "wrong run",
+        mutate: async () => undefined,
+        message: /journal is missing at the fixed target\/run-derived path/,
+        options: (root, transaction) => ({
+          runId: `${transaction.runId}-foreign`,
+          target: root.target,
+          identityPath: root.identityPath,
+        }),
+      },
+      {
+        label: "wrong identity path",
+        mutate: async () => undefined,
+        message: /identity path is not the fixed canonical identity/,
+        options: (root, transaction) => ({
+          runId: transaction.runId,
+          target: root.target,
+          identityPath: path.join(root.root, "foreign-identity.json"),
+        }),
+      },
+      {
+        label: "wrong target path",
+        mutate: async () => undefined,
+        message: /target is not the fixed canonical target|journal is missing at the fixed target\/run-derived path/,
+        options: (root, transaction) => ({
+          runId: transaction.runId,
+          target: path.join(root.root, "foreign.app"),
+          identityPath: root.identityPath,
+        }),
+      },
+      {
+        label: "wrong candidate fingerprint",
+        mutate: async (_root, transaction) => {
+          const record = JSON.parse((await readFile(transaction.paths.journal)).toString("utf8"));
+          record.candidateFingerprint = "0".repeat(64);
+          await writeFile(transaction.paths.journal, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+        },
+        message: /artifact binding does not match the exact candidate fingerprint/,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const root = await setup({ identity: false });
+      const binding = await makeBinding(root.source, path.join(root.root, `app-store-development-negative-${testCase.label.replaceAll(" ", "-")}.json`), `negative-${testCase.label}`);
+      const transaction = await replacePackageBundle({
+        source: root.source,
+        target: root.target,
+        identityPath: root.identityPath,
+        ownerToken: "M7-recovery-negative-owner",
+        runId: newPackageTransactionId(),
+        inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+        artifactBinding: binding,
+      });
+      await testCase.mutate(root, transaction, binding);
+      const before = await capturePackageState(root, transaction);
+      const proofInput = {
+        target: root.target,
+        identityPath: root.identityPath,
+        ownerToken: transaction.ownerToken,
+        runId: transaction.runId,
+        runtimeRootPath: root.root,
+        expectedArtifactBinding: binding,
+        ...testCase.options?.(root, transaction, binding),
+      };
+      await expect(readPackageRecoveryProof(proofInput)).rejects.toThrow(testCase.message);
+      const restoreTransaction = testCase.label === "wrong run"
+        ? {
+          ...transaction,
+          runId: `${transaction.runId}-foreign`,
+          paths: packageTransactionPaths(root.target, `${transaction.runId}-foreign`),
+        }
+        : transaction;
+      await expect(restorePackageTransaction(restoreTransaction, {
+        ownerToken: transaction.ownerToken,
+        target: root.target,
+        identityPath: root.identityPath,
+        runtimeRootPath: root.root,
+        requireRecoveryProof: true,
+        expectedArtifactBinding: binding,
+        ...(testCase.options?.(root, transaction, binding) ?? {}),
+      })).rejects.toThrow(testCase.message);
+      await expect(capturePackageState(root, transaction)).resolves.toEqual(before);
     }
   });
 
@@ -695,10 +1087,10 @@ describe("macOS package replacement transaction", () => {
       target: root.target,
       identityPath: root.identityPath,
       requireArtifactBinding: true,
-      requireAuthorizedIdentity: true,
+      requireRecoveryProof: true,
       expectedArtifactBinding: binding,
       runtimeRootPath: root.root,
-    })).rejects.toThrow(/metadata does not exactly match/);
+    })).rejects.toThrow(/published identity.*bytes, digest, or metadata|metadata does not exactly match/);
     await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe(candidateMarker);
   });
 
@@ -944,4 +1336,26 @@ async function makeBinding(source: string, manifestPath: string, publicKey: stri
     signatureDigest: "f".repeat(64),
     publicSdkKeySha256: createHash("sha256").update(publicKey).digest("hex"),
   });
+}
+
+async function capturePackageState(root: PackageFixture, transaction: any) {
+  const candidates = [
+    root.source,
+    root.target,
+    root.identityPath,
+    ...Object.values(transaction.paths),
+    `${root.identityPath}.m7.${transaction.runId}.identity.tmp`,
+  ];
+  return Promise.all(candidates.map(async (candidate) => {
+    const info = await lstat(candidate).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    return {
+      candidate,
+      type: info?.isDirectory() ? "directory" : info?.isFile() ? "file" : info?.isSymbolicLink() ? "symlink" : info ? "special" : null,
+      fingerprint: await fingerprintPath(candidate),
+      bytes: info?.isFile() ? await readFile(candidate) : null,
+    };
+  }));
 }

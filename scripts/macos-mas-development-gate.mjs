@@ -80,6 +80,7 @@ import { acceptedMacOSPackagePaths } from "./lib/macos-package-contract.mjs";
 import {
   fingerprintPath,
   packageTransactionPaths,
+  readPackageRecoveryProof,
   readPackageTransactionProof,
   replacePackageBundle,
   restorePackageTransaction,
@@ -167,11 +168,25 @@ export function masDevelopmentRuntimeContext({ userHome = homedir(), contract = 
   };
 }
 
-function masGatePackageLockOptions(context) {
+function masGatePackageLockOptions(context, dependencies = {}) {
+  const packageParentPath = resolvePackageFilesystemPath(path.dirname(context.bundlePath), dependencies?.packageFilesystem);
   return {
     parentPath: context.parentPath,
-    packageParentPath: path.dirname(context.bundlePath),
+    packageParentPath,
   };
+}
+
+function resolvePackageFilesystemPath(candidate, filesystem) {
+  if (filesystem === undefined) return candidate;
+  if (!filesystem || typeof filesystem !== "object" || Array.isArray(filesystem) ||
+      typeof filesystem.resolvePath !== "function" || Object.keys(filesystem).some((name) => name !== "resolvePath")) {
+    throw coordinatorError("MAS package filesystem must expose only one low-level resolvePath adapter");
+  }
+  const resolved = filesystem.resolvePath(candidate);
+  if (typeof resolved !== "string" || !path.isAbsolute(resolved) || path.resolve(resolved) !== resolved || resolved.includes("\0")) {
+    throw coordinatorError("MAS package filesystem resolvePath must return one exact canonical absolute path");
+  }
+  return resolved;
 }
 
 function assertMasDevelopmentContext(context) {
@@ -295,7 +310,7 @@ async function readMasDevelopmentGateStatusWithProof({ context, dependencies = {
         ...runtimeStatus,
         package: { status: "not-applicable" },
       },
-      packageProof: null,
+      packageRecoveryProof: null,
       session: null,
     };
   }
@@ -303,7 +318,7 @@ async function readMasDevelopmentGateStatusWithProof({ context, dependencies = {
   if (session.runId !== runtimeStatus.runId) {
     throw coordinatorError("runtime status and its session journal have different run IDs");
   }
-  const packageProof = await readPackageProofForSession({
+  const packageRecoveryProof = await readPackageRecoveryProofForSession({
     context,
     session,
     dependencies,
@@ -312,23 +327,21 @@ async function readMasDevelopmentGateStatusWithProof({ context, dependencies = {
   return {
     status: {
       ...runtimeStatus,
-      package: packageProofSummary(packageProof),
+      package: packageProofSummary(packageRecoveryProof),
     },
-    packageProof: packageProof.status === "committed" ? packageProof : null,
+    packageRecoveryProof: packageRecoveryProof.status === "recoverable" ? packageRecoveryProof : null,
     session,
   };
 }
 
-async function readPackageProofForSession({ context, session, dependencies = {}, allowMissing = false } = {}) {
+async function readPackageRecoveryProofForSession({ context, session, dependencies = {}, allowMissing = false } = {}) {
   if (!session || typeof session !== "object" || typeof session.runId !== "string" || typeof session.ownerToken !== "string") {
     throw coordinatorError("package identity authorization has no exact runtime session owner and run");
   }
   const journalPath = packageTransactionPaths(context.bundlePath, session.runId).journal;
-  const readProof = dependencies.readPackageTransactionProof ?? readPackageTransactionProof;
-  if (typeof readProof !== "function") throw coordinatorError("package identity authorization reader is unavailable");
   let proof;
   try {
-    proof = await readProof({
+    proof = await readPackageRecoveryProof({
       target: context.bundlePath,
       identityPath: context.identityPath,
       runId: session.runId,
@@ -336,10 +349,35 @@ async function readPackageProofForSession({ context, session, dependencies = {},
       runtimeRootPath: context.runtimeRoot,
       journalPath,
       allowMissing,
+      filesystem: dependencies.packageFilesystem,
     });
   } catch (error) {
     if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) throw error;
-    throw coordinatorError(`package identity authorization failed before coordinator use: ${describe(error)}`, error);
+    throw coordinatorError(`package recovery authorization failed before coordinator use: ${describe(error)}`, error);
+  }
+  assertPackageProofComposition(proof, context, session, journalPath);
+  return proof;
+}
+
+async function readPackageLaunchProofForSession({ context, session, dependencies = {} } = {}) {
+  if (!session || typeof session !== "object" || typeof session.runId !== "string" || typeof session.ownerToken !== "string") {
+    throw coordinatorError("package identity authorization has no exact runtime session owner and run");
+  }
+  const journalPath = packageTransactionPaths(context.bundlePath, session.runId).journal;
+  let proof;
+  try {
+    proof = await readPackageTransactionProof({
+      target: context.bundlePath,
+      identityPath: context.identityPath,
+      runId: session.runId,
+      ownerToken: session.ownerToken,
+      runtimeRootPath: context.runtimeRoot,
+      journalPath,
+      filesystem: dependencies.packageFilesystem,
+    });
+  } catch (error) {
+    if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) throw error;
+    throw coordinatorError(`package launch authorization failed before coordinator use: ${describe(error)}`, error);
   }
   assertPackageProofComposition(proof, context, session, journalPath);
   return proof;
@@ -350,22 +388,18 @@ function assertPackageProofComposition(proof, context, session, journalPath) {
     throw coordinatorError("package identity authorization returned a proof at the wrong fixed journal path");
   }
   if (proof.status === "absent") return;
-  if (proof.status !== "committed" || proof.ownerToken !== session.ownerToken || proof.runId !== session.runId ||
+  if ((proof.status !== "committed" && proof.status !== "recoverable") || proof.ownerToken !== session.ownerToken || proof.runId !== session.runId ||
       proof.target !== context.bundlePath || proof.identityPath !== context.identityPath ||
       !proof.transaction || typeof proof.transaction !== "object" || Array.isArray(proof.transaction)) {
-    throw coordinatorError("package identity authorization is not bound to the exact committed package, owner, run, and identity path");
-  }
-  if (proof.transaction.ownerToken !== session.ownerToken || proof.transaction.runId !== session.runId ||
-      proof.transaction.target !== context.bundlePath || proof.transaction.identityPath !== context.identityPath ||
-      proof.transaction.state !== "committed") {
-    throw coordinatorError("package identity authorization transaction binding is not exact");
+    throw coordinatorError("package identity authorization is not bound to the exact package, owner, run, and identity path");
   }
 }
 
 function packageProofSummary(proof) {
   if (proof.status === "absent") return { status: "absent", journalPath: proof.journalPath };
   return {
-    status: "committed",
+    status: proof.state === "committed" ? "committed" : "recovery-required",
+    state: proof.state,
     journalPath: proof.journalPath,
     ownerToken: proof.ownerToken,
     runId: proof.runId,
@@ -550,6 +584,8 @@ export async function installMasDevelopmentGate({
           target: context.bundlePath,
           identityPath: context.identityPath,
           requireArtifactBinding: true,
+          requireRecoveryProof: true,
+          expectedArtifactBinding: validation.artifactBinding,
           lockParentPath: context.parentPath,
           runtimeRootPath: context.runtimeRoot,
           lockLease: lease,
@@ -601,8 +637,16 @@ export async function launchMasDevelopmentGate({
     if (status.status !== "active" || status.phase !== "ready") {
       throw coordinatorError(`MAS launch requires one active ready transaction; observed ${status.status}/${status.phase ?? "none"}`);
     }
-    if (!composed.packageProof) {
+    if (!composed.packageRecoveryProof) {
       throw coordinatorError("MAS launch requires one committed package transaction with an authorized published identity");
+    }
+    const packageLaunchProof = await readPackageLaunchProofForSession({
+      context,
+      session: composed.session,
+      dependencies,
+    });
+    if (packageLaunchProof.status !== "committed") {
+      throw coordinatorError("MAS launch requires the package transaction's committed-only authorization proof");
     }
     const handoff = await readHostHandoff(status, context);
     const launch = dependencies.launch ?? (async () => {
@@ -1237,7 +1281,7 @@ export async function restoreMasDevelopmentGate({
         // Stop proof releases the host lease before returning. Reacquire the
         // same sibling lock for package mutation so a new native host cannot
         // claim an available handoff between absence proof and rollback.
-        const packageLease = await acquireMasGateLock(masGatePackageLockOptions(context));
+        const packageLease = await acquireMasGateLock(masGatePackageLockOptions(context, dependencies));
         try {
           const composed = await readMasDevelopmentGateStatusWithProof({ context, dependencies, lockLease: packageLease });
           const status = composed.status;
@@ -1249,14 +1293,15 @@ export async function restoreMasDevelopmentGate({
           if (typeof session.runId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(session.runId)) {
             throw coordinatorError("MAS session journal run ID is invalid; preserve every root and do not derive package paths");
           }
-          if (composed.packageProof) {
-            await restorePackageTransaction(composed.packageProof.transaction, {
-              ownerToken: session.ownerToken,
-              target: context.bundlePath,
-              identityPath: context.identityPath,
+          if (composed.packageRecoveryProof) {
+            const packageTransaction = composed.packageRecoveryProof.transaction;
+            await restorePackageTransaction(packageTransaction, {
+              ownerToken: packageTransaction.ownerToken,
+              target: packageTransaction.target,
+              identityPath: packageTransaction.identityPath,
               requireArtifactBinding: true,
-              requireAuthorizedIdentity: true,
-              expectedArtifactBinding: composed.packageProof.artifactBinding,
+              requireRecoveryProof: true,
+              expectedArtifactBinding: packageTransaction.artifactBinding,
               lockParentPath: context.parentPath,
               runtimeRootPath: context.runtimeRoot,
               lockLease: packageLease,

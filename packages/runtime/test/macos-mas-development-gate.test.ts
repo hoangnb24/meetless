@@ -15,6 +15,7 @@ import {
   masLiveAbsentObservation,
   readMasDevelopmentGateStatus,
   readMasGateSessionStatus,
+  restoreMasDevelopmentGate,
   restoreInRequiredOrder,
   stopMasDevelopmentGate,
   validateMasDevelopmentInstallArtifact,
@@ -41,7 +42,11 @@ import {
   macAppStorePackagedHostConfiguration,
   macAppStorePackagedMarker,
 } from "../../../scripts/lib/macos-app-store-package-contract.mjs";
-import { packageTransactionPaths } from "../../../scripts/lib/macos-package-transaction.mjs";
+import {
+  fingerprintPath,
+  packageTransactionPaths,
+  replacePackageBundle,
+} from "../../../scripts/lib/macos-package-transaction.mjs";
 import {
   MACOS_APP_STORE_CHILD_ENTITLEMENTS,
   MACOS_APP_STORE_PARENT_ENTITLEMENTS,
@@ -478,26 +483,65 @@ describe("MAS development gate coordinator", () => {
     await genuine.release();
   });
 
-  it("releases the gate lock before waiting for the native host to claim the durable handoff", async () => {
+  it("uses an actual committed package transaction for post-install launch and restore composition", async () => {
     const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-launch-test-")));
     roots.push(base);
     const context = masDevelopmentRuntimeContext({ userHome: base });
     await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
     await seedMasSessionIndex(context);
-    const absent = masLiveAbsentObservation(context);
-    const options = {
-      runtimeRoot: context.runtimeRoot,
-      contractRuntimeRoot: context.runtimeRoot,
-      runtimeRootParent: context.parentPath,
-      activePath: context.activePath,
-      identityRelativePath: context.identityRelativePath,
+    await mkdir(context.runtimeRoot, { recursive: true, mode: 0o700 });
+    await writeFile(path.join(context.runtimeRoot, "prior-runtime-state"), "prior runtime\n");
+    const session = await beginMasGateSessionTransaction({
+      ...masGateRuntimeOptions(context, { requiredFreeBytes: 1, dependencies: { processRows: async () => [], listeners: async () => [], sockets: async () => [], openHandles: async () => [] } }),
+    });
+    const packageParent = path.join(base, "Applications");
+    const packageTarget = path.join(packageParent, "Meetless.app");
+    const packageSource = path.join(base, "candidate.app");
+    await mkdir(packageParent, { recursive: true, mode: 0o700 });
+    await mkdir(path.join(packageTarget, "Contents"), { recursive: true, mode: 0o700 });
+    await writeFile(path.join(packageTarget, "Contents", "marker"), "prior package\n");
+    await mkdir(path.join(packageSource, "Contents"), { recursive: true, mode: 0o700 });
+    await writeFile(path.join(packageSource, "Contents", "marker"), "candidate package\n");
+    const manifestPath = path.join(base, "app-store-development-manifest.json");
+    const manifestBytes = Buffer.from("retained package manifest\n");
+    await writeFile(manifestPath, manifestBytes, { mode: 0o600 });
+    const packageFingerprint = await fingerprintPath(packageSource);
+    if (!packageFingerprint) throw new Error("package fixture source fingerprint is missing");
+    const artifactBinding = freezeMasGateArtifactBinding({
+      schema: "MAS_GATE_ARTIFACT_BINDING v1",
+      version: 1,
+      manifestPath,
+      manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+      bundlePath: packageSource,
+      bundleFingerprint: packageFingerprint,
+      artifactDigest: "a".repeat(64),
+      candidateSnapshotDigest: "b".repeat(64),
+      packageInputDigest: "c".repeat(64),
+      artifactInputDigest: "d".repeat(64),
+      licenseDigest: "e".repeat(64),
+      signatureDigest: "f".repeat(64),
+      publicSdkKeySha256: createHash("sha256").update("fixture-public-key").digest("hex"),
+    });
+    const packageTransaction = await replacePackageBundle({
+      source: packageSource,
+      target: packageTarget,
       identityPath: context.identityPath,
-      requiredFreeBytes: 1,
-      assertNoLiveOwnedRuntime: async () => absent,
-    };
-    const session = await beginMasGateSessionTransaction(options);
-    await mkdir(path.dirname(context.identityPath), { recursive: true, mode: 0o700 });
-    await writeFile(context.identityPath, "authorized package identity\n", { mode: 0o600 });
+      ownerToken: session.ownerToken,
+      runId: session.runId,
+      artifactBinding,
+      inspect: async () => ({
+        bundleIdentifier: context.contract.bundleIdentifier,
+        bundlePath: context.bundlePath,
+        bundleRealPath: context.bundlePath,
+        executablePath: context.executablePath,
+        designatedRequirement: "identifier \\\"com.meetless.app\\\"",
+        cdHash: "a".repeat(40),
+        binarySha256: "b".repeat(64),
+        binaryDevice: 1,
+        binaryInode: 2,
+        binarySize: 10,
+      }),
+    });
     const installed = {
       bundleIdentifier: context.contract.bundleIdentifier,
       bundlePath: context.bundlePath,
@@ -513,30 +557,21 @@ describe("MAS development gate coordinator", () => {
     const available = createMasHostHandoff(context, session, installed);
     await writeFile(path.join(session.activePath, "host-handoff.json"), `${JSON.stringify(available)}\n`, { mode: 0o600 });
     const packageJournalPath = packageTransactionPaths(context.bundlePath, session.runId).journal;
-    const packageProof = {
-      status: "committed",
-      journalPath: packageJournalPath,
-      ownerToken: session.ownerToken,
-      runId: session.runId,
-      target: context.bundlePath,
-      identityPath: context.identityPath,
-      transaction: {
-        schema: "MAS_PACKAGE_TRANSACTION v4",
-        version: 4,
-        ownerToken: session.ownerToken,
-        runId: session.runId,
-        target: context.bundlePath,
-        identityPath: context.identityPath,
-        state: "committed",
+    const packageFilesystem = {
+      resolvePath: (candidate: string) => {
+        const logicalParent = path.dirname(context.bundlePath);
+        const prefix = `${logicalParent}${path.sep}`;
+        if (candidate === logicalParent) return packageParent;
+        if (candidate.startsWith(prefix)) return path.join(packageParent, candidate.slice(prefix.length));
+        return candidate;
       },
     };
-    let suppliedProof = packageProof;
     const launchDependencies = {
       processRows: async () => [],
       listeners: async () => [],
       sockets: async () => [],
       openHandles: async () => [],
-      readPackageTransactionProof: async () => suppliedProof,
+      packageFilesystem,
     };
     const composedStatus = await readMasDevelopmentGateStatus({
       context,
@@ -545,19 +580,9 @@ describe("MAS development gate coordinator", () => {
     expect(composedStatus).toMatchObject({
       status: "active",
       phase: "ready",
-      package: { status: "committed", journalPath: packageJournalPath },
+      package: { status: "committed", state: "committed", journalPath: packageJournalPath },
     });
     let launchCalled = false;
-    await expect(launchMasDevelopmentGate({
-      context,
-      dependencies: {
-        ...launchDependencies,
-        readPackageTransactionProof: async () => ({ status: "absent", journalPath: packageJournalPath }),
-        launch: async () => { launchCalled = true; },
-      },
-    })).rejects.toThrow(/committed package transaction/);
-    expect(launchCalled).toBe(false);
-    suppliedProof = packageProof;
     const result = await launchMasDevelopmentGate({
       context,
       dependencies: {
@@ -577,6 +602,62 @@ describe("MAS development gate coordinator", () => {
     expect(launchCalled).toBe(true);
     expect(result.status).toBe("launch-claimed");
     expect(result.handoff.state).toBe("claimed");
+
+    const restored = await restoreMasDevelopmentGate({
+      context,
+      dependencies: launchDependencies,
+    });
+    expect(restored.status).toBe("restored");
+    await expect(readFile(path.join(packageTarget, "Contents", "marker"), "utf8")).resolves.toBe("prior package\n");
+    await expect(lstat(context.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(path.join(context.runtimeRoot, "prior-runtime-state"), "utf8")).resolves.toBe("prior runtime\n");
+    await expect(lstat(session.freshRetainedPath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+    await expect(lstat(packageTransaction.paths.journal)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("cannot authorize launch through a caller-supplied package proof", async () => {
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-proof-authority-test-")));
+    roots.push(base);
+    const context = masDevelopmentRuntimeContext({ userHome: base });
+    await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
+    await seedMasSessionIndex(context);
+    const session = await beginMasGateSessionTransaction({
+      ...masGateRuntimeOptions(context, {
+        requiredFreeBytes: 1,
+        dependencies: { processRows: async () => [], listeners: async () => [], sockets: async () => [], openHandles: async () => [] },
+      }),
+    });
+    const packageParent = path.join(base, "Applications");
+    await mkdir(packageParent, { recursive: true, mode: 0o700 });
+    const packageFilesystem = {
+      resolvePath: (candidate: string) => {
+        const logicalParent = path.dirname(context.bundlePath);
+        const prefix = `${logicalParent}${path.sep}`;
+        if (candidate === logicalParent) return packageParent;
+        if (candidate.startsWith(prefix)) return path.join(packageParent, candidate.slice(prefix.length));
+        return candidate;
+      },
+    };
+    let forgedReaderCalled = false;
+    let launchCalled = false;
+    await expect(launchMasDevelopmentGate({
+      context,
+      dependencies: {
+        processRows: async () => [],
+        listeners: async () => [],
+        sockets: async () => [],
+        openHandles: async () => [],
+        packageFilesystem,
+        readPackageTransactionProof: async () => {
+          forgedReaderCalled = true;
+          return { status: "committed" };
+        },
+        launch: async () => { launchCalled = true; },
+      },
+    })).rejects.toThrow(/committed package transaction/);
+    expect(forgedReaderCalled).toBe(false);
+    expect(launchCalled).toBe(false);
+    await expect(readFile(path.join(session.activePath, "transaction.json"))).resolves.toBeDefined();
   });
 
   it("stops only the exact owned host through the coordinator and never through an ambient authority string", async () => {

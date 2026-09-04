@@ -7,6 +7,19 @@ import { assertMacOSPackageParent } from "./macos-package-parent-policy.mjs";
 
 export const PACKAGE_TRANSACTION_SCHEMA = "MAS_PACKAGE_TRANSACTION v4";
 export const PACKAGE_TRANSACTION_VERSION = 4;
+export const PACKAGE_TRANSACTION_RECOVERABLE_STATES = Object.freeze([
+  "prepared",
+  "staged",
+  "target-backed-up",
+  "candidate-installed",
+  "identity-published",
+  "committed",
+  "restoring",
+  "target-displaced",
+  "target-restored",
+  "target-removed",
+  "identity-restored",
+]);
 
 export function newPackageTransactionId() {
   return `${Date.now()}-${process.pid}-${randomUUID().slice(0, 12)}`;
@@ -126,6 +139,7 @@ async function replacePackageBundleWithLease(input) {
     state: "prepared",
   };
   await writeJournal(transaction);
+  if (faultAt === "prepared") throw new Error("injected package transaction interruption at prepared");
 
   await assertArtifactBindingStillCurrent(artifactBinding, source);
   await cp(source, paths.staging, {
@@ -263,17 +277,17 @@ async function replacePackageBundleWithLease(input) {
 }
 
 export async function recoverPackageTransaction(transactionOrJournal, options = {}) {
-  const transaction = await loadTransaction(transactionOrJournal);
+  let transaction = await loadTransaction(transactionOrJournal);
   assertTransaction(transaction, options);
+  if (options.requireRecoveryProof === true) {
+    transaction = await requireAuthorizedRecoveryTransaction(transaction, options);
+  }
   return withPackageMutationLease(transaction, options, async (lockLease) => {
     const lockedOptions = { ...options, lockLease };
     await lockLease.bindRuntimeRoot(runtimeRootPathFor(transaction, options));
     if (lockedOptions.assertNoLiveHost) await lockedOptions.assertNoLiveHost();
-    if (lockedOptions.requireAuthorizedIdentity === true) {
-      await assertAuthorizedPublishedIdentity(transaction, {
-        expectedArtifactBinding: lockedOptions.expectedArtifactBinding,
-        runtimeRootPath: runtimeRootPathFor(transaction, options),
-      });
+    if (lockedOptions.requireRecoveryProof === true) {
+      transaction = await requireAuthorizedRecoveryTransaction(transaction, lockedOptions);
     }
     if (transaction.state === "finalizing" || transaction.state === "finalized") {
       await finishFinalization(transaction, lockedOptions);
@@ -286,20 +300,17 @@ export async function recoverPackageTransaction(transactionOrJournal, options = 
 
 export async function restorePackageTransaction(transaction, options = {}) {
   assertTransaction(transaction, options);
+  if (options.requireRecoveryProof === true) {
+    transaction = await requireAuthorizedRecoveryTransaction(transaction, options);
+  }
   return withPackageMutationLease(transaction, options, async (lockLease) => {
     const lockedOptions = { ...options, lockLease };
     await lockLease.bindRuntimeRoot(runtimeRootPathFor(transaction, options));
     if (lockedOptions.assertNoLiveHost) await lockedOptions.assertNoLiveHost();
-    if (lockedOptions.requireAuthorizedIdentity === true) {
-      await assertAuthorizedPublishedIdentity(transaction, {
-        expectedArtifactBinding: lockedOptions.expectedArtifactBinding,
-        runtimeRootPath: runtimeRootPathFor(transaction, options),
-      });
+    if (lockedOptions.requireRecoveryProof === true) {
+      transaction = await requireAuthorizedRecoveryTransaction(transaction, lockedOptions);
     }
-    if (transaction.state !== "prepared" && transaction.state !== "staged" && transaction.state !== "target-backed-up" &&
-        transaction.state !== "candidate-installed" && transaction.state !== "identity-published" && transaction.state !== "committed" && transaction.state !== "restoring" &&
-        transaction.state !== "target-displaced" && transaction.state !== "target-restored" &&
-        transaction.state !== "target-removed" && transaction.state !== "identity-restored") {
+    if (!PACKAGE_TRANSACTION_RECOVERABLE_STATES.includes(transaction.state)) {
       throw new Error(`cannot restore a package transaction in state ${transaction.state}`);
     }
     await restoreToPrevious(transaction, lockedOptions);
@@ -347,18 +358,56 @@ export async function readBytes(candidate) {
  * published identity are the only authority consulted here, and every path is
  * derived from the exact package target and runtime run ID.
  */
-export async function readPackageTransactionProof({
+export async function readPackageTransactionProof(options = {}) {
+  const record = await readPackageTransactionRecord(options);
+  if (record.status === "absent") return record;
+  const identity = await assertAuthorizedPublishedIdentity(record.transaction, {
+    expectedArtifactBinding: options.expectedArtifactBinding,
+    runtimeRootPath: record.physicalRuntimeRootPath,
+  });
+  return packageProofResult(record, {
+    status: "committed",
+    currentIdentityBytes: identity.bytes,
+    currentIdentityFingerprint: identity.digest,
+    currentIdentity: identity.metadata,
+  });
+}
+
+/**
+ * Prove that the fixed package journal describes one known, physically
+ * recoverable interruption. Unlike the launch proof this accepts the package
+ * rollback states, but it still binds the exact owner, run, target, identity,
+ * artifact, and on-disk state before a caller can request mutation.
+ */
+export async function readPackageRecoveryProof(options = {}) {
+  const record = await readPackageTransactionRecord(options);
+  if (record.status === "absent") return record;
+  const physicalState = await assertAuthorizedRecoverablePackageState(record.transaction, {
+    expectedArtifactBinding: options.expectedArtifactBinding,
+    runtimeRootPath: record.physicalRuntimeRootPath,
+  });
+  return packageProofResult(record, {
+    status: "recoverable",
+    state: record.transaction.state,
+    currentIdentityBytes: physicalState.identityBytes,
+    currentIdentityFingerprint: physicalState.identityFingerprint,
+    currentIdentity: physicalState.identity,
+  });
+}
+
+async function readPackageTransactionRecord({
   target,
   identityPath,
   runId,
   ownerToken,
-  expectedArtifactBinding,
   runtimeRootPath,
   journalPath,
   allowMissing = false,
+  filesystem,
 } = {}) {
   assertCanonicalPackagePath(target, "package proof target");
   assertCanonicalPackagePath(identityPath, "package proof identity path");
+  assertCanonicalPackagePath(runtimeRootPath, "package proof runtime root");
   if (typeof runId !== "string" || !/^[-A-Za-z0-9]+$/u.test(runId)) {
     throw new Error("package proof run ID is invalid");
   }
@@ -366,35 +415,67 @@ export async function readPackageTransactionProof({
     throw new Error("package proof owner token is required");
   }
   if (typeof allowMissing !== "boolean") throw new Error("package proof allowMissing must be boolean");
-  const paths = packageTransactionPaths(target, runId);
+  const adapter = normalizePackageFilesystem(filesystem);
+  const logicalPaths = packageTransactionPaths(target, runId);
   if (journalPath !== undefined) {
     assertCanonicalPackagePath(journalPath, "package proof journal path");
-    if (journalPath !== paths.journal) throw new Error("package proof journal path is not the fixed target/run-derived package journal");
+    if (journalPath !== logicalPaths.journal) throw new Error("package proof journal path is not the fixed target/run-derived package journal");
   }
-  const journalInfo = await lstat(paths.journal).catch((error) => {
+  const physicalTarget = resolvePackagePath(adapter, target, "package proof target");
+  const physicalTargetParent = resolvePackagePath(adapter, path.dirname(target), "package proof package parent");
+  if (physicalTargetParent !== path.dirname(physicalTarget)) {
+    throw new Error("package proof filesystem mapping changed the fixed package target parent");
+  }
+  const physicalIdentityPath = resolvePackagePath(adapter, identityPath, "package proof identity path");
+  const physicalRuntimeRootPath = resolvePackagePath(adapter, runtimeRootPath, "package proof runtime root");
+  const physicalPaths = packageTransactionPaths(physicalTarget, runId);
+  assertPackagePathMapping(adapter, logicalPaths, physicalPaths);
+  if (resolvePackagePath(adapter, packageIdentityTemporaryPath(identityPath, runId), "package proof identity temporary") !== packageIdentityTemporaryPath(physicalIdentityPath, runId)) {
+    throw new Error("package proof filesystem mapping changed the fixed identity temporary target/run path");
+  }
+  const physicalJournalInfo = await lstat(physicalPaths.journal).catch((error) => {
     if (error?.code === "ENOENT") return null;
     throw error;
   });
-  if (!journalInfo) {
-    if (allowMissing) {
-      const identityInfo = await lstat(identityPath).catch((error) => {
+  if (!physicalJournalInfo) {
+    if (!allowMissing) {
+      throw new Error(`package proof journal is missing at the fixed target/run-derived path ${logicalPaths.journal}`);
+    }
+    const identityInfo = await lstat(physicalIdentityPath).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (identityInfo) {
+      throw new Error("package proof journal is missing while the package identity path is present");
+    }
+    for (const [candidate, label] of [
+      [physicalPaths.staging, "package staging"],
+      [physicalPaths.backup, "prior package backup"],
+      [physicalPaths.displaced, "displaced package"],
+      [packageIdentityTemporaryPath(physicalIdentityPath, runId), "package identity temporary"],
+    ]) {
+      const residue = await lstat(candidate).catch((error) => {
         if (error?.code === "ENOENT") return null;
         throw error;
       });
-      if (identityInfo) {
-        throw new Error("package proof journal is missing while the package identity path is present");
+      if (residue) {
+        throw new Error(`package proof journal is missing while ${label} is present at a fixed target/run-derived path`);
       }
-      return { status: "absent", journalPath: paths.journal };
     }
-    throw new Error(`package proof journal is missing at the fixed target/run-derived path ${paths.journal}`);
+    return { status: "absent", journalPath: logicalPaths.journal };
   }
-  if (journalInfo.isSymbolicLink() || !journalInfo.isFile() || journalInfo.uid !== currentUid() || journalInfo.nlink !== 1 || (journalInfo.mode & 0o7777) !== 0o600) {
+  if (physicalJournalInfo.isSymbolicLink() || !physicalJournalInfo.isFile() || physicalJournalInfo.uid !== currentUid() || physicalJournalInfo.nlink !== 1 || (physicalJournalInfo.mode & 0o7777) !== 0o600) {
     throw new Error("package proof journal is not one secure regular file");
+  }
+  try {
+    await assertMacOSPackageParent(path.dirname(physicalTarget));
+  } catch (error) {
+    throw new Error(`package proof package parent is not authorized: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   let transaction;
   try {
-    transaction = normalizeTransaction(JSON.parse(await readFile(paths.journal, "utf8")));
+    transaction = normalizeTransaction(JSON.parse(await readFile(physicalPaths.journal, "utf8")));
   } catch (error) {
     throw new Error(`package proof journal is malformed: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -403,31 +484,60 @@ export async function readPackageTransactionProof({
   }
   assertTransaction(transaction, {
     ownerToken,
-    target,
-    identityPath,
+    target: physicalTarget,
+    identityPath: physicalIdentityPath,
     requireArtifactBinding: true,
   });
-  const identity = await assertAuthorizedPublishedIdentity(transaction, {
-    expectedArtifactBinding,
-    runtimeRootPath,
-  });
   return {
-    status: "committed",
-    journalPath: paths.journal,
+    status: "present",
+    transaction,
+    logicalPaths,
+    physicalRuntimeRootPath,
+    logicalTarget: target,
+    logicalIdentityPath: identityPath,
+  };
+}
+
+function packageProofResult(record, values) {
+  const transaction = record.transaction;
+  return {
+    ...values,
+    journalPath: record.logicalPaths.journal,
     ownerToken: transaction.ownerToken,
     runId: transaction.runId,
-    target: transaction.target,
-    identityPath: transaction.identityPath,
+    target: record.logicalTarget,
+    identityPath: record.logicalIdentityPath,
     artifactBinding: transaction.artifactBinding,
     candidateFingerprint: transaction.candidateFingerprint,
     candidateIdentity: transaction.candidateIdentity,
     nextIdentityFingerprint: transaction.nextIdentityFingerprint,
     identityPublishedIdentity: transaction.identityPublishedIdentity,
-    currentIdentityBytes: identity.bytes,
-    currentIdentityFingerprint: identity.digest,
-    currentIdentity: identity.metadata,
     transaction,
   };
+}
+
+function normalizePackageFilesystem(filesystem) {
+  if (filesystem === undefined) return { resolvePath: (candidate) => candidate };
+  if (!filesystem || typeof filesystem !== "object" || Array.isArray(filesystem) ||
+      typeof filesystem.resolvePath !== "function" || Object.keys(filesystem).some((name) => name !== "resolvePath")) {
+    throw new Error("package proof filesystem must expose only one low-level resolvePath adapter");
+  }
+  return filesystem;
+}
+
+function resolvePackagePath(filesystem, candidate, label) {
+  const resolved = filesystem.resolvePath(candidate);
+  if (typeof resolved !== "string") throw new Error(`${label} resolver did not return one absolute path`);
+  assertCanonicalPackagePath(resolved, `${label} resolved path`);
+  return resolved;
+}
+
+function assertPackagePathMapping(filesystem, logicalPaths, physicalPaths) {
+  for (const name of Object.keys(logicalPaths)) {
+    if (resolvePackagePath(filesystem, logicalPaths[name], `package proof ${name}`) !== physicalPaths[name]) {
+      throw new Error(`package proof filesystem mapping changed the fixed ${name} target/run path`);
+    }
+  }
 }
 
 async function loadTransaction(transactionOrJournal) {
@@ -573,6 +683,23 @@ async function restoreIdentity(transaction, lockLease) {
   }
 }
 
+async function requireAuthorizedRecoveryTransaction(transaction, options) {
+  const proof = await readPackageRecoveryProof({
+    target: transaction.target,
+    identityPath: transaction.identityPath,
+    runId: transaction.runId,
+    ownerToken: options.ownerToken ?? transaction.ownerToken,
+    expectedArtifactBinding: options.expectedArtifactBinding,
+    runtimeRootPath: runtimeRootPathFor(transaction, options),
+    allowMissing: false,
+    filesystem: options.filesystem,
+  });
+  if (proof.status !== "recoverable" || !proof.transaction) {
+    throw new Error("package recovery authorization did not return one recoverable package transaction");
+  }
+  return proof.transaction;
+}
+
 async function assertAuthorizedPublishedIdentity(transaction, {
   expectedArtifactBinding,
   runtimeRootPath,
@@ -621,8 +748,24 @@ async function assertAuthorizedPublishedIdentity(transaction, {
     throw new Error("package identity authorization identity path is outside the exact runtime root");
   }
   await assertNoSymlinkAncestors(transaction.identityPath, runtimeRootPath);
+  await assertNoSymlinkAncestors(transaction.target, path.dirname(transaction.target));
   if (await packagePathIdentity(packageIdentityTemporaryPath(transaction.identityPath, transaction.runId)) !== null) {
     throw new Error("package identity authorization has a temporary or collision identity at the exact run-derived path");
+  }
+  if (await packagePathIdentity(transaction.paths.staging) !== null || await packagePathIdentity(transaction.paths.displaced) !== null) {
+    throw new Error("package identity authorization has a staging or displaced package collision");
+  }
+  const backupFingerprint = await fingerprintPath(transaction.paths.backup);
+  if (transaction.previous.targetExists) {
+    assertExactPackageIdentity(transaction.previous.targetIdentity, "package identity authorization prior package identity", "directory");
+    assertExactPackageIdentity(transaction.backupIdentity, "package identity authorization backup identity", "directory");
+    if (backupFingerprint !== transaction.previous.targetFingerprint ||
+        !samePackageIdentity(await packagePathIdentity(transaction.paths.backup), transaction.previous.targetIdentity) ||
+        transaction.backupFingerprint !== transaction.previous.targetFingerprint) {
+      throw new Error("package identity authorization prior-package backup is missing or changed");
+    }
+  } else if (backupFingerprint !== null) {
+    throw new Error("package identity authorization has a prior-package backup collision for a fresh target");
   }
 
   const candidateFingerprint = await fingerprintPath(transaction.target);
@@ -633,7 +776,7 @@ async function assertAuthorizedPublishedIdentity(transaction, {
   if (!samePackageIdentity(candidateIdentity, transaction.candidateIdentity)) {
     throw new Error("package identity authorization candidate package identity changed");
   }
-  const bytes = await readBytes(transaction.identityPath);
+  const bytes = await readIdentityBytes(transaction.identityPath, "package identity authorization current identity");
   if (bytes === null) throw new Error("package identity authorization published identity is missing");
   if (!Buffer.isBuffer(bytes) || Buffer.compare(bytes, transaction.nextIdentityBytes) !== 0 || digest(bytes) !== transaction.nextIdentityFingerprint) {
     throw new Error("package identity authorization current bytes do not exactly match nextIdentityBytes and digest");
@@ -643,6 +786,446 @@ async function assertAuthorizedPublishedIdentity(transaction, {
     throw new Error("package identity authorization current file metadata does not exactly match identityPublishedIdentity");
   }
   return { bytes, digest: transaction.nextIdentityFingerprint, metadata };
+}
+
+async function assertAuthorizedRecoverablePackageState(transaction, {
+  expectedArtifactBinding,
+  runtimeRootPath,
+} = {}) {
+  if (!PACKAGE_TRANSACTION_RECOVERABLE_STATES.includes(transaction.state)) {
+    throw new Error(`package recovery authorization rejects unknown or non-rollback state ${String(transaction.state)}`);
+  }
+  assertFreshRootPackageBinding(transaction, expectedArtifactBinding);
+  assertCanonicalPackagePath(runtimeRootPath, "package recovery runtime root");
+  if (!pathInside(runtimeRootPath, transaction.identityPath)) {
+    throw new Error("package recovery authorization identity path is outside the exact runtime root");
+  }
+  await assertNoSymlinkAncestors(transaction.identityPath, runtimeRootPath);
+  await assertNoSymlinkAncestors(transaction.target, path.dirname(transaction.target));
+
+  const state = transaction.state;
+  const priorFingerprint = transaction.previous.targetExists ? transaction.previous.targetFingerprint : null;
+  const priorIdentity = transaction.previous.targetIdentity;
+  const candidateFingerprint = transaction.candidateFingerprint;
+  const candidateIdentity = transaction.candidateIdentity;
+  const stagingFingerprint = transaction.stagingFingerprint ?? transaction.sourceFingerprint;
+  const stagingIdentity = transaction.stagingIdentity;
+  const target = await packagePathSnapshot(transaction.target);
+  const staging = await packagePathSnapshot(transaction.paths.staging);
+  const backup = await packagePathSnapshot(transaction.paths.backup);
+  const displaced = await packagePathSnapshot(transaction.paths.displaced);
+  const identity = await identitySnapshot(transaction.identityPath);
+  const temporary = await packagePathSnapshot(packageIdentityTemporaryPath(transaction.identityPath, transaction.runId));
+
+  assertRecoveryJournalIdentityShape(transaction, state);
+  if (transaction.stagingIdentity !== null) {
+    assertExactPackageIdentity(transaction.stagingIdentity, "package recovery staging identity", "directory");
+    if (transaction.stagingFingerprint !== candidateFingerprint) {
+      throw new Error(`package recovery ${state} staging fingerprint is not bound to the candidate`);
+    }
+  }
+  if (transaction.candidateIdentity !== null) {
+    assertExactPackageIdentity(transaction.candidateIdentity, "package recovery candidate identity", "directory");
+  }
+  if (transaction.backupIdentity !== null) {
+    assertExactPackageIdentity(transaction.backupIdentity, "package recovery backup identity", "directory");
+    if (!transaction.previous.targetExists || transaction.backupFingerprint !== priorFingerprint) {
+      throw new Error(`package recovery ${state} backup fingerprint is not bound to the prior package`);
+    }
+  }
+  if (transaction.identityPublishedIdentity !== null) {
+    assertExactPackageIdentity(transaction.identityPublishedIdentity, "package recovery published identity", "file");
+  }
+  if (transaction.previous.targetExists) {
+    assertExactPackageIdentity(priorIdentity, "package recovery prior target identity", "directory");
+  } else if (priorIdentity !== null) {
+    throw new Error("package recovery prior target identity exists for a fresh package target");
+  }
+  if (transaction.previous.identityBytes !== null) {
+    throw new Error("package recovery authorization requires null previous.identityBytes for the fresh-root install");
+  }
+
+  const candidateIdentityRequired = ["candidate-installed", "identity-published", "committed", "target-displaced"].includes(state);
+  const candidateTargetRequired = ["candidate-installed", "identity-published", "committed"].includes(state);
+  const identityPublishedRequired = ["identity-published", "committed"].includes(state);
+  const preCandidate = ["prepared", "staged", "target-backed-up"].includes(state);
+  if (preCandidate && candidateIdentity !== null) {
+    throw new Error(`package recovery ${state} journal contains a candidate identity before candidate installation`);
+  }
+  if (candidateIdentityRequired) {
+    assertExactPackageIdentity(candidateIdentity, "package recovery candidate identity", "directory");
+  } else if (candidateIdentity !== null) {
+    assertExactPackageIdentity(candidateIdentity, "package recovery candidate identity", "directory");
+  }
+  if (stagingFingerprint !== null && typeof stagingFingerprint !== "string") {
+    throw new Error("package recovery staging fingerprint is invalid");
+  }
+
+  const stagingExpected = ["staged", "target-backed-up"].includes(state);
+  const stagingAllowedInFlight = ["restoring", "target-restored", "target-removed"].includes(state);
+  if (stagingExpected || (stagingAllowedInFlight && staging.fingerprint !== null)) {
+    if (transaction.stagingFingerprint !== candidateFingerprint || stagingFingerprint !== candidateFingerprint ||
+        !staging.fingerprint || staging.fingerprint !== stagingFingerprint) {
+      throw new Error(`package recovery ${state} staging artifact is missing or changed`);
+    }
+    assertExactPackageIdentity(stagingIdentity, "package recovery staging identity", "directory");
+    if (!samePackageIdentity(staging.identity, stagingIdentity)) {
+      throw new Error(`package recovery ${state} staging artifact identity changed or is a symlink collision`);
+    }
+  } else if (staging.fingerprint !== null) {
+    throw new Error(`package recovery ${state} has an unexpected staging artifact or collision`);
+  }
+
+  if (candidateTargetRequired && (!target.fingerprint || target.fingerprint !== candidateFingerprint ||
+      !samePackageIdentity(target.identity, candidateIdentity))) {
+    throw new Error(`package recovery ${state} candidate package is missing or changed`);
+  }
+
+  const backupExpected = transaction.previous.targetExists &&
+    ["target-backed-up", "candidate-installed", "identity-published", "committed", "target-displaced"].includes(state);
+  const backupAllowedInFlight = transaction.previous.targetExists && state === "restoring" &&
+    (target.fingerprint === null || target.fingerprint === candidateFingerprint);
+  if (backupExpected || backupAllowedInFlight) {
+    if (backup.fingerprint !== priorFingerprint || !samePackageIdentity(backup.identity, priorIdentity) ||
+        transaction.backupFingerprint !== priorFingerprint) {
+      throw new Error(`package recovery ${state} prior package backup is missing or changed`);
+    }
+    assertExactPackageIdentity(transaction.backupIdentity, "package recovery backup identity", "directory");
+  } else if (backup.fingerprint !== null) {
+    throw new Error(`package recovery ${state} has an unexpected prior-package backup or collision`);
+  }
+
+  if (!transaction.previous.targetExists && backup.fingerprint !== null) {
+    throw new Error(`package recovery ${state} has a prior-package backup for a fresh package target`);
+  }
+  if (transaction.previous.targetExists && state === "target-backed-up" && target.fingerprint !== null) {
+    throw new Error("package recovery target-backed-up state still has a canonical target");
+  }
+  if (transaction.previous.targetExists && ["prepared", "staged"].includes(state) &&
+      (!target.fingerprint || target.fingerprint !== priorFingerprint || !samePackageIdentity(target.identity, priorIdentity))) {
+    throw new Error(`package recovery ${state} prior package target is missing or changed`);
+  }
+  if (!transaction.previous.targetExists && ["prepared", "staged", "target-backed-up"].includes(state) && target.fingerprint !== null) {
+    throw new Error(`package recovery ${state} has a package target where prior absence was recorded`);
+  }
+
+  if (state === "restoring") {
+    const targetIsPrior = transaction.previous.targetExists && target.fingerprint === priorFingerprint &&
+      samePackageIdentity(target.identity, priorIdentity);
+    const targetIsCandidate = target.fingerprint === candidateFingerprint &&
+      samePackageIdentity(target.identity, candidateIdentity);
+    const targetIsAbsent = target.fingerprint === null;
+    if (!targetIsPrior && !targetIsCandidate && !targetIsAbsent) {
+      throw new Error("package recovery restoring state has an impossible canonical target");
+    }
+    if (transaction.previous.targetExists) {
+      if (targetIsCandidate && backup.fingerprint !== priorFingerprint) {
+        throw new Error("package recovery restoring state lost the prior package backup before candidate displacement");
+      }
+      if (targetIsCandidate && (staging.fingerprint !== null || displaced.fingerprint !== null)) {
+        throw new Error("package recovery restoring state has duplicate candidate artifacts");
+      }
+      if (targetIsAbsent && backup.fingerprint !== priorFingerprint) {
+        throw new Error("package recovery restoring state has no exact prior package backup");
+      }
+      if (targetIsPrior && backup.fingerprint !== null) {
+        throw new Error("package recovery restoring state has both the prior target and its backup");
+      }
+    } else if (backup.fingerprint !== null || targetIsPrior) {
+      throw new Error("package recovery restoring state contradicts the recorded prior target absence");
+    }
+  }
+
+  if (state === "prepared" && (staging.fingerprint !== null || backup.fingerprint !== null || displaced.fingerprint !== null)) {
+    throw new Error("package recovery prepared state contains an unexpected transaction artifact");
+  }
+  if (["prepared", "staged", "target-backed-up"].includes(state) && displaced.fingerprint !== null) {
+    throw new Error(`package recovery ${state} has an unexpected displaced candidate or collision`);
+  }
+  if (state === "candidate-installed" && displaced.fingerprint !== null) {
+    throw new Error("package recovery candidate-installed state has an unexpected displaced candidate or collision");
+  }
+  if (["identity-published", "committed"].includes(state) && displaced.fingerprint !== null) {
+    throw new Error(`package recovery ${state} has an unexpected displaced candidate or collision`);
+  }
+  if (displaced.fingerprint !== null) {
+    if (candidateIdentity === null) {
+      throw new Error(`package recovery ${state} displaced candidate lacks its journaled identity`);
+    }
+    if (displaced.fingerprint !== candidateFingerprint || !samePackageIdentity(displaced.identity, candidateIdentity)) {
+      throw new Error(`package recovery ${state} displaced candidate is missing or changed`);
+    }
+  }
+
+  if (state === "target-displaced") {
+    if (!transaction.previous.targetExists || target.fingerprint !== null || displaced.fingerprint !== candidateFingerprint || backup.fingerprint !== priorFingerprint) {
+      throw new Error("package recovery target-displaced state is not the exact post-displacement shape");
+    }
+  }
+  if (state === "target-restored") {
+    if (!transaction.previous.targetExists || target.fingerprint !== priorFingerprint ||
+        !samePackageIdentity(target.identity, priorIdentity) || backup.fingerprint !== null ||
+        (staging.fingerprint !== null && displaced.fingerprint !== null)) {
+      throw new Error("package recovery target-restored state is not the exact prior-target shape");
+    }
+  }
+  if (state === "target-removed") {
+    if (transaction.previous.targetExists || target.fingerprint !== null || backup.fingerprint !== null) {
+      throw new Error("package recovery target-removed state is impossible for the recorded prior target");
+    }
+    if (staging.fingerprint !== null && displaced.fingerprint !== null) {
+      throw new Error("package recovery target-removed state contains two candidate artifacts");
+    }
+  }
+  if (state === "identity-restored") {
+    const expectedTarget = transaction.previous.targetExists ? priorFingerprint : null;
+    if (target.fingerprint !== expectedTarget ||
+        (expectedTarget !== null && !samePackageIdentity(target.identity, priorIdentity)) ||
+        staging.fingerprint !== null || backup.fingerprint !== null || displaced.fingerprint !== null || temporary.fingerprint !== null) {
+      throw new Error("package recovery identity-restored state is not fully reconciled");
+    }
+  }
+
+  if (["restoring", "target-displaced", "target-restored", "target-removed", "identity-restored"].includes(state)) {
+    if (staging.fingerprint !== null && displaced.fingerprint !== null) {
+      throw new Error(`package recovery ${state} contains both staging and displaced candidates`);
+    }
+  }
+
+  const identityExpected = identityPublishedRequired ||
+    (["restoring", "target-displaced", "target-restored", "target-removed"].includes(state) && identity.fingerprint !== null);
+  const temporaryPublicationInFlight = transaction.identityTemporaryPath !== null;
+  if (temporaryPublicationInFlight && identity.fingerprint !== null) {
+    assertTemporaryIdentityDestination(transaction, identity, "package recovery in-flight identity");
+  } else if (identityPublishedRequired) {
+    assertPublishedIdentitySnapshot(transaction, identity, "package recovery published identity");
+  } else if (state === "identity-restored") {
+    if (identity.fingerprint !== null) throw new Error("package recovery identity-restored state still has a published identity");
+  } else if (identityExpected) {
+    assertPublishedIdentitySnapshot(transaction, identity, "package recovery in-flight identity");
+  } else if (identity.fingerprint !== null) {
+    throw new Error(`package recovery ${state} has an unexpected identity or collision`);
+  }
+  if (state === "candidate-installed" && transaction.identityPublishedIdentity !== null && identity.fingerprint === null) {
+    throw new Error("package recovery candidate-installed state lost its published identity");
+  }
+
+  assertRecoveryIdentityTemporaryState(transaction, temporary, identity, state);
+  await assertRecoveryCleanupState(transaction, state);
+  return {
+    identityBytes: identity.bytes,
+    identityFingerprint: identity.fingerprint,
+    identity: identity.identity,
+  };
+}
+
+function assertFreshRootPackageBinding(transaction, expectedArtifactBinding) {
+  if (!Object.prototype.hasOwnProperty.call(transaction.previous, "identityBytes") || transaction.previous.identityBytes !== null) {
+    throw new Error("package recovery authorization requires null previous.identityBytes for a fresh-root install");
+  }
+  let artifactBinding;
+  try {
+    artifactBinding = assertMasGateArtifactBinding(transaction.artifactBinding, { bundlePath: transaction.source });
+  } catch (error) {
+    throw new Error(`package recovery authorization artifact binding is invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (transaction.sourceFingerprint !== artifactBinding.bundleFingerprint || transaction.candidateFingerprint !== artifactBinding.bundleFingerprint) {
+    throw new Error("package recovery authorization artifact binding does not match the exact candidate fingerprint");
+  }
+  if (expectedArtifactBinding !== undefined) {
+    assertMasGateArtifactBinding(expectedArtifactBinding, { bundlePath: transaction.source });
+    if (!sameArtifactBinding(artifactBinding, expectedArtifactBinding)) {
+      throw new Error("package recovery authorization artifact binding differs from the authorized artifact");
+    }
+  }
+}
+
+function assertRecoveryJournalIdentityShape(transaction, state) {
+  const nextIdentityFieldsPresent = transaction.nextIdentityBytes !== undefined || transaction.nextIdentityFingerprint !== undefined;
+  if (nextIdentityFieldsPresent &&
+      (!Buffer.isBuffer(transaction.nextIdentityBytes) ||
+       typeof transaction.nextIdentityFingerprint !== "string" ||
+       !/^[a-f0-9]{64}$/u.test(transaction.nextIdentityFingerprint) ||
+       transaction.nextIdentityFingerprint !== digest(transaction.nextIdentityBytes))) {
+    throw new Error(`package recovery ${state} next identity bytes and digest are inconsistent`);
+  }
+
+  if (["prepared", "staged", "target-backed-up"].includes(state) &&
+      (nextIdentityFieldsPresent || transaction.identityPublishedIdentity !== null ||
+       transaction.identityTemporaryPath !== null || transaction.identityTemporaryFingerprint !== null ||
+       transaction.identityTemporaryIdentity !== null)) {
+    throw new Error(`package recovery ${state} contains identity publication data before candidate installation`);
+  }
+  if (state === "prepared" &&
+      ((transaction.stagingFingerprint !== undefined && transaction.stagingFingerprint !== null) ||
+       transaction.stagingIdentity !== null ||
+       (transaction.backupFingerprint !== undefined && transaction.backupFingerprint !== null) ||
+       transaction.backupIdentity !== null)) {
+    throw new Error("package recovery prepared state contains journaled package artifacts");
+  }
+  if (state === "candidate-installed" && nextIdentityFieldsPresent &&
+      transaction.identityTemporaryPath === null && transaction.identityPublishedIdentity === null) {
+    throw new Error("package recovery candidate-installed state has identity bytes without a publication intent");
+  }
+}
+
+async function packagePathSnapshot(candidate) {
+  return {
+    fingerprint: await fingerprintPath(candidate),
+    identity: await packagePathIdentity(candidate),
+  };
+}
+
+async function identitySnapshot(candidate) {
+  const info = await lstat(candidate).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!info) return { bytes: null, fingerprint: null, identity: null };
+  const identity = packageIdentityOf(info);
+  if (!info.isFile() || info.isSymbolicLink()) {
+    return { bytes: null, fingerprint: await fingerprintPath(candidate), identity };
+  }
+  const bytes = await readFile(candidate);
+  return {
+    bytes,
+    fingerprint: digest(bytes),
+    identity,
+  };
+}
+
+async function readIdentityBytes(candidate, label) {
+  const info = await lstat(candidate).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!info) return null;
+  if (info.isSymbolicLink() || !info.isFile()) throw new Error(`${label} metadata does not exactly match one regular file`);
+  return readFile(candidate);
+}
+
+function assertPublishedIdentitySnapshot(transaction, snapshot, label) {
+  if (!Buffer.isBuffer(transaction.nextIdentityBytes) ||
+      transaction.nextIdentityFingerprint !== digest(transaction.nextIdentityBytes) ||
+      !/^[a-f0-9]{64}$/u.test(transaction.nextIdentityFingerprint ?? "")) {
+    throw new Error(`${label} next identity bytes and digest are inconsistent`);
+  }
+  assertExactPackageIdentity(transaction.identityPublishedIdentity, `${label} ownership identity`, "file");
+  if (snapshot.bytes === null || Buffer.compare(snapshot.bytes, transaction.nextIdentityBytes) !== 0 ||
+      snapshot.fingerprint !== transaction.nextIdentityFingerprint ||
+      !samePackageIdentity(snapshot.identity, transaction.identityPublishedIdentity)) {
+    throw new Error(`${label} bytes, digest, or metadata do not match the package transaction`);
+  }
+}
+
+function assertTemporaryIdentityDestination(transaction, snapshot, label) {
+  if (!Buffer.isBuffer(transaction.nextIdentityBytes) ||
+      transaction.nextIdentityFingerprint !== digest(transaction.nextIdentityBytes) ||
+      !/^[a-f0-9]{64}$/u.test(transaction.nextIdentityFingerprint ?? "")) {
+    throw new Error(`${label} next identity bytes and digest are inconsistent`);
+  }
+  assertExactPackageIdentity(transaction.identityTemporaryIdentity, `${label} temporary ownership identity`, "file");
+  if (snapshot.bytes === null || Buffer.compare(snapshot.bytes, transaction.nextIdentityBytes) !== 0 ||
+      snapshot.fingerprint !== transaction.nextIdentityFingerprint ||
+      !samePackageIdentity(snapshot.identity, transaction.identityTemporaryIdentity)) {
+    throw new Error(`${label} does not exactly match the journaled temporary publication`);
+  }
+}
+
+function assertRecoveryIdentityTemporaryState(transaction, temporary, identity, state) {
+  const expectedTemporaryPath = packageIdentityTemporaryPath(transaction.identityPath, transaction.runId);
+  if (transaction.identityTemporaryPath === null) {
+    if (transaction.identityTemporaryFingerprint !== null || transaction.identityTemporaryIdentity !== null || temporary.fingerprint !== null) {
+      throw new Error(`package recovery ${state} has an unjournaled identity temporary or collision`);
+    }
+    return;
+  }
+  if (transaction.identityTemporaryPath !== expectedTemporaryPath) {
+    throw new Error("package recovery identity temporary path is not the exact run-derived path");
+  }
+  if (state !== "candidate-installed" && state !== "restoring") {
+    throw new Error(`package recovery ${state} contains an impossible identity temporary`);
+  }
+  if (!Buffer.isBuffer(transaction.nextIdentityBytes) ||
+      transaction.identityTemporaryFingerprint !== fingerprintFileBytes(transaction.nextIdentityBytes)) {
+    throw new Error("package recovery identity temporary bytes are not bound to nextIdentityBytes");
+  }
+  assertExactPackageIdentity(transaction.identityTemporaryIdentity, "package recovery identity temporary identity", "file");
+  if (temporary.fingerprint !== null) {
+    if (temporary.fingerprint !== transaction.identityTemporaryFingerprint ||
+        !samePackageIdentity(temporary.identity, transaction.identityTemporaryIdentity) || identity.fingerprint !== null) {
+      throw new Error("package recovery identity temporary is changed, colliding, or published twice");
+    }
+  } else if (identity.fingerprint === null &&
+      !(transaction.cleanupSource === transaction.identityTemporaryPath && transaction.cleanupPath !== null)) {
+    throw new Error("package recovery identity temporary and destination are both missing or unowned");
+  } else if (identity.fingerprint !== null && !samePackageIdentity(identity.identity, transaction.identityTemporaryIdentity)) {
+    throw new Error("package recovery identity temporary and destination are both missing or unowned");
+  }
+}
+
+async function assertRecoveryCleanupState(transaction, state) {
+  const fields = [transaction.cleanupPath, transaction.cleanupSource, transaction.cleanupFingerprint, transaction.cleanupIdentity];
+  if (fields.every((value) => value === null)) {
+    for (const [candidate, label] of [
+      [transaction.target, "installed package"],
+      [transaction.identityPath, "package identity"],
+      [transaction.paths.staging, "package staging"],
+      [transaction.paths.backup, "prior package backup"],
+      [transaction.paths.displaced, "displaced package"],
+    ]) {
+      const cleanupPath = cleanupPathFor(transaction, candidate, label);
+      if ((await packagePathSnapshot(cleanupPath)).fingerprint !== null) {
+        throw new Error(`package recovery ${state} has an unjournaled cleanup collision for ${label}`);
+      }
+    }
+    return;
+  }
+  if (fields.some((value) => value === null)) {
+    throw new Error(`package recovery ${state} cleanup intent is incomplete`);
+  }
+  const temporaryCleanupInFlight = state === "candidate-installed" &&
+    transaction.identityTemporaryPath !== null && transaction.cleanupSource === transaction.identityTemporaryPath;
+  if (!["restoring", "target-displaced", "target-restored", "target-removed", "identity-restored"].includes(state) &&
+      !temporaryCleanupInFlight) {
+    throw new Error(`package recovery ${state} contains cleanup intent before rollback`);
+  }
+  assertCanonicalPackagePath(transaction.cleanupPath, "package recovery cleanup path");
+  assertCanonicalPackagePath(transaction.cleanupSource, "package recovery cleanup source");
+  if (!transaction.cleanupIdentity || !["directory", "file"].includes(transaction.cleanupIdentity.type) ||
+      !/^[a-f0-9]{64}$/u.test(transaction.cleanupFingerprint)) {
+    throw new Error(`package recovery ${state} cleanup ownership is invalid`);
+  }
+  assertExactPackageIdentity(transaction.cleanupIdentity, "package recovery cleanup identity", transaction.cleanupIdentity.type);
+  const allowedSources = new Set([
+    transaction.target,
+    transaction.identityPath,
+    transaction.paths.staging,
+    transaction.paths.backup,
+    transaction.paths.displaced,
+    transaction.identityTemporaryPath,
+  ].filter((candidate) => typeof candidate === "string"));
+  if (!allowedSources.has(transaction.cleanupSource)) throw new Error("package recovery cleanup source is outside the transaction-owned path set");
+  const cleanupPrefix = `${transaction.cleanupSource}.m7-cleanup-${transaction.runId}-`;
+  if (!transaction.cleanupPath.startsWith(cleanupPrefix) || !/^[a-f0-9]{16}$/u.test(transaction.cleanupPath.slice(cleanupPrefix.length))) {
+    throw new Error("package recovery cleanup path is not the deterministic sibling of its source");
+  }
+  const source = await packagePathSnapshot(transaction.cleanupSource);
+  const disposable = await packagePathSnapshot(transaction.cleanupPath);
+  if (source.fingerprint !== null && disposable.fingerprint !== null) {
+    throw new Error(`package recovery ${state} cleanup source and disposable are both present`);
+  }
+  if (source.fingerprint !== null && (source.fingerprint !== transaction.cleanupFingerprint ||
+      !samePackageIdentity(source.identity, transaction.cleanupIdentity))) {
+    throw new Error(`package recovery ${state} cleanup source ownership changed`);
+  }
+  if (disposable.fingerprint !== null && (disposable.fingerprint !== transaction.cleanupFingerprint ||
+      !samePackageIdentity(disposable.identity, transaction.cleanupIdentity))) {
+    throw new Error(`package recovery ${state} cleanup disposable ownership changed`);
+  }
+  if (source.fingerprint === null && disposable.fingerprint === null) {
+    throw new Error(`package recovery ${state} cleanup source and disposable are both missing`);
+  }
 }
 
 function assertExactPackageIdentity(identity, label, expectedType) {
@@ -812,10 +1395,17 @@ async function reconcilePendingCleanup(transaction, lease) {
   }
   await assertOwnedPath(transaction.cleanupPath, transaction.cleanupFingerprint, "cleanup disposable", transaction.cleanupIdentity);
   await rm(transaction.cleanupPath, { recursive: true, force: true });
+  const identityTemporaryCleanup = transaction.cleanupSource === transaction.identityTemporaryPath &&
+    transaction.identityTemporaryPath !== null;
   transaction.cleanupPath = null;
   transaction.cleanupSource = null;
   transaction.cleanupFingerprint = null;
   transaction.cleanupIdentity = null;
+  if (identityTemporaryCleanup) {
+    transaction.identityTemporaryPath = null;
+    transaction.identityTemporaryFingerprint = null;
+    transaction.identityTemporaryIdentity = null;
+  }
   await writeJournal(transaction);
 }
 
@@ -1129,7 +1719,13 @@ function assertCanonicalPackagePath(candidate, label) {
 }
 
 async function exists(candidate) {
-  return (await lstat(candidate).catch(() => null)) !== null;
+  try {
+    await lstat(candidate);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 function digest(bytes) {
