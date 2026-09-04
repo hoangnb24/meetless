@@ -1717,8 +1717,9 @@ export async function inspectOpenHandles(pids, context, dependencies = {}) {
 /**
  * Apply the one strict spawnSync result policy shared by exact listener and
  * runtime-root +D inspections. A status-1 no-match result is absence only
- * when both present streams have exactly zero bytes; no trimming or semantic
- * output normalization is allowed at this boundary.
+ * when both present streams have exactly zero bytes; bounded purpose-specific
+ * records with exactly empty stderr are live evidence. No trimming or
+ * semantic output normalization is allowed at this boundary.
  */
 export function classifyMasLsofResult(result, purpose) {
   const policy = MAS_LSOF_POLICIES[purpose];
@@ -1749,7 +1750,13 @@ export function classifyMasLsofResult(result, purpose) {
   }
   if (status === 1) {
     if (stdout.byteLength === 0 && stderr.byteLength === 0) return { status: "absent", records: [] };
-    rejectMasLsofResult(result, purpose, `status 1 is not an exact empty no-match result; ${diagnostic}`);
+    if (stderr.byteLength !== 0) {
+      rejectMasLsofResult(result, purpose, `status 1 is not an exact empty no-match result because stderr is non-empty; ${diagnostic}`);
+    }
+    if (stdout.byteLength === 0) {
+      rejectMasLsofResult(result, purpose, `status 1 is not an exact empty no-match result because stdout is empty but stderr is not; ${diagnostic}`);
+    }
+    return parseMasLsofLiveRecords(stdout, policy, result, purpose, diagnostic, 1);
   }
   if (status !== 0) {
     rejectMasLsofResult(result, purpose, `status must be exactly 0 or the exact no-match status 1; ${diagnostic}`);
@@ -1761,11 +1768,15 @@ export function classifyMasLsofResult(result, purpose) {
     rejectMasLsofResult(result, purpose, `status 0 carried no lsof records; ${diagnostic}`);
   }
 
+  return parseMasLsofLiveRecords(stdout, policy, result, purpose, diagnostic, 0);
+}
+
+function parseMasLsofLiveRecords(stdout, policy, result, purpose, diagnostic, status) {
   let records;
   try {
     records = parseMasLsofRecords(stdout.bytes, policy);
   } catch (error) {
-    rejectMasLsofResult(result, purpose, `status 0 carried malformed lsof records (${error.message}); ${diagnostic}`);
+    rejectMasLsofResult(result, purpose, `status ${status} carried malformed lsof records (${error.message}); ${diagnostic}`);
   }
   return { status: "live", records };
 }

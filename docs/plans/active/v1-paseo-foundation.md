@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v80`
-- `current_frontier`: `R5-MAS-ATTEMPT14-RETAINED-TRANSACTION-RECOVERY`
-- `state`: `LSOF_CORRECTION_LEAD_ACCEPTED_RECOVERY_AUTHORIZATION_REQUIRED`
+- `plan_revision`: `v81`
+- `current_frontier`: `R5-MAS-ATTEMPT14-LSOF-STATUS1-LIVE`
+- `state`: `ATTEMPT_14_LSOF_STATUS1_LIVE_PENDING`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead-accepted strict MAS lsof no-match correction `3ba7dc312b418133a99eb726787dbee156501db3`, an immutable child of accepted package-proof/recovery convergence `c27bd86ffb27f888da25cd02c6ec4e0f6fffeda3`. The accepted Applications-parent/runtime-owner candidate `b3d96b4c1618423a16f18fe271bc9e565974800c` remains an implementation ancestor.
+- `candidate`: repository-only status-1 live lsof correction, an immutable child of exact base `2ad81e5c9cabb1e07f954ffad7e47761559fe7d2`; predecessor strict no-match candidate `3ba7dc312b418133a99eb726787dbee156501db3` remains its implementation ancestor.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 13 is consumed by the pre-install package-parent failure recorded below. The one-time initial fixed-index authorization — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` — is spent; no package/sign/install/restore/launch retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: the previous recovery invocation was explicitly no-retry; one further corrected recovery invocation requires fresh owner authorization.
-- `next_action`: request authorization for exactly one coordinator restore of retained Attempt 14 run `2b2905cf-7acd-493f-9aa7-5a6401c1e2e4`; package/sign/install/launch and every excluded gate remain closed.
+- `blocked_by`: Lead review of the status-1 live lsof correction; the retained-run recovery invocation remains separately unauthorized and requires fresh owner authorization.
+- `next_action`: inspect the immutable status-1 live lsof child from exact base `2ad81e5c9cabb1e07f954ffad7e47761559fe7d2`; do not invoke retained-run recovery or any package/sign/install/launch/stop/restore/archive/retry/push path.
 
 ## Ownership And Authority
 
@@ -1984,7 +1984,7 @@ retained Attempt 14 run ID
 Local proof and enforcement levels are recorded in the peer handoff. No hook,
 CI, or branch-protection result is claimed by this repository-only convergence.
 
-### R5 MAS Attempt 14 strict lsof no-match correction (2026-09-04; current frontier)
+### R5 MAS Attempt 14 strict lsof no-match correction (2026-09-04; superseded predecessor)
 
 `FRONTIER_BRIEF v1 — SERIAL ATTEMPT14 STRICT LSOF NO-MATCH CORRECTION` starts
 from exact base `c27bd86ffb27f888da25cd02c6ec4e0f6fffeda3`, in the original
@@ -2038,6 +2038,44 @@ retained-run recovery invocation failed before rollback and was explicitly
 no-retry; all package/runtime roots remain retained. A further coordinator
 restore requires fresh owner authorization and must not include package,
 install, or launch.
+
+### R5 MAS Attempt 14 status-1 live lsof correction (2026-09-04; current frontier)
+
+`FRONTIER_BRIEF v1 — SERIAL STATUS1 VALID LSOF LIVE EVIDENCE CORRECTION` starts
+from exact base `2ad81e5c9cabb1e07f954ffad7e47761559fe7d2`, in the original
+family rooted at `470d109c81c14c144f352cd2b522dc6a1cf57142`. It accepts
+`ATT14-LSOF-SEMANTICS-001-AMEND` and `ATT14-LSOF-STATUS1-LIVE-004`; the
+authority digest remains
+`ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
+
+The shared exact listener/runtime-root `+D` classifier now keeps an exact
+status-1 result with present empty stdout and stderr as absence, while a
+status-1 result with valid bounded purpose-specific `-Fpcn` or `-Fpct` records,
+exactly empty stderr, `error === undefined`, and `signal === null` is live
+evidence. Status 0 behavior is unchanged. Whitespace, malformed or invalid
+UTF-8 output, over-bound streams, missing/non-empty stderr, defined errors,
+non-null/missing signals, malformed streams, and records mixed with diagnostics
+remain fail-closed. Neither live evidence nor a rejected inspection can cross
+the stop/absence boundary into package rollback.
+
+The injected policy matrix proves status-1 `Fpcn` and `Fpct` records, all
+negative stream/status/error/signal/record/maxBuffer cases, and zero recovery
+mutation callbacks for both status-1 live evidence and rejected diagnostics.
+The disposable exact `/usr/sbin/lsof -nP +D` fixture proves an empty directory
+is absent, a held file is live despite local lsof status 1, and a missing path
+diagnostic is rejected. The existing package transaction/coordinator proof
+continues to use an actual isolated committed package transaction and the
+package-first restore composition; no package transaction, runtime transaction,
+native helper, package proof, LaunchServices, or external state is changed.
+
+Changed paths are exactly:
+`scripts/macos-mas-development-gate.mjs`,
+`packages/runtime/test/macos-mas-development-gate.test.ts`, and
+`docs/plans/active/v1-paseo-foundation.md`. The retained Attempt 14 run ID
+`2b2905cf-7acd-493f-9aa7-5a6401c1e2e4` and its fixed evidence remain untouched;
+this repository correction is not authorization for another recovery
+invocation. Local, hook, CI, and branch-protection enforcement levels are
+reported separately in the peer handoff.
 
 ### Risks And Recovery
 

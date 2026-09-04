@@ -445,7 +445,7 @@ describe("MAS development gate coordinator", () => {
     })).resolves.toMatchObject({ status: "live", openHandles: [{ pid: host.pid, path: context.runtimeRoot }] });
   });
 
-  it("accepts only exact empty lsof no-match results and parses bounded live records", () => {
+  it("classifies exact empty and status-1 live lsof results with bounded records", () => {
     const empty = (overrides: Record<string, unknown> = {}) => ({
       error: undefined,
       status: 1,
@@ -459,6 +459,14 @@ describe("MAS development gate coordinator", () => {
 
     expect(classifyMasLsofResult(empty(), MAS_LSOF_PURPOSES.OPEN_HANDLES)).toEqual({ status: "absent", records: [] });
     expect(classifyMasLsofResult({ ...empty(), stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }, MAS_LSOF_PURPOSES.LISTENER)).toEqual({ status: "absent", records: [] });
+    expect(classifyMasLsofResult({ ...empty(), stdout: validOpen }, MAS_LSOF_PURPOSES.OPEN_HANDLES)).toEqual({
+      status: "live",
+      records: [{ pid: 31, command: "node", fileDescriptors: ["3"], paths: ["/private/tmp/fixture/held-file"] }],
+    });
+    expect(classifyMasLsofResult({ ...empty(), stdout: Buffer.from(validListener) }, MAS_LSOF_PURPOSES.LISTENER)).toEqual({
+      status: "live",
+      records: [{ pid: 31, command: "node", fileDescriptors: ["3"], types: ["IPv4"] }],
+    });
     expect(classifyMasLsofResult({ ...empty(), status: 0, stdout: validOpen, stderr: Buffer.alloc(0) }, MAS_LSOF_PURPOSES.OPEN_HANDLES)).toMatchObject({
       status: "live",
       records: [{ pid: 31, command: "node", fileDescriptors: ["3"], paths: ["/private/tmp/fixture/held-file"] }],
@@ -471,12 +479,19 @@ describe("MAS development gate coordinator", () => {
     const rejected = [
       ["status-1 whitespace stdout", empty({ stdout: " \t\n" })],
       ["status-1 non-empty stderr", empty({ stderr: "diagnostic\n" })],
+      ["status-1 missing stderr", empty({ stderr: undefined })],
+      ["status-1 valid stdout plus stderr", empty({ stdout: validOpen, stderr: "diagnostic\n" })],
       ["status-1 missing stdout", empty({ stdout: undefined })],
       ["status-1 null stderr", empty({ stderr: null })],
       ["status-1 non-string stream", empty({ stdout: 0 })],
       ["status-1 signal", empty({ signal: "SIGTERM" })],
       ["status-1 missing signal", empty({ signal: undefined })],
       ["status-1 error", empty({ error: Object.assign(new Error("secret lsof error"), { code: "EACCES" }) })],
+      ["status-1 valid stdout plus signal", empty({ stdout: validOpen, signal: "SIGTERM" })],
+      ["status-1 valid stdout plus error", empty({ stdout: validOpen, error: Object.assign(new Error("secret lsof error"), { code: "EACCES" }) })],
+      ["status-1 malformed records", empty({ stdout: "p31\ncnode\nxunexpected\n" })],
+      ["status-1 invalid UTF-8", empty({ stdout: Buffer.from([0xff]), stderr: Buffer.alloc(0) })],
+      ["status-1 maxBuffer overflow", empty({ stdout: Buffer.alloc(MAS_LSOF_MAX_BUFFER_BYTES + 1, 0x78) })],
       ["null result", null],
       ["undefined result", undefined],
       ["null status", empty({ status: null })],
@@ -595,11 +610,56 @@ describe("MAS development gate coordinator", () => {
       });
       expect(heldResult.status).toBe(1);
       expect(Buffer.byteLength(String(heldResult.stdout), "utf8")).toBeGreaterThan(0);
-      await expect(inspectOpenHandles([], context)).rejects.toThrow(/status 1 is not an exact empty no-match result/);
-      expect(() => classifyMasLsofResult(heldResult, MAS_LSOF_PURPOSES.OPEN_HANDLES)).toThrow(/status 1 is not an exact empty no-match result/);
+      await expect(inspectOpenHandles([], context)).resolves.toMatchObject([
+        { path: context.runtimeRoot, records: expect.any(Array) },
+      ]);
+      const classified = classifyMasLsofResult(heldResult, MAS_LSOF_PURPOSES.OPEN_HANDLES);
+      expect(classified).toMatchObject({ status: "live", records: expect.any(Array) });
+      expect(classified.records.length).toBeGreaterThan(0);
     } finally {
       await held.close();
     }
+  });
+
+  it("does not begin package rollback when status-1 lsof is live or rejected", async () => {
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-lsof-recovery-boundary-test-")));
+    roots.push(base);
+    const context = masDevelopmentRuntimeContext({ userHome: base });
+    await mkdir(context.runtimeRoot, { recursive: true, mode: 0o700 });
+    const empty = { error: undefined, status: 1, signal: null, stdout: "", stderr: "" };
+    const validOpen = "p31\ncnode\nf3\nn/private/tmp/fixture/held-file\n";
+    let openHandleResult: Record<string, unknown> = { ...empty, stdout: validOpen };
+    const invokeLsof = (_command: string, arguments_: string[]) => arguments_.includes("+D") ? openHandleResult : empty;
+    const dependencies = {
+      processRows: async () => [],
+      sockets: async () => [],
+      invokeLsof,
+    };
+    let mutationCount = 0;
+    const attemptRestore = () => restoreInRequiredOrder({
+      stop: () => stopMasDevelopmentGate({ context, dependencies }),
+      rollbackPackage: async () => {
+        mutationCount += 1;
+        return { status: "ready-for-runtime-restore" };
+      },
+      reacquireGateLock: async () => {
+        mutationCount += 1;
+        return { release: async () => undefined };
+      },
+      runtimeRestore: async () => {
+        mutationCount += 1;
+        return { phase: "restored" };
+      },
+      archiveSession: async () => {
+        mutationCount += 1;
+        return { phase: "archived" };
+      },
+    });
+
+    await expect(attemptRestore()).rejects.toThrow(/exact LaunchServices host process/);
+    openHandleResult = { ...empty, stdout: validOpen, stderr: "diagnostic\n" };
+    await expect(attemptRestore()).rejects.toThrow(/lsof result rejected/);
+    expect(mutationCount).toBe(0);
   });
 
   it("uses one stable kernel lock and rejects contention until the holder releases", async () => {
