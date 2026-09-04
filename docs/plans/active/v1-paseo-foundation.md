@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v102`
+- `plan_revision`: `v103`
 - `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-16`
-- `state`: `ATTEMPT16_CONSUMED_PHASE2_PREMUTATION_KEY_AUTHORITY_ERROR`
+- `state`: `ATTEMPT16_PHASE2_ONLY_RETRY_AUTHORIZED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted Attempt 16 artifact from repository tip `e57ac527db6e2cb3cf0654c872ea7fcfed414e79`, bundle fingerprint `e7243483893d9939287ff66c482590375f271cb626c31dcb1fc7b950eb514f65`, manifest SHA-256 `e377fbeb004f845a44241f29b545bdadab87640b2aff4b2c376bcc189536cf0e`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 15 is consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: any reuse of the accepted Attempt 16 artifact for a corrected Phase 2 install/launch/recovery sequence requires fresh explicit owner authorization.
-- `next_action`: recommend one bounded Phase 2-only retry using the unchanged accepted artifact and loading only the required public SDK key from the owned mode-0600 environment file without disclosure; do not package again.
+- `blocked_by`: none for the one owner-authorized Phase 2-only retry; any terminal failure remains no-retry.
+- `next_action`: run one bounded Phase 2-only coordinator install/launch/readiness/recovery sequence using the unchanged accepted artifact and loading only the required public SDK key from the owned mode-0600 environment file without disclosure; do not package again.
 
 ## Ownership And Authority
 
@@ -2486,6 +2486,18 @@ retry against the same artifact, loading only the one public SDK environment
 variable from the already accepted owned mode-0600 file and never logging,
 persisting, or passing its raw value in arguments. Attempt 16's original
 authorization is consumed; no retry is currently authorized.
+
+The owner subsequently authorized exactly one Phase 2-only retry with the
+statement `Cho phép chạy lại riêng Phase 2 của Attempt 16 đúng một lần, dùng
+artifact hiện tại và chỉ nạp public SDK key để validator kiểm tra`. Lead binds
+this to the unchanged accepted artifact and exactly one coordinator install;
+if install commits, exactly one LaunchServices launch/readiness sequence and
+one coordinator recovery are authorized. The operator may load only
+`MEETLESS_REVENUECAT_PUBLIC_SDK_KEY` from the accepted owned mode-0600
+environment file for validation and child startup, without printing,
+persisting, or passing the raw value in command arguments. Package count must
+remain zero. Any terminal failure consumes this authorization and remains
+no-retry; all other external gates remain closed.
 
 ### Risks And Recovery
 
