@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v85`
+- `plan_revision`: `v86`
 - `current_frontier`: `R5-MAS-ATTEMPT14-RETAINED-TRANSACTION-RECOVERY`
-- `state`: `PACKAGE_LEASE_ORDER_LEAD_ACCEPTED_RECOVERY_AUTHORIZATION_REQUIRED`
+- `state`: `ATTEMPT14_ONE_SHOT_COORDINATOR_RECOVERY_AUTHORIZED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted package lease/absence order correction `7ae5d2d2a43c01ccf52eeba9282ce9b32376fb9c`, an immutable child of exact base `f0ae83f029b64e0a7516f11f84d079e5a5a1bc0a`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 13 is consumed by the pre-install package-parent failure recorded below. The one-time initial fixed-index authorization — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` — is spent; no package/sign/install/restore/launch retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: the prior recovery authorization was one-shot and consumed; another corrected recovery invocation requires fresh owner authorization.
-- `next_action`: request authorization for exactly one coordinator restore of retained Attempt 14 run `2b2905cf-7acd-493f-9aa7-5a6401c1e2e4`; package/sign/install/launch and every excluded gate remain closed.
+- `blocked_by`: none for the single authorized recovery invocation; any failure remains no-retry and requires a new owner decision.
+- `next_action`: invoke exactly one coordinator restore of retained Attempt 14 run `2b2905cf-7acd-493f-9aa7-5a6401c1e2e4`; package/sign/install/launch and every excluded gate remain closed.
 
 ## Ownership And Authority
 
@@ -2154,6 +2154,17 @@ precedes runtime-root bind, the lease is immediately reasserted before
 mutation, and no helper exclusion or lsof weakening was introduced. This is
 repository acceptance only. The retained transaction remains untouched and a
 further coordinator restore requires fresh owner authorization.
+
+The owner subsequently authorized exactly one invocation with the statement
+`Cho phép coordinator recovery Attempt 14 thêm đúng một lần`. Lead binds this
+authorization only to the coordinator restore of retained run
+`2b2905cf-7acd-493f-9aa7-5a6401c1e2e4`, including its internal stop/absence
+checks, package-first rollback, package-lease release, gate-lock reacquisition,
+fresh-runtime retention, prior-runtime restoration, and archive/index
+publication. It does not authorize package, sign, install, launch, a MAS retry,
+manual filesystem recovery, secret/cache/Trash inspection, or any excluded
+external gate. The authorization is consumed by one invocation regardless of
+outcome; failure remains no-retry.
 
 ### Risks And Recovery
 
