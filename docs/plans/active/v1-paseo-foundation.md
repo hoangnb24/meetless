@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v104`
-- `current_frontier`: `R5-MAS-ATTEMPT16-READINESS-DIAGNOSIS`
-- `state`: `ATTEMPT16_TERMINAL_READINESS_FAILURE_RECOVERED`
+- `plan_revision`: `v105`
+- `current_frontier`: `R5-MAS-ATTEMPT16-READINESS-DIAGNOSTIC-INSTRUMENTATION`
+- `state`: `ATTEMPT16_RECOVERED_CAUSE_UNRESOLVED_DIAGNOSTIC_GAP`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted Attempt 16 artifact from repository tip `e57ac527db6e2cb3cf0654c872ea7fcfed414e79`, bundle fingerprint `e7243483893d9939287ff66c482590375f271cb626c31dcb1fc7b950eb514f65`, manifest SHA-256 `e377fbeb004f845a44241f29b545bdadab87640b2aff4b2c376bcc189536cf0e`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempts 14, 15, and 16 are consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: any new package/install/launch attempt requires separate owner authorization after the retained Attempt 16 readiness failure is diagnosed.
-- `next_action`: inspect only retained Attempt 16 evidence and fresh-runtime logs to determine why the claimed host exited before H→D→S→W→P, daemon `16777`, recording readiness, and renderer `18082`; do not launch or mutate real state.
+- `blocked_by`: retained evidence cannot distinguish the failing readiness subcheck because the desktop discards native registration-status errors; any new external attempt also requires separate owner authorization.
+- `next_action`: obtain owner direction before implementing bounded readiness diagnostics that preserve PID-lock, native registration-status, and attestation subcheck results; do not alter renderer/network behavior or launch again.
 
 ## Ownership And Authority
 
@@ -2516,6 +2516,26 @@ with inode `43589382` and full-attestation digest
 The fresh runtime and terminal archive remain at exact run-derived retained
 paths. Repository-owned final status is terminal `archived` and live state is
 absent. Attempt 16 is consumed and recovered; no retry is authorized.
+
+Read-only retained-evidence diagnosis proved that the daemon did start and
+listen on `127.0.0.1:16777`: the daemon log records server listen at
+`23:17:03.620Z`, worker readiness at `23:17:03.896Z`, plugin load, and relay
+connection. The desktop nevertheless timed out after 30 seconds because its
+readiness predicate requires a live `desktopManaged` PID lock plus a matching
+native registration marked `attested`. The implementation discards
+registration-status errors, so retained evidence cannot distinguish PID-lock
+observation failure from post-start native registration/attestation inspection
+failure. At `23:17:32.888Z` the timeout cleanup intentionally sent `SIGTERM`;
+the worker then exited cleanly with code `0`.
+
+Renderer and later recording probes are downstream and non-causal: renderer
+`18082` is created only after recording readiness, while the observed recording
+`ECONNREFUSED` occurred after daemon cleanup. No renderer, sandbox, argv,
+configuration, or network-behavior correction is justified by this evidence.
+The smallest next repository change, if requested, is diagnostic only in the
+runtime readiness owner: preserve each predicate component and a sanitized
+native registration-status error before timeout. No functional fix or future
+external attempt is currently authorized.
 
 ### Risks And Recovery
 
