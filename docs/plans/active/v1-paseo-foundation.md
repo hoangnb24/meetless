@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v86`
+- `plan_revision`: `v87`
 - `current_frontier`: `R5-MAS-ATTEMPT14-RETAINED-TRANSACTION-RECOVERY`
-- `state`: `ATTEMPT14_ONE_SHOT_COORDINATOR_RECOVERY_AUTHORIZED`
+- `state`: `ATTEMPT14_RECOVERY_COMPLETE_EXTERNAL_GATES_CLOSED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted package lease/absence order correction `7ae5d2d2a43c01ccf52eeba9282ce9b32376fb9c`, an immutable child of exact base `f0ae83f029b64e0a7516f11f84d079e5a5a1bc0a`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 13 is consumed by the pre-install package-parent failure recorded below. The one-time initial fixed-index authorization — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` — is spent; no package/sign/install/restore/launch retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: none for the single authorized recovery invocation; any failure remains no-retry and requires a new owner decision.
-- `next_action`: invoke exactly one coordinator restore of retained Attempt 14 run `2b2905cf-7acd-493f-9aa7-5a6401c1e2e4`; package/sign/install/launch and every excluded gate remain closed.
+- `blocked_by`: any new MAS package/install/launch attempt requires a separate owner decision and authorization.
+- `next_action`: retain the terminal Attempt 14 archive/evidence and keep package/sign/install/launch and every excluded gate closed pending a new owner decision.
 
 ## Ownership And Authority
 
@@ -2165,6 +2165,20 @@ publication. It does not authorize package, sign, install, launch, a MAS retry,
 manual filesystem recovery, secret/cache/Trash inspection, or any excluded
 external gate. The authorization is consumed by one invocation regardless of
 outcome; failure remains no-retry.
+
+That authorization was consumed by exactly one coordinator restore invocation,
+which exited `0`. The coordinator proved complete absence, restored the prior
+package first, released the package lease, reacquired the gate lock, retained
+the fresh runtime, restored the prior runtime, and published terminal archive
+and index state. `/Applications/Meetless.app` matches baseline tree fingerprint
+`7039ded32b778fcda21fae6d961d80e72508630b2aaa0c8d2abedf08103e2a14`
+and CDHash `acfdb5223b4d492d86e13827babcea2c5df392dc`; the canonical runtime matches
+retained aggregate digest
+`130c2d4de4cf4e6b9d63ce775860aa2bcd2f70012222c1d7d67d694af71dc6de`.
+The Attempt 14 package transaction paths and package identity are absent, the
+fresh runtime is retained at its run-derived path, and the archive journal is
+terminal `archived`. Attempt 14 recovery is complete; this does not authorize
+a new MAS attempt or any excluded gate.
 
 ### Risks And Recovery
 
