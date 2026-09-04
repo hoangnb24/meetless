@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v99`
+- `plan_revision`: `v100`
 - `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-16`
-- `state`: `ATTEMPT16_CONSUMED_NO_PACKAGE_OPERATOR_PREFLIGHT_ERROR`
+- `state`: `ATTEMPT16_AUTHORIZED_PHASE1_PACKAGE_NOT_YET_CONSUMED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` is terminal `archived`; prior app and runtime are canonical, and accepted corrections `0d3445b84d91053a1d0911ceaf184f7c2eb9dc51` and `8e3401a20972849ba61a5c5401ddd88fcb8d17ca` remain repository truth.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 15 is consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: any new package attempt requires fresh owner authorization; no repository correction is needed.
-- `next_action`: if the owner authorizes another attempt, use authoritative coordinator status for MAS session state and do not add a custom index-intent-absence predicate.
+- `blocked_by`: none for Attempt 16 Phase 1; its authorization remains unconsumed because package count is zero.
+- `next_action`: use authoritative coordinator status as the sole read-only MAS session preflight, then consume Attempt 16 when the single package command begins; no custom fixed-record predicate is permitted.
 
 ## Ownership And Authority
 
@@ -2430,11 +2430,27 @@ complete archived transaction composition. It must be retained, not removed.
 
 No repository/runtime correction is required. Package count was `0`; app,
 runtime, terminal Attempt 14/15 archives, lock, repository, and protected files
-remained unchanged. Under the explicit one-attempt contract, the failed
-preflight consumed Attempt 16 even without package mutation. Any future attempt
-must use repository coordinator status as the sole MAS session-state preflight,
-while the complete artifact validator remains the separate package authority.
-No retry is authorized.
+remained unchanged. The owner subsequently removed the prior accounting rule
+with `Bỏ quy tắc đi đấy đi và triển khai cho mình`. Lead binds the replacement
+contract as follows: a read-only admission/preflight failure does not consume an
+attempt; the attempt is consumed when its first package command begins. From
+that boundary onward, package/install/launch/recovery commands remain one-shot
+and no-retry regardless of outcome.
+
+Attempt 16 is therefore still authorized and unconsumed. Its next Phase 1 must
+use repository coordinator status as the sole MAS session-state preflight and
+must not add custom parsing or fixed-record absence checks. The complete
+artifact validator remains the separate package authority. This accounting
+change does not weaken transaction, mutation, launch, or recovery safety and
+does not authorize any excluded gate.
+
+The repository-native enforcement boundary is the coordinator status command,
+not a second attempt-accounting subsystem: existing positive proof accepts an
+exact committed index intent whose index equals `after`, while malformed,
+pending, mismatched, or ambiguous intent/state remains fail-closed. The plan and
+operator brief own command-count accounting because the repository intentionally
+has no parallel control-plane task database. Local fixture proof exists; no
+hook, checked-in CI, or verified branch-protection enforcement is claimed.
 
 ### Risks And Recovery
 
