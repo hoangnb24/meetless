@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v88`
+- `plan_revision`: `v89`
 - `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-15`
-- `state`: `ATTEMPT15_ONE_SHOT_AUTHORIZED_PHASE1_PACKAGE_CHECKPOINT`
+- `state`: `ATTEMPT15_PHASE1_ACCEPTED_PHASE2_AUTHORIZED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead-accepted package lease/absence order correction `7ae5d2d2a43c01ccf52eeba9282ce9b32376fb9c`, an immutable child of exact base `f0ae83f029b64e0a7516f11f84d079e5a5a1bc0a`.
+- `candidate`: Lead-accepted Attempt 15 artifact from repository tip `0bbd3d5878ed69be435a2a3595af24e40bebcd7b`, bundle fingerprint `3ef85dc193f62199a25f7821b0dc7ffd813e7fc09696b3f305969fb9aa2c8a9e`, manifest SHA-256 `b5cd55f0a2c817bdee89f03b9c2497da2d9bcbac13fdd910ac9d96a21004c5c7`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: the owner authorized one Attempt 15 with the exact statement `Cho phép Attempt 15 chạy`. Bind it to one package command and, only after Lead accepts the artifact checkpoint, one coordinator install/launch/readiness/recovery sequence. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: none for Attempt 15 Phase 1; Phase 2 depends on Lead acceptance of the newly packaged artifact and preflight evidence.
-- `next_action`: package exactly once into a fresh proof root, perform complete read-only artifact and fixed-path preflight validation, and return a Lead checkpoint without install or launch.
+- `blocked_by`: none for the one authorized Attempt 15 Phase 2 sequence; any failure consumes the attempt and remains no-retry.
+- `next_action`: run exactly one coordinator install/launch/readiness/recovery sequence using the accepted fresh artifact; restore the prior package/runtime state on every terminal path.
 
 ## Ownership And Authority
 
@@ -2197,6 +2197,21 @@ production/annual actions, real transcription/provider/TCC/recording/export,
 upload/submission/publication/App Review, push, manual filesystem recovery, or
 unrelated process control. Attempt 14 remains terminal `archived`; its retained
 fresh runtime and evidence are not cleanup targets.
+
+Phase 1 completed with exactly one successful package invocation. Lead accepts
+the artifact checkpoint from proof root
+`/private/tmp/meetless-mas-development-proof.D8xLdO`: bundle fingerprint
+`3ef85dc193f62199a25f7821b0dc7ffd813e7fc09696b3f305969fb9aa2c8a9e`,
+manifest SHA-256
+`b5cd55f0a2c817bdee89f03b9c2497da2d9bcbac13fdd910ac9d96a21004c5c7`,
+and outer CDHash `a42af0ffe3553848b05bb033eebc7c6384c9941e`. The complete MAS
+validator and independent signature/profile, thin-arm64, entitlement, package
+input, symlink/load-path, contract, endpoint, pinned-Paseo, runtime/helper,
+license inventory, notice, and public-key-hash checks passed. The known broader
+license review remains a separate release/submission Definition of Done; it
+does not authorize publication and does not block this local development
+launch proof. Phase 2 is admitted under the existing one-Attempt-15 owner
+authorization without opening any excluded gate.
 
 ### Risks And Recovery
 
