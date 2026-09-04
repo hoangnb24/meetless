@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v87`
-- `current_frontier`: `R5-MAS-ATTEMPT14-RETAINED-TRANSACTION-RECOVERY`
-- `state`: `ATTEMPT14_RECOVERY_COMPLETE_EXTERNAL_GATES_CLOSED`
+- `plan_revision`: `v88`
+- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-15`
+- `state`: `ATTEMPT15_ONE_SHOT_AUTHORIZED_PHASE1_PACKAGE_CHECKPOINT`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted package lease/absence order correction `7ae5d2d2a43c01ccf52eeba9282ce9b32376fb9c`, an immutable child of exact base `f0ae83f029b64e0a7516f11f84d079e5a5a1bc0a`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: Attempt 13 is consumed by the pre-install package-parent failure recorded below. The one-time initial fixed-index authorization — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` — is spent; no package/sign/install/restore/launch retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: any new MAS package/install/launch attempt requires a separate owner decision and authorization.
-- `next_action`: retain the terminal Attempt 14 archive/evidence and keep package/sign/install/launch and every excluded gate closed pending a new owner decision.
+- `pending_ruling`: the owner authorized one Attempt 15 with the exact statement `Cho phép Attempt 15 chạy`. Bind it to one package command and, only after Lead accepts the artifact checkpoint, one coordinator install/launch/readiness/recovery sequence. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
+- `blocked_by`: none for Attempt 15 Phase 1; Phase 2 depends on Lead acceptance of the newly packaged artifact and preflight evidence.
+- `next_action`: package exactly once into a fresh proof root, perform complete read-only artifact and fixed-path preflight validation, and return a Lead checkpoint without install or launch.
 
 ## Ownership And Authority
 
@@ -2179,6 +2179,24 @@ The Attempt 14 package transaction paths and package identity are absent, the
 fresh runtime is retained at its run-derived path, and the archive journal is
 terminal `archived`. Attempt 14 recovery is complete; this does not authorize
 a new MAS attempt or any excluded gate.
+
+### R5 MAS Attempt 15 authorization (2026-09-04; current frontier)
+
+The owner authorized one new attempt with the exact statement `Cho phép
+Attempt 15 chạy`. Lead binds this to one serial two-checkpoint attempt: Phase 1
+may invoke the development MAS package command exactly once in a fresh proof
+root and perform complete artifact plus fixed-path preflight validation. Phase
+2 may proceed without another owner prompt only after Lead accepts that
+checkpoint; it may invoke the coordinator install/launch/readiness/recovery
+sequence exactly once and must restore the prior package/runtime state on every
+terminal path. A failure consumes the attempt and remains no-retry.
+
+This authorization does not open purchase/restore APIs, premium UI/status,
+RevenueCat mutation/dashboard/credential/cache-child inspection, Convex,
+production/annual actions, real transcription/provider/TCC/recording/export,
+upload/submission/publication/App Review, push, manual filesystem recovery, or
+unrelated process control. Attempt 14 remains terminal `archived`; its retained
+fresh runtime and evidence are not cleanup targets.
 
 ### Risks And Recovery
 
