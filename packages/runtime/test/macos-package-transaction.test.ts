@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -10,6 +10,7 @@ import {
   fingerprintPath,
   packageTransactionPaths,
   recoverPackageTransaction,
+  readPackageTransactionProof,
   replacePackageBundle,
   serializeSortedJson,
   restorePackageTransaction,
@@ -481,6 +482,226 @@ describe("macOS package replacement transaction", () => {
     await expect(fingerprintPath(root.target)).resolves.toBe(binding.bundleFingerprint);
   });
 
+  it("proves only the exact committed fresh-root package identity by bytes and metadata", async () => {
+    const root = await setup({ identity: false });
+    const manifestPath = path.join(root.root, "app-store-development-proof.json");
+    const binding = await makeBinding(root.source, manifestPath, "test-public-sdk-key-proof");
+    const ownerToken = "M7-package-proof-owner";
+    const runId = newPackageTransactionId();
+    const transaction = await replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken,
+      runId,
+      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      artifactBinding: binding,
+    });
+
+    const proof = await readPackageTransactionProof({
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken,
+      runId,
+      runtimeRootPath: root.root,
+    });
+    expect(proof.status).toBe("committed");
+    expect(proof.journalPath).toBe(packageTransactionPaths(root.target, runId).journal);
+    expect(proof.transaction).toMatchObject({ state: "committed", ownerToken, runId });
+    expect(proof.currentIdentityBytes).toEqual(transaction.nextIdentityBytes);
+    expect(proof.currentIdentityFingerprint).toBe(transaction.nextIdentityFingerprint);
+
+    const semanticRewrite = JSON.stringify(JSON.parse(transaction.nextIdentityBytes.toString("utf8"))) + "\n";
+    await writeFile(root.identityPath, semanticRewrite);
+    await expect(readPackageTransactionProof({
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken,
+      runId,
+      runtimeRootPath: root.root,
+    })).rejects.toThrow(/current bytes do not exactly match/);
+  });
+
+  it("rejects altered package identity metadata before an authorized rollback", async () => {
+    const root = await setup({ identity: false });
+    const manifestPath = path.join(root.root, "app-store-development-metadata-proof.json");
+    const binding = await makeBinding(root.source, manifestPath, "test-public-sdk-key-metadata-proof");
+    const ownerToken = "M7-package-proof-metadata";
+    const runId = newPackageTransactionId();
+    await replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken,
+      runId,
+      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      artifactBinding: binding,
+    });
+    const identityBytes = await readFile(root.identityPath);
+    await rm(root.identityPath, { force: true });
+    await writeFile(root.identityPath, identityBytes, { mode: 0o600 });
+    const priorTarget = await readFile(path.join(root.target, "Contents", "marker"), "utf8");
+
+    await expect(readPackageTransactionProof({
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken,
+      runId,
+      runtimeRootPath: root.root,
+    })).rejects.toThrow(/metadata does not exactly match/);
+    await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe(priorTarget);
+  });
+
+  it.each([
+    ["wrong owner", (root: PackageFixture, transaction: any) => ({
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-wrong-owner",
+      runId: transaction.runId,
+      runtimeRootPath: root.root,
+    })],
+    ["wrong identity path", (root: PackageFixture, transaction: any) => ({
+      target: root.target,
+      identityPath: path.join(root.root, "different-identity.json"),
+      ownerToken: transaction.ownerToken,
+      runId: transaction.runId,
+      runtimeRootPath: root.root,
+    })],
+    ["wrong target path", (root: PackageFixture, transaction: any) => ({
+      target: path.join(root.root, "Other.app"),
+      identityPath: root.identityPath,
+      ownerToken: transaction.ownerToken,
+      runId: transaction.runId,
+      runtimeRootPath: root.root,
+    })],
+  ] as const)("rejects %s before using package proof", async (_label, makeInput) => {
+    const root = await setup({ identity: false });
+    const manifestPath = path.join(root.root, `app-store-development-${_label.replaceAll(" ", "-")}.json`);
+    const binding = await makeBinding(root.source, manifestPath, `test-public-sdk-key-${_label}`);
+    const transaction = await replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-proof-binding-owner",
+      runId: newPackageTransactionId(),
+      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      artifactBinding: binding,
+    });
+    await expect(readPackageTransactionProof(makeInput(root, transaction, binding))).rejects.toThrow(/owner token mismatch|identity path|missing at the fixed/iu);
+  });
+
+  it("rejects wrong run, artifact, non-committed, missing, and symlink identities before package mutation", async () => {
+    const root = await setup({ identity: false });
+    const manifestPath = path.join(root.root, "app-store-development-negative-proof.json");
+    const binding = await makeBinding(root.source, manifestPath, "test-public-sdk-key-negative-proof");
+    const ownerToken = "M7-package-proof-negative";
+    const runId = newPackageTransactionId();
+    const transaction = await replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken,
+      runId,
+      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      artifactBinding: binding,
+    });
+    const journalPath = packageTransactionPaths(root.target, runId).journal;
+    const journalBytes = await readFile(journalPath);
+    const candidateMarker = await readFile(path.join(root.target, "Contents", "marker"), "utf8");
+    const identityBytes = await readFile(root.identityPath);
+
+    const wrongRun = `${runId}-wrong`;
+    await writeFile(packageTransactionPaths(root.target, wrongRun).journal, journalBytes, { mode: 0o600 });
+    await expect(readPackageTransactionProof({
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken,
+      runId: wrongRun,
+      runtimeRootPath: root.root,
+    })).rejects.toThrow(/run ID does not equal/);
+
+    const mutateJournal = async (mutator: (record: any) => void, message: RegExp) => {
+      const record = JSON.parse(journalBytes.toString("utf8"));
+      mutator(record);
+      await writeFile(journalPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+      await expect(readPackageTransactionProof({
+        target: root.target,
+        identityPath: root.identityPath,
+        ownerToken,
+        runId,
+        runtimeRootPath: root.root,
+      })).rejects.toThrow(message);
+      await writeFile(journalPath, journalBytes, { mode: 0o600 });
+    };
+    await mutateJournal((record) => { record.candidateFingerprint = "0".repeat(64); }, /candidate fingerprint/);
+    await mutateJournal((record) => { record.state = "identity-published"; }, /requires committed package state/);
+
+    await rm(root.identityPath);
+    await expect(readPackageTransactionProof({
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken,
+      runId,
+      runtimeRootPath: root.root,
+    })).rejects.toThrow(/published identity is missing/);
+    await writeFile(root.identityPath, identityBytes, { mode: 0o600 });
+
+    await rm(journalPath);
+    await expect(readPackageTransactionProof({
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken,
+      runId,
+      runtimeRootPath: root.root,
+      allowMissing: true,
+    })).rejects.toThrow(/journal is missing while the package identity path is present/);
+    await writeFile(journalPath, journalBytes, { mode: 0o600 });
+
+    const symlinkTarget = path.join(root.root, "identity-target.json");
+    await writeFile(symlinkTarget, identityBytes, { mode: 0o600 });
+    await rm(root.identityPath);
+    await symlink(symlinkTarget, root.identityPath);
+    await expect(readPackageTransactionProof({
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken,
+      runId,
+      runtimeRootPath: root.root,
+    })).rejects.toThrow(/metadata does not exactly match/);
+
+    await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe(candidateMarker);
+  });
+
+  it("preflights exact package authorization before any strict rollback mutation", async () => {
+    const root = await setup({ identity: false });
+    const manifestPath = path.join(root.root, "app-store-development-rollback-proof.json");
+    const binding = await makeBinding(root.source, manifestPath, "test-public-sdk-key-rollback-proof");
+    const transaction = await replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath: root.identityPath,
+      ownerToken: "M7-package-proof-rollback",
+      runId: newPackageTransactionId(),
+      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      artifactBinding: binding,
+    });
+    const identityBytes = await readFile(root.identityPath);
+    await rm(root.identityPath);
+    await writeFile(root.identityPath, identityBytes, { mode: 0o600 });
+    const candidateMarker = await readFile(path.join(root.target, "Contents", "marker"), "utf8");
+
+    await expect(restorePackageTransaction(transaction, {
+      ownerToken: transaction.ownerToken,
+      target: root.target,
+      identityPath: root.identityPath,
+      requireArtifactBinding: true,
+      requireAuthorizedIdentity: true,
+      expectedArtifactBinding: binding,
+      runtimeRootPath: root.root,
+    })).rejects.toThrow(/metadata does not exactly match/);
+    await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe(candidateMarker);
+  });
+
   it("retains a same-content destination collision instead of deleting it during recovery", async () => {
     const root = await setup({ identity: false });
     const manifestPath = path.join(root.root, "app-store-development-collision.json");
@@ -695,6 +916,13 @@ async function setup({ identity = true } = {}) {
   if (identity) await writeFile(identityPath, "prior identity\n");
   return { root, source, target, identityPath };
 }
+
+type PackageFixture = {
+  root: string;
+  source: string;
+  target: string;
+  identityPath: string;
+};
 
 async function makeBinding(source: string, manifestPath: string, publicKey: string) {
   const manifestBytes = Buffer.from("retained manifest fixture\n");

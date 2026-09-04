@@ -13,6 +13,7 @@ import {
   masDevelopmentRuntimeContext,
   masGateRuntimeOptions,
   masLiveAbsentObservation,
+  readMasDevelopmentGateStatus,
   readMasGateSessionStatus,
   restoreInRequiredOrder,
   stopMasDevelopmentGate,
@@ -40,6 +41,7 @@ import {
   macAppStorePackagedHostConfiguration,
   macAppStorePackagedMarker,
 } from "../../../scripts/lib/macos-app-store-package-contract.mjs";
+import { packageTransactionPaths } from "../../../scripts/lib/macos-package-transaction.mjs";
 import {
   MACOS_APP_STORE_CHILD_ENTITLEMENTS,
   MACOS_APP_STORE_PARENT_ENTITLEMENTS,
@@ -494,6 +496,8 @@ describe("MAS development gate coordinator", () => {
       assertNoLiveOwnedRuntime: async () => absent,
     };
     const session = await beginMasGateSessionTransaction(options);
+    await mkdir(path.dirname(context.identityPath), { recursive: true, mode: 0o700 });
+    await writeFile(context.identityPath, "authorized package identity\n", { mode: 0o600 });
     const installed = {
       bundleIdentifier: context.contract.bundleIdentifier,
       bundlePath: context.bundlePath,
@@ -508,14 +512,56 @@ describe("MAS development gate coordinator", () => {
     };
     const available = createMasHostHandoff(context, session, installed);
     await writeFile(path.join(session.activePath, "host-handoff.json"), `${JSON.stringify(available)}\n`, { mode: 0o600 });
+    const packageJournalPath = packageTransactionPaths(context.bundlePath, session.runId).journal;
+    const packageProof = {
+      status: "committed",
+      journalPath: packageJournalPath,
+      ownerToken: session.ownerToken,
+      runId: session.runId,
+      target: context.bundlePath,
+      identityPath: context.identityPath,
+      transaction: {
+        schema: "MAS_PACKAGE_TRANSACTION v4",
+        version: 4,
+        ownerToken: session.ownerToken,
+        runId: session.runId,
+        target: context.bundlePath,
+        identityPath: context.identityPath,
+        state: "committed",
+      },
+    };
+    let suppliedProof = packageProof;
+    const launchDependencies = {
+      processRows: async () => [],
+      listeners: async () => [],
+      sockets: async () => [],
+      openHandles: async () => [],
+      readPackageTransactionProof: async () => suppliedProof,
+    };
+    const composedStatus = await readMasDevelopmentGateStatus({
+      context,
+      dependencies: launchDependencies,
+    });
+    expect(composedStatus).toMatchObject({
+      status: "active",
+      phase: "ready",
+      package: { status: "committed", journalPath: packageJournalPath },
+    });
     let launchCalled = false;
+    await expect(launchMasDevelopmentGate({
+      context,
+      dependencies: {
+        ...launchDependencies,
+        readPackageTransactionProof: async () => ({ status: "absent", journalPath: packageJournalPath }),
+        launch: async () => { launchCalled = true; },
+      },
+    })).rejects.toThrow(/committed package transaction/);
+    expect(launchCalled).toBe(false);
+    suppliedProof = packageProof;
     const result = await launchMasDevelopmentGate({
       context,
       dependencies: {
-        processRows: async () => [],
-        listeners: async () => [],
-        sockets: async () => [],
-        openHandles: async () => [],
+        ...launchDependencies,
         launch: async () => {
           launchCalled = true;
           const hostLease = await acquireMasGateLock({ parentPath: context.parentPath });

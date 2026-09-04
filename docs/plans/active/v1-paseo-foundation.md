@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v75`
-- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-14`
-- `state`: `ATTEMPT_14_OWNER_AUTHORIZED_PHASE_1_PENDING`
+- `plan_revision`: `v76`
+- `current_frontier`: `R5-MAS-ATTEMPT14-POSTINSTALL-IDENTITY-CORRECTION`
+- `state`: `ATTEMPT_14_POSTINSTALL_IDENTITY_CORRECTION_PENDING`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead-accepted Applications-parent/runtime-owner correction `b3d96b4c1618423a16f18fe271bc9e565974800c`, an immutable child of `7871962f7c032ed18139d1280e35e4391e3ac709` and accepted integration tip `69c97239c8903cbb9fb06af01302ea2b4e1ed0e6`. It preserves the accepted status read-only, first-use bootstrap, package-source, identity, bounded registration, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export corrections.
+- `candidate`: repository-only post-install identity/recovery correction, an immutable child of exact base `470d109c81c14c144f352cd2b522dc6a1cf57142`; candidate commit is recorded as `<immutable-candidate-commit-pending>` until this child is created. The accepted Applications-parent/runtime-owner candidate `b3d96b4c1618423a16f18fe271bc9e565974800c` remains its implementation ancestor.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 13 is consumed by the pre-install package-parent failure recorded below. The one-time initial fixed-index authorization — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` — is spent; no package/sign/install/restore/launch retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: Attempt 14 requires a fresh artifact bound to the accepted repository tip and a Lead artifact checkpoint before install/launch.
-- `next_action`: run exactly one fresh package/sign/validate Phase 1 from the accepted tip; do not install or launch until Lead accepts that artifact checkpoint.
+- `blocked_by`: Lead review and acceptance of the repository-only post-install identity/recovery correction before any external Attempt 14 Phase 1 or Phase 2 action.
+- `next_action`: inspect the immutable correction child from exact base `470d109c81c14c144f352cd2b522dc6a1cf57142`; keep package/sign/install/launch/stop/restore/archive and all external gates closed.
 
 ## Ownership And Authority
 
@@ -1888,6 +1888,52 @@ or annual actions, real transcription/provider/TCC/recording/export, upload,
 submission, publication, App Review, push, or secret disclosure. Existing
 Attempt 13 and Lead-probe residues must be classified and preserved according
 to their recorded ownership; no manual cleanup is authorized.
+
+### R5 MAS Attempt 14 post-install identity/recovery correction (2026-09-04; current frontier)
+
+`FRONTIER_BRIEF v1 — SERIAL ATTEMPT14 POST-INSTALL IDENTITY/RECOVERY
+CORRECTION` is a sole-writer repository child of exact base
+`470d109c81c14c144f352cd2b522dc6a1cf57142`. The candidate commit is
+`<immutable-candidate-commit-pending>` until this child is created. Accepted
+findings are `ATT14-POSTINSTALL-IDENTITY-001`,
+`ATT14-POSTINSTALL-IDENTITY-002`, and `ATT14-POSTINSTALL-PROOF-004`;
+`ATT14-RECOVERY-ORDER-003` remains preserved. Authority digest remains
+`ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
+
+The correction keeps the runtime transaction's pre-package fresh-root
+readiness and identity-absence guard unchanged. The package transaction now
+owns a read-only proof that derives the v4 journal from the exact package
+target and runtime run ID, binds the package owner/run/artifact and candidate
+fingerprint/identity, requires null prior identity bytes, and compares the
+published identity by exact bytes, SHA-256 digest, and lstat metadata. It
+rejects temporary/collision identity state, symlinked identity ancestry,
+altered or missing package/identity state, wrong owner/run/path/artifact, and
+non-committed journals before authorization. No semantic JSON equality or
+permissive fallback is used.
+
+The coordinator composes the raw runtime status with that package proof for
+both status entry points, launch, and recovery. Launch requires active ready
+runtime state, a committed package transaction, the exact authorized identity,
+and a valid handoff before LaunchServices. Restore/recovery keeps the existing
+stop/absence → package rollback → package-lease release → gate-lock
+reacquisition → runtime restore → archive sequence. Strict package rollback
+repeats the proof preflight before mutation; after package rollback, the
+existing runtime identity-absence guard and restoration path remain the owner.
+The runtime transaction does not read package journals and receives no
+duplicate package-identity state.
+
+The changed paths are exactly the package transaction module, MAS coordinator,
+the package-transaction and coordinator focused tests, and this plan. No
+native, runtime-transaction, validator, contract, direct-DMG, authority, or
+external-action file changed. Repository-only negative proof covers wrong
+owner/path/run, wrong candidate binding, non-committed state, missing or
+replaced identity, symlink identity, strict rollback preflight, and launch
+rejection with zero LaunchServices calls. The retained Attempt 14 run ID
+`2b2905cf-7acd-493f-9aa7-5a6401c1e2e4` and all real MAS state remain untouched;
+only repository fixtures were used.
+
+Local proof and enforcement levels are recorded in the peer handoff. No hook,
+CI, or branch-protection result is claimed by this repository-only correction.
 
 ### Risks And Recovery
 

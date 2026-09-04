@@ -269,6 +269,12 @@ export async function recoverPackageTransaction(transactionOrJournal, options = 
     const lockedOptions = { ...options, lockLease };
     await lockLease.bindRuntimeRoot(runtimeRootPathFor(transaction, options));
     if (lockedOptions.assertNoLiveHost) await lockedOptions.assertNoLiveHost();
+    if (lockedOptions.requireAuthorizedIdentity === true) {
+      await assertAuthorizedPublishedIdentity(transaction, {
+        expectedArtifactBinding: lockedOptions.expectedArtifactBinding,
+        runtimeRootPath: runtimeRootPathFor(transaction, options),
+      });
+    }
     if (transaction.state === "finalizing" || transaction.state === "finalized") {
       await finishFinalization(transaction, lockedOptions);
     } else {
@@ -284,6 +290,12 @@ export async function restorePackageTransaction(transaction, options = {}) {
     const lockedOptions = { ...options, lockLease };
     await lockLease.bindRuntimeRoot(runtimeRootPathFor(transaction, options));
     if (lockedOptions.assertNoLiveHost) await lockedOptions.assertNoLiveHost();
+    if (lockedOptions.requireAuthorizedIdentity === true) {
+      await assertAuthorizedPublishedIdentity(transaction, {
+        expectedArtifactBinding: lockedOptions.expectedArtifactBinding,
+        runtimeRootPath: runtimeRootPathFor(transaction, options),
+      });
+    }
     if (transaction.state !== "prepared" && transaction.state !== "staged" && transaction.state !== "target-backed-up" &&
         transaction.state !== "candidate-installed" && transaction.state !== "identity-published" && transaction.state !== "committed" && transaction.state !== "restoring" &&
         transaction.state !== "target-displaced" && transaction.state !== "target-restored" &&
@@ -326,6 +338,96 @@ export async function readBytes(candidate) {
     if (error && typeof error === "object" && error.code === "ENOENT") return null;
     throw error;
   });
+}
+
+/**
+ * Prove the one committed MAS package identity that a coordinator may
+ * authorize after the runtime transaction has crossed its fresh-root write
+ * boundary. This is deliberately read-only: the package journal and the
+ * published identity are the only authority consulted here, and every path is
+ * derived from the exact package target and runtime run ID.
+ */
+export async function readPackageTransactionProof({
+  target,
+  identityPath,
+  runId,
+  ownerToken,
+  expectedArtifactBinding,
+  runtimeRootPath,
+  journalPath,
+  allowMissing = false,
+} = {}) {
+  assertCanonicalPackagePath(target, "package proof target");
+  assertCanonicalPackagePath(identityPath, "package proof identity path");
+  if (typeof runId !== "string" || !/^[-A-Za-z0-9]+$/u.test(runId)) {
+    throw new Error("package proof run ID is invalid");
+  }
+  if (typeof ownerToken !== "string" || !ownerToken) {
+    throw new Error("package proof owner token is required");
+  }
+  if (typeof allowMissing !== "boolean") throw new Error("package proof allowMissing must be boolean");
+  const paths = packageTransactionPaths(target, runId);
+  if (journalPath !== undefined) {
+    assertCanonicalPackagePath(journalPath, "package proof journal path");
+    if (journalPath !== paths.journal) throw new Error("package proof journal path is not the fixed target/run-derived package journal");
+  }
+  const journalInfo = await lstat(paths.journal).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!journalInfo) {
+    if (allowMissing) {
+      const identityInfo = await lstat(identityPath).catch((error) => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (identityInfo) {
+        throw new Error("package proof journal is missing while the package identity path is present");
+      }
+      return { status: "absent", journalPath: paths.journal };
+    }
+    throw new Error(`package proof journal is missing at the fixed target/run-derived path ${paths.journal}`);
+  }
+  if (journalInfo.isSymbolicLink() || !journalInfo.isFile() || journalInfo.uid !== currentUid() || journalInfo.nlink !== 1 || (journalInfo.mode & 0o7777) !== 0o600) {
+    throw new Error("package proof journal is not one secure regular file");
+  }
+
+  let transaction;
+  try {
+    transaction = normalizeTransaction(JSON.parse(await readFile(paths.journal, "utf8")));
+  } catch (error) {
+    throw new Error(`package proof journal is malformed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (transaction.runId !== runId) {
+    throw new Error("package proof journal run ID does not equal the exact target/run-derived path run ID");
+  }
+  assertTransaction(transaction, {
+    ownerToken,
+    target,
+    identityPath,
+    requireArtifactBinding: true,
+  });
+  const identity = await assertAuthorizedPublishedIdentity(transaction, {
+    expectedArtifactBinding,
+    runtimeRootPath,
+  });
+  return {
+    status: "committed",
+    journalPath: paths.journal,
+    ownerToken: transaction.ownerToken,
+    runId: transaction.runId,
+    target: transaction.target,
+    identityPath: transaction.identityPath,
+    artifactBinding: transaction.artifactBinding,
+    candidateFingerprint: transaction.candidateFingerprint,
+    candidateIdentity: transaction.candidateIdentity,
+    nextIdentityFingerprint: transaction.nextIdentityFingerprint,
+    identityPublishedIdentity: transaction.identityPublishedIdentity,
+    currentIdentityBytes: identity.bytes,
+    currentIdentityFingerprint: identity.digest,
+    currentIdentity: identity.metadata,
+    transaction,
+  };
 }
 
 async function loadTransaction(transactionOrJournal) {
@@ -468,6 +570,122 @@ async function restoreIdentity(transaction, lockLease) {
     await removeOwnedPath(transaction, transaction.identityPath, await fingerprintPath(transaction.identityPath), "package identity", lockLease, expectedIdentity);
   } else {
     await writeBytesAtomic(transaction.identityPath, previousBytes, { lease: lockLease, noReplace: false });
+  }
+}
+
+async function assertAuthorizedPublishedIdentity(transaction, {
+  expectedArtifactBinding,
+  runtimeRootPath,
+} = {}) {
+  if (transaction.state !== "committed") {
+    throw new Error(`package identity authorization requires committed package state; observed ${transaction.state}`);
+  }
+  if (!Object.prototype.hasOwnProperty.call(transaction.previous, "identityBytes") || transaction.previous.identityBytes !== null) {
+    throw new Error("package identity authorization requires null previous.identityBytes for a fresh-root install");
+  }
+  let artifactBinding;
+  try {
+    artifactBinding = assertMasGateArtifactBinding(transaction.artifactBinding, { bundlePath: transaction.source });
+  } catch (error) {
+    throw new Error(`package identity authorization artifact binding is invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (transaction.sourceFingerprint !== artifactBinding.bundleFingerprint || transaction.candidateFingerprint !== artifactBinding.bundleFingerprint) {
+    throw new Error("package identity authorization artifact binding does not match the exact candidate fingerprint");
+  }
+  if (expectedArtifactBinding !== undefined) {
+    assertMasGateArtifactBinding(expectedArtifactBinding, { bundlePath: transaction.source });
+    if (!sameArtifactBinding(artifactBinding, expectedArtifactBinding)) {
+      throw new Error("package identity authorization artifact binding differs from the authorized artifact");
+    }
+  }
+
+  assertExactPackageIdentity(transaction.candidateIdentity, "package identity authorization candidate identity", "directory");
+  assertExactPackageIdentity(transaction.identityPublishedIdentity, "package identity authorization published identity", "file");
+  if (!Buffer.isBuffer(transaction.nextIdentityBytes)) {
+    throw new Error("package identity authorization next identity bytes are not one durable byte value");
+  }
+  if (transaction.nextIdentityFingerprint !== digest(transaction.nextIdentityBytes) || !/^[a-f0-9]{64}$/u.test(transaction.nextIdentityFingerprint ?? "")) {
+    throw new Error("package identity authorization next identity bytes and digest are inconsistent");
+  }
+  if (transaction.identityTemporaryPath !== null || transaction.identityTemporaryFingerprint !== null || transaction.identityTemporaryIdentity !== null) {
+    throw new Error("package identity authorization retains a temporary or collision identity");
+  }
+  if (transaction.cleanupPath !== null || transaction.cleanupSource !== null || transaction.cleanupFingerprint !== null || transaction.cleanupIdentity !== null) {
+    throw new Error("package identity authorization has pending package cleanup intent");
+  }
+  if (runtimeRootPath === undefined) {
+    throw new Error("package identity authorization requires the exact runtime root");
+  }
+  assertCanonicalPackagePath(runtimeRootPath, "package proof runtime root");
+  if (!pathInside(runtimeRootPath, transaction.identityPath)) {
+    throw new Error("package identity authorization identity path is outside the exact runtime root");
+  }
+  await assertNoSymlinkAncestors(transaction.identityPath, runtimeRootPath);
+  if (await packagePathIdentity(packageIdentityTemporaryPath(transaction.identityPath, transaction.runId)) !== null) {
+    throw new Error("package identity authorization has a temporary or collision identity at the exact run-derived path");
+  }
+
+  const candidateFingerprint = await fingerprintPath(transaction.target);
+  if (candidateFingerprint !== transaction.candidateFingerprint) {
+    throw new Error("package identity authorization candidate package fingerprint changed");
+  }
+  const candidateIdentity = await packagePathIdentity(transaction.target);
+  if (!samePackageIdentity(candidateIdentity, transaction.candidateIdentity)) {
+    throw new Error("package identity authorization candidate package identity changed");
+  }
+  const bytes = await readBytes(transaction.identityPath);
+  if (bytes === null) throw new Error("package identity authorization published identity is missing");
+  if (!Buffer.isBuffer(bytes) || Buffer.compare(bytes, transaction.nextIdentityBytes) !== 0 || digest(bytes) !== transaction.nextIdentityFingerprint) {
+    throw new Error("package identity authorization current bytes do not exactly match nextIdentityBytes and digest");
+  }
+  const metadata = await packagePathIdentity(transaction.identityPath);
+  if (!samePackageIdentity(metadata, transaction.identityPublishedIdentity)) {
+    throw new Error("package identity authorization current file metadata does not exactly match identityPublishedIdentity");
+  }
+  return { bytes, digest: transaction.nextIdentityFingerprint, metadata };
+}
+
+function assertExactPackageIdentity(identity, label, expectedType) {
+  validateOptionalPackageIdentity(identity, label);
+  if (!identity || identity.type !== expectedType) throw new Error(`${label} is not the exact expected ${expectedType} identity`);
+  const expectedKeys = ["dev", "gid", "ino", "mode", "nlink", "size", "type", "uid"];
+  const actualKeys = Object.keys(identity).sort();
+  if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) {
+    throw new Error(`${label} contains unexpected or missing metadata`);
+  }
+}
+
+function sameArtifactBinding(actual, expected) {
+  const fields = [
+    "schema",
+    "version",
+    "manifestPath",
+    "manifestSha256",
+    "bundlePath",
+    "bundleFingerprint",
+    "artifactDigest",
+    "candidateSnapshotDigest",
+    "packageInputDigest",
+    "artifactInputDigest",
+    "licenseDigest",
+    "signatureDigest",
+    "publicSdkKeySha256",
+  ];
+  return fields.every((field) => actual[field] === expected[field]);
+}
+
+function pathInside(root, candidate) {
+  return candidate !== root && candidate.startsWith(`${root}${path.sep}`);
+}
+
+async function assertNoSymlinkAncestors(candidate, root) {
+  let current = path.dirname(candidate);
+  while (true) {
+    const info = await lstat(current);
+    if (info.isSymbolicLink()) throw new Error("package identity authorization path contains a symlink ancestor");
+    if (current === root) return;
+    if (!pathInside(root, current)) throw new Error("package identity authorization path escaped the exact runtime root");
+    current = path.dirname(current);
   }
 }
 
@@ -916,6 +1134,11 @@ async function exists(candidate) {
 
 function digest(bytes) {
   return bytes === null || bytes === undefined ? null : createHash("sha256").update(bytes).digest("hex");
+}
+
+function currentUid() {
+  if (typeof process.getuid !== "function") throw new Error("package identity authorization requires process UID support");
+  return process.getuid();
 }
 
 function fingerprintFileBytes(bytes) {

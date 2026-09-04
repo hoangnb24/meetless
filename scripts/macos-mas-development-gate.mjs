@@ -64,8 +64,10 @@ import {
   archiveMasGateSessionTransaction,
   assertMasGateSessionReady,
   beginMasGateSessionTransaction,
+  MAS_GATE_SESSION_INDEX_INTENT_SCHEMA,
+  MAS_GATE_SESSION_INDEX_INTENT_VERSION,
   initializeMasGateSessionIndex,
-  readMasGateSessionStatus,
+  readMasGateSessionStatus as readRuntimeMasGateSessionStatus,
   restoreMasGateSessionTransaction,
 } from "./lib/macos-mas-gate-session-transaction.mjs";
 import {
@@ -78,6 +80,7 @@ import { acceptedMacOSPackagePaths } from "./lib/macos-package-contract.mjs";
 import {
   fingerprintPath,
   packageTransactionPaths,
+  readPackageTransactionProof,
   replacePackageBundle,
   restorePackageTransaction,
 } from "./lib/macos-package-transaction.mjs";
@@ -86,7 +89,7 @@ export const MAS_GATE_COORDINATOR_SCHEMA = "MAS_GATE_COORDINATOR v1";
 export const MAS_GATE_HOST_HANDOFF_SCHEMA = "MAS_GATE_HOST_HANDOFF v1";
 export const MAS_GATE_HOST_HANDOFF_FILENAME = "host-handoff.json";
 
-export { readMasGateSessionStatus };
+export { readRuntimeMasGateSessionStatus };
 
 const execFileAsync = promisify(execFile);
 const modulePath = fileURLToPath(import.meta.url);
@@ -219,6 +222,192 @@ export function masLiveAbsentObservation(context) {
     sockets: [],
     openHandles: [],
   };
+}
+
+/**
+ * Compose the runtime transaction status with the package transaction's
+ * post-install authorization. The runtime transaction remains the owner of
+ * fresh-root readiness and deliberately rejects a published identity; only
+ * this coordinator can add the package-owned proof for the post-install
+ * state.
+ */
+export async function readMasDevelopmentGateStatus({
+  context = masDevelopmentRuntimeContext(),
+  dependencies = {},
+  lockLease,
+} = {}) {
+  const composed = await readMasDevelopmentGateStatusWithProof({ context, dependencies, lockLease });
+  return composed.status;
+}
+
+/**
+ * Keep the historical coordinator export used by the session CLI, while
+ * routing that CLI through the same package-aware status composition. Older
+ * callers pass masGateRuntimeOptions(context) rather than a coordinator
+ * context, so recover the contract-derived home from its exact runtime root.
+ */
+export async function readMasGateSessionStatus(options = {}) {
+  const context = options.context ?? contextFromMasGateRuntimeOptions(options);
+  return readMasDevelopmentGateStatus({
+    context,
+    dependencies: options.dependencies ?? {},
+    lockLease: options.lockLease,
+  });
+}
+
+function contextFromMasGateRuntimeOptions(options) {
+  if (options?.runtimeRoot === undefined) return masDevelopmentRuntimeContext();
+  const contract = macAppStoreInstallationContract();
+  const runtimeSuffix = path.join(path.sep, ...contract.userSupportRelativePath.split("/"));
+  if (typeof options.runtimeRoot !== "string" || !options.runtimeRoot.endsWith(runtimeSuffix)) {
+    throw coordinatorError("MAS status runtime options are not bound to the exact app-container contract root");
+  }
+  const userHome = options.runtimeRoot.slice(0, -runtimeSuffix.length) || path.sep;
+  return masDevelopmentRuntimeContext({ userHome });
+}
+
+async function readMasDevelopmentGateStatusWithProof({ context, dependencies = {}, lockLease } = {}) {
+  context = assertMasDevelopmentContext(context);
+  const runtimeOptions = masGateRuntimeOptions(
+    context,
+    lockLease ? { dependencies, lockLease } : { dependencies },
+  );
+  let runtimeStatus;
+  let session = null;
+  let postInstallIdentityObserved = false;
+  try {
+    runtimeStatus = await readRuntimeMasGateSessionStatus(runtimeOptions);
+  } catch (error) {
+    if (!isFreshIdentityPresenceFailure(error)) throw error;
+    postInstallIdentityObserved = true;
+    session = await readSessionJournal(path.join(context.activePath, "transaction.json"));
+    if (session.phase !== "ready") {
+      throw coordinatorError("post-install identity was present while the runtime transaction was not ready", error);
+    }
+    assertHandoffSessionBinding(context, session);
+    runtimeStatus = postInstallRuntimeStatus(context, session);
+  }
+
+  if (runtimeStatus.status !== "active" && runtimeStatus.status !== "recovery-required") {
+    await assertIdentityAbsentWithoutRuntimeTransaction(context, runtimeStatus);
+    return {
+      status: {
+        ...runtimeStatus,
+        package: { status: "not-applicable" },
+      },
+      packageProof: null,
+      session: null,
+    };
+  }
+  if (!session) session = await readSessionJournal(runtimeStatus.journalPath);
+  if (session.runId !== runtimeStatus.runId) {
+    throw coordinatorError("runtime status and its session journal have different run IDs");
+  }
+  const packageProof = await readPackageProofForSession({
+    context,
+    session,
+    dependencies,
+    allowMissing: !postInstallIdentityObserved,
+  });
+  return {
+    status: {
+      ...runtimeStatus,
+      package: packageProofSummary(packageProof),
+    },
+    packageProof: packageProof.status === "committed" ? packageProof : null,
+    session,
+  };
+}
+
+async function readPackageProofForSession({ context, session, dependencies = {}, allowMissing = false } = {}) {
+  if (!session || typeof session !== "object" || typeof session.runId !== "string" || typeof session.ownerToken !== "string") {
+    throw coordinatorError("package identity authorization has no exact runtime session owner and run");
+  }
+  const journalPath = packageTransactionPaths(context.bundlePath, session.runId).journal;
+  const readProof = dependencies.readPackageTransactionProof ?? readPackageTransactionProof;
+  if (typeof readProof !== "function") throw coordinatorError("package identity authorization reader is unavailable");
+  let proof;
+  try {
+    proof = await readProof({
+      target: context.bundlePath,
+      identityPath: context.identityPath,
+      runId: session.runId,
+      ownerToken: session.ownerToken,
+      runtimeRootPath: context.runtimeRoot,
+      journalPath,
+      allowMissing,
+    });
+  } catch (error) {
+    if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) throw error;
+    throw coordinatorError(`package identity authorization failed before coordinator use: ${describe(error)}`, error);
+  }
+  assertPackageProofComposition(proof, context, session, journalPath);
+  return proof;
+}
+
+function assertPackageProofComposition(proof, context, session, journalPath) {
+  if (!proof || typeof proof !== "object" || Array.isArray(proof) || proof.journalPath !== journalPath) {
+    throw coordinatorError("package identity authorization returned a proof at the wrong fixed journal path");
+  }
+  if (proof.status === "absent") return;
+  if (proof.status !== "committed" || proof.ownerToken !== session.ownerToken || proof.runId !== session.runId ||
+      proof.target !== context.bundlePath || proof.identityPath !== context.identityPath ||
+      !proof.transaction || typeof proof.transaction !== "object" || Array.isArray(proof.transaction)) {
+    throw coordinatorError("package identity authorization is not bound to the exact committed package, owner, run, and identity path");
+  }
+  if (proof.transaction.ownerToken !== session.ownerToken || proof.transaction.runId !== session.runId ||
+      proof.transaction.target !== context.bundlePath || proof.transaction.identityPath !== context.identityPath ||
+      proof.transaction.state !== "committed") {
+    throw coordinatorError("package identity authorization transaction binding is not exact");
+  }
+}
+
+function packageProofSummary(proof) {
+  if (proof.status === "absent") return { status: "absent", journalPath: proof.journalPath };
+  return {
+    status: "committed",
+    journalPath: proof.journalPath,
+    ownerToken: proof.ownerToken,
+    runId: proof.runId,
+    target: proof.target,
+    identityPath: proof.identityPath,
+    artifactBinding: proof.artifactBinding,
+    candidateFingerprint: proof.candidateFingerprint,
+    candidateIdentity: proof.candidateIdentity,
+    nextIdentityFingerprint: proof.nextIdentityFingerprint,
+    identityPublishedIdentity: proof.identityPublishedIdentity,
+    currentIdentityFingerprint: proof.currentIdentityFingerprint,
+    currentIdentity: proof.currentIdentity,
+  };
+}
+
+function postInstallRuntimeStatus(context, session) {
+  return {
+    status: "active",
+    phase: session.phase,
+    journalPath: path.join(context.activePath, "transaction.json"),
+    activePath: context.activePath,
+    quarantinePath: session.quarantinePath,
+    freshRetainedPath: session.freshRetainedPath,
+    archivePath: session.archivePath,
+    runId: session.runId,
+    stateScope: session.stateScope,
+  };
+}
+
+async function assertIdentityAbsentWithoutRuntimeTransaction(context, runtimeStatus) {
+  const identityInfo = await lstat(context.identityPath).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw coordinatorError(`package identity presence could not be checked for ${runtimeStatus.status} runtime status: ${describe(error)}`, error);
+  });
+  if (identityInfo) {
+    throw coordinatorError(`package identity is present without an active runtime transaction (${runtimeStatus.status}); preserve every root`);
+  }
+}
+
+function isFreshIdentityPresenceFailure(error) {
+  return error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE &&
+    /identity path is not absent in the fresh canonical runtime root/u.test(error.message ?? "");
 }
 
 /**
@@ -374,7 +563,7 @@ export async function installMasDevelopmentGate({
         let runtimeJournalPath = null;
         if (session?.runId) runtimeJournalPath = path.join(context.activePath, "transaction.json");
         else {
-          const status = await readMasGateSessionStatus(masGateRuntimeOptions(context, { dependencies, lockLease: lease }));
+          const status = await readRuntimeMasGateSessionStatus(masGateRuntimeOptions(context, { dependencies, lockLease: lease }));
           runtimeJournalPath = status.journalPath ?? null;
         }
         if (runtimeJournalPath && await pathExists(runtimeJournalPath)) {
@@ -407,9 +596,13 @@ export async function launchMasDevelopmentGate({
   const lease = await acquireMasGateLock({ parentPath: context.parentPath });
   let released = false;
   try {
-    const status = await readMasGateSessionStatus({ ...masGateRuntimeOptions(context, { dependencies }), lockLease: lease });
+    const composed = await readMasDevelopmentGateStatusWithProof({ context, dependencies, lockLease: lease });
+    const status = composed.status;
     if (status.status !== "active" || status.phase !== "ready") {
       throw coordinatorError(`MAS launch requires one active ready transaction; observed ${status.status}/${status.phase ?? "none"}`);
+    }
+    if (!composed.packageProof) {
+      throw coordinatorError("MAS launch requires one committed package transaction with an authorized published identity");
     }
     const handoff = await readHostHandoff(status, context);
     const launch = dependencies.launch ?? (async () => {
@@ -1046,32 +1239,24 @@ export async function restoreMasDevelopmentGate({
         // claim an available handoff between absence proof and rollback.
         const packageLease = await acquireMasGateLock(masGatePackageLockOptions(context));
         try {
-          const status = await readMasGateSessionStatus(masGateRuntimeOptions(context, { dependencies, lockLease: packageLease }));
+          const composed = await readMasDevelopmentGateStatusWithProof({ context, dependencies, lockLease: packageLease });
+          const status = composed.status;
           if (status.status !== "active" && status.status !== "recovery-required") {
             return { status: "nothing-to-restore", observation: stopped.observation };
           }
           sessionJournalPath = status.journalPath;
-          session = await readSessionJournal(sessionJournalPath);
+          session = composed.session;
           if (typeof session.runId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(session.runId)) {
             throw coordinatorError("MAS session journal run ID is invalid; preserve every root and do not derive package paths");
           }
-          const packageJournalPath = packageTransactionPaths(context.bundlePath, session.runId).journal;
-          if (await pathExists(packageJournalPath)) {
-            const packageInfo = await lstat(packageJournalPath);
-            if (packageInfo.isSymbolicLink() || !packageInfo.isFile() || packageInfo.uid !== currentUid() || packageInfo.nlink !== 1 || (packageInfo.mode & 0o7777) !== 0o600) {
-              throw coordinatorError("MAS package transaction journal is not one secure regular file");
-            }
-            let packageTransaction;
-            try {
-              packageTransaction = JSON.parse(await readFile(packageJournalPath, "utf8"));
-            } catch (error) {
-              throw coordinatorError(`MAS package transaction journal is malformed: ${describe(error)}`, error);
-            }
-            await restorePackageTransaction(packageTransaction, {
+          if (composed.packageProof) {
+            await restorePackageTransaction(composed.packageProof.transaction, {
               ownerToken: session.ownerToken,
               target: context.bundlePath,
               identityPath: context.identityPath,
               requireArtifactBinding: true,
+              requireAuthorizedIdentity: true,
+              expectedArtifactBinding: composed.packageProof.artifactBinding,
               lockParentPath: context.parentPath,
               runtimeRootPath: context.runtimeRoot,
               lockLease: packageLease,
@@ -1158,7 +1343,12 @@ async function readSessionJournal(journalPath) {
     if (info.isSymbolicLink() || !info.isFile() || info.uid !== currentUid() || info.nlink !== 1 || (info.mode & 0o7777) !== 0o600) {
       throw coordinatorError("MAS session journal is not one secure regular file");
     }
-    return JSON.parse(await readFile(journalPath, "utf8"));
+    const decoded = JSON.parse(await readFile(journalPath, "utf8"));
+    if (decoded?.schema === MAS_GATE_SESSION_INDEX_INTENT_SCHEMA && decoded.version === MAS_GATE_SESSION_INDEX_INTENT_VERSION &&
+        decoded.transaction && typeof decoded.transaction === "object" && !Array.isArray(decoded.transaction)) {
+      return decoded.transaction;
+    }
+    return decoded;
   } catch (error) {
     if (error?.code === "MAS-GATE-CLEANUP-001") throw error;
     throw coordinatorError(`MAS session journal is unavailable or malformed: ${describe(error)}`, error);
@@ -1506,7 +1696,7 @@ async function main() {
     return;
   }
   if (command === "status") {
-    process.stdout.write(`${JSON.stringify(await readMasGateSessionStatus(masGateRuntimeOptions(context)), null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(await readMasDevelopmentGateStatus({ context }), null, 2)}\n`);
     return;
   }
   if (command === "install") {
