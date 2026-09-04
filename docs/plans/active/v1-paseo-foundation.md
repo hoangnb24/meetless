@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v71`
-- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-13`
-- `state`: `OWNER_AUTHORIZED_PENDING_SERIAL_OPERATOR`
+- `plan_revision`: `v72`
+- `current_frontier`: `R5-MAS-SERIAL-APPLICATIONS-PARENT-POLICY-CORRECTION`
+- `state`: `REPOSITORY_CORRECTION_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted status read-only and first-use bootstrap correction `0d21c5336117fa1517fdc5032ac6bb5da274c481`, an immutable child of `12cecc38ae39a4b5e66016ddd637de020672f7d2`; its ancestry retains exact base `3b68fb22c4453b2e66e6da934e44387c3d6e0964` and accepted implementation ancestor `ca26b6c045bbbb1c86aa46b2a0a0966205d645cd`. Prior package-source, identity, bounded registration, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export corrections remain preserved.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: Owner authorization remains limited to one Attempt 13 run and the one-time initial fixed-index step — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` The package command remains unrun. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: no repository implementation dependency remains before the bounded serial Attempt 13 operator run.
-- `next_action`: staff one fresh serial operator for the frozen recovery audit, exact package command, Lead artifact checkpoint, coordinator-owned install/launch/stop/restore, and complete residue report. Any contract or runtime failure returns `REOPEN_REQUEST`; no code correction is mixed into the gate.
+- `pending_ruling`: Attempt 13 is consumed by the pre-install package-parent failure recorded below. The one-time initial fixed-index authorization — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` — is spent; no package/sign/install/restore/launch retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
+- `blocked_by`: Lead review of this repository correction; any future package/install/restore/launch retry requires new owner authorization.
+- `next_action`: Lead review the immutable child of exact base `69c97239c8903cbb9fb06af01302ea2b4e1ed0e6`. If accepted, obtain fresh owner authorization before any new external gate attempt.
 
 ## Ownership And Authority
 
@@ -1766,7 +1766,7 @@ JavaScript syntax; structural no-enumeration/strict-schema checks; and diff
 validation. No real MAS root, `/Applications`, package/sign/install/launch,
 process stop, secret/cache inspection, external action, or push is performed.
 
-### R5 MAS status read-only correction (2026-09-04; current frontier)
+### R5 MAS status read-only correction (2026-09-04; prior frontier)
 
 `CONVERGENCE_RECONCILIATION v3` is an immutable child of
 `12cecc38ae39a4b5e66016ddd637de020672f7d2`. Lead accepted finding
@@ -1799,6 +1799,44 @@ index-intent rejection. All further probes for this frontier use fixtures or
 proof roots. The Lead-created Trash residue is not touched. No real MAS root,
 Trash path, `/Applications`, package/sign/install/launch, process, secret/cache,
 external system, or push is in scope.
+
+### R5 MAS serial Applications-parent policy correction (2026-09-04; current frontier)
+
+`FRONTIER_BRIEF v1 — SERIAL APPLICATIONS PARENT POLICY CORRECTION` starts at
+the exact accepted base/current tip
+`69c97239c8903cbb9fb06af01302ea2b4e1ed0e6`. Attempt 13 is consumed. Its
+pre-install failure exposed that JavaScript treated the private runtime/lock
+parent and the package parent as one class: JavaScript prepared the runtime
+lock before the native helper rejected the standard `/Applications`
+`root:admin` mode `0775` package parent as group-writable. No package move,
+install, restore, launch, or accepted readiness occurred. The existing app and
+runtime remained unchanged. The exact attempt-owned lock is retained as
+unchanged residue; this correction does not inspect or mutate it, and creates no
+real MAS or `/Applications` residue. Attempt 13’s one-time fixed-index
+authorization is spent; any retry requires new owner authorization.
+
+The correction adds one pure/shared JavaScript package-parent policy seam. A
+private package parent is current-user- or root-owned and non-group/other-
+writable. The exact canonical `/Applications` package parent is accepted only
+when it is a directory with UID 0, the resolved system `admin` GID, exact mode
+`0775`, and the effective user is root or a supplementary admin member. The
+JavaScript check runs before `prepareLockFile`; the native helper repeats the
+policy from its descriptor after no-follow traversal and identity binding,
+including before protected package renames. Existing descriptor-relative
+`openat(..., O_NOFOLLOW)` traversal, pinned identities,
+`renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`, sibling names,
+transaction-specific ownership, root-owned prior-app backup handling, runtime
+parent policy, and MeetlessHost checks remain unchanged.
+
+Fixture proof covers synthetic exact `/Applications` metadata and admin
+membership, same metadata at another path, missing membership, wrong
+UID/GID/mode, symlink/alias, writable private/runtime parents, pre-lock failure
+without lock residue, native modeled policy positives/negatives, package
+ancestor substitution/EEXIST, and package rollback. Authority digest remains
+`ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
+No package/sign/install/restore/launch retry, real MAS root or `/Applications`
+inspection, exact attempt-lock mutation, Trash/secrets/cache/process/external
+inspection, or push is permitted for this correction.
 
 ### Risks And Recovery
 

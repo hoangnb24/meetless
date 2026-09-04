@@ -3,6 +3,7 @@ import { cp, lstat, mkdir, open, readFile, readlink, readdir, rename, rm, writeF
 import path from "node:path";
 import { acquireMasGateLock, assertMasGateMutationLease, masGateLockPath } from "./macos-mas-gate-lock.mjs";
 import { assertMasGateArtifactBinding, freezeMasGateArtifactBinding } from "./mas-gate-artifact-binding.mjs";
+import { assertMacOSPackageParent } from "./macos-package-parent-policy.mjs";
 
 export const PACKAGE_TRANSACTION_SCHEMA = "MAS_PACKAGE_TRANSACTION v4";
 export const PACKAGE_TRANSACTION_VERSION = 4;
@@ -29,6 +30,7 @@ async function withPackageMutationLease(input, options, operation) {
   const lockParentPath = options?.lockParentPath ?? path.dirname(target);
   assertCanonicalPackagePath(lockParentPath, "package mutation lock parent");
   const packageParentPath = path.dirname(target);
+  await assertMacOSPackageParent(packageParentPath);
   const expectedLockPath = masGateLockPath(lockParentPath);
   if (supplied) {
     assertMasGateMutationLease(supplied);
@@ -41,7 +43,6 @@ async function withPackageMutationLease(input, options, operation) {
     await supplied.assertHeld();
     return operation(supplied);
   }
-  await mkdir(path.dirname(target), { recursive: true, mode: 0o755 });
   const lease = await acquireMasGateLock({
     parentPath: lockParentPath,
     packageParentPath,
@@ -80,7 +81,7 @@ async function replacePackageBundleWithLease(input) {
   }
   const sourceFingerprint = await fingerprintPath(source);
   if (!sourceFingerprint) throw new Error(`package transaction source is missing: ${source}`);
-  await assertPackageParent(path.dirname(target));
+  await assertMacOSPackageParent(path.dirname(target));
   if (artifactBinding && sourceFingerprint !== artifactBinding.bundleFingerprint) {
     throw new Error("package transaction source fingerprint differs from the validated MAS artifact binding");
   }
@@ -901,13 +902,6 @@ async function assertArtifactBindingCurrent(binding, source) {
   if (sourceFingerprint !== binding.bundleFingerprint) {
     throw new Error("validated MAS artifact source changed before package mutation");
   }
-}
-
-async function assertPackageParent(parentPath) {
-  const info = await lstat(parentPath).catch((error) => {
-    throw new Error(`package target parent is unavailable: ${error.message}`);
-  });
-  if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("package target parent is not one real directory");
 }
 
 function assertCanonicalPackagePath(candidate, label) {

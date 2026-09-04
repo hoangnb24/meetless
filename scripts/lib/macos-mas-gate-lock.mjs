@@ -3,6 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertMacOSPackageParent } from "./macos-package-parent-policy.mjs";
 
 export const MAS_GATE_LOCK_SCHEMA = "MAS_GATE_LOCK v1";
 export const MAS_GATE_LOCK_BASENAME = ".meetless-mas-gate.lock";
@@ -41,6 +42,7 @@ export async function acquireMasGateLock({ parentPath, packageParentPath = paren
     const canonicalParent = canonicalAbsolute(parentPath, "MAS gate lock parent");
     const canonicalPackageParent = canonicalAbsolute(packageParentPath, "MAS gate package parent");
     await assertLockParent(canonicalParent);
+    await assertMacOSPackageParent(canonicalPackageParent);
     const lockPath = masGateLockPath(canonicalParent);
     await prepareLockFile(lockPath, canonicalParent);
     const child = spawn(mutationHelperPath, [`--parent=${canonicalParent}`, `--lock=${lockPath}`, `--package-parent=${canonicalPackageParent}`], {

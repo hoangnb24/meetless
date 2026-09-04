@@ -1,7 +1,9 @@
+import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   newPackageTransactionId,
@@ -12,8 +14,12 @@ import {
   serializeSortedJson,
   restorePackageTransaction,
 } from "../../../scripts/lib/macos-package-transaction.mjs";
-import { acquireMasGateLock } from "../../../scripts/lib/macos-mas-gate-lock.mjs";
+import { MAS_GATE_LOCK_BASENAME, acquireMasGateLock } from "../../../scripts/lib/macos-mas-gate-lock.mjs";
 import { freezeMasGateArtifactBinding } from "../../../scripts/lib/mas-gate-artifact-binding.mjs";
+import {
+  MACOS_PACKAGE_PARENT_SYSTEM_PATH,
+  evaluateMacOSPackageParentPolicy,
+} from "../../../scripts/lib/macos-package-parent-policy.mjs";
 import {
   archiveMasGateSessionTransaction,
   beginMasGateSessionTransaction,
@@ -25,6 +31,7 @@ import {
 } from "../../../scripts/lib/macos-mas-gate-session-transaction.mjs";
 
 const roots: string[] = [];
+const execFile = promisify(execFileCallback);
 
 const identityGoldenVector = {
   version: 1,
@@ -83,7 +90,169 @@ function absentRuntime(runtimeRoot: string, parentPath: string) {
   };
 }
 
+describe("macOS package-parent policy", () => {
+  const currentUid = process.getuid?.() ?? 501;
+  const wrongUid = currentUid === 0 ? 501 : currentUid;
+
+  it("accepts synthetic exact /Applications metadata only with admin membership", () => {
+    const systemMetadata = {
+      type: "directory",
+      isDirectory: true,
+      isSymbolicLink: false,
+      uid: 0,
+      gid: 80,
+      mode: 0o775,
+    };
+    expect(evaluateMacOSPackageParentPolicy({
+      parentPath: MACOS_PACKAGE_PARENT_SYSTEM_PATH,
+      resolvedPath: MACOS_PACKAGE_PARENT_SYSTEM_PATH,
+      metadata: systemMetadata,
+      currentUid,
+      effectiveUid: wrongUid,
+      supplementaryGroups: [80],
+      adminGroupId: 80,
+    })).toMatchObject({ accepted: true, classification: "system-applications" });
+
+    expect(evaluateMacOSPackageParentPolicy({
+      parentPath: "/private/tmp/not-Applications",
+      resolvedPath: "/private/tmp/not-Applications",
+      metadata: systemMetadata,
+      currentUid,
+      effectiveUid: currentUid,
+      supplementaryGroups: [80],
+      adminGroupId: 80,
+    })).toMatchObject({ accepted: false });
+    expect(evaluateMacOSPackageParentPolicy({
+      parentPath: MACOS_PACKAGE_PARENT_SYSTEM_PATH,
+      resolvedPath: MACOS_PACKAGE_PARENT_SYSTEM_PATH,
+      metadata: systemMetadata,
+      currentUid,
+      effectiveUid: wrongUid,
+      supplementaryGroups: [],
+      adminGroupId: 80,
+    })).toMatchObject({ accepted: false });
+    expect(evaluateMacOSPackageParentPolicy({
+      parentPath: "/private/tmp/private-package-parent",
+      resolvedPath: "/private/tmp/private-package-parent",
+      metadata: {
+        type: "directory",
+        isDirectory: true,
+        isSymbolicLink: false,
+        uid: currentUid,
+        gid: 20,
+        mode: 0o700,
+      },
+      currentUid,
+      effectiveUid: currentUid,
+      supplementaryGroups: [],
+    })).toMatchObject({ accepted: true, classification: "private" });
+  });
+
+  it.each([
+    ["wrong uid", { uid: wrongUid, gid: 80, mode: 0o775 }],
+    ["wrong gid", { uid: 0, gid: 20, mode: 0o775 }],
+    ["wrong mode", { uid: 0, gid: 80, mode: 0o755 }],
+    ["symlink", { type: "symlink", isDirectory: false, isSymbolicLink: true, uid: 0, gid: 80, mode: 0o775 }],
+  ] as const)("rejects /Applications %s metadata", (_label, change) => {
+    expect(evaluateMacOSPackageParentPolicy({
+      parentPath: MACOS_PACKAGE_PARENT_SYSTEM_PATH,
+      resolvedPath: MACOS_PACKAGE_PARENT_SYSTEM_PATH,
+      metadata: {
+        type: "directory",
+        isDirectory: true,
+        isSymbolicLink: false,
+        uid: 0,
+        gid: 80,
+        mode: 0o775,
+        ...change,
+      },
+      currentUid,
+      effectiveUid: currentUid,
+      supplementaryGroups: [80],
+      adminGroupId: 80,
+    })).toMatchObject({ accepted: false });
+  });
+
+  it("rejects aliases, writable private parents, and a writable runtime parent", () => {
+    const metadata = { type: "directory", isDirectory: true, isSymbolicLink: false, uid: currentUid, gid: 20, mode: 0o700 };
+    expect(evaluateMacOSPackageParentPolicy({
+      parentPath: "/private/tmp/package-alias",
+      resolvedPath: "/private/tmp/real-package-parent",
+      metadata,
+      currentUid,
+      effectiveUid: currentUid,
+      supplementaryGroups: [],
+    })).toMatchObject({ accepted: false });
+    expect(evaluateMacOSPackageParentPolicy({
+      parentPath: "/private/tmp/private-package-parent",
+      resolvedPath: "/private/tmp/private-package-parent",
+      metadata: { ...metadata, mode: 0o775 },
+      currentUid,
+      effectiveUid: currentUid,
+      supplementaryGroups: [],
+    })).toMatchObject({ accepted: false });
+    expect(evaluateMacOSPackageParentPolicy({
+      parentPath: "/private/tmp/runtime-parent",
+      resolvedPath: "/private/tmp/runtime-parent",
+      metadata: { ...metadata, mode: 0o775 },
+      currentUid,
+      effectiveUid: currentUid,
+      supplementaryGroups: [],
+    })).toMatchObject({ accepted: false });
+  });
+
+  it("exercises the native package-parent policy against modeled system and private metadata", async () => {
+    if (process.platform !== "darwin") return;
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-native-package-parent-policy-test-")));
+    roots.push(root);
+    const executable = path.join(root, "policy-test");
+    await execFile("xcrun", [
+      "swiftc",
+      "-DMEETLESS_MAS_GATE_POLICY_TESTING",
+      "native/macos-host/mas-gate-mutation/main.swift",
+      "-o",
+      executable,
+    ], { cwd: path.resolve(".") });
+    await execFile(executable, [], { cwd: path.resolve(".") });
+  });
+
+  it("keeps the native helper fail-closed for a group-writable non-system parent", async () => {
+    if (process.platform !== "darwin") return;
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-native-package-parent-negative-test-")));
+    roots.push(root);
+    const lockParent = path.join(root, "runtime-parent");
+    const packageParent = path.join(root, "package-parent");
+    await mkdir(lockParent, { mode: 0o700 });
+    await mkdir(packageParent, { mode: 0o700 });
+    await chmod(packageParent, 0o775);
+    const result = await execFile(
+      path.resolve("native/macos-host/.build/release/MeetlessMasGateMutation"),
+      [`--parent=${lockParent}`, `--lock=${path.join(lockParent, MAS_GATE_LOCK_BASENAME)}`, `--package-parent=${packageParent}`],
+      { cwd: path.resolve(".") },
+    ).then(() => null, (error) => error);
+    expect(result?.code).not.toBe(0);
+    expect(`${result?.stdout ?? ""}${result?.stderr ?? ""}`).toMatch(/package parent/);
+    await expect(lstat(path.join(lockParent, MAS_GATE_LOCK_BASENAME)))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
 describe("macOS package replacement transaction", () => {
+  it("rejects an invalid package parent before preparing the runtime lock", async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-package-parent-order-test-")));
+    roots.push(root);
+    const lockParent = path.join(root, "runtime-parent");
+    const packageParent = path.join(root, "package-parent");
+    await mkdir(lockParent, { mode: 0o700 });
+    await mkdir(packageParent, { mode: 0o700 });
+    await chmod(packageParent, 0o775);
+
+    await expect(acquireMasGateLock({ parentPath: lockParent, packageParentPath: packageParent }))
+      .rejects.toThrow(/package parent policy/);
+    await expect(lstat(path.join(lockParent, MAS_GATE_LOCK_BASENAME)))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rolls back package identity before restoring the prior runtime root", async () => {
     const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-m7-composition-test-")));
     roots.push(root);
@@ -92,6 +261,7 @@ describe("macOS package replacement transaction", () => {
     const identityPath = path.join(runtime, "host-identity.json");
     const source = path.join(root, "source.app");
     const target = path.join(root, "Applications", "Meetless.app");
+    await mkdir(path.dirname(target), { mode: 0o700 });
     await mkdir(path.join(runtime, "prior"), { recursive: true });
     await writeFile(
       path.join(parent, MAS_GATE_SESSION_INDEX_BASENAME),

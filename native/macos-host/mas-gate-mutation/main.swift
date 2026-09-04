@@ -5,6 +5,7 @@ private let protocolSchema = "MAS_GATE_MUTATION v2"
 private let protocolVersion = 2
 private let lockSchema = "MAS_GATE_LOCK v1"
 private let lockFilename = ".meetless-mas-gate.lock"
+private let systemPackageParentPath = "/Applications"
 private let renameExclusive: UInt32 = 0x00000004 // RENAME_EXCL
 private let renameNoFollowAny: UInt32 = 0x00000010 // RENAME_NOFOLLOW_ANY
 private let originalParentPID = getppid()
@@ -132,6 +133,89 @@ private func assertSecureDirectory(_ handle: DirectoryHandle, label: String) thr
   }
 }
 
+private func assertPackageParent(_ handle: DirectoryHandle) throws {
+  let information = try descriptorStat(handle.descriptor, label: "package parent")
+  guard sameDirectory(information, handle.information) else {
+    throw MutationError(code: EPERM, message: "package parent descriptor identity changed")
+  }
+  let resolvedPath = try canonicalRealPath(handle.path)
+  guard resolvedPath == handle.path else {
+    throw MutationError(code: EPERM, message: "package parent is a symlink or path alias")
+  }
+  let adminGroup = handle.path == systemPackageParentPath ? try resolvedAdminGroup() : nil
+  let effectiveUid = geteuid()
+  let supplementaryGroups = handle.path == systemPackageParentPath && effectiveUid != 0
+    ? try supplementaryGroupSet()
+    : Set<gid_t>()
+  try assertPackageParentMetadata(
+    information,
+    path: handle.path,
+    resolvedAdminGroup: adminGroup,
+    effectiveUid: effectiveUid,
+    supplementaryGroups: supplementaryGroups,
+  )
+}
+
+private func assertPackageParentMetadata(
+  _ information: stat,
+  path: String,
+  resolvedAdminGroup: gid_t?,
+  effectiveUid: uid_t,
+  supplementaryGroups: Set<gid_t>,
+) throws {
+  guard (information.st_mode & S_IFMT) == S_IFDIR else {
+    throw MutationError(code: EPERM, message: "package parent is not one directory")
+  }
+
+  // /Applications is a contract-owned system destination. Its metadata is
+  // intentionally not accepted through the private-parent class.
+  if path == systemPackageParentPath {
+    guard information.st_uid == 0,
+          (information.st_mode & 0o7777) == 0o775 else {
+      throw MutationError(code: EPERM, message: "exact /Applications package parent must be root-owned with mode 0775")
+    }
+    guard let adminGroup = resolvedAdminGroup else {
+      throw MutationError(code: EPERM, message: "the actual system admin group could not be resolved")
+    }
+    guard information.st_gid == adminGroup else {
+      throw MutationError(code: EPERM, message: "exact /Applications package parent is not owned by the resolved admin group")
+    }
+    let authorized = effectiveUid == 0 || supplementaryGroups.contains(adminGroup)
+    guard authorized else {
+      throw MutationError(code: EPERM, message: "effective user is neither root nor a supplementary member of the admin group")
+    }
+    return
+  }
+
+  guard (information.st_uid == getuid() || information.st_uid == 0),
+        (information.st_mode & 0o022) == 0 else {
+    throw MutationError(code: EPERM, message: "private package parent must be current-user/root-owned and non-group/other-writable")
+  }
+}
+
+private func resolvedAdminGroup() throws -> gid_t {
+  guard let entry = "admin".withCString({ getgrnam($0) }) else {
+    throw MutationError(code: EPERM, message: "the actual system admin group could not be resolved")
+  }
+  return entry.pointee.gr_gid
+}
+
+private func supplementaryGroupSet() throws -> Set<gid_t> {
+  let count = getgroups(0, nil)
+  guard count >= 0 else {
+    throw MutationError(code: errno, message: "cannot inspect supplementary group membership")
+  }
+  if count == 0 { return [] }
+  var groups = [gid_t](repeating: 0, count: Int(count))
+  let copied = groups.withUnsafeMutableBufferPointer { buffer in
+    getgroups(count, buffer.baseAddress)
+  }
+  guard copied == count else {
+    throw MutationError(code: errno, message: "cannot read complete supplementary group membership")
+  }
+  return Set(groups)
+}
+
 private func openDirectoryFromDescriptor(_ base: Int32, _ components: [String], label: String) throws -> Int32 {
   var descriptor = ".".withCString { openat(base, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW) }
   guard descriptor >= 0 else {
@@ -196,6 +280,14 @@ private func sameDirectory(_ left: stat, _ right: stat) -> Bool {
   left.st_dev == right.st_dev && left.st_ino == right.st_ino
 }
 
+private func canonicalRealPath(_ path: String) throws -> String {
+  guard let resolved = path.withCString({ realpath($0, nil) }) else {
+    throw MutationError(code: errno, message: "cannot verify the canonical package parent path")
+  }
+  defer { free(resolved) }
+  return String(cString: resolved)
+}
+
 private func closeDirectory(_ handle: DirectoryHandle) {
   close(handle.descriptor)
 }
@@ -220,7 +312,7 @@ private func acquireLock(_ arguments: Arguments) -> (Int32, DirectoryHandle, Dir
       try assertSecureDirectory(parent, label: "lock parent")
       let packageParent = try openTrustedDirectory(arguments.packageParentPath, label: "package parent")
       do {
-        try assertSecureDirectory(packageParent, label: "package parent")
+        try assertPackageParent(packageParent)
         let descriptor = lockFilename.withCString { openat(parent.descriptor, $0, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600) }
         guard descriptor >= 0 else { throw MutationError(code: errno, message: "cannot open the stable sibling lock") }
         do {
@@ -359,6 +451,7 @@ private func resolveMoveParents(
           authorizedRootPath == nil else {
       throw MutationError(code: EINVAL, message: "package-sibling move is not bound to the pinned package parent")
     }
+    try assertPackageParent(packageParent)
     let sourceParent = try openTrustedDirectory(sourceParentPath, label: "package-sibling source parent")
     let destinationParent: DirectoryHandle
     do {
@@ -427,6 +520,9 @@ private func renameNoReplace(
   defer {
     closeDirectory(sourceParent)
     closeDirectory(destinationParent)
+  }
+  if pathClass == "package-sibling" {
+    try assertPackageParent(packageParent)
   }
   guard sourceParent.information.st_dev == destinationParent.information.st_dev else {
     throw MutationError(code: EXDEV, message: "protected move source and destination are on different devices")
@@ -519,6 +615,132 @@ private func handle(
   return true
 }
 
+#if MEETLESS_MAS_GATE_POLICY_TESTING
+private func modeledPackageParentStat(uid: uid_t, gid: gid_t, mode: UInt16, symlink: Bool = false) -> stat {
+  var information = stat()
+  information.st_uid = uid
+  information.st_gid = gid
+  information.st_mode = (symlink ? S_IFLNK : S_IFDIR) | mode
+  return information
+}
+
+private func assertModeledPackageParentAccepted(
+  _ information: stat,
+  path: String,
+  adminGroup: gid_t?,
+  effectiveUid: uid_t,
+  supplementaryGroups: Set<gid_t>,
+) {
+  do {
+    try assertPackageParentMetadata(
+      information,
+      path: path,
+      resolvedAdminGroup: adminGroup,
+      effectiveUid: effectiveUid,
+      supplementaryGroups: supplementaryGroups,
+    )
+  } catch {
+    fail("modeled package-parent policy rejected an allowed case: \(path)")
+  }
+}
+
+private func assertModeledPackageParentRejected(
+  _ information: stat,
+  path: String,
+  adminGroup: gid_t?,
+  effectiveUid: uid_t,
+  supplementaryGroups: Set<gid_t>,
+) {
+  do {
+    try assertPackageParentMetadata(
+      information,
+      path: path,
+      resolvedAdminGroup: adminGroup,
+      effectiveUid: effectiveUid,
+      supplementaryGroups: supplementaryGroups,
+    )
+    fail("modeled package-parent policy accepted a forbidden case: \(path)")
+  } catch let error as MutationError {
+    _ = error
+  } catch {
+    fail("modeled package-parent policy returned an unexpected error: \(path)")
+  }
+}
+
+private func runModeledPackageParentPolicyTests() -> Never {
+  let currentUid = uid_t(501)
+  let adminGroup = gid_t(80)
+  let system = modeledPackageParentStat(uid: 0, gid: adminGroup, mode: 0o775)
+  assertModeledPackageParentAccepted(
+    system,
+    path: systemPackageParentPath,
+    adminGroup: adminGroup,
+    effectiveUid: currentUid,
+    supplementaryGroups: [adminGroup],
+  )
+  assertModeledPackageParentRejected(
+    system,
+    path: systemPackageParentPath,
+    adminGroup: adminGroup,
+    effectiveUid: currentUid,
+    supplementaryGroups: [],
+  )
+  assertModeledPackageParentRejected(
+    system,
+    path: "/private/tmp/not-Applications",
+    adminGroup: adminGroup,
+    effectiveUid: currentUid,
+    supplementaryGroups: [adminGroup],
+  )
+  assertModeledPackageParentRejected(
+    modeledPackageParentStat(uid: currentUid, gid: adminGroup, mode: 0o775),
+    path: systemPackageParentPath,
+    adminGroup: adminGroup,
+    effectiveUid: currentUid,
+    supplementaryGroups: [adminGroup],
+  )
+  assertModeledPackageParentRejected(
+    modeledPackageParentStat(uid: 0, gid: gid_t(20), mode: 0o775),
+    path: systemPackageParentPath,
+    adminGroup: adminGroup,
+    effectiveUid: currentUid,
+    supplementaryGroups: [adminGroup],
+  )
+  assertModeledPackageParentRejected(
+    modeledPackageParentStat(uid: 0, gid: adminGroup, mode: 0o755),
+    path: systemPackageParentPath,
+    adminGroup: adminGroup,
+    effectiveUid: currentUid,
+    supplementaryGroups: [adminGroup],
+  )
+  assertModeledPackageParentRejected(
+    modeledPackageParentStat(uid: 0, gid: adminGroup, mode: 0o775, symlink: true),
+    path: systemPackageParentPath,
+    adminGroup: adminGroup,
+    effectiveUid: currentUid,
+    supplementaryGroups: [adminGroup],
+  )
+
+  let privateParent = modeledPackageParentStat(uid: currentUid, gid: gid_t(20), mode: 0o700)
+  assertModeledPackageParentAccepted(
+    privateParent,
+    path: "/private/tmp/private-package-parent",
+    adminGroup: nil,
+    effectiveUid: currentUid,
+    supplementaryGroups: [],
+  )
+  assertModeledPackageParentRejected(
+    modeledPackageParentStat(uid: currentUid, gid: gid_t(20), mode: 0o775),
+    path: "/private/tmp/runtime-parent",
+    adminGroup: nil,
+    effectiveUid: currentUid,
+    supplementaryGroups: [],
+  )
+  exit(0)
+}
+
+runModeledPackageParentPolicyTests()
+#else
 private let arguments_ = parseArguments()
 private let acquiredLock = acquireLock(arguments_)
 private let lockDescriptor = acquiredLock.0
@@ -542,3 +764,4 @@ while let line = readLine(strippingNewline: true) {
   }
   if !handle(request, descriptor: lockDescriptor, lockParent: lockParent, packageParent: packageParent, arguments: arguments_, runtimeRoot: &runtimeRoot) { break }
 }
+#endif
