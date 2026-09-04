@@ -1426,12 +1426,12 @@ async function assertReadyRoot(transaction, context) {
   });
   if (canonical.isSymbolicLink() || !canonical.isDirectory()) throw failClosed("fresh canonical runtime root is not one directory at the write boundary");
   assertRootIdentity(canonical, transaction.freshRootIdentity, "fresh canonical runtime root");
-  if (await inspectedPath(context.identityPath) !== null) throw failClosed("identity path is not absent in the fresh canonical runtime root");
   if (transaction.priorExists) {
     await assertAttestation(transaction.quarantinePath, transaction.priorAggregateAttestation, "quarantine prior root");
   } else if (await inspectedPath(transaction.quarantinePath) !== null) {
     throw failClosed("unexpected quarantine root exists at the ready boundary");
   }
+  if (await inspectedPath(context.identityPath) !== null) throw failClosed("identity path is not absent in the fresh canonical runtime root");
 }
 
 async function assertRestoredState(transaction, context) {

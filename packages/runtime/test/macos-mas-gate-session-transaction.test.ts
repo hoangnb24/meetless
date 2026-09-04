@@ -38,6 +38,7 @@ import { freezeMasGateArtifactBinding } from "../../../scripts/lib/mas-gate-arti
 const execFile = promisify(execFileCallback);
 const testRoots: string[] = [];
 const identityRelativePath = "host-identity.json";
+type QuarantineTransaction = { quarantinePath: string; freshRetainedPath: string };
 
 afterEach(async () => {
   await Promise.all(testRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -986,6 +987,48 @@ describe("MAS runtime-root preservation transaction", () => {
     await expect(assertMasGateSessionReady(transaction, runtimeOptions(fixture))).resolves.toMatchObject({ phase: "ready" });
     await writeFile(fixture.identityPath, "unexpected identity\n");
     await expect(assertMasGateSessionReady(transaction, runtimeOptions(fixture))).rejects.toThrow(/identity path is not absent/);
+  });
+
+  it.each([
+    ["changed bytes", async (transaction: QuarantineTransaction) => {
+      await writeFile(path.join(transaction.quarantinePath, "opaque.bin"), "changed bytes\n");
+    }, /attestation changed/],
+    ["changed metadata", async (transaction: QuarantineTransaction) => {
+      await chmod(path.join(transaction.quarantinePath, "nested", "metadata.txt"), 0o640);
+    }, /attestation changed/],
+    ["changed root identity", async (transaction: QuarantineTransaction, fixture: Fixture) => {
+      await rename(transaction.quarantinePath, path.join(fixture.base, "held-prior-root"));
+      await mkdir(transaction.quarantinePath, { mode: 0o750 });
+    }, /attestation changed/],
+    ["quarantine symlink", async (transaction: QuarantineTransaction, fixture: Fixture) => {
+      const held = path.join(fixture.base, "held-prior-root");
+      await rename(transaction.quarantinePath, held);
+      await symlink(held, transaction.quarantinePath);
+    }, /symlink/],
+    ["quarantine collision", async (transaction: QuarantineTransaction, fixture: Fixture) => {
+      await rename(transaction.quarantinePath, path.join(fixture.base, "held-prior-root"));
+      await writeFile(transaction.quarantinePath, "collision\n", { mode: 0o600 });
+    }, /runtime quarantine is not one owned same-device runtime directory/],
+    ["missing quarantine", async (transaction: QuarantineTransaction) => {
+      await rm(transaction.quarantinePath, { recursive: true });
+    }, /runtime root is missing|quarantine prior root/],
+  ] as const)("validates journal-bound quarantine %s before post-install identity absence", async (_label, mutate, expected) => {
+    const fixture = await createFixture({ prior: true });
+    const transaction = await begin(fixture);
+    await writeFile(fixture.identityPath, "published package identity\n", { mode: 0o600 });
+    await mutate(transaction, fixture);
+    const before = await snapshotTree(fixture.parent);
+
+    let failure: unknown;
+    try {
+      await readMasGateSessionStatus(runtimeOptions(fixture));
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(expected);
+    expect((failure as Error).message).not.toMatch(/identity path is not absent/);
+    await expect(snapshotTree(fixture.parent)).resolves.toEqual(before);
   });
 
   it("rejects reintroduction of recursive runtime cleanup in both package proof runners", async () => {

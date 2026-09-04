@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v93`
-- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-15`
-- `state`: `ATTEMPT15_ONE_SHOT_COORDINATOR_RECOVERY_AUTHORIZED`
+- `plan_revision`: `v94`
+- `current_frontier`: `R5-MAS-ATTEMPT15-JOURNAL-BOUND-QUARANTINE-ATTESTATION`
+- `state`: `ATTEMPT15_QUARANTINE_CORRECTION_READY_FOR_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: retained Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` from repository checkpoint `e6b2cbd3f9e1515732680024dd7f616d9f7b7a53`; installed bundle fingerprint `3ef85dc193f62199a25f7821b0dc7ffd813e7fc09696b3f305969fb9aa2c8a9e`, manifest SHA-256 `b5cd55f0a2c817bdee89f03b9c2497da2d9bcbac13fdd910ac9d96a21004c5c7`.
+- `candidate`: repository-only quarantine-attestation correction from exact base `357723f9b1124ec0ca680a021f4ddb608764e799`; retained Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` and installed bundle fingerprint `3ef85dc193f62199a25f7821b0dc7ffd813e7fc09696b3f305969fb9aa2c8a9e` remain uninspected and unchanged.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: Attempt 15 is consumed. The owner accepted the dev-only inode policy with `Bỏ qua đi, chặt quá`; correction `0d3445b84d91053a1d0911ceaf184f7c2eb9dc51` is Lead-accepted. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: none for the single authorized recovery invocation; any failure consumes the authorization and remains no-retry.
-- `next_action`: invoke exactly one coordinator recovery of retained run `9e749d2e-873e-48cd-b521-18b2d112cb3a`; no package/install/launch or other external gate is authorized.
+- `pending_ruling`: Lead review of the immutable repository correction for `ATT15-QUARANTINE-DIGEST-001`, `ATT15-QUARANTINE-STATUS-002`, and `ATT15-QUARANTINE-RECOVERY-003`. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
+- `blocked_by`: the one authorized coordinator recovery invocation remains gated on Lead acceptance of this correction; it has not been invoked or consumed.
+- `next_action`: Lead reviews the immutable repository candidate and its fixture-only proof. Do not invoke recovery, package, install, launch, or any other external action from this correction.
 
 ## Ownership And Authority
 
@@ -2301,6 +2301,51 @@ prior-runtime restoration, and archive/index publication. It does not authorize
 package, sign, install, launch, a new attempt, manual filesystem recovery, or
 any excluded gate. One invocation consumes the authorization regardless of
 outcome; failure remains no-retry.
+
+### R5 MAS Attempt 15 journal-bound quarantine attestation correction (2026-09-04; pending Lead review)
+
+`FRONTIER_BRIEF v1 — ATTEMPT 15 JOURNAL-BOUND QUARANTINE ATTESTATION`
+starts from exact base `357723f9b1124ec0ca680a021f4ddb608764e799` and
+accepts `ATT15-QUARANTINE-DIGEST-001`, `ATT15-QUARANTINE-STATUS-002`, and
+`ATT15-QUARANTINE-RECOVERY-003`. The full
+`MAS_GATE_RUNTIME_ROOT_ATTESTATION v1` stored in the active transaction journal
+is the only quarantine mutation authority. The bare historical digest remains
+narrative evidence and is not read or enforced by runtime code or tests.
+Authority digest remains
+`ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
+
+The smallest owner change reorders `assertReadyRoot`: after exact fresh-root
+identity, it validates the current quarantine against the journal-bound full
+attestation before applying the unchanged post-install identity-absence guard.
+Coordinator `active/ready` synthesis therefore occurs only after that runtime
+validation fails solely for the expected published identity. Package proof
+remains package-owned; no package fields or authority were copied into the
+runtime transaction, and recovery order is unchanged.
+
+Fixture-only positive proof uses an actual committed package transaction and
+shows that the current quarantine exactly equals the journal attestation before
+post-install composition returns `active/ready`. Its fixture digest is derived
+from current bytes and metadata, not a historical scalar. Negative proof covers
+changed bytes, changed file metadata, changed quarantine-root identity,
+quarantine symlink, quarantine collision, and missing quarantine while a
+published identity is present. Every case rejects before the identity-absence
+failure and preserves the observed fixture tree. A coordinator negative proves
+that changed quarantine bytes prevent `active/ready` synthesis with zero
+package-path resolution and no fresh-retain or archive creation.
+
+Personally observed repository proof: the focused runtime transaction,
+coordinator, and package transaction command passed 3 files and 164 tests;
+`npm run typecheck`, `npm run validate:macos:app-store`, Node syntax checks for
+both runtime/coordinator modules, and `git diff --check` passed. The candidate
+changes exactly the runtime transaction owner, its focused test, the coordinator
+focused test, and this plan. No production coordinator change was needed.
+
+Preflight result is deliberately no-invocation: no real MAS or retained
+evidence was inspected; `/Applications`, locks, processes, secrets, caches, and
+Trash were not inspected or changed; and no package, sign, install, launch,
+stop, restore, archive, retry, external action, or push occurred. The owner's
+one-shot Attempt 15 recovery authorization remains unconsumed. Every external
+gate remains closed pending Lead acceptance.
 
 ### Risks And Recovery
 

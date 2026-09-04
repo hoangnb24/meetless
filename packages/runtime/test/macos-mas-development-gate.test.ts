@@ -31,6 +31,7 @@ import {
   MAS_GATE_SESSION_INDEX_INTENT_BASENAME,
   MAS_GATE_SESSION_INDEX_SCHEMA,
   MAS_GATE_SESSION_INDEX_VERSION,
+  attestMasGateRuntimeRoot,
   beginMasGateSessionTransaction,
 } from "../../../scripts/lib/macos-mas-gate-session-transaction.mjs";
 import {
@@ -818,6 +819,9 @@ describe("MAS development gate coordinator", () => {
       sockets: async () => [],
       packageFilesystem,
     };
+    const narrativeDigestOutsideRuntimeContract = "0".repeat(64);
+    await expect(attestMasGateRuntimeRoot(session.quarantinePath)).resolves.toEqual(session.priorAggregateAttestation);
+    expect(session.priorAggregateAttestation.digest).not.toBe(narrativeDigestOutsideRuntimeContract);
     const composedStatus = await readMasDevelopmentGateStatus({
       context,
       dependencies: launchDependencies,
@@ -866,6 +870,42 @@ describe("MAS development gate coordinator", () => {
     await expect(readFile(path.join(context.runtimeRoot, "prior-runtime-state"), "utf8")).resolves.toBe("prior runtime\n");
     await expect(lstat(session.freshRetainedPath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
     await expect(lstat(packageTransaction.paths.journal)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not synthesize post-install active/ready or consult package state before quarantine attestation", async () => {
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-quarantine-status-test-")));
+    roots.push(base);
+    const context = masDevelopmentRuntimeContext({ userHome: base });
+    await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
+    await seedMasSessionIndex(context);
+    await mkdir(context.runtimeRoot, { recursive: true, mode: 0o700 });
+    await writeFile(path.join(context.runtimeRoot, "prior-runtime-state"), "prior runtime\n", { mode: 0o600 });
+    const session = await beginMasGateSessionTransaction({
+      ...masGateRuntimeOptions(context, {
+        requiredFreeBytes: 1,
+        dependencies: { processRows: async () => [], listeners: async () => [], sockets: async () => [], openHandles: async () => [] },
+      }),
+    });
+    await writeFile(context.identityPath, "published package identity\n", { mode: 0o600 });
+    await writeFile(path.join(session.quarantinePath, "prior-runtime-state"), "changed bytes\n", { mode: 0o600 });
+    let packagePathResolutions = 0;
+
+    await expect(readMasDevelopmentGateStatus({
+      context,
+      dependencies: {
+        packageFilesystem: {
+          resolvePath: (candidate: string) => {
+            packagePathResolutions += 1;
+            return candidate;
+          },
+        },
+      },
+    })).rejects.toThrow(/quarantine prior root attestation changed/);
+    expect(packagePathResolutions).toBe(0);
+    await expect(readFile(context.identityPath, "utf8")).resolves.toBe("published package identity\n");
+    await expect(readFile(path.join(session.quarantinePath, "prior-runtime-state"), "utf8")).resolves.toBe("changed bytes\n");
+    await expect(lstat(session.freshRetainedPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(path.join(context.parentPath, `.meetless-mas-gate-session.${session.runId}.archived`))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("cannot authorize launch through a caller-supplied package proof", async () => {
