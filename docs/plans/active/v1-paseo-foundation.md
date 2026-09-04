@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v94`
+- `plan_revision`: `v95`
 - `current_frontier`: `R5-MAS-ATTEMPT15-JOURNAL-BOUND-QUARANTINE-ATTESTATION`
-- `state`: `ATTEMPT15_QUARANTINE_CORRECTION_READY_FOR_LEAD_REVIEW`
+- `state`: `ATTEMPT15_QUARANTINE_CORRECTION_LEAD_ACCEPTED_RECOVERY_AUTHORIZED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: repository-only quarantine-attestation correction from exact base `357723f9b1124ec0ca680a021f4ddb608764e799`; retained Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` and installed bundle fingerprint `3ef85dc193f62199a25f7821b0dc7ffd813e7fc09696b3f305969fb9aa2c8a9e` remain uninspected and unchanged.
+- `candidate`: Lead-accepted quarantine-attestation correction `8e3401a20972849ba61a5c5401ddd88fcb8d17ca`, exact child of `357723f9b1124ec0ca680a021f4ddb608764e799`; retained Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` remains pending its already-authorized one-shot recovery.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: Lead review of the immutable repository correction for `ATT15-QUARANTINE-DIGEST-001`, `ATT15-QUARANTINE-STATUS-002`, and `ATT15-QUARANTINE-RECOVERY-003`. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: the one authorized coordinator recovery invocation remains gated on Lead acceptance of this correction; it has not been invoked or consumed.
-- `next_action`: Lead reviews the immutable repository candidate and its fixture-only proof. Do not invoke recovery, package, install, launch, or any other external action from this correction.
+- `pending_ruling`: none for the single coordinator recovery already authorized by `Cho phép coordinator recovery Attempt 15 đúng một lần`; Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
+- `blocked_by`: none for that one invocation; failure consumes it and remains no-retry.
+- `next_action`: invoke exactly one coordinator recovery of retained Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a`; no separate historical-digest preflight and no other external action.
 
 ## Ownership And Authority
 
@@ -2302,7 +2302,7 @@ package, sign, install, launch, a new attempt, manual filesystem recovery, or
 any excluded gate. One invocation consumes the authorization regardless of
 outcome; failure remains no-retry.
 
-### R5 MAS Attempt 15 journal-bound quarantine attestation correction (2026-09-04; pending Lead review)
+### R5 MAS Attempt 15 journal-bound quarantine attestation correction (2026-09-04; Lead accepted)
 
 `FRONTIER_BRIEF v1 — ATTEMPT 15 JOURNAL-BOUND QUARANTINE ATTESTATION`
 starts from exact base `357723f9b1124ec0ca680a021f4ddb608764e799` and
@@ -2346,6 +2346,17 @@ Trash were not inspected or changed; and no package, sign, install, launch,
 stop, restore, archive, retry, external action, or push occurred. The owner's
 one-shot Attempt 15 recovery authorization remains unconsumed. Every external
 gate remains closed pending Lead acceptance.
+
+Lead accepted immutable candidate
+`8e3401a20972849ba61a5c5401ddd88fcb8d17ca` after verifying exact parentage,
+the four-path delta, clean tracked state, unchanged authority digest, and the
+writer's `164/164` focused proof. Independent FAST closeout returned
+`CLOSEOUT_PASS`: the full journal-bound quarantine attestation is checked before
+the unchanged identity-presence guard, invalid quarantine state cannot be
+synthesized as `active/ready`, and package authority plus recovery ordering
+remain unchanged. The owner's prior one-shot recovery authorization was not
+consumed by the failed custom preflight and remains valid for exactly one
+coordinator invocation.
 
 ### Risks And Recovery
 
