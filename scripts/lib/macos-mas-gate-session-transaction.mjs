@@ -102,6 +102,8 @@ const OWNER_TOKEN_BYTES = 32;
 const POSIX_MODE_MASK = 0o7777;
 const MAX_SESSION_INDEX_ENTRIES = 256;
 const MAX_FIXED_RECORD_BYTES = 1024 * 1024;
+const STATUS_SNAPSHOT_ATTEMPTS = 2;
+const STATUS_SNAPSHOT_INCONSISTENT_CODE = "MAS-GATE-STATUS-INCONSISTENT";
 
 /**
  * Establish the fixed locator for the first coordinator install. This seam
@@ -438,146 +440,176 @@ export async function archiveMasGateSessionTransaction(transactionOrJournal, opt
 /**
  * Read-only status for the fixed active slot. Archived sessions are reported,
  * never cleaned, so a caller can decide which retained evidence to inspect.
+ * Without a supplied lease this path never acquires or prepares one; it uses
+ * a bounded optimistic fixed-record snapshot and retries only on observed
+ * fixed-record drift. A supplied lease is used only for serialized reads.
  */
 export async function readMasGateSessionStatus(options = {}) {
   try {
-    return await withMasGateLock({ ...options, parentPath: parentPathHint(options) }, async () => {
-      const context = await validateContext(options, "status");
-      const paths = fixedTransactionPaths(context);
-      const locatorState = await readSessionLocatorState(context, options, { allowUninitialized: true });
-      if (locatorState.uninitialized) {
-        return {
-          status: "uninitialized",
-          state: "absent-safe",
-          runtimeRoot: context.runtimeRoot,
-          parentPath: context.parentPath,
-          activePath: paths.activePath,
-          indexPath: paths.indexPath,
-          indexIntentPath: paths.indexIntentPath,
-          archived: [],
-          stateScope: "runtime-root-only",
-        };
+    const parentPath = parentPathHint(options);
+    if (options.lockLease) {
+      return await withMasGateLock({ ...options, parentPath }, async () => readMasGateSessionStatusSnapshot(options));
+    }
+    let lastError;
+    for (let attempt = 0; attempt < STATUS_SNAPSHOT_ATTEMPTS; attempt += 1) {
+      try {
+        return await readMasGateSessionStatusSnapshot(options);
+      } catch (error) {
+        lastError = error;
+        if (!isCode(error, STATUS_SNAPSHOT_INCONSISTENT_CODE) || attempt + 1 >= STATUS_SNAPSHOT_ATTEMPTS) throw error;
       }
-      const entries = locatorState.entries;
-      const building = await findBuildingTransactions(context, options, entries, locatorState.pendingIntent?.transaction);
-      const intents = await findConstructionIntents(context, options, entries);
-      const archived = await findArchivedTransactions(context, options, entries);
-      const archivedRunIds = new Set(archived.map((candidate) => candidate.runId));
-      await assertSiblingArtifactTopology(context, options, null, locatorState);
-      const activeInfo = await inspectedPath(paths.activePath);
-      if (activeInfo !== null) {
-        if (building.length > 0) {
-          throw failClosed("both the fixed active transaction slot and an active construction root are present; preserve every byte and resolve the ambiguity");
-        }
-        if (!activeInfo.isDirectory() || activeInfo.isSymbolicLink()) {
-          throw failClosed("the fixed active transaction slot is not one owned directory");
-        }
-        await assertOwnedSecureDirectory(paths.activePath, "active transaction slot", context.parentDevice);
-        const journalInfo = await inspectedPath(paths.journalPath);
-        if (!journalInfo) throw failClosed("the fixed active transaction slot has no durable journal");
-        await assertJournalFile(paths.journalPath, "active transaction journal");
-        const transaction = await loadTransaction(paths.journalPath, options);
-        assertTransaction(transaction, context, options);
-        if (locatorState.index && !locatorState.index.entries.some((entry) => entry.runId === transaction.runId)) {
-          throw failClosed("the fixed active transaction has no exact registered session locator; preserve every byte and run reconciliation");
-        }
-        if (transaction.phase === "archived") throw failClosed("an archived transaction journal remained in the fixed active slot");
-        if (transaction.phase === "ready") await assertReadyRoot(transaction, context);
-        if (transaction.phase === "restored") await assertRestoredState(transaction, context);
-        if (transaction.phase === "archive-intent") await assertRestoredRoots(transaction, context);
-        return {
-          status: transaction.phase === "archived" ? "archived" : "active",
-          phase: transaction.phase,
-          journalPath: paths.journalPath,
-          activePath: transaction.activePath,
-          quarantinePath: transaction.quarantinePath,
-          freshRetainedPath: transaction.freshRetainedPath,
-          archivePath: transaction.archivePath,
-          runId: transaction.runId,
-          stateScope: transaction.stateScope,
-        };
-      }
-
-      if (building.length > 1) throw failClosed("multiple active transaction construction roots are present; retain every root and recover only after resolving the ambiguity");
-      if (building.length === 1) {
-        const transaction = building[0];
-        return {
-          status: "recovery-required",
-          phase: transaction.phase,
-          journalPath: transaction.journalPath,
-          activePath: paths.activePath,
-          constructionPath: transaction.constructionPath,
-          quarantinePath: transaction.quarantinePath,
-          freshRetainedPath: transaction.freshRetainedPath,
-          archivePath: transaction.archivePath,
-          runId: transaction.runId,
-          stateScope: transaction.stateScope,
-        };
-      }
-
-      const pendingIntent = intents.find((candidate) => !archivedRunIds.has(candidate.runId));
-      if (pendingIntent) {
-        return {
-          status: "recovery-required",
-          phase: pendingIntent.phase,
-          journalPath: pendingIntent.journalPath,
-          activePath: paths.activePath,
-          constructionPath: pendingIntent.constructionPath,
-          quarantinePath: pendingIntent.quarantinePath,
-          freshRetainedPath: pendingIntent.freshRetainedPath,
-          archivePath: pendingIntent.archivePath,
-          runId: pendingIntent.runId,
-          stateScope: pendingIntent.stateScope,
-        };
-      }
-
-      if (locatorState.pendingIntent) {
-        const transaction = locatorState.pendingIntent.transaction;
-        return {
-          status: "recovery-required",
-          phase: transaction.phase,
-          journalPath: paths.indexIntentPath,
-          activePath: paths.activePath,
-          constructionPath: transaction.constructionPath,
-          quarantinePath: transaction.quarantinePath,
-          freshRetainedPath: transaction.freshRetainedPath,
-          archivePath: transaction.archivePath,
-          runId: transaction.runId,
-          stateScope: transaction.stateScope,
-          archived: archived.map((candidate) => ({
-            phase: candidate.phase,
-            journalPath: candidate.journalPath,
-            freshRetainedPath: candidate.freshRetainedPath,
-            archivePath: candidate.archivePath,
-            runId: candidate.runId,
-            stateScope: candidate.stateScope,
-          })),
-        };
-      }
-
-      for (const transaction of archived) {
-        if (transaction.phase === "archived") await assertArchivedState(transaction, context);
-        if (transaction.phase === "archive-intent") await assertRestoredRoots(transaction, context);
-      }
-      const recovery = archived.find((transaction) => transaction.phase !== "archived");
-      return {
-        status: recovery ? "recovery-required" : archived.length > 0 ? "archived" : "absent",
-        phase: recovery?.phase,
-        journalPath: recovery?.journalPath,
-        activePath: paths.activePath,
-        archived: archived.map((transaction) => ({
-          phase: transaction.phase,
-          journalPath: transaction.journalPath,
-          freshRetainedPath: transaction.freshRetainedPath,
-          archivePath: transaction.archivePath,
-          runId: transaction.runId,
-          stateScope: transaction.stateScope,
-        })),
-      };
-    });
+    }
+    throw lastError;
   } catch (error) {
     throw asCleanupError("could not read runtime-root preservation status", error);
   }
+}
+
+async function readMasGateSessionStatusSnapshot(options) {
+  const context = await validateContext(options, "status");
+  const before = await fixedStatusSnapshot(context);
+  const status = await readMasGateSessionStatusBody(context, options);
+  const after = await fixedStatusSnapshot(context);
+  if (!sameFixedStatusSnapshot(before, after)) {
+    const error = failClosed("fixed MAS status records changed during the read; retry the read-only status command");
+    error.code = STATUS_SNAPSHOT_INCONSISTENT_CODE;
+    throw error;
+  }
+  return status;
+}
+
+async function readMasGateSessionStatusBody(context, options) {
+  const paths = fixedTransactionPaths(context);
+  const locatorState = await readSessionLocatorState(context, options, { allowUninitialized: true });
+  if (locatorState.uninitialized) {
+    return {
+      status: "uninitialized",
+      state: "absent-safe",
+      runtimeRoot: context.runtimeRoot,
+      parentPath: context.parentPath,
+      activePath: paths.activePath,
+      indexPath: paths.indexPath,
+      indexIntentPath: paths.indexIntentPath,
+      archived: [],
+      stateScope: "runtime-root-only",
+    };
+  }
+  const entries = locatorState.entries;
+  const building = await findBuildingTransactions(context, options, entries, locatorState.pendingIntent?.transaction);
+  const intents = await findConstructionIntents(context, options, entries);
+  const archived = await findArchivedTransactions(context, options, entries);
+  const archivedRunIds = new Set(archived.map((candidate) => candidate.runId));
+  await assertSiblingArtifactTopology(context, options, null, locatorState);
+  const activeInfo = await inspectedPath(paths.activePath);
+  if (activeInfo !== null) {
+    if (building.length > 0) {
+      throw failClosed("both the fixed active transaction slot and an active construction root are present; preserve every byte and resolve the ambiguity");
+    }
+    if (!activeInfo.isDirectory() || activeInfo.isSymbolicLink()) {
+      throw failClosed("the fixed active transaction slot is not one owned directory");
+    }
+    await assertOwnedSecureDirectory(paths.activePath, "active transaction slot", context.parentDevice);
+    const journalInfo = await inspectedPath(paths.journalPath);
+    if (!journalInfo) throw failClosed("the fixed active transaction slot has no durable journal");
+    await assertJournalFile(paths.journalPath, "active transaction journal");
+    const transaction = await loadTransaction(paths.journalPath, options);
+    assertTransaction(transaction, context, options);
+    if (locatorState.index && !locatorState.index.entries.some((entry) => entry.runId === transaction.runId)) {
+      throw failClosed("the fixed active transaction has no exact registered session locator; preserve every byte and run reconciliation");
+    }
+    if (transaction.phase === "archived") throw failClosed("an archived transaction journal remained in the fixed active slot");
+    if (transaction.phase === "ready") await assertReadyRoot(transaction, context);
+    if (transaction.phase === "restored") await assertRestoredState(transaction, context);
+    if (transaction.phase === "archive-intent") await assertRestoredRoots(transaction, context);
+    return {
+      status: transaction.phase === "archived" ? "archived" : "active",
+      phase: transaction.phase,
+      journalPath: paths.journalPath,
+      activePath: transaction.activePath,
+      quarantinePath: transaction.quarantinePath,
+      freshRetainedPath: transaction.freshRetainedPath,
+      archivePath: transaction.archivePath,
+      runId: transaction.runId,
+      stateScope: transaction.stateScope,
+    };
+  }
+
+  if (building.length > 1) throw failClosed("multiple active transaction construction roots are present; retain every root and recover only after resolving the ambiguity");
+  if (building.length === 1) {
+    const transaction = building[0];
+    return {
+      status: "recovery-required",
+      phase: transaction.phase,
+      journalPath: transaction.journalPath,
+      activePath: paths.activePath,
+      constructionPath: transaction.constructionPath,
+      quarantinePath: transaction.quarantinePath,
+      freshRetainedPath: transaction.freshRetainedPath,
+      archivePath: transaction.archivePath,
+      runId: transaction.runId,
+      stateScope: transaction.stateScope,
+    };
+  }
+
+  const pendingIntent = intents.find((candidate) => !archivedRunIds.has(candidate.runId));
+  if (pendingIntent) {
+    return {
+      status: "recovery-required",
+      phase: pendingIntent.phase,
+      journalPath: pendingIntent.journalPath,
+      activePath: paths.activePath,
+      constructionPath: pendingIntent.constructionPath,
+      quarantinePath: pendingIntent.quarantinePath,
+      freshRetainedPath: pendingIntent.freshRetainedPath,
+      archivePath: pendingIntent.archivePath,
+      runId: pendingIntent.runId,
+      stateScope: pendingIntent.stateScope,
+    };
+  }
+
+  if (locatorState.pendingIntent) {
+    const transaction = locatorState.pendingIntent.transaction;
+    return {
+      status: "recovery-required",
+      phase: transaction.phase,
+      journalPath: paths.indexIntentPath,
+      activePath: paths.activePath,
+      constructionPath: transaction.constructionPath,
+      quarantinePath: transaction.quarantinePath,
+      freshRetainedPath: transaction.freshRetainedPath,
+      archivePath: transaction.archivePath,
+      runId: transaction.runId,
+      stateScope: transaction.stateScope,
+      archived: archived.map((candidate) => ({
+        phase: candidate.phase,
+        journalPath: candidate.journalPath,
+        freshRetainedPath: candidate.freshRetainedPath,
+        archivePath: candidate.archivePath,
+        runId: candidate.runId,
+        stateScope: candidate.stateScope,
+      })),
+    };
+  }
+
+  for (const transaction of archived) {
+    if (transaction.phase === "archived") await assertArchivedState(transaction, context);
+    if (transaction.phase === "archive-intent") await assertRestoredRoots(transaction, context);
+  }
+  const recovery = archived.find((transaction) => transaction.phase !== "archived");
+  return {
+    status: recovery ? "recovery-required" : archived.length > 0 ? "archived" : "absent",
+    phase: recovery?.phase,
+    journalPath: recovery?.journalPath,
+    activePath: paths.activePath,
+    archived: archived.map((transaction) => ({
+      phase: transaction.phase,
+      journalPath: transaction.journalPath,
+      freshRetainedPath: transaction.freshRetainedPath,
+      archivePath: transaction.archivePath,
+      runId: transaction.runId,
+      stateScope: transaction.stateScope,
+    })),
+  };
 }
 
 /**
@@ -646,6 +678,34 @@ function fixedTransactionPaths(context) {
     indexPath: path.join(context.parentPath, MAS_GATE_SESSION_INDEX_BASENAME),
     indexIntentPath: path.join(context.parentPath, MAS_GATE_SESSION_INDEX_INTENT_BASENAME),
   };
+}
+
+async function fixedStatusSnapshot(context) {
+  const paths = fixedTransactionPaths(context);
+  const snapshot = {};
+  for (const [label, candidate] of [
+    ["index", paths.indexPath],
+    ["indexIntent", paths.indexIntentPath],
+    ["active", paths.activePath],
+  ]) {
+    const info = await inspectedPath(candidate);
+    snapshot[label] = info ? {
+      dev: info.dev,
+      ino: info.ino,
+      mode: info.mode,
+      uid: info.uid,
+      gid: info.gid,
+      nlink: info.nlink,
+      size: info.size,
+      mtimeMs: info.mtimeMs,
+      ctimeMs: info.ctimeMs,
+    } : null;
+  }
+  return snapshot;
+}
+
+function sameFixedStatusSnapshot(left, right) {
+  return stableJson(left) === stableJson(right);
 }
 
 function emptySessionIndex(context) {

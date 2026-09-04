@@ -119,6 +119,39 @@ describe("MAS runtime-root preservation transaction", () => {
     expect(status).not.toHaveProperty("journalPath");
   });
 
+  it("reads missing lock/index status without changing the fixture parent", async () => {
+    const fixture = await createFixture({ prior: false, index: false });
+    const preservedDirectory = path.join(fixture.parent, "preserved-directory");
+    await mkdir(preservedDirectory, { mode: 0o700 });
+    await writeFile(path.join(fixture.parent, "preserved-file"), "preserve bytes\n", { mode: 0o600 });
+    await writeFile(path.join(preservedDirectory, "nested-file"), "nested bytes\n", { mode: 0o600 });
+    const before = await snapshotTree(fixture.parent);
+
+    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).resolves.toMatchObject({
+      status: "uninitialized",
+      state: "absent-safe",
+    });
+
+    await expect(snapshotTree(fixture.parent)).resolves.toEqual(before);
+    await expect(lstat(path.join(fixture.parent, ".meetless-mas-gate.lock"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reads status through a supplied lease without writing lock metadata", async () => {
+    const fixture = await createFixture({ prior: false, index: false });
+    const lease = await acquireMasGateLock({ parentPath: fixture.parent });
+    try {
+      const before = await readFile(path.join(fixture.parent, ".meetless-mas-gate.lock"));
+      await expect(readMasGateSessionStatus({ ...runtimeOptions(fixture), lockLease: lease })).resolves.toMatchObject({
+        status: "uninitialized",
+        state: "absent-safe",
+      });
+      await expect(readFile(path.join(fixture.parent, ".meetless-mas-gate.lock"))).resolves.toEqual(before);
+    } finally {
+      await lease.release();
+    }
+  });
+
   it("quarantines a stale marker mixed with state instead of treating the marker as subtree ownership", async () => {
     const fixture = await createFixture({ prior: true });
     await writeFile(path.join(fixture.runtime, "package-proof-owner.json"), "stale marker\n");
@@ -271,6 +304,24 @@ describe("MAS runtime-root preservation transaction", () => {
       else await expect(lstat(evidencePath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
     },
   );
+
+  it("fails closed for an inconsistent fixed index intent without rewriting either record", async () => {
+    const fixture = await createFixture({ prior: true });
+    await expect(begin(fixture, { faultAt: "index-intent-journaled" })).rejects.toMatchObject({
+      code: MAS_GATE_CLEANUP_DIAGNOSTIC_CODE,
+    });
+    const indexPath = path.join(fixture.parent, MAS_GATE_SESSION_INDEX_BASENAME);
+    const intentPath = path.join(fixture.parent, ".meetless-mas-gate-session.index-intent");
+    const indexBefore = await readFile(indexPath);
+    const intent = JSON.parse(await readFile(intentPath, "utf8"));
+    intent.state = "committed";
+    const inconsistentIntent = Buffer.from(`${JSON.stringify(intent, null, 2)}\n`);
+    await writeFile(intentPath, inconsistentIntent, { mode: 0o600 });
+
+    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).rejects.toThrow(/committed.*durable result|disagree/iu);
+    await expect(readFile(indexPath)).resolves.toEqual(indexBefore);
+    await expect(readFile(intentPath)).resolves.toEqual(inconsistentIntent);
+  });
 
   it("requires the fixed index for public begin and every recovery operation", async () => {
     const uninitialized = await createFixture({ prior: false, index: false });
@@ -1300,6 +1351,31 @@ async function createTypedTargetCollision(target: string, kind: "file" | "direct
   const pointedPath = `${target}.pointed-file`;
   await writeFile(pointedPath, contents, { mode: 0o600 });
   await symlink(pointedPath, target);
+}
+
+async function snapshotTree(candidate: string): Promise<Record<string, unknown>> {
+  const info = await lstat(candidate);
+  const snapshot: Record<string, unknown> = {
+    type: info.isDirectory() ? "directory" : info.isFile() ? "file" : info.isSymbolicLink() ? "symlink" : "other",
+    mode: Number(info.mode),
+    uid: Number(info.uid),
+    gid: Number(info.gid),
+    dev: Number(info.dev),
+    ino: Number(info.ino),
+    nlink: Number(info.nlink),
+    size: Number(info.size),
+    mtimeMs: info.mtimeMs,
+    ctimeMs: info.ctimeMs,
+  };
+  if (info.isFile()) snapshot.bytes = (await readFile(candidate)).toString("base64");
+  if (info.isDirectory()) {
+    const children: Record<string, unknown> = {};
+    for (const name of (await readdir(candidate)).sort()) {
+      children[name] = await snapshotTree(path.join(candidate, name));
+    }
+    snapshot.children = children;
+  }
+  return snapshot;
 }
 
 async function assertTypedTargetCollision(target: string, kind: "file" | "directory" | "symlink", contents: string) {
