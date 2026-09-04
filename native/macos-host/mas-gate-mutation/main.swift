@@ -124,12 +124,19 @@ private func descriptorStat(_ descriptor: Int32, label: String) throws -> stat {
   return information
 }
 
-private func assertSecureDirectory(_ handle: DirectoryHandle, label: String) throws {
-  let information = handle.information
+private func assertPrivateRuntimeDirectory(_ handle: DirectoryHandle, label: String) throws {
+  let information = try descriptorStat(handle.descriptor, label: label)
+  guard sameDirectory(information, handle.information) else {
+    throw MutationError(code: EPERM, message: "\(label) descriptor identity changed")
+  }
+  try assertPrivateRuntimeDirectoryMetadata(information, label: label, ownerUid: getuid())
+}
+
+private func assertPrivateRuntimeDirectoryMetadata(_ information: stat, label: String, ownerUid: uid_t) throws {
   guard (information.st_mode & S_IFMT) == S_IFDIR,
-        (information.st_uid == getuid() || information.st_uid == 0),
+        information.st_uid == ownerUid,
         (information.st_mode & 0o022) == 0 else {
-    throw MutationError(code: EPERM, message: "\(label) is not one secure non-writable directory")
+    throw MutationError(code: EPERM, message: "\(label) must be one current-user-owned non-group/other-writable directory")
   }
 }
 
@@ -309,7 +316,7 @@ private func acquireLock(_ arguments: Arguments) -> (Int32, DirectoryHandle, Dir
   do {
     let parent = try openTrustedDirectory(arguments.parentPath, label: "lock parent")
     do {
-      try assertSecureDirectory(parent, label: "lock parent")
+      try assertPrivateRuntimeDirectory(parent, label: "lock parent")
       let packageParent = try openTrustedDirectory(arguments.packageParentPath, label: "package parent")
       do {
         try assertPackageParent(packageParent)
@@ -395,6 +402,7 @@ private func assertLock(_ descriptor: Int32, parent: DirectoryHandle, arguments:
   let lock = try descriptorStat(descriptor, label: "the held lock descriptor")
   let currentParent = try openTrustedDirectory(arguments.parentPath, label: "lock parent")
   defer { closeDirectory(currentParent) }
+  try assertPrivateRuntimeDirectory(currentParent, label: "lock parent")
   guard sameDirectory(currentParent.information, parent.information) else {
     throw MutationError(code: EPERM, message: "held lock parent identity changed")
   }
@@ -474,6 +482,7 @@ private func resolveMoveParents(
           authorizedParentPath == nil else {
       throw MutationError(code: EINVAL, message: "runtime-child move is not bound to the live runtime-root descriptor")
     }
+    try assertPrivateRuntimeDirectory(runtimeRoot, label: "runtime root")
     let sourceParent = try openTrustedDirectoryRelativeTo(runtimeRoot, sourceParentPath, label: "runtime-child source parent")
     let destinationParent: DirectoryHandle
     do {
@@ -542,7 +551,7 @@ private func renameNoReplace(
 private func bindRuntimeRoot(_ path: String, current: inout DirectoryHandle?) throws {
   let candidate = try openTrustedDirectory(path, label: "runtime root")
   do {
-    try assertSecureDirectory(candidate, label: "runtime root")
+    try assertPrivateRuntimeDirectory(candidate, label: "runtime root")
     if let current {
       guard current.path == candidate.path, sameDirectory(current.information, candidate.information) else {
         throw MutationError(code: EPERM, message: "runtime-root descriptor identity changed")
@@ -667,9 +676,51 @@ private func assertModeledPackageParentRejected(
   }
 }
 
+private func assertModeledPrivateRuntimeDirectoryAccepted(
+  _ information: stat,
+  label: String,
+  ownerUid: uid_t,
+) {
+  do {
+    try assertPrivateRuntimeDirectoryMetadata(information, label: label, ownerUid: ownerUid)
+  } catch {
+    fail("modeled private runtime-directory policy rejected an allowed case: \(label)")
+  }
+}
+
+private func assertModeledPrivateRuntimeDirectoryRejected(
+  _ information: stat,
+  label: String,
+  ownerUid: uid_t,
+) {
+  do {
+    try assertPrivateRuntimeDirectoryMetadata(information, label: label, ownerUid: ownerUid)
+    fail("modeled private runtime-directory policy accepted a forbidden case: \(label)")
+  } catch let error as MutationError {
+    _ = error
+  } catch {
+    fail("modeled private runtime-directory policy returned an unexpected error: \(label)")
+  }
+}
+
 private func runModeledPackageParentPolicyTests() -> Never {
   let currentUid = uid_t(501)
   let adminGroup = gid_t(80)
+  assertModeledPrivateRuntimeDirectoryAccepted(
+    modeledPackageParentStat(uid: currentUid, gid: gid_t(20), mode: 0o700),
+    label: "runtime parent",
+    ownerUid: currentUid,
+  )
+  assertModeledPrivateRuntimeDirectoryRejected(
+    modeledPackageParentStat(uid: 0, gid: gid_t(20), mode: 0o700),
+    label: "lock parent",
+    ownerUid: currentUid,
+  )
+  assertModeledPrivateRuntimeDirectoryRejected(
+    modeledPackageParentStat(uid: currentUid, gid: gid_t(20), mode: 0o775),
+    label: "runtime parent",
+    ownerUid: currentUid,
+  )
   let system = modeledPackageParentStat(uid: 0, gid: adminGroup, mode: 0o775)
   assertModeledPackageParentAccepted(
     system,
