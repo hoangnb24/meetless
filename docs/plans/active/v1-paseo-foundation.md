@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v74`
-- `current_frontier`: `R5-MAS-AWAITING-FRESH-RETRY-AUTHORIZATION`
-- `state`: `REPOSITORY_CORRECTION_LEAD_ACCEPTED_EXTERNAL_GATE_CLOSED`
+- `plan_revision`: `v75`
+- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-14`
+- `state`: `ATTEMPT_14_OWNER_AUTHORIZED_PHASE_1_PENDING`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted Applications-parent/runtime-owner correction `b3d96b4c1618423a16f18fe271bc9e565974800c`, an immutable child of `7871962f7c032ed18139d1280e35e4391e3ac709` and accepted integration tip `69c97239c8903cbb9fb06af01302ea2b4e1ed0e6`. It preserves the accepted status read-only, first-use bootstrap, package-source, identity, bounded registration, host-attestation, topology/state, lease-use, relative-socket, fresh-request-ID, and MAS export corrections.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 13 is consumed by the pre-install package-parent failure recorded below. The one-time initial fixed-index authorization — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` — is spent; no package/sign/install/restore/launch retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: any future package/install/restore/launch retry requires fresh owner authorization.
-- `next_action`: obtain explicit owner authorization before opening a new MAS package/install/launch attempt; until then keep every external and excluded gate closed.
+- `blocked_by`: Attempt 14 requires a fresh artifact bound to the accepted repository tip and a Lead artifact checkpoint before install/launch.
+- `next_action`: run exactly one fresh package/sign/validate Phase 1 from the accepted tip; do not install or launch until Lead accepts that artifact checkpoint.
 
 ## Ownership And Authority
 
@@ -1876,6 +1876,18 @@ runtime negative, descriptor revalidation, and preservation of the exact
 `/Applications` package-parent exception. This is repository acceptance only.
 Attempt 13 remains consumed and no new package, install, restore, launch, or
 other external gate is authorized.
+
+The owner then replied `Đồng ý` directly to the Lead's request for explicit
+authorization of one new attempt. Lead binds that reply to exactly one
+`R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-14`: Phase 1 may build, sign,
+and validate one fresh development MAS artifact from the accepted repository
+tip; Phase 2 may install and launch only after a separate Lead artifact
+checkpoint. This authorization does not open purchase/restore, premium UI or
+status, RevenueCat mutation/dashboard/credential activity, Convex, production
+or annual actions, real transcription/provider/TCC/recording/export, upload,
+submission, publication, App Review, push, or secret disclosure. Existing
+Attempt 13 and Lead-probe residues must be classified and preserved according
+to their recorded ownership; no manual cleanup is authorized.
 
 ### Risks And Recovery
 
