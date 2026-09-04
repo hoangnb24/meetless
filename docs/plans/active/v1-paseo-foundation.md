@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v100`
+- `plan_revision`: `v101`
 - `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-16`
-- `state`: `ATTEMPT16_AUTHORIZED_PHASE1_PACKAGE_NOT_YET_CONSUMED`
+- `state`: `ATTEMPT16_PHASE1_ACCEPTED_PHASE2_AUTHORIZED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` is terminal `archived`; prior app and runtime are canonical, and accepted corrections `0d3445b84d91053a1d0911ceaf184f7c2eb9dc51` and `8e3401a20972849ba61a5c5401ddd88fcb8d17ca` remain repository truth.
+- `candidate`: Lead-accepted Attempt 16 artifact from repository tip `e57ac527db6e2cb3cf0654c872ea7fcfed414e79`, bundle fingerprint `e7243483893d9939287ff66c482590375f271cb626c31dcb1fc7b950eb514f65`, manifest SHA-256 `e377fbeb004f845a44241f29b545bdadab87640b2aff4b2c376bcc189536cf0e`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 15 is consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: none for Attempt 16 Phase 1; its authorization remains unconsumed because package count is zero.
-- `next_action`: use authoritative coordinator status as the sole read-only MAS session preflight, then consume Attempt 16 when the single package command begins; no custom fixed-record predicate is permitted.
+- `blocked_by`: none for the one authorized Attempt 16 Phase 2 sequence; any failure remains no-retry.
+- `next_action`: run exactly one coordinator install/LaunchServices launch/readiness/recovery sequence against the accepted artifact, preserving current network behavior and restoring prior app/runtime on every terminal path.
 
 ## Ownership And Authority
 
@@ -2451,6 +2451,23 @@ pending, mismatched, or ambiguous intent/state remains fail-closed. The plan and
 operator brief own command-count accounting because the repository intentionally
 has no parallel control-plane task database. Local fixture proof exists; no
 hook, checked-in CI, or verified branch-protection enforcement is claimed.
+
+The resumed Phase 1 used only authoritative coordinator status, which returned
+terminal `archived` for Attempts 14 and 15. It then invoked the package command
+exactly once, consuming Attempt 16, and exited `0`. Lead accepts the artifact at
+`/private/tmp/meetless-mas-development-proof.to7YjX/release/macos/Meetless.app`:
+manifest SHA-256
+`e377fbeb004f845a44241f29b545bdadab87640b2aff4b2c376bcc189536cf0e`,
+bundle fingerprint
+`e7243483893d9939287ff66c482590375f271cb626c31dcb1fc7b950eb514f65`,
+artifact digest
+`51aa64ed7dbe8311eed5c689b0145834d7a620807021db2859b4789c5aa4668a`,
+and outer CDHash `555a31c82e2818d71393670d14d2a81875f6b016`. Complete MAS validation,
+deep/strict signature, exact signer/team/profile, 43 thin-arm64 Mach-O and
+entitlement closure, package/source/Paseo inputs, license inventory, and
+public-key hash passed. No install or launch occurred in Phase 1. Lead admits
+Phase 2 under the existing Attempt 16 authorization; all excluded gates remain
+closed.
 
 ### Risks And Recovery
 
