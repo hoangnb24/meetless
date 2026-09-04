@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v96`
-- `current_frontier`: `R5-MAS-ATTEMPT15-RECOVERY-COMPLETE`
-- `state`: `ATTEMPT15_ARCHIVED_EXTERNAL_GATES_CLOSED`
+- `plan_revision`: `v97`
+- `current_frontier`: `R5-MAS-POST-ATTEMPT15-READINESS-DECISION`
+- `state`: `ATTEMPT15_DIAGNOSIS_COMPLETE_OWNER_SCOPE_DECISION_REQUIRED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` is terminal `archived`; prior app and runtime are canonical, and accepted corrections `0d3445b84d91053a1d0911ceaf184f7c2eb9dc51` and `8e3401a20972849ba61a5c5401ddd88fcb8d17ca` remain repository truth.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 15 is consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: any new package/install/launch attempt or renderer investigation requiring real execution needs a separate owner decision and authorization.
-- `next_action`: retain Attempt 15 archive/evidence and separately diagnose renderer `18082` from repository/retained logs before proposing any new external attempt.
+- `blocked_by`: any new package/install/launch attempt needs separate owner authorization; changing automatic speech-model download or relay startup requires a product-policy choice.
+- `next_action`: preserve current behavior for an isolated future readiness attempt unless the owner chooses to defer speech-model downloads and/or relay connection; do not invent a renderer correction from incomplete evidence.
 
 ## Ownership And Authority
 
@@ -2374,6 +2374,30 @@ are absent, its fresh runtime is retained at the run-derived path, and its
 archive is terminal `archived`. Attempt 14 remains terminal and unchanged.
 No owned process, target listener, canonical socket, or open handle remains.
 This recovery is complete and authorizes no new attempt or excluded gate.
+
+`PLAN_RECONCILIATION v1 — POST-ATTEMPT15 READINESS DIAGNOSIS` closes the
+repository/retained-evidence diagnosis without a new production change. The
+proven earliest failure was the pre-correction handoff comparison, not a
+renderer bind failure. The host, supervisor, worker, plugin, and daemon listener
+were observed; desktop creates renderer `18082` only after recording readiness.
+Retained evidence contains no timestamped renderer-bind, HTTP-timeout, or later
+bootstrap error, so it cannot distinguish recovery stopping the host during
+that wait from an independent later renderer failure. The accepted recursive,
+schema-exact handoff correction already owns the proven defect; no speculative
+renderer correction is authorized.
+
+Speech-model downloads and relay connection are separate Paseo startup side
+effects. Local speech providers are enabled by default and start background
+model reconciliation after daemon readiness. Meetless explicitly enables and
+persists relay, so Paseo connects it after plugin startup. Neither behavior is
+proven to cause renderer failure, and neither violates an accepted current
+policy. Deferring either changes product behavior and requires owner authority.
+Repository fixtures can prove handoff tamper rejection, renderer serving/abort,
+readiness timeout/shutdown, and relay enable/disable behavior, but only a
+separately authorized signed MAS launch can prove the full live composition.
+The reconciled recommendation is to preserve current network behavior for one
+future isolated readiness attempt so that the already-corrected handoff remains
+the only changed variable; decide startup-network policy separately afterward.
 
 ### Risks And Recovery
 
