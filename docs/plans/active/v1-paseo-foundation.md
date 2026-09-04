@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v83`
-- `current_frontier`: `R5-MAS-ATTEMPT14-RETAINED-TRANSACTION-RECOVERY`
-- `state`: `OWNER_AUTHORIZED_ONE_ATTEMPT14_COORDINATOR_RECOVERY`
+- `plan_revision`: `v84`
+- `current_frontier`: `R5-MAS-ATTEMPT14-PACKAGE-LEASE-SELF-OBSERVATION`
+- `state`: `REPOSITORY_PACKAGE_LEASE_ABSENCE_ORDER_CORRECTION_PENDING_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead-accepted status-1 live lsof correction `1351f8295ec06aebfc5de33adb857552a261376e`, an immutable child of exact base `2ad81e5c9cabb1e07f954ffad7e47761559fe7d2`; predecessor strict no-match candidate `3ba7dc312b418133a99eb726787dbee156501db3` remains its implementation ancestor.
+- `candidate`: repository-only package lease/absence order correction, an immutable child of exact base `f0ae83f029b64e0a7516f11f84d079e5a5a1bc0a`; Lead review remains pending.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 13 is consumed by the pre-install package-parent failure recorded below. The one-time initial fixed-index authorization — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` — is spent; no package/sign/install/restore/launch retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: none before the one authorized recovery invocation; every package/sign/install/launch and excluded gate remains closed.
-- `next_action`: run exactly one coordinator restore of retained Attempt 14 run `2b2905cf-7acd-493f-9aa7-5a6401c1e2e4`, then stop and audit without retry.
+- `blocked_by`: Lead review of the repository candidate; retained Attempt 14 recovery remains separately unauthorized, and every package/sign/install/launch and excluded gate remains closed.
+- `next_action`: Lead review the immutable repository child of exact base `f0ae83f029b64e0a7516f11f84d079e5a5a1bc0a`; do not invoke retained recovery or any external MAS lifecycle action.
 
 ## Ownership And Authority
 
@@ -2039,7 +2039,7 @@ no-retry; all package/runtime roots remain retained. A further coordinator
 restore requires fresh owner authorization and must not include package,
 install, or launch.
 
-### R5 MAS Attempt 14 status-1 live lsof correction (2026-09-04; current frontier)
+### R5 MAS Attempt 14 status-1 live lsof correction (2026-09-04; superseded predecessor)
 
 `FRONTIER_BRIEF v1 — SERIAL STATUS1 VALID LSOF LIVE EVIDENCE CORRECTION` starts
 from exact base `2ad81e5c9cabb1e07f954ffad7e47761559fe7d2`, in the original
@@ -2097,6 +2097,52 @@ rollback, fresh-runtime retention, prior-runtime restoration, archive
 publication, and the coordinator's own contemporaneous absence checks. It does
 not permit package, sign, install, launch, a new attempt, manual filesystem
 recovery, or any excluded external gate. Failure remains no-retry.
+
+That historical authorization was not exercised. The current package lease
+absence-order frontier is repository-only and does not authorize a retained-run
+recovery invocation.
+
+### R5 MAS Attempt 14 package lease absence-order correction (2026-09-04; current frontier)
+
+`FRONTIER_BRIEF v1 — SERIAL PACKAGE LEASE ABSENCE ORDER CORRECTION` is the
+sole-writer repository child of exact base
+`f0ae83f029b64e0a7516f11f84d079e5a5a1bc0a`, in the original family rooted at
+`470d109c81c14c144f352cd2b522dc6a1cf57142`. It accepts
+`ATT14-PACKAGE-LEASE-SELF-OBSERVATION-001`,
+`ATT14-PACKAGE-LEASE-SELF-OBSERVATION-002`,
+`ATT14-PACKAGE-LEASE-ORDER-003`,
+`ATT14-PACKAGE-LEASE-PROOF-004`, and
+`ATT14-PACKAGE-LEASE-AUTHORITY-005`; the authority digest remains
+`ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
+
+The package transaction's `recoverPackageTransaction`,
+`restorePackageTransaction`, and `finalizePackageTransaction` paths now acquire
+and validate the exact package mutation lease before calling `assertNoLiveHost`.
+Only after explicit absence succeeds do they bind the runtime-root descriptor,
+then immediately reassert the live lease before any package mutation. The
+native lease, `+D` evidence, package proof/identity/collision checks, state-aware
+recovery, runtime identity-absence guard, and package-first coordinator order
+remain unchanged. No helper PID or descriptor is excluded and no fallback is
+introduced.
+
+The coordinator committed-transaction composition uses no `openHandles`
+policy mock for its package status/launch/restore dependencies, so the accepted
+bounded `+D` adapter inspects the disposable runtime root. The package tests
+also exercise all three mutation APIs against an exact `/usr/sbin/lsof -nP +D`
+empty-root result while a contender proves the package lease is already held;
+successful completion proves the bind/mutation path follows the absence check.
+Existing foreign-held, malformed, stale/spoofed/dead lease, wrong owner/run/
+path/identity/artifact, collision, and recovery-state regressions remain in the
+focused suites and fail before package/runtime/archive mutation.
+
+Changed paths are exactly `scripts/lib/macos-package-transaction.mjs`,
+`packages/runtime/test/macos-package-transaction.test.ts`,
+`packages/runtime/test/macos-mas-development-gate.test.ts`, and this plan.
+The retained Attempt 14 run ID
+`2b2905cf-7acd-493f-9aa7-5a6401c1e2e4` and all real MAS state remain untouched;
+this repository correction does not authorize another recovery invocation.
+Local, hook, CI, and branch-protection enforcement levels are reported in the
+peer handoff and are not inferred from repository tests.
 
 ### Risks And Recovery
 

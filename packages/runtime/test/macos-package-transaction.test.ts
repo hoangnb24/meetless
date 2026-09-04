@@ -1,4 +1,4 @@
-import { execFile as execFileCallback } from "node:child_process";
+import { execFile as execFileCallback, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   newPackageTransactionId,
   fingerprintPath,
+  finalizePackageTransaction,
   packageTransactionPaths,
   readPackageRecoveryProof,
   recoverPackageTransaction,
@@ -34,6 +35,8 @@ import {
 
 const roots: string[] = [];
 const execFile = promisify(execFileCallback);
+const MAS_LSOF_MAX_BUFFER_BYTES = 256 * 1024;
+const MAS_LSOF_ENV = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" };
 
 const identityGoldenVector = {
   version: 1,
@@ -517,6 +520,70 @@ describe("macOS package replacement transaction", () => {
     await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
     await expect(lstat(root.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(lstat(cleanupPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("holds the package lease before absence and binds the runtime root before recovery mutation", async () => {
+    for (const operation of ["recover", "restore", "finalize"] as const) {
+      const root = await setup({ identity: false });
+      const runtimeRoot = path.join(root.root, "runtime-root");
+      const identityPath = path.join(runtimeRoot, "host-identity.json");
+      await mkdir(runtimeRoot, { mode: 0o700 });
+      const transaction = await replacePackageBundle({
+        source: root.source,
+        target: root.target,
+        identityPath,
+        ownerToken: `M7-lease-order-${operation}`,
+        runId: newPackageTransactionId(),
+        inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      });
+      const events: string[] = [];
+      const assertNoLiveHost = async () => {
+        const contender = await acquireMasGateLock({ parentPath: path.dirname(root.target) })
+          .then(async (lease) => {
+            await lease.release();
+            return null;
+          }, (error) => error);
+        expect(contender).toBeInstanceOf(Error);
+        events.push("lease-acquired");
+
+        const result = spawnSync("/usr/sbin/lsof", ["-nP", "+D", runtimeRoot, "-Fpcn"], {
+          encoding: "utf8",
+          maxBuffer: MAS_LSOF_MAX_BUFFER_BYTES,
+          env: MAS_LSOF_ENV,
+        });
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe(1);
+        expect(result.signal).toBeNull();
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toBe("");
+        events.push("absence");
+      };
+      const options = {
+        ownerToken: transaction.ownerToken,
+        target: root.target,
+        identityPath,
+        runtimeRootPath: runtimeRoot,
+        assertNoLiveHost,
+      };
+
+      if (operation === "recover") {
+        await recoverPackageTransaction(transaction.paths.journal, options);
+      } else if (operation === "restore") {
+        await restorePackageTransaction(transaction, options);
+      } else {
+        await finalizePackageTransaction(transaction, options);
+      }
+      events.push("mutation-complete");
+      expect(events).toEqual(["lease-acquired", "absence", "mutation-complete"]);
+      if (operation === "finalize") {
+        await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("candidate\n");
+        await expect(readFile(identityPath)).resolves.toEqual(transaction.nextIdentityBytes);
+      } else {
+        await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
+        await expect(lstat(identityPath)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+      await expect(lstat(transaction.paths.journal)).rejects.toMatchObject({ code: "ENOENT" });
+    }
   });
 
   it("does not treat a missing journal with a fixed package residue as absent", async () => {

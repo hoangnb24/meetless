@@ -792,7 +792,6 @@ describe("MAS development gate coordinator", () => {
       processRows: async () => [],
       listeners: async () => [],
       sockets: async () => [],
-      openHandles: async () => [],
       packageFilesystem,
     };
     const composedStatus = await readMasDevelopmentGateStatus({

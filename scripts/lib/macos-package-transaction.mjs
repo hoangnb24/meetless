@@ -284,8 +284,7 @@ export async function recoverPackageTransaction(transactionOrJournal, options = 
   }
   return withPackageMutationLease(transaction, options, async (lockLease) => {
     const lockedOptions = { ...options, lockLease };
-    await lockLease.bindRuntimeRoot(runtimeRootPathFor(transaction, options));
-    if (lockedOptions.assertNoLiveHost) await lockedOptions.assertNoLiveHost();
+    await preparePackageMutationLease(transaction, lockedOptions, lockLease);
     if (lockedOptions.requireRecoveryProof === true) {
       transaction = await requireAuthorizedRecoveryTransaction(transaction, lockedOptions);
     }
@@ -305,8 +304,7 @@ export async function restorePackageTransaction(transaction, options = {}) {
   }
   return withPackageMutationLease(transaction, options, async (lockLease) => {
     const lockedOptions = { ...options, lockLease };
-    await lockLease.bindRuntimeRoot(runtimeRootPathFor(transaction, options));
-    if (lockedOptions.assertNoLiveHost) await lockedOptions.assertNoLiveHost();
+    await preparePackageMutationLease(transaction, lockedOptions, lockLease);
     if (lockedOptions.requireRecoveryProof === true) {
       transaction = await requireAuthorizedRecoveryTransaction(transaction, lockedOptions);
     }
@@ -322,8 +320,7 @@ export async function finalizePackageTransaction(transaction, options = {}) {
   assertTransaction(transaction, options);
   return withPackageMutationLease(transaction, options, async (lockLease) => {
     const lockedOptions = { ...options, lockLease };
-    await lockLease.bindRuntimeRoot(runtimeRootPathFor(transaction, options));
-    if (lockedOptions.assertNoLiveHost) await lockedOptions.assertNoLiveHost();
+    await preparePackageMutationLease(transaction, lockedOptions, lockLease);
     if (transaction.state !== "committed" && transaction.state !== "finalizing" && transaction.state !== "finalized") {
       throw new Error(`cannot finalize a package transaction in state ${transaction.state}`);
     }
@@ -335,6 +332,15 @@ export async function finalizePackageTransaction(transaction, options = {}) {
     await finishFinalization(transaction, lockedOptions);
     return transaction;
   });
+}
+
+async function preparePackageMutationLease(transaction, options, lockLease) {
+  // withPackageMutationLease has already acquired and validated this exact
+  // package lease. Prove host absence before the native helper opens its
+  // runtime-root descriptor, then reassert the lease immediately afterward.
+  if (options.assertNoLiveHost) await options.assertNoLiveHost();
+  await lockLease.bindRuntimeRoot(runtimeRootPathFor(transaction, options));
+  await lockLease.assertHeld();
 }
 
 export async function fingerprintPath(root) {
