@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v95`
-- `current_frontier`: `R5-MAS-ATTEMPT15-JOURNAL-BOUND-QUARANTINE-ATTESTATION`
-- `state`: `ATTEMPT15_QUARANTINE_CORRECTION_LEAD_ACCEPTED_RECOVERY_AUTHORIZED`
+- `plan_revision`: `v96`
+- `current_frontier`: `R5-MAS-ATTEMPT15-RECOVERY-COMPLETE`
+- `state`: `ATTEMPT15_ARCHIVED_EXTERNAL_GATES_CLOSED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead-accepted quarantine-attestation correction `8e3401a20972849ba61a5c5401ddd88fcb8d17ca`, exact child of `357723f9b1124ec0ca680a021f4ddb608764e799`; retained Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` remains pending its already-authorized one-shot recovery.
+- `candidate`: Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` is terminal `archived`; prior app and runtime are canonical, and accepted corrections `0d3445b84d91053a1d0911ceaf184f7c2eb9dc51` and `8e3401a20972849ba61a5c5401ddd88fcb8d17ca` remain repository truth.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: none for the single coordinator recovery already authorized by `Cho phép coordinator recovery Attempt 15 đúng một lần`; Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: none for that one invocation; failure consumes it and remains no-retry.
-- `next_action`: invoke exactly one coordinator recovery of retained Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a`; no separate historical-digest preflight and no other external action.
+- `pending_ruling`: Attempt 15 is consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
+- `blocked_by`: any new package/install/launch attempt or renderer investigation requiring real execution needs a separate owner decision and authorization.
+- `next_action`: retain Attempt 15 archive/evidence and separately diagnose renderer `18082` from repository/retained logs before proposing any new external attempt.
 
 ## Ownership And Authority
 
@@ -2357,6 +2357,23 @@ synthesized as `active/ready`, and package authority plus recovery ordering
 remain unchanged. The owner's prior one-shot recovery authorization was not
 consumed by the failed custom preflight and remains valid for exactly one
 coordinator invocation.
+
+That authorization was consumed by exactly one coordinator restore invocation,
+which exited `0` and returned `restored`. The coordinator proved complete
+absence, restored the prior package first, released the package lease,
+reacquired the gate lock, retained the fresh runtime, restored the prior
+runtime, and published terminal archive/index state. The canonical app matches
+baseline fingerprint
+`7039ded32b778fcda21fae6d961d80e72508630b2aaa0c8d2abedf08103e2a14`
+and CDHash `acfdb5223b4d492d86e13827babcea2c5df392dc`; its deep/strict signature
+passed and original mtime was restored. The canonical runtime's full archived
+attestation matches digest
+`130c2d4de4cf4e6b9d63ce775860aa2bcd2f70012222c1d7d67d694af71dc6de`.
+Attempt 15's active/quarantine/package transaction and published identity paths
+are absent, its fresh runtime is retained at the run-derived path, and its
+archive is terminal `archived`. Attempt 14 remains terminal and unchanged.
+No owned process, target listener, canonical socket, or open handle remains.
+This recovery is complete and authorizes no new attempt or excluded gate.
 
 ### Risks And Recovery
 
