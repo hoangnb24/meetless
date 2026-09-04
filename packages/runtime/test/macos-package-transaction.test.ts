@@ -301,7 +301,7 @@ describe("macOS package replacement transaction", () => {
       identityPath,
       ownerToken: "M7-composition-owner",
       runId: newPackageTransactionId(),
-      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      inspect: async (bundlePath: string) => makePublishedHostIdentity({ root, source, target, identityPath }, bundlePath),
     });
     await expect(readFile(identityPath, "utf8")).resolves.toContain("com.meetless.app");
 
@@ -366,7 +366,7 @@ describe("macOS package replacement transaction", () => {
         identityPath: root.identityPath,
         ownerToken,
         runId,
-        inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+        inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
         artifactBinding: binding,
         faultAt: state,
       })).rejects.toThrow(`injected package transaction interruption at ${state}`);
@@ -403,7 +403,7 @@ describe("macOS package replacement transaction", () => {
         identityPath: root.identityPath,
         ownerToken,
         runId: newPackageTransactionId(),
-        inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+        inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
         artifactBinding: binding,
       });
       await expect(restorePackageTransaction(transaction, {
@@ -447,7 +447,7 @@ describe("macOS package replacement transaction", () => {
       identityPath: root.identityPath,
       ownerToken: "M7-fresh-target-owner",
       runId: newPackageTransactionId(),
-      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
       artifactBinding: binding,
     });
     await expect(readPackageRecoveryProof({
@@ -487,7 +487,7 @@ describe("macOS package replacement transaction", () => {
       identityPath: root.identityPath,
       ownerToken: "M7-cleanup-owner",
       runId: newPackageTransactionId(),
-      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
       artifactBinding: binding,
     });
     const cleanupPath = `${transaction.target}.m7-cleanup-${transaction.runId}-${createHash("sha256")
@@ -534,7 +534,7 @@ describe("macOS package replacement transaction", () => {
         identityPath,
         ownerToken: `M7-lease-order-${operation}`,
         runId: newPackageTransactionId(),
-        inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+        inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
       });
       const events: string[] = [];
       const assertNoLiveHost = async () => {
@@ -595,7 +595,7 @@ describe("macOS package replacement transaction", () => {
       identityPath: root.identityPath,
       ownerToken: "M7-missing-journal-owner",
       runId: newPackageTransactionId(),
-      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
       artifactBinding: binding,
     });
     await rm(transaction.paths.journal);
@@ -649,15 +649,6 @@ describe("macOS package replacement transaction", () => {
       {
         label: "missing identity",
         mutate: async (root) => { await rm(root.identityPath); },
-        message: /published identity.*bytes, digest, or metadata/,
-      },
-      {
-        label: "replaced identity",
-        mutate: async (root) => {
-          const bytes = await readFile(root.identityPath);
-          await rm(root.identityPath);
-          await writeFile(root.identityPath, bytes, { mode: 0o600 });
-        },
         message: /published identity.*bytes, digest, or metadata/,
       },
       {
@@ -744,6 +735,12 @@ describe("macOS package replacement transaction", () => {
         }),
       },
       {
+        label: "wrong runtime root",
+        mutate: async () => undefined,
+        message: /outside the exact runtime root|published host identity contains an invalid strict value/,
+        options: (root) => ({ runtimeRootPath: path.join(root.root, "foreign-runtime") }),
+      },
+      {
         label: "wrong target path",
         mutate: async () => undefined,
         message: /target is not the fixed canonical target|journal is missing at the fixed target\/run-derived path/,
@@ -773,7 +770,7 @@ describe("macOS package replacement transaction", () => {
         identityPath: root.identityPath,
         ownerToken: "M7-recovery-negative-owner",
         runId: newPackageTransactionId(),
-        inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+        inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
         artifactBinding: binding,
       });
       await testCase.mutate(root, transaction, binding);
@@ -927,7 +924,7 @@ describe("macOS package replacement transaction", () => {
       identityPath: root.identityPath,
       ownerToken: "M7-binding-owner",
       runId: newPackageTransactionId(),
-      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
       artifactBinding: binding,
     });
 
@@ -953,7 +950,7 @@ describe("macOS package replacement transaction", () => {
       identityPath: root.identityPath,
       ownerToken,
       runId,
-      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
       artifactBinding: binding,
     });
 
@@ -993,7 +990,7 @@ describe("macOS package replacement transaction", () => {
       identityPath: root.identityPath,
       ownerToken,
       runId,
-      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
       artifactBinding: binding,
     });
     const identityBytes = await readFile(root.identityPath);
@@ -1043,7 +1040,7 @@ describe("macOS package replacement transaction", () => {
       identityPath: root.identityPath,
       ownerToken: "M7-proof-binding-owner",
       runId: newPackageTransactionId(),
-      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
       artifactBinding: binding,
     });
     await expect(readPackageTransactionProof(makeInput(root, transaction, binding))).rejects.toThrow(/owner token mismatch|identity path|missing at the fixed/iu);
@@ -1061,7 +1058,7 @@ describe("macOS package replacement transaction", () => {
       identityPath: root.identityPath,
       ownerToken,
       runId,
-      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
       artifactBinding: binding,
     });
     const journalPath = packageTransactionPaths(root.target, runId).journal;
@@ -1131,7 +1128,7 @@ describe("macOS package replacement transaction", () => {
     await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe(candidateMarker);
   });
 
-  it("preflights exact package authorization before any strict rollback mutation", async () => {
+  it("accepts an atomic same-content identity republication with only a changed inode for recovery", async () => {
     const root = await setup({ identity: false });
     const manifestPath = path.join(root.root, "app-store-development-rollback-proof.json");
     const binding = await makeBinding(root.source, manifestPath, "test-public-sdk-key-rollback-proof");
@@ -1141,14 +1138,25 @@ describe("macOS package replacement transaction", () => {
       identityPath: root.identityPath,
       ownerToken: "M7-package-proof-rollback",
       runId: newPackageTransactionId(),
-      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
       artifactBinding: binding,
     });
     const identityBytes = await readFile(root.identityPath);
-    await rm(root.identityPath);
-    await writeFile(root.identityPath, identityBytes, { mode: 0o600 });
-    const candidateMarker = await readFile(path.join(root.target, "Contents", "marker"), "utf8");
+    const originalIdentity = await lstat(root.identityPath);
+    const replacement = `${root.identityPath}.native-republication`;
+    await writeFile(replacement, identityBytes, { mode: 0o600 });
+    await rename(replacement, root.identityPath);
+    const republishedIdentity = await lstat(root.identityPath);
+    expect(republishedIdentity.ino).not.toBe(originalIdentity.ino);
 
+    await expect(readPackageRecoveryProof({
+      ownerToken: transaction.ownerToken,
+      runId: transaction.runId,
+      target: root.target,
+      identityPath: root.identityPath,
+      expectedArtifactBinding: binding,
+      runtimeRootPath: root.root,
+    })).resolves.toMatchObject({ status: "recoverable", state: "committed" });
     await expect(restorePackageTransaction(transaction, {
       ownerToken: transaction.ownerToken,
       target: root.target,
@@ -1157,9 +1165,72 @@ describe("macOS package replacement transaction", () => {
       requireRecoveryProof: true,
       expectedArtifactBinding: binding,
       runtimeRootPath: root.root,
-    })).rejects.toThrow(/published identity.*bytes, digest, or metadata|metadata does not exactly match/);
-    await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe(candidateMarker);
+    })).resolves.toBeDefined();
+    await expect(readFile(path.join(root.target, "Contents", "marker"), "utf8")).resolves.toBe("prior\n");
   });
+
+  it("rejects a symlinked identity ancestry even when bytes and leaf metadata still match", async () => {
+    const root = await setup({ identity: false });
+    const runtimeRoot = path.join(root.root, "runtime");
+    const identityPath = path.join(runtimeRoot, "identity.json");
+    await mkdir(runtimeRoot, { mode: 0o700 });
+    const fixture = { ...root, root: runtimeRoot, identityPath };
+    const binding = await makeBinding(root.source, path.join(root.root, "app-store-development-symlink-ancestry.json"), "symlink-ancestry");
+    const transaction = await replacePackageBundle({
+      source: root.source,
+      target: root.target,
+      identityPath,
+      ownerToken: "M7-package-proof-symlink-ancestry",
+      runId: newPackageTransactionId(),
+      inspect: async (bundlePath: string) => makePublishedHostIdentity(fixture, bundlePath),
+      artifactBinding: binding,
+      runtimeRootPath: runtimeRoot,
+    });
+    const realRuntimeRoot = path.join(root.root, "runtime-real");
+    await rename(runtimeRoot, realRuntimeRoot);
+    await symlink(realRuntimeRoot, runtimeRoot);
+
+    await expect(readPackageRecoveryProof({
+      ownerToken: transaction.ownerToken,
+      runId: transaction.runId,
+      target: root.target,
+      identityPath,
+      expectedArtifactBinding: binding,
+      runtimeRootPath: runtimeRoot,
+    })).rejects.toThrow(/symlink ancestor/);
+  });
+
+  it.each(["uid", "gid", "mode", "dev", "nlink", "size"] as const)(
+    "rejects same-content republication when %s also differs from the journaled identity",
+    async (field) => {
+      const root = await setup({ identity: false });
+      const binding = await makeBinding(root.source, path.join(root.root, `app-store-development-${field}.json`), `metadata-${field}`);
+      const transaction = await replacePackageBundle({
+        source: root.source,
+        target: root.target,
+        identityPath: root.identityPath,
+        ownerToken: `M7-package-proof-${field}`,
+        runId: newPackageTransactionId(),
+        inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
+        artifactBinding: binding,
+      });
+      const replacement = `${root.identityPath}.native-republication`;
+      await writeFile(replacement, await readFile(root.identityPath), { mode: 0o600 });
+      await rename(replacement, root.identityPath);
+      const record = JSON.parse((await readFile(transaction.paths.journal)).toString("utf8"));
+      record.identityPublishedIdentity[field] += 1;
+      await writeFile(transaction.paths.journal, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+
+      await expect(readPackageRecoveryProof({
+        ownerToken: transaction.ownerToken,
+        runId: transaction.runId,
+        target: root.target,
+        identityPath: root.identityPath,
+        expectedArtifactBinding: binding,
+        runtimeRootPath: root.root,
+      })).rejects.toThrow(/published identity.*bytes, digest, or metadata/);
+    },
+  );
 
   it("retains a same-content destination collision instead of deleting it during recovery", async () => {
     const root = await setup({ identity: false });
@@ -1172,7 +1243,7 @@ describe("macOS package replacement transaction", () => {
       identityPath: root.identityPath,
       ownerToken: "M7-collision-owner",
       runId,
-      inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+      inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
       artifactBinding: binding,
       beforeRename: async ({ label, destination }: { label: string; destination: string }) => {
         if (label === "package staging install rename") {
@@ -1296,7 +1367,7 @@ describe("macOS package replacement transaction", () => {
         identityPath: root.identityPath,
         ownerToken: "M7-death-owner",
         runId,
-        inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+        inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
         lockLease: lease,
         afterRenameSyscall: ({ label }: { label: string }) => {
           if (label === "package staging install rename") {
@@ -1332,7 +1403,7 @@ describe("macOS package replacement transaction", () => {
           identityPath: root.identityPath,
           ownerToken: `M7-identity-death-${deathPoint}`,
           runId,
-          inspect: async (bundlePath: string) => ({ bundleIdentifier: "com.meetless.app", bundleRealPath: bundlePath }),
+          inspect: async (bundlePath: string) => makePublishedHostIdentity(root, bundlePath),
           artifactBinding: binding,
           lockLease: lease,
           beforeRename: deathPoint === "before" ? () => process.kill(lease.holderPid, "SIGKILL") : undefined,
@@ -1382,6 +1453,20 @@ type PackageFixture = {
   target: string;
   identityPath: string;
 };
+
+function makePublishedHostIdentity(root: PackageFixture, bundlePath: string) {
+  return {
+    ...identityGoldenVector,
+    bundlePath,
+    bundleRealPath: bundlePath,
+    executablePath: path.join(bundlePath, "Contents", "MacOS", "MeetlessHost"),
+    configuration: {
+      ...identityGoldenVector.configuration,
+      runtimeRoot: root.root,
+      identityPath: root.identityPath,
+    },
+  };
+}
 
 async function makeBinding(source: string, manifestPath: string, publicKey: string) {
   const manifestBytes = Buffer.from("retained manifest fixture\n");

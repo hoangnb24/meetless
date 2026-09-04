@@ -376,6 +376,7 @@ export async function readPackageTransactionProof(options = {}) {
     currentIdentityBytes: identity.bytes,
     currentIdentityFingerprint: identity.digest,
     currentIdentity: identity.metadata,
+    publishedHostIdentity: identity.document,
   });
 }
 
@@ -398,6 +399,7 @@ export async function readPackageRecoveryProof(options = {}) {
     currentIdentityBytes: physicalState.identityBytes,
     currentIdentityFingerprint: physicalState.identityFingerprint,
     currentIdentity: physicalState.identity,
+    publishedHostIdentity: physicalState.identityDocument,
   });
 }
 
@@ -677,9 +679,11 @@ async function restoreIdentity(transaction, lockLease) {
   }
   if (currentDigest === previousDigest) return;
   if (previousBytes === null) {
-    const expectedIdentity = transaction.artifactBinding
-      ? transaction.identityPublishedIdentity
-      : await packagePathIdentity(transaction.identityPath);
+    const currentIdentity = await packagePathIdentity(transaction.identityPath);
+    if (transaction.artifactBinding && !sameRecoveryPublishedIdentity(currentIdentity, transaction.identityPublishedIdentity)) {
+      throw new Error("refusing to restore package identity; published ownership metadata changed beyond the authorized inode republication");
+    }
+    const expectedIdentity = currentIdentity;
     if (!expectedIdentity) {
       throw new Error("refusing to restore package identity; published ownership identity is missing");
     }
@@ -740,6 +744,7 @@ async function assertAuthorizedPublishedIdentity(transaction, {
   if (transaction.nextIdentityFingerprint !== digest(transaction.nextIdentityBytes) || !/^[a-f0-9]{64}$/u.test(transaction.nextIdentityFingerprint ?? "")) {
     throw new Error("package identity authorization next identity bytes and digest are inconsistent");
   }
+  const identityDocument = decodeStrictPublishedHostIdentity(transaction.nextIdentityBytes, "package identity authorization");
   if (transaction.identityTemporaryPath !== null || transaction.identityTemporaryFingerprint !== null || transaction.identityTemporaryIdentity !== null) {
     throw new Error("package identity authorization retains a temporary or collision identity");
   }
@@ -791,7 +796,7 @@ async function assertAuthorizedPublishedIdentity(transaction, {
   if (!samePackageIdentity(metadata, transaction.identityPublishedIdentity)) {
     throw new Error("package identity authorization current file metadata does not exactly match identityPublishedIdentity");
   }
-  return { bytes, digest: transaction.nextIdentityFingerprint, metadata };
+  return { bytes, digest: transaction.nextIdentityFingerprint, metadata, document: identityDocument };
 }
 
 async function assertAuthorizedRecoverablePackageState(transaction, {
@@ -824,6 +829,9 @@ async function assertAuthorizedRecoverablePackageState(transaction, {
   const temporary = await packagePathSnapshot(packageIdentityTemporaryPath(transaction.identityPath, transaction.runId));
 
   assertRecoveryJournalIdentityShape(transaction, state);
+  const identityDocument = transaction.nextIdentityBytes === undefined
+    ? null
+    : decodeStrictPublishedHostIdentity(transaction.nextIdentityBytes, `package recovery ${state}`);
   if (transaction.stagingIdentity !== null) {
     assertExactPackageIdentity(transaction.stagingIdentity, "package recovery staging identity", "directory");
     if (transaction.stagingFingerprint !== candidateFingerprint) {
@@ -1022,6 +1030,7 @@ async function assertAuthorizedRecoverablePackageState(transaction, {
     identityBytes: identity.bytes,
     identityFingerprint: identity.fingerprint,
     identity: identity.identity,
+    identityDocument,
   };
 }
 
@@ -1119,9 +1128,74 @@ function assertPublishedIdentitySnapshot(transaction, snapshot, label) {
   assertExactPackageIdentity(transaction.identityPublishedIdentity, `${label} ownership identity`, "file");
   if (snapshot.bytes === null || Buffer.compare(snapshot.bytes, transaction.nextIdentityBytes) !== 0 ||
       snapshot.fingerprint !== transaction.nextIdentityFingerprint ||
-      !samePackageIdentity(snapshot.identity, transaction.identityPublishedIdentity)) {
+      !sameRecoveryPublishedIdentity(snapshot.identity, transaction.identityPublishedIdentity)) {
     throw new Error(`${label} bytes, digest, or metadata do not match the package transaction`);
   }
+}
+
+function decodeStrictPublishedHostIdentity(bytes, label) {
+  let value;
+  try {
+    value = JSON.parse(Buffer.from(bytes).toString("utf8"));
+  } catch (error) {
+    throw new Error(`${label} published host identity is malformed JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  assertExactObjectKeys(value, [
+    "binaryDevice", "binaryInode", "binarySha256", "binarySize", "bundleIdentifier", "bundlePath",
+    "bundleRealPath", "cdHash", "configuration", "designatedRequirement", "executablePath", "version",
+  ], `${label} published host identity`);
+  const configurationKeys = [
+    "captureHelperPath", "endpointPolicy", "endpointWorkingDirectory", "identityPath", "listen", "nodePath",
+    "recordingEndpointName", "rendererOrigin", "repositoryRoot", "runtimeCliPath", "runtimeRoot",
+    "transcriptionEndpointName", "transcriptionSocket", "transcriptionStaging",
+  ];
+  if (!value.configuration || typeof value.configuration !== "object" || Array.isArray(value.configuration)) {
+    throw new Error(`${label} published host identity configuration is not one object`);
+  }
+  const actualConfigurationKeys = Object.keys(value.configuration).sort();
+  const allowedConfigurationKeys = new Set(configurationKeys);
+  const requiredConfigurationKeys = [
+    "identityPath", "listen", "nodePath", "rendererOrigin", "repositoryRoot", "runtimeCliPath", "runtimeRoot",
+    "transcriptionSocket", "transcriptionStaging",
+  ];
+  if (actualConfigurationKeys.some((key) => !allowedConfigurationKeys.has(key)) ||
+      requiredConfigurationKeys.some((key) => !Object.prototype.hasOwnProperty.call(value.configuration, key))) {
+    throw new Error(`${label} published host identity configuration contains unexpected or missing keys`);
+  }
+  if (value.version !== 1 || value.bundleIdentifier !== "com.meetless.app" ||
+      !isNonEmptyString(value.bundlePath) || !isNonEmptyString(value.bundleRealPath) ||
+      !isNonEmptyString(value.executablePath) || !isNonEmptyString(value.designatedRequirement) ||
+      typeof value.cdHash !== "string" || !/^[a-f0-9]{40}$/u.test(value.cdHash) ||
+      typeof value.binarySha256 !== "string" || !/^[a-f0-9]{64}$/u.test(value.binarySha256) ||
+      !isNonNegativeSafeInteger(value.binaryDevice) || !isNonNegativeSafeInteger(value.binaryInode) ||
+      !Number.isSafeInteger(value.binarySize) || value.binarySize <= 0 ||
+      requiredConfigurationKeys.some((key) => !isNonEmptyString(value.configuration[key])) ||
+      !/^https?:\/\//u.test(value.configuration.rendererOrigin)) {
+    throw new Error(`${label} published host identity contains an invalid strict value`);
+  }
+  for (const key of configurationKeys.filter((key) => !requiredConfigurationKeys.includes(key))) {
+    if (Object.prototype.hasOwnProperty.call(value.configuration, key) && !isNonEmptyString(value.configuration[key])) {
+      throw new Error(`${label} published host identity configuration contains an invalid ${key}`);
+    }
+  }
+  return value;
+}
+
+function assertExactObjectKeys(value, expectedKeys, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} is not one object`);
+  const actualKeys = Object.keys(value).sort();
+  const sortedExpected = [...expectedKeys].sort();
+  if (actualKeys.length !== sortedExpected.length || actualKeys.some((key, index) => key !== sortedExpected[index])) {
+    throw new Error(`${label} contains unexpected or missing keys`);
+  }
+}
+
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isNonNegativeSafeInteger(value) {
+  return Number.isSafeInteger(value) && value >= 0;
 }
 
 function assertTemporaryIdentityDestination(transaction, snapshot, label) {
@@ -1316,6 +1390,10 @@ function packageIdentityOf(info) {
 
 function samePackageIdentity(actual, expected) {
   return Boolean(actual && expected) && ["type", "mode", "uid", "gid", "dev", "ino", "nlink", "size"].every((field) => actual[field] === expected[field]);
+}
+
+function sameRecoveryPublishedIdentity(actual, expected) {
+  return Boolean(actual && expected) && ["type", "mode", "uid", "gid", "dev", "nlink", "size"].every((field) => actual[field] === expected[field]);
 }
 
 function validateOptionalPackageIdentity(identity, label) {

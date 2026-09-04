@@ -494,6 +494,55 @@ private func testFoundationJSONIdentityGoldenVector() throws {
   )
 }
 
+private func testStrictMasGateHostHandoffDecoding() throws {
+  let root: [String: Any] = [
+    "type": "directory", "mode": 448, "uid": 501, "gid": 20,
+    "dev": 1, "ino": 2, "nlink": 2, "size": 0,
+  ]
+  let handoff: [String: Any] = [
+    "schema": "MAS_GATE_HOST_HANDOFF v1", "version": 1,
+    "ownerToken": "owner-token-abcdefghijklmnopqrstuvwxyz-0123456789", "runId": "run-1",
+    "state": "available", "phase": "ready", "canonicalRuntimeRoot": "/runtime",
+    "parentPath": "/parent", "activePath": "/active", "freshRootIdentity": root,
+    "identityRelativePath": "server-id", "identityPath": "/runtime/server-id",
+    "bundlePath": "/Applications/Meetless.app", "bundleRealPath": "/Applications/Meetless.app",
+    "executablePath": "/Applications/Meetless.app/Contents/MacOS/MeetlessHost",
+    "bundleIdentifier": "com.meetless.app", "designatedRequirement": "identifier com.meetless.app",
+    "cdHash": String(repeating: "a", count: 40), "binarySha256": String(repeating: "b", count: 64),
+    "binaryDevice": 1, "binaryInode": 3, "binarySize": 10,
+    "claimedByPid": NSNull(), "claimedAt": NSNull(),
+  ]
+  let insertionOrder = try JSONSerialization.data(withJSONObject: handoff)
+  let sorted = try JSONSerialization.data(withJSONObject: handoff, options: [.sortedKeys])
+  let insertionDecoded = try decodeStrictMasGateHostHandoff(insertionOrder)
+  let sortedDecoded = try decodeStrictMasGateHostHandoff(sorted)
+  check(insertionDecoded.runId == "run-1", "native handoff decoder accepts insertion-order JSON")
+  check(sortedDecoded.runId == "run-1", "native handoff decoder accepts sorted-key JSON")
+
+  var extra = handoff
+  extra["extra"] = true
+  expectThrow("native handoff decoder rejects an extra outer key") {
+    _ = try decodeStrictMasGateHostHandoff(JSONSerialization.data(withJSONObject: extra))
+  }
+  var missing = handoff
+  missing.removeValue(forKey: "binarySize")
+  expectThrow("native handoff decoder rejects a missing outer key") {
+    _ = try decodeStrictMasGateHostHandoff(JSONSerialization.data(withJSONObject: missing))
+  }
+  var wrongType = handoff
+  wrongType["binarySize"] = "10"
+  expectThrow("native handoff decoder rejects a wrong field type") {
+    _ = try decodeStrictMasGateHostHandoff(JSONSerialization.data(withJSONObject: wrongType))
+  }
+  var nestedExtra = root
+  nestedExtra["extra"] = 1
+  var invalidNested = handoff
+  invalidNested["freshRootIdentity"] = nestedExtra
+  expectThrow("native handoff decoder rejects an extra fresh-root identity key") {
+    _ = try decodeStrictMasGateHostHandoff(JSONSerialization.data(withJSONObject: invalidNested))
+  }
+}
+
 private func nativeProcessFixtureExecutable() throws -> String {
   try inspectMeetlessProcessIdentity(getpid()).configuredPath
 }
@@ -3217,6 +3266,10 @@ private struct TranscriptionCapabilityTests {
     do { try testFoundationJSONIdentityGoldenVector() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: Foundation JSON identity golden vector: \(error)\n".utf8))
+    }
+    do { try testStrictMasGateHostHandoffDecoding() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: strict MAS host handoff decoding: \(error)\n".utf8))
     }
     do { try testNativeProcessProtocolTransport() } catch {
       failures += 1

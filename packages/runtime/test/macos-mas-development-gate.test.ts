@@ -1,6 +1,6 @@
 import { execFile as execFileCallback, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, open, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -752,6 +752,7 @@ describe("MAS development gate coordinator", () => {
       runId: session.runId,
       artifactBinding,
       inspect: async () => ({
+        version: 1,
         bundleIdentifier: context.contract.bundleIdentifier,
         bundlePath: context.bundlePath,
         bundleRealPath: context.bundlePath,
@@ -760,11 +761,23 @@ describe("MAS development gate coordinator", () => {
         cdHash: "a".repeat(40),
         binarySha256: "b".repeat(64),
         binaryDevice: 1,
-        binaryInode: 2,
+        binaryInode: 3,
         binarySize: 10,
+        configuration: {
+          repositoryRoot: path.join(base, "repository"),
+          runtimeRoot: context.runtimeRoot,
+          listen: "127.0.0.1:16777",
+          rendererOrigin: "http://127.0.0.1:18082",
+          transcriptionSocket: path.join(context.runtimeRoot, "transcription.sock"),
+          transcriptionStaging: path.join(context.runtimeRoot, "transcription-staging"),
+          nodePath: path.join(base, "node"),
+          runtimeCliPath: path.join(base, "runtime.js"),
+          identityPath: context.identityPath,
+        },
       }),
     });
     const installed = {
+      version: 1,
       bundleIdentifier: context.contract.bundleIdentifier,
       bundlePath: context.bundlePath,
       bundleRealPath: context.bundlePath,
@@ -775,6 +788,17 @@ describe("MAS development gate coordinator", () => {
       binaryDevice: 1,
       binaryInode: 3,
       binarySize: 10,
+      configuration: {
+        repositoryRoot: path.join(base, "repository"),
+        runtimeRoot: context.runtimeRoot,
+        listen: "127.0.0.1:16777",
+        rendererOrigin: "http://127.0.0.1:18082",
+        transcriptionSocket: path.join(context.runtimeRoot, "transcription.sock"),
+        transcriptionStaging: path.join(context.runtimeRoot, "transcription-staging"),
+        nodePath: path.join(base, "node"),
+        runtimeCliPath: path.join(base, "runtime.js"),
+        identityPath: context.identityPath,
+      },
     };
     const available = createMasHostHandoff(context, session, installed);
     await writeFile(path.join(session.activePath, "host-handoff.json"), `${JSON.stringify(available)}\n`, { mode: 0o600 });
@@ -823,6 +847,14 @@ describe("MAS development gate coordinator", () => {
     expect(launchCalled).toBe(true);
     expect(result.status).toBe("launch-claimed");
     expect(result.handoff.state).toBe("claimed");
+    expect(result).not.toHaveProperty("readiness");
+
+    const originalIdentity = await lstat(context.identityPath);
+    const republishedIdentityPath = `${context.identityPath}.native-republication`;
+    await writeFile(republishedIdentityPath, await readFile(context.identityPath), { mode: 0o600 });
+    await rename(republishedIdentityPath, context.identityPath);
+    const republishedIdentity = await lstat(context.identityPath);
+    expect(republishedIdentity.ino).not.toBe(originalIdentity.ino);
 
     const restored = await restoreMasDevelopmentGate({
       context,
@@ -1187,18 +1219,54 @@ describe("MAS development gate coordinator", () => {
       binarySize: 10,
     };
     const handoff = createMasHostHandoff(context, session, installed);
-    expect(validateMasHostHandoff(handoff, { context, session })).toBe(handoff);
+    const packageProof = {
+      status: "committed",
+      ownerToken: session.ownerToken,
+      runId: session.runId,
+      target: context.bundlePath,
+      identityPath: context.identityPath,
+      candidateFingerprint: "c".repeat(64),
+      artifactBinding: { bundleFingerprint: "c".repeat(64) },
+      transaction: { state: "committed" },
+      publishedHostIdentity: { version: 1, ...installed },
+    };
+    expect(validateMasHostHandoff(handoff, { context, session, packageProof })).toBe(handoff);
+    const swiftSorted = Object.fromEntries(Object.entries({
+      ...handoff,
+      freshRootIdentity: Object.fromEntries(Object.entries(handoff.freshRootIdentity).reverse()),
+    }).reverse());
+    expect(validateMasHostHandoff(swiftSorted, { context, session, packageProof })).toBe(swiftSorted);
     for (const change of [
       { ownerToken: "other-owner" },
+      { runId: "other-run" },
       { canonicalRuntimeRoot: `${context.runtimeRoot}-other` },
+      { identityPath: `${context.identityPath}-other` },
       { bundlePath: `${context.bundlePath}-other` },
       { bundleIdentifier: "other.bundle" },
     ]) {
-      expect(() => validateMasHostHandoff({ ...handoff, ...change }, { context, session })).toThrow(/not bound/);
+      expect(() => validateMasHostHandoff({ ...handoff, ...change }, { context, session, packageProof })).toThrow(/not bound/);
     }
+    expect(() => validateMasHostHandoff({ ...handoff, extra: true }, { context, session, packageProof })).toThrow(/not bound/);
+    const { binarySize: _missing, ...missingKey } = handoff;
+    expect(() => validateMasHostHandoff(missingKey, { context, session, packageProof })).toThrow(/not bound/);
+    expect(() => validateMasHostHandoff({ ...handoff, binarySize: "10" }, { context, session, packageProof })).toThrow(/not bound/);
+    expect(() => validateMasHostHandoff({
+      ...handoff,
+      freshRootIdentity: { ...handoff.freshRootIdentity, extra: 1 },
+    }, { context, session, packageProof })).toThrow(/not bound/);
+    expect(() => validateMasHostHandoff(handoff, {
+      context,
+      session,
+      packageProof: { ...packageProof, candidateFingerprint: "d".repeat(64) },
+    })).toThrow(/not bound/);
+    expect(() => validateMasHostHandoff(handoff, {
+      context,
+      session,
+      packageProof: { ...packageProof, publishedHostIdentity: { ...packageProof.publishedHostIdentity, cdHash: "d".repeat(40) } },
+    })).toThrow(/not bound/);
     const replay = { ...handoff, state: "claimed", claimedByPid: 99, claimedAt: new Date().toISOString() };
-    expect(() => validateMasHostHandoff(replay, { context, session })).toThrow(/not bound/);
-    expect(validateMasHostHandoff(replay, { context, session, state: "claimed" })).toBe(replay);
+    expect(() => validateMasHostHandoff(replay, { context, session, packageProof })).toThrow(/not bound/);
+    expect(validateMasHostHandoff(replay, { context, session, state: "claimed", packageProof })).toBe(replay);
   });
 
   it("keeps restore ordering package-first and releases the reacquired lock last", async () => {

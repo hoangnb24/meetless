@@ -204,7 +204,7 @@ private struct HostIdentityDocument: Codable {
   let configuration: HostConfiguration
 }
 
-private struct MasGateRootIdentity: Codable {
+struct MasGateRootIdentity: Codable {
   let type: String
   let mode: Int64
   let uid: Int64
@@ -213,6 +213,38 @@ private struct MasGateRootIdentity: Codable {
   let ino: Int64
   let nlink: Int64
   let size: Int64
+
+  private enum CodingKeys: String, CodingKey {
+    case type, mode, uid, gid, dev, ino, nlink, size
+  }
+
+  init(type: String, mode: Int64, uid: Int64, gid: Int64, dev: Int64, ino: Int64, nlink: Int64, size: Int64) {
+    self.type = type
+    self.mode = mode
+    self.uid = uid
+    self.gid = gid
+    self.dev = dev
+    self.ino = ino
+    self.nlink = nlink
+    self.size = size
+  }
+
+  init(from decoder: Decoder) throws {
+    try assertExactMasGateKeys(
+      decoder,
+      expected: ["type", "mode", "uid", "gid", "dev", "ino", "nlink", "size"],
+      label: "MAS fresh-root identity"
+    )
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    type = try container.decode(String.self, forKey: .type)
+    mode = try container.decode(Int64.self, forKey: .mode)
+    uid = try container.decode(Int64.self, forKey: .uid)
+    gid = try container.decode(Int64.self, forKey: .gid)
+    dev = try container.decode(Int64.self, forKey: .dev)
+    ino = try container.decode(Int64.self, forKey: .ino)
+    nlink = try container.decode(Int64.self, forKey: .nlink)
+    size = try container.decode(Int64.self, forKey: .size)
+  }
 }
 
 private struct MasGateLockIdentity {
@@ -260,6 +292,18 @@ private func assertStrictMasGateKeys(_ decoder: Decoder, allowed: Set<String>, l
   if let unknown = container.allKeys.map(\.stringValue).first(where: { !allowed.contains($0) }) {
     throw DecodingError.dataCorrupted(
       .init(codingPath: decoder.codingPath, debugDescription: "\(label) contains unknown field \(unknown)")
+    )
+  }
+}
+
+private func assertExactMasGateKeys(_ decoder: Decoder, expected: Set<String>, label: String) throws {
+  let container = try decoder.container(keyedBy: StrictMasGateCodingKey.self)
+  let actual = Set(container.allKeys.map(\.stringValue))
+  guard actual == expected else {
+    let missing = expected.subtracting(actual).sorted().joined(separator: ",")
+    let extra = actual.subtracting(expected).sorted().joined(separator: ",")
+    throw DecodingError.dataCorrupted(
+      .init(codingPath: decoder.codingPath, debugDescription: "\(label) has non-exact keys; missing=[\(missing)] extra=[\(extra)]")
     )
   }
 }
@@ -372,7 +416,7 @@ private struct MasGateSessionIndexIntent: Decodable {
   }
 }
 
-private struct MasGateHostHandoff: Codable {
+struct MasGateHostHandoff: Codable {
   let schema: String
   let version: Int
   let ownerToken: String
@@ -397,6 +441,55 @@ private struct MasGateHostHandoff: Codable {
   let binarySize: Int64
   var claimedByPid: Int32?
   var claimedAt: String?
+
+  private enum CodingKeys: String, CodingKey {
+    case schema, version, ownerToken, runId, state, phase, canonicalRuntimeRoot, parentPath, activePath
+    case freshRootIdentity, identityRelativePath, identityPath, bundlePath, bundleRealPath, executablePath
+    case bundleIdentifier, designatedRequirement, cdHash, binarySha256, binaryDevice, binaryInode, binarySize
+    case claimedByPid, claimedAt
+  }
+
+  init(from decoder: Decoder) throws {
+    try assertExactMasGateKeys(
+      decoder,
+      expected: [
+        "schema", "version", "ownerToken", "runId", "state", "phase", "canonicalRuntimeRoot", "parentPath", "activePath",
+        "freshRootIdentity", "identityRelativePath", "identityPath", "bundlePath", "bundleRealPath", "executablePath",
+        "bundleIdentifier", "designatedRequirement", "cdHash", "binarySha256", "binaryDevice", "binaryInode", "binarySize",
+        "claimedByPid", "claimedAt",
+      ],
+      label: "MAS host handoff"
+    )
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    schema = try container.decode(String.self, forKey: .schema)
+    version = try container.decode(Int.self, forKey: .version)
+    ownerToken = try container.decode(String.self, forKey: .ownerToken)
+    runId = try container.decode(String.self, forKey: .runId)
+    state = try container.decode(String.self, forKey: .state)
+    phase = try container.decode(String.self, forKey: .phase)
+    canonicalRuntimeRoot = try container.decode(String.self, forKey: .canonicalRuntimeRoot)
+    parentPath = try container.decode(String.self, forKey: .parentPath)
+    activePath = try container.decode(String.self, forKey: .activePath)
+    freshRootIdentity = try container.decode(MasGateRootIdentity.self, forKey: .freshRootIdentity)
+    identityRelativePath = try container.decode(String.self, forKey: .identityRelativePath)
+    identityPath = try container.decode(String.self, forKey: .identityPath)
+    bundlePath = try container.decode(String.self, forKey: .bundlePath)
+    bundleRealPath = try container.decode(String.self, forKey: .bundleRealPath)
+    executablePath = try container.decode(String.self, forKey: .executablePath)
+    bundleIdentifier = try container.decode(String.self, forKey: .bundleIdentifier)
+    designatedRequirement = try container.decode(String.self, forKey: .designatedRequirement)
+    cdHash = try container.decode(String.self, forKey: .cdHash)
+    binarySha256 = try container.decode(String.self, forKey: .binarySha256)
+    binaryDevice = try container.decode(Int64.self, forKey: .binaryDevice)
+    binaryInode = try container.decode(Int64.self, forKey: .binaryInode)
+    binarySize = try container.decode(Int64.self, forKey: .binarySize)
+    claimedByPid = try container.decodeIfPresent(Int32.self, forKey: .claimedByPid)
+    claimedAt = try container.decodeIfPresent(String.self, forKey: .claimedAt)
+  }
+}
+
+func decodeStrictMasGateHostHandoff(_ data: Data) throws -> MasGateHostHandoff {
+  try JSONDecoder().decode(MasGateHostHandoff.self, from: data)
 }
 
 struct MeetlessExecutableIdentity {
@@ -1169,7 +1262,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     try assertSecureFile(journalPath, label: "MAS transaction journal")
     try assertSecureFile(handoffPath, label: "MAS host handoff")
     let journal = try JSONDecoder().decode(MasGateSessionJournal.self, from: readRequiredData(journalPath, label: "MAS transaction journal"))
-    let handoff = try JSONDecoder().decode(MasGateHostHandoff.self, from: readRequiredData(handoffPath, label: "MAS host handoff"))
+    let handoff = try decodeStrictMasGateHostHandoff(readRequiredData(handoffPath, label: "MAS host handoff"))
     guard journal.schema == meetlessMasGateTransactionSchema,
           journal.version == 2,
           journal.ownerToken.range(of: "^[A-Za-z0-9_-]{40,80}$", options: .regularExpression) != nil,

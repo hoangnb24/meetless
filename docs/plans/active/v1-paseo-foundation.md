@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v90`
+- `plan_revision`: `v91`
 - `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-15`
-- `state`: `ATTEMPT15_CONSUMED_RETAINED_TRANSACTION_CORRECTION_REQUIRED`
+- `state`: `ATTEMPT15_CONSUMED_RETAINED_TRANSACTION_CORRECTION_CANDIDATE_READY_FOR_LEAD_REVIEW`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: retained Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` from repository checkpoint `e6b2cbd3f9e1515732680024dd7f616d9f7b7a53`; installed bundle fingerprint `3ef85dc193f62199a25f7821b0dc7ffd813e7fc09696b3f305969fb9aa2c8a9e`, manifest SHA-256 `b5cd55f0a2c817bdee89f03b9c2497da2d9bcbac13fdd910ac9d96a21004c5c7`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: the owner authorized one Attempt 15 with the exact statement `Cho phép Attempt 15 chạy`. Bind it to one package command and, only after Lead accepts the artifact checkpoint, one coordinator install/launch/readiness/recovery sequence. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: the consumed Attempt 15 retained transaction requires repository correction and Lead acceptance before a separately authorized one-shot coordinator recovery.
-- `next_action`: establish and correct the handoff key-order comparison and authorized native identity-republication recovery contracts; keep the retained transaction untouched and all external gates closed.
+- `blocked_by`: the consumed Attempt 15 retained transaction requires Lead acceptance of the dev-only inode-contract correction before any separately authorized one-shot coordinator recovery.
+- `next_action`: Lead reviews the immutable correction candidate reported in the Attempt 15 peer disposition; keep the retained transaction untouched and all external gates closed.
 
 ## Ownership And Authority
 
@@ -2231,6 +2231,58 @@ atomic identity republication: exact identity bytes still matched SHA-256
 `9b05b0a14692eb76626b95686769af0701c4ee1078b42e143099f80f5b2789c8`,
 but the inode changed. These lifecycle contracts require repository correction
 and Lead acceptance. Attempt 15 is consumed; no recovery retry is authorized.
+
+### R5 MAS Attempt 15 dev-only handoff and identity-inode correction (2026-09-04; candidate ready)
+
+Owner authority is the exact response `Bỏ qua đi, chặt quá` after being told
+that the only mismatch was the identity-file inode while exact bytes/hash and
+all other secure metadata matched. Lead binds that decision only to this
+single-operator development gate: authorized native atomic republication may
+change the published identity file inode during recovery, but exact bytes,
+digest, decoded identity schema and values, path, uid/gid, mode, device, nlink,
+size, owner/run/target, artifact/candidate, recognized state, symlink-free
+ancestry, and collision/temporary absence remain fail-closed. Initial
+publication and launch proof remain inode-strict. There is no flag, fallback,
+adoption record, attestation protocol, journal rewrite, or production/publication
+authority.
+
+The correction starts at exact base
+`a8d003fa4f104ca875fc971988f59a1334378fd3`. Its immutable commit is the
+resulting seven-path candidate reported in `PEER_DISPOSITION v1`; the retained
+run `9e749d2e-873e-48cd-b521-18b2d112cb3a` and its package/runtime evidence were
+not inspected or changed. The implementation keeps the strict launch predicate,
+adds a recovery-only identity metadata comparison that excludes only inode,
+strictly decodes the complete published host identity, binds coordinator
+handoff values to the committed package/artifact proof, compares recursive JSON
+without key-order sensitivity, and requires exact outer and `freshRootIdentity`
+key sets in both Node and native Swift.
+
+Repository proof on the candidate covers Swift-sorted and insertion-order
+handoffs; missing, extra, and wrong-type outer/nested fields; wrong owner, run,
+root, path, bundle, artifact, and candidate; changed bytes/digest/value and all
+non-inode identity metadata; symlink ancestry, leaf symlink, temporary, staging,
+displaced, and same-content collisions; a real atomic same-content identity
+replacement with a changed inode; and state-aware coordinator restoration in
+package-first order. The coordinator result remains only `launch-claimed` and
+does not contain renderer readiness; renderer `18082` readiness remains a
+separate Definition of Done and its absence is not accepted as launch
+readiness.
+
+Personally observed validation: the two focused Vitest files passed 61 tests;
+`npm run build:native` passed both debug and release native suites after a
+direct `swift run -c release MeetlessHostTests` correctly failed for missing
+owner-command environment `MEETLESS_TEST_PACKAGE_NODE_SOURCE`; `npm run
+typecheck` passed; and `npm run validate:macos:app-store` passed. Final focused,
+syntax, diff, ancestry, changed-path, authority-digest, and clean tracked-tree
+results are recorded in the peer disposition.
+
+No optional repository hook or checked-in CI invocation owns this focused
+correction command. Branch-protection enforcement is external and unverified.
+No hook/CI/branch setting was changed. All real MAS state, `/Applications`,
+retained evidence, process, secret/cache/Trash, package/sign/install/launch/
+stop/restore/archive/retry, purchase/restore, RevenueCat/Convex, production,
+upload/submission/publication/App Review, external action, and push gates remain
+closed.
 
 ### Risks And Recovery
 

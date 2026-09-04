@@ -678,7 +678,7 @@ export async function launchMasDevelopmentGate({
     if (packageLaunchProof.status !== "committed") {
       throw coordinatorError("MAS launch requires the package transaction's committed-only authorization proof");
     }
-    const handoff = await readHostHandoff(status, context);
+    const handoff = await readHostHandoff(status, context, packageLaunchProof);
     const launch = dependencies.launch ?? (async () => {
       await execFileAsync("open", ["-g", "-a", context.bundlePath]);
     });
@@ -687,11 +687,12 @@ export async function launchMasDevelopmentGate({
     await launch({ context, status, handoff });
     const claimed = dependencies.waitForHandoff
       ? await dependencies.waitForHandoff({ context, status, handoff })
-      : await waitForMasHostHandoffClaim(context, status);
+      : await waitForMasHostHandoffClaim(context, status, packageLaunchProof);
     validateMasHostHandoff(claimed, {
       context,
       session: await readSessionJournal(path.join(status.activePath, "transaction.json")),
       state: "claimed",
+      packageProof: packageLaunchProof,
     });
     return { coordinator: MAS_GATE_COORDINATOR_SCHEMA, status: "launch-claimed", runId: status.runId, handoff: claimed };
   } catch (error) {
@@ -1485,16 +1486,17 @@ async function writeHostHandoff(context, session, installed) {
   await writeDurableJson(temporary, target, handoff);
 }
 
-async function readHostHandoff(status, context) {
+async function readHostHandoff(status, context, packageProof) {
   return readHostHandoffFile(
     status.activePath,
     status.journalPath,
     context,
     "available",
+    packageProof,
   );
 }
 
-async function readHostHandoffFile(activePath, journalPath, context, state) {
+async function readHostHandoffFile(activePath, journalPath, context, state, packageProof) {
   const target = path.join(activePath, MAS_GATE_HOST_HANDOFF_FILENAME);
   const info = await lstat(target).catch((error) => { throw coordinatorError(`MAS host handoff is unavailable: ${describe(error)}`, error); });
   if (info.isSymbolicLink() || !info.isFile() || info.uid !== currentUid() || info.nlink !== 1 || (info.mode & 0o7777) !== 0o600) {
@@ -1503,10 +1505,10 @@ async function readHostHandoffFile(activePath, journalPath, context, state) {
   let handoff;
   try { handoff = JSON.parse(await readFile(target, "utf8")); } catch (error) { throw coordinatorError("MAS host handoff is malformed", error); }
   const session = await readSessionJournal(journalPath);
-  return validateMasHostHandoff(handoff, { context, session, state });
+  return validateMasHostHandoff(handoff, { context, session, state, packageProof });
 }
 
-async function waitForMasHostHandoffClaim(context, status) {
+async function waitForMasHostHandoffClaim(context, status, packageProof) {
   const deadline = Date.now() + 5_000;
   let lastError;
   while (Date.now() < deadline) {
@@ -1516,6 +1518,7 @@ async function waitForMasHostHandoffClaim(context, status) {
         path.join(status.activePath, "transaction.json"),
         context,
         "claimed",
+        packageProof,
       );
     } catch (error) {
       lastError = error;
@@ -1528,20 +1531,39 @@ async function waitForMasHostHandoffClaim(context, status) {
   );
 }
 
-export function validateMasHostHandoff(handoff, { context, session, state = "available" } = {}) {
+export function validateMasHostHandoff(handoff, { context, session, state = "available", packageProof } = {}) {
   context = assertMasDevelopmentContext(context);
   assertHandoffSessionBinding(context, session);
   if (state !== "available" && state !== "claimed") throw coordinatorError("MAS host handoff state is unknown");
+  const expectedKeys = [
+    "activePath", "binaryDevice", "binaryInode", "binarySha256", "binarySize", "bundleIdentifier", "bundlePath",
+    "bundleRealPath", "canonicalRuntimeRoot", "cdHash", "claimedAt", "claimedByPid", "designatedRequirement",
+    "executablePath", "freshRootIdentity", "identityPath", "identityRelativePath", "ownerToken", "parentPath",
+    "phase", "runId", "schema", "state", "version",
+  ];
+  const expectedRootIdentityKeys = ["dev", "gid", "ino", "mode", "nlink", "size", "type", "uid"];
+  const packageIdentity = packageProof?.publishedHostIdentity;
   const expectedRelativeIdentity = context.identityRelativePath;
   const valid = handoff && typeof handoff === "object" && !Array.isArray(handoff) &&
+    hasExactKeys(handoff, expectedKeys) && hasExactKeys(handoff.freshRootIdentity, expectedRootIdentityKeys) &&
+    packageProof && packageProof.status === "committed" && packageProof.transaction?.state === "committed" &&
+    packageProof.ownerToken === session.ownerToken && packageProof.runId === session.runId &&
+    packageProof.target === context.bundlePath && packageProof.identityPath === context.identityPath &&
+    packageProof.candidateFingerprint === packageProof.artifactBinding?.bundleFingerprint &&
+    packageIdentity && typeof packageIdentity === "object" && !Array.isArray(packageIdentity) &&
     handoff.schema === MAS_GATE_HOST_HANDOFF_SCHEMA && handoff.version === 1 && handoff.state === state &&
     handoff.ownerToken === session.ownerToken && handoff.runId === session.runId && handoff.phase === "ready" &&
     handoff.canonicalRuntimeRoot === context.runtimeRoot && handoff.parentPath === context.parentPath &&
     handoff.activePath === context.activePath && handoff.activePath === session.activePath && handoff.freshRootIdentity &&
-    JSON.stringify(handoff.freshRootIdentity) === JSON.stringify(session.freshRootIdentity) &&
+    recursivelyEqual(handoff.freshRootIdentity, session.freshRootIdentity) &&
     handoff.identityRelativePath === expectedRelativeIdentity && handoff.identityPath === context.identityPath &&
     handoff.bundlePath === context.bundlePath && handoff.bundleRealPath === context.bundlePath &&
     handoff.executablePath === context.executablePath && handoff.bundleIdentifier === context.contract.bundleIdentifier &&
+    handoff.bundlePath === packageIdentity.bundlePath && handoff.bundleRealPath === packageIdentity.bundleRealPath &&
+    handoff.executablePath === packageIdentity.executablePath && handoff.bundleIdentifier === packageIdentity.bundleIdentifier &&
+    handoff.designatedRequirement === packageIdentity.designatedRequirement && handoff.cdHash === packageIdentity.cdHash &&
+    handoff.binarySha256 === packageIdentity.binarySha256 && handoff.binaryDevice === packageIdentity.binaryDevice &&
+    handoff.binaryInode === packageIdentity.binaryInode && handoff.binarySize === packageIdentity.binarySize &&
     typeof handoff.designatedRequirement === "string" && handoff.designatedRequirement.length > 0 &&
     typeof handoff.cdHash === "string" && /^[a-f0-9]{40}$/u.test(handoff.cdHash) &&
     typeof handoff.binarySha256 === "string" && /^[a-f0-9]{64}$/u.test(handoff.binarySha256) &&
@@ -1551,6 +1573,22 @@ export function validateMasHostHandoff(handoff, { context, session, state = "ava
       Number.isInteger(handoff.claimedByPid) && handoff.claimedByPid > 1 && typeof handoff.claimedAt === "string" && handoff.claimedAt.length > 0);
   if (!valid) throw coordinatorError("MAS host handoff is not bound to the active session, exact MAS root, and installed bundle");
   return handoff;
+}
+
+function hasExactKeys(value, expectedKeys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const actualKeys = Object.keys(value).sort();
+  const sortedExpected = [...expectedKeys].sort();
+  return actualKeys.length === sortedExpected.length && actualKeys.every((key, index) => key === sortedExpected[index]);
+}
+
+function recursivelyEqual(left, right) {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== "object" || typeof right !== "object" || Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left)) return left.length === right.length && left.every((value, index) => recursivelyEqual(value, right[index]));
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && recursivelyEqual(left[key], right[key]));
 }
 
 function assertHandoffSessionBinding(context, session) {
