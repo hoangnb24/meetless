@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v98`
+- `plan_revision`: `v99`
 - `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-16`
-- `state`: `ATTEMPT16_ONE_SHOT_AUTHORIZED_PHASE1_PACKAGE_CHECKPOINT`
+- `state`: `ATTEMPT16_CONSUMED_NO_PACKAGE_OPERATOR_PREFLIGHT_ERROR`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` is terminal `archived`; prior app and runtime are canonical, and accepted corrections `0d3445b84d91053a1d0911ceaf184f7c2eb9dc51` and `8e3401a20972849ba61a5c5401ddd88fcb8d17ca` remain repository truth.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 15 is consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: none for Attempt 16 Phase 1; Phase 2 depends on Lead acceptance of the new artifact checkpoint.
-- `next_action`: package exactly once into a fresh proof root and run complete artifact plus fixed-path preflight validation without install or launch.
+- `blocked_by`: any new package attempt requires fresh owner authorization; no repository correction is needed.
+- `next_action`: if the owner authorizes another attempt, use authoritative coordinator status for MAS session state and do not add a custom index-intent-absence predicate.
 
 ## Ownership And Authority
 
@@ -2419,6 +2419,22 @@ RevenueCat mutation/dashboard/cache-child inspection, Convex, production,
 recording/transcription/TCC/export, upload/submission/publication/App Review,
 push, or manual filesystem recovery. Attempt 14 and Attempt 15 terminal
 archives/fresh-retained evidence are not cleanup targets.
+
+Attempt 16 stopped in Phase 1 before creating a proof root or invoking the
+package command. Authoritative coordinator status returned terminal `archived`,
+but the operator added an invalid stronger preflight requiring the durable
+committed `.meetless-mas-gate-session.index-intent` record to be absent. The
+record is contract-owned terminal evidence: when the exact index equals its
+committed `after` value, status treats it as acknowledged and validates the
+complete archived transaction composition. It must be retained, not removed.
+
+No repository/runtime correction is required. Package count was `0`; app,
+runtime, terminal Attempt 14/15 archives, lock, repository, and protected files
+remained unchanged. Under the explicit one-attempt contract, the failed
+preflight consumed Attempt 16 even without package mutation. Any future attempt
+must use repository coordinator status as the sole MAS session-state preflight,
+while the complete artifact validator remains the separate package authority.
+No retry is authorized.
 
 ### Risks And Recovery
 
