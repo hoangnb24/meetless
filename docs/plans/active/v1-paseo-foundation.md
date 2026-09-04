@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v103`
-- `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-16`
-- `state`: `ATTEMPT16_PHASE2_ONLY_RETRY_AUTHORIZED`
+- `plan_revision`: `v104`
+- `current_frontier`: `R5-MAS-ATTEMPT16-READINESS-DIAGNOSIS`
+- `state`: `ATTEMPT16_TERMINAL_READINESS_FAILURE_RECOVERED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted Attempt 16 artifact from repository tip `e57ac527db6e2cb3cf0654c872ea7fcfed414e79`, bundle fingerprint `e7243483893d9939287ff66c482590375f271cb626c31dcb1fc7b950eb514f65`, manifest SHA-256 `e377fbeb004f845a44241f29b545bdadab87640b2aff4b2c376bcc189536cf0e`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: Attempt 15 is consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: none for the one owner-authorized Phase 2-only retry; any terminal failure remains no-retry.
-- `next_action`: run one bounded Phase 2-only coordinator install/launch/readiness/recovery sequence using the unchanged accepted artifact and loading only the required public SDK key from the owned mode-0600 environment file without disclosure; do not package again.
+- `pending_ruling`: Attempts 14, 15, and 16 are consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
+- `blocked_by`: any new package/install/launch attempt requires separate owner authorization after the retained Attempt 16 readiness failure is diagnosed.
+- `next_action`: inspect only retained Attempt 16 evidence and fresh-runtime logs to determine why the claimed host exited before H→D→S→W→P, daemon `16777`, recording readiness, and renderer `18082`; do not launch or mutate real state.
 
 ## Ownership And Authority
 
@@ -2498,6 +2498,24 @@ environment file for validation and child startup, without printing,
 persisting, or passing the raw value in command arguments. Package count must
 remain zero. Any terminal failure consumes this authorization and remains
 no-retry; all other external gates remain closed.
+
+The authorized Phase 2-only retry completed once for run
+`c1fc6225-bd5c-4d96-a9df-387eb7b97133`. Coordinator install and launch both
+exited `0`, and LaunchServices accepted handoff PID `99068` for the exact
+installed artifact. The host then exited before process-parent proof, the
+H→D→S→W→P chain, daemon `16777`, recording readiness, renderer `18082`, or HTTP
+readiness. The bounded readiness observation ended with no owned process,
+listener, socket, or runtime-root open handle.
+
+Exactly one coordinator restore then exited `0`. Package rollback preceded
+runtime restoration; the prior app returned with fingerprint
+`7039ded32b778fcda21fae6d961d80e72508630b2aaa0c8d2abedf08103e2a14` and
+CDHash `acfdb5223b4d492d86e13827babcea2c5df392dc`; the prior runtime returned
+with inode `43589382` and full-attestation digest
+`130c2d4de4cf4e6b9d63ce775860aa2bcd2f70012222c1d7d67d694af71dc6de`.
+The fresh runtime and terminal archive remain at exact run-derived retained
+paths. Repository-owned final status is terminal `archived` and live state is
+absent. Attempt 16 is consumed and recovered; no retry is authorized.
 
 ### Risks And Recovery
 
