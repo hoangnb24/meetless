@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v92`
+- `plan_revision`: `v93`
 - `current_frontier`: `R5-MAS-DEV-PACKAGE-SIGN-INSTALL-LAUNCH-ATTEMPT-15`
-- `state`: `ATTEMPT15_INODE_CONTRACT_LEAD_ACCEPTED_RECOVERY_AUTHORIZATION_REQUIRED`
+- `state`: `ATTEMPT15_ONE_SHOT_COORDINATOR_RECOVERY_AUTHORIZED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: retained Attempt 15 run `9e749d2e-873e-48cd-b521-18b2d112cb3a` from repository checkpoint `e6b2cbd3f9e1515732680024dd7f616d9f7b7a53`; installed bundle fingerprint `3ef85dc193f62199a25f7821b0dc7ffd813e7fc09696b3f305969fb9aa2c8a9e`, manifest SHA-256 `b5cd55f0a2c817bdee89f03b9c2497da2d9bcbac13fdd910ac9d96a21004c5c7`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 15 is consumed. The owner accepted the dev-only inode policy with `Bỏ qua đi, chặt quá`; correction `0d3445b84d91053a1d0911ceaf184f7c2eb9dc51` is Lead-accepted. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: a coordinator recovery of retained run `9e749d2e-873e-48cd-b521-18b2d112cb3a` requires fresh explicit one-shot owner authorization.
-- `next_action`: request authorization for exactly one coordinator recovery of the retained Attempt 15 transaction; no package/install/launch or other external gate is authorized.
+- `blocked_by`: none for the single authorized recovery invocation; any failure consumes the authorization and remains no-retry.
+- `next_action`: invoke exactly one coordinator recovery of retained run `9e749d2e-873e-48cd-b521-18b2d112cb3a`; no package/install/launch or other external gate is authorized.
 
 ## Ownership And Authority
 
@@ -2291,6 +2291,16 @@ FAST closeout returned `CLOSEOUT_PASS`: handoff equality is key-order-independen
 but schema-exact, launch/publication remain inode-strict, and recovery alone
 excludes only inode while preserving every other identity and lifecycle guard.
 This repository acceptance does not authorize recovery or any new attempt.
+
+The owner subsequently authorized exactly one invocation with the statement
+`Cho phép coordinator recovery Attempt 15 đúng một lần`. Lead binds this only
+to coordinator recovery of retained run
+`9e749d2e-873e-48cd-b521-18b2d112cb3a`, including internal stop/absence,
+package-first rollback, lease release/reacquisition, fresh-runtime retention,
+prior-runtime restoration, and archive/index publication. It does not authorize
+package, sign, install, launch, a new attempt, manual filesystem recovery, or
+any excluded gate. One invocation consumes the authorization regardless of
+outcome; failure remains no-retry.
 
 ### Risks And Recovery
 
