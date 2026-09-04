@@ -96,6 +96,32 @@ const execFileAsync = promisify(execFile);
 const modulePath = fileURLToPath(import.meta.url);
 const repositoryRoot = path.resolve(path.dirname(modulePath), "..");
 
+export const MAS_LSOF_MAX_BUFFER_BYTES = 256 * 1024;
+export const MAS_LSOF_PURPOSES = Object.freeze({
+  LISTENER: "listener",
+  OPEN_HANDLES: "open-handles",
+});
+
+const MAS_LSOF_ENV = Object.freeze({
+  PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+  LANG: "C",
+  LC_ALL: "C",
+});
+const MAS_LSOF_MAX_FIELD_BYTES = 16 * 1024;
+const MAS_LSOF_MAX_RECORDS = 4096;
+const MAS_LSOF_POLICIES = Object.freeze({
+  [MAS_LSOF_PURPOSES.LISTENER]: Object.freeze({
+    label: "exact listener",
+    allowedFields: ["p", "c", "f", "t"],
+    requiredFields: ["c", "t"],
+  }),
+  [MAS_LSOF_PURPOSES.OPEN_HANDLES]: Object.freeze({
+    label: "runtime-root open-handle",
+    allowedFields: ["p", "c", "f", "n"],
+    requiredFields: ["c", "n"],
+  }),
+});
+
 /**
  * Project the accepted MAS contract into the one runtime-root transaction
  * context. This function deliberately compares the MAS root with the direct
@@ -455,11 +481,15 @@ export async function inspectMasLiveState(context, dependencies = {}) {
   assertProcessRows(rows);
   const ownedProcesses = rows.filter((row) => processRowIsOwned(row, context));
   const listenerPorts = exactListenerPorts(context);
-  const listeners = await (dependencies.listeners ?? inspectListeners)(listenerPorts, context);
+  const listeners = dependencies.listeners
+    ? await dependencies.listeners(listenerPorts, context)
+    : await inspectListeners(listenerPorts, context, dependencies);
   const sockets = await (dependencies.sockets ?? inspectCanonicalSockets)(context);
   assertEvidenceList(listeners, "listener");
   assertEvidenceList(sockets, "socket");
-  const openHandles = await (dependencies.openHandles ?? inspectOpenHandles)(ownedProcesses.map((row) => row.pid), context);
+  const openHandles = dependencies.openHandles
+    ? await dependencies.openHandles(ownedProcesses.map((row) => row.pid), context)
+    : await inspectOpenHandles(ownedProcesses.map((row) => row.pid), context, dependencies);
   assertEvidenceList(openHandles, "open-handle");
   if (ownedProcesses.length > 0 || listeners.length > 0 || sockets.length > 0 || openHandles.length > 0) {
     return {
@@ -1616,6 +1646,7 @@ function candidateProcessNames(context) {
 async function inspectProcessExecutable(pid) {
   const result = spawnSync("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), "-d", "txt", "-Fn"], {
     encoding: "utf8",
+    maxBuffer: MAS_LSOF_MAX_BUFFER_BYTES,
     env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" },
   });
   if (result.error || result.status !== 0) {
@@ -1639,17 +1670,15 @@ function exactArguments(actual, expected) {
   return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 }
 
-async function inspectListeners(ports) {
+export async function inspectListeners(ports, _context, dependencies = {}) {
   const listeners = [];
   for (const port of ports) {
-    const result = spawnSync("/usr/sbin/lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fpct"], {
-      encoding: "utf8",
-      env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" },
-    });
-    if (result.error) throw result.error;
-    if (result.status === 1 && result.stdout.trim() === "" && result.stderr.trim() === "") continue;
-    if (result.status !== 0) throw new Error(`lsof listener inspection exited ${result.status}: ${result.stderr?.trim() ?? ""}`);
-    if (result.stdout.trim()) listeners.push({ port, output: result.stdout.trim() });
+    const result = await runMasLsof(
+      ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fpct"],
+      MAS_LSOF_PURPOSES.LISTENER,
+      dependencies,
+    );
+    if (result.status === "live") listeners.push({ port, records: result.records });
   }
   return listeners;
 }
@@ -1666,20 +1695,208 @@ async function inspectCanonicalSockets(context) {
   return sockets;
 }
 
-async function inspectOpenHandles(pids, context) {
+export async function inspectOpenHandles(pids, context, dependencies = {}) {
   const root = await lstat(context.runtimeRoot).catch((error) => {
     if (error?.code === "ENOENT") return null;
     throw error;
   });
   if (!root) return [];
-  const result = spawnSync("/usr/sbin/lsof", ["-nP", "+D", context.runtimeRoot, "-Fpcn"], {
-    encoding: "utf8",
-    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" },
-  });
-  if (result.error) throw result.error;
-  if (result.status === 1 && result.stdout.trim() === "" && result.stderr.trim() === "") return [];
-  if (result.status !== 0) throw new Error(`lsof runtime-root handle inspection exited ${result.status}: ${result.stderr?.trim() ?? ""}`);
-  return result.stdout.trim() ? [{ path: context.runtimeRoot, output: result.stdout.trim(), inspectedPids: pids }] : [];
+  if (root.isSymbolicLink() || !root.isDirectory()) {
+    throw coordinatorError("MAS runtime-root +D lsof inspection requires one non-symlink directory before invocation");
+  }
+  const result = await runMasLsof(
+    ["-nP", "+D", context.runtimeRoot, "-Fpcn"],
+    MAS_LSOF_PURPOSES.OPEN_HANDLES,
+    dependencies,
+  );
+  return result.status === "live"
+    ? [{ path: context.runtimeRoot, records: result.records, inspectedPids: pids }]
+    : [];
+}
+
+/**
+ * Apply the one strict spawnSync result policy shared by exact listener and
+ * runtime-root +D inspections. A status-1 no-match result is absence only
+ * when both present streams have exactly zero bytes; no trimming or semantic
+ * output normalization is allowed at this boundary.
+ */
+export function classifyMasLsofResult(result, purpose) {
+  const policy = MAS_LSOF_POLICIES[purpose];
+  if (!policy) throw coordinatorError("MAS lsof classifier received an unsupported fixed inspection purpose");
+
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    const stdout = projectMasLsofStream(readMasLsofProperty(result, "stdout"));
+    const stderr = projectMasLsofStream(readMasLsofProperty(result, "stderr"));
+    rejectMasLsofResult(result, purpose, `result is not one spawnSync result object; ${formatMasLsofDiagnostic(result, purpose, stdout, stderr)}`);
+  }
+  const error = readMasLsofProperty(result, "error");
+  const status = readMasLsofProperty(result, "status");
+  const signal = readMasLsofProperty(result, "signal");
+  const stdout = projectMasLsofStream(readMasLsofProperty(result, "stdout"));
+  const stderr = projectMasLsofStream(readMasLsofProperty(result, "stderr"));
+  const diagnostic = formatMasLsofDiagnostic(result, purpose, stdout, stderr);
+  if (!stdout.valid || !stderr.valid) {
+    rejectMasLsofResult(result, purpose, `stdout and stderr must be present strings or Buffers; ${diagnostic}`);
+  }
+  if (stdout.byteLength > MAS_LSOF_MAX_BUFFER_BYTES || stderr.byteLength > MAS_LSOF_MAX_BUFFER_BYTES) {
+    rejectMasLsofResult(result, purpose, `stream exceeds maxBuffer ${MAS_LSOF_MAX_BUFFER_BYTES} bytes; ${diagnostic}`);
+  }
+  if (error !== undefined) {
+    rejectMasLsofResult(result, purpose, `spawnSync returned an error; ${diagnostic}`);
+  }
+  if (signal !== null) {
+    rejectMasLsofResult(result, purpose, `spawnSync signal must be exactly null; ${diagnostic}`);
+  }
+  if (status === 1) {
+    if (stdout.byteLength === 0 && stderr.byteLength === 0) return { status: "absent", records: [] };
+    rejectMasLsofResult(result, purpose, `status 1 is not an exact empty no-match result; ${diagnostic}`);
+  }
+  if (status !== 0) {
+    rejectMasLsofResult(result, purpose, `status must be exactly 0 or the exact no-match status 1; ${diagnostic}`);
+  }
+  if (stderr.byteLength !== 0) {
+    rejectMasLsofResult(result, purpose, `status 0 carried diagnostic stderr; ${diagnostic}`);
+  }
+  if (stdout.byteLength === 0) {
+    rejectMasLsofResult(result, purpose, `status 0 carried no lsof records; ${diagnostic}`);
+  }
+
+  let records;
+  try {
+    records = parseMasLsofRecords(stdout.bytes, policy);
+  } catch (error) {
+    rejectMasLsofResult(result, purpose, `status 0 carried malformed lsof records (${error.message}); ${diagnostic}`);
+  }
+  return { status: "live", records };
+}
+
+async function runMasLsof(arguments_, purpose, dependencies = {}) {
+  const invoke = dependencies.invokeLsof ?? spawnSync;
+  if (typeof invoke !== "function") throw coordinatorError("MAS lsof invocation adapter must be one low-level function");
+  let result;
+  try {
+    result = await invoke("/usr/sbin/lsof", arguments_, {
+      encoding: "utf8",
+      maxBuffer: MAS_LSOF_MAX_BUFFER_BYTES,
+      env: MAS_LSOF_ENV,
+    });
+  } catch (error) {
+    result = { error, status: null, signal: null, stdout: undefined, stderr: undefined };
+  }
+  return classifyMasLsofResult(result, purpose);
+}
+
+function parseMasLsofRecords(bytes, policy) {
+  let output;
+  try {
+    output = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error("invalid UTF-8 output");
+  }
+  if (!output.endsWith("\n")) throw new Error("records are missing the final newline");
+  if (output.includes("\0")) throw new Error("records contain a NUL byte");
+
+  const records = [];
+  let current = null;
+  const finish = () => {
+    if (!current) return;
+    if (current.command === null) throw new Error("record is missing command field c");
+    for (const field of policy.requiredFields) {
+      if (field === "c" && current.command === null) throw new Error("record is missing command field c");
+      if (field === "n" && current.names.length === 0) throw new Error("record is missing name field n");
+      if (field === "t" && current.types.length === 0) throw new Error("record is missing type field t");
+    }
+    if (records.length >= MAS_LSOF_MAX_RECORDS) throw new Error("record count exceeds the bounded limit");
+    const record = { pid: current.pid, command: current.command };
+    if (current.files.length > 0) record.fileDescriptors = current.files;
+    if (current.names.length > 0) record.paths = current.names;
+    if (current.types.length > 0) record.types = current.types;
+    records.push(record);
+    current = null;
+  };
+
+  for (const line of output.slice(0, -1).split("\n")) {
+    if (line.length < 2) throw new Error("record field is empty");
+    const code = line[0];
+    const value = line.slice(1);
+    if (!policy.allowedFields.includes(code)) throw new Error("record contains an unexpected field");
+    if (Buffer.byteLength(value, "utf8") > MAS_LSOF_MAX_FIELD_BYTES) throw new Error("record field exceeds the bounded limit");
+    if (code === "p") {
+      finish();
+      if (!/^[1-9]\d*$/u.test(value)) throw new Error("process field p is not a positive decimal PID");
+      const pid = Number(value);
+      if (!Number.isSafeInteger(pid)) throw new Error("process field p exceeds the safe PID range");
+      current = { pid, command: null, files: [], names: [], types: [] };
+      continue;
+    }
+    if (!current) throw new Error("record field appeared before process field p");
+    if (!/\S/u.test(value)) throw new Error("record field value is empty or whitespace");
+    if (code === "c") {
+      if (current.command !== null) throw new Error("record contains duplicate command field c");
+      current.command = value;
+    } else if (code === "f") {
+      current.files.push(value);
+    } else if (code === "n") {
+      current.names.push(value);
+    } else if (code === "t") {
+      current.types.push(value);
+    }
+  }
+  finish();
+  if (records.length === 0) throw new Error("no complete lsof records");
+  return records;
+}
+
+function rejectMasLsofResult(result, purpose, reason) {
+  throw coordinatorError(`MAS ${MAS_LSOF_POLICIES[purpose].label} lsof result rejected: ${reason}`);
+}
+
+function projectMasLsofStream(output) {
+  if (Buffer.isBuffer(output)) {
+    return { valid: true, state: "present", type: "buffer", byteLength: output.byteLength, bytes: output };
+  }
+  if (typeof output === "string") {
+    return { valid: true, state: "present", type: "string", byteLength: Buffer.byteLength(output, "utf8"), bytes: Buffer.from(output, "utf8") };
+  }
+  if (output === null) return { valid: false, state: "absent", type: "null", byteLength: 0, bytes: null };
+  if (output === undefined) return { valid: false, state: "absent", type: "undefined", byteLength: 0, bytes: null };
+  return { valid: false, state: "present", type: typeof output, byteLength: 0, bytes: null };
+}
+
+function formatMasLsofDiagnostic(result, purpose, stdout, stderr) {
+  return [
+    `purpose=${purpose}`,
+    `error=${formatMasLsofError(readMasLsofProperty(result, "error"))}`,
+    `status=${formatMasLsofScalar(readMasLsofProperty(result, "status"))}`,
+    `signal=${formatMasLsofScalar(readMasLsofProperty(result, "signal"))}`,
+    `stdout={state=${stdout.state},type=${stdout.type},byteLength=${stdout.byteLength}}`,
+    `stderr={state=${stderr.state},type=${stderr.type},byteLength=${stderr.byteLength}}`,
+  ].join(" ");
+}
+
+function formatMasLsofError(error) {
+  if (error === undefined) return "<undefined>";
+  if (error === null) return "<null>";
+  if (typeof error !== "object" && typeof error !== "function") return `<${typeof error}>`;
+  return ["name", "code", "errno", "syscall"]
+    .map((field) => `${field}=${formatMasLsofScalar(readMasLsofProperty(error, field))}`)
+    .join(",");
+}
+
+function formatMasLsofScalar(value) {
+  if (value === undefined) return "<undefined>";
+  if (value === null) return "<null>";
+  if (typeof value === "string") {
+    const bounded = value.length > 96 ? `${value.slice(0, 93)}...` : value;
+    return JSON.stringify(bounded);
+  }
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return `<${typeof value}>`;
+}
+
+function readMasLsofProperty(value, property) {
+  if (value === null || value === undefined) return undefined;
+  try { return value[property]; } catch { return undefined; }
 }
 
 function exactListenerPorts(context) {

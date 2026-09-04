@@ -1,15 +1,20 @@
-import { execFile as execFileCallback } from "node:child_process";
+import { execFile as execFileCallback, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createMasHostHandoff,
+  classifyMasLsofResult,
+  inspectListeners,
   inspectMasLiveState,
+  inspectOpenHandles,
   installMasDevelopmentGate,
   launchMasDevelopmentGate,
+  MAS_LSOF_MAX_BUFFER_BYTES,
+  MAS_LSOF_PURPOSES,
   masDevelopmentRuntimeContext,
   masGateRuntimeOptions,
   masLiveAbsentObservation,
@@ -438,6 +443,163 @@ describe("MAS development gate coordinator", () => {
       processRows: async () => [host],
       openHandles: async () => [{ pid: host.pid, path: context.runtimeRoot }],
     })).resolves.toMatchObject({ status: "live", openHandles: [{ pid: host.pid, path: context.runtimeRoot }] });
+  });
+
+  it("accepts only exact empty lsof no-match results and parses bounded live records", () => {
+    const empty = (overrides: Record<string, unknown> = {}) => ({
+      error: undefined,
+      status: 1,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      ...overrides,
+    });
+    const validOpen = "p31\ncnode\nf3\nn/private/tmp/fixture/held-file\n";
+    const validListener = "p31\ncnode\nf3\ntIPv4\n";
+
+    expect(classifyMasLsofResult(empty(), MAS_LSOF_PURPOSES.OPEN_HANDLES)).toEqual({ status: "absent", records: [] });
+    expect(classifyMasLsofResult({ ...empty(), stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }, MAS_LSOF_PURPOSES.LISTENER)).toEqual({ status: "absent", records: [] });
+    expect(classifyMasLsofResult({ ...empty(), status: 0, stdout: validOpen, stderr: Buffer.alloc(0) }, MAS_LSOF_PURPOSES.OPEN_HANDLES)).toMatchObject({
+      status: "live",
+      records: [{ pid: 31, command: "node", fileDescriptors: ["3"], paths: ["/private/tmp/fixture/held-file"] }],
+    });
+    expect(classifyMasLsofResult({ ...empty(), status: 0, stdout: Buffer.from(validListener), stderr: "" }, MAS_LSOF_PURPOSES.LISTENER)).toMatchObject({
+      status: "live",
+      records: [{ pid: 31, command: "node", fileDescriptors: ["3"], types: ["IPv4"] }],
+    });
+
+    const rejected = [
+      ["status-1 whitespace stdout", empty({ stdout: " \t\n" })],
+      ["status-1 non-empty stderr", empty({ stderr: "diagnostic\n" })],
+      ["status-1 missing stdout", empty({ stdout: undefined })],
+      ["status-1 null stderr", empty({ stderr: null })],
+      ["status-1 non-string stream", empty({ stdout: 0 })],
+      ["status-1 signal", empty({ signal: "SIGTERM" })],
+      ["status-1 missing signal", empty({ signal: undefined })],
+      ["status-1 error", empty({ error: Object.assign(new Error("secret lsof error"), { code: "EACCES" }) })],
+      ["null result", null],
+      ["undefined result", undefined],
+      ["null status", empty({ status: null })],
+      ["undefined status", empty({ status: undefined })],
+      ["negative status", empty({ status: -1 })],
+      ["status greater than one", empty({ status: 2 })],
+      ["string status", empty({ status: "1" })],
+      ["status-0 empty", empty({ status: 0 })],
+      ["status-0 whitespace", empty({ status: 0, stdout: " \n" })],
+      ["status-0 missing stderr", empty({ status: 0, stderr: undefined })],
+      ["status-0 null stdout", empty({ status: 0, stdout: null })],
+      ["status-0 diagnostic stderr", empty({ status: 0, stdout: validOpen, stderr: "warning\n" })],
+      ["status-0 missing final newline", empty({ status: 0, stdout: validOpen.slice(0, -1) })],
+      ["status-0 unknown field", empty({ status: 0, stdout: "p31\ncnode\nxunexpected\n" })],
+      ["status-0 missing required field", empty({ status: 0, stdout: "p31\ncnode\n" })],
+      ["status-0 invalid UTF-8", empty({ status: 0, stdout: Buffer.from([0xff]), stderr: Buffer.alloc(0) })],
+      ["status-0 maxBuffer overflow", empty({ status: 0, stdout: Buffer.alloc(MAS_LSOF_MAX_BUFFER_BYTES + 1, 0x78) })],
+      ["spawnSync maxBuffer error", { error: Object.assign(new Error("secret maxBuffer output"), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }), status: null, signal: null, stdout: undefined, stderr: undefined }],
+    ] as const;
+
+    for (const [_label, result] of rejected) {
+      expect(() => classifyMasLsofResult(result, MAS_LSOF_PURPOSES.OPEN_HANDLES)).toThrow(/MAS runtime-root open-handle lsof result rejected/);
+    }
+
+    const diagnosticResult = empty({
+      status: 2,
+      stdout: `stream-secret-sentinel-${"s".repeat(1024 * 1024)}`,
+      stderr: `stream-secret-sentinel-${"e".repeat(1024 * 1024)}`,
+      error: Object.assign(new Error("error-message-secret"), { code: "EACCES", syscall: "spawn lsof" }),
+    });
+    let diagnostic: Error | undefined;
+    try {
+      classifyMasLsofResult(diagnosticResult, MAS_LSOF_PURPOSES.OPEN_HANDLES);
+    } catch (error) {
+      diagnostic = error as Error;
+    }
+    expect(diagnostic).toBeDefined();
+    expect(diagnostic!.message).not.toContain("stream-secret-sentinel");
+    expect(diagnostic!.message).not.toContain("error-message-secret");
+    expect(diagnostic!.message).toContain('purpose=open-handles');
+    expect(diagnostic!.message).toContain('error=name="Error",code="EACCES"');
+    expect(diagnostic!.message).toMatch(/stdout=\{state=present,type=string,byteLength=\d+\}/u);
+    expect(diagnostic!.message).toMatch(/stderr=\{state=present,type=string,byteLength=\d+\}/u);
+    expect(diagnostic!.message.length).toBeLessThan(2_048);
+  });
+
+  it("uses bounded low-level lsof adapters and rejects +D root type drift before invocation", async () => {
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-lsof-adapter-test-")));
+    roots.push(base);
+    const context = masDevelopmentRuntimeContext({ userHome: base });
+    await mkdir(context.runtimeRoot, { recursive: true, mode: 0o700 });
+    const calls: Array<{ command: string; arguments_: string[]; options: Record<string, unknown> }> = [];
+    const empty = { error: undefined, status: 1, signal: null, stdout: "", stderr: "" };
+    const invokeLsof = (command: string, arguments_: string[], options: Record<string, unknown>) => {
+      calls.push({ command, arguments_, options });
+      return empty;
+    };
+
+    await expect(inspectListeners([16777], context, { invokeLsof })).resolves.toEqual([]);
+    await expect(inspectOpenHandles([], context, { invokeLsof })).resolves.toEqual([]);
+    await expect(inspectMasLiveState(context, {
+      processRows: async () => [],
+      sockets: async () => [],
+      invokeLsof,
+    })).resolves.toMatchObject({ status: "absent" });
+    expect(calls[0]).toMatchObject({
+      command: "/usr/sbin/lsof",
+      arguments_: ["-nP", "-iTCP:16777", "-sTCP:LISTEN", "-Fpct"],
+    });
+    expect(calls[0].options).toMatchObject({ encoding: "utf8", maxBuffer: MAS_LSOF_MAX_BUFFER_BYTES });
+    expect(Number.isFinite(calls[0].options.maxBuffer)).toBe(true);
+    const openCall = calls.find((call) => call.arguments_.includes("+D"));
+    expect(openCall).toMatchObject({
+      command: "/usr/sbin/lsof",
+      arguments_: ["-nP", "+D", context.runtimeRoot, "-Fpcn"],
+    });
+
+    const guardedCalls = calls.length;
+    await rm(context.runtimeRoot, { recursive: true, force: true });
+    await symlink(base, context.runtimeRoot);
+    await expect(inspectOpenHandles([], context, { invokeLsof })).rejects.toThrow(/non-symlink directory before invocation/);
+    expect(calls).toHaveLength(guardedCalls);
+
+    await rm(context.runtimeRoot, { recursive: true, force: true });
+    await writeFile(context.runtimeRoot, "not a directory\n");
+    await expect(inspectOpenHandles([], context, { invokeLsof })).rejects.toThrow(/non-symlink directory before invocation/);
+    expect(calls).toHaveLength(guardedCalls);
+  });
+
+  it("proves exact /usr/sbin/lsof fixture no-match and held-file semantics", async () => {
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-lsof-fixture-test-")));
+    roots.push(base);
+    const context = masDevelopmentRuntimeContext({ userHome: base });
+    await mkdir(context.runtimeRoot, { recursive: true, mode: 0o700 });
+    await expect(inspectListeners([1], context)).resolves.toEqual([]);
+    await expect(inspectOpenHandles([], context)).resolves.toEqual([]);
+
+    const missingPath = path.join(context.runtimeRoot, "missing-path");
+    const missing = spawnSync("/usr/sbin/lsof", ["-nP", "+D", missingPath, "-Fpcn"], {
+      encoding: "utf8",
+      maxBuffer: MAS_LSOF_MAX_BUFFER_BYTES,
+      env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" },
+    });
+    expect(missing.status).toBe(1);
+    expect(Buffer.byteLength(String(missing.stderr), "utf8")).toBeGreaterThan(0);
+    expect(() => classifyMasLsofResult(missing, MAS_LSOF_PURPOSES.OPEN_HANDLES)).toThrow(/status 1 is not an exact empty no-match result/);
+
+    const heldPath = path.join(context.runtimeRoot, "held-file");
+    await writeFile(heldPath, "held\n");
+    const held = await open(heldPath, "r");
+    try {
+      const heldResult = spawnSync("/usr/sbin/lsof", ["-nP", "+D", context.runtimeRoot, "-Fpcn"], {
+        encoding: "utf8",
+        maxBuffer: MAS_LSOF_MAX_BUFFER_BYTES,
+        env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" },
+      });
+      expect(heldResult.status).toBe(1);
+      expect(Buffer.byteLength(String(heldResult.stdout), "utf8")).toBeGreaterThan(0);
+      await expect(inspectOpenHandles([], context)).rejects.toThrow(/status 1 is not an exact empty no-match result/);
+      expect(() => classifyMasLsofResult(heldResult, MAS_LSOF_PURPOSES.OPEN_HANDLES)).toThrow(/status 1 is not an exact empty no-match result/);
+    } finally {
+      await held.close();
+    }
   });
 
   it("uses one stable kernel lock and rejects contention until the holder releases", async () => {

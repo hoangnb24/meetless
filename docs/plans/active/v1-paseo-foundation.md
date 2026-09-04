@@ -2,17 +2,17 @@
 
 ## Current State
 
-- `plan_revision`: `v78`
-- `current_frontier`: `R5-MAS-ATTEMPT14-PACKAGE-PROOF-AUTHORITY-RECOVERY-STATES`
-- `state`: `ATTEMPT_14_PACKAGE_PROOF_AUTHORITY_RECOVERY_STATES_PENDING`
+- `plan_revision`: `v79`
+- `current_frontier`: `R5-MAS-ATTEMPT14-LSOF-NOMATCH-CORRECTION`
+- `state`: `ATTEMPT_14_LSOF_NOMATCH_CORRECTION_PENDING`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: repository-only package-proof authority/recovery-state convergence, an immutable child of exact correction base `24a9d88b76643a77eafb21bafdd835aa87d24886` and original family base `470d109c81c14c144f352cd2b522dc6a1cf57142`; the immutable child is recorded in `PEER_DISPOSITION v1`. The accepted Applications-parent/runtime-owner candidate `b3d96b4c1618423a16f18fe271bc9e565974800c` remains an implementation ancestor.
+- `candidate`: repository-only strict MAS lsof no-match correction, an immutable child of exact base `c27bd86ffb27f888da25cd02c6ec4e0f6fffeda3`; the immutable child is recorded in `PEER_DISPOSITION v1`. The accepted Applications-parent/runtime-owner candidate `b3d96b4c1618423a16f18fe271bc9e565974800c` remains an implementation ancestor.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempt 13 is consumed by the pre-install package-parent failure recorded below. The one-time initial fixed-index authorization — `Cho phép tạo chỉ mục lần đầu cho Attempt 13.` — is spent; no package/sign/install/restore/launch retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: Lead review and acceptance of the repository-only package-proof authority/recovery-state convergence before any external Attempt 14 Phase 1 or Phase 2 action.
-- `next_action`: inspect the immutable convergence child from exact base `24a9d88b76643a77eafb21bafdd835aa87d24886`; keep package/sign/install/launch/stop/restore/archive and all external gates closed.
+- `blocked_by`: Lead review and acceptance of the repository-only strict lsof no-match correction before any external Attempt 14 Phase 1 or Phase 2 action.
+- `next_action`: inspect the immutable strict-lsof child from exact base `c27bd86ffb27f888da25cd02c6ec4e0f6fffeda3`; keep package/sign/install/launch/stop/restore/archive and all external gates closed.
 
 ## Ownership And Authority
 
@@ -1935,7 +1935,7 @@ only repository fixtures were used.
 Local proof and enforcement levels are recorded in the peer handoff. No hook,
 CI, or branch-protection result is claimed by this repository-only correction.
 
-### R5 MAS Attempt 14 package-proof authority and recovery-state convergence (2026-09-04; current frontier)
+### R5 MAS Attempt 14 package-proof authority and recovery-state convergence (2026-09-04; superseded first correction)
 
 `CONVERGENCE_RECONCILIATION v1 — ATTEMPT14 PACKAGE-PROOF AUTHORITY AND
 RECOVERY STATES` is the sole-writer repository child of correction base
@@ -1983,6 +1983,50 @@ retained Attempt 14 run ID
 
 Local proof and enforcement levels are recorded in the peer handoff. No hook,
 CI, or branch-protection result is claimed by this repository-only convergence.
+
+### R5 MAS Attempt 14 strict lsof no-match correction (2026-09-04; current frontier)
+
+`FRONTIER_BRIEF v1 — SERIAL ATTEMPT14 STRICT LSOF NO-MATCH CORRECTION` starts
+from exact base `c27bd86ffb27f888da25cd02c6ec4e0f6fffeda3`, in the original
+family rooted at `470d109c81c14c144f352cd2b522dc6a1cf57142`. The accepted
+findings are `ATT14-LSOF-SEMANTICS-001`, `ATT14-LSOF-ADAPTER-002`, and
+`ATT14-LSOF-PROOF-003`; the package/runtime-transaction, native, package-proof,
+LaunchServices, and external-state boundaries remain closed. Authority digest
+remains
+`ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
+
+The correction owns one shared classifier/parser for the exact listener and
+runtime-root `+D` lsof invocations. Absence is accepted only for an exact
+status-1 result with `error === undefined`, `signal === null`, and present
+empty-string or zero-byte Buffer stdout/stderr. Whitespace, diagnostics,
+missing or malformed streams, errors, signals, non-1 statuses, and status-0
+empty/malformed/diagnostic-bearing output fail closed. Bounded status-0
+`-Fpcn`/`-Fpct` records become live evidence without returning raw output.
+Every spawn uses the fixed `/usr/sbin/lsof` path and a finite `maxBuffer`;
+`+D` rejects a symlink or non-directory runtime root before invocation. Missing
+runtime roots remain pre-package absence so the existing fresh-root transaction
+topology is unchanged, while an actual missing-path lsof diagnostic is not
+treated as absence.
+
+The low-level `invokeLsof` fixture adapter returns raw process results only;
+the package/coordinator policy remains inside the shared classifier. Existing
+stop/absence and package-first recovery ordering are unchanged, as is the
+runtime transaction's independent identity-absence guard. The changed paths
+are exactly this coordinator module, its focused test, and this plan.
+
+Required local proof includes the disposable exact `/usr/sbin/lsof -nP +D`
+empty-directory, held-file, and missing-path cases; the complete injected
+status/stream/signal/error/record/maxBuffer matrix; exact listener/+D adapter
+arguments and finite buffer checks; all focused MAS transaction/coordinator/
+package regressions; typecheck, MAS baseline, syntax, and diff checks. The
+retained Attempt 14 run ID
+`2b2905cf-7acd-493f-9aa7-5a6401c1e2e4` is read-only and remains untouched.
+No package/sign/install/launch/stop/restore/archive/retry/push or real MAS
+path inspection is authorized by this correction.
+
+Local, hook, CI, and branch-protection enforcement levels are recorded in the
+peer handoff; no hook, CI, or branch result is claimed unless directly
+observed.
 
 ### Risks And Recovery
 
