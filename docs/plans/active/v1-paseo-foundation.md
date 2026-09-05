@@ -2,7 +2,7 @@
 
 ## Current State
 
-- `plan_revision`: `v127`
+- `plan_revision`: `v128`
 - `current_frontier`: `R5-MAS-ATTEMPT19-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
 - `state`: `ATTEMPT19_READINESS_FAILED_RECOVERED_CHILD_IDENTITY_MISMATCH`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
@@ -16,6 +16,18 @@
 - `next_action`: review the local parent pin candidate, then assess the separately queued launch-failure enum work; no external retry admitted.
 
 ### A19 argv-drift ruling and fork correction boundary
+
+Launch diagnostic candidate323e466ddfb563ce07c05c14e30e3bef58c0623a remains
+pending acceptance. Lead inspected the three-file delta and independently ran
+the full coordinator file:22 passed/2 failed. Both failures stop in artifact
+manifest candidate-snapshot validation before the intended SDK/license or
+composition seam. Do not call that complete composed proof or infer a launch
+regression from it. Route one bounded evidence correction to the same writer:
+establish the stale/missing fixture binding and use the repository's existing
+fixture preparation, or correct test-owned fixture input; never weaken the
+production validator, skip the tests, or regenerate a real MAS package.
+Require the whole coordinator file plus transaction regressions to pass and
+record any required generated-input setup precisely. No wider review loop.
 
 Lead accepts local pin integration fe704a4d38b5f16e7e81280548c0574bdaaaf131
 over51951c040471b75131cf30313107dca68530b653. Cumulative11-path manifest,
