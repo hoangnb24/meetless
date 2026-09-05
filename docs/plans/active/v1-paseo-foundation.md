@@ -2,18 +2,45 @@
 
 ## Current State
 
-- `plan_revision`: `v109`
+- `plan_revision`: `v110`
 - `current_frontier`: `R5-MAS-ATTEMPT17-NATIVE-REGISTRATION-PRUNE-REASON`
-- `state`: `ATTEMPT17_RECOVERED_REGISTRATION_ABSENT_PRUNE_CAUSE_UNRESOLVED`
+- `state`: `NATIVE_REMOVAL_DIAGNOSTICS_AUTHORIZED_LEAD_OWNED_RUNTIME_FRONTIER`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted Attempt 17 artifact from source `4ec0865dd1b8626d75fc2648dfba8e055dde27f6`, bundle fingerprint `55f327720893d61be6a24a19c5d6704f9e237fecbf8eb539b21f159145fc06ca`, manifest SHA-256 `48f710433c26ab8456983d41e17f5d0dd7e9d24e808af7e2d2d9381f2eb29a5d`; package accepted, runtime readiness failed.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: Attempts 14–17 are consumed and recovered. No retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
+- `pending_ruling`: Attempts 14–17 are consumed and recovered. New bounded MAS proof runs are now Lead-routed under the owner's delegated base-runtime authority below, not retries charged to an old attempt. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
 - `blocked_by`: successful native status lacks the live supervisor's daemon registration, but native pruning/reset does not retain the predicate that removed it. Neither a functional correction nor user-test readiness is proven.
-- `next_action`: propose bounded native registration-removal diagnostics using existing native diagnostic categories where possible, with local proof before any separately authorized new attempt. Preserve readiness/topology/attestation; no speculative PID substitution, timeout increase, or registration bypass. Prepare observation before a future launch so the startup window is not missed.
+- `next_action`: implement bounded native registration-removal diagnostics with local production-path and retained-output proof, then Lead acceptance before routing the next one-shot MAS proof. Preserve readiness/topology/attestation; no speculative PID substitution, timeout increase, or registration bypass. Prepare observation before launch so the startup window is not missed.
+
+### Delegated base-runtime technical authority (2026-09-05)
+
+Owner instruction: `Đồng ý, từ giờ bạn take full control cho mình. Vì mình
+không có domain knowledge về chỗ này.` This accepts the proposed native
+diagnostic work and delegates technical choices toward a working MAS base
+runtime the owner can test. Lead explicitly communicated that this includes
+needed build–install–launch–recover proof rounds, one at a time, after local
+candidate acceptance, with complete recovery before continuing. It does not
+authorize relaxed validation, new product policy, billing/production/capture
+or publication gates, push, or manual cleanup of protected state/evidence.
+
+Lead owns reversible in-scope fixes, local proof, candidate acceptance and
+bounded existing coordinator operations without routine technical approval
+prompts. Every new external round gets an exact accepted source/artifact and a
+one-shot operator brief; no operator self-retries after failure. Stop and
+escalate new material risk/cost, ambiguous product choices, failed recovery or
+any expansion outside this base-runtime scope. Previously consumed attempts
+remain historical failures, not reusable authorizations.
+
+`FOUNDATION_CHECK v1`: independent Attempt 17 source/log analysis narrows the
+missing fact to native registration removal; existing predicates and contracts
+remain valid authority. Native diagnostic work must retain why a committed
+removal/reset occurred and prove that output reaches the retained startup
+evidence, not merely construct an unused error. No functional cause is assumed.
+One SERIAL writer owns native registration diagnostics and their direct tests;
+Lead acceptance is separate. No second writable frontier is ready.
 
 ### Attempt 17 result and Lead ruling (2026-09-05)
 
