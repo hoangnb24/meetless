@@ -2,7 +2,7 @@
 
 ## Current State
 
-- `plan_revision`: `v128`
+- `plan_revision`: `v129`
 - `current_frontier`: `R5-MAS-ATTEMPT19-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
 - `state`: `ATTEMPT19_READINESS_FAILED_RECOVERED_CHILD_IDENTITY_MISMATCH`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
@@ -99,14 +99,55 @@ Observed local proof:
   unchanged successful lock-release/claim path.
 - `node --check scripts/macos-mas-development-gate.mjs` and `npm run typecheck`
   passed. The transaction/coordinator source-guard file passed 112 tests.
-- The complete coordinator file ran 24 tests: 22 passed and 2 failed in
-  pre-existing artifact-validation fixtures because the retained release
-  manifest lacks the current candidate-snapshot binding; both fail before this
-  launch diagnostic seam and no source artifact was changed to bypass them.
+- The complete coordinator file initially ran 24 tests: 22 passed and 2 failed
+  because the retained release composition was from the pre-pin candidate and
+  its candidate-snapshot binding did not match the current pinned source. Both
+  stopped before this launch diagnostic seam; no source artifact was changed to
+  bypass them.
 - An isolated temporary `HOME` CLI capture produced exit `1`, empty stdout,
   and stderr JSON with `coordinator: "MAS_GATE_COORDINATOR v1"`,
   `status: "failed"`, diagnostic schema `MAS_GATE_LAUNCH_DIAGNOSTIC v1`, and
   category `lock-failed`; the temporary path was absent from the payload.
+
+### A19 composed fixture correction (2026-09-06)
+
+The correction starts from exact parent HEAD
+`8f2f0c10a59b55d316c772f7445e2101791d5670`. The retained ignored release
+composition was diagnosed, not dismissed: its candidate binding recorded
+digest `e5643b7686b750a5b51e16cb5e530bf17a2f0b8af3def092ed6bd7a192c46b49`,
+head `facc81070a65e19e020a1a3576e0625e429c4e83`, and Paseo
+`7618cda71e2836f9ba7e821286504841203cb745`. The current source snapshot
+observed after the fixture edit recorded command
+`node scripts/candidate-snapshot.mjs --mode=package-source`, mode
+`package-source`, the two accepted excluded paths, digest
+`10482f2cbc46357ea85460df1feed65c003d63eed8162bf1e43550c339bf1c0b`, head
+`8f2f0c10a59b55d316c772f7445e2101791d5670`, and Paseo
+`a2c8ff349ffdf6f500eb09270c7f44af4c018bfc`. The retained composition's
+`candidateSnapshot`, `packageInputs.sourceSnapshot`, and packaged inventory
+binding carried the old identity; the fixture also had no current composed
+snapshot supplied to the production validator. The current digest is recorded
+as a working-tree observation; the fixture derives it at test runtime rather
+than hard-coding a status-sensitive value.
+
+The test-owned fixture now derives the current snapshot through the repository
+snapshot implementation, preserves its exact command/mode/exclusion/digest/
+head/Paseo fields, and rebinds the in-memory direct composition, package-input
+digest, inventory snapshot/package-input binding, inventory entry bytes, and
+direct-composition artifact digest. The low-level adapters serve those
+self-consistent bytes while the unchanged production validators inspect the
+retained bundle entry set and all later SDK/license/signature/composition
+seams. No ignored release output was regenerated and no production predicate,
+launch path, or validator was changed.
+
+Correction proof from repository root: the full coordinator file passed 24/24;
+the MAS transaction/source-guard file passed 112/112; `npm run typecheck`
+passed. The earlier coordinator result was 22/24 with both failures stopping
+at the exact stale candidate binding; this correction reaches the intended
+wrong-key, license, symlink, load-path, composition, CLI, timeout, and
+unchanged success/release assertions. MAS package/sign/install/launch,
+recording, TCC, network, credentials, recovery, and external gates remain
+unrun. The frozen authority aggregate remains
+`ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
 
 Tests use isolated temporary fixtures only; no installed app, MAS package,
 signing, LaunchServices launch, capture, TCC, network, recovery, or external

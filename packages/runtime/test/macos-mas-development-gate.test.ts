@@ -58,6 +58,12 @@ import {
   packageTransactionPaths,
   replacePackageBundle,
 } from "../../../scripts/lib/macos-package-transaction.mjs";
+import { collectCandidateSnapshot } from "../../../scripts/candidate-snapshot.mjs";
+import {
+  digestJson,
+  snapshotBinding,
+} from "../../../scripts/lib/macos-package-inputs.mjs";
+import { digestManifest } from "../../../scripts/validate-macos-package.mjs";
 import {
   MACOS_APP_STORE_CHILD_ENTITLEMENTS,
   MACOS_APP_STORE_PARENT_ENTITLEMENTS,
@@ -110,8 +116,42 @@ async function seedMasSessionIndex(context: ReturnType<typeof masDevelopmentRunt
 
 async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: string; manifestPath: string }) {
   const proofRoot = path.dirname(path.dirname(path.dirname(manifestPath)));
-  const directCompositionBytes = await readFile(path.join(proofRoot, "release", "macos", "composition-manifest.json"));
-  const directComposition = JSON.parse(directCompositionBytes.toString("utf8"));
+  const retainedComposition = JSON.parse((await readFile(path.join(proofRoot, "release", "macos", "composition-manifest.json"))).toString("utf8"));
+  const collectedSnapshot = collectCandidateSnapshot("package-source");
+  const candidateSnapshot = {
+    command: snapshotBinding(collectedSnapshot).command,
+    ...collectedSnapshot,
+    paseoCommit: collectedSnapshot.dependencyArtifacts.paseo.expectedCommit,
+  };
+  const directComposition = structuredClone(retainedComposition);
+  directComposition.candidateSnapshot = candidateSnapshot;
+  directComposition.packageInputs = {
+    ...directComposition.packageInputs,
+    sourceSnapshot: snapshotBinding(candidateSnapshot),
+  };
+  directComposition.packageInputs.digest = digestJson({ ...directComposition.packageInputs, digest: undefined });
+
+  const inventoryPath = path.join(bundle, directComposition.licenseInventory.path);
+  const inventory = JSON.parse((await readFile(inventoryPath)).toString("utf8"));
+  inventory.artifact.candidateSnapshot = snapshotBinding(candidateSnapshot);
+  inventory.artifact.packageInputBinding = {
+    ...inventory.artifact.packageInputBinding,
+    digest: directComposition.packageInputs.digest,
+    sourceSnapshotDigest: candidateSnapshot.digest,
+  };
+  const inventoryBytes = Buffer.from(`${JSON.stringify(inventory)}\n`);
+  const inventorySha256 = createHash("sha256").update(inventoryBytes).digest("hex");
+  directComposition.licenseInventory = {
+    ...directComposition.licenseInventory,
+    sha256: inventorySha256,
+    packageInputDigest: directComposition.packageInputs.digest,
+  };
+  const inventoryEntry = directComposition.entries.find((entry: { path: string }) => entry.path === directComposition.licenseInventory.path);
+  if (!inventoryEntry) throw new Error("MAS fixture composition is missing its license inventory entry");
+  inventoryEntry.sha256 = inventorySha256;
+  inventoryEntry.size = inventoryBytes.byteLength;
+  directComposition.artifactDigest = digestManifest({ ...directComposition, artifactDigest: undefined });
+  const directCompositionBytes = Buffer.from(`${JSON.stringify(directComposition)}\n`);
   const entries = directComposition.entries;
   const inspectedEntries = await inspectPackageMachOEntries(bundle, entries, { ownerMode: true });
   const outerExecutablePath = path.join(bundle, "Contents", "MacOS", "MeetlessHost");
@@ -254,6 +294,7 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
     [path.join(bundle, "Contents", "Resources", "meetless", "installation-contract.json"), contract],
     [path.join(bundle, "Contents", "Resources", "meetless", "meetless-package.json"), marker],
     [path.join(bundle, "Contents", "Resources", "host-config.json"), hostConfiguration],
+    [inventoryPath, inventoryBytes],
     [profilePath, profileBytes],
     [path.join(bundle, "Contents", "Resources", "meetless", "runtime", "electron", "Electron.app", "Contents", "Info.plist"), electronInfo],
   ]);
