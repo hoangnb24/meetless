@@ -39,6 +39,50 @@ Node regression proof; reuse the same reviewer for FAST closeout of this
 finding and correction delta. External attempt remains held. This is native
 composition of the accepted terminal exception, not a new assurance policy.
 
+### R5 native parity correction evidence (2026-09-05)
+
+The correction started from exact HEAD `d97bc5e02490ab05e6bcd69d4a516417ecc5a17c`,
+whose only prior change after correction base
+`62f7505b290b63ae7170ddc8a3f96d7dd7efb98a` was the Lead's plan-only routing;
+that routing and its authority text remain preserved. The native correction
+keeps the shared `sameMasGateStableRootIdentity` comparator exact for active,
+ready, and host-handoff paths. Only `assertArchivedMasTransactionArtifact`
+uses the named terminal archived-retained-root comparator, which ignores the
+historical numeric `dev` while retaining every existing stable non-device
+comparison. The surrounding current-retained-root-to-current-parent device
+check, archive ownership/mode/path/symlink checks, exact journal paths and
+archived phase remain unchanged. Native records no retained content digest, so
+this correction makes no content-equivalence claim.
+
+The native test seam proves an archived retained root with a device-only
+difference is accepted, the shared active/ready/handoff comparator rejects the
+same device difference, and archived type, mode, owner, group, and inode
+differences remain rejected. `npm run build:native` from repository root
+passed the RevenueCat-linked host and MAS mutation builds, then both debug and
+release native test builds and executables. The mandated focused Node
+transaction/coordinator command passed 2 files and 133 tests from repository
+root without Node changes. A preliminary standalone debug executable run used
+`command -v node` instead of the build script's canonical `process.execPath`
+and failed only its existing package-builder path precondition; the required
+root build command supplied the canonical path and passed.
+
+Cumulative changed-path manifest from original base `f003c05` is now:
+
+- `scripts/lib/macos-mas-gate-session-transaction.mjs`
+- `packages/runtime/test/macos-mas-gate-session-transaction.test.ts`
+- `packages/runtime/test/macos-mas-development-gate.test.ts`
+- `native/macos-host/MeetlessHost.swift`
+- `native/macos-host/TranscriptionCapabilityTests.swift`
+- `docs/plans/active/v1-paseo-foundation.md`
+
+No protected state/build material was changed. No real archive, nested mounted
+device, live launch/recovery, package/install/sign operation, credential,
+network, or external gate was used. The frozen authority aggregate remains
+`ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`; the
+scoped plan-v118 owner decision and Lead v119 routing remain separately
+identified and are not represented as part of that frozen digest. This
+correction remains pending Lead acceptance and FAST closeout.
+
 After the explicit limited-assurance recommendation and confirmation question,
 the owner directed: "Ok thế bạn quyết đi, mình giao toàn quyền rồi mà. Xử lý
 cho xong để mình có thể test thử". Lead exercises that specific delegated

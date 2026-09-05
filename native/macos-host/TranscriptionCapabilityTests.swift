@@ -613,6 +613,52 @@ private func testStrictMasGateHostHandoffDecoding() throws {
   }
 }
 
+private func makeMasGateRootIdentity(
+  type: String = "directory",
+  mode: Int64 = 448,
+  uid: Int64 = 501,
+  gid: Int64 = 20,
+  dev: Int64 = 1,
+  ino: Int64 = 2,
+  nlink: Int64 = 2,
+  size: Int64 = 0
+) -> MasGateRootIdentity {
+  MasGateRootIdentity(type: type, mode: mode, uid: uid, gid: gid, dev: dev, ino: ino, nlink: nlink, size: size)
+}
+
+private func testMasGateArchivedRetainedRootDeviceAssurance() {
+  let recorded = makeMasGateRootIdentity()
+  let sameDevice = makeMasGateRootIdentity()
+  let differentDevice = makeMasGateRootIdentity(dev: 2)
+
+  check(
+    sameMasGateArchivedRetainedRootIdentity(recorded, sameDevice),
+    "archived retained-root comparison must accept the exact recorded root"
+  )
+  check(
+    sameMasGateArchivedRetainedRootIdentity(recorded, differentDevice),
+    "archived retained-root comparison must accept only a numeric device difference"
+  )
+  check(
+    !sameMasGateStableRootIdentity(recorded, differentDevice),
+    "active, ready, and handoff root comparison must retain exact device identity"
+  )
+
+  let nonDeviceDifferences: [(String, MasGateRootIdentity)] = [
+    ("type", makeMasGateRootIdentity(type: "regular-file")),
+    ("mode", makeMasGateRootIdentity(mode: 384)),
+    ("owner", makeMasGateRootIdentity(uid: 502)),
+    ("group", makeMasGateRootIdentity(gid: 21)),
+    ("inode", makeMasGateRootIdentity(ino: 3)),
+  ]
+  for (label, changed) in nonDeviceDifferences {
+    check(
+      !sameMasGateArchivedRetainedRootIdentity(recorded, changed),
+      "archived retained-root comparison must reject \(label) changes"
+    )
+  }
+}
+
 private func nativeProcessFixtureExecutable() throws -> String {
   try inspectMeetlessProcessIdentity(getpid()).configuredPath
 }
@@ -3837,6 +3883,7 @@ private struct TranscriptionCapabilityTests {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: strict MAS host handoff decoding: \(error)\n".utf8))
     }
+    testMasGateArchivedRetainedRootDeviceAssurance()
     do { try testNativeProcessProtocolTransport() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: native process protocol transport: \(error)\n".utf8))

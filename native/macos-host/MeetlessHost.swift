@@ -247,6 +247,30 @@ struct MasGateRootIdentity: Codable {
   }
 }
 
+// Directory link count and size can change when the gate publishes the
+// identity file; inode, device, ownership, and mode are the stable root
+// identity needed to reject a path swap at host handoff.
+func sameMasGateStableRootIdentity(_ left: MasGateRootIdentity, _ right: MasGateRootIdentity) -> Bool {
+  left.type == right.type &&
+    left.mode == right.mode &&
+    left.uid == right.uid &&
+    left.gid == right.gid &&
+    left.dev == right.dev &&
+    left.ino == right.ino
+}
+
+func sameMasGateArchivedRetainedRootIdentity(_ left: MasGateRootIdentity, _ right: MasGateRootIdentity) -> Bool {
+  // Terminal archives have no retained content digest. Keep every existing
+  // stable non-device field and permit only the historical numeric device to
+  // differ; the caller still verifies the current retained root against its
+  // current parent device and all archive/journal path guards.
+  left.type == right.type &&
+    left.mode == right.mode &&
+    left.uid == right.uid &&
+    left.gid == right.gid &&
+    left.ino == right.ino
+}
+
 private struct MasGateLockIdentity {
   let dev: Int64
   let ino: Int64
@@ -1983,7 +2007,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       throw hostPreflightError("MAS archived transaction journal is not bound to one completed exact session")
     }
     let retainedIdentity = try masGateRootIdentity(journal.freshRetainedPath, parentPath: parentPath)
-    guard sameMasGateStableRootIdentity(retainedIdentity, freshRootIdentity) else {
+    guard sameMasGateArchivedRetainedRootIdentity(retainedIdentity, freshRootIdentity) else {
       throw hostPreflightError("MAS archived fresh-root evidence changed outside its transaction")
     }
   }
@@ -2103,18 +2127,6 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     guard descriptor >= 0 else { throw hostPreflightError("cannot open \(path) to durably publish MAS gate state") }
     defer { close(descriptor) }
     guard fsync(descriptor) == 0 else { throw hostPreflightError("cannot durably publish MAS gate state for \(path)") }
-  }
-
-  // Directory link count and size can change when the gate publishes the
-  // identity file; inode, device, ownership, and mode are the stable root
-  // identity needed to reject a path swap at host handoff.
-  private func sameMasGateStableRootIdentity(_ left: MasGateRootIdentity, _ right: MasGateRootIdentity) -> Bool {
-    left.type == right.type &&
-      left.mode == right.mode &&
-      left.uid == right.uid &&
-      left.gid == right.gid &&
-      left.dev == right.dev &&
-      left.ino == right.ino
   }
 
   private func loadOwnedRegistry() -> OwnedProcessRegistry? {
