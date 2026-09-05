@@ -2,7 +2,7 @@
 
 ## Current State
 
-- `plan_revision`: `v125`
+- `plan_revision`: `v126`
 - `current_frontier`: `R5-MAS-ATTEMPT19-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
 - `state`: `ATTEMPT19_READINESS_FAILED_RECOVERED_CHILD_IDENTITY_MISMATCH`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
@@ -16,6 +16,22 @@
 - `next_action`: review the local parent pin candidate, then assess the separately queued launch-failure enum work; no external retry admitted.
 
 ### A19 argv-drift ruling and fork correction boundary
+
+Parent candidate b25d69aea6e5e309f5a46659fd9a8f2c94a5b859 is not yet accepted:
+pin/marker delta is scoped, but verify:paseo-bundle cannot reconstruct the new
+fork commit from the referenced historical bundle. Lead verified the dependency
+record points at old 018c8114...bundle while expectedCommit is a2c8ff349....
+This is missing immutable dependency material, not a reason to bypass validation.
+Authorize one SERIAL completion of the same integration: generate one new
+content-addressed self-contained Git bundle for the exact reviewed fork commit,
+update bundle path/hash/size metadata, and prove fresh offline checkout/fsck.
+Preserve both existing bundles and all existing fork refs; use an isolated
+temporary Git repository for the bundle ref rather than overwriting the
+pre-existing refs/meetless/bundle-candidate (currently points elsewhere).
+No remote access/push, new fork revision, lockfile or application behavior change.
+Generated bundle is source evidence, not a MAS package or role configuration.
+Use the existing verifier unchanged unless a concrete defect is demonstrated.
+Parent candidate acceptance remains held until the verification passes.
 
 Lead local fork checkpoint: accept a2c8ff349ffdf6f500eb09270c7f44af4c018bfc
 from 7618cda71e2836f9ba7e821286504841203cb745 for bounded parent integration,
