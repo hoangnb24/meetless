@@ -2,7 +2,7 @@
 
 ## Current State
 
-- `plan_revision`: `v114`
+- `plan_revision`: `v116`
 - `current_frontier`: `R5-MAS-POST-REBOOT-ARCHIVED-IDENTITY-FOUNDATION`
 - `state`: `ATTEMPT18_INTERRUPTED_PHASE1_REJECTED_POST_REBOOT_STATUS_BLOCKED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
@@ -14,6 +14,79 @@
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
 - `blocked_by`: authoritative coordinator status fails with MAS-GATE-CLEANUP-001 because the archived transaction device is 16777234 while the current runtime root device is 16777232. The same root inode and counts do not establish full attestation equivalence. Do not bypass, normalize away, or rewrite journal identity to obtain a green status.
 - `next_action`: read-only foundation judgment on reboot-stable identity and safe archived-state handling before any correction or new external brief. Attempt 18 ownership/result is closed below; no interrupted package invocation will be silently resumed or repeated.
+
+### Owner boundary question: post-reboot scope classification (2026-09-05)
+
+Owner subsequently accepted the narrow recommendation and delegated technical
+execution: "Đồng ý, please act on my behalf, bạn toàn quyền quyết. Chúng ta cần
+đẩy nhanh tiến độ hơn." Lead selects terminal-archive handling as the next
+bounded outcome; automatic active-transaction recovery and full artifact
+retention are deferred. Existing data protection and excluded external gates
+remain unchanged. Routine implementation decisions do not require another
+owner approval; reduced historical assurance is not silently authorized.
+
+`FOUNDATION_CHECK v1`: the remaining decision is evidence sufficiency for old
+terminal archives, not a general recovery design. One ordinary read-only Peer
+will independently identify the smallest defensible behavior and focused proof,
+including whether existing journal evidence can support it without rebaseline
+or archive mutation. Lead owns the final ruling and subsequent writer brief.
+No writer is active. SERIAL remains the routing default; no two writable
+frontiers are ready. This foundation check is a bounded prerequisite, not a
+new broad review loop. Build/install/launch remain held until acceptance.
+
+Scope judgment only, requested by the owner. No implementation, review dispatch,
+external attempt, identity-policy relaxation, or new artifact acceptance is
+authorized by this record. The proposed frontier has no frozen implementation
+candidate yet; its broad name must not implicitly bundle the outputs below.
+
+**Causal boundary.** Attempt 18 never entered install. Its missing package exit
+and artifact evidence require rejection, not runtime recovery. The separate
+current status refusal follows `readMasGateSessionStatusBody` ->
+`assertArchivedState` -> `assertRestoredRoots` -> `assertAttestation` ->
+`attestRoot`: even terminal archived transactions compare the current root to
+the historical numeric device. That field also participates in the aggregate
+digest and retained-root identity checks. Removing one comparison is neither
+a complete fix nor evidence of historical equivalence. This work can prevent
+the observed post-reboot verification blockage; it cannot prevent the machine
+crash or fix the independent native daemon-registration failure.
+
+| Mechanism/output | Classification for single-operator dev MAS | Independent completion boundary |
+| --- | --- | --- |
+| Whole-root preservation, no overwrite/delete of prior state, artifact/target binding, shared lock, owned-process absence, active identity checks, package-first rollback, unknown-state refusal | Existing mandatory safety, not optional production hardening. A single operator still has host/helper concurrency and valuable pre-existing data. Preserve; do not reopen completed work without causal evidence. | Existing safety proof remains valid across the actual changed surface; no weakening of active-transaction checks. |
+| Authoritative handling of terminal archives after reboot | Necessary next foundation scope for the observed blocker. Establish a defensible distinction between completed historical evidence and the identity needed for a new run. | An evidenced allowed post-reboot terminal state is classified correctly; changed or ambiguous state is rejected with all bytes preserved. Archive and retained-root checks are covered, not just the first device comparison. Current old archives require an explicit evidence disposition. |
+| Build start/ownership/result handback and evidence surviving interruption | Separate operational reliability output. A bounded durable invocation record addresses coordination ambiguity; missing exit remains unknown and missing artifact remains rejected. Full artifact retention/resumption is not necessary for safe rejection or for the archive fix. | A new Lead can classify the interrupted invocation without inventing completion or reusing unaccepted outputs. Retaining signed artifacts across reboot is a further storage/output choice. |
+| Recovery or resumption of an active install/restore across reboot; broad legacy migration, volume replacement, unattended multi-operator operation | Separate recovery/production-hardening scope, not causally required by this Phase-1-only crash. Safe detection, preservation and refusal of unresolved active state remain mandatory now. | Rehearsed recovery at the relevant mutation boundaries with its own identity and compatibility proof; not inferred from terminal-archive tests. |
+| Native prune diagnosis, any resulting runtime correction, packaged renderer and owner-test readiness | Independent user-facing output; accepted diagnostics have not yet proven or fixed the native failure. | A fresh accepted artifact reaches the required runtime/renderer behavior and bounded shutdown/recovery. A green coordinator status is not this result. |
+
+**Lead recommendation and owner tradeoff.** Narrow the next foundation to safe
+terminal-archive handling for the current dev gate. Keep interruption behavior
+explicit: stop and preserve ambiguous state; reject unverifiable packages;
+rebuild only under a fresh brief. This minimizes new implementation, review and
+reboot-test surface on the route to an owner-testable app. It accepts rebuild
+time and Lead inspection after interruption rather than promising unattended
+resume. It does not trade away protection of existing data.
+
+Requiring automatic recovery at every mid-install crash point, historical
+identity migration, or durable retention of every full artifact expands the
+requested output and adds implementation/test time and storage cost. No honest
+hour estimate exists before selecting and bounding that design; same-day app
+readiness is not established. These guarantees must not become silent
+prerequisites of the dev-runtime deliverable. Conversely, substituting a new
+baseline for unproven historical equivalence changes the assurance delivered
+to the owner: it is not approved here and cannot be disguised as a refactor.
+
+The lifecycle coordinator owns any later archive classification change; the
+build operator owns invocation/artifact evidence; runtime ownership remains
+separate. These responsibilities vary independently. Runtime proof depends on
+accepted gate state and artifact, not on a general-purpose recovery system.
+This is a separation of acceptance outcomes, not a demand for new modules,
+parallel writers, or artificially split implementation commits. Combine work
+only if subsequent evidence establishes a real inseparable invariant.
+
+`PLAN_RECONCILIATION v1`: scope classified; all existing holds remain. No
+writer/reviewer dispatched. The next foundation judgment must bound the
+terminal-archive DoD and evidence sufficiency before a correction brief; it
+must not silently admit the other independent DoDs.
 
 ### Attempt 18 crash handback and Lead disposition (2026-09-05)
 
