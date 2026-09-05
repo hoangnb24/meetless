@@ -2,7 +2,7 @@
 
 ## Current State
 
-- `plan_revision`: `v124`
+- `plan_revision`: `v125`
 - `current_frontier`: `R5-MAS-ATTEMPT19-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
 - `state`: `ATTEMPT19_READINESS_FAILED_RECOVERED_CHILD_IDENTITY_MISMATCH`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
@@ -16,6 +16,32 @@
 - `next_action`: one local maintained-fork correction candidate for packaged supervisor/worker argv stability, then reviewed pin integration; no external retry admitted.
 
 ### A19 argv-drift ruling and fork correction boundary
+
+Lead local fork checkpoint: accept a2c8ff349ffdf6f500eb09270c7f44af4c018bfc
+from 7618cda71e2836f9ba7e821286504841203cb745 for bounded parent integration,
+not release/runtime acceptance. Exact fork delta: two guarded title assignments
+and daemon-identity.test.ts. Lead inspected delta/marker propagation, clean fork
+worktree and whitespace; reran four identity tests with parent-provided Vitest,
+all passed. Initial invocation looked for absent fork-local Vitest and failed
+before tests; corrected explicit executable passed. Writer server build passed;
+oxfmt/oxlint/tsgo unavailable and not installed. Test imports real source modules
+and observes a pre-set fixture title via ps; this proves assignments are skipped,
+not full native argv attestation or an installed MAS lifecycle.
+
+`NO_REVIEW`: independent causal/design judgment already obtained; this two-guard
+implementation is deterministic and does not change native policy. No further
+macro review would resolve missing live evidence. ADR0001 recording/desktop
+acceptance remains unrun and must not be claimed by the local pin checkpoint.
+One SERIAL writer may now integrate only the reviewed gitlink, pin constants,
+direct marker fixtures and plan in parent history. No fork/lockfile changes,
+push or external attempt. The separate bounded launch-failure enum work remains
+queued after this integration; shared checkout/proof surfaces mean SERIAL,
+not concurrent writers without isolated worktrees.
+
+Role boundary: changed fork paths and generated server output contain no added
+Room role configuration per writer audit; known test/example provider IDs are
+not installed role profiles. Actual future MAS artifact still needs the role
+configuration exclusion check; source scan is not artifact acceptance.
 
 Explicit project-owner boundary: Codex Room Supervisor/Lead/Peer role
 configuration belongs to codex-room-setup, not the maintained Paseo fork and
