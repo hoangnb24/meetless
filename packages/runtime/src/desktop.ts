@@ -411,30 +411,160 @@ async function writeDesktopSettings(userData: string): Promise<void> {
   );
 }
 
-async function waitForDaemon(config: RuntimeConfig, child: ChildProcess, signal: AbortSignal): Promise<NonNullable<Awaited<ReturnType<typeof readPidLock>>>> {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
+type DaemonReadinessPidLockStatus =
+  | "unobserved"
+  | "read-error"
+  | "missing"
+  | "non-desktop-managed"
+  | "dead-pid"
+  | "live-desktop-managed";
+
+type DaemonReadinessRegistrationStatus =
+  | "not-applicable"
+  | "inspection-error"
+  | "matching-registration-absent"
+  | "attested-false"
+  | "attested";
+
+interface DaemonReadinessObservation {
+  pidLock: DaemonReadinessPidLockStatus;
+  registration: DaemonReadinessRegistrationStatus;
+  pid?: number;
+  error?: { type: string; code?: string };
+}
+
+interface DaemonReadinessDependencies {
+  readLock(filePath: string): ReturnType<typeof readPidLock>;
+  running(pid: number): boolean;
+  inspectRegistrations(config: RuntimeConfig): ReturnType<typeof inspectPackagedRegistrations>;
+  inspectDevelopmentProcess: typeof inspectLiveProcess;
+  now(): number;
+  wait(milliseconds: number): Promise<void>;
+}
+
+const systemDaemonReadinessDependencies: DaemonReadinessDependencies = {
+  readLock: readPidLock,
+  running: processIsRunning,
+  inspectRegistrations: inspectPackagedRegistrations,
+  inspectDevelopmentProcess: inspectLiveProcess,
+  now: Date.now,
+  wait: delay,
+};
+
+async function waitForDaemon(
+  config: RuntimeConfig,
+  child: Pick<ChildProcess, "exitCode">,
+  signal: AbortSignal,
+  dependencies: DaemonReadinessDependencies = systemDaemonReadinessDependencies,
+  timeoutMs = 30_000,
+): Promise<NonNullable<Awaited<ReturnType<typeof readPidLock>>>> {
+  const deadline = dependencies.now() + timeoutMs;
+  let observation: DaemonReadinessObservation = { pidLock: "unobserved", registration: "not-applicable" };
+  const observedPidLock = new Set<DaemonReadinessPidLockStatus>();
+  const observedRegistration = new Set<DaemonReadinessRegistrationStatus>();
+  while (dependencies.now() < deadline) {
     signal.throwIfAborted();
     if (child.exitCode !== null) throw new Error(`Meetless daemon exited during startup (${child.exitCode})`);
-    const lock = await readPidLock(config.paths.pidLock).catch(() => null);
-    if (lock?.desktopManaged === true && processIsRunning(lock.pid)) {
+    let lock: Awaited<ReturnType<typeof readPidLock>>;
+    try {
+      lock = await dependencies.readLock(config.paths.pidLock);
+    } catch (error) {
+      observation = {
+        pidLock: "read-error",
+        registration: "not-applicable",
+        error: sanitizedDiagnosticError(error),
+      };
+      recordDaemonReadinessObservation(observation, observedPidLock, observedRegistration);
+      await dependencies.wait(100);
+      continue;
+    }
+    if (!lock) {
+      observation = { pidLock: "missing", registration: "not-applicable" };
+    } else if (!lock.desktopManaged) {
+      observation = { pidLock: "non-desktop-managed", registration: "not-applicable", pid: lock.pid };
+    } else if (!dependencies.running(lock.pid)) {
+      observation = { pidLock: "dead-pid", registration: "not-applicable", pid: lock.pid };
+    } else {
+      observation = { pidLock: "live-desktop-managed", registration: "not-applicable", pid: lock.pid };
       if (isPackagedRuntime(config)) {
-        const registrations = await inspectPackagedRegistrations(config).catch(() => []);
+        let registrations: Awaited<ReturnType<typeof inspectPackagedRegistrations>>;
+        try {
+          registrations = await dependencies.inspectRegistrations(config);
+        } catch (error) {
+          observation = { ...observation, registration: "inspection-error", error: sanitizedDiagnosticError(error) };
+          recordDaemonReadinessObservation(observation, observedPidLock, observedRegistration);
+          await dependencies.wait(100);
+          continue;
+        }
         const daemon = registrations.find((registration) => registration.role === "daemon" && registration.pid === lock.pid);
-        if (daemon?.attested === true) return lock;
+        if (!daemon) observation = { ...observation, registration: "matching-registration-absent" };
+        else if (daemon.attested !== true) observation = { ...observation, registration: "attested-false" };
+        else return lock;
       } else {
-      const live = inspectLiveProcess({
-        pid: lock.pid,
-        expectedListen: config.listen,
-        expectedPaseoHome: config.paths.paseoHome,
-        expectedSupervisorEntrypoint: config.supervisorEntrypoint,
-      });
-      if (live.listener?.address === config.listen && live.listener.belongsToSupervisor) return lock;
+        const live = dependencies.inspectDevelopmentProcess({
+          pid: lock.pid,
+          expectedListen: config.listen,
+          expectedPaseoHome: config.paths.paseoHome,
+          expectedSupervisorEntrypoint: config.supervisorEntrypoint,
+        });
+        if (live.listener?.address === config.listen && live.listener.belongsToSupervisor) return lock;
       }
     }
-    await delay(100);
+    recordDaemonReadinessObservation(observation, observedPidLock, observedRegistration);
+    await dependencies.wait(100);
   }
-  throw new Error(`Timed out starting isolated Meetless daemon at ${config.listen}`);
+  throw new Error(
+    `Timed out starting isolated Meetless daemon at ${config.listen}; ` +
+      `readiness diagnostics: last=${formatDaemonReadinessObservation(observation)}; ` +
+      `observedPidLock=${formatObservedStatuses(observedPidLock)}; ` +
+      `observedRegistration=${formatObservedStatuses(observedRegistration)}`,
+  );
+}
+
+function recordDaemonReadinessObservation(
+  observation: DaemonReadinessObservation,
+  pidLock: Set<DaemonReadinessPidLockStatus>,
+  registration: Set<DaemonReadinessRegistrationStatus>,
+): void {
+  pidLock.add(observation.pidLock);
+  registration.add(observation.registration);
+}
+
+function formatDaemonReadinessObservation(observation: DaemonReadinessObservation): string {
+  const fields = [`pidLock=${observation.pidLock}`, `registration=${observation.registration}`];
+  if (observation.pid !== undefined) fields.push(`pid=${observation.pid}`);
+  if (observation.error) {
+    fields.push(`errorType=${observation.error.type}`);
+    if (observation.error.code) fields.push(`errorCode=${observation.error.code}`);
+  }
+  return `{${fields.join(",")}}`;
+}
+
+function formatObservedStatuses<T extends string>(statuses: Set<T>): string {
+  return `[${[...statuses].sort().join(",")}]`;
+}
+
+function sanitizedDiagnosticError(error: unknown): { type: string; code?: string } {
+  const rawType = error instanceof Error ? error.name : "NonError";
+  const type = new Set(["Error", "SyntaxError", "TypeError", "RangeError", "URIError", "EvalError", "AggregateError"])
+    .has(rawType) ? rawType : error instanceof Error ? "Error" : "NonError";
+  if (!(error instanceof Error) || !("code" in error) || typeof error.code !== "string") return { type };
+  const code = error.code;
+  const safeCodes = new Set([
+    "EACCES", "EAGAIN", "ECONNREFUSED", "ECONNRESET", "EINTR", "EINVAL", "EIO", "ENOENT",
+    "ENOTSOCK", "EPERM", "EPIPE", "ETIMEDOUT",
+  ]);
+  return safeCodes.has(code) ? { type, code } : { type };
+}
+
+export async function waitForDaemonForTest(
+  config: RuntimeConfig,
+  child: Pick<ChildProcess, "exitCode">,
+  signal: AbortSignal,
+  dependencies: DaemonReadinessDependencies,
+  timeoutMs?: number,
+): Promise<NonNullable<Awaited<ReturnType<typeof readPidLock>>>> {
+  return waitForDaemon(config, child, signal, dependencies, timeoutMs);
 }
 
 export interface CapturePermissionBoundaryOptions {

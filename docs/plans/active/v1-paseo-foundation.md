@@ -2,9 +2,9 @@
 
 ## Current State
 
-- `plan_revision`: `v105`
+- `plan_revision`: `v106`
 - `current_frontier`: `R5-MAS-ATTEMPT16-READINESS-DIAGNOSTIC-INSTRUMENTATION`
-- `state`: `ATTEMPT16_RECOVERED_CAUSE_UNRESOLVED_DIAGNOSTIC_GAP`
+- `state`: `BASE_RUNTIME_DIAGNOSTICS_AUTHORIZED_NO_EXTERNAL_RETRY`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted Attempt 16 artifact from repository tip `e57ac527db6e2cb3cf0654c872ea7fcfed414e79`, bundle fingerprint `e7243483893d9939287ff66c482590375f271cb626c31dcb1fc7b950eb514f65`, manifest SHA-256 `e377fbeb004f845a44241f29b545bdadab87640b2aff4b2c376bcc189536cf0e`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
@@ -12,7 +12,54 @@
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempts 14, 15, and 16 are consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
 - `blocked_by`: retained evidence cannot distinguish the failing readiness subcheck because the desktop discards native registration-status errors; any new external attempt also requires separate owner authorization.
-- `next_action`: obtain owner direction before implementing bounded readiness diagnostics that preserve PID-lock, native registration-status, and attestation subcheck results; do not alter renderer/network behavior or launch again.
+- `next_action`: implement and locally verify bounded readiness diagnostics that preserve PID-lock, native registration-status, and attestation subcheck results; Lead accepts the candidate before requesting a separately scoped install/launch attempt. Do not alter renderer/network behavior or launch again under this repository-only frontier.
+
+## Today's Acceptance Boundary — Base MAS Runtime (2026-09-05)
+
+Owner direction: `Mình muốn giảm bớt ma sát, bản Mas chạy được, mình có thể
+test được. Việc mua bán/restore có thể để sang plan tiếp theo khi base runtime
+ready`.
+
+The immediate outcome is a MAS application the owner can launch and test, with
+observed host-owned startup, daemon/plugin and recording-capability readiness,
+renderer delivery, and safe shutdown/recovery. Packaging alone is not this
+outcome. A diagnostic patch alone is not this outcome either.
+
+Purchase/restore, Premium UI/status, managed-transcription production, billing
+configuration, and store submission/publication are deferred to a subsequent
+plan after base runtime acceptance. This sequencing does not remove V1 product
+requirements or disable existing billing behavior. Real recording/TCC/export,
+external attempts, and leaving an installed test session running still require
+their explicit operational scope; no such gate is opened by this record.
+
+`PLAN_RECONCILIATION v1`: runtime startup is the sole immediate critical path.
+Keep prior accepted artifact/recovery evidence; defer monetization/release
+frontiers rather than repeating their checks during runtime diagnosis. Keep
+one active plan and preserve historical records. No Harness or transaction
+framework redesign is authorized.
+
+`FOUNDATION_CHECK v1`: existing ADR0003 owns readiness and safe shutdown. The
+current daemon predicate drops PID-lock and native inspection errors; retained
+Attempt 16 evidence cannot identify the failed component. Existing process,
+registration, sandbox, network, and recovery contracts remain frozen. Route
+diagnostic-only work before proposing a behavioral correction.
+
+Execution is SERIAL with one writer in `packages/runtime/src/`,
+`packages/runtime/test/`, and this plan, restricted to readiness diagnostics and
+their proof. No second writable frontier is ready; parallel dispatch is not
+applicable. Lead owns acceptance, not a competing implementation.
+
+Next real acceptance boundaries:
+
+1. A locally verified diagnostic candidate distinguishes read/parse failures,
+   missing or non-managed/dead PID locks, native inspection failures, missing
+   matching registration, and non-attested registration without leaking secrets
+   or weakening readiness, timeout, abort, or cleanup behavior.
+2. A separately authorized packaged attempt obtains conclusive startup evidence
+   and completes coordinator-owned recovery. Any correction follows observed
+   cause, not an inferred renderer/network failure.
+3. After runtime proof, agree the bounded owner-test installation/session and
+   recovery path. Do not claim an archived proof run leaves a usable test app.
 
 ## Ownership And Authority
 
@@ -2536,6 +2583,26 @@ The smallest next repository change, if requested, is diagnostic only in the
 runtime readiness owner: preserve each predicate component and a sanitized
 native registration-status error before timeout. No functional fix or future
 external attempt is currently authorized.
+
+#### Readiness diagnostic candidate (2026-09-05; pending Lead acceptance)
+
+The runtime desktop now retains a bounded, sanitized daemon-readiness summary
+through the existing production decision path. Timeout output distinguishes PID
+lock read/parse error, missing lock, non-`desktopManaged` lock, dead PID, native
+registration inspection error, absent matching daemon registration, and
+`attested: false`; it preserves the latest applicable lock/registration state
+and the bounded set of states observed during retries. Error output admits only
+known error classes and errno codes, never raw messages, environment values, or
+protocol tokens. The success predicate, check ordering, network behavior,
+30-second deadline with 100 ms polls, abort, direct-development behavior, and
+central shutdown remain unchanged.
+
+Local fixture verification passed: the new production-path diagnostic suite
+(`14` tests), existing host/readiness/lifecycle/packaged-attestation suites (`56`
+tests), and `@meetless/runtime` typecheck. No package, install, launch, native or
+live-state probe, recording, external service, or all-in-one build/test ran.
+This diagnostic candidate is not MAS runtime acceptance; a separately
+authorized packaged attempt and Lead acceptance remain required.
 
 ### Risks And Recovery
 
