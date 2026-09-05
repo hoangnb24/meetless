@@ -2,9 +2,9 @@
 
 ## Current State
 
-- `plan_revision`: `v119`
-- `current_frontier`: `R5-MAS-TERMINAL-ARCHIVE-DEVICE-ASSURANCE`
-- `state`: `R5_TERMINAL_ARCHIVE_ASSURANCE_REOPEN_NATIVE_PARITY`
+- `plan_revision`: `v120`
+- `current_frontier`: `R5-MAS-ATTEMPT19-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
+- `state`: `ATTEMPT19_PHASE1_AUTHORIZED_SOURCE_ACCEPTED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: terminal-archive source candidate implemented from immutable base `f003c05`; local commit identity is handed off separately for Lead acceptance. No MAS artifact, package, install, launch, or external gate is accepted by this implementation.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
@@ -13,7 +13,42 @@
 - `pending_ruling`: the terminal-only archive assurance implementation is locally complete, but its source candidate remains pending Lead acceptance and read-only coordinator verification. Attempt 18 had one interrupted Phase-1 invocation, no accepted artifact and no Phase-2 admission. External retry/build/install/recovery operations remain held; existing excluded gates and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
 - `blocked_by`: no in-scope implementation dependency remains; Lead acceptance and read-only status verification remain pending. Historical volume continuity is still unproven by design.
-- `next_action`: Lead independently inspect the immutable source candidate and terminal coordinator output before any external MAS attempt. Attempt 18 remains rejected; no interrupted package invocation is resumed or repeated.
+- `next_action`: one SERIAL operator executes Attempt 19 Phase 1 only; hand back exact artifact and terminal command result for Lead acceptance before install/launch. Attempt 18 remains rejected, never resumed.
+
+### Lead source acceptance and Attempt 19 Phase 1 (2026-09-05)
+
+Lead accepts `4ad3d532e4bbab8dd8110a2376b384fbf7e3f0ca`, original base
+`f003c05cc86ddfc9a887179f5c30ad68d158164d`, correction base
+`62f7505b290b63ae7170ddc8a3f96d7dd7efb98a`. Cumulative six-file scope matches
+the declared transaction/coordinator tests, native host/tests and plan.
+Independent same-Peer FAST closeout closed R5-MAS-TERMINAL-ARCHIVE-001.
+Lead inspected the comparator and all call sites, preserved current-parent
+device guard, ancestry, whitespace and frozen hashes; personally ran native
+build with debug/release tests (exit 0) and the unchanged Node suites (133 pass).
+Writer typecheck passed. No full HostDelegate/live readiness claim is implied.
+
+Lead then ran the read-only authoritative session status: exit 0, archived,
+package not-applicable, four terminal archives each explicitly classified
+limited-non-device-equivalent, recorded non-device properties matched,
+historical volume continuity unproven, retained content digest not recorded.
+Repository-owned inspectMasLiveState returned absent with all four counts zero.
+No archives or roots were modified and no lifecycle mutation was needed.
+
+This supersedes the historical pending-acceptance/blocked fields above. Under
+existing scoped owner authority, admit exactly one fresh package/build/sign
+Phase-1 invocation for Attempt 19. Sole operator owns ignored build output and
+fresh proof/evidence only; repository source and protected paths stay frozen.
+Record invocation ownership/start/PID and evidence location before waiting,
+retain terminal exit explicitly, and never infer success from intermediate
+build output. Incomplete results are rejected, not automatically retried.
+No general artifact-retention framework is required. Phase 2 needs a separate
+Lead artifact acceptance brief; install/launch/restore counts remain zero now.
+All billing, production, real capture/TCC/export, upload/publication, push and
+manual evidence cleanup exclusions remain closed.
+
+`PLAN_RECONCILIATION v1`: reboot archive foundation and native parity are
+absorbed. Return directly to packaged native diagnostic/runtime proof; do not
+add automatic cross-reboot recovery or unrelated hardening to this frontier.
 
 ### Terminal archive assurance decision and implementation authority (2026-09-05)
 
