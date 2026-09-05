@@ -2,7 +2,7 @@
 
 ## Current State
 
-- `plan_revision`: `v126`
+- `plan_revision`: `v127`
 - `current_frontier`: `R5-MAS-ATTEMPT19-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
 - `state`: `ATTEMPT19_READINESS_FAILED_RECOVERED_CHILD_IDENTITY_MISMATCH`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
@@ -16,6 +16,31 @@
 - `next_action`: review the local parent pin candidate, then assess the separately queued launch-failure enum work; no external retry admitted.
 
 ### A19 argv-drift ruling and fork correction boundary
+
+Lead accepts local pin integration fe704a4d38b5f16e7e81280548c0574bdaaaf131
+over51951c040471b75131cf30313107dca68530b653. Cumulative11-path manifest,
+ancestry, whitespace and frozen authority hashes verified. Lead personally ran
+unchanged verify-paseo-bundle: fresh offline checkout/fsck passed at exact
+a2c8ff349ffdf6f500eb09270c7f44af4c018bfc, new bundle SHA256
+5ca855b8df3ae62d8843dde1edac3f2335ac945ff8979957837d6be5acb93fe4,
+size102267156. Old bundles retained; total footprint283494449 bytes.
+Writer96-pass/1-skip integration, typecheck and native/build evidence remain
+recorded. This is local source/dependency acceptance, not MAS runtime,
+recording, role-clean artifact, distribution or remote-publication proof.
+
+`PLAN_RECONCILIATION v1`: fork guard, parent pin and offline source material
+are absorbed into one coherent integration outcome. Next single SERIAL writer
+owns only bounded coordinator launch failure reporting and focused tests/plan.
+Independent A19 launch analysis could not identify the rejected predicate;
+authorize a fixed allowlisted category at existing failure boundaries and an
+actual CLI-safe serialization path. Preserve all predicates, release ordering,
+5-second handoff deadline, polling, success output and exit behavior. Do not
+retain raw error messages, owner tokens, handoff contents or arbitrary strings.
+Distinguish handoff timeout from the last bounded read/validation reason when
+available so retries do not erase the diagnostic. Tests must exercise the real
+serialization boundary, not only an error property invisible to the operator.
+No diagnostics framework, native/fork/lockfile change or external attempt.
+Use existing code/test owners; all excluded gates and future retry hold remain.
 
 Parent candidate b25d69aea6e5e309f5a46659fd9a8f2c94a5b859 is not yet accepted:
 pin/marker delta is scoped, but verify:paseo-bundle cannot reconstruct the new
