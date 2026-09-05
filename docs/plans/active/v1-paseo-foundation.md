@@ -2584,7 +2584,7 @@ runtime readiness owner: preserve each predicate component and a sanitized
 native registration-status error before timeout. No functional fix or future
 external attempt is currently authorized.
 
-#### Readiness diagnostic candidate (2026-09-05; pending Lead acceptance)
+#### Readiness diagnostic correction candidate (2026-09-05; pending Lead acceptance)
 
 The runtime desktop now retains a bounded, sanitized daemon-readiness summary
 through the existing production decision path. Timeout output distinguishes PID
@@ -2592,17 +2592,27 @@ lock read/parse error, missing lock, non-`desktopManaged` lock, dead PID, native
 registration inspection error, absent matching daemon registration, and
 `attested: false`; it preserves the latest applicable lock/registration state
 and the bounded set of states observed during retries. Error output admits only
-known error classes and errno codes, never raw messages, environment values, or
-protocol tokens. The success predicate, check ordering, network behavior,
+fixed categories for the actual upstream PID-lock and host-protocol errors,
+never raw messages, environment values, protocol tokens, or native rejection
+detail. A separate bounded category set preserves earlier sanitized failures
+when a later retry reaches another state. The success predicate, check ordering, network behavior,
 30-second deadline with 100 ms polls, abort, direct-development behavior, and
 central shutdown remain unchanged.
 
 Local fixture verification passed: the new production-path diagnostic suite
-(`14` tests), existing host/readiness/lifecycle/packaged-attestation suites (`56`
+(`28` tests), existing host/readiness/lifecycle/packaged-attestation suites (`56`
 tests), and `@meetless/runtime` typecheck. No package, install, launch, native or
 live-state probe, recording, external service, or all-in-one build/test ran.
 This diagnostic candidate is not MAS runtime acceptance; a separately
 authorized packaged attempt and Lead acceptance remain required.
+
+Lead did not accept candidate
+`fcae11c8ab8a76bd98f27b3a3a0b4bb6aedec5c0` for an external attempt: its
+fixture used an invented errno while production transport emits plain static
+errors, and its latest observation could drop an earlier sanitized reason.
+This correction uses the inspected production error construction and retains a
+fixed set of error categories across retries; it does not infer native causes
+that the protocol does not expose.
 
 ### Risks And Recovery
 

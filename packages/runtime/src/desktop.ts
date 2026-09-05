@@ -426,11 +426,36 @@ type DaemonReadinessRegistrationStatus =
   | "attested-false"
   | "attested";
 
+type DaemonReadinessErrorCategory =
+  | "pid-lock-invalid-json"
+  | "pid-lock-invalid-identity"
+  | "pid-lock-read-error"
+  | "host-protocol-request-frame-too-large"
+  | "host-protocol-timeout"
+  | "host-protocol-response-frame-too-large"
+  | "host-protocol-invalid-json"
+  | "host-protocol-invalid-or-misbound"
+  | "host-protocol-native-rejected"
+  | "host-protocol-socket-unavailable"
+  | "host-protocol-socket-closed"
+  | "registration-generation-mismatch"
+  | "unknown-redacted";
+
+const daemonReadinessRegistrationErrorCategories: ReadonlyMap<string, DaemonReadinessErrorCategory> = new Map([
+  ["host process protocol request exceeds the bounded frame size", "host-protocol-request-frame-too-large"],
+  ["host process protocol request timed out", "host-protocol-timeout"],
+  ["host process protocol response exceeds the bounded frame size", "host-protocol-response-frame-too-large"],
+  ["host process protocol response is not valid JSON", "host-protocol-invalid-json"],
+  ["host process protocol response is invalid or misbound", "host-protocol-invalid-or-misbound"],
+  ["host process protocol socket is unavailable", "host-protocol-socket-unavailable"],
+  ["host process protocol socket closed before response", "host-protocol-socket-closed"],
+]);
+
 interface DaemonReadinessObservation {
   pidLock: DaemonReadinessPidLockStatus;
   registration: DaemonReadinessRegistrationStatus;
   pid?: number;
-  error?: { type: string; code?: string };
+  error?: DaemonReadinessErrorCategory;
 }
 
 interface DaemonReadinessDependencies {
@@ -462,6 +487,7 @@ async function waitForDaemon(
   let observation: DaemonReadinessObservation = { pidLock: "unobserved", registration: "not-applicable" };
   const observedPidLock = new Set<DaemonReadinessPidLockStatus>();
   const observedRegistration = new Set<DaemonReadinessRegistrationStatus>();
+  const observedErrors = new Set<DaemonReadinessErrorCategory>();
   while (dependencies.now() < deadline) {
     signal.throwIfAborted();
     if (child.exitCode !== null) throw new Error(`Meetless daemon exited during startup (${child.exitCode})`);
@@ -472,9 +498,9 @@ async function waitForDaemon(
       observation = {
         pidLock: "read-error",
         registration: "not-applicable",
-        error: sanitizedDiagnosticError(error),
+        error: sanitizedDiagnosticError(error, "pid-lock"),
       };
-      recordDaemonReadinessObservation(observation, observedPidLock, observedRegistration);
+      recordDaemonReadinessObservation(observation, observedPidLock, observedRegistration, observedErrors);
       await dependencies.wait(100);
       continue;
     }
@@ -491,8 +517,12 @@ async function waitForDaemon(
         try {
           registrations = await dependencies.inspectRegistrations(config);
         } catch (error) {
-          observation = { ...observation, registration: "inspection-error", error: sanitizedDiagnosticError(error) };
-          recordDaemonReadinessObservation(observation, observedPidLock, observedRegistration);
+          observation = {
+            ...observation,
+            registration: "inspection-error",
+            error: sanitizedDiagnosticError(error, "registration"),
+          };
+          recordDaemonReadinessObservation(observation, observedPidLock, observedRegistration, observedErrors);
           await dependencies.wait(100);
           continue;
         }
@@ -510,14 +540,15 @@ async function waitForDaemon(
         if (live.listener?.address === config.listen && live.listener.belongsToSupervisor) return lock;
       }
     }
-    recordDaemonReadinessObservation(observation, observedPidLock, observedRegistration);
+    recordDaemonReadinessObservation(observation, observedPidLock, observedRegistration, observedErrors);
     await dependencies.wait(100);
   }
   throw new Error(
     `Timed out starting isolated Meetless daemon at ${config.listen}; ` +
       `readiness diagnostics: last=${formatDaemonReadinessObservation(observation)}; ` +
       `observedPidLock=${formatObservedStatuses(observedPidLock)}; ` +
-      `observedRegistration=${formatObservedStatuses(observedRegistration)}`,
+      `observedRegistration=${formatObservedStatuses(observedRegistration)}; ` +
+      `observedErrors=${formatObservedStatuses(observedErrors)}`,
   );
 }
 
@@ -525,18 +556,17 @@ function recordDaemonReadinessObservation(
   observation: DaemonReadinessObservation,
   pidLock: Set<DaemonReadinessPidLockStatus>,
   registration: Set<DaemonReadinessRegistrationStatus>,
+  errors: Set<DaemonReadinessErrorCategory>,
 ): void {
   pidLock.add(observation.pidLock);
   registration.add(observation.registration);
+  if (observation.error) errors.add(observation.error);
 }
 
 function formatDaemonReadinessObservation(observation: DaemonReadinessObservation): string {
   const fields = [`pidLock=${observation.pidLock}`, `registration=${observation.registration}`];
   if (observation.pid !== undefined) fields.push(`pid=${observation.pid}`);
-  if (observation.error) {
-    fields.push(`errorType=${observation.error.type}`);
-    if (observation.error.code) fields.push(`errorCode=${observation.error.code}`);
-  }
+  if (observation.error) fields.push(`error=${observation.error}`);
   return `{${fields.join(",")}}`;
 }
 
@@ -544,17 +574,28 @@ function formatObservedStatuses<T extends string>(statuses: Set<T>): string {
   return `[${[...statuses].sort().join(",")}]`;
 }
 
-function sanitizedDiagnosticError(error: unknown): { type: string; code?: string } {
-  const rawType = error instanceof Error ? error.name : "NonError";
-  const type = new Set(["Error", "SyntaxError", "TypeError", "RangeError", "URIError", "EvalError", "AggregateError"])
-    .has(rawType) ? rawType : error instanceof Error ? "Error" : "NonError";
-  if (!(error instanceof Error) || !("code" in error) || typeof error.code !== "string") return { type };
-  const code = error.code;
-  const safeCodes = new Set([
-    "EACCES", "EAGAIN", "ECONNREFUSED", "ECONNRESET", "EINTR", "EINVAL", "EIO", "ENOENT",
-    "ENOTSOCK", "EPERM", "EPIPE", "ETIMEDOUT",
-  ]);
-  return safeCodes.has(code) ? { type, code } : { type };
+function sanitizedDiagnosticError(
+  error: unknown,
+  source: "pid-lock" | "registration",
+): DaemonReadinessErrorCategory {
+  if (!(error instanceof Error)) return "unknown-redacted";
+  if (source === "pid-lock") {
+    if (error instanceof SyntaxError) return "pid-lock-invalid-json";
+    if (error.message.startsWith("Invalid isolated PID lock identity at ")) return "pid-lock-invalid-identity";
+    if ("code" in error && typeof error.code === "string" && error.code !== "ENOENT") return "pid-lock-read-error";
+    return "unknown-redacted";
+  }
+  const category = daemonReadinessRegistrationErrorCategories.get(error.message);
+  if (category) return category;
+  if (error.message.startsWith("host process protocol rejected host.process.error: ")) {
+    return "host-protocol-native-rejected";
+  }
+  if (error.message.startsWith(
+    "Production Meetless host attestation failed closed: native registration status is not bound to the desktop launch generation.",
+  )) {
+    return "registration-generation-mismatch";
+  }
+  return "unknown-redacted";
 }
 
 export async function waitForDaemonForTest(

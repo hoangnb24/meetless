@@ -22,17 +22,56 @@ describe("daemon startup readiness diagnostics", () => {
   });
 
   test.each([
-    ["PID-lock read or parse error", { readError: syntaxError("credential=lock-secret") }, /pidLock=read-error,registration=not-applicable,errorType=SyntaxError/],
+    ["PID-lock parse error", { readError: syntaxError("credential=lock-secret") }, /pidLock=read-error,registration=not-applicable,error=pid-lock-invalid-json/],
+    ["PID-lock invalid identity", { readError: new Error("Invalid isolated PID lock identity at /secret/runtime/pid.lock") }, /pidLock=read-error,registration=not-applicable,error=pid-lock-invalid-identity/],
+    ["PID-lock read error", { readError: codedError("credential=lock-secret", "EACCES") }, /pidLock=read-error,registration=not-applicable,error=pid-lock-read-error/],
     ["missing PID lock", { lock: null }, /pidLock=missing,registration=not-applicable/],
     ["non-desktopManaged PID lock", { lock: { ...managedLock, desktopManaged: false } }, /pidLock=non-desktop-managed,registration=not-applicable,pid=4242/],
     ["dead PID", { running: false }, /pidLock=dead-pid,registration=not-applicable,pid=4242/],
-    ["native registration inspection error", { registrationError: codedError("ownerToken=native-secret", "EACCES") }, /pidLock=live-desktop-managed,registration=inspection-error,pid=4242,errorType=Error,errorCode=EACCES/],
     ["matching registration absent", { registrations: [] }, /pidLock=live-desktop-managed,registration=matching-registration-absent,pid=4242/],
     ["matching registration has attested false", { registrations: [registration({ attested: false })] }, /pidLock=live-desktop-managed,registration=attested-false,pid=4242/],
   ])("distinguishes %s at the deadline", async (_label, options, expected) => {
     const context = readinessContext(options);
 
     await expect(context.wait()).rejects.toThrow(expected);
+  });
+
+  test.each([
+    ["host process protocol request exceeds the bounded frame size", "host-protocol-request-frame-too-large"],
+    ["host process protocol request timed out", "host-protocol-timeout"],
+    ["host process protocol response exceeds the bounded frame size", "host-protocol-response-frame-too-large"],
+    ["host process protocol response is not valid JSON", "host-protocol-invalid-json"],
+    ["host process protocol response is invalid or misbound", "host-protocol-invalid-or-misbound"],
+    ["host process protocol socket is unavailable", "host-protocol-socket-unavailable"],
+    ["host process protocol socket closed before response", "host-protocol-socket-closed"],
+  ])("classifies the production transport error %s", async (message, category) => {
+    const context = readinessContext({ registrationError: new Error(message) });
+
+    await expect(context.wait()).rejects.toThrow(`error=${category}`);
+  });
+
+  test("classifies native rejection without retaining its untrusted detail", async () => {
+    const secret = "ownerToken=owner-secret password=credential-secret";
+    const context = readinessContext({
+      registrationError: new Error(`host process protocol rejected host.process.error: ${secret}`),
+    });
+
+    const failure = await context.wait().catch((error: unknown) => error) as Error;
+    expect(failure.message).toContain("error=host-protocol-native-rejected");
+    expect(failure.message).not.toContain(secret);
+    expect(failure.message).not.toContain("owner-secret");
+    expect(failure.message).not.toContain("credential-secret");
+  });
+
+  test("classifies the registration-generation mismatch emitted after protocol validation", async () => {
+    const context = readinessContext({
+      registrationError: new Error(
+        "Production Meetless host attestation failed closed: native registration status is not bound to the desktop launch generation. " +
+          "Authority: test authority text that is not retained",
+      ),
+    });
+
+    await expect(context.wait()).rejects.toThrow("error=registration-generation-mismatch");
   });
 
   test("retains bounded prior observations and succeeds after transient readiness recovery", async () => {
@@ -66,6 +105,47 @@ describe("daemon startup readiness diagnostics", () => {
     );
   });
 
+  test("retains a bounded transport failure when a later retry has no matching registration", async () => {
+    let attempts = 0;
+    const context = readinessContext({
+      inspectRegistrations: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("host process protocol request timed out");
+        return [];
+      },
+      timeoutMs: 300,
+    });
+
+    await expect(context.wait()).rejects.toThrow(
+      /last=\{pidLock=live-desktop-managed,registration=matching-registration-absent,pid=4242\}.*observedErrors=\[host-protocol-timeout\]/,
+    );
+  });
+
+  test("retains a bounded PID-lock parse failure when a later retry observes a missing lock", async () => {
+    let attempts = 0;
+    const context = readinessContext({
+      readLock: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new SyntaxError("secret malformed lock contents");
+        return null;
+      },
+      timeoutMs: 300,
+    });
+
+    await expect(context.wait()).rejects.toThrow(
+      /last=\{pidLock=missing,registration=not-applicable\}.*observedErrors=\[pid-lock-invalid-json\]/,
+    );
+  });
+
+  test.each([
+    ["wrong PID", registration({ attested: true, pid: managedLock.pid + 1 })],
+    ["wrong role", registration({ attested: true, role: "plugin" })],
+  ])("does not treat a registration with the %s as matching", async (_label, mismatched) => {
+    const context = readinessContext({ registrations: [mismatched] });
+
+    await expect(context.wait()).rejects.toThrow("registration=matching-registration-absent");
+  });
+
   test("keeps the production daemon-start deadline at 30 seconds with 100 ms polls", async () => {
     const context = readinessContext({ lock: null, useProductionDeadline: true });
 
@@ -81,7 +161,7 @@ describe("daemon startup readiness diagnostics", () => {
     const error = await context.wait().catch((failure: unknown) => failure);
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("registration=inspection-error");
-    expect((error as Error).message).toContain("errorCode=EACCES");
+    expect((error as Error).message).toContain("error=unknown-redacted");
     expect((error as Error).message).not.toContain(secret);
     expect((error as Error).message).not.toContain("protocol-secret");
     expect((error as Error).message).not.toContain("owner-secret");
@@ -91,7 +171,7 @@ describe("daemon startup readiness diagnostics", () => {
     hostileMetadata.name = "CredentialSecret";
     const hostileContext = readinessContext({ registrationError: hostileMetadata });
     const hostileError = await hostileContext.wait().catch((failure: unknown) => failure) as Error;
-    expect(hostileError.message).toContain("errorType=Error");
+    expect(hostileError.message).toContain("error=unknown-redacted");
     expect(hostileError.message).not.toContain("CredentialSecret");
     expect(hostileError.message).not.toContain("OWNER_TOKEN_SECRET");
     expect(hostileError.message).not.toContain("raw-message-secret");
@@ -172,10 +252,10 @@ function readinessContext(options: ReadinessContextOptions = {}) {
   };
 }
 
-function registration(input: { attested: boolean }): HostProcessRegistration {
+function registration(input: { attested: boolean; pid?: number; role?: "daemon" | "plugin" }): HostProcessRegistration {
   return {
-    role: "daemon",
-    pid: managedLock.pid,
+    role: input.role ?? "daemon",
+    pid: input.pid ?? managedLock.pid,
     attested: input.attested,
     identity: {},
   } as HostProcessRegistration;
