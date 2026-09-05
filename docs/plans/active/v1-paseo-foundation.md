@@ -2,9 +2,9 @@
 
 ## Current State
 
-- `plan_revision`: `v120`
+- `plan_revision`: `v121`
 - `current_frontier`: `R5-MAS-ATTEMPT19-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
-- `state`: `ATTEMPT19_PHASE1_AUTHORIZED_SOURCE_ACCEPTED`
+- `state`: `ATTEMPT19_ARTIFACT_ACCEPTED_PHASE2_AUTHORIZED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: terminal-archive source candidate implemented from immutable base `f003c05`; local commit identity is handed off separately for Lead acceptance. No MAS artifact, package, install, launch, or external gate is accepted by this implementation.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
@@ -13,7 +13,42 @@
 - `pending_ruling`: the terminal-only archive assurance implementation is locally complete, but its source candidate remains pending Lead acceptance and read-only coordinator verification. Attempt 18 had one interrupted Phase-1 invocation, no accepted artifact and no Phase-2 admission. External retry/build/install/recovery operations remain held; existing excluded gates and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
 - `blocked_by`: no in-scope implementation dependency remains; Lead acceptance and read-only status verification remain pending. Historical volume continuity is still unproven by design.
-- `next_action`: one SERIAL operator executes Attempt 19 Phase 1 only; hand back exact artifact and terminal command result for Lead acceptance before install/launch. Attempt 18 remains rejected, never resumed.
+- `next_action`: same SERIAL operator executes one Attempt 19 coordinator install/launch/observe/restore brief against the accepted immutable artifact; no rebuild or retry.
+
+### Attempt 19 authorization reconciliation and artifact acceptance
+
+Owner specifically proposed "restore, chạy attempt 19"; after Lead explained
+archive verification before that named attempt, owner replied "Ok thế bạn
+quyết đi, mình giao toàn quyền rồi mà. Xử lý cho xong để mình có thể test thử".
+Lead rules this authorizes the named bounded Attempt 19 workflow, satisfying
+the earlier separate-owner retry gate for this episode, not all future retries.
+The temporary supervisory reconciliation hold was resolved in the task-local
+record `/Users/tubakhuym/Library/Logs/Meetless-dev-proof/attempt19/lead-authorization-reconciliation.md`
+without changing the source during build. That decision is now absorbed here.
+Supervisor did not act on the operator; Lead retains handback ownership.
+
+Phase 1 completed exactly once at source `483c7a50f861f17237249473633a16dcd650154f`:
+wrapper 6933/npm 6937, start 2026-09-05T15:15:31.728Z, exit 0/signal null at
+15:27:49.290Z. No install/launch/recovery occurred. Evidence directory:
+`/Users/tubakhuym/Library/Logs/Meetless-dev-proof/attempt19/run-D3S1jW`.
+Lead read terminal, validator and source-parity records, independently hashed
+the manifest and bundle and ran deep/strict codesign (exit 0):
+
+- Artifact `/private/tmp/meetless-mas-development-proof.pGYeDE/release/macos/Meetless.app`
+- Manifest SHA256 `b30a5fd9d8cc5dc7c4d0dc0e69122081bc24f076cfec0dc7a4cbfd1409bd0984`
+- Fingerprint `f0c4eb2fbbd6a5fd31a22f12b571fd6f67fc316ecd316a4093be3a9e33cccd45`
+- Artifact digest `f2a774a00091a861818674cb8b5c325b1007db2931f0ea01f1af1f5a99ec05db`
+- Recorded CDHash `69ea6f1d9a67a74e9db10a7adaf7ce87a9e55e99`; Lead observed correct Apple Development signer, Team 63M98WD275 and thin arm64.
+
+Lead accepts this artifact checkpoint. Phase 2 is now separately admitted for
+the same named attempt: one coordinator install, one LaunchServices launch
+with observer armed beforehand, bounded diagnostic observation, then coordinator
+package-first restore regardless of readiness outcome. No rebuild, repeated
+launch, standalone stop or manual cleanup. Any refusal ends progression and
+retains evidence. Readiness remains unproven. Existing excluded gates remain
+closed; owner-test installation left running is not promised by this proof.
+The authoritative key hash is the full 64-character value in terminal/validator
+records (the peer summary omitted its final character); no raw key is recorded.
 
 ### Lead source acceptance and Attempt 19 Phase 1 (2026-09-05)
 
