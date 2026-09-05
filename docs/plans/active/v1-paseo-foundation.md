@@ -2,9 +2,9 @@
 
 ## Current State
 
-- `plan_revision`: `v121`
+- `plan_revision`: `v122`
 - `current_frontier`: `R5-MAS-ATTEMPT19-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
-- `state`: `ATTEMPT19_ARTIFACT_ACCEPTED_PHASE2_AUTHORIZED`
+- `state`: `ATTEMPT19_READINESS_FAILED_RECOVERED_CHILD_IDENTITY_MISMATCH`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: terminal-archive source candidate implemented from immutable base `f003c05`; local commit identity is handed off separately for Lead acceptance. No MAS artifact, package, install, launch, or external gate is accepted by this implementation.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
@@ -13,7 +13,40 @@
 - `pending_ruling`: the terminal-only archive assurance implementation is locally complete, but its source candidate remains pending Lead acceptance and read-only coordinator verification. Attempt 18 had one interrupted Phase-1 invocation, no accepted artifact and no Phase-2 admission. External retry/build/install/recovery operations remain held; existing excluded gates and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
 - `blocked_by`: no in-scope implementation dependency remains; Lead acceptance and read-only status verification remain pending. Historical volume continuity is still unproven by design.
-- `next_action`: same SERIAL operator executes one Attempt 19 coordinator install/launch/observe/restore brief against the accepted immutable artifact; no rebuild or retry.
+- `next_action`: bounded read-only causal diagnosis of daemon identity mutation and launch refusal; Attempt 19 is terminal, no new external retry admitted.
+
+### Attempt 19 close-out and runtime diagnosis
+
+Run f76291eb-7f8b-44cf-8c73-46f85cafb2cc: install once exit0, launch once
+exit1, readiness failed at plugin bootstrap, restore once exit0. No manual
+stop/launch, rebuild or retry. Evidence is retained under
+`/Users/tubakhuym/Library/Logs/Meetless-dev-proof/attempt19/phase2-J7K4mN`.
+Lead read terminal/observation/restoration evidence and full operator handback;
+fresh authoritative status confirms this run archived with exact-recorded-device
+assurance and repository-owned live inspection returns absent.
+Operator evidence proves app fingerprint/CDHash and runtime inode43589382,
+dev16777232, digest9e870f5fd3f9e97af20d4434d0017decb53f8c026c87a05e245fef5f3d241e06
+returned to their pre-attempt baseline. Accept recovered terminal disposition,
+not user-test readiness. Operator moving scope is released.
+
+Native evidence now retains `action=prune role=daemon stage=inspection
+check=child-identity-mismatch os=none pid=86634 generation=1 revision=9`.
+H86339 -> D86605 -> S86634 -> W86686 and plugin86721 were observed; capture
+helper absent, renderer18082 absent, daemon16777 present before recovery.
+Observed supervisor argv became ["Paseo Supervisor", "", ""]; worker argv
+became ["Paseo Daemon", "", ""]. Source sets process.title in both roles;
+native pruning compares full current identity to the registered snapshot.
+This is a concrete causal hypothesis, not yet an isolated reproduction proving
+which identity field changed at the prune instant. Launch exit1 had only the
+safe coordinator-failed-closed category retained; do not conflate it with the
+prune event without checking the actual launch acceptance path.
+
+`FOUNDATION_CHECK v1`: one bounded read-only Peer will establish the changing
+field/control flow and smallest safe correction boundary, including whether
+the process-title behavior can be kept from changing attested argv rather than
+weakening identity security. No implementation or external retry dispatched.
+Avoid another generic diagnostics layer if an isolated existing seam can prove
+the cause. Any fork/pinned-input change needs explicit Lead scope ruling.
 
 ### Attempt 19 authorization reconciliation and artifact acceptance
 
