@@ -150,6 +150,69 @@ evidence cannot identify its failing branch. Retain this independent issue;
 do not claim the argv correction fixes launch acceptance or renderer delivery.
 Avoid another external run until its available evidence/source is assessed.
 
+### A19 offline Paseo bundle completion (2026-09-06)
+
+The bounded dependency completion starts from exact parent base
+`205b545fcf1cb10512de425c9cfd6ac5d2360cc3`, the parent candidate
+`b25d69aea6e5e309f5a46659fd9a8f2c94a5b859` is the correction base, and the
+original pin-integration base is
+`51951c040471b75131cf30313107dca68530b653`. The reviewed fork remains
+`a2c8ff349ffdf6f500eb09270c7f44af4c018bfc`, based on
+`7618cda71e2836f9ba7e821286504841203cb745`; no fork source, gitlink, pin
+constant, lockfile, or runtime behavior changed in this completion.
+
+The exact local fork object graph was fetched into an isolated temporary Git
+repository from the checked-out submodule, without network access. A new
+self-contained bundle was generated with only
+`refs/meetless/bundle-candidate` advertised:
+
+- `vendor/paseo-bundles/5ca855b8df3ae62d8843dde1edac3f2335ac945ff8979957837d6be5acb93fe4.bundle`
+- SHA-256 `5ca855b8df3ae62d8843dde1edac3f2335ac945ff8979957837d6be5acb93fe4`
+- size `102267156` bytes; head
+  `a2c8ff349ffdf6f500eb09270c7f44af4c018bfc refs/meetless/bundle-candidate`
+- `git bundle verify` reports a complete history, and the temporary source
+  repository passed `git fsck --full --no-dangling`.
+
+The dependency record now names that path, hash, and size while retaining the
+exact expected commit and bundle ref. The two historical bundles were
+preserved byte-for-byte and with their existing heads:
+`vendor/paseo-bundles/018c81149bc6963759df8016dd316188cb9956b8904972c3240f9f0be82a886a.bundle`
+has SHA-256
+`018c81149bc6963759df8016dd316188cb9956b8904972c3240f9f0be82a886a`, size
+`102244892` bytes, and head
+`7618cda71e2836f9ba7e821286504841203cb745 refs/meetless/bundle-candidate`;
+`vendor/paseo-bundles/0cd59fbf0a2437c943c6fa10a63567260c8ab665bcefa975c50d593b705016b3.bundle`
+has SHA-256
+`0cd59fbf0a2437c943c6fa10a63567260c8ab665bcefa975c50d593b705016b3`, size
+`78982401` bytes, and head
+`c81cb84735043c281a5a2d23d456d3708ce5d94e refs/meetless/bundle-candidate`.
+The three-bundle local footprint is `283494449` bytes; the new dependency
+material adds `102267156` bytes.
+
+Observed local proof:
+
+- Unchanged `node scripts/verify-paseo-bundle.mjs` passed its byte/hash/size
+  checks, fresh checkout, exact expected head, and full fsck. It reported
+  expected and fresh checkout commit
+  `a2c8ff349ffdf6f500eb09270c7f44af4c018bfc` and the new bundle hash/size.
+- The focused parent Vitest command passed five files with 96 tests passed and
+  one existing skip.
+- `node --check scripts/lib/paseo-dependency.mjs` passed.
+- The package-source snapshot passed at parent head
+  `205b545fcf1cb10512de425c9cfd6ac5d2360cc3` with digest
+  `f8d04cf065d0efaf4a5962ee6294e833ac923f023ada52bebca95ad7bfd6720c`,
+  gitlink and expected commit both
+  `a2c8ff349ffdf6f500eb09270c7f44af4c018bfc`, and the new bundle metadata.
+
+No MAS package, signing, install, launch, recording, TCC, network, push, or
+external gate was run. The launch `exit1` category remains separately queued;
+this bundle completion does not resolve it. No Codex Room Supervisor/Lead/Peer
+role configuration was added to the fork snapshot or generated bundle; the
+packaged-artifact role audit remains a separate boundary check. ADR0001
+recording/desktop proof remains explicitly unrun and excluded. The frozen
+authority aggregate remains
+`ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
+
 ### Attempt 19 close-out and runtime diagnosis
 
 Run f76291eb-7f8b-44cf-8c73-46f85cafb2cc: install once exit0, launch once
