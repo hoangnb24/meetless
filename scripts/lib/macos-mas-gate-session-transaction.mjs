@@ -25,6 +25,8 @@ import { assertMasGateArtifactBinding } from "./mas-gate-artifact-binding.mjs";
 export const MAS_GATE_SESSION_TRANSACTION_SCHEMA = "MAS_GATE_SESSION_TRANSACTION v2";
 export const MAS_GATE_SESSION_TRANSACTION_VERSION = 2;
 export const MAS_GATE_RUNTIME_ROOT_ATTESTATION_SCHEMA = "MAS_GATE_RUNTIME_ROOT_ATTESTATION v1";
+// This class is terminal evidence only; it is not historical volume continuity.
+export const MAS_GATE_TERMINAL_ARCHIVE_ASSURANCE_CLASS = "terminal-archive-limited-non-device-equivalence";
 export const MAS_GATE_SESSION_INDEX_SCHEMA = "MAS_GATE_SESSION_INDEX v1";
 export const MAS_GATE_SESSION_INDEX_VERSION = 1;
 export const MAS_GATE_SESSION_INDEX_INTENT_SCHEMA = "MAS_GATE_SESSION_INDEX_INTENT v1";
@@ -591,24 +593,32 @@ async function readMasGateSessionStatusBody(context, options) {
     };
   }
 
+  const archivedAssurance = new Map();
   for (const transaction of archived) {
-    if (transaction.phase === "archived") await assertArchivedState(transaction, context);
+    if (transaction.phase === "archived") {
+      archivedAssurance.set(transaction.runId, await assertArchivedState(transaction, context));
+    }
     if (transaction.phase === "archive-intent") await assertRestoredRoots(transaction, context);
   }
   const recovery = archived.find((transaction) => transaction.phase !== "archived");
+  const archivedSummary = archived.map((transaction) => ({
+    phase: transaction.phase,
+    journalPath: transaction.journalPath,
+    freshRetainedPath: transaction.freshRetainedPath,
+    archivePath: transaction.archivePath,
+    runId: transaction.runId,
+    stateScope: transaction.stateScope,
+    ...(archivedAssurance.has(transaction.runId) ? { assurance: archivedAssurance.get(transaction.runId) } : {}),
+  }));
   return {
     status: recovery ? "recovery-required" : archived.length > 0 ? "archived" : "absent",
     phase: recovery?.phase,
     journalPath: recovery?.journalPath,
     activePath: paths.activePath,
-    archived: archived.map((transaction) => ({
-      phase: transaction.phase,
-      journalPath: transaction.journalPath,
-      freshRetainedPath: transaction.freshRetainedPath,
-      archivePath: transaction.archivePath,
-      runId: transaction.runId,
-      stateScope: transaction.stateScope,
-    })),
+    ...(archivedSummary.length === 1 && archivedSummary[0].assurance
+      ? { assurance: archivedSummary[0].assurance }
+      : {}),
+    archived: archivedSummary,
   };
 }
 
@@ -644,6 +654,8 @@ export async function assertMasGateSessionReady(transactionOrJournal, options = 
 
 /**
  * Return an aggregate attestation without exposing child names or inventories.
+ * `digestDevice` changes only serialized device fields in the derived digest;
+ * traversal still enforces the observed root device and every child device.
  */
 export async function attestMasGateRuntimeRoot(runtimeRoot, options = {}) {
   try {
@@ -651,6 +663,7 @@ export async function attestMasGateRuntimeRoot(runtimeRoot, options = {}) {
     assertWholeRuntimeRoot(root, "attestation");
     return (await attestRoot(root, {
       expectedDevice: options.expectedDevice,
+      digestDevice: options.digestDevice,
       requireOwnerUid: options.requireOwnerUid ?? false,
     })).aggregateAttestation;
   } catch (error) {
@@ -1442,31 +1455,61 @@ async function assertRestoredState(transaction, context) {
 }
 
 async function assertArchivedState(transaction, context) {
-  await assertRestoredRoots(transaction, context);
+  const evidence = await assertRestoredRoots(transaction, context, { allowTerminalDeviceDifference: true });
   if (await inspectedPath(transaction.activePath)) throw failClosed("fixed active transaction slot remained after archive");
   if (await inspectedPath(transaction.constructionPath)) throw failClosed("active transaction construction root remained after archive");
   await assertOwnedSecureDirectory(transaction.archivePath, "archived transaction slot", context.parentDevice);
   await assertJournalFile(transaction.journalPath, "archived transaction journal");
+  return terminalArchiveAssurance(evidence.deviceDifference);
 }
 
-async function assertRestoredRoots(transaction, context) {
+async function assertRestoredRoots(transaction, context, { allowTerminalDeviceDifference = false } = {}) {
+  let deviceDifference = false;
   const canonical = await inspectedPath(context.runtimeRoot);
   const quarantine = await inspectedPath(transaction.quarantinePath);
   if (transaction.priorExists) {
     if (!canonical && !quarantine) throw failClosed("neither restored canonical nor quarantine prior root is present");
     if (canonical && quarantine) throw failClosed("both restored canonical and quarantine prior roots are present");
     if (!canonical) throw failClosed("restored canonical prior root is missing");
-    await assertAttestation(context.runtimeRoot, transaction.priorAggregateAttestation, "restored canonical prior root");
+    const attestation = allowTerminalDeviceDifference
+      ? await assertTerminalAttestation(
+        context.runtimeRoot,
+        transaction.priorAggregateAttestation,
+        context.parentDevice,
+        "restored canonical prior root",
+      )
+      : await assertAttestation(context.runtimeRoot, transaction.priorAggregateAttestation, "restored canonical prior root");
+    deviceDifference ||= attestation.deviceDifference === true;
   } else if (canonical || quarantine) {
     throw failClosed("an unexpected root appeared after restoring recorded prior absence");
   }
 
   const retained = await inspectedPath(transaction.freshRetainedPath);
   if (!retained) throw failClosed("retained fresh runtime root is missing after restore");
-  assertFreshRetainedRoot(retained, transaction, context.parentDevice);
-  if (transaction.freshRetainedRootIdentity && !sameIdentity(identityOf(retained), transaction.freshRetainedRootIdentity)) {
+  const retainedDeviceDifference = assertFreshRetainedRoot(
+    retained,
+    transaction,
+    context.parentDevice,
+    { allowDeviceDifference: allowTerminalDeviceDifference },
+  );
+  const retainedIdentity = identityOf(retained);
+  const recordedRetainedIdentity = transaction.freshRetainedRootIdentity;
+  const retainedIdentityDeviceDifference = Boolean(
+    recordedRetainedIdentity && retainedIdentity.dev !== recordedRetainedIdentity.dev,
+  );
+  const retainedIdentityMatches = recordedRetainedIdentity && (
+    retainedIdentityDeviceDifference
+      ? sameIdentityExceptDevice(retainedIdentity, recordedRetainedIdentity)
+      : sameIdentity(retainedIdentity, recordedRetainedIdentity)
+  );
+  if (recordedRetainedIdentity && !retainedIdentityMatches) {
     throw failClosed("retained fresh runtime root identity changed outside the transaction");
   }
+  if (retainedIdentityDeviceDifference && !allowTerminalDeviceDifference) {
+    throw failClosed("retained fresh runtime root device changed outside the transaction");
+  }
+  deviceDifference ||= retainedDeviceDifference || retainedIdentityDeviceDifference === true;
+  return { deviceDifference };
 }
 
 async function restoreInternal(transaction, options, context) {
@@ -1755,6 +1798,32 @@ async function assertAttestation(root, expected, label) {
   return actual;
 }
 
+async function assertTerminalAttestation(root, expected, currentDevice, label) {
+  if (!expected) throw failClosed(`${label} expected attestation is missing`);
+  const actual = await attestRoot(root, {
+    expectedDevice: currentDevice,
+    digestDevice: expected.root.dev,
+    requireOwnerUid: false,
+  });
+  const matches = actual.deviceProjected
+    ? sameAggregateExceptDevice(actual.aggregateAttestation, expected)
+    : sameAggregate(actual.aggregateAttestation, expected);
+  if (!matches) throw failClosed(`${label} attestation changed; preserving every remaining byte`);
+  return { deviceDifference: actual.deviceProjected };
+}
+
+function terminalArchiveAssurance(deviceDifference) {
+  return {
+    classification: deviceDifference
+      ? MAS_GATE_TERMINAL_ARCHIVE_ASSURANCE_CLASS
+      : "terminal-archive-exact-recorded-device",
+    deviceIdentity: deviceDifference ? "numeric-device-projected" : "exact-recorded-device",
+    recordedNonDeviceProperties: "matched",
+    historicalVolumeContinuity: "unproven",
+    retainedFreshRootContent: "not-recorded",
+  };
+}
+
 function sameAggregate(actual, expected) {
   return actual.schema === expected.schema &&
     actual.digest === expected.digest &&
@@ -1767,12 +1836,31 @@ function sameAggregate(actual, expected) {
     sameIdentity(actual.root, expected.root);
 }
 
-function assertFreshRetainedRoot(info, transaction, expectedDevice) {
+function sameAggregateExceptDevice(actual, expected) {
+  return actual.schema === expected.schema &&
+    actual.digest === expected.digest &&
+    actual.entryCount === expected.entryCount &&
+    actual.fileCount === expected.fileCount &&
+    actual.directoryCount === expected.directoryCount &&
+    actual.symlinkCount === expected.symlinkCount &&
+    actual.hardlinkGroupCount === expected.hardlinkGroupCount &&
+    actual.byteCount === expected.byteCount &&
+    sameIdentityExceptDevice(actual.root, expected.root);
+}
+
+function assertFreshRetainedRoot(info, transaction, expectedDevice, { allowDeviceDifference = false } = {}) {
   if (info.isSymbolicLink() || !info.isDirectory()) throw failClosed("fresh retained runtime root is not one directory");
-  assertRootIdentity(info, transaction.freshRootIdentity, "fresh retained runtime root");
+  const identity = identityOf(info);
+  const deviceDifference = identity.dev !== transaction.freshRootIdentity.dev;
+  if (deviceDifference && !allowDeviceDifference) {
+    throw failClosed("fresh retained runtime root device changed outside the transaction");
+  }
+  if (deviceDifference) assertRootIdentityExceptDevice(info, transaction.freshRootIdentity, "fresh retained runtime root");
+  else assertRootIdentity(info, transaction.freshRootIdentity, "fresh retained runtime root");
   if (info.uid !== currentUid() || (info.mode & POSIX_MODE_MASK) !== 0o700 || (expectedDevice !== undefined && info.dev !== expectedDevice)) {
     throw failClosed("fresh retained runtime root ownership, mode, or device changed");
   }
+  return deviceDifference;
 }
 
 function assertRootIdentity(actual, expected, label) {
@@ -1783,8 +1871,20 @@ function assertRootIdentity(actual, expected, label) {
   }
 }
 
+function assertRootIdentityExceptDevice(actual, expected, label) {
+  if (!expected || actual.isSymbolicLink() || !actual.isDirectory()) throw failClosed(`${label} is not one directory`);
+  const identity = identityOf(actual);
+  for (const field of ["ino", "mode", "uid", "gid"]) {
+    if (identity[field] !== expected[field]) throw failClosed(`${label} ${field} changed outside the transaction`);
+  }
+}
+
 function sameIdentity(actual, expected) {
   return ["type", "dev", "ino", "mode", "uid", "gid", "nlink", "size"].every((field) => actual[field] === expected[field]);
+}
+
+function sameIdentityExceptDevice(actual, expected) {
+  return ["type", "ino", "mode", "uid", "gid", "nlink", "size"].every((field) => actual[field] === expected[field]);
 }
 
 function assertStableIdentity(before, after, label) {
@@ -1816,6 +1916,8 @@ async function attestRoot(root, options = {}) {
   if (options.requireOwnerUid && rootInfo.uid !== ownerUid) throw failClosed("runtime root owner does not match the current run owner");
   const expectedDevice = options.expectedDevice ?? rootInfo.dev;
   if (rootInfo.dev !== expectedDevice) throw failClosed("runtime root device does not match the transaction device");
+  const digestDevice = options.digestDevice ?? rootInfo.dev;
+  if (!isNonNegativeIntegerValue(digestDevice)) throw failClosed("runtime root serialized digest device is invalid");
 
   const entries = [];
   await visitRoot(root, root, rootInfo.dev, entries);
@@ -1839,19 +1941,25 @@ async function attestRoot(root, options = {}) {
     for (const entry of group) entry.hardlinkGroup = groupIds.get(key);
   }
   entries.sort((left, right) => left.relative.localeCompare(right.relative));
-  const digestInput = entries.map((entry) => ({ ...entry }));
+  const stableRootIdentity = identityOf(stableRoot);
+  const digestRoot = { ...stableRootIdentity, dev: integerValue(digestDevice) };
+  const digestInput = entries.map((entry) => ({ ...entry, dev: integerValue(digestDevice) }));
   const aggregate = {
     schema: MAS_GATE_RUNTIME_ROOT_ATTESTATION_SCHEMA,
-    digest: sha256(Buffer.from(JSON.stringify({ root: identityOf(stableRoot), entries: digestInput }))),
+    digest: sha256(Buffer.from(JSON.stringify({ root: digestRoot, entries: digestInput }))),
     entryCount: entries.length,
     fileCount: entries.filter((entry) => entry.type === "file").length,
     directoryCount: entries.filter((entry) => entry.type === "directory").length,
     symlinkCount: entries.filter((entry) => entry.type === "symlink").length,
     hardlinkGroupCount: orderedGroups.length,
     byteCount: entries.filter((entry) => entry.type === "file").reduce((sum, entry) => sum + BigInt(entry.size), 0n).toString(),
-    root: identityOf(stableRoot),
+    root: stableRootIdentity,
   };
-  return { rootIdentity: identityOf(stableRoot), aggregateAttestation: aggregate };
+  return {
+    rootIdentity: stableRootIdentity,
+    aggregateAttestation: aggregate,
+    deviceProjected: stableRootIdentity.dev !== digestRoot.dev,
+  };
 }
 
 async function visitRoot(root, candidate, expectedDevice, entries) {

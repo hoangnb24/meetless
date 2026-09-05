@@ -31,8 +31,10 @@ import {
   MAS_GATE_SESSION_INDEX_INTENT_BASENAME,
   MAS_GATE_SESSION_INDEX_SCHEMA,
   MAS_GATE_SESSION_INDEX_VERSION,
+  archiveMasGateSessionTransaction,
   attestMasGateRuntimeRoot,
   beginMasGateSessionTransaction,
+  restoreMasGateSessionTransaction,
 } from "../../../scripts/lib/macos-mas-gate-session-transaction.mjs";
 import {
   MAS_GATE_LOCK_BASENAME,
@@ -332,6 +334,59 @@ describe("MAS development gate coordinator", () => {
     await expect(readMasGateSessionStatus(masGateRuntimeOptions(context))).resolves.toMatchObject({
       status: "absent",
       activePath: context.activePath,
+    });
+  });
+
+  it("propagates terminal non-device assurance through the authoritative coordinator", async () => {
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-terminal-assurance-test-")));
+    roots.push(base);
+    const context = masDevelopmentRuntimeContext({ userHome: base });
+    await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
+    await seedMasSessionIndex(context);
+    await mkdir(context.runtimeRoot, { recursive: true, mode: 0o700 });
+    await writeFile(path.join(context.runtimeRoot, "prior-runtime-state"), "prior runtime\n", { mode: 0o600 });
+    const isolatedDependencies = {
+      processRows: async () => [],
+      listeners: async () => [],
+      sockets: async () => [],
+      openHandles: async () => [],
+    };
+
+    const session = await beginMasGateSessionTransaction({
+      ...masGateRuntimeOptions(context, { requiredFreeBytes: 1, dependencies: isolatedDependencies }),
+    });
+    await restoreMasGateSessionTransaction(session, masGateRuntimeOptions(context, { dependencies: isolatedDependencies }));
+    const archived = await archiveMasGateSessionTransaction(session, masGateRuntimeOptions(context, { dependencies: isolatedDependencies }));
+    const currentRoot = await lstat(context.runtimeRoot);
+    const historicalDevice = Number(currentRoot.dev) + 1;
+    const projected = await attestMasGateRuntimeRoot(context.runtimeRoot, { digestDevice: historicalDevice });
+    const journal = JSON.parse(await readFile(archived.journalPath, "utf8"));
+    journal.priorAggregateAttestation = { ...projected, root: { ...projected.root, dev: historicalDevice } };
+    journal.priorRootIdentity = { ...journal.priorRootIdentity, dev: historicalDevice };
+    journal.prior = {
+      ...journal.prior,
+      rootIdentity: { ...journal.prior.rootIdentity, dev: historicalDevice },
+      aggregateAttestation: { ...projected, root: { ...projected.root, dev: historicalDevice } },
+    };
+    journal.freshRootIdentity = { ...journal.freshRootIdentity, dev: historicalDevice };
+    journal.freshRetainedRootIdentity = { ...journal.freshRetainedRootIdentity, dev: historicalDevice };
+    await writeFile(archived.journalPath, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+
+    const status = await readMasDevelopmentGateStatus({
+      context,
+      dependencies: isolatedDependencies,
+    });
+    expect(status).toMatchObject({
+      status: "archived",
+      assurance: {
+        classification: "terminal-archive-limited-non-device-equivalence",
+        deviceIdentity: "numeric-device-projected",
+        recordedNonDeviceProperties: "matched",
+        historicalVolumeContinuity: "unproven",
+        retainedFreshRootContent: "not-recorded",
+      },
+      package: { status: "not-applicable" },
+      archived: [{ runId: archived.runId, assurance: { classification: "terminal-archive-limited-non-device-equivalence" } }],
     });
   });
 

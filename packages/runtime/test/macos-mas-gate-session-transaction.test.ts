@@ -87,7 +87,14 @@ describe("MAS runtime-root preservation transaction", () => {
     await expect(archiveMasGateSessionTransaction(archived, runtimeOptions(fixture))).resolves.toMatchObject({ phase: "archived" });
     await expect(lstat(archived.activePath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(lstat(archived.archivePath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
-    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).resolves.toMatchObject({ status: "archived" });
+    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).resolves.toMatchObject({
+      status: "archived",
+      assurance: {
+        classification: "terminal-archive-exact-recorded-device",
+        deviceIdentity: "exact-recorded-device",
+        retainedFreshRootContent: "not-recorded",
+      },
+    });
   });
 
   it("restores prior absence while retaining the fresh run root and journal", async () => {
@@ -102,6 +109,124 @@ describe("MAS runtime-root preservation transaction", () => {
     await archiveMasGateSessionTransaction(restored, runtimeOptions(fixture));
     await expect(lstat(restored.freshRetainedPath)).resolves.toBeDefined();
     await expect(readMasGateSessionStatus(runtimeOptions(fixture))).resolves.toMatchObject({ status: "archived" });
+  });
+
+  it("classifies a terminal archive with only serialized device differences and records a fresh baseline on begin", async () => {
+    const { fixture, archive, journalBytes } = await createTerminalArchiveWithDeviceDifference();
+    const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+
+    expect(status).toMatchObject({
+      status: "archived",
+      assurance: {
+        classification: "terminal-archive-limited-non-device-equivalence",
+        deviceIdentity: "numeric-device-projected",
+        recordedNonDeviceProperties: "matched",
+        historicalVolumeContinuity: "unproven",
+        retainedFreshRootContent: "not-recorded",
+      },
+      archived: [{ runId: archive.runId, assurance: { classification: "terminal-archive-limited-non-device-equivalence" } }],
+    });
+    await expect(readFile(archive.journalPath)).resolves.toEqual(journalBytes);
+
+    const currentBaseline = await attestMasGateRuntimeRoot(fixture.runtime, { requireOwnerUid: true });
+    const next = await begin(fixture);
+    expect(next.priorAggregateAttestation.root.dev).toBe(currentBaseline.root.dev);
+    expect(next.priorAggregateAttestation.digest).toBe(currentBaseline.digest);
+    await expect(readFile(archive.journalPath)).resolves.toEqual(journalBytes);
+  });
+
+  it("reports retained-root identity assurance without inventing a retained-content digest", async () => {
+    const fixture = await createFixture({ prior: false });
+    const transaction = await begin(fixture);
+    await writeFile(path.join(fixture.runtime, "run-only.txt"), "run\n", { mode: 0o600 });
+    const restored = await restoreMasGateSessionTransaction(transaction, runtimeOptions(fixture));
+    const archive = await archiveMasGateSessionTransaction(restored, runtimeOptions(fixture));
+    const retained = await lstat(archive.freshRetainedPath);
+    const historicalDevice = Number(retained.dev) + 1;
+    const journal = JSON.parse(await readFile(archive.journalPath, "utf8"));
+    rewriteRecordedDevices(journal, historicalDevice);
+    await writeFile(archive.journalPath, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+
+    const status = await readMasGateSessionStatus(runtimeOptions(fixture));
+    expect(status).toMatchObject({
+      status: "archived",
+      assurance: {
+        classification: "terminal-archive-limited-non-device-equivalence",
+        retainedFreshRootContent: "not-recorded",
+      },
+    });
+    expect(status.assurance).not.toHaveProperty("digest");
+  });
+
+  it.each([
+    ["bytes", async (fixture: Fixture) => {
+      await writeFile(path.join(fixture.runtime, "opaque.bin"), "changed\n", { mode: 0o640 });
+    }],
+    ["metadata", async (fixture: Fixture) => {
+      await chmod(path.join(fixture.runtime, "nested", "metadata.txt"), 0o640);
+    }],
+    ["inode", async (fixture: Fixture) => {
+      const target = path.join(fixture.runtime, "nested", "metadata.txt");
+      const held = `${target}.held`;
+      await rename(target, held);
+      await writeFile(target, "metadata\n", { mode: 0o600 });
+      await rm(held);
+    }],
+    ["hardlink topology", async (fixture: Fixture) => {
+      await rm(path.join(fixture.runtime, "hardlink-alias"));
+      await writeFile(path.join(fixture.runtime, "hardlink-alias"), "opaque\n", { mode: 0o640 });
+    }],
+    ["symlink target", async (fixture: Fixture) => {
+      await rm(path.join(fixture.runtime, "literal-link"));
+      await symlink("nested/metadata.txt", path.join(fixture.runtime, "literal-link"));
+    }],
+  ] as const)("rejects terminal archives when %s differs outside the device field", async (_label, mutate) => {
+    const { fixture, archive, journalBytes } = await createTerminalArchiveWithDeviceDifference();
+    await mutate(fixture);
+    const beforeStatus = await snapshotTree(fixture.parent);
+
+    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).rejects.toThrow(/attestation changed/iu);
+    await expect(snapshotTree(fixture.parent)).resolves.toEqual(beforeStatus);
+    await expect(readFile(archive.journalPath)).resolves.toEqual(journalBytes);
+  });
+
+  it("rejects an insecure canonical root and keeps the terminal evidence untouched", async () => {
+    const { fixture, archive, journalBytes } = await createTerminalArchiveWithDeviceDifference();
+    const held = path.join(fixture.base, "held-canonical-root");
+    await rename(fixture.runtime, held);
+    await symlink(held, fixture.runtime);
+
+    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).rejects.toThrow(/symlink|canonical runtime root/iu);
+    await expect(readFile(path.join(held, "opaque.bin"), "utf8")).resolves.toBe("opaque\n");
+    await expect(readFile(archive.journalPath)).resolves.toEqual(journalBytes);
+  });
+
+  it("keeps the current root-device guard active during serialized-device projection", async () => {
+    const fixture = await createFixture({ prior: true });
+    const root = await lstat(fixture.runtime);
+    const currentDevice = Number(root.dev);
+
+    await expect(attestMasGateRuntimeRoot(fixture.runtime, {
+      expectedDevice: currentDevice + 1,
+      digestDevice: currentDevice,
+    })).rejects.toThrow(/device/iu);
+  });
+
+  it("keeps active and archive-intent device checks exact", async () => {
+    const activeFixture = await createFixture({ prior: true });
+    const active = await begin(activeFixture);
+    const activeJournal = JSON.parse(await readFile(active.journalPath, "utf8"));
+    const activeDevice = Number(activeJournal.priorAggregateAttestation.root.dev) + 1;
+    rewriteRecordedDevices(activeJournal, activeDevice);
+    await writeFile(active.journalPath, `${JSON.stringify(activeJournal, null, 2)}\n`);
+    await expect(readMasGateSessionStatus(runtimeOptions(activeFixture))).rejects.toThrow(/dev|attestation/iu);
+
+    const { fixture, archive } = await createTerminalArchiveWithDeviceDifference();
+    const archiveIntent = JSON.parse(await readFile(archive.journalPath, "utf8"));
+    archiveIntent.phase = "archive-intent";
+    archiveIntent.phaseHistory = archiveIntent.phaseHistory.slice(0, -1);
+    await writeFile(archive.journalPath, `${JSON.stringify(archiveIntent, null, 2)}\n`);
+    await expect(readMasGateSessionStatus(runtimeOptions(fixture))).rejects.toThrow(/dev|attestation/iu);
   });
 
   it("reports a prompt typed uninitialized state when the exact fixed records are absent", async () => {
@@ -1107,6 +1232,43 @@ describe("MAS runtime-root preservation transaction", () => {
 
 async function begin(fixture: Fixture, overrides: Record<string, unknown> = {}) {
   return beginMasGateSessionTransaction({ ...runtimeOptions(fixture), ...overrides });
+}
+
+async function createTerminalArchiveWithDeviceDifference() {
+  const fixture = await createFixture({ prior: true });
+  const transaction = await begin(fixture);
+  await restoreMasGateSessionTransaction(transaction, runtimeOptions(fixture));
+  const archive = await archiveMasGateSessionTransaction(transaction, runtimeOptions(fixture));
+  const currentRoot = await lstat(fixture.runtime);
+  const historicalDevice = Number(currentRoot.dev) + 1;
+  const projected = await attestMasGateRuntimeRoot(fixture.runtime, { digestDevice: historicalDevice });
+  const journal = JSON.parse(await readFile(archive.journalPath, "utf8"));
+  rewriteRecordedDevices(journal, historicalDevice, projected);
+  const journalBytes = Buffer.from(`${JSON.stringify(journal, null, 2)}\n`);
+  await writeFile(archive.journalPath, journalBytes, { mode: 0o600 });
+  return { fixture, archive, journalBytes };
+}
+
+function rewriteRecordedDevices(journal: Record<string, any>, device: number, projected?: Record<string, any>) {
+  if (journal.priorExists) {
+    const aggregate = projected ?? journal.priorAggregateAttestation;
+    journal.priorAggregateAttestation = {
+      ...aggregate,
+      root: { ...aggregate.root, dev: device },
+    };
+    journal.priorRootIdentity = { ...journal.priorRootIdentity, dev: device };
+    journal.prior = {
+      ...journal.prior,
+      rootIdentity: { ...journal.prior.rootIdentity, dev: device },
+      aggregateAttestation: {
+        ...journal.prior.aggregateAttestation,
+        ...journal.priorAggregateAttestation,
+        root: { ...journal.prior.aggregateAttestation.root, dev: device },
+      },
+    };
+  }
+  if (journal.freshRootIdentity) journal.freshRootIdentity = { ...journal.freshRootIdentity, dev: device };
+  if (journal.freshRetainedRootIdentity) journal.freshRetainedRootIdentity = { ...journal.freshRetainedRootIdentity, dev: device };
 }
 
 function testArtifactBinding() {

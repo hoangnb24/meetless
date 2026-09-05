@@ -3,17 +3,17 @@
 ## Current State
 
 - `plan_revision`: `v118`
-- `current_frontier`: `R5-MAS-POST-REBOOT-ARCHIVED-IDENTITY-FOUNDATION`
-- `state`: `ATTEMPT18_INTERRUPTED_PHASE1_REJECTED_POST_REBOOT_STATUS_BLOCKED`
+- `current_frontier`: `R5-MAS-TERMINAL-ARCHIVE-DEVICE-ASSURANCE`
+- `state`: `R5_TERMINAL_ARCHIVE_ASSURANCE_IMPLEMENTED_PENDING_LEAD_ACCEPTANCE`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: no available MAS artifact accepted for the next phase. Attempt 18 Phase 1 is rejected as incomplete/unverifiable after crash; historical Attempt 17 package identities remain evidence only and its temporary artifact path no longer exists. Accepted native diagnostic source remains `90637005d82a30fce8b264a256026c5edab7701a`.
+- `candidate`: terminal-archive source candidate implemented from immutable base `f003c05`; local commit identity is handed off separately for Lead acceptance. No MAS artifact, package, install, launch, or external gate is accepted by this implementation.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: Attempts 14–17 were recovered before reboot; their archives remain but current coordinator status refuses post-reboot device identity. Attempt 18 had one interrupted Phase-1 invocation, no accepted artifact and no Phase-2 admission. All retry/build/install/launch/recovery operations are held pending the new foundation ruling. Existing excluded gates and push remain closed.
+- `pending_ruling`: the terminal-only archive assurance implementation is locally complete, but its source candidate remains pending Lead acceptance and read-only coordinator verification. Attempt 18 had one interrupted Phase-1 invocation, no accepted artifact and no Phase-2 admission. External retry/build/install/recovery operations remain held; existing excluded gates and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
-- `blocked_by`: authoritative coordinator status fails with MAS-GATE-CLEANUP-001 because the archived transaction device is 16777234 while the current runtime root device is 16777232. The same root inode and counts do not establish full attestation equivalence. Do not bypass, normalize away, or rewrite journal identity to obtain a green status.
-- `next_action`: read-only foundation judgment on reboot-stable identity and safe archived-state handling before any correction or new external brief. Attempt 18 ownership/result is closed below; no interrupted package invocation will be silently resumed or repeated.
+- `blocked_by`: no in-scope implementation dependency remains; Lead acceptance and read-only status verification remain pending. Historical volume continuity is still unproven by design.
+- `next_action`: Lead independently inspect the immutable source candidate and terminal coordinator output before any external MAS attempt. Attempt 18 remains rejected; no interrupted package invocation is resumed or repeated.
 
 ### Terminal archive assurance decision and implementation authority (2026-09-05)
 
@@ -49,6 +49,47 @@ same ordinary foundation Peer may assess the stable candidate's residual
 lifecycle risk; no OCR or broad unrelated review is prescribed.
 External operations remain held until source acceptance and read-only status
 verification; then Lead may brief Attempt 19 under existing scoped authority.
+
+### R5 terminal archive device assurance implementation evidence (2026-09-05)
+
+The bounded implementation is complete from base `f003c05`. It changes only the
+transaction attestation owner, its native transaction tests, the native
+coordinator composition test, and this plan. Terminal `archived` status derives
+a digest by projecting only serialized `dev` fields to the recorded value while
+the live traversal still requires the current parent device for the root and
+every entry. Every other digest field, root identity field, file byte, metadata,
+symlink target, and hardlink grouping remains exact. Active, construction,
+ready, archive-intent, restore, and new-begin baseline paths remain exact.
+
+The coordinator reports `terminal-archive-limited-non-device-equivalence`,
+`recordedNonDeviceProperties: matched`,
+`historicalVolumeContinuity: unproven`, and
+`retainedFreshRootContent: not-recorded` when a terminal device projection was
+needed. Same-device archives retain the exact-device classification. Journals,
+retained roots, and old evidence are not rewritten by the implementation.
+
+Changed-path manifest:
+
+- `scripts/lib/macos-mas-gate-session-transaction.mjs`
+- `packages/runtime/test/macos-mas-gate-session-transaction.test.ts`
+- `packages/runtime/test/macos-mas-development-gate.test.ts`
+- `docs/plans/active/v1-paseo-foundation.md`
+
+Observed proof on isolated fixtures: the focused transaction/coordinator
+command passed 2 files and 133 tests; `npm run typecheck` passed. The first
+focused run exposed one test expectation that matched `device` but the
+diagnostic used `dev`; the test expectation was corrected and the rerun passed.
+The fixtures covered device-only terminal projection, non-device mutation
+rejection, retained-root identity without a content digest, active and
+archive-intent strictness, coordinator propagation, and a fresh current
+baseline. No nested mounted-device fixture, real archive, live runtime probe,
+package/sign/install/launch/recovery operation, network, or external gate was
+used.
+
+Enforcement remains repository-native: local focused Vitest and typecheck are
+available and passed; no active hook was found beyond checked-in Git samples;
+no checked-in CI workflow invoking these commands was found; branch protection
+is unverified.
 
 ### Owner boundary question: post-reboot scope classification (2026-09-05)
 
