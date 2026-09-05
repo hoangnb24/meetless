@@ -42,6 +42,69 @@ serialization boundary, not only an error property invisible to the operator.
 No diagnostics framework, native/fork/lockfile change or external attempt.
 Use existing code/test owners; all excluded gates and future retry hold remain.
 
+### A19 bounded launch-failure diagnostic completion (2026-09-06)
+
+This SERIAL source diagnostic starts from exact parent base
+`eb5d7fb68a7c102a7e99d0d4942d24972d541e6f`, which contains the locally
+accepted offline pin integration `fe704a4d38b5f16e7e81280548c0574bdaaaf131`.
+The sole implementation scope is
+`scripts/macos-mas-development-gate.mjs`,
+`packages/runtime/test/macos-mas-development-gate.test.ts`, and this active
+plan. No fork, native, dependency, lockfile, credential, package, or runtime
+launch source outside that scope is authorized.
+
+The existing coordinator launch order remains authoritative: status/ready and
+package proof, available handoff read, LaunchServices open, lock release,
+five-second claim polling, and claimed-handoff validation. Success JSON and
+exit behavior remain unchanged. Launch failures now have one CLI-safe stderr
+shape, with exit status still nonzero:
+
+```json
+{
+  "coordinator": "MAS_GATE_COORDINATOR v1",
+  "status": "failed",
+  "diagnostic": {
+    "schema": "MAS_GATE_LAUNCH_DIAGNOSTIC v1",
+    "category": "open-failed"
+  }
+}
+```
+
+The fixed category allowlist is `unknown`, `lock-failed`,
+`preflight-status`, `package-proof`, `handoff-read`, `open-failed`,
+`handoff-claim-timeout`, and `claimed-handoff-invalid`. Timeout diagnostics
+may additionally carry only `lastCause` `unknown`, `handoff-read`, or
+`claimed-handoff-invalid`; no raw errors, paths, owner tokens, or handoff
+contents are serialized. The allowlist is assigned at the existing owner
+boundary rather than inferred by parsing error text.
+
+Observed local proof:
+
+- The launch-focused coordinator selection passed 5 tests with 19 unrelated
+  tests skipped. It covered context/lock and package preflight rejection,
+  handoff read, open failure, claimed-handoff rejection, timeout last-cause
+  retention, unknown-error sanitization, CLI stderr serialization, and the
+  unchanged successful lock-release/claim path.
+- `node --check scripts/macos-mas-development-gate.mjs` and `npm run typecheck`
+  passed. The transaction/coordinator source-guard file passed 112 tests.
+- The complete coordinator file ran 24 tests: 22 passed and 2 failed in
+  pre-existing artifact-validation fixtures because the retained release
+  manifest lacks the current candidate-snapshot binding; both fail before this
+  launch diagnostic seam and no source artifact was changed to bypass them.
+- An isolated temporary `HOME` CLI capture produced exit `1`, empty stdout,
+  and stderr JSON with `coordinator: "MAS_GATE_COORDINATOR v1"`,
+  `status: "failed"`, diagnostic schema `MAS_GATE_LAUNCH_DIAGNOSTIC v1`, and
+  category `lock-failed`; the temporary path was absent from the payload.
+
+Tests use isolated temporary fixtures only; no installed app, MAS package,
+signing, LaunchServices launch, capture, TCC, network, recovery, or external
+gate is allowed. Codex Room Supervisor/Lead/Peer role configuration remains
+outside Meetless and is not introduced. No active hook was found beyond
+checked-in Git samples, no checked-in CI invocation for this diagnostic was
+found, and branch protection is unverified. The frozen authority aggregate
+remains
+`ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
+
 Parent candidate b25d69aea6e5e309f5a46659fd9a8f2c94a5b859 is not yet accepted:
 pin/marker delta is scoped, but verify:paseo-bundle cannot reconstruct the new
 fork commit from the referenced historical bundle. Lead verified the dependency

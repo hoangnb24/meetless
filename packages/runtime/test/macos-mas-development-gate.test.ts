@@ -15,6 +15,8 @@ import {
   launchMasDevelopmentGate,
   MAS_LSOF_MAX_BUFFER_BYTES,
   MAS_LSOF_PURPOSES,
+  MAS_GATE_LAUNCH_DIAGNOSTIC_SCHEMA,
+  MAS_GATE_LAUNCH_FAILURE_CATEGORIES,
   masDevelopmentRuntimeContext,
   masGateRuntimeOptions,
   masLiveAbsentObservation,
@@ -22,6 +24,7 @@ import {
   readMasGateSessionStatus,
   restoreMasDevelopmentGate,
   restoreInRequiredOrder,
+  serializeMasDevelopmentGateFailure,
   stopMasDevelopmentGate,
   validateMasDevelopmentInstallArtifact,
   validateMasHostHandoff,
@@ -77,6 +80,15 @@ const execFile = promisify(execFileCallback);
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
+
+async function captureLaunchFailure(operation: () => Promise<unknown>) {
+  try {
+    await operation();
+  } catch (error) {
+    return serializeMasDevelopmentGateFailure(error);
+  }
+  throw new Error("expected the MAS launch fixture to fail closed");
+}
 
 async function seedMasSessionIndex(context: ReturnType<typeof masDevelopmentRuntimeContext>) {
   const indexPath = path.join(context.parentPath, MAS_GATE_SESSION_INDEX_BASENAME);
@@ -306,6 +318,53 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
 }
 
 describe("MAS development gate coordinator", () => {
+  it("serializes unknown launch failures into the fixed diagnostic shape", () => {
+    const secret = "owner-token=/private/secret/runtime-root";
+    const serialized = serializeMasDevelopmentGateFailure(new Error(secret), "not-an-accepted-category");
+    expect(serialized).toEqual({
+      coordinator: "MAS_GATE_COORDINATOR v1",
+      status: "failed",
+      diagnostic: {
+        schema: MAS_GATE_LAUNCH_DIAGNOSTIC_SCHEMA,
+        category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.UNKNOWN,
+      },
+    });
+    expect(JSON.stringify(serialized)).not.toContain(secret);
+    expect(JSON.stringify(serialized)).not.toContain("runtime-root");
+  });
+
+  it("classifies invalid launch context as preflight status without exposing context", async () => {
+    const failure = await captureLaunchFailure(() => launchMasDevelopmentGate({
+      context: {} as ReturnType<typeof masDevelopmentRuntimeContext>,
+    }));
+    expect(failure).toMatchObject({
+      diagnostic: {
+        category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.PREFLIGHT_STATUS,
+      },
+    });
+    expect(JSON.stringify(failure)).not.toContain("MAS user home");
+  });
+
+  it("captures the real CLI lock failure as bounded machine-readable output", async () => {
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-launch-cli-test-")));
+    roots.push(base);
+    const result = await execFile(process.execPath, [path.resolve("scripts/macos-mas-development-gate.mjs"), "launch"], {
+      cwd: path.resolve("."),
+      env: { ...process.env, HOME: base },
+    }).catch((error) => error);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toEqual({
+      coordinator: "MAS_GATE_COORDINATOR v1",
+      status: "failed",
+      diagnostic: {
+        schema: MAS_GATE_LAUNCH_DIAGNOSTIC_SCHEMA,
+        category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.LOCK_FAILED,
+      },
+    });
+    expect(result.stderr).not.toContain(base);
+  });
+
   it("binds MAS state to the app-container contract and keeps the direct-DMG root separate", () => {
     const context = masDevelopmentRuntimeContext({ userHome: "/Users/example" });
     expect(context.runtimeRoot).toBe("/Users/example/Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless");
@@ -886,6 +945,65 @@ describe("MAS development gate coordinator", () => {
       phase: "ready",
       package: { status: "committed", state: "committed", journalPath: packageJournalPath },
     });
+    await rm(path.join(session.activePath, "host-handoff.json"));
+    const handoffReadFailure = await captureLaunchFailure(() => launchMasDevelopmentGate({
+      context,
+      dependencies: {
+        ...launchDependencies,
+        launch: async () => { throw new Error("must not launch without an available handoff"); },
+      },
+    }));
+    expect(handoffReadFailure).toMatchObject({
+      diagnostic: {
+        category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ,
+      },
+    });
+    await writeFile(path.join(session.activePath, "host-handoff.json"), `${JSON.stringify(available)}\n`, { mode: 0o600 });
+
+    const openFailure = await captureLaunchFailure(() => launchMasDevelopmentGate({
+      context,
+      dependencies: {
+        ...launchDependencies,
+        launch: async () => { throw new Error(`secret-open-failure ${context.runtimeRoot}`); },
+      },
+    }));
+    expect(openFailure).toMatchObject({
+      diagnostic: {
+        category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.OPEN_FAILED,
+      },
+    });
+    expect(JSON.stringify(openFailure)).not.toContain(context.runtimeRoot);
+
+    const claimedHandoffFailure = await captureLaunchFailure(() => launchMasDevelopmentGate({
+      context,
+      dependencies: {
+        ...launchDependencies,
+        launch: async () => undefined,
+        waitForHandoff: async () => available,
+      },
+    }));
+    expect(claimedHandoffFailure).toMatchObject({
+      diagnostic: {
+        category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.CLAIMED_HANDOFF_INVALID,
+      },
+    });
+
+    const timeoutFailure = await captureLaunchFailure(() => launchMasDevelopmentGate({
+      context,
+      dependencies: {
+        ...launchDependencies,
+        launch: async () => undefined,
+      },
+    }));
+    expect(timeoutFailure).toMatchObject({
+      diagnostic: {
+        category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT,
+        lastCause: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.CLAIMED_HANDOFF_INVALID,
+      },
+    });
+    expect(JSON.stringify(timeoutFailure)).not.toContain(context.runtimeRoot);
+    expect(JSON.stringify(timeoutFailure)).not.toContain(session.ownerToken);
+
     let launchCalled = false;
     const result = await launchMasDevelopmentGate({
       context,
@@ -988,7 +1106,7 @@ describe("MAS development gate coordinator", () => {
     };
     let forgedReaderCalled = false;
     let launchCalled = false;
-    await expect(launchMasDevelopmentGate({
+    const failure = await captureLaunchFailure(() => launchMasDevelopmentGate({
       context,
       dependencies: {
         processRows: async () => [],
@@ -1002,7 +1120,13 @@ describe("MAS development gate coordinator", () => {
         },
         launch: async () => { launchCalled = true; },
       },
-    })).rejects.toThrow(/committed package transaction/);
+    }));
+    expect(failure).toMatchObject({
+      diagnostic: {
+        schema: MAS_GATE_LAUNCH_DIAGNOSTIC_SCHEMA,
+        category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.PACKAGE_PROOF,
+      },
+    });
     expect(forgedReaderCalled).toBe(false);
     expect(launchCalled).toBe(false);
     await expect(readFile(path.join(session.activePath, "transaction.json"))).resolves.toBeDefined();

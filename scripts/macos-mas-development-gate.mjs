@@ -89,6 +89,22 @@ import {
 export const MAS_GATE_COORDINATOR_SCHEMA = "MAS_GATE_COORDINATOR v1";
 export const MAS_GATE_HOST_HANDOFF_SCHEMA = "MAS_GATE_HOST_HANDOFF v1";
 export const MAS_GATE_HOST_HANDOFF_FILENAME = "host-handoff.json";
+export const MAS_GATE_LAUNCH_DIAGNOSTIC_SCHEMA = "MAS_GATE_LAUNCH_DIAGNOSTIC v1";
+export const MAS_GATE_LAUNCH_FAILURE_CATEGORIES = Object.freeze({
+  UNKNOWN: "unknown",
+  LOCK_FAILED: "lock-failed",
+  PREFLIGHT_STATUS: "preflight-status",
+  PACKAGE_PROOF: "package-proof",
+  HANDOFF_READ: "handoff-read",
+  OPEN_FAILED: "open-failed",
+  HANDOFF_CLAIM_TIMEOUT: "handoff-claim-timeout",
+  CLAIMED_HANDOFF_INVALID: "claimed-handoff-invalid",
+});
+export const MAS_GATE_LAUNCH_LAST_CAUSES = Object.freeze({
+  UNKNOWN: "unknown",
+  HANDOFF_READ: "handoff-read",
+  CLAIMED_HANDOFF_INVALID: "claimed-handoff-invalid",
+});
 
 export { readRuntimeMasGateSessionStatus };
 
@@ -658,15 +674,20 @@ export async function launchMasDevelopmentGate({
   context = masDevelopmentRuntimeContext(),
   dependencies = {},
 } = {}) {
-  context = assertMasDevelopmentContext(context);
-  const lease = await acquireMasGateLock({ parentPath: context.parentPath });
+  let lease = null;
   let released = false;
+  let failureCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.PREFLIGHT_STATUS;
   try {
+    context = assertMasDevelopmentContext(context);
+    failureCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.LOCK_FAILED;
+    lease = await acquireMasGateLock({ parentPath: context.parentPath });
+    failureCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.PREFLIGHT_STATUS;
     const composed = await readMasDevelopmentGateStatusWithProof({ context, dependencies, lockLease: lease });
     const status = composed.status;
     if (status.status !== "active" || status.phase !== "ready") {
       throw coordinatorError(`MAS launch requires one active ready transaction; observed ${status.status}/${status.phase ?? "none"}`);
     }
+    failureCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.PACKAGE_PROOF;
     if (!composed.packageRecoveryProof) {
       throw coordinatorError("MAS launch requires one committed package transaction with an authorized published identity");
     }
@@ -678,28 +699,59 @@ export async function launchMasDevelopmentGate({
     if (packageLaunchProof.status !== "committed") {
       throw coordinatorError("MAS launch requires the package transaction's committed-only authorization proof");
     }
+    failureCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ;
     const handoff = await readHostHandoff(status, context, packageLaunchProof);
     const launch = dependencies.launch ?? (async () => {
       await execFileAsync("open", ["-g", "-a", context.bundlePath]);
     });
+    failureCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.LOCK_FAILED;
     await lease.release();
     released = true;
+    failureCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.OPEN_FAILED;
     await launch({ context, status, handoff });
+    failureCategory = dependencies.waitForHandoff
+      ? MAS_GATE_LAUNCH_FAILURE_CATEGORIES.UNKNOWN
+      : MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT;
     const claimed = dependencies.waitForHandoff
       ? await dependencies.waitForHandoff({ context, status, handoff })
       : await waitForMasHostHandoffClaim(context, status, packageLaunchProof);
+    failureCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ;
+    const claimedSession = await readSessionJournal(path.join(status.activePath, "transaction.json"));
+    failureCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.CLAIMED_HANDOFF_INVALID;
     validateMasHostHandoff(claimed, {
       context,
-      session: await readSessionJournal(path.join(status.activePath, "transaction.json")),
+      session: claimedSession,
       state: "claimed",
       packageProof: packageLaunchProof,
     });
     return { coordinator: MAS_GATE_COORDINATOR_SCHEMA, status: "launch-claimed", runId: status.runId, handoff: claimed };
   } catch (error) {
-    if (error?.code === "MAS-GATE-CLEANUP-001") throw error;
-    throw coordinatorError(`MAS launch stopped before host handoff: ${describe(error)}`, error);
+    const diagnostic = readMasLaunchDiagnostic(error);
+    if (error?.code === "MAS-GATE-CLEANUP-001") {
+      if (!diagnostic) attachMasLaunchDiagnostic(error, { category: failureCategory });
+      throw error;
+    }
+    throw coordinatorError(
+      `MAS launch stopped before host handoff: ${describe(error)}`,
+      error,
+      diagnostic ?? { category: failureCategory },
+    );
   } finally {
-    if (!released) await lease.release();
+    if (!released && lease) {
+      try {
+        await lease.release();
+      } catch (error) {
+        if (error?.code === "MAS-GATE-CLEANUP-001") {
+          if (!readMasLaunchDiagnostic(error)) {
+            attachMasLaunchDiagnostic(error, { category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.LOCK_FAILED });
+          }
+          throw error;
+        }
+        throw coordinatorError("MAS launch lock release failed", error, {
+          category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.LOCK_FAILED,
+        });
+      }
+    }
   }
 }
 
@@ -1498,14 +1550,53 @@ async function readHostHandoff(status, context, packageProof) {
 
 async function readHostHandoffFile(activePath, journalPath, context, state, packageProof) {
   const target = path.join(activePath, MAS_GATE_HOST_HANDOFF_FILENAME);
-  const info = await lstat(target).catch((error) => { throw coordinatorError(`MAS host handoff is unavailable: ${describe(error)}`, error); });
+  const info = await lstat(target).catch((error) => {
+    throw coordinatorError(`MAS host handoff is unavailable: ${describe(error)}`, error, {
+      category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ,
+    });
+  });
   if (info.isSymbolicLink() || !info.isFile() || info.uid !== currentUid() || info.nlink !== 1 || (info.mode & 0o7777) !== 0o600) {
-    throw coordinatorError("MAS host handoff is not one secure regular file");
+    throw coordinatorError("MAS host handoff is not one secure regular file", undefined, {
+      category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ,
+    });
   }
   let handoff;
-  try { handoff = JSON.parse(await readFile(target, "utf8")); } catch (error) { throw coordinatorError("MAS host handoff is malformed", error); }
-  const session = await readSessionJournal(journalPath);
-  return validateMasHostHandoff(handoff, { context, session, state, packageProof });
+  try {
+    handoff = JSON.parse(await readFile(target, "utf8"));
+  } catch (error) {
+    throw coordinatorError("MAS host handoff is malformed", error, {
+      category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ,
+    });
+  }
+  let session;
+  try {
+    session = await readSessionJournal(journalPath);
+  } catch (error) {
+    if (error?.code === "MAS-GATE-CLEANUP-001") {
+      attachMasLaunchDiagnostic(error, { category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ });
+      throw error;
+    }
+    throw coordinatorError("MAS host handoff session is unavailable", error, {
+      category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ,
+    });
+  }
+  try {
+    return validateMasHostHandoff(handoff, { context, session, state, packageProof });
+  } catch (error) {
+    if (error?.code === "MAS-GATE-CLEANUP-001") {
+      attachMasLaunchDiagnostic(error, {
+        category: state === "claimed"
+          ? MAS_GATE_LAUNCH_FAILURE_CATEGORIES.CLAIMED_HANDOFF_INVALID
+          : MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ,
+      });
+      throw error;
+    }
+    throw coordinatorError("MAS host handoff validation failed", error, {
+      category: state === "claimed"
+        ? MAS_GATE_LAUNCH_FAILURE_CATEGORIES.CLAIMED_HANDOFF_INVALID
+        : MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ,
+    });
+  }
 }
 
 async function waitForMasHostHandoffClaim(context, status, packageProof) {
@@ -1525,9 +1616,18 @@ async function waitForMasHostHandoffClaim(context, status, packageProof) {
       await delay(100);
     }
   }
+  const lastDiagnostic = readMasLaunchDiagnostic(lastError);
+  const lastCause = lastDiagnostic?.category === MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ ||
+    lastDiagnostic?.category === MAS_GATE_LAUNCH_FAILURE_CATEGORIES.CLAIMED_HANDOFF_INVALID
+    ? lastDiagnostic.category
+    : MAS_GATE_LAUNCH_LAST_CAUSES.UNKNOWN;
   throw coordinatorError(
     `LaunchServices did not produce a claimed MAS host handoff within 5 seconds: ${describe(lastError)}`,
     lastError,
+    {
+      category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT,
+      lastCause,
+    },
   );
 }
 
@@ -1989,10 +2089,70 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function coordinatorError(reason, cause) {
+const MAS_GATE_LAUNCH_DIAGNOSTIC_PROPERTY = "masLaunchDiagnostic";
+const MAS_GATE_LAUNCH_FAILURE_CATEGORY_VALUES = new Set(Object.values(MAS_GATE_LAUNCH_FAILURE_CATEGORIES));
+const MAS_GATE_LAUNCH_LAST_CAUSE_VALUES = new Set(Object.values(MAS_GATE_LAUNCH_LAST_CAUSES));
+
+export function serializeMasDevelopmentGateFailure(error, fallbackCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.UNKNOWN) {
+  const existing = readMasLaunchDiagnostic(error);
+  const category = existing?.category ?? (
+    MAS_GATE_LAUNCH_FAILURE_CATEGORY_VALUES.has(fallbackCategory)
+      ? fallbackCategory
+      : MAS_GATE_LAUNCH_FAILURE_CATEGORIES.UNKNOWN
+  );
+  const diagnostic = {
+    schema: MAS_GATE_LAUNCH_DIAGNOSTIC_SCHEMA,
+    category,
+  };
+  if (category === MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT) {
+    diagnostic.lastCause = existing?.lastCause ?? MAS_GATE_LAUNCH_LAST_CAUSES.UNKNOWN;
+  }
+  return {
+    coordinator: MAS_GATE_COORDINATOR_SCHEMA,
+    status: "failed",
+    diagnostic,
+  };
+}
+
+function attachMasLaunchDiagnostic(error, { category, lastCause } = {}) {
+  if (!error || (typeof error !== "object" && typeof error !== "function")) return error;
+  const normalizedCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORY_VALUES.has(category)
+    ? category
+    : MAS_GATE_LAUNCH_FAILURE_CATEGORIES.UNKNOWN;
+  const diagnostic = { category: normalizedCategory };
+  if (normalizedCategory === MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT) {
+    diagnostic.lastCause = MAS_GATE_LAUNCH_LAST_CAUSE_VALUES.has(lastCause)
+      ? lastCause
+      : MAS_GATE_LAUNCH_LAST_CAUSES.UNKNOWN;
+  }
+  Object.defineProperty(error, MAS_GATE_LAUNCH_DIAGNOSTIC_PROPERTY, {
+    configurable: true,
+    enumerable: false,
+    value: Object.freeze(diagnostic),
+  });
+  return error;
+}
+
+function readMasLaunchDiagnostic(error) {
+  if (!error || (typeof error !== "object" && typeof error !== "function")) return null;
+  let candidate;
+  try { candidate = error[MAS_GATE_LAUNCH_DIAGNOSTIC_PROPERTY]; } catch { return null; }
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate) ||
+      !MAS_GATE_LAUNCH_FAILURE_CATEGORY_VALUES.has(candidate.category)) return null;
+  const diagnostic = { category: candidate.category };
+  if (candidate.category === MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT) {
+    diagnostic.lastCause = MAS_GATE_LAUNCH_LAST_CAUSE_VALUES.has(candidate.lastCause)
+      ? candidate.lastCause
+      : MAS_GATE_LAUNCH_LAST_CAUSES.UNKNOWN;
+  }
+  return Object.freeze(diagnostic);
+}
+
+function coordinatorError(reason, cause, diagnostic) {
   const error = new Error(`MAS-GATE-CLEANUP-001: repository-authorized MAS development coordinator failed closed. Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md and docs/decisions/0005-mac-app-store-and-revenuecat.md. Next action: leave every root intact; run MAS gate status/recovery. Reason: ${reason}`);
   error.code = "MAS-GATE-CLEANUP-001";
   if (cause) error.cause = cause;
+  if (diagnostic) attachMasLaunchDiagnostic(error, diagnostic);
   return error;
 }
 
@@ -2001,6 +2161,16 @@ function delay(milliseconds) { return new Promise((resolve) => setTimeout(resolv
 
 async function main() {
   const [command = "status", ...arguments_] = process.argv.slice(2);
+  if (command === "launch") {
+    try {
+      const context = masDevelopmentRuntimeContext();
+      process.stdout.write(`${JSON.stringify(await launchMasDevelopmentGate({ context }), null, 2)}\n`);
+    } catch (error) {
+      process.stderr.write(`${JSON.stringify(serializeMasDevelopmentGateFailure(error, MAS_GATE_LAUNCH_FAILURE_CATEGORIES.PREFLIGHT_STATUS), null, 2)}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
   const context = masDevelopmentRuntimeContext();
   if (command === "help" || command === "--help") {
     process.stdout.write("Usage: node scripts/macos-mas-development-gate.mjs <status|install|launch|stop|restore|recover> [--manifest=/proof/release/macos/app-store-development-manifest.json] [--bundle=/proof/release/macos/Meetless.app] [--required-free-bytes=N]\n");
@@ -2015,10 +2185,6 @@ async function main() {
     const bundlePath = readRequiredPath(arguments_, "--bundle=");
     const requiredFreeBytes = readRequiredFreeBytes(arguments_);
     process.stdout.write(`${JSON.stringify(await installMasDevelopmentGate({ manifestPath, bundlePath, requiredFreeBytes, context }), null, 2)}\n`);
-    return;
-  }
-  if (command === "launch") {
-    process.stdout.write(`${JSON.stringify(await launchMasDevelopmentGate({ context }), null, 2)}\n`);
     return;
   }
   if (command === "stop") {
