@@ -2,18 +2,41 @@
 
 ## Current State
 
-- `plan_revision`: `v129`
-- `current_frontier`: `R5-MAS-ATTEMPT19-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
-- `state`: `ATTEMPT19_READINESS_FAILED_RECOVERED_CHILD_IDENTITY_MISMATCH`
+- `plan_revision`: `v130`
+- `current_frontier`: `R5-MAS-POST-A19-SOURCE-ACCEPTANCE`
+- `state`: `POST_A19_CORRECTIONS_ACCEPTED_EXTERNAL_RETRY_HELD`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: terminal-archive source candidate implemented from immutable base `f003c05`; local commit identity is handed off separately for Lead acceptance. No MAS artifact, package, install, launch, or external gate is accepted by this implementation.
+- `candidate`: local source fbbac36121637b9e6d26eb89dcbdedb31bc7dbfb accepted; contains reviewed fork pin a2c8ff349ffdf6f500eb09270c7f44af4c018bfc and bounded launch diagnostics. No MAS artifact contains this combined correction yet.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: the terminal-only archive assurance implementation is locally complete, but its source candidate remains pending Lead acceptance and read-only coordinator verification. Attempt 18 had one interrupted Phase-1 invocation, no accepted artifact and no Phase-2 admission. External retry/build/install/recovery operations remain held; existing excluded gates and push remain closed.
+- `pending_ruling`: Attempt 19 is consumed and recovered. Its named owner authorization does not admit Attempt 20. A new external round requires the separate owner retry authorization retained in the A19 reconciliation; excluded gates and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
-- `blocked_by`: no in-scope implementation dependency remains; Lead acceptance and read-only status verification remain pending. Historical volume continuity is still unproven by design.
-- `next_action`: review the local parent pin candidate, then assess the separately queued launch-failure enum work; no external retry admitted.
+- `blocked_by`: packaged native readiness and actual new-artifact role-configuration exclusion remain unproven. The A19 launch rejection predicate remains unknown; new diagnostics can retain it on a future authorized run.
+- `next_action`: obtain named Attempt 20 authorization before package/sign/install/launch; retain two artifact/runtime acceptance checkpoints and observer-before-launch ordering.
+
+### Lead combined source acceptance (2026-09-06)
+
+Accept fbbac36121637b9e6d26eb89dcbdedb31bc7dbfb, diagnostic base
+eb5d7fb68a7c102a7e99d0d4942d24972d541e6f, initial diagnostic323e466 and
+test-only correction over8f2f0c1. Lead inspected cumulative three-file scope:
+coordinator, its test, plan. The correction rebinds in-memory fixture metadata
+and dependent hashes; no production validator/predicate changed. Lead reran
+the complete coordinator and transaction suites from root:136/136 passed.
+Four frozen authority hashes and diff whitespace matched. Writer typecheck
+passed; no hook/CI/branch-protection enforcement is newly claimed.
+
+The diagnostic returns only fixed categories through actual CLI stderr, with
+bounded timeout lastCause. Success and lifecycle order remain unchanged by
+source inspection. Fork argv guard and offline pin material were previously
+accepted. These are source-level outcomes; no new MAS/runtime success claim.
+
+`PLAN_RECONCILIATION v1`: remove stale terminal-archive acceptance and pin
+blockers from current state. Source correction, dependency material and launch
+evidence work are complete locally; the next outcome is one bounded external
+proof, not another source review loop. Preserve owner role-configuration
+exclusion audit at artifact acceptance. Named retry gate remains explicit;
+do not reinterpret the consumed A19 authorization as an unlimited retry grant.
 
 ### A19 argv-drift ruling and fork correction boundary
 
