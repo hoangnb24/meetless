@@ -2,9 +2,9 @@
 
 ## Current State
 
-- `plan_revision`: `v107`
-- `current_frontier`: `R5-MAS-ATTEMPT16-READINESS-DIAGNOSTIC-INSTRUMENTATION`
-- `state`: `BASE_RUNTIME_DIAGNOSTICS_ACCEPTED_AWAITING_SCOPED_ATTEMPT`
+- `plan_revision`: `v108`
+- `current_frontier`: `R5-MAS-ATTEMPT17-DIAGNOSTIC-RUNTIME-PROOF`
+- `state`: `ATTEMPT17_AUTHORIZED_PHASE1_PENDING`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted Attempt 16 artifact from repository tip `e57ac527db6e2cb3cf0654c872ea7fcfed414e79`, bundle fingerprint `e7243483893d9939287ff66c482590375f271cb626c31dcb1fc7b950eb514f65`, manifest SHA-256 `e377fbeb004f845a44241f29b545bdadab87640b2aff4b2c376bcc189536cf0e`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
@@ -12,8 +12,43 @@
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempts 14, 15, and 16 are consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`; not yet packaged or run as a MAS application.
-- `blocked_by`: Attempt 16's retained evidence still cannot identify its failing readiness subcheck. The accepted diagnostic source needs a new signed build and separately owner-authorized install/launch/recovery observation; no external retry is authorized yet.
-- `next_action`: request one scoped diagnostic attempt: build/sign/validate the accepted source, coordinator install, one LaunchServices launch and bounded readiness observation, then coordinator recovery. Preserve existing network behavior and permit only the already-required build-scoped public SDK key loading for validation/startup, without exposing it. All purchase/restore, real capture/TCC/export, production and publication gates remain closed. This proposed scope is not authorization.
+- `blocked_by`: Attempt 16's cause remains unresolved until the newly authorized diagnostic attempt supplies live evidence.
+- `next_action`: execute Attempt 17 Phase 1 once, accept the exact new signed artifact, then proceed under the same owner authorization to one coordinator install/LaunchServices launch/bounded readiness observation and coordinator recovery. No automatic retry after terminal failure.
+
+### Attempt 17 authorization (2026-09-05)
+
+The owner answered `Đồng ý` to the explicit proposal for one
+build–sign–validate–install–launch attempt using the existing public SDK key and
+unchanged network behavior, followed by automatic restoration of the old app
+and data after evidence collection. This is one serial two-checkpoint attempt:
+
+- Phase 1: read-only coordinator-status preflight, one MAS development
+  build/package/sign invocation in a fresh proof root, complete artifact
+  validation. Stop at the immutable artifact for Lead acceptance.
+- Phase 2: after Lead accepts that artifact, one coordinator install, one
+  LaunchServices launch with bounded readiness observation, owned stop if
+  needed, then one coordinator recovery. A new owner prompt between these
+  phases is not required. Verify package-first rollback, exact old-app and
+  old-runtime restoration, absence of owned live state, and terminal archive.
+
+The sole external operator owns generated build/proof outputs and authorized
+coordinator-mediated changes to `/Applications/Meetless.app` and the exact MAS
+runtime transaction targets; no other writer operates concurrently. The
+previous runtime diagnostic writer is finished. Repository code is frozen at
+accepted diagnostic source `8759ec6d494018e2bfd7a01682b6f5af0fb2f409` plus
+subsequent plan-only acceptance/authorization records. No source corrections,
+manual cleanup, archive deletion, or unbounded retries are authorized.
+
+Load only `MEETLESS_REVENUECAT_PUBLIC_SDK_KEY` from the already accepted owned
+mode-0600 environment file for build/validator/startup where required; never
+print or pass its raw value in arguments or copy it into evidence. Preserve
+existing relay and local-model startup behavior. Purchase/restore, Premium
+UI/status, RevenueCat dashboard/mutation/cache/secret inspection, Convex and
+production, real capture/recording/TCC/export, upload/submission/publication,
+and push remain closed. This proof ends with restoration, not a retained
+interactive test installation. Read-only preflight failures before a side
+effect do not consume an attempt; terminal package/install/launch failure
+remains no-retry. Retain failed-attempt evidence safely.
 
 ## Today's Acceptance Boundary — Base MAS Runtime (2026-09-05)
 
