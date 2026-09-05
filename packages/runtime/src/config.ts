@@ -31,7 +31,7 @@ import {
   RuntimeEndpointPolicyViolationError,
 } from "./runtime-endpoints.js";
 
-export const PINNED_PASEO_COMMIT = "7618cda71e2836f9ba7e821286504841203cb745";
+export const PINNED_PASEO_COMMIT = "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc";
 export const DEFAULT_MEETLESS_LISTEN = "127.0.0.1:6777";
 export const MEETLESS_INSTALLATION_PATH = "/Applications/Meetless.app";
 export const MEETLESS_USER_SUPPORT_RELATIVE_PATH = "Library/Application Support/Meetless";

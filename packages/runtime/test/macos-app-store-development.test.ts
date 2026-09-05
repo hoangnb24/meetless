@@ -379,10 +379,10 @@ describe("Mac App Store development package boundary", () => {
     const commit = await resolveR5DevelopmentPaseoCommit("/workspace/meetless", {
       execute: async (...arguments_) => {
         calls.push(arguments_);
-        return { stdout: "7618cda71e2836f9ba7e821286504841203cb745\n" };
+        return { stdout: "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc\n" };
       },
     });
-    expect(commit).toBe("7618cda71e2836f9ba7e821286504841203cb745");
+    expect(commit).toBe("a2c8ff349ffdf6f500eb09270c7f44af4c018bfc");
     expect(calls).toEqual([[
       "git",
       ["-C", "/workspace/meetless/vendor/paseo", "rev-parse", "--verify", "HEAD^{commit}"],
@@ -396,7 +396,7 @@ describe("Mac App Store development package boundary", () => {
       execute: async () => ({ stdout: "not-a-commit\n" }),
     })).rejects.toThrow(/invalid Paseo commit marker/);
     await expect(resolveR5DevelopmentPaseoCommit("relative-repository", {
-      execute: async () => ({ stdout: "7618cda71e2836f9ba7e821286504841203cb745" }),
+      execute: async () => ({ stdout: "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc" }),
     })).rejects.toThrow(/absolute repository root/);
   });
 

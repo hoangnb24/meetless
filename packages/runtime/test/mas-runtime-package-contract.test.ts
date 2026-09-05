@@ -26,7 +26,7 @@ import {
   validateMacAppStorePackagedMarker,
 } from "../../../scripts/lib/macos-app-store-package-contract.mjs";
 
-const FIXTURE_PASEO_COMMIT = "7618cda71e2836f9ba7e821286504841203cb745";
+const FIXTURE_PASEO_COMMIT = "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc";
 const FIXTURE_HOME = "/Users/example";
 const FIXTURE_CONTAINER_SUPPORT = `${FIXTURE_HOME}/Library/Containers/com.meetless.app/Data/Library/Application Support`;
 const FIXTURE_RUNTIME_ROOT = `${FIXTURE_CONTAINER_SUPPORT}/Meetless`;

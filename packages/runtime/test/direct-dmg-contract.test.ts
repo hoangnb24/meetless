@@ -445,7 +445,7 @@ describe("M7 direct-DMG installation contract", () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-f23-marker-"));
     try {
       await writeFile(path.join(root, "installation-contract.json"), installationContractBytes());
-      const marker = packagedMarker({ paseoCommit: "7618cda71e2836f9ba7e821286504841203cb745" });
+      const marker = packagedMarker({ paseoCommit: "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc" });
       expect(validatePackagedMarker(marker, root)).toBeUndefined();
       expect(validateHostConfig(packagedHostConfiguration(), "/Applications/Meetless.app")).toBeUndefined();
       expect(() => validatePackagedMarker({ ...marker, hostBundlePath: "/Users/example/Applications/Meetless.app" }, root)).toThrow(/direct-install locations/);

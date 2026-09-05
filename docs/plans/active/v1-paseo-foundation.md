@@ -13,7 +13,7 @@
 - `pending_ruling`: the terminal-only archive assurance implementation is locally complete, but its source candidate remains pending Lead acceptance and read-only coordinator verification. Attempt 18 had one interrupted Phase-1 invocation, no accepted artifact and no Phase-2 admission. External retry/build/install/recovery operations remain held; existing excluded gates and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
 - `blocked_by`: no in-scope implementation dependency remains; Lead acceptance and read-only status verification remain pending. Historical volume continuity is still unproven by design.
-- `next_action`: one local maintained-fork correction candidate for packaged supervisor/worker argv stability, then reviewed pin integration; no external retry admitted.
+- `next_action`: review the local parent pin candidate, then assess the separately queued launch-failure enum work; no external retry admitted.
 
 ### A19 argv-drift ruling and fork correction boundary
 
@@ -80,6 +80,53 @@ later explicit pin/marker integration and necessary package-source proof.
 Recording/capture remains excluded; an eventual local pin checkpoint must
 report unrun recording proof rather than silently claim full ADR0001 release
 acceptance. No distribution or publication is authorized.
+
+### A19 parent pin integration checkpoint (2026-09-05)
+
+The parent integration starts from exact base
+`51951c040471b75131cf30313107dca68530b653`, which already contains only the
+Lead plan routing from the fork handback. The checked-out `vendor/paseo`
+gitlink is advanced locally to the Lead-accepted fork candidate
+`a2c8ff349ffdf6f500eb09270c7f44af4c018bfc`, whose fork parent is the original
+`7618cda71e2836f9ba7e821286504841203cb745`. This is a local parent candidate,
+not Lead acceptance of release or runtime proof.
+
+The current pin/marker contract is updated coherently at the existing owners:
+`scripts/lib/paseo-dependency.mjs` and
+`packages/runtime/src/config.ts` now name the candidate, and current package
+marker/pin fixtures in the focused runtime tests plus the native marker fixture
+use that same exact commit. Historical artifact baselines and historical plan
+records remain unchanged. No fork file, lockfile, launch-diagnostic source,
+package/sign/install/launch/recording/TCC/network state, or protected artifact
+was changed. The fork audit found no added Codex Room role configuration; the
+future packaged-artifact role exclusion remains an independent audit and is
+not claimed by this checkpoint.
+
+Observed local proof:
+
+- The focused parent Vitest command passed five files with 96 tests passed and
+  one existing skip.
+- `npm run typecheck`, `npm run build:meetless`, and `npm run build:native`
+  passed. The native command passed both debug and release
+  `MeetlessHostTests` executables.
+- The package-source snapshot passed with digest
+  `03c7fdad96d595b1983bbc67ed8af444b99a1012d67f2b70dec3b51c1bb55560`, parent
+  head `51951c040471b75131cf30313107dca68530b653`, gitlink and expected commit
+  both `a2c8ff349ffdf6f500eb09270c7f44af4c018bfc`, and the existing bundle
+  size/hash unchanged.
+- The offline bundle validator remains intentionally unaccepted: the existing
+  content-addressed bundle contains only the historical
+  `7618cda71e2836f9ba7e821286504841203cb745` ref, so checkout of the new
+  candidate fails closed. Updating or regenerating that bundle is outside this
+  parent-pin scope and no package proof is claimed.
+- Root format/lint scripts are absent; the maintained fork's `oxfmt`,
+  `oxlint`, and `tsgo` are unavailable in this checkout. No tool installation
+  was attempted. The frozen authority aggregate remains
+  `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
+
+The separate coordinator launch `exit1` remains unresolved and is not
+attributed to this pin integration. ADR0001 recording/desktop proof remains
+explicitly unrun and excluded.
 
 The coordinator launch exit1 is separate: native handoff is claimed before
 children start, whereas title mutation occurs afterward. Existing sanitized

@@ -399,7 +399,7 @@ async function packagedResourceFixture(): Promise<{ root: string; packageRoot: s
     schema: "MEETLESS_MACOS_PACKAGE v2",
     target: "macos-arm64",
     bundleIdentifier: "com.meetless.app",
-    paseoCommit: "7618cda71e2836f9ba7e821286504841203cb745",
+    paseoCommit: "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc",
     listen: "127.0.0.1:16777",
     rendererOrigin: "http://127.0.0.1:18082",
     installationContract: "installation-contract.json",
