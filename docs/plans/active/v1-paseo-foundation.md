@@ -2,9 +2,9 @@
 
 ## Current State
 
-- `plan_revision`: `v118`
+- `plan_revision`: `v119`
 - `current_frontier`: `R5-MAS-TERMINAL-ARCHIVE-DEVICE-ASSURANCE`
-- `state`: `R5_TERMINAL_ARCHIVE_ASSURANCE_IMPLEMENTED_PENDING_LEAD_ACCEPTANCE`
+- `state`: `R5_TERMINAL_ARCHIVE_ASSURANCE_REOPEN_NATIVE_PARITY`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: terminal-archive source candidate implemented from immutable base `f003c05`; local commit identity is handed off separately for Lead acceptance. No MAS artifact, package, install, launch, or external gate is accepted by this implementation.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
@@ -16,6 +16,28 @@
 - `next_action`: Lead independently inspect the immutable source candidate and terminal coordinator output before any external MAS attempt. Attempt 18 remains rejected; no interrupted package invocation is resumed or repeated.
 
 ### Terminal archive assurance decision and implementation authority (2026-09-05)
+
+Lead acceptance checkpoint: candidate `62f7505b290b63ae7170ddc8a3f96d7dd7efb98a`
+is reopened on exactly `{R5-MAS-TERMINAL-ARCHIVE-001}`. Independent ordinary
+Peer found the unchanged Swift archived-artifact guard still compares retained
+root device exactly before native handoff. Lead verified that call path and
+accepts the finding: Node acceptance alone cannot deliver a launchable state.
+The shared active/handoff comparator must stay strict; the bounded correction
+belongs only to the terminal native archived-root guard and direct regressions.
+
+Lead personally reran the two focused Node suites from repository root:
+133 tests passed. An earlier workspace-cwd invocation failed four tests because
+repository-relative script/fixture paths were resolved from packages/runtime;
+the correct root invocation passed without source changes. Ancestry, four-file
+manifest, diff whitespace and all four frozen authority hashes matched.
+
+`PLAN_RECONCILIATION v1`: one accepted correction batch, one SERIAL writer;
+expand ownership to native/macos-host/MeetlessHost.swift and its existing
+TranscriptionCapabilityTests.swift plus this plan. No competing Node writer or
+second independent feature. Require actual native test execution and retained
+Node regression proof; reuse the same reviewer for FAST closeout of this
+finding and correction delta. External attempt remains held. This is native
+composition of the accepted terminal exception, not a new assurance policy.
 
 After the explicit limited-assurance recommendation and confirmation question,
 the owner directed: "Ok thế bạn quyết đi, mình giao toàn quyền rồi mà. Xử lý
