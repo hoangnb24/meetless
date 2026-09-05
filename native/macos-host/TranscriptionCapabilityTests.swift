@@ -29,6 +29,53 @@ private final class RecordingRegistrationDiagnosticSink: MeetlessProcessRegistra
   }
 }
 
+private final class CancellationOrderingDiagnosticSink: MeetlessProcessRegistrationDiagnosticSink {
+  private let cancellation: NativeRequestCancellation
+  private let entered = DispatchSemaphore(value: 0)
+  private let release = DispatchSemaphore(value: 0)
+  private let lock = NSLock()
+  private var blockNextRecord = true
+  private var recordedEventCount = 0
+  private var cancellationObserved = false
+
+  init(cancellation: NativeRequestCancellation) {
+    self.cancellation = cancellation
+  }
+
+  func record(_ event: MeetlessProcessRegistrationRemovalEvent) {
+    lock.lock()
+    recordedEventCount += 1
+    cancellationObserved = cancellation.isCancelled()
+    let shouldBlock = blockNextRecord
+    blockNextRecord = false
+    lock.unlock()
+    entered.signal()
+    if shouldBlock {
+      _ = release.wait(timeout: .now() + .seconds(5))
+    }
+  }
+
+  func waitUntilRecording() -> Bool {
+    entered.wait(timeout: .now() + .seconds(2)) == .success
+  }
+
+  func unblock() {
+    release.signal()
+  }
+
+  var didObserveCancellation: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return cancellationObserved
+  }
+
+  var eventCount: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return recordedEventCount
+  }
+}
+
 private struct RuntimeEndpointGoldenPolicy: Decodable {
   let schema: String
   let workingDirectory: String
@@ -1854,6 +1901,68 @@ private func testStalePruneDoesNotEmitUncommittedRemoval() throws {
     fixture.state.processRegistrationSnapshotForTesting().isEmpty,
     "a committed state reset must remove the registration snapshot"
   )
+}
+
+private func testLifecycleCancellationPrecedesDiagnosticSink() throws {
+  do {
+    let fixture = try NativeRegistrationDiagnosticFixture.make()
+    guard let lease = fixture.state.issueLease(
+      peerPID: fixture.pluginPID,
+      authorizer: RuntimePeerAuthorizer(),
+      requireRegistered: true
+    ), let execution = fixture.state.beginExecution(lease) else {
+      throw NSError(domain: "MeetlessHostTests", code: 74, userInfo: [NSLocalizedDescriptionKey: "publish cancellation fixture could not begin an active execution"])
+    }
+    defer { fixture.state.finishExecution(execution) }
+    let sink = CancellationOrderingDiagnosticSink(cancellation: execution.cancellation)
+    fixture.state.setRegistrationDiagnosticSink(sink)
+    let finished = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+      fixture.state.publish(fixture.desktop.processIdentifier)
+      finished.signal()
+    }
+    check(sink.waitUntilRecording(), "publish must reach the diagnostic sink in the cancellation-ordering regression")
+    check(
+      sink.didObserveCancellation,
+      "publish must cancel active executions before potentially blocking diagnostic sink work"
+    )
+    sink.unblock()
+    check(
+      finished.wait(timeout: .now() + .seconds(2)) == .success,
+      "publish must complete after the controlled diagnostic sink stall is released"
+    )
+    check(sink.eventCount > 0, "publish cancellation regression must retain its reset event snapshot")
+  }
+
+  do {
+    let fixture = try NativeRegistrationDiagnosticFixture.make()
+    guard let lease = fixture.state.issueLease(
+      peerPID: fixture.pluginPID,
+      authorizer: RuntimePeerAuthorizer(),
+      requireRegistered: true
+    ), let execution = fixture.state.beginExecution(lease) else {
+      throw NSError(domain: "MeetlessHostTests", code: 75, userInfo: [NSLocalizedDescriptionKey: "clear cancellation fixture could not begin an active execution"])
+    }
+    defer { fixture.state.finishExecution(execution) }
+    let sink = CancellationOrderingDiagnosticSink(cancellation: execution.cancellation)
+    fixture.state.setRegistrationDiagnosticSink(sink)
+    let finished = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+      fixture.state.clear(expected: fixture.desktop.processIdentifier)
+      finished.signal()
+    }
+    check(sink.waitUntilRecording(), "clear must reach the diagnostic sink in the cancellation-ordering regression")
+    check(
+      sink.didObserveCancellation,
+      "clear must cancel active executions before potentially blocking diagnostic sink work"
+    )
+    sink.unblock()
+    check(
+      finished.wait(timeout: .now() + .seconds(2)) == .success,
+      "clear must complete after the controlled diagnostic sink stall is released"
+    )
+    check(sink.eventCount > 0, "clear cancellation regression must retain its reset event snapshot")
+  }
 }
 
 private func testRegistrationDiagnosticProductionWiring() throws {
@@ -3747,6 +3856,10 @@ private struct TranscriptionCapabilityTests {
     do { try testStalePruneDoesNotEmitUncommittedRemoval() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: stale registration prune diagnostics: \(error)\n".utf8))
+    }
+    do { try testLifecycleCancellationPrecedesDiagnosticSink() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: lifecycle cancellation before diagnostic sink: \(error)\n".utf8))
     }
     do { try testRegistrationDiagnosticProductionWiring() } catch {
       failures += 1

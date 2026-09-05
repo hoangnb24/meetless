@@ -2443,8 +2443,8 @@ final class RuntimeAuthorizationState {
     )
     let sink = registrationDiagnosticSink
     lock.unlock()
-    recordRemovalEvents(events, using: sink)
     cancellations.forEach { $0.cancel() }
+    recordRemovalEvents(events, using: sink)
   }
 
   func clear(expected: pid_t? = nil) {
@@ -2482,8 +2482,8 @@ final class RuntimeAuthorizationState {
     )
     let sink = registrationDiagnosticSink
     lock.unlock()
-    recordRemovalEvents(events, using: sink)
     cancellations.forEach { $0.cancel() }
+    recordRemovalEvents(events, using: sink)
   }
 
   func snapshot() -> pid_t? {

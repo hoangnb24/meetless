@@ -2,9 +2,9 @@
 
 ## Current State
 
-- `plan_revision`: `v111`
+- `plan_revision`: `v112`
 - `current_frontier`: `R5-MAS-ATTEMPT17-NATIVE-REGISTRATION-PRUNE-REASON`
-- `state`: `NATIVE_REMOVAL_DIAGNOSTICS_CANDIDATE_READY_FOR_LEAD_ACCEPTANCE`
+- `state`: `NATIVE_REMOVAL_DIAGNOSTICS_LIFECYCLE_ORDER_CORRECTION_READY_FOR_CLOSEOUT`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted Attempt 17 artifact from source `4ec0865dd1b8626d75fc2648dfba8e055dde27f6`, bundle fingerprint `55f327720893d61be6a24a19c5d6704f9e237fecbf8eb539b21f159145fc06ca`, manifest SHA-256 `48f710433c26ab8456983d41e17f5d0dd7e9d24e808af7e2d2d9381f2eb29a5d`; package accepted, runtime readiness failed.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
@@ -13,7 +13,7 @@
 - `pending_ruling`: Attempts 14–17 are consumed and recovered. New bounded MAS proof runs are now Lead-routed under the owner's delegated base-runtime authority below, not retries charged to an old attempt. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
 - `blocked_by`: successful native status lacked the live supervisor's daemon registration, but the immutable native diagnostic candidate now retains the committed pruning/reset predicate. Neither a functional correction nor user-test readiness is proven.
-- `next_action`: Lead independently accepts or rejects the immutable native diagnostic candidate before routing the next one-shot MAS proof. Preserve readiness/topology/attestation; no speculative PID substitution, timeout increase, or registration bypass. Prepare observation before launch so the startup window is not missed.
+- `next_action`: Lead independently closes out the immutable `LIFECYCLE-001` correction candidate before routing the next one-shot MAS proof. Preserve readiness/topology/attestation; no speculative PID substitution, timeout increase, or registration bypass. Prepare observation before launch so the startup window is not missed.
 
 ### Delegated base-runtime technical authority (2026-09-05)
 
@@ -128,6 +128,32 @@ readiness/diagnostic regression passed 2 files and 53 tests; no TypeScript was
 changed, so the full typecheck was not required. Frozen authority hashes and
 aggregate digest remain unchanged. Lead acceptance is separate; this section
 does not claim MAS runtime readiness.
+
+### `LIFECYCLE-001` correction closeout (2026-09-05)
+
+Lead froze the sole accepted finding against correction base
+`ceb101ad5e496a2419cc693ea852c04bbd9a7a50`: `publish()` and `clear()` called
+`recordRemovalEvents` before the existing active-execution cancellations. The
+correction retains each committed event snapshot, generation, and revision,
+unlocks the authorization state, runs the original cancellation loop, and only
+then invokes the diagnostic sink. No lifecycle/security/readiness/inspection
+behavior or sink design changes are included.
+
+The executable regression creates an active native request execution for each
+method, installs a sink that blocks on its first record, invokes `publish()`
+and `clear()` on isolated fixtures, and verifies cancellation is already true
+when sink work begins before releasing the stall. Both reset event snapshots
+are recorded. The reviewer-supplied evidence limit remains explicit:
+`testRegistrationDiagnosticProductionWiring` exercises the real attach helper
+and real authorization state in an isolated fixture, while source inspection
+verifies production attachment before `Process.run`; real MAS retained-sink
+proof remains the next external boundary.
+
+No other finding is accepted. The correction remains native-only plus this
+plan, with the frozen four authority-file hashes and aggregate digest
+unchanged. Final native debug/release proof and the focused TypeScript
+diagnostic/readiness/packaged-attestation regression are required before the
+immutable closeout handoff; no external attempt is authorized.
 
 Operational evidence limit: the operator's observation started at
 `01:05:30.495Z`, over five minutes after launch and after cleanup. Its later
