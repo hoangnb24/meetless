@@ -2,7 +2,7 @@
 
 ## Current State
 
-- `plan_revision`: `v116`
+- `plan_revision`: `v118`
 - `current_frontier`: `R5-MAS-POST-REBOOT-ARCHIVED-IDENTITY-FOUNDATION`
 - `state`: `ATTEMPT18_INTERRUPTED_PHASE1_REJECTED_POST_REBOOT_STATUS_BLOCKED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
@@ -15,7 +15,62 @@
 - `blocked_by`: authoritative coordinator status fails with MAS-GATE-CLEANUP-001 because the archived transaction device is 16777234 while the current runtime root device is 16777232. The same root inode and counts do not establish full attestation equivalence. Do not bypass, normalize away, or rewrite journal identity to obtain a green status.
 - `next_action`: read-only foundation judgment on reboot-stable identity and safe archived-state handling before any correction or new external brief. Attempt 18 ownership/result is closed below; no interrupted package invocation will be silently resumed or repeated.
 
+### Terminal archive assurance decision and implementation authority (2026-09-05)
+
+After the explicit limited-assurance recommendation and confirmation question,
+the owner directed: "Ok thế bạn quyết đi, mình giao toàn quyền rồi mà. Xử lý
+cho xong để mình có thể test thử". Lead exercises that specific delegated
+decision now: accept a terminal-only non-device-equivalence assurance class,
+not historical volume continuity. This resolves the confirmation hold below.
+
+Accepted rule: only fully terminal `archived` evidence may use a derived
+comparison projecting serialized device identifiers to their recorded values.
+All other recorded properties must match; traversal must enforce current-device
+uniformity and existing symlink/hardlink/ownership/path protections. Retained
+fresh-root checks remain at their existing recorded evidence depth, with only
+the same explicit device exception; do not imply a retained-content digest
+where none was recorded. Journals and retained roots remain immutable.
+Report the limited assurance explicitly through the authoritative coordinator;
+never label it exact historical volume equivalence. Unknown or non-device
+differences still refuse progression without mutation.
+
+Active, construction, ready, archive-intent, restore and new pre-write checks
+retain exact device identity. A new transaction independently records its
+current baseline. This exception does not authorize active recovery across
+reboot, a generic migration framework, or manual repair of old archives.
+
+`FOUNDATION_CHECK v1`: independent design result accepted conditionally on the
+above explicit assurance decision; no second discovery loop is needed.
+One SERIAL writer owns the bounded transaction/coordinator/test change and
+this plan after dispatch. Lead does not implement the moving scope. Acceptance
+requires positive device-only proof, negative non-device/active-state proof,
+coordinator propagation and new-transaction baseline composition proof. The
+same ordinary foundation Peer may assess the stable candidate's residual
+lifecycle risk; no OCR or broad unrelated review is prescribed.
+External operations remain held until source acceptance and read-only status
+verification; then Lead may brief Attempt 19 under existing scoped authority.
+
 ### Owner boundary question: post-reboot scope classification (2026-09-05)
+
+Foundation result / Lead ruling: ordinary Peer `be99120b` returned
+`DEPENDENCY_REQUEST` at `c0b9b335c3388bfaf055236599bd11d3591d7e25`.
+Lead verified the digest construction, uniform-device traversal, hardlink
+grouping and separate retained-root device checks. A terminal-only derived
+digest with only serialized device fields projected to the historical value
+could prove equality of the other recorded properties, but cannot prove
+historical volume continuity. No historical volume binding is retained in the
+journal. This is a conditional verification design, not observed equivalence
+of the live roots and not an accepted correction.
+
+Lead recommends explicitly accepting this limited historical assurance for
+completed archives only, while preserving their bytes, requiring every other
+recorded property to match, reporting volume continuity as unproven, and keeping
+all active-transaction/device/pre-write/restore checks strict. A fresh run would
+record its own current baseline. If any required comparison fails, stop without
+mutation. This changes the assurance delivered, so broad technical delegation
+is not treated as silent approval to relax it. Owner confirmation is required
+before implementation; no further review loop or external attempt is opened.
+The alternative is to keep the gate blocked pending historical volume evidence.
 
 Owner subsequently accepted the narrow recommendation and delegated technical
 execution: "Đồng ý, please act on my behalf, bạn toàn quyền quyết. Chúng ta cần
