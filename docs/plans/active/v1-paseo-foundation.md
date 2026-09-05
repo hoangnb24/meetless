@@ -2,7 +2,7 @@
 
 ## Current State
 
-- `plan_revision`: `v123`
+- `plan_revision`: `v124`
 - `current_frontier`: `R5-MAS-ATTEMPT19-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
 - `state`: `ATTEMPT19_READINESS_FAILED_RECOVERED_CHILD_IDENTITY_MISMATCH`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
@@ -16,6 +16,24 @@
 - `next_action`: one local maintained-fork correction candidate for packaged supervisor/worker argv stability, then reviewed pin integration; no external retry admitted.
 
 ### A19 argv-drift ruling and fork correction boundary
+
+Explicit project-owner boundary: Codex Room Supervisor/Lead/Peer role
+configuration belongs to codex-room-setup, not the maintained Paseo fork and
+not any Meetless artifact. This applies to the current fork correction and
+subsequent pin/package acceptance. Do not copy role prompts, provider profiles,
+setup defaults or room configuration into runtime source, generated output or
+package inputs. Generic provider support is not authorization to ship role
+configuration. The Paseo daemon supervisor is a runtime process manager, not
+the Codex Room Supervisor role; its legitimate runtime code is not prohibited.
+
+Lead relayed this boundary to the active sole fork writer without expanding
+the two-entrypoint correction. Initial tracked-content scan found role IDs in
+four test files and public-docs/mcp.md examples; this is not yet proof of an
+installed role profile or clean artifact. Classify those references and actual
+configuration/package inputs before acceptance; do not equate a keyword match
+with configuration or silently claim the entire artifact is clean. Any cleanup
+of pre-existing role-specific examples/configuration is separately scoped after
+the moving fork candidate is stable, never competing edits or broad deletion.
 
 Lead accepts independent A19-DAEMON-IDENTITY-001: title-driven argv drift is a
 sufficient supported cause of native supervisor pruning. Native exact equality
