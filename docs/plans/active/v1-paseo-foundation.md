@@ -2,7 +2,7 @@
 
 ## Current State
 
-- `plan_revision`: `v122`
+- `plan_revision`: `v123`
 - `current_frontier`: `R5-MAS-ATTEMPT19-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
 - `state`: `ATTEMPT19_READINESS_FAILED_RECOVERED_CHILD_IDENTITY_MISMATCH`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
@@ -13,7 +13,35 @@
 - `pending_ruling`: the terminal-only archive assurance implementation is locally complete, but its source candidate remains pending Lead acceptance and read-only coordinator verification. Attempt 18 had one interrupted Phase-1 invocation, no accepted artifact and no Phase-2 admission. External retry/build/install/recovery operations remain held; existing excluded gates and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
 - `blocked_by`: no in-scope implementation dependency remains; Lead acceptance and read-only status verification remain pending. Historical volume continuity is still unproven by design.
-- `next_action`: bounded read-only causal diagnosis of daemon identity mutation and launch refusal; Attempt 19 is terminal, no new external retry admitted.
+- `next_action`: one local maintained-fork correction candidate for packaged supervisor/worker argv stability, then reviewed pin integration; no external retry admitted.
+
+### A19 argv-drift ruling and fork correction boundary
+
+Lead accepts independent A19-DAEMON-IDENTITY-001: title-driven argv drift is a
+sufficient supported cause of native supervisor pruning. Native exact equality
+is correct and will not be weakened. Both supervisor and worker set title;
+the existing packaged environment marker is available before these assignments.
+Preserve launch argv in packaged mode while leaving direct-development titles
+unchanged. This is runtime infrastructure in the maintained fork, not meeting
+policy or an exception to native identity checks.
+
+ADR0001 requires separate fork history and reviewed immutable pin integration.
+Authorize one SERIAL local fork candidate from
+7618cda71e2836f9ba7e821286504841203cb745 in the existing submodule, limited to
+the two entrypoints and focused fork tests. No push, remote mutation, lockfile,
+upstream merge or parent gitlink acceptance yet. The local submodule HEAD may
+move to the candidate; this is unaccepted pending integration, not a new pin.
+Meetless parent source remains unchanged during fork work. Lead will own the
+later explicit pin/marker integration and necessary package-source proof.
+Recording/capture remains excluded; an eventual local pin checkpoint must
+report unrun recording proof rather than silently claim full ADR0001 release
+acceptance. No distribution or publication is authorized.
+
+The coordinator launch exit1 is separate: native handoff is claimed before
+children start, whereas title mutation occurs afterward. Existing sanitized
+evidence cannot identify its failing branch. Retain this independent issue;
+do not claim the argv correction fixes launch acceptance or renderer delivery.
+Avoid another external run until its available evidence/source is assessed.
 
 ### Attempt 19 close-out and runtime diagnosis
 
