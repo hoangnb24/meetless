@@ -2,18 +2,43 @@
 
 ## Current State
 
-- `plan_revision`: `v130`
-- `current_frontier`: `R5-MAS-POST-A19-SOURCE-ACCEPTANCE`
-- `state`: `POST_A19_CORRECTIONS_ACCEPTED_EXTERNAL_RETRY_HELD`
+- `plan_revision`: `v131`
+- `current_frontier`: `R5-MAS-ATTEMPT20-ARGV-STABILITY-RUNTIME-PROOF`
+- `state`: `ATTEMPT20_OWNER_AUTHORIZED_PHASE1_ADMITTED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: local source fbbac36121637b9e6d26eb89dcbdedb31bc7dbfb accepted; contains reviewed fork pin a2c8ff349ffdf6f500eb09270c7f44af4c018bfc and bounded launch diagnostics. No MAS artifact contains this combined correction yet.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: Attempt 19 is consumed and recovered. Its named owner authorization does not admit Attempt 20. A new external round requires the separate owner retry authorization retained in the A19 reconciliation; excluded gates and push remain closed.
+- `pending_ruling`: owner explicitly authorized named Attempt 20 below. Phase 1 only admitted now; Phase 2 needs Lead artifact acceptance. No retry beyond this one episode; excluded gates and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
 - `blocked_by`: packaged native readiness and actual new-artifact role-configuration exclusion remain unproven. The A19 launch rejection predicate remains unknown; new diagnostics can retain it on a future authorized run.
-- `next_action`: obtain named Attempt 20 authorization before package/sign/install/launch; retain two artifact/runtime acceptance checkpoints and observer-before-launch ordering.
+- `next_action`: sole SERIAL operator runs one fresh Phase-1 package/build/sign with durable terminal evidence and role-configuration exclusion audit; stop for artifact acceptance before install/launch.
+
+### Attempt 20 explicit owner authorization (2026-09-06)
+
+Lead asked: "Bạn cho phép Attempt 20: build–kiểm chứng–cài–launch–hoàn tác,
+giữ nguyên mọi gate loại trừ, chứ?" Owner replied "ok". This is the separate
+named retry authorization, not reuse of A19 or unlimited future attempts.
+Admit one Phase-1 invocation now against accepted source fbbac361... and
+reviewed Paseo a2c8ff349.... One operator owns generated build/fresh evidence;
+no source edits or concurrent writer. Retain invocation start/PIDs and terminal
+exit in a fresh persistent evidence directory. Missing result is unknown, not
+success; no self-retry. Preflight remains read-only and cannot consume a package
+invocation if it refuses before spawn.
+
+Require full MAS validator and exact artifact/source/input/signature binding,
+packaged supervisor/worker title guards, and inspection excluding Codex Room
+Supervisor/Lead/Peer profiles/prompts/configuration from artifact. Generic
+runtime supervisor code/provider support is not a role profile; classify any
+matches rather than silently delete or accept them. Old artifacts/evidence
+are immutable and not reused as the new candidate.
+
+Phase 2 remains held until separate Lead artifact acceptance/brief. It will
+retain observer-before-launch and the new fixed CLI failure category/lastCause,
+one install/launch, bounded observation and package-first coordinator restore.
+Purchase/premium restore, production, real recording/capture/TCC/export,
+upload/publication, push and manual archive cleanup remain excluded.
 
 ### Lead combined source acceptance (2026-09-06)
 
