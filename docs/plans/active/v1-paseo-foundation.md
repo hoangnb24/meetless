@@ -2,9 +2,9 @@
 
 ## Current State
 
-- `plan_revision`: `v112`
-- `current_frontier`: `R5-MAS-ATTEMPT17-NATIVE-REGISTRATION-PRUNE-REASON`
-- `state`: `NATIVE_REMOVAL_DIAGNOSTICS_LIFECYCLE_ORDER_CORRECTION_READY_FOR_CLOSEOUT`
+- `plan_revision`: `v113`
+- `current_frontier`: `R5-MAS-ATTEMPT18-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
+- `state`: `ATTEMPT18_ROUTED_PHASE1_PENDING`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted Attempt 17 artifact from source `4ec0865dd1b8626d75fc2648dfba8e055dde27f6`, bundle fingerprint `55f327720893d61be6a24a19c5d6704f9e237fecbf8eb539b21f159145fc06ca`, manifest SHA-256 `48f710433c26ab8456983d41e17f5d0dd7e9d24e808af7e2d2d9381f2eb29a5d`; package accepted, runtime readiness failed.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
@@ -13,7 +13,58 @@
 - `pending_ruling`: Attempts 14–17 are consumed and recovered. New bounded MAS proof runs are now Lead-routed under the owner's delegated base-runtime authority below, not retries charged to an old attempt. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
 - `blocked_by`: successful native status lacked the live supervisor's daemon registration, but the immutable native diagnostic candidate now retains the committed pruning/reset predicate. Neither a functional correction nor user-test readiness is proven.
-- `next_action`: Lead independently closes out the immutable `LIFECYCLE-001` correction candidate before routing the next one-shot MAS proof. Preserve readiness/topology/attestation; no speculative PID substitution, timeout increase, or registration bypass. Prepare observation before launch so the startup window is not missed.
+- `next_action`: one Attempt 18 build/sign/validate checkpoint from accepted native diagnostic source `90637005d82a30fce8b264a256026c5edab7701a` plus this plan-only routing record, then Lead artifact acceptance before one prepared install/launch/observe/recover sequence. No operator self-retry.
+
+### Native diagnostic acceptance and Attempt 18 routing (2026-09-05)
+
+Lead accepts `90637005d82a30fce8b264a256026c5edab7701a`, correction base
+`ceb101ad5e496a2419cc693ea852c04bbd9a7a50`, original base
+`6688a6003628c5529096386b2cc7ea8fd7406186`. Complete change manifest is the three
+native Swift source/test files plus this plan. The diagnosed validity checks
+preserve the original inspection sequence/predicates. Lead verified the sink
+attachment in `HostDelegate.launchRuntime` before `Process.run`, the real
+attach/state fixture's retained output, and the bounded categorical format.
+Live MAS retention is not yet proven.
+
+Independent ordinary macro EXPLORATORY review identified exactly
+`LIFECYCLE-001` (synchronous log before execution cancellation). Lead accepted
+that set; one correction batch reordered both methods and added controlled
+blocking-sink tests. The same reviewer completed FAST CLOSEOUT on that set and
+delta, disposition FOUNDATION_READY / finding CLOSED. Review runtime metadata:
+`codex-peer/gpt-5.6-luna`, max; no OCR. Lead personally reran
+`npm run build:native` on the correction: release native builds and debug/release
+native suites passed. Lead's three TypeScript diagnostic/readiness/packaged
+composition suites passed 56 tests on the preceding diagnostic candidate;
+correction changed no TypeScript. Ancestry, changed-path and whitespace checks
+passed; all four material authority files remain unchanged.
+
+Under delegated base-runtime authority, Lead routes exactly one new Attempt 18
+with the existing two real checkpoints. Sole SERIAL operator owns generated
+build/fresh proof output first; after Lead accepts the new artifact, owns one
+coordinator install, one LaunchServices launch/observation, and one coordinator
+recovery. No source edits or concurrent writer during execution. Build must
+include native removal events, not reuse the Attempt 17 artifact. The same
+already-accepted public SDK key may be loaded for build/validation/startup;
+raw value never enters arguments/log evidence. Existing network behavior and
+all purchase/restore/production/capture/publication exclusions stay unchanged.
+
+Before launch, prepare and syntax-check the whole observation/recovery
+orchestration, arm continuous passive topology/HTTP sampling and diagnostic
+collection, then launch without a human/agent setup gap. Correlate observation
+deadline to actual handoff/startup within a fixed outer bound; do not change
+the app's 30-second startup deadline. Do not invoke desktop-attestation APIs
+from an unrelated external observer. Readiness status probes may not activate
+capture/TCC or billing. Always collect allowlisted native registration-removal
+lines and desktop readiness summaries from the exact runtime log, preserving
+empty sets and first/last timing. Stop observation and release its handles
+before coordinator recovery; then prove exact old-app/runtime restoration and
+terminal archived/owned-live-state absence. Any failure ends that operator's
+attempt; recovery refusal stops further work and requires a Lead decision.
+
+`PLAN_RECONCILIATION v1`: desktop diagnostic proof, Attempt 17 recovery and native
+diagnostic acceptance are absorbed. Current path is new packaged observation,
+then an evidence-backed correction only if needed, then owner-test readiness.
+No billing/production work becomes a dependency of this base-runtime frontier.
 
 ### Delegated base-runtime technical authority (2026-09-05)
 
