@@ -2,18 +2,99 @@
 
 ## Current State
 
-- `plan_revision`: `v108`
-- `current_frontier`: `R5-MAS-ATTEMPT17-DIAGNOSTIC-RUNTIME-PROOF`
-- `state`: `ATTEMPT17_AUTHORIZED_PHASE1_PENDING`
+- `plan_revision`: `v109`
+- `current_frontier`: `R5-MAS-ATTEMPT17-NATIVE-REGISTRATION-PRUNE-REASON`
+- `state`: `ATTEMPT17_RECOVERED_REGISTRATION_ABSENT_PRUNE_CAUSE_UNRESOLVED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead-accepted Attempt 16 artifact from repository tip `e57ac527db6e2cb3cf0654c872ea7fcfed414e79`, bundle fingerprint `e7243483893d9939287ff66c482590375f271cb626c31dcb1fc7b950eb514f65`, manifest SHA-256 `e377fbeb004f845a44241f29b545bdadab87640b2aff4b2c376bcc189536cf0e`.
+- `candidate`: Lead-accepted Attempt 17 artifact from source `4ec0865dd1b8626d75fc2648dfba8e055dde27f6`, bundle fingerprint `55f327720893d61be6a24a19c5d6704f9e237fecbf8eb539b21f159145fc06ca`, manifest SHA-256 `48f710433c26ab8456983d41e17f5d0dd7e9d24e808af7e2d2d9381f2eb29a5d`; package accepted, runtime readiness failed.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: Attempts 14, 15, and 16 are consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`; not yet packaged or run as a MAS application.
-- `blocked_by`: Attempt 16's cause remains unresolved until the newly authorized diagnostic attempt supplies live evidence.
-- `next_action`: execute Attempt 17 Phase 1 once, accept the exact new signed artifact, then proceed under the same owner authorization to one coordinator install/LaunchServices launch/bounded readiness observation and coordinator recovery. No automatic retry after terminal failure.
+- `pending_ruling`: Attempts 14–17 are consumed and recovered. No retry is authorized. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
+- `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
+- `blocked_by`: successful native status lacks the live supervisor's daemon registration, but native pruning/reset does not retain the predicate that removed it. Neither a functional correction nor user-test readiness is proven.
+- `next_action`: propose bounded native registration-removal diagnostics using existing native diagnostic categories where possible, with local proof before any separately authorized new attempt. Preserve readiness/topology/attestation; no speculative PID substitution, timeout increase, or registration bypass. Prepare observation before a future launch so the startup window is not missed.
+
+### Attempt 17 result and Lead ruling (2026-09-05)
+
+The authorized attempt completed once and is recovered. Phase 1 package/sign,
+Phase 2 install, LaunchServices launch, and coordinator restore each ran once
+and exited 0. No retry or standalone/manual stop occurred. Runtime readiness
+did not pass; successful launch-command exit is only handoff acceptance.
+
+Accepted artifact: `/private/tmp/meetless-mas-development-proof.p8sBUu/release/macos/Meetless.app`.
+Manifest SHA-256 `48f710433c26ab8456983d41e17f5d0dd7e9d24e808af7e2d2d9381f2eb29a5d`,
+artifact digest `d0ae18b79566a64606327768213097ab7b96a3e4fb97f61f9ce31becf0b2d52f`,
+outer CDHash `37c93255dcfb0063b5fdd6be3d60f766a783d952`. Complete MAS validator
+passed for the exact signer/team/profile, 43 thin-arm64 Mach-O entries,
+entitlement/load/symlink closure, source/package inputs and public-key hash.
+Lead personally verified the fingerprint, manifest and packaged diagnostic
+hashes, and deep/strict signature before admitting Phase 2 without another
+owner prompt.
+
+Run `a7f57a9b-8068-4c10-ad73-a58fa80adf9f` claimed native host PID `54189`
+at `00:59:49Z`. Retained logs show supervisor PID `54195`, worker PID `54196`,
+worker ready at `00:59:51.954Z`, and intentional SIGTERM at `01:00:20.932Z`.
+The retained desktop timeout is conclusive at the readiness-subcheck level:
+
+```text
+last={pidLock=live-desktop-managed,registration=matching-registration-absent,pid=54195}
+observedPidLock=[live-desktop-managed,missing]
+observedRegistration=[matching-registration-absent,not-applicable]
+observedErrors=[]
+```
+
+Source-constrained inference: initial child registration and daemon attestation
+returned successfully because both precede the reached supervisor and timeout.
+The PID lock belongs to the supervisor, not its worker. Native status prunes
+registrations before reading them, and the native reaper does the same every
+250 ms; invalid identity/parent/owner-chain checks remove registrations while
+allowing status to succeed. Which check caused the disappearance is not
+retained. A specific pruning trigger or unobserved reset is not proven.
+Do not infer a functional fix from absent downstream renderer readiness.
+
+Independent read-only Peer `be99120b-a7be-4886-ab54-dc20cfc56ad2` returned
+DEPENDENCY_REQUEST / evidence insufficient for a functional correction against
+frozen source `4ec0865d...`. Ordinary macro premise lane, EXPLORATORY; configured
+runtime was `codex-peer/gpt-5.6-luna` with max reasoning (the response's literal
+model field `report` is not a valid model identity). Lead inspected the decisive
+pruning/status code and accepts that evidence limit. No OCR or code correction
+was performed.
+
+Operational evidence limit: the operator's observation started at
+`01:05:30.495Z`, over five minutes after launch and after cleanup. Its later
+plugin-bootstrap failure and renderer connection refusal cannot diagnose
+startup. Future authorized observation must be prepared before launch and
+start immediately around handoff, then include sanitized retained-log evidence.
+This is a task-local execution correction, not authority to redesign Harness
+or lifecycle tooling.
+
+Recovery accepted: package rollback preceded runtime restoration. Lead
+personally recomputed restored `/Applications/Meetless.app` fingerprint
+`7039ded32b778fcda21fae6d961d80e72508630b2aaa0c8d2abedf08103e2a14`, ran deep/strict
+verification, and recomputed runtime full-attestation digest
+`130c2d4de4cf4e6b9d63ce775860aa2bcd2f70012222c1d7d67d694af71dc6de` with original
+inode `43589382`. Operator observed restored CDHash
+`acfdb5223b4d492d86e13827babcea2c5df392dc` and no owned process/listener/socket/open
+handle. Lead's additional read-only coordinator status returned `archived`,
+including this run, package `not-applicable`.
+
+Archive and fresh-retained evidence remain under the exact MAS support parent
+as `.meetless-mas-gate-session.a7f57a9b-8068-4c10-ad73-a58fa80adf9f.archived`
+and the matching `.fresh-retained`; neither is a cleanup target.
+Final audit `/private/tmp/meetless-attempt17-phase2-final-audit-l0D7E7/final-audit.json`
+SHA-256 `4b6bc3f0e14ee69409ab797d84e1e4cd5d6a842e8a350b12ebbae4a71144c7a0`.
+Retained `logs/host-runtime.log` SHA-256
+`67f0bd8439eea7228befe6b978198d082d07a5534fcf87a0dd643f1099b5c43b`;
+`logs/daemon.log` SHA-256
+`b3eb7bfc38e15ec1ea5aee0975c3b24c1027ec2128d41d94ccaff9ee2f77ee01`.
+No raw credentials/log payloads are copied into this plan. Protected untracked
+paths remain untouched; all excluded gates and push remain closed.
+
+`PLAN_RECONCILIATION v1`: absorb completed desktop diagnostics and Attempt 17
+proof/recovery. Route native removal-reason discovery before a functional fix
+or new runtime attempt. Purchase/restore/production remain deferred. The base
+runtime acceptance target is unchanged and remains unmet.
 
 ### Attempt 17 authorization (2026-09-05)
 
