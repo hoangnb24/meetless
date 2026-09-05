@@ -2,9 +2,9 @@
 
 ## Current State
 
-- `plan_revision`: `v110`
+- `plan_revision`: `v111`
 - `current_frontier`: `R5-MAS-ATTEMPT17-NATIVE-REGISTRATION-PRUNE-REASON`
-- `state`: `NATIVE_REMOVAL_DIAGNOSTICS_AUTHORIZED_LEAD_OWNED_RUNTIME_FRONTIER`
+- `state`: `NATIVE_REMOVAL_DIAGNOSTICS_CANDIDATE_READY_FOR_LEAD_ACCEPTANCE`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted Attempt 17 artifact from source `4ec0865dd1b8626d75fc2648dfba8e055dde27f6`, bundle fingerprint `55f327720893d61be6a24a19c5d6704f9e237fecbf8eb539b21f159145fc06ca`, manifest SHA-256 `48f710433c26ab8456983d41e17f5d0dd7e9d24e808af7e2d2d9381f2eb29a5d`; package accepted, runtime readiness failed.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
@@ -12,8 +12,8 @@
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempts 14–17 are consumed and recovered. New bounded MAS proof runs are now Lead-routed under the owner's delegated base-runtime authority below, not retries charged to an old attempt. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
-- `blocked_by`: successful native status lacks the live supervisor's daemon registration, but native pruning/reset does not retain the predicate that removed it. Neither a functional correction nor user-test readiness is proven.
-- `next_action`: implement bounded native registration-removal diagnostics with local production-path and retained-output proof, then Lead acceptance before routing the next one-shot MAS proof. Preserve readiness/topology/attestation; no speculative PID substitution, timeout increase, or registration bypass. Prepare observation before launch so the startup window is not missed.
+- `blocked_by`: successful native status lacked the live supervisor's daemon registration, but the immutable native diagnostic candidate now retains the committed pruning/reset predicate. Neither a functional correction nor user-test readiness is proven.
+- `next_action`: Lead independently accepts or rejects the immutable native diagnostic candidate before routing the next one-shot MAS proof. Preserve readiness/topology/attestation; no speculative PID substitution, timeout increase, or registration bypass. Prepare observation before launch so the startup window is not missed.
 
 ### Delegated base-runtime technical authority (2026-09-05)
 
@@ -87,6 +87,47 @@ runtime was `codex-peer/gpt-5.6-luna` with max reasoning (the response's literal
 model field `report` is not a valid model identity). Lead inspected the decisive
 pruning/status code and accepts that evidence limit. No OCR or code correction
 was performed.
+
+### Native registration-removal diagnostics (2026-09-05)
+
+`FRONTIER_BRIEF v1` / `FOUNDATION_CHECK v1` is implemented against original
+base `6688a6003628c5529096386b2cc7ea8fd7406186`, with no MAS, install,
+LaunchServices, capture, TCC, network, product, or external attempt. The native
+candidate changes only `native/macos-host/MeetlessHost.swift`,
+`native/macos-host/TranscriptionCapability.swift`, and
+`native/macos-host/TranscriptionCapabilityTests.swift`; this plan records the
+evidence and remains the only other changed path.
+
+`MeetlessProcessRegistrationRemovalEvent` retains fixed action, role, stage,
+check, normalized OS code, PID, generation, and committed revision. Native
+pruning classifies the observation that failed the existing identity, parent,
+or owner-chain predicate; process disappearance is distinct from unavailable
+inspection. The existing registration/descendant mutation and status/lease
+semantics remain unchanged. Events are constructed under the authorization
+lock but written only after unlocking, and stale snapshots emit no prune event.
+Reset and explicit release paths have separate fixed action/check values so a
+missing registration is not misreported as pruning.
+
+The production `HostDelegate.launchRuntime` path opens the existing mode-0600
+`runtimeRoot/logs/host-runtime.log`, attaches a duplicated descriptor to the
+authorization state before `Process.run`, and continues using that same handle
+for runtime stdout/stderr. The sink admits at most 64 diagnostic events per
+host launch and rejects lines over 512 bytes; output is categorical only and
+contains no paths, argv, tokens, raw errors, hashes, credentials, or hostile
+caller text. An isolated process-chain fixture replaced the executable image,
+denied executable reads, killed the daemon, and exercised reset/stale races.
+It proved valid-chain survival, child identity drift, inspection unavailable,
+parent mismatch, owner-chain invalidation, process-gone removal, recursive
+descendant removal, stale-snapshot suppression, reset distinction, and actual
+retention through the host-runtime log composition.
+
+`npm run build:native` passed release capture/host/mutation builds and both
+debug/release `MeetlessHostTests` runs with the accepted absolute
+`MEETLESS_TEST_PACKAGE_NODE_SOURCE` precondition. The focused TypeScript host
+readiness/diagnostic regression passed 2 files and 53 tests; no TypeScript was
+changed, so the full typecheck was not required. Frozen authority hashes and
+aggregate digest remain unchanged. Lead acceptance is separate; this section
+does not claim MAS runtime readiness.
 
 Operational evidence limit: the operator's observation started at
 `01:05:30.495Z`, over five minutes after launch and after cleanup. Its later

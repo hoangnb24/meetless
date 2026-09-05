@@ -6,6 +6,29 @@ import Security
 
 private var failures = 0
 
+private final class RecordingRegistrationDiagnosticSink: MeetlessProcessRegistrationDiagnosticSink {
+  private let lock = NSLock()
+  private var recordedEvents: [MeetlessProcessRegistrationRemovalEvent] = []
+
+  func record(_ event: MeetlessProcessRegistrationRemovalEvent) {
+    lock.lock()
+    recordedEvents.append(event)
+    lock.unlock()
+  }
+
+  func snapshot() -> [MeetlessProcessRegistrationRemovalEvent] {
+    lock.lock()
+    defer { lock.unlock() }
+    return recordedEvents
+  }
+
+  func removeAll() {
+    lock.lock()
+    recordedEvents.removeAll()
+    lock.unlock()
+  }
+}
+
 private struct RuntimeEndpointGoldenPolicy: Decodable {
   let schema: String
   let workingDirectory: String
@@ -1542,6 +1565,341 @@ private func testPackagedCaptureHelperRelativeConnectAndRetryIDs() throws {
   }
 }
 
+private final class NativeRegistrationDiagnosticFixture {
+  let root: URL
+  let executable: URL
+  let desktop: Process
+  let state: RuntimeAuthorizationState
+  let desktopAttestation: MeetlessDesktopAttestationResult
+  let daemonPID: pid_t
+  let workerPID: pid_t
+  let pluginPID: pid_t
+  let helperPID: pid_t
+
+  private init(
+    root: URL,
+    executable: URL,
+    desktop: Process,
+    state: RuntimeAuthorizationState,
+    desktopAttestation: MeetlessDesktopAttestationResult,
+    daemonPID: pid_t,
+    workerPID: pid_t,
+    pluginPID: pid_t,
+    helperPID: pid_t
+  ) {
+    self.root = root
+    self.executable = executable
+    self.desktop = desktop
+    self.state = state
+    self.desktopAttestation = desktopAttestation
+    self.daemonPID = daemonPID
+    self.workerPID = workerPID
+    self.pluginPID = pluginPID
+    self.helperPID = helperPID
+  }
+
+  static func make() throws -> NativeRegistrationDiagnosticFixture {
+    let fileManager = FileManager.default
+    let source = try nativeProcessFixtureExecutable()
+    let root = URL(fileURLWithPath: source)
+      .deletingLastPathComponent()
+      .appendingPathComponent("meetless-registration-diagnostic-\(UUID().uuidString)")
+    try fileManager.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let executable = root.appendingPathComponent("fixture-host")
+    var desktop: Process?
+    var completed = false
+    defer {
+      if !completed {
+        let helperPID = readNativeProcessFixturePID(root.path, role: "capture-helper")
+        let pluginPID = readNativeProcessFixturePID(root.path, role: "plugin")
+        let workerPID = readNativeProcessFixturePID(root.path, role: "daemon-worker")
+        let daemonPID = readNativeProcessFixturePID(root.path, role: "daemon")
+        terminateNativeProcessFixture(helperPID)
+        terminateNativeProcessFixture(pluginPID)
+        terminateNativeProcessFixture(workerPID)
+        terminateNativeProcessFixture(daemonPID)
+        if let desktop {
+          terminateNativeProcessFixture(desktop.processIdentifier)
+          if desktop.isRunning { desktop.waitUntilExit() }
+        }
+        try? fileManager.removeItem(at: root)
+      }
+    }
+
+    try fileManager.copyItem(at: URL(fileURLWithPath: source), to: executable)
+    let runtimeCli = root.appendingPathComponent("runtime-cli.js").path
+    let workerPath = root.appendingPathComponent("daemon-worker.js").path
+    let pluginPath = root.appendingPathComponent("plugins/plugin-process.js").path
+    let policy = MeetlessProcessRegistrationPolicy(
+      runtimeRoot: root.path,
+      endpointPolicy: meetlessRuntimeEndpointSchema,
+      endpointWorkingDirectory: meetlessRuntimeEndpointWorkingDirectory,
+      recordingEndpointName: "recording.sock",
+      transcriptionEndpointName: "transcription.sock",
+      nodePath: executable.path,
+      runtimeCliPath: runtimeCli,
+      daemonWorkerPath: workerPath,
+      daemonWorkerArguments: [executable.path, workerPath, "daemon"],
+      pluginPath: pluginPath,
+      pluginArguments: [executable.path, pluginPath],
+      captureHelperPath: executable.path
+    )
+    let wirePolicy = MeetlessHostProcessPolicyWire(
+      runtimeRoot: policy.runtimeRoot,
+      endpointPolicy: policy.endpointPolicy,
+      endpointWorkingDirectory: policy.endpointWorkingDirectory,
+      recordingEndpointName: policy.recordingEndpointName,
+      transcriptionEndpointName: policy.transcriptionEndpointName
+    )
+    var environment = ProcessInfo.processInfo.environment
+    environment["MEETLESS_NATIVE_PROCESS_FIXTURE"] = "desktop"
+    environment["MEETLESS_NATIVE_FIXTURE_PID_ROOT"] = root.path
+    environment["MEETLESS_NATIVE_FIXTURE_RUNTIME_CLI"] = runtimeCli
+    environment["MEETLESS_NATIVE_FIXTURE_WORKER_PATH"] = workerPath
+    environment["MEETLESS_NATIVE_FIXTURE_PLUGIN_PATH"] = pluginPath
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = [runtimeCli, "desktop"]
+    process.environment = environment
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    desktop = process
+
+    let state = RuntimeAuthorizationState()
+    state.configure(processPolicy: policy, hostIdentity: try fixtureHostIdentity(), hostPID: getpid())
+    state.publish(process.processIdentifier)
+    guard let desktopAttestation = state.attestDesktop(
+      peerPID: process.processIdentifier,
+      requestId: "diagnostic-fixture-desktop",
+      challenge: "diagnostic-fixture-challenge"
+    ) else {
+      throw NSError(
+        domain: "MeetlessHostTests",
+        code: 70,
+        userInfo: [NSLocalizedDescriptionKey: "diagnostic fixture desktop attestation failed"]
+      )
+    }
+    guard let daemonPID = waitForNativeProcessFixturePID(root.path, role: "daemon"),
+          let daemonIdentity = try? inspectMeetlessProcessIdentity(daemonPID),
+          let workerPID = waitForNativeProcessFixturePID(root.path, role: "daemon-worker"),
+          let pluginPID = waitForNativeProcessFixturePID(root.path, role: "plugin"),
+          let helperPID = waitForNativeProcessFixturePID(root.path, role: "capture-helper"),
+          let pluginIdentity = try? inspectMeetlessProcessIdentity(pluginPID),
+          let helperIdentity = try? inspectMeetlessProcessIdentity(helperPID) else {
+      throw NSError(domain: "MeetlessHostTests", code: 71, userInfo: [NSLocalizedDescriptionKey: "diagnostic fixture process chain was not inspectable"])
+    }
+    let daemonToken = "diagnostic-fixture-daemon-token"
+    guard state.registerChild(
+      peerPID: process.processIdentifier,
+      requestId: "diagnostic-fixture-daemon-registration",
+      generation: desktopAttestation.generation,
+      ownerToken: desktopAttestation.ownerToken,
+      registrationToken: daemonToken,
+      role: "daemon",
+      childPID: daemonPID,
+      expectedIdentity: daemonIdentity,
+      policy: wirePolicy
+    ) != nil,
+    state.attestRegisteredProcess(
+      peerPID: daemonPID,
+      requestId: "diagnostic-fixture-daemon-attestation",
+      generation: desktopAttestation.generation,
+      registrationToken: daemonToken,
+      role: "daemon"
+    ) != nil else {
+      throw NSError(domain: "MeetlessHostTests", code: 72, userInfo: [NSLocalizedDescriptionKey: "diagnostic fixture daemon registration failed"])
+    }
+    let pluginToken = "diagnostic-fixture-plugin-token"
+    guard state.registerChild(
+      peerPID: pluginPID,
+      requestId: "diagnostic-fixture-plugin-registration",
+      generation: desktopAttestation.generation,
+      ownerToken: daemonToken,
+      registrationToken: pluginToken,
+      role: "plugin",
+      childPID: pluginPID,
+      expectedIdentity: pluginIdentity,
+      policy: wirePolicy
+    ) != nil,
+    state.attestRegisteredProcess(
+      peerPID: pluginPID,
+      requestId: "diagnostic-fixture-plugin-attestation",
+      generation: desktopAttestation.generation,
+      registrationToken: pluginToken,
+      role: "plugin"
+    ) != nil,
+    state.registerChild(
+      peerPID: pluginPID,
+      requestId: "diagnostic-fixture-helper-registration",
+      generation: desktopAttestation.generation,
+      ownerToken: pluginToken,
+      registrationToken: "diagnostic-fixture-helper-token",
+      role: "capture-helper",
+      childPID: helperPID,
+      expectedIdentity: helperIdentity,
+      policy: wirePolicy
+    ) != nil else {
+      throw NSError(domain: "MeetlessHostTests", code: 73, userInfo: [NSLocalizedDescriptionKey: "diagnostic fixture descendant registration failed"])
+    }
+    let fixture = NativeRegistrationDiagnosticFixture(
+      root: root,
+      executable: executable,
+      desktop: process,
+      state: state,
+      desktopAttestation: desktopAttestation,
+      daemonPID: daemonPID,
+      workerPID: workerPID,
+      pluginPID: pluginPID,
+      helperPID: helperPID
+    )
+    completed = true
+    return fixture
+  }
+
+  deinit {
+    terminateNativeProcessFixture(helperPID)
+    terminateNativeProcessFixture(pluginPID)
+    terminateNativeProcessFixture(workerPID)
+    terminateNativeProcessFixture(daemonPID)
+    terminateNativeProcessFixture(desktop.processIdentifier)
+    if desktop.isRunning { desktop.waitUntilExit() }
+    try? FileManager.default.removeItem(at: root)
+  }
+}
+
+private func testCommittedRegistrationIdentityAndInspectionDiagnostics() throws {
+  do {
+    let fixture = try NativeRegistrationDiagnosticFixture.make()
+    let sink = RecordingRegistrationDiagnosticSink()
+    fixture.state.setRegistrationDiagnosticSink(sink)
+    let replacement = fixture.root.appendingPathComponent("fixture-host-replacement")
+    try FileManager.default.copyItem(at: fixture.executable, to: replacement)
+    try FileManager.default.removeItem(at: fixture.executable)
+    try FileManager.default.moveItem(at: replacement, to: fixture.executable)
+    check(sink.snapshot().isEmpty, "identity drift must not emit a removal event before prune commits")
+    check(
+      fixture.state.processRegistrationSnapshotForTesting().count == 3,
+      "identity drift must leave the accepted registration chain intact until prune commits"
+    )
+    check(fixture.state.pruneDeadRegistrations(), "identity drift prune must complete")
+    let events = sink.snapshot().filter { $0.action == .prune }
+    check(
+      events.contains {
+        $0.role == .daemon &&
+          $0.pid == fixture.daemonPID &&
+          $0.stage == .inspection &&
+          $0.check == .childIdentityMismatch &&
+          $0.osCode == .none
+      },
+      "committed executable identity drift must retain the daemon child-identity predicate"
+    )
+    check(
+      fixture.state.processRegistrationSnapshotForTesting().isEmpty,
+      "identity drift must preserve recursive registration invalidation"
+    )
+  }
+
+  do {
+    let fixture = try NativeRegistrationDiagnosticFixture.make()
+    let sink = RecordingRegistrationDiagnosticSink()
+    fixture.state.setRegistrationDiagnosticSink(sink)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o000],
+      ofItemAtPath: fixture.executable.path
+    )
+    check(fixture.state.pruneDeadRegistrations(), "inspection-unavailable prune must complete")
+    let events = sink.snapshot().filter { $0.action == .prune }
+    check(
+      events.contains {
+        $0.role == .daemon &&
+          $0.pid == fixture.daemonPID &&
+          $0.stage == .inspection &&
+          $0.check == .processInspectionUnavailable &&
+          $0.osCode == .unknown
+      },
+      "committed metadata inspection failure must retain process-inspection-unavailable"
+    )
+    check(
+      fixture.state.processRegistrationSnapshotForTesting().isEmpty,
+      "inspection failure must preserve recursive registration invalidation"
+    )
+  }
+}
+
+private func testStalePruneDoesNotEmitUncommittedRemoval() throws {
+  let fixture = try NativeRegistrationDiagnosticFixture.make()
+  let sink = RecordingRegistrationDiagnosticSink()
+  fixture.state.setRegistrationDiagnosticSink(sink)
+  fixture.state.setPruneInspectionHook {
+    fixture.state.clear(expected: fixture.desktop.processIdentifier)
+  }
+  check(fixture.state.pruneDeadRegistrations(), "stale prune inspection must complete after the state reset")
+  let events = sink.snapshot()
+  check(
+    !events.contains(where: { $0.action == .prune }),
+    "a stale prune snapshot must not emit an uncommitted removal event"
+  )
+  check(
+    events.contains {
+      $0.action == .reset &&
+        $0.role == .daemon &&
+        $0.stage == .lifecycle &&
+        $0.check == .stateReset
+    },
+    "a committed state reset must be distinguished from registration pruning"
+  )
+  check(
+    fixture.state.processRegistrationSnapshotForTesting().isEmpty,
+    "a committed state reset must remove the registration snapshot"
+  )
+}
+
+private func testRegistrationDiagnosticProductionWiring() throws {
+  let fixture = try NativeRegistrationDiagnosticFixture.make()
+  let logs = fixture.root.appendingPathComponent("logs")
+  let logURL = logs.appendingPathComponent("host-runtime.log")
+  let fileManager = FileManager.default
+  try fileManager.createDirectory(at: logs, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+  fileManager.createFile(atPath: logURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+  let hostLog = try FileHandle(forWritingTo: logURL)
+  defer { try? hostLog.close() }
+  try hostLog.seekToEnd()
+  guard let sink = attachMeetlessProcessRegistrationDiagnosticSink(
+    to: fixture.state,
+    duplicating: hostLog
+  ) else {
+    check(false, "the production host-runtime log path must install a registration diagnostic sink")
+    return
+  }
+  terminateNativeProcessFixture(fixture.daemonPID)
+  waitForNativeProcessFixtureExit(fixture.daemonPID)
+  guard let status = fixture.state.registrationStatus(
+    peerPID: fixture.desktop.processIdentifier,
+    requestId: "production-diagnostic-status",
+    generation: fixture.desktopAttestation.generation,
+    ownerToken: fixture.desktopAttestation.ownerToken
+  ) else {
+    check(false, "production diagnostic wiring must preserve the successful empty status response after prune")
+    return
+  }
+  check(status.isEmpty, "production diagnostic prune must preserve recursive daemon registration removal")
+  let retained = try String(contentsOf: logURL, encoding: .utf8)
+  check(
+    retained.contains("registration-removal action=prune role=daemon stage=inspection check=process-gone"),
+    "the exact host-runtime log sink must retain the committed daemon process-gone event"
+  )
+  check(
+    retained.split(separator: "\n").allSatisfy { $0.utf8.count + 1 <= meetlessMaximumRegistrationDiagnosticLineBytes },
+    "production retained registration diagnostics must remain line-bounded"
+  )
+  for secret in ["/private/hostile/path", "ownerToken=secret", "credential=secret", "raw-error"] {
+    check(!retained.contains(secret), "production retained diagnostics must not expose (secret)")
+  }
+  _ = sink
+}
+
 private func testPackagedProcessRegistrationChain() throws {
   let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("meetless-process-chain-\(UUID().uuidString)")
   try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -1600,6 +1958,8 @@ private func testPackagedProcessRegistrationChain() throws {
   }
   let desktopPID = desktop.processIdentifier
   let state = RuntimeAuthorizationState()
+  let registrationDiagnosticSink = RecordingRegistrationDiagnosticSink()
+  state.setRegistrationDiagnosticSink(registrationDiagnosticSink)
   state.configure(processPolicy: policy, hostIdentity: hostIdentity, hostPID: getpid())
   state.publish(desktopPID)
   guard let desktopAttestation = state.attestDesktop(peerPID: desktopPID, requestId: "desktop-request", challenge: "desktop-challenge") else {
@@ -2140,6 +2500,12 @@ private func testPackagedProcessRegistrationChain() throws {
     ) != nil,
     "plugin must register its recording-service-owned helper"
   )
+  registrationDiagnosticSink.removeAll()
+  check(state.pruneDeadRegistrations(), "a valid attested registration chain must survive a native prune inspection")
+  check(
+    registrationDiagnosticSink.snapshot().isEmpty,
+    "a valid attested registration chain must not emit a removal diagnostic"
+  )
   let attestationRaceState = RuntimeAuthorizationState()
   attestationRaceState.configure(processPolicy: policy, hostIdentity: hostIdentity, hostPID: getpid())
   attestationRaceState.publish(desktopPID)
@@ -2460,6 +2826,7 @@ private func testPackagedProcessRegistrationChain() throws {
     check(false, "a registered plugin must issue a lease before deterministic reparenting")
     return
   }
+  registrationDiagnosticSink.removeAll()
   terminateNativeProcessFixture(workerPID)
   waitForNativeProcessFixtureExit(workerPID)
   var staleLeaseActionRan = false
@@ -2487,6 +2854,25 @@ private func testPackagedProcessRegistrationChain() throws {
     afterWorkerExit.count == 1 && afterWorkerExit[0].pid == daemonPID,
     "worker reparent or exit must recursively remove plugin and helper registrations"
   )
+  let workerRemovalEvents = registrationDiagnosticSink.snapshot().filter { $0.action == .prune }
+  check(
+    workerRemovalEvents.contains {
+      $0.role == .plugin && $0.pid == pluginPID && $0.stage == .inspection && $0.check == .parentMismatch
+    },
+    "a committed worker reparent must retain the plugin parent-mismatch predicate"
+  )
+  check(
+    workerRemovalEvents.contains {
+      $0.role == .captureHelper && $0.pid == helperPID && $0.stage == .ownership && $0.check == .ownerChainFailure
+    },
+    "a committed worker reparent must retain the helper owner-chain predicate"
+  )
+  check(
+    workerRemovalEvents.allSatisfy {
+      $0.generation == desktopAttestation.generation && $0.revision > 0
+    },
+    "committed removal diagnostics must retain the launch generation and committed revision"
+  )
   terminateNativeProcessFixture(pluginPID)
   waitForNativeProcessFixtureExit(pluginPID)
   guard let afterPluginExit = state.registrationStatus(
@@ -2499,6 +2885,7 @@ private func testPackagedProcessRegistrationChain() throws {
     return
   }
   check(afterPluginExit.count == 1 && afterPluginExit[0].pid == daemonPID, "plugin exit must not remove its unowned daemon")
+  registrationDiagnosticSink.removeAll()
   terminateNativeProcessFixture(daemonPID)
   waitForNativeProcessFixtureExit(daemonPID)
   guard let afterDaemonExit = state.registrationStatus(
@@ -2511,6 +2898,13 @@ private func testPackagedProcessRegistrationChain() throws {
     return
   }
   check(afterDaemonExit.isEmpty, "daemon exit must recursively release the remaining registration chain")
+  let daemonRemovalEvents = registrationDiagnosticSink.snapshot().filter { $0.action == .prune }
+  check(
+    daemonRemovalEvents.contains {
+      $0.role == .daemon && $0.pid == daemonPID && $0.stage == .inspection && $0.check == .processGone
+    },
+    "a committed daemon process exit must retain the process-gone predicate"
+  )
   state.clear()
   check(
     state.registrationStatus(
@@ -2934,6 +3328,69 @@ private func testRuntimeAuthorizationStateSnapshot() {
   check(state.snapshot() == nil, "exact runtime termination must clear authorization")
 }
 
+private func testRegistrationDiagnosticFileSinkIsBoundedAndRetained() throws {
+  let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("meetless-registration-log-\(UUID().uuidString)")
+  let logs = root.appendingPathComponent("logs")
+  let logURL = logs.appendingPathComponent("host-runtime.log")
+  let fileManager = FileManager.default
+  try fileManager.createDirectory(at: logs, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+  fileManager.createFile(atPath: logURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+  defer { try? fileManager.removeItem(at: root) }
+
+  let hostLog = try FileHandle(forWritingTo: logURL)
+  defer { try? hostLog.close() }
+  try hostLog.seekToEnd()
+  guard let sink = makeMeetlessProcessRegistrationDiagnosticSink(duplicating: hostLog) else {
+    check(false, "the production host-runtime log must provide a diagnostic sink")
+    return
+  }
+  let event = MeetlessProcessRegistrationRemovalEvent(
+    action: .prune,
+    failure: MeetlessProcessRegistrationFailure(
+      role: .daemon,
+      stage: .inspection,
+      check: .childIdentityMismatch,
+      osCode: .none
+    ),
+    pid: 4242,
+    generation: 7,
+    revision: 11
+  )
+  for offset in 0..<(meetlessMaximumRegistrationDiagnosticEvents + 8) {
+    sink.record(
+      MeetlessProcessRegistrationRemovalEvent(
+        action: event.action,
+        failure: MeetlessProcessRegistrationFailure(
+          role: event.role,
+          stage: event.stage,
+          check: event.check,
+          osCode: event.osCode
+        ),
+        pid: event.pid + Int32(offset),
+        generation: event.generation,
+        revision: event.revision
+      )
+    )
+  }
+  let retained = try String(contentsOf: logURL, encoding: .utf8)
+  let lines = retained.split(separator: "\n")
+  check(
+    lines.count == meetlessMaximumRegistrationDiagnosticEvents,
+    "the retained registration diagnostic sink must cap its event output"
+  )
+  check(
+    lines.allSatisfy { $0.utf8.count + 1 <= meetlessMaximumRegistrationDiagnosticLineBytes },
+    "each retained registration diagnostic line must remain bounded"
+  )
+  check(
+    retained.contains("registration-removal action=prune role=daemon stage=inspection check=child-identity-mismatch os=none pid=4242 generation=7 revision=11"),
+    "the production host-runtime log must retain the categorical removal event"
+  )
+  for secret in ["/private/hostile/path", "ownerToken=secret", "credential=secret", "raw-error"] {
+    check(!retained.contains(secret), "retained registration diagnostics must not expose \(secret)")
+  }
+}
+
 private func testDelayedAuthorizedRequestIsDeniedAfterRevocation() throws {
   let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("meetless-native-revoked-\(UUID().uuidString)")
   let staging = root.appendingPathComponent("meeting-store/transcription-ranges")
@@ -3283,6 +3740,18 @@ private struct TranscriptionCapabilityTests {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: packaged process registration chain: \(error)\n".utf8))
     }
+    do { try testCommittedRegistrationIdentityAndInspectionDiagnostics() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: committed registration identity and inspection diagnostics: \(error)\n".utf8))
+    }
+    do { try testStalePruneDoesNotEmitUncommittedRemoval() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: stale registration prune diagnostics: \(error)\n".utf8))
+    }
+    do { try testRegistrationDiagnosticProductionWiring() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: registration diagnostic production wiring: \(error)\n".utf8))
+    }
     do {
       let expectedNodeIdentity = try runningPackageBuilderNodeIdentity()
       try testPackageBuilderNodeSourceValidation(expectedIdentity: expectedNodeIdentity)
@@ -3317,6 +3786,10 @@ private struct TranscriptionCapabilityTests {
       FileHandle.standardError.write(Data("FAIL: concurrent native lifecycle: \(error)\n".utf8))
     }
     testRuntimeAuthorizationStateSnapshot()
+    do { try testRegistrationDiagnosticFileSinkIsBoundedAndRetained() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: registration diagnostic sink: \(error)\n".utf8))
+    }
     do { try testDelayedAuthorizedRequestIsDeniedAfterRevocation() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: delayed authorization revocation: \(error)\n".utf8))

@@ -525,6 +525,44 @@ private func logError(_ message: String) {
   NSLog("MeetlessHost: %@", message)
 }
 
+final class MeetlessProcessRegistrationDiagnosticFileSink: MeetlessProcessRegistrationDiagnosticSink {
+  private let fileHandle: FileHandle
+  private let lock = NSLock()
+  private var recordedEventCount = 0
+
+  init?(duplicating fileHandle: FileHandle) {
+    let descriptor = dup(fileHandle.fileDescriptor)
+    guard descriptor >= 0 else { return nil }
+    self.fileHandle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+  }
+
+  func record(_ event: MeetlessProcessRegistrationRemovalEvent) {
+    let data = Data((event.retainedLine + "\n").utf8)
+    guard data.count <= meetlessMaximumRegistrationDiagnosticLineBytes else { return }
+    lock.lock()
+    defer { lock.unlock() }
+    guard recordedEventCount < meetlessMaximumRegistrationDiagnosticEvents else { return }
+    fileHandle.write(data)
+    recordedEventCount += 1
+  }
+}
+
+func makeMeetlessProcessRegistrationDiagnosticSink(
+  duplicating fileHandle: FileHandle
+) -> MeetlessProcessRegistrationDiagnosticFileSink? {
+  MeetlessProcessRegistrationDiagnosticFileSink(duplicating: fileHandle)
+}
+
+@discardableResult
+func attachMeetlessProcessRegistrationDiagnosticSink(
+  to authorization: RuntimeAuthorizationState,
+  duplicating fileHandle: FileHandle
+) -> MeetlessProcessRegistrationDiagnosticFileSink? {
+  let sink = makeMeetlessProcessRegistrationDiagnosticSink(duplicating: fileHandle)
+  authorization.setRegistrationDiagnosticSink(sink)
+  return sink
+}
+
 private func hostPreflightError(_ message: String) -> NSError {
   NSError(
     domain: "MeetlessHost.Preflight",
@@ -730,6 +768,7 @@ private func writeIdentityAtomically(_ data: Data, to identityPath: String, runt
 final class HostDelegate: NSObject, NSApplicationDelegate {
   private var runtime: Process?
   private var runtimeLog: FileHandle?
+  private var registrationDiagnosticSink: MeetlessProcessRegistrationDiagnosticFileSink?
   private var lockDescriptor: Int32 = -1
   private var signalSources: [DispatchSourceSignal] = []
   private var configuration: HostConfiguration?
@@ -859,6 +898,8 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     }
     if let runtime, runtime.isRunning { runtime.waitUntilExit() }
     removeOwnedRegistryIfReleased(registry)
+    runtimeAuthorization.setRegistrationDiagnosticSink(nil)
+    registrationDiagnosticSink = nil
     if lockDescriptor >= 0 {
       _ = lockf(lockDescriptor, F_ULOCK, 0)
       close(lockDescriptor)
@@ -2217,6 +2258,10 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     let log = try FileHandle(forWritingTo: logURL)
     try log.seekToEnd()
     runtimeLog = log
+    registrationDiagnosticSink = attachMeetlessProcessRegistrationDiagnosticSink(
+      to: runtimeAuthorization,
+      duplicating: log
+    )
     process.standardInput = FileHandle.nullDevice
     process.standardOutput = log
     process.standardError = log
@@ -2310,10 +2355,24 @@ final class RuntimeAuthorizationState {
   private var usedChallenges: Set<String> = []
   private var activeExecutions: [UUID: NativeRequestCancellation] = [:]
   private var inspectionHook: (() -> Void)?
+  private var pruneInspectionHook: (() -> Void)?
+  private var registrationDiagnosticSink: MeetlessProcessRegistrationDiagnosticSink?
 
   func setInspectionHook(_ hook: (() -> Void)?) {
     lock.lock()
     inspectionHook = hook
+    lock.unlock()
+  }
+
+  func setPruneInspectionHook(_ hook: (() -> Void)?) {
+    lock.lock()
+    pruneInspectionHook = hook
+    lock.unlock()
+  }
+
+  func setRegistrationDiagnosticSink(_ sink: MeetlessProcessRegistrationDiagnosticSink?) {
+    lock.lock()
+    registrationDiagnosticSink = sink
     lock.unlock()
   }
 
@@ -2323,6 +2382,8 @@ final class RuntimeAuthorizationState {
     hostPID: pid_t
   ) {
     lock.lock()
+    let removedRegistrations = registrations
+    let previousGeneration = generation
     self.processPolicy = processPolicy
     self.hostIdentity = hostIdentity
     self.hostPID = hostPID
@@ -2334,12 +2395,27 @@ final class RuntimeAuthorizationState {
     self.usedRegistrationTokens.removeAll()
     self.usedChallenges.removeAll()
     self.inspectionHook = nil
+    self.pruneInspectionHook = nil
     revision &+= 1
+    let events = makeRemovalEvents(
+      action: .reset,
+      removedPIDs: Set(removedRegistrations.keys),
+      registrations: removedRegistrations,
+      failures: [:],
+      generation: previousGeneration,
+      revision: revision,
+      fallbackStage: .lifecycle,
+      fallbackCheck: .stateReset
+    )
+    let sink = registrationDiagnosticSink
     lock.unlock()
+    recordRemovalEvents(events, using: sink)
   }
 
   func publish(_ pid: pid_t) {
     lock.lock()
+    let removedRegistrations = registrations
+    let previousGeneration = generation
     generation &+= 1
     revision &+= 1
     runtimePID = pid > 1 ? pid : nil
@@ -2352,9 +2428,22 @@ final class RuntimeAuthorizationState {
     usedRegistrationTokens.removeAll()
     usedChallenges.removeAll()
     inspectionHook = nil
+    pruneInspectionHook = nil
     let cancellations = Array(activeExecutions.values)
     activeExecutions.removeAll()
+    let events = makeRemovalEvents(
+      action: .reset,
+      removedPIDs: Set(removedRegistrations.keys),
+      registrations: removedRegistrations,
+      failures: [:],
+      generation: previousGeneration,
+      revision: revision,
+      fallbackStage: .lifecycle,
+      fallbackCheck: .stateReset
+    )
+    let sink = registrationDiagnosticSink
     lock.unlock()
+    recordRemovalEvents(events, using: sink)
     cancellations.forEach { $0.cancel() }
   }
 
@@ -2364,6 +2453,8 @@ final class RuntimeAuthorizationState {
       lock.unlock()
       return
     }
+    let removedRegistrations = registrations
+    let previousGeneration = generation
     generation &+= 1
     revision &+= 1
     runtimePID = nil
@@ -2376,9 +2467,22 @@ final class RuntimeAuthorizationState {
     usedRegistrationTokens.removeAll()
     usedChallenges.removeAll()
     inspectionHook = nil
+    pruneInspectionHook = nil
     let cancellations = Array(activeExecutions.values)
     activeExecutions.removeAll()
+    let events = makeRemovalEvents(
+      action: .reset,
+      removedPIDs: Set(removedRegistrations.keys),
+      registrations: removedRegistrations,
+      failures: [:],
+      generation: previousGeneration,
+      revision: revision,
+      fallbackStage: .lifecycle,
+      fallbackCheck: .stateReset
+    )
+    let sink = registrationDiagnosticSink
     lock.unlock()
+    recordRemovalEvents(events, using: sink)
     cancellations.forEach { $0.cancel() }
   }
 
@@ -3002,9 +3106,21 @@ final class RuntimeAuthorizationState {
       lock.unlock()
       return false
     }
-    removeRegistrationAndDescendantsLocked(startingAt: childPID)
+    let removedPIDs = removeRegistrationAndDescendantsLocked(startingAt: childPID)
     revision &+= 1
+    let events = makeRemovalEvents(
+      action: .release,
+      removedPIDs: removedPIDs,
+      registrations: snapshot.registrations,
+      failures: [:],
+      generation: snapshot.generation,
+      revision: revision,
+      fallbackStage: .lifecycle,
+      fallbackCheck: .explicitRelease
+    )
+    let sink = registrationDiagnosticSink
     lock.unlock()
+    recordRemovalEvents(events, using: sink)
     return true
   }
 
@@ -3013,6 +3129,8 @@ final class RuntimeAuthorizationState {
     for _ in 0..<3 {
       lock.lock()
       if let runtimePID, !isProcessAlive(runtimePID) {
+        let removedRegistrations = registrations
+        let previousGeneration = generation
         self.runtimePID = nil
         desktopOwnerToken = nil
         desktopAttested = false
@@ -3022,7 +3140,19 @@ final class RuntimeAuthorizationState {
         usedRegistrationTokens.removeAll()
         generation &+= 1
         revision &+= 1
+        let events = makeRemovalEvents(
+          action: .reset,
+          removedPIDs: Set(removedRegistrations.keys),
+          registrations: removedRegistrations,
+          failures: [:],
+          generation: previousGeneration,
+          revision: revision,
+          fallbackStage: .lifecycle,
+          fallbackCheck: .processGone
+        )
+        let sink = registrationDiagnosticSink
         lock.unlock()
+        recordRemovalEvents(events, using: sink)
         return true
       }
       guard let snapshot = authorizationSnapshotLocked() else {
@@ -3031,26 +3161,39 @@ final class RuntimeAuthorizationState {
       }
       lock.unlock()
 
-      var invalid = Set<pid_t>()
+      var invalidFailures: [pid_t: MeetlessProcessRegistrationFailure] = [:]
       for registration in snapshot.registrations.values {
         var visited = Set<pid_t>()
-        if !validateRegistrationChain(registration, snapshot: snapshot, visited: &visited) {
-          invalid.insert(registration.pid)
+        if let failure = validateRegistrationChainDiagnosed(registration, snapshot: snapshot, visited: &visited) {
+          invalidFailures[registration.pid] = failure
         }
       }
+      notifyPruneInspectionHook()
 
       lock.lock()
       guard isCurrentStateLocked(snapshot) else {
         lock.unlock()
         continue
       }
-      if invalid.isEmpty {
+      if invalidFailures.isEmpty {
         lock.unlock()
         return true
       }
-      removeRegistrationAndDescendantsLocked(pids: invalid)
+      let removedPIDs = removeRegistrationAndDescendantsLocked(pids: Set(invalidFailures.keys))
       revision &+= 1
+      let events = makeRemovalEvents(
+        action: .prune,
+        removedPIDs: removedPIDs,
+        registrations: snapshot.registrations,
+        failures: invalidFailures,
+        generation: snapshot.generation,
+        revision: revision,
+        fallbackStage: .ownership,
+        fallbackCheck: .ownerChainFailure
+      )
+      let sink = registrationDiagnosticSink
       lock.unlock()
+      recordRemovalEvents(events, using: sink)
       return true
     }
     return false
@@ -3164,10 +3307,54 @@ final class RuntimeAuthorizationState {
       runtimePID == snapshot.runtimePID
   }
 
+  private func makeRemovalEvents(
+    action: MeetlessProcessRegistrationDiagnosticAction,
+    removedPIDs: Set<pid_t>,
+    registrations: [pid_t: RegisteredChild],
+    failures: [pid_t: MeetlessProcessRegistrationFailure],
+    generation: UInt64,
+    revision: UInt64,
+    fallbackStage: MeetlessProcessRegistrationDiagnosticStage,
+    fallbackCheck: MeetlessProcessRegistrationDiagnosticCheck
+  ) -> [MeetlessProcessRegistrationRemovalEvent] {
+    removedPIDs.sorted().compactMap { pid in
+      guard let registration = registrations[pid] else { return nil }
+      let failure = failures[pid] ?? MeetlessProcessRegistrationFailure(
+        role: MeetlessProcessRegistrationFailure.role(for: registration.role),
+        stage: fallbackStage,
+        check: fallbackCheck,
+        osCode: .none
+      )
+      return MeetlessProcessRegistrationRemovalEvent(
+        action: action,
+        failure: failure,
+        pid: pid,
+        generation: generation,
+        revision: revision
+      )
+    }
+  }
+
+  private func recordRemovalEvents(
+    _ events: [MeetlessProcessRegistrationRemovalEvent],
+    using sink: MeetlessProcessRegistrationDiagnosticSink?
+  ) {
+    guard let sink else { return }
+    events.forEach { sink.record($0) }
+  }
+
   private func notifyInspectionHook() {
     lock.lock()
     let hook = inspectionHook
     inspectionHook = nil
+    lock.unlock()
+    hook?()
+  }
+
+  private func notifyPruneInspectionHook() {
+    lock.lock()
+    let hook = pruneInspectionHook
+    pruneInspectionHook = nil
     lock.unlock()
     hook?()
   }
@@ -3451,8 +3638,59 @@ final class RuntimeAuthorizationState {
   private func normalizedInspectionCode(_ error: Error) -> MeetlessNormalizedOSCode {
     guard let inspectionError = error as? MeetlessProcessInspectionError else { return .unknown }
     switch inspectionError {
-    case .unavailable(let osCode): return osCode
+    case .unavailable(let osCode, _): return osCode
     }
+  }
+
+  private func inspectionDetails(_ error: Error) -> (osCode: MeetlessNormalizedOSCode, source: MeetlessProcessInspectionSource?) {
+    guard let inspectionError = error as? MeetlessProcessInspectionError else {
+      return (osCode: .unknown, source: nil)
+    }
+    switch inspectionError {
+    case .unavailable(let osCode, let source): return (osCode: osCode, source: source)
+    }
+  }
+
+  private func processGone(_ osCode: MeetlessNormalizedOSCode) -> Bool {
+    osCode == .enoent || osCode == .esrch
+  }
+
+  private func diagnosedInspectionFailure(
+    role: MeetlessProcessRegistrationDiagnosticRole,
+    stage: MeetlessProcessRegistrationDiagnosticStage,
+    observation: MeetlessParentPIDObservation
+  ) -> MeetlessProcessRegistrationFailure {
+    registrationFailure(
+      role: role,
+      stage: stage,
+      check: processGone(observation.osCode) ? .processGone : .processInspectionUnavailable,
+      osCode: observation.osCode
+    )
+  }
+
+  private func diagnosedInspectionFailure(
+    role: MeetlessProcessRegistrationDiagnosticRole,
+    stage: MeetlessProcessRegistrationDiagnosticStage,
+    error: Error
+  ) -> MeetlessProcessRegistrationFailure {
+    let details = inspectionDetails(error)
+    let gone = processGone(details.osCode) &&
+      (details.source == .processPath || details.source == .arguments)
+    return registrationFailure(
+      role: role,
+      stage: stage,
+      check: gone ? .processGone : .processInspectionUnavailable,
+      osCode: details.osCode
+    )
+  }
+
+  private func registrationFailure(
+    role: MeetlessProcessRegistrationDiagnosticRole,
+    stage: MeetlessProcessRegistrationDiagnosticStage,
+    check: MeetlessProcessRegistrationDiagnosticCheck,
+    osCode: MeetlessNormalizedOSCode = .none
+  ) -> MeetlessProcessRegistrationFailure {
+    MeetlessProcessRegistrationFailure(role: role, stage: stage, check: check, osCode: osCode)
   }
 
   private func inspectRegisteredProcess(
@@ -3514,11 +3752,43 @@ final class RuntimeAuthorizationState {
     snapshot: AuthorizationSnapshot,
     visited: inout Set<pid_t>
   ) -> Bool {
-    guard visited.insert(registration.pid).inserted,
-          let identity = try? inspectMeetlessProcessIdentity(registration.pid),
-          identity == registration.expectedIdentity,
-          liveParentPID(registration.pid) == registration.owner.pid else { return false }
-    return validateOwnerEvidence(registration.owner, snapshot: snapshot, visited: &visited)
+    validateRegistrationChainDiagnosed(registration, snapshot: snapshot, visited: &visited) == nil
+  }
+
+  private func validateRegistrationChainDiagnosed(
+    _ registration: RegisteredChild,
+    snapshot: AuthorizationSnapshot,
+    visited: inout Set<pid_t>
+  ) -> MeetlessProcessRegistrationFailure? {
+    let diagnosticRole = MeetlessProcessRegistrationFailure.role(for: registration.role)
+    guard visited.insert(registration.pid).inserted else {
+      return registrationFailure(role: diagnosticRole, stage: .ownership, check: .ownerChainFailure)
+    }
+
+    let identity: MeetlessProcessIdentity
+    do {
+      identity = try inspectMeetlessProcessIdentity(registration.pid)
+    } catch {
+      return diagnosedInspectionFailure(role: diagnosticRole, stage: .inspection, error: error)
+    }
+    guard identity == registration.expectedIdentity else {
+      return registrationFailure(role: diagnosticRole, stage: .inspection, check: .childIdentityMismatch)
+    }
+
+    let parentObservation = inspectLiveParentPID(registration.pid)
+    guard let parentPID = parentObservation.pid else {
+      return diagnosedInspectionFailure(role: diagnosticRole, stage: .inspection, observation: parentObservation)
+    }
+    guard parentPID == registration.owner.pid else {
+      return registrationFailure(role: diagnosticRole, stage: .inspection, check: .parentMismatch)
+    }
+
+    return validateOwnerEvidenceDiagnosed(
+      registration.owner,
+      diagnosticRole: diagnosticRole,
+      snapshot: snapshot,
+      visited: &visited
+    )
   }
 
   private func validateOwnerEvidence(
@@ -3526,13 +3796,52 @@ final class RuntimeAuthorizationState {
     snapshot: AuthorizationSnapshot,
     visited: inout Set<pid_t>
   ) -> Bool {
-    guard owner.pid > 1,
-          owner.parentPID > 1,
-          let currentIdentity = try? inspectMeetlessProcessIdentity(owner.pid),
-          currentIdentity == owner.identity,
-          liveParentPID(owner.pid) == owner.parentPID,
-          let currentParentIdentity = try? inspectMeetlessProcessIdentity(owner.parentPID),
-          currentParentIdentity == owner.parentIdentity else { return false }
+    validateOwnerEvidenceDiagnosed(
+      owner,
+      diagnosticRole: .unknown,
+      snapshot: snapshot,
+      visited: &visited
+    ) == nil
+  }
+
+  private func validateOwnerEvidenceDiagnosed(
+    _ owner: ProcessOwnerEvidence,
+    diagnosticRole: MeetlessProcessRegistrationDiagnosticRole,
+    snapshot: AuthorizationSnapshot,
+    visited: inout Set<pid_t>
+  ) -> MeetlessProcessRegistrationFailure? {
+    guard owner.pid > 1, owner.parentPID > 1 else {
+      return registrationFailure(role: diagnosticRole, stage: .ownership, check: .ownerChainFailure)
+    }
+
+    let currentIdentity: MeetlessProcessIdentity
+    do {
+      currentIdentity = try inspectMeetlessProcessIdentity(owner.pid)
+    } catch {
+      return diagnosedInspectionFailure(role: diagnosticRole, stage: .inspection, error: error)
+    }
+    guard currentIdentity == owner.identity else {
+      return registrationFailure(role: diagnosticRole, stage: .ownership, check: .ownerChainFailure)
+    }
+
+    let parentObservation = inspectLiveParentPID(owner.pid)
+    guard let parentPID = parentObservation.pid else {
+      return diagnosedInspectionFailure(role: diagnosticRole, stage: .inspection, observation: parentObservation)
+    }
+    guard parentPID == owner.parentPID else {
+      return registrationFailure(role: diagnosticRole, stage: .ownership, check: .ownerChainFailure)
+    }
+
+    let currentParentIdentity: MeetlessProcessIdentity
+    do {
+      currentParentIdentity = try inspectMeetlessProcessIdentity(owner.parentPID)
+    } catch {
+      return diagnosedInspectionFailure(role: diagnosticRole, stage: .inspection, error: error)
+    }
+    guard currentParentIdentity == owner.parentIdentity else {
+      return registrationFailure(role: diagnosticRole, stage: .ownership, check: .ownerChainFailure)
+    }
+
     switch owner.role {
     case "desktop":
       guard snapshot.desktopAttested,
@@ -3541,33 +3850,47 @@ final class RuntimeAuthorizationState {
             owner.parentPID == snapshot.hostPID,
             owner.parentIdentity == snapshot.hostProcessIdentity,
             processIdentityMatchesShape(owner.identity, expectedProcessIdentity(for: "desktop", policy: snapshot.processPolicy)),
-            hostProcessIdentityMatchesAttestation(owner.parentIdentity, snapshot.hostIdentity) else { return false }
-      return true
+            hostProcessIdentityMatchesAttestation(owner.parentIdentity, snapshot.hostIdentity) else {
+        return registrationFailure(role: diagnosticRole, stage: .ownership, check: .ownerChainFailure)
+      }
+      return nil
     case "daemon-worker":
       guard daemonWorkerIdentityMatchesPolicy(owner.identity, policy: snapshot.processPolicy),
             let daemon = snapshot.registrations[owner.parentPID],
             daemon.role == "daemon",
             daemon.attested,
-            daemon.expectedIdentity == owner.parentIdentity else { return false }
-      return validateRegistrationChain(daemon, snapshot: snapshot, visited: &visited)
+            daemon.expectedIdentity == owner.parentIdentity else {
+        return registrationFailure(role: diagnosticRole, stage: .ownership, check: .ownerChainFailure)
+      }
+      guard validateRegistrationChainDiagnosed(daemon, snapshot: snapshot, visited: &visited) == nil else {
+        return registrationFailure(role: diagnosticRole, stage: .ownership, check: .ownerChainFailure)
+      }
+      return nil
     case "plugin":
       guard let plugin = snapshot.registrations[owner.pid],
             plugin.role == "plugin",
             plugin.attested,
             plugin.expectedIdentity == owner.identity,
             plugin.owner.pid == owner.parentPID,
-            plugin.owner.identity == owner.parentIdentity else { return false }
-      return validateRegistrationChain(plugin, snapshot: snapshot, visited: &visited)
+            plugin.owner.identity == owner.parentIdentity else {
+        return registrationFailure(role: diagnosticRole, stage: .ownership, check: .ownerChainFailure)
+      }
+      guard validateRegistrationChainDiagnosed(plugin, snapshot: snapshot, visited: &visited) == nil else {
+        return registrationFailure(role: diagnosticRole, stage: .ownership, check: .ownerChainFailure)
+      }
+      return nil
     default:
-      return false
+      return registrationFailure(role: diagnosticRole, stage: .ownership, check: .ownerChainFailure)
     }
   }
 
-  private func removeRegistrationAndDescendantsLocked(startingAt pid: pid_t) {
+  @discardableResult
+  private func removeRegistrationAndDescendantsLocked(startingAt pid: pid_t) -> Set<pid_t> {
     removeRegistrationAndDescendantsLocked(pids: [pid])
   }
 
-  private func removeRegistrationAndDescendantsLocked(pids initial: Set<pid_t>) {
+  @discardableResult
+  private func removeRegistrationAndDescendantsLocked(pids initial: Set<pid_t>) -> Set<pid_t> {
     var removed = initial
     var changed = true
     while changed {
@@ -3578,6 +3901,7 @@ final class RuntimeAuthorizationState {
       }
     }
     for pid in removed { registrations.removeValue(forKey: pid) }
+    return removed
   }
 
   private func processIdentityMatchesShape(

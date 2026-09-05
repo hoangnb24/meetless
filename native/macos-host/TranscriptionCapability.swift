@@ -18,6 +18,8 @@ let meetlessDarwinUnixSocketPathBytes = 103
 let meetlessHostProcessProtocolVersion = 1
 let meetlessMaximumProcessArgumentCount = 32
 let meetlessMaximumProcessFieldBytes = 16 * 1024
+let meetlessMaximumRegistrationDiagnosticLineBytes = 512
+let meetlessMaximumRegistrationDiagnosticEvents = 64
 
 struct MeetlessRuntimeEndpointDescriptor: Codable, Equatable {
   let role: String
@@ -135,6 +137,7 @@ enum MeetlessProcessRegistrationDiagnosticStage: String {
   case authorization
   case ownership
   case inspection
+  case lifecycle
 }
 
 enum MeetlessProcessRegistrationDiagnosticCheck: String {
@@ -148,6 +151,15 @@ enum MeetlessProcessRegistrationDiagnosticCheck: String {
   case childIdentityMismatch = "child-identity-mismatch"
   case ownerChainFailure = "owner-chain-failure"
   case processInspectionUnavailable = "process-inspection-unavailable"
+  case processGone = "process-gone"
+  case stateReset = "state-reset"
+  case explicitRelease = "explicit-release"
+}
+
+enum MeetlessProcessRegistrationDiagnosticAction: String {
+  case prune
+  case release
+  case reset
 }
 
 enum MeetlessNormalizedOSCode: String {
@@ -176,13 +188,56 @@ struct MeetlessProcessRegistrationFailure: Equatable {
   }
 }
 
+struct MeetlessProcessRegistrationRemovalEvent: Equatable {
+  let action: MeetlessProcessRegistrationDiagnosticAction
+  let role: MeetlessProcessRegistrationDiagnosticRole
+  let stage: MeetlessProcessRegistrationDiagnosticStage
+  let check: MeetlessProcessRegistrationDiagnosticCheck
+  let osCode: MeetlessNormalizedOSCode
+  let pid: pid_t
+  let generation: UInt64
+  let revision: UInt64
+
+  init(
+    action: MeetlessProcessRegistrationDiagnosticAction,
+    failure: MeetlessProcessRegistrationFailure,
+    pid: pid_t,
+    generation: UInt64,
+    revision: UInt64
+  ) {
+    self.action = action
+    self.role = failure.role
+    self.stage = failure.stage
+    self.check = failure.check
+    self.osCode = failure.osCode
+    self.pid = pid
+    self.generation = generation
+    self.revision = revision
+  }
+
+  var retainedLine: String {
+    "MeetlessHost: registration-removal action=\(action.rawValue) role=\(role.rawValue) stage=\(stage.rawValue) check=\(check.rawValue) os=\(osCode.rawValue) pid=\(pid) generation=\(generation) revision=\(revision)"
+  }
+}
+
+protocol MeetlessProcessRegistrationDiagnosticSink: AnyObject {
+  func record(_ event: MeetlessProcessRegistrationRemovalEvent)
+}
+
 enum MeetlessChildRegistrationDecision {
   case accepted(MeetlessChildRegistrationResult)
   case rejected(MeetlessProcessRegistrationFailure)
 }
 
+enum MeetlessProcessInspectionSource: Equatable {
+  case processPath
+  case executableMetadata
+  case executableData
+  case arguments
+}
+
 enum MeetlessProcessInspectionError: Error, Equatable {
-  case unavailable(MeetlessNormalizedOSCode)
+  case unavailable(MeetlessNormalizedOSCode, source: MeetlessProcessInspectionSource)
 }
 
 struct MeetlessRegisteredProcessAttestationResult {
@@ -1241,27 +1296,35 @@ func liveParentPID(_ pid: pid_t) -> pid_t? {
 }
 
 func inspectMeetlessProcessIdentity(_ pid: pid_t) throws -> MeetlessProcessIdentity {
-  guard pid > 1 else { throw MeetlessProcessInspectionError.unavailable(.einval) }
+  guard pid > 1 else {
+    throw MeetlessProcessInspectionError.unavailable(.einval, source: .processPath)
+  }
   var pathBuffer = [UInt8](repeating: 0, count: Int(MAXPATHLEN))
   let pathLength = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
   guard pathLength > 0 else {
-    throw MeetlessProcessInspectionError.unavailable(meetlessNormalizedOSCode(errno))
+    throw MeetlessProcessInspectionError.unavailable(
+      meetlessNormalizedOSCode(errno),
+      source: .processPath
+    )
   }
   let executablePath = String(decoding: pathBuffer.prefix(Int(pathLength)), as: UTF8.self)
   let realPath = URL(fileURLWithPath: executablePath).resolvingSymlinksInPath().standardizedFileURL.path
   var information = stat()
   guard lstat(executablePath, &information) == 0 else {
-    throw MeetlessProcessInspectionError.unavailable(meetlessNormalizedOSCode(errno))
+    throw MeetlessProcessInspectionError.unavailable(
+      meetlessNormalizedOSCode(errno),
+      source: .executableMetadata
+    )
   }
   guard (information.st_mode & S_IFMT) == S_IFREG,
         information.st_size > 0 else {
-    throw MeetlessProcessInspectionError.unavailable(.none)
+    throw MeetlessProcessInspectionError.unavailable(.none, source: .executableMetadata)
   }
   let binary: Data
   do {
     binary = try Data(contentsOf: URL(fileURLWithPath: executablePath))
   } catch {
-    throw MeetlessProcessInspectionError.unavailable(.unknown)
+    throw MeetlessProcessInspectionError.unavailable(.unknown, source: .executableData)
   }
   return MeetlessProcessIdentity(
     configuredPath: executablePath,
@@ -1280,19 +1343,25 @@ private func inspectMeetlessProcessArguments(_ pid: pid_t) throws -> [String] {
   guard sysctl(&mib, UInt32(mib.count), nil, &size, nil, 0) == 0,
         size > MemoryLayout<Int32>.size,
         size <= 256 * 1024 else {
-    throw MeetlessProcessInspectionError.unavailable(meetlessNormalizedOSCode(errno))
+    throw MeetlessProcessInspectionError.unavailable(
+      meetlessNormalizedOSCode(errno),
+      source: .arguments
+    )
   }
   var bytes = [UInt8](repeating: 0, count: size)
   guard sysctl(&mib, UInt32(mib.count), &bytes, &size, nil, 0) == 0,
         size >= MemoryLayout<Int32>.size else {
-    throw MeetlessProcessInspectionError.unavailable(meetlessNormalizedOSCode(errno))
+    throw MeetlessProcessInspectionError.unavailable(
+      meetlessNormalizedOSCode(errno),
+      source: .arguments
+    )
   }
   if size < bytes.count { bytes.removeSubrange(size..<bytes.count) }
   let argc = bytes.withUnsafeBytes { raw -> Int32 in
     raw.loadUnaligned(as: Int32.self)
   }
   guard argc > 0, argc <= Int32(meetlessMaximumProcessArgumentCount) else {
-    throw MeetlessProcessInspectionError.unavailable(.none)
+    throw MeetlessProcessInspectionError.unavailable(.none, source: .arguments)
   }
   var cursor = MemoryLayout<Int32>.size
   while cursor < bytes.count && bytes[cursor] != 0 { cursor += 1 }
@@ -1304,7 +1373,9 @@ private func inspectMeetlessProcessArguments(_ pid: pid_t) throws -> [String] {
     arguments.append(String(decoding: bytes[start..<cursor], as: UTF8.self))
     cursor += 1
   }
-  guard arguments.count == Int(argc) else { throw MeetlessProcessInspectionError.unavailable(.none) }
+  guard arguments.count == Int(argc) else {
+    throw MeetlessProcessInspectionError.unavailable(.none, source: .arguments)
+  }
   return arguments
 }
 
