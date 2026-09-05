@@ -2,18 +2,92 @@
 
 ## Current State
 
-- `plan_revision`: `v113`
-- `current_frontier`: `R5-MAS-ATTEMPT18-NATIVE-DIAGNOSTIC-RUNTIME-PROOF`
-- `state`: `ATTEMPT18_ROUTED_PHASE1_PENDING`
+- `plan_revision`: `v114`
+- `current_frontier`: `R5-MAS-POST-REBOOT-ARCHIVED-IDENTITY-FOUNDATION`
+- `state`: `ATTEMPT18_INTERRUPTED_PHASE1_REJECTED_POST_REBOOT_STATUS_BLOCKED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: Lead-accepted Attempt 17 artifact from source `4ec0865dd1b8626d75fc2648dfba8e055dde27f6`, bundle fingerprint `55f327720893d61be6a24a19c5d6704f9e237fecbf8eb539b21f159145fc06ca`, manifest SHA-256 `48f710433c26ab8456983d41e17f5d0dd7e9d24e808af7e2d2d9381f2eb29a5d`; package accepted, runtime readiness failed.
+- `candidate`: no available MAS artifact accepted for the next phase. Attempt 18 Phase 1 is rejected as incomplete/unverifiable after crash; historical Attempt 17 package identities remain evidence only and its temporary artifact path no longer exists. Accepted native diagnostic source remains `90637005d82a30fce8b264a256026c5edab7701a`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: Attempts 14–17 are consumed and recovered. New bounded MAS proof runs are now Lead-routed under the owner's delegated base-runtime authority below, not retries charged to an old attempt. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
+- `pending_ruling`: Attempts 14–17 were recovered before reboot; their archives remain but current coordinator status refuses post-reboot device identity. Attempt 18 had one interrupted Phase-1 invocation, no accepted artifact and no Phase-2 admission. All retry/build/install/launch/recovery operations are held pending the new foundation ruling. Existing excluded gates and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
-- `blocked_by`: successful native status lacked the live supervisor's daemon registration, but the immutable native diagnostic candidate now retains the committed pruning/reset predicate. Neither a functional correction nor user-test readiness is proven.
-- `next_action`: one Attempt 18 build/sign/validate checkpoint from accepted native diagnostic source `90637005d82a30fce8b264a256026c5edab7701a` plus this plan-only routing record, then Lead artifact acceptance before one prepared install/launch/observe/recover sequence. No operator self-retry.
+- `blocked_by`: authoritative coordinator status fails with MAS-GATE-CLEANUP-001 because the archived transaction device is 16777234 while the current runtime root device is 16777232. The same root inode and counts do not establish full attestation equivalence. Do not bypass, normalize away, or rewrite journal identity to obtain a green status.
+- `next_action`: read-only foundation judgment on reboot-stable identity and safe archived-state handling before any correction or new external brief. Attempt 18 ownership/result is closed below; no interrupted package invocation will be silently resumed or repeated.
+
+### Attempt 18 crash handback and Lead disposition (2026-09-05)
+
+The owner reported a machine crash and asked to continue. Supervisor advisory
+required explicit Phase-1 process/residue disposition and artifact ruling
+before any retry or Phase 2. Lead resumed read-only inspection; no original
+write authority was silently reused. Operator `87974102-5b8f-420e-8352-d221e044b474`
+was idle with no active turn or pending permission, then completed a bounded
+read-only crash handback: `INTERRUPTED_NO_ACCEPTABLE_ARTIFACT`.
+
+Attempt 18 ledger at original source `9e1a05f2f857206adf24216941d3e44d2a2628dc`:
+
+- Package/build/sign invocation: exactly one started, tool session `9001`.
+  OS PID and exact start timestamp were not captured. No terminal child exit
+  was recorded; overall build/sign completion is **unknown**, not a fabricated
+  nonzero exit or a successful package claim.
+- Last observed progress: native release products and native tests completed,
+  Paseo/TypeScript builds completed, Expo reported `Exported: dist`; the same
+  invocation remained live with no candidate/signature/validator handback.
+- Coordinator install / launch / recovery: `0 / 0 / 0`. Phase 2 was never
+  admitted. No Attempt-18 run ID or transaction was observed.
+- After reboot, the original process is no longer live. Lead's bounded process
+  metadata check found no surviving original npm/Swift/codesign/Meetless package
+  process; this does not supply a missing terminal exit code.
+- Exact Phase-1 proof root was never handed back. Current `/private/tmp`
+  enumeration has no `meetless-attempt18-*` or `meetless-mas-development-proof.*`
+  paths. No surviving manifest/fingerprint/CDHash/artifact digest/full validator
+  result is available. Previously recorded temporary artifact/evidence paths
+  must now be treated as unavailable, not silently reused.
+- Ignored generated native/Paseo/TypeScript/Expo build outputs remain. They are
+  unaccepted intermediate outputs, not a signed MAS artifact or new baseline.
+  No residue was deleted, renamed, repaired, or promoted during this audit.
+
+**Binding Lead ruling:** reject Attempt 18 Phase 1 for progression:
+`INTERRUPTED_NO_ACCEPTABLE_ARTIFACT`. This closes the one-shot operator's moving
+write scope and the unclassified result; it is not acceptance of an artifact,
+not a claim that the package command exited nonzero, and not authorization to
+retry it. Any new build needs a fresh Lead brief after the status blocker is
+resolved. Phase 2 remains unadmitted.
+
+Post-crash machine evidence personally observed by Lead:
+
+- Source HEAD still `9e1a05f2f857206adf24216941d3e44d2a2628dc`, tracked worktree
+  clean; protected untracked paths untouched; four authority hashes unchanged.
+- `/Applications/Meetless.app` fingerprint remains
+  `7039ded32b778fcda21fae6d961d80e72508630b2aaa0c8d2abedf08103e2a14`, CDHash
+  `acfdb5223b4d492d86e13827babcea2c5df392dc`; deep/strict verification passed.
+- Repository-owned `inspectMasLiveState` returned `absent`: process, listener,
+  socket and open-handle counts all zero.
+- MAS support parent still contains the same four terminal archive journals
+  (Attempts 14–17) and retained roots. Filesystem inspection found no canonical
+  active transaction directory/new run. This is descriptive inspection, not
+  a replacement for the failing authoritative coordinator status.
+- `node scripts/macos-mas-gate-session.mjs status` emitted
+  `MAS-GATE-CLEANUP-001: runtime root device does not match the transaction
+  device` while verifying archived restored roots. Current device `16777232`
+  differs from journal device `16777234`; root inode remains `43589382`.
+- Current full attestation digest is
+  `9e870f5fd3f9e97af20d4434d0017decb53f8c026c87a05e245fef5f3d241e06`, with the
+  same 13 entries, 6 files, 7 directories and 5413 file bytes. Historical digest
+  was `130c2d4de4cf4e6b9d63ce775860aa2bcd2f70012222c1d7d67d694af71dc6de`.
+  The device field is included in the attestation digest; equality of the
+  other observed summaries does not prove it is the only differing field.
+  Full runtime restoration/equivalence is therefore not re-accepted post-boot.
+
+No post-crash package/sign/install/launch/restore/cleanup command was run.
+All live resources are absent, so no process termination or manual filesystem
+recovery is needed or authorized by this handback. Read-only diagnostics and
+this durable record close the coordination gap without weakening verification.
+
+`PLAN_RECONCILIATION v1`: native diagnostic source acceptance survives the crash;
+temporary package proof does not. Route post-reboot archive identity foundation
+before a fresh build or runtime attempt. The base-runtime goal remains unmet;
+billing/production and all previously excluded gates remain out of scope.
 
 ### Native diagnostic acceptance and Attempt 18 routing (2026-09-05)
 
