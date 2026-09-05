@@ -2,17 +2,18 @@
 
 ## Current State
 
-- `plan_revision`: `v106`
+- `plan_revision`: `v107`
 - `current_frontier`: `R5-MAS-ATTEMPT16-READINESS-DIAGNOSTIC-INSTRUMENTATION`
-- `state`: `BASE_RUNTIME_DIAGNOSTICS_AUTHORIZED_NO_EXTERNAL_RETRY`
+- `state`: `BASE_RUNTIME_DIAGNOSTICS_ACCEPTED_AWAITING_SCOPED_ATTEMPT`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: Lead-accepted Attempt 16 artifact from repository tip `e57ac527db6e2cb3cf0654c872ea7fcfed414e79`, bundle fingerprint `e7243483893d9939287ff66c482590375f271cb626c31dcb1fc7b950eb514f65`, manifest SHA-256 `e377fbeb004f845a44241f29b545bdadab87640b2aff4b2c376bcc189536cf0e`.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
 - `pending_ruling`: Attempts 14, 15, and 16 are consumed and recovered. Purchase/restore, premium UI/status, real transcription/provider/TCC/recording/export, RevenueCat mutation/dashboard/secret activity, Convex, production/annual action, upload/submission/publication/App Review, and push remain closed.
-- `blocked_by`: retained evidence cannot distinguish the failing readiness subcheck because the desktop discards native registration-status errors; any new external attempt also requires separate owner authorization.
-- `next_action`: implement and locally verify bounded readiness diagnostics that preserve PID-lock, native registration-status, and attestation subcheck results; Lead accepts the candidate before requesting a separately scoped install/launch attempt. Do not alter renderer/network behavior or launch again under this repository-only frontier.
+- `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`; not yet packaged or run as a MAS application.
+- `blocked_by`: Attempt 16's retained evidence still cannot identify its failing readiness subcheck. The accepted diagnostic source needs a new signed build and separately owner-authorized install/launch/recovery observation; no external retry is authorized yet.
+- `next_action`: request one scoped diagnostic attempt: build/sign/validate the accepted source, coordinator install, one LaunchServices launch and bounded readiness observation, then coordinator recovery. Preserve existing network behavior and permit only the already-required build-scoped public SDK key loading for validation/startup, without exposing it. All purchase/restore, real capture/TCC/export, production and publication gates remain closed. This proposed scope is not authorization.
 
 ## Today's Acceptance Boundary — Base MAS Runtime (2026-09-05)
 
@@ -2584,7 +2585,7 @@ runtime readiness owner: preserve each predicate component and a sanitized
 native registration-status error before timeout. No functional fix or future
 external attempt is currently authorized.
 
-#### Readiness diagnostic correction candidate (2026-09-05; pending Lead acceptance)
+#### Readiness diagnostic correction accepted (2026-09-05)
 
 The runtime desktop now retains a bounded, sanitized daemon-readiness summary
 through the existing production decision path. Timeout output distinguishes PID
@@ -2604,7 +2605,7 @@ Local fixture verification passed: the new production-path diagnostic suite
 tests), and `@meetless/runtime` typecheck. No package, install, launch, native or
 live-state probe, recording, external service, or all-in-one build/test ran.
 This diagnostic candidate is not MAS runtime acceptance; a separately
-authorized packaged attempt and Lead acceptance remain required.
+authorized packaged attempt remains required.
 
 Lead did not accept candidate
 `fcae11c8ab8a76bd98f27b3a3a0b4bb6aedec5c0` for an external attempt: its
@@ -2613,6 +2614,22 @@ errors, and its latest observation could drop an earlier sanitized reason.
 This correction uses the inspected production error construction and retains a
 fixed set of error categories across retries; it does not infer native causes
 that the protocol does not expose.
+
+Lead accepted correction `8759ec6d494018e2bfd7a01682b6f5af0fb2f409` after
+bounded close-out of DIAG-001 and DIAG-002 against correction base
+`fcae11c8ab8a76bd98f27b3a3a0b4bb6aedec5c0`, original frontier base
+`7fd15cfd08d9f09c088b1b58db9d5373a9bb0817`. Ancestry, the complete three-path
+manifest (desktop source, diagnostic test, this plan), and all four frozen
+authority hashes matched. Lead personally reran the five focused suites (84
+tests passed), runtime typecheck (passed), and diff whitespace checks (passed).
+The error mapping matches the existing protocol's static errors and rejects
+raw detail; error-to-other-state tests retain prior failure categories. The
+runtime test seam calls the production wait function, and existing
+packaged-attestation composition/host/readiness/lifecycle checks passed.
+Review route: owning deterministic checks; no additional independent review
+lane was needed for this bounded diagnostic-only delta. No native protocol,
+recovery, network, readiness acceptance predicate, or product policy changed.
+Both protected untracked paths remain untouched; no external gate or push ran.
 
 ### Risks And Recovery
 
