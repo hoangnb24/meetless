@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import net from "node:net";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RuntimeConfig } from "./config.js";
@@ -24,6 +24,22 @@ import { activateUiTestRun, removeUiTestRunState } from "./ui-test-envelope.js";
 const rendererAbortListeners = new WeakMap<Server, { signal: AbortSignal; listener: () => void }>();
 const capturePermissionIntentHeader = "x-meetless-permission-intent";
 const capturePermissionIntentLifetimeMs = 5_000;
+const MAC_CHROMIUM_TEMP_DIRECTORY_PREFIX = "m-";
+const MAC_CHROMIUM_TEMP_SOCKET_NAME = "S";
+export const MAC_CHROMIUM_PROCESS_SINGLETON_PATH_BYTES = 253;
+
+interface DirectoryIdentity {
+  dev: number;
+  ino: number;
+}
+
+export interface MacChromiumTempAllocation {
+  readonly directory: string;
+  readonly socketPath: string;
+  release(): Promise<void>;
+}
+
+type DesktopSpawn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
 
 export function buildRendererUrl(config: RuntimeConfig): string {
   const configured = process.env.MEETLESS_RENDERER_URL?.trim();
@@ -49,6 +65,272 @@ export function localDaemonWebSocketUrl(listen: string): string {
   return `ws://${destination}/ws`;
 }
 
+export function isMacAppStoreDesktop(config: RuntimeConfig): boolean {
+  return isPackagedRuntime(config) && Boolean(config.environment.MEETLESS_APP_CONTAINER_SUPPORT_ROOT?.trim());
+}
+
+export function copyEnvironmentWithoutMacChromiumTmpDir(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(environment).filter(([key]) => key !== "MAC_CHROMIUM_TMPDIR"),
+  );
+}
+
+export function desktopChildEnvironment(
+  config: RuntimeConfig,
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  return isMacAppStoreDesktop(config) ? copyEnvironmentWithoutMacChromiumTmpDir(environment) : environment;
+}
+
+export async function allocateMacChromiumTemp(
+  config: RuntimeConfig,
+  signal: AbortSignal,
+): Promise<MacChromiumTempAllocation | null> {
+  signal.throwIfAborted();
+  if (!isMacAppStoreDesktop(config)) return null;
+
+  const tempRoot = await resolveMacChromiumTempRoot(config);
+  signal.throwIfAborted();
+  const parentIdentity = await assertTrustedDirectory(tempRoot, "MAS Chromium temp root", true);
+  let directory: string | null = null;
+  let allocation: MacChromiumTempAllocation | null = null;
+  try {
+    directory = await mkdtemp(path.join(tempRoot, MAC_CHROMIUM_TEMP_DIRECTORY_PREFIX));
+    await chmod(directory, 0o700);
+    const relativeName = path.relative(tempRoot, directory);
+    if (!/^m-[A-Za-z0-9]{6}$/u.test(relativeName)) {
+      throw new Error("MAS Chromium temp allocation has an unexpected fresh directory name");
+    }
+    const directoryIdentity = await assertTrustedDirectory(directory, "MAS Chromium temp allocation", true);
+    const socketPath = path.join(directory, MAC_CHROMIUM_TEMP_SOCKET_NAME);
+    const socketPathBytes = Buffer.byteLength(socketPath, "utf8");
+    if (socketPathBytes > MAC_CHROMIUM_PROCESS_SINGLETON_PATH_BYTES) {
+      throw new Error(
+        `MAS Chromium process-singleton path is ${socketPathBytes} UTF-8 bytes; ` +
+        `the Darwin allowance is ${MAC_CHROMIUM_PROCESS_SINGLETON_PATH_BYTES}`,
+      );
+    }
+    allocation = createMacChromiumTempAllocation({
+      directory,
+      socketPath,
+      parent: tempRoot,
+      parentIdentity,
+      directoryIdentity,
+    });
+    signal.throwIfAborted();
+    return allocation;
+  } catch (error) {
+    if (allocation) {
+      try {
+        await allocation.release();
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "MAS Chromium temp allocation failed and cleanup failed");
+      }
+    } else if (directory) {
+      try {
+        await removeOwnedMacChromiumTemp(directory, tempRoot, parentIdentity, undefined);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "MAS Chromium temp allocation failed and cleanup failed");
+      }
+    }
+    throw error;
+  }
+}
+
+export function buildElectronSpawnOptions(
+  config: RuntimeConfig,
+  rendererUrl: string,
+  environment: NodeJS.ProcessEnv,
+  macChromiumTempDirectory: string | null,
+): { command: string; args: string[]; options: SpawnOptions } {
+  const nonSecretChildEnvironment = desktopChildEnvironment(config, environment);
+  if (isMacAppStoreDesktop(config) && !macChromiumTempDirectory) {
+    throw new Error("MAS Electron launch requires an owned MAC_CHROMIUM_TMPDIR allocation");
+  }
+  const electronEnvironment = {
+    ...nonSecretChildEnvironment,
+    ...(isMacAppStoreDesktop(config) ? { MAC_CHROMIUM_TMPDIR: macChromiumTempDirectory as string } : {}),
+    EXPO_DEV_URL: rendererUrl,
+    PASEO_TEST_APP_NAME: "Meetless",
+  };
+  const bootstrap = path.join(REPOSITORY_ROOT, "scripts/electron-bootstrap.mjs");
+  return {
+    command: config.packageResources?.electronBinary ?? process.execPath,
+    args: config.packaged
+      ? [bootstrap]
+      : [fileURLToPath(import.meta.resolve("electron/cli.js")), bootstrap],
+    options: {
+      cwd: config.packaged ? config.paths.root : REPOSITORY_ROOT,
+      env: electronEnvironment,
+      stdio: "inherit",
+      detached: true,
+    },
+  };
+}
+
+export function spawnMeetlessElectron(
+  config: RuntimeConfig,
+  rendererUrl: string,
+  environment: NodeJS.ProcessEnv,
+  macChromiumTempDirectory: string | null,
+  signal: AbortSignal,
+  spawnProcess: DesktopSpawn = spawn,
+): ChildProcess {
+  signal.throwIfAborted();
+  const launch = buildElectronSpawnOptions(config, rendererUrl, environment, macChromiumTempDirectory);
+  signal.throwIfAborted();
+  return spawnProcess(launch.command, launch.args, launch.options);
+}
+
+export async function spawnMeetlessElectronWithMacChromiumTemp(
+  config: RuntimeConfig,
+  rendererUrl: string,
+  environment: NodeJS.ProcessEnv,
+  allocation: MacChromiumTempAllocation | null,
+  signal: AbortSignal,
+  spawnProcess: DesktopSpawn = spawn,
+): Promise<ChildProcess> {
+  try {
+    return spawnMeetlessElectron(
+      config,
+      rendererUrl,
+      environment,
+      allocation?.directory ?? null,
+      signal,
+      spawnProcess,
+    );
+  } catch (error) {
+    if (allocation) {
+      try {
+        await allocation.release();
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "Electron spawn failed and MAS temp cleanup failed");
+      }
+    }
+    throw error;
+  }
+}
+
+export async function shutdownOwnedRuntimeAndReleaseMacChromiumTemp(
+  allocation: MacChromiumTempAllocation | null,
+  shutdown: () => Promise<void>,
+): Promise<void> {
+  await shutdown();
+  await allocation?.release();
+}
+
+async function resolveMacChromiumTempRoot(config: RuntimeConfig): Promise<string> {
+  const configuredSupportRoot = config.environment.MEETLESS_APP_CONTAINER_SUPPORT_ROOT?.trim();
+  if (!configuredSupportRoot || !path.isAbsolute(configuredSupportRoot) || configuredSupportRoot.includes("\u0000")) {
+    throw new Error("MAS Chromium temp allocation requires the canonical absolute app-container support root");
+  }
+  const supportRoot = path.resolve(configuredSupportRoot);
+  const dataRoot = path.resolve(supportRoot, "..", "..");
+  const containerRoot = path.dirname(dataRoot);
+  const canonicalSupportRoot = path.join(dataRoot, "Library", "Application Support");
+  if (
+    supportRoot !== canonicalSupportRoot ||
+    path.basename(dataRoot) !== "Data" ||
+    path.basename(containerRoot) !== "com.meetless.app" ||
+    path.basename(path.dirname(containerRoot)) !== "Containers" ||
+    path.basename(path.dirname(path.dirname(containerRoot))) !== "Library"
+  ) {
+    throw new Error("MAS Chromium temp allocation support root is outside the canonical Meetless app container");
+  }
+  await assertTrustedDirectory(containerRoot, "MAS app-container root", false);
+  await assertTrustedDirectory(dataRoot, "MAS app-container Data root", false);
+  await assertTrustedDirectory(supportRoot, "MAS app-container support root", false);
+
+  const tempRoot = path.join(dataRoot, "tmp");
+  try {
+    await assertTrustedDirectory(tempRoot, "MAS Chromium temp root", true);
+  } catch (error) {
+    if (!isErrno(error, "ENOENT")) throw error;
+    try {
+      await mkdir(tempRoot, { mode: 0o700 });
+    } catch (mkdirError) {
+      if (!isErrno(mkdirError, "EEXIST")) throw mkdirError;
+    }
+    await assertTrustedDirectory(tempRoot, "MAS Chromium temp root", true);
+  }
+  return tempRoot;
+}
+
+async function assertTrustedDirectory(
+  directory: string,
+  label: string,
+  requirePrivateMode: boolean,
+  expectedIdentity?: DirectoryIdentity,
+): Promise<DirectoryIdentity> {
+  const info = await lstat(directory);
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new Error(`${label} must be a non-symlink directory`);
+  }
+  const resolved = await realpath(directory);
+  if (!path.isAbsolute(resolved)) {
+    throw new Error(`${label} does not resolve to an absolute canonical path`);
+  }
+  const identity = { dev: Number(info.dev), ino: Number(info.ino) };
+  if (expectedIdentity && !sameDirectoryIdentity(identity, expectedIdentity)) {
+    throw new Error(`${label} changed identity while the MAS temp allocation was owned`);
+  }
+  if (requirePrivateMode && (info.mode & 0o777) !== 0o700) {
+    throw new Error(`${label} must have mode 0700`);
+  }
+  return identity;
+}
+
+function sameDirectoryIdentity(left: DirectoryIdentity, right: DirectoryIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function createMacChromiumTempAllocation(input: {
+  directory: string;
+  socketPath: string;
+  parent: string;
+  parentIdentity: DirectoryIdentity;
+  directoryIdentity: DirectoryIdentity;
+}): MacChromiumTempAllocation {
+  let released = false;
+  return {
+    directory: input.directory,
+    socketPath: input.socketPath,
+    release: async () => {
+      if (released) return;
+      await removeOwnedMacChromiumTemp(
+        input.directory,
+        input.parent,
+        input.parentIdentity,
+        input.directoryIdentity,
+      );
+      released = true;
+    },
+  };
+}
+
+async function removeOwnedMacChromiumTemp(
+  directory: string,
+  parent: string,
+  parentIdentity: DirectoryIdentity,
+  directoryIdentity: DirectoryIdentity | undefined,
+): Promise<void> {
+  await assertTrustedDirectory(parent, "MAS Chromium temp root", true, parentIdentity);
+  try {
+    await assertTrustedDirectory(directory, "MAS Chromium temp allocation", true, directoryIdentity);
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return;
+    throw new Error(`Refusing MAS Chromium temp cleanup: ${describe(error)}`);
+  }
+  await rm(directory, { recursive: true, force: true });
+  try {
+    await lstat(directory);
+    throw new Error("MAS Chromium temp allocation remained after cleanup");
+  } catch (error) {
+    if (!isErrno(error, "ENOENT")) throw error;
+  }
+  await assertTrustedDirectory(parent, "MAS Chromium temp root", true, parentIdentity);
+}
+
 export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number> {
   const owned = new HostOwnedRuntimeShutdown(config);
   const shutdown = owned.signals;
@@ -59,6 +341,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
   let daemonOwned = false;
   let hostAttested = false;
   let desktopAttestation: PackagedDesktopAttestation | null = null;
+  let macChromiumTemp: MacChromiumTempAllocation | null = null;
   try {
     desktopAttestation = isPackagedRuntime(config) ? await attestPackagedDesktop(config) : null;
     const hostIdentity = desktopAttestation?.identity ?? await assertDesktopLaunchedByHost(config);
@@ -82,12 +365,12 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
       const daemonToken = isPackagedRuntime(config) ? randomUUID() : null;
       const daemonEnvironment = isPackagedRuntime(config) && desktopAttestation && daemonToken
         ? {
-          ...config.environment,
+          ...desktopChildEnvironment(config, config.environment),
           MEETLESS_HOST_PROCESS_GENERATION: String(desktopAttestation.generation),
           MEETLESS_HOST_PROCESS_TOKEN: daemonToken,
           MEETLESS_HOST_PROCESS_ROLE: "daemon",
         }
-        : config.environment;
+        : desktopChildEnvironment(config, config.environment);
       const daemonExecutable = isPackagedRuntime(config)
         ? config.packageResources?.nodeBinary
         : process.execPath;
@@ -125,6 +408,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
 
     const rendererUrl = buildRendererUrl(config);
     const nonSecretChildEnvironment = copyEnvironmentWithoutDirectPasswordSecrets(config.environment);
+    if (isMacAppStoreDesktop(config)) delete nonSecretChildEnvironment.MAC_CHROMIUM_TMPDIR;
     if (config.packaged) {
       rendererServer = await startPackagedRenderer(
         config,
@@ -153,28 +437,26 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
       await waitForHttp(config.rendererOrigin, renderer, shutdown.signal);
     }
 
-    const bootstrap = path.join(REPOSITORY_ROOT, "scripts/electron-bootstrap.mjs");
-    const electronCommand = config.packageResources?.electronBinary ?? process.execPath;
-    const electronArguments = config.packaged
-      ? [bootstrap]
-      : [fileURLToPath(import.meta.resolve("electron/cli.js")), bootstrap];
-    electron = spawn(electronCommand, electronArguments, {
-      cwd: config.packaged ? config.paths.root : REPOSITORY_ROOT,
-      env: {
-        ...nonSecretChildEnvironment,
-        EXPO_DEV_URL: rendererUrl,
-        PASEO_TEST_APP_NAME: "Meetless",
-      },
-      stdio: "inherit",
-      detached: true,
-    });
+    macChromiumTemp = await allocateMacChromiumTemp(config, shutdown.signal);
+    electron = await spawnMeetlessElectronWithMacChromiumTemp(
+      config,
+      rendererUrl,
+      nonSecretChildEnvironment,
+      macChromiumTemp,
+      shutdown.signal,
+    );
     await owned.track("electron", electron);
     const result = await Promise.race([waitForExit(electron), waitForShutdown(shutdown.signal)]);
     return result.code ?? (result.signal ? 1 : 0);
   } finally {
     shutdown.dispose();
     await closeRendererServer(rendererServer);
-    if (hostAttested) await owned.shutdown({ daemonChild, daemonOwned });
+    if (hostAttested) {
+      await shutdownOwnedRuntimeAndReleaseMacChromiumTemp(
+        macChromiumTemp,
+        () => owned.shutdown({ daemonChild, daemonOwned }),
+      );
+    }
   }
 }
 
