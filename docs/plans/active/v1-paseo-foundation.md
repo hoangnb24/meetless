@@ -2,9 +2,9 @@
 
 ## Current State
 
-- `plan_revision`: `v132`
+- `plan_revision`: `v133`
 - `current_frontier`: `R5-MAS-ATTEMPT20-ARGV-STABILITY-RUNTIME-PROOF`
-- `state`: `ATTEMPT20_ARTIFACT_ACCEPTED_PHASE2_ADMITTED`
+- `state`: `ATTEMPT20_RECOVERED_HANDOFF_INVALID_TOPOLOGY_EVIDENCE_GAP`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: local source fbbac36121637b9e6d26eb89dcbdedb31bc7dbfb accepted; contains reviewed fork pin a2c8ff349ffdf6f500eb09270c7f44af4c018bfc and bounded launch diagnostics. No MAS artifact contains this combined correction yet.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
@@ -13,7 +13,34 @@
 - `pending_ruling`: owner explicitly authorized named Attempt 20 below. Phase 1 only admitted now; Phase 2 needs Lead artifact acceptance. No retry beyond this one episode; excluded gates and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
 - `blocked_by`: packaged native readiness and actual new-artifact role-configuration exclusion remain unproven. The A19 launch rejection predicate remains unknown; new diagnostics can retain it on a future authorized run.
-- `next_action`: same SERIAL operator runs one coordinator install/launch/observe/restore against the accepted A20 artifact; no rebuild or retry.
+- `next_action`: read-only retained handoff/exit diagnosis and observer evidence-loss audit; A20 consumed, no further external attempt authorized.
+
+### Attempt 20 terminal ruling and next diagnostic boundary
+
+Run9272f221-8055-4c8b-97db-9407b6d07cc2: install1/exit0, launch1/exit1,
+restore1/exit0. Lead read observation/launch-terminal evidence at
+`/Users/tubakhuym/Library/Logs/Meetless-dev-proof/attempt20/phase2-qlCgMY` and
+fresh authoritative status confirms this run archived, live state absent.
+Operator restoration evidence reports exact old app and current runtime
+baseline restored. Accept terminal recovered disposition, reject full readiness
+proof: required sampled per-process topology was not persisted, only counts.
+This is an operator evidence-contract failure, not proof the runtime lacked
+those processes; no rerun is authorized to fill the missing arrays.
+
+Known output: handoff-claim-timeout / lastCause claimed-handoff-invalid;
+renderer categories include http and absent (no inferred HTTP200/UI proof),
+desktop status idle, external readiness failed at authoritative recording
+status. Daemon process-gone/ESRCH and plugin owner-chain-failure were retained;
+all owned processes were absent already before restore. Their termination
+cause/order is not established. Do not claim complete argv/attestation fix from
+missing topology or equate renderer response with user-test readiness.
+
+`FOUNDATION_CHECK v1`: prioritize retained archive/handoff and source predicate
+comparison, reporting only safe field names/equality outcomes, never raw owner
+tokens or handoff data. Separate parent handoff validation from later process
+termination. Independently audit wrapper persistence loss; exact historical
+arrays cannot be fabricated. No new diagnostics framework or correction before
+the existing evidence's limits and causal facts are established.
 
 ### Attempt 20 artifact acceptance and Phase 2 admission
 
