@@ -4,6 +4,98 @@
 
 ### Owner immediate-launch directive (2026-09-06)
 
+Lead accepts private-temp source55fe85f6d66445a80ecb805b1b77648c142f4670.
+FAST closeout closes001–004 without new findings; Lead inspected actual delta
+and independently passed25 focused tests across4 files (exit0). Writer runtime
+typecheck passed; reviewer inspected source, not test execution. Remaining
+check/rmdir race can remove an empty replacement only, not replacement contents;
+nonempty residue retained by accepted bounded policy. No full-runtime claim.
+
+`PLAN_RECONCILIATION v1`: absorb completed temp foundation/correction/review;
+next dependency is corrected artifact then actual window. No more observer work,
+no unrelated six-test repair, no Electron fork/upgrade. Under explicit owner
+private-temp approval and fix/open request, admit one isolated package/sign
+invocation; Lead owns subsequent restored-session replacement and live window
+acceptance. Current crashed5208953a session remains installed/preserved until
+coordinator restore. No automatic package retry, billing/capture/production/push.
+
+Private-temp correction55fe85f6d66445a80ecb805b1b77648c142f4670 handed back
+over exacte330b446, same two-file scope. Lead inspected correction delta;
+same reviewer be99120b receives FAST CLOSEOUT for accepted001–004 only, with
+MAS-only environment refinement and nonempty-residue retention explicitly in
+contract. No broad review restart or automatic third correction. Live proof
+remains closed until source acceptance. Lead focused four-file rerun owns its
+terminal separately; writer11+14 tests and typecheck are reported evidence.
+
+Private-temp review ruling: freeze accepted findings001–004, correction base
+e330b446, same source/test owner5973d610. Correct full socket target byte count;
+validated MAS/canonical runtime relation; replace recursive cleanup with owned
+empty-directory rmdir and retain nonempty/unknown-identity residue; ensure
+renderer-close failure cannot skip owned shutdown and preserve combined errors.
+Lead accepts bounded temp residue rather than introducing deletion machinery.
+Refine002: no unapproved global direct/dev env stripping; retain MAS-only scope
+and explicitly test direct packaged ambient-variable false classification.
+One correction batch, same reviewer FAST closeout of stable delta only.
+Five root-suite static failures confirmed also at unchanged base via isolated
+named-file comparison; sixth readiness failure remains full-suite-sensitive and
+unresolved, passed isolated at both versions. No false pre-existing claim for six.
+No unrelated test repairs, full build, or external attempt admitted here.
+
+Private-temp candidate e330b446c0e25784fb1f1abd97b4105c38cdea9d is NOT yet
+accepted. Lead inspected entire desktop delta (322 changed source lines plus
+256 test lines); one ordinary read-only lifecycle/filesystem review is justified
+by new recursive cleanup and identity claims, not mere diff completion. Reviewer
+be99120b returns one complete material batch. Writer5973d610 is read-only for
+exact six root-suite failure classification; no correction until Lead ruling.
+Do not label failures pre-existing without baseline evidence. No package/live
+attempt admitted. Prefer minimal safe resource handling over new cleanup machinery.
+
+Private-temp implementation ruling: accept independent desktop-spawn ownership
+boundary. Sole SERIAL writer5973d610 owns desktop.ts and focused runtime tests
+(small local helper only if justified); Lead unstaged plan excluded, base91166a9.
+MAS-only fresh short child of validated container Data/tmp, explicit Electron
+MAC_CHROMIUM_TMPDIR, no ambient override in MAS daemon/renderer env, same userData.
+Verify current filesystem ownership, canonical path, byte bound and cancellation.
+Remove only owned fresh resource after successful owned shutdown; failure retains
+it, never sweep existing temp dirs or extend MAS journal authority. Direct/dev
+unchanged. Use encode-invariant existing Vitest owner, no new test framework.
+Source-level proof and actual MAS singleton/window proof are separate: no mocked
+test counts as real second-instance acceptance. Live actions remain Lead-owned
+after frozen candidate verification; no writer package or container mutation.
+
+Owner approves private-temp proposal (latest explicit agreement). Current frontier
+`MAS-ELECTRON-PRIVATE-TEMP`: retain pinned Electron, sandbox, userData and singleton
+routing; allocate short private sandbox temp for launched Electron via Chromium's
+MAC_CHROMIUM_TMPDIR mechanism. Lead source inspection found latest stable tags
+41.10.7/42.11.2/43.6.0/44.2.0 and main still use fixed S; no version upgrade is
+justified as this fix. Chromium146 file_util_apple.mm reads this environment
+variable before NSTemporaryDirectory; this is implementation support, not an
+Electron public API guarantee. Owner agreement supplies scoped integration
+authority, does not change frozen documents or authorize Electron fork maintenance.
+Read-only independent reviewer be99120b validates minimal lifecycle/short-path
+owner and singleton behavior before one source writer. No new observer, broad
+temp cleanup, live attempt, package, or policy bypass during this foundation check.
+
+Singleton ruling: retained EEXIST proves cookie-creation failure, not collision
+ownership. Do not remove residue, disable Electron singleton or substitute native
+host lock: native session ownership does not implement Electron second-instance
+routing. No new live observation admitted. Existing read-only reviewer continues
+only to exhaust pinned Electron MAS downstream temp/socket patches and actual
+bootstrap path ordering, especially literal Data/tmp/S, before proposing further
+evidence. No new observer project or implementation scope is opened.
+
+Namespace artifact vQoWHr accepted: manifest010b09019b42cb270af9074071ac9fc49f7df367b806e20540fc31d4dc32db06,
+Lead deep/strict codesign and nested plist checks passed. Prior cb1f4d4e restore
+exit0, new install exit0 run5208953a-64f4-4863-80eb-c11c816c3bc5. Launch exit1
+handoff-claim-timeout/claimed-handoff-invalid/claim-state. Native runtime reached
+recorder idle and Electron39478 login-shell code, but no visible-window proof;
+log errors SingletonCookie file-exists17 and failed symlinks then SIGTERM teardown.
+No MachPort fatal retained in this run. Native/desktop now absent in process list.
+Data/tmp/S no longer exists on read-only check: do not classify as removable stale
+residue. Reviewer be99120b owns bounded read-only singleton/temp and native-owner
+contract diagnosis before any further change; no automatic build/retry/cleanup.
+This latest installed session is not restored yet; preserve app/runtime/logs.
+
 Lead accepts namespace correction `1b00cb6ced00b7505c063247c57d406c2155dcba`
 over9bfd99a: complete three-file diff inspected, exact nested main plist and
 signed-code identifier enforced; helper checks and entitlement policy unchanged.
