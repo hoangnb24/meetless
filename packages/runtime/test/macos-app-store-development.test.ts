@@ -118,10 +118,25 @@ describe("Mac App Store development package boundary", () => {
     const preparedInfo = prepareR5DevelopmentElectronInfo(extractedInfo);
     expect(preparedInfo).toMatchObject({
       CFBundleExecutable: "Electron",
+      CFBundleIdentifier: "com.meetless.app",
       ElectronTeamID: "63M98WD275",
     });
-    expect(validateR5DevelopmentElectronInfo(preparedInfo, { requireElectronTeamId: true })).toBe(preparedInfo);
-    expect(() => validateR5DevelopmentElectronInfo(extractedInfo, { requireElectronTeamId: true })).toThrow(/ElectronTeamID/);
+    expect(validateR5DevelopmentElectronInfo(preparedInfo, {
+      requireElectronTeamId: true,
+      requireBundleIdentifier: true,
+    })).toBe(preparedInfo);
+    expect(() => validateR5DevelopmentElectronInfo(extractedInfo, {
+      requireElectronTeamId: true,
+      requireBundleIdentifier: true,
+    })).toThrow(/ElectronTeamID/);
+    expect(() => validateR5DevelopmentElectronInfo({
+      ...preparedInfo,
+      CFBundleIdentifier: undefined,
+    }, { requireBundleIdentifier: true })).toThrow(/bundle identifier/);
+    expect(() => validateR5DevelopmentElectronInfo({
+      ...preparedInfo,
+      CFBundleIdentifier: "com.github.Electron",
+    }, { requireBundleIdentifier: true })).toThrow(/bundle identifier/);
     expect(validateR5DevelopmentElectronFileOutput("Electron: Mach-O 64-bit executable arm64")).toEqual({ architecture: "arm64" });
     expect(() => validateR5DevelopmentElectronInfo({ CFBundleExecutable: "Electron", CFBundleVersion: "40.0.0" })).toThrow(/41.2.0/);
     expect(() => validateR5DevelopmentElectronFileOutput("Electron: Mach-O universal binary with 2 architectures: [arm64:x86_64]")).toThrow(/thin arm64/);
@@ -143,6 +158,7 @@ describe("Mac App Store development package boundary", () => {
     expect(() => validateR5DevelopmentSignature(details.replace("TeamIdentifier=63M98WD275", "TeamIdentifier=OTHER"))).toThrow(/Team ID/);
     expect(() => validateR5DevelopmentSignature(details.replace("Apple Development: Long Le (335C7MY4H4)", "Apple Distribution: Long Le (63M98WD275)"))).toThrow(/identity/);
     expect(validateR5DevelopmentSignature(details.replace("Identifier=com.meetless.app", "Identifier=com.meetless.helper"), "nested", { expectedBundleIdentifier: null })).toMatchObject({ identifier: "com.meetless.helper" });
+    expect(() => validateR5DevelopmentSignature(details.replace("Identifier=com.meetless.app", "Identifier=com.meetless.helper"), "signed MAS Electron")).toThrow(/expected com.meetless.app/);
   });
 
   test("binds ElectronTeamID after the MAS runtime replaces the direct Electron app", () => {
@@ -158,7 +174,8 @@ describe("Mac App Store development package boundary", () => {
     expect(metadataIndex).toBeGreaterThan(copyIndex);
     expect(replacement).toContain("prepareR5DevelopmentElectronInfo(extractedInfo)");
     expect(replacement).toContain("plist.build(preparedInfo)");
-    expect(source).toContain("{ requireElectronTeamId: true }");
+    expect(source).toContain("{ requireElectronTeamId: true, requireBundleIdentifier: true }");
+    expect(source).toContain("{ expectedBundleIdentifier: R5_APP_STORE_BUNDLE_ID }");
   });
 
   test("ignores only the normalized embedded profile and preserves code-object signing routes", () => {

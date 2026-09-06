@@ -360,7 +360,12 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
       await readFile(path.join(nestedElectronAppPath, "Contents", "Info.plist"), "utf8"),
       "signed Electron MAS Info.plist",
     ),
-    { requireElectronTeamId: true },
+    { requireElectronTeamId: true, requireBundleIdentifier: true },
+  );
+  validateR5DevelopmentSignature(
+    await readCodesignDisplay(nestedElectronExecutablePath),
+    "signed MAS Electron",
+    { expectedBundleIdentifier: R5_APP_STORE_BUNDLE_ID },
   );
 
   const nestedSignatures = [];
