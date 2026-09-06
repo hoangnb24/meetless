@@ -40,7 +40,8 @@ meetings and evidence are not represented as Paseo workspaces or agents.
 ### Private MAS Electron temporary space
 
 For a validated MAS installation, the Electron child receives a fresh short
-directory under the canonical app-container support root's `Data/tmp`. The
+directory under the canonical container's `Data/tmp`, derived from its validated
+`Data/Library/Application Support` location. The
 directory is created with private permissions, its canonical root/parent and
 bounded UTF-8 path are checked, and abort is checked before and after creation
 and before spawn. Only the Electron child receives the explicit

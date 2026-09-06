@@ -20,7 +20,7 @@ no-window startup blocker for owner exploration.
 
 The latest read-only status reports an active transaction record but no live
 processes, listeners, sockets, or open handles. The successful installation is
-intentionally stopped; its transaction and prior app/runtime backups remain
+stopped and intentionally retained; its transaction and prior app/runtime backups remain
 coordinator-preserved. It is not claimed restored or archived, and no inference
 is made about who stopped it. No automatic relaunch, retry, recording, or
 monitoring is active.
@@ -61,9 +61,10 @@ not authorize them. Each requires its own owner/Lead scope and evidence.
 2. **Packaged second-instance behavior.** Prove the MAS Electron singleton and
    second-instance handoff with the accepted shared `userData` and private temp
    lifecycle. The visible first window does not establish this routing.
-3. **Store and billing operations.** Apply and validate the profile-backed App
-   Sandbox/In-App Purchase configuration, replace unrestricted writable paths
-   with container/export-safe behavior, and produce a validated sandbox build.
+3. **Store and billing operations.** Preserve the accepted development package's
+   profile-backed sandbox and container-safe runtime layout; those are completed
+   foundations, not work to restart. Validate the exact store-distribution and
+   In-App Purchase configuration when that separately scoped gate opens.
    Prove sandbox purchase, cancellation, restore, offline/free behavior, device
    enrollment, and RevenueCat webhook handling. Complete App Store Connect
    agreements, availability/eligibility, and release metadata under the

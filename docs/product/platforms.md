@@ -21,8 +21,7 @@ the first V1 recording matrix.
 
 The macOS development App Store integration has a verified desktop UI handoff:
 the owner observed a visible, interactable window and confirmed the requested
-basic UI test. The latest local installation is intentionally stopped with its
-coordinator-preserved transaction backups retained. This is a desktop UI status,
+basic UI test on 2026-09-06. This is a desktop UI status,
 not a claim of real recording/TCC, second-instance routing, purchase/restore,
 managed-production, store publication, or release acceptance. See [the accepted
 MAS development integration decision](../decisions/0006-mas-development-desktop-integration.md)
