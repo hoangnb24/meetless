@@ -2,18 +2,99 @@
 
 ## Current State
 
-- `plan_revision`: `v136`
+### Owner immediate-launch directive (2026-09-06)
+
+Lead accepts source `5d3c566d3ba654cac57dfe2498f79adce5d6aa80` over
+9c1ec70: nested MAS Electron plist receives the existing accepted Team ID
+after archive replacement and before signing; signed-artifact validation checks
+the key. Lead inspected all three changed files and pinned Electron41.2.0
+SetUpBundleOverrides, independently ran all13 development-package tests (exit0),
+and checked four frozen hashes and whitespace. Writer additionally reports
+41 focused tests/typecheck passed. No sandbox/entitlement change. This accepts
+the causal metadata correction, not a visible-window claim.
+
+Owner's fix-and-open request authorizes Lead to build the correction and perform
+the necessary safe replacement/reopen workflow without the auxiliary observer.
+One existing build operator is admitted for package/sign only; Lead retains
+subsequent install/launch and restoration ownership. No automatic retries,
+capture/billing/production/push or publication. The presently installed crashed
+session must be coordinator-restored before replacing it, preserving its logs.
+
+Latest owner request: fix the actual no-window crash. `MAS-ELECTRON-WINDOW-STARTUP`
+is the current frontier. Direct launch succeeded but Electron PID31665 exited
+at08:35:48.972 with MachPortRendezvousServer bootstrap_check_in permission
+denied1100, preceded by SingletonCookie errors. Recorder status idle preceded
+the fatal error; daemon shutdown followed it. Later process inspection found
+no Meetless process and renderer HTTP probe returned000. HTTP200 and successful
+foreground command were not proof of a visible window; Lead retracts that claim.
+
+One SERIAL source owner5973d610-7357-47c2-b10f-0670401a048e investigates and
+corrects the existing packaging composition in package-macos scripts and
+directly relevant app-store-development helper/tests. Base9c1ec70; Lead's
+unstaged plan is excluded from writer scope. Start with causal foundation
+verification against pinned primary Electron behavior; no sandbox or validator
+weakening, fork change, new harness, or policy expansion. If source correction
+requires broader authority return a dependency. Lead owns artifact and actual
+window acceptance; no independent broad review loop is precommitted.
+Current installed session da35e0ca remains preserved, not restored; do not
+mutate it while the source owner inspects metadata. No new live run dispatched.
+
+Owner explicitly requests opening the app now without the auxiliary test
+observer. Lead owns one direct install/launch of the existing accepted A20 MAS
+artifact, subject to the existing installer safety checks; no build or observer
+run. This supersedes the pending authorization hold for this bounded action.
+Keep the app available if launch succeeds; do not automatically restore on a
+timer. Existing coordinator recovery remains the sole rollback mechanism if
+installation fails. No archive deletion, validation bypass, billing, capture,
+production or publication is authorized. Pre-action status: archived/live absent.
+
+Result: direct install exited 0, runId
+`da35e0ca-caa7-44a5-8707-b56862ac1061`; coordinator launch exited 0 with
+`launch-claimed`, native host PID31648. One direct HTTP request to renderer
+`127.0.0.1:18082/` returned 200 and host remained alive. Requested foreground
+activation of the already-running installed app. No observer, build, automated
+recording or restore ran. Leave this session installed/running for owner use;
+old app/runtime remain transaction-preserved, not yet restored. This proves
+launch and renderer HTTP response, not recording or full runtime acceptance.
+CLI launch emitted its full handoff to the tool output, including the owner
+token; do not repeat it in summaries or evidence. Use projected output for any
+future coordinator invocation. No secret was copied into this plan.
+
+- `plan_revision`: `v137`
 - `current_frontier`: `R5-MAS-ATTEMPT20-ARGV-STABILITY-RUNTIME-PROOF`
 - `state`: `ATTEMPT20_RECOVERED_HANDOFF_INVALID_TOPOLOGY_EVIDENCE_GAP`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: current local source candidate pending Lead acceptance; exact immutable identity is reported in the handback. It contains reviewed fork pin a2c8ff349ffdf6f500eb09270c7f44af4c018bfc and bounded launch diagnostics. No MAS artifact contains this combined correction yet.
+- `candidate`: Lead-accepted diagnostic source `9c1ec70e19903bf7d7b49af723fe2d9453751b25`; reviewed fork pin a2c8ff349ffdf6f500eb09270c7f44af4c018bfc. The A20 artifact contains the fork correction but not this latest parent diagnostic completion. Source acceptance is not runtime acceptance.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
-- `pending_ruling`: owner explicitly authorized named Attempt 20 below. Phase 1 only admitted now; Phase 2 needs Lead artifact acceptance. No retry beyond this one episode; excluded gates and push remain closed.
+- `pending_ruling`: Attempt 20 authorization is consumed; its failed runtime proof and successful recovery are terminal. No Attempt 21 package/install/launch is admitted. Excluded gates and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
-- `blocked_by`: packaged native readiness and actual new-artifact role-configuration exclusion remain unproven. The A19 launch rejection predicate remains unknown; new diagnostics can retain it on a future authorized run.
-- `next_action`: read-only retained handoff/exit diagnosis and observer evidence-loss audit; A20 consumed, no further external attempt authorized.
+- `blocked_by`: full packaged runtime readiness remains unproven; exact A20 handoff rejection group and first signal sender remain unknown. A20 artifact role-exclusion audit passed, but any future artifact requires its own verification. Corrected observer persistence proof is pending.
+- `next_action`: accept and verify offline observer preparation before proposing any separately authorized external proof; preserve A20 evidence unchanged.
+
+### Lead source acceptance and plan reconciliation (2026-09-06)
+
+`PLAN_RECONCILIATION v1`: accept diagnostic candidate
+`9c1ec70e19903bf7d7b49af723fe2d9453751b25` over original base
+`1ad2365b5523f61705c46dea361cfb6f9e059b71`. Lead inspected the complete
+coordinator delta: original acceptance conjuncts and their order remain at the
+existing validator; only fixed-group failure metadata and propagation change.
+The complete manifest is coordinator, coordinator test, and this plan. Lead's
+root Vitest execution independently passed both files, 136 tests, terminal exit
+0; diff whitespace check passed. Writer typecheck evidence remains separately
+reported. No additional review loop is needed for this bounded diagnostic delta.
+
+Absorb completed retained-evidence diagnosis and serializer-loss audit into the
+terminal A20 record. No functional handoff or shutdown correction is proven.
+One preparation-only owner, operator ea333eff-712c-4d24-aa56-c953b55a8a45,
+may create new files only beneath
+`/Users/tubakhuym/Library/Logs/Meetless-dev-proof/observer-preparation/`.
+It must exercise the exact serialization path with nonempty synthetic process
+records, reject counts-only loss, preserve safe diagnostic groups, and report
+file hashes plus offline test terminals. Old evidence is immutable; repository,
+real runtime, credentials, package/install/launch/recovery are outside its scope.
+Lead owns acceptance of that handback. This preparation does not authorize A21.
 
 ### Attempt 20 terminal ruling and next diagnostic boundary
 
@@ -45,7 +126,7 @@ nonempty topology serialization round-trip before install.
 ### A20 bounded handoff-predicate diagnostic completion (2026-09-06)
 
 This source correction starts from exact parent HEAD
-`1ad2365d3d305026bfc36c5d1db0a1c605cf147e`. It changes only the coordinator,
+`1ad2365b5523f61705c46dea361cfb6f9e059b71`. It changes only the coordinator,
 its existing coordinator test, and this plan. The existing
 `validateMasHostHandoff` acceptance conjunction remains the sole predicate
 owner and now reports one fixed group enum: `schema`, `session`, `root`,
