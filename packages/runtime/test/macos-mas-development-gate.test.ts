@@ -17,6 +17,7 @@ import {
   MAS_LSOF_PURPOSES,
   MAS_GATE_LAUNCH_DIAGNOSTIC_SCHEMA,
   MAS_GATE_LAUNCH_FAILURE_CATEGORIES,
+  MAS_GATE_HANDOFF_PREDICATE_GROUPS,
   masDevelopmentRuntimeContext,
   masGateRuntimeOptions,
   masLiveAbsentObservation,
@@ -94,6 +95,15 @@ async function captureLaunchFailure(operation: () => Promise<unknown>) {
     return serializeMasDevelopmentGateFailure(error);
   }
   throw new Error("expected the MAS launch fixture to fail closed");
+}
+
+function captureSynchronousFailure(operation: () => unknown) {
+  try {
+    operation();
+  } catch (error) {
+    return serializeMasDevelopmentGateFailure(error);
+  }
+  throw new Error("expected the MAS handoff fixture to fail closed");
 }
 
 async function seedMasSessionIndex(context: ReturnType<typeof masDevelopmentRuntimeContext>) {
@@ -372,6 +382,24 @@ describe("MAS development gate coordinator", () => {
     });
     expect(JSON.stringify(serialized)).not.toContain(secret);
     expect(JSON.stringify(serialized)).not.toContain("runtime-root");
+
+    const hostileDiagnostic = new Error(secret);
+    Object.defineProperty(hostileDiagnostic, "masLaunchDiagnostic", {
+      value: {
+        category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT,
+        lastCause: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.CLAIMED_HANDOFF_INVALID,
+        lastPredicateGroup: secret,
+      },
+    });
+    const sanitized = serializeMasDevelopmentGateFailure(hostileDiagnostic);
+    expect(sanitized).toMatchObject({
+      diagnostic: {
+        category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT,
+        lastCause: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.CLAIMED_HANDOFF_INVALID,
+      },
+    });
+    expect(sanitized.diagnostic).not.toHaveProperty("lastPredicateGroup");
+    expect(JSON.stringify(sanitized)).not.toContain(secret);
   });
 
   it("classifies invalid launch context as preflight status without exposing context", async () => {
@@ -1026,6 +1054,7 @@ describe("MAS development gate coordinator", () => {
     expect(claimedHandoffFailure).toMatchObject({
       diagnostic: {
         category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.CLAIMED_HANDOFF_INVALID,
+        predicateGroup: MAS_GATE_HANDOFF_PREDICATE_GROUPS.CLAIM_STATE,
       },
     });
 
@@ -1040,6 +1069,7 @@ describe("MAS development gate coordinator", () => {
       diagnostic: {
         category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT,
         lastCause: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.CLAIMED_HANDOFF_INVALID,
+        lastPredicateGroup: MAS_GATE_HANDOFF_PREDICATE_GROUPS.CLAIM_STATE,
       },
     });
     expect(JSON.stringify(timeoutFailure)).not.toContain(context.runtimeRoot);
@@ -1496,6 +1526,35 @@ describe("MAS development gate coordinator", () => {
       freshRootIdentity: Object.fromEntries(Object.entries(handoff.freshRootIdentity).reverse()),
     }).reverse());
     expect(validateMasHostHandoff(swiftSorted, { context, session, packageProof })).toBe(swiftSorted);
+    const predicateCases = [
+      { group: MAS_GATE_HANDOFF_PREDICATE_GROUPS.SCHEMA, candidate: { ...handoff, extra: true } },
+      { group: MAS_GATE_HANDOFF_PREDICATE_GROUPS.SESSION, candidate: { ...handoff, ownerToken: "other-owner" } },
+      { group: MAS_GATE_HANDOFF_PREDICATE_GROUPS.ROOT, candidate: { ...handoff, canonicalRuntimeRoot: `${context.runtimeRoot}-other` } },
+      { group: MAS_GATE_HANDOFF_PREDICATE_GROUPS.PACKAGE_PROOF, proof: { ...packageProof, candidateFingerprint: "d".repeat(64) } },
+      {
+        group: MAS_GATE_HANDOFF_PREDICATE_GROUPS.INSTALLED_IDENTITY,
+        proof: { ...packageProof, publishedHostIdentity: { ...packageProof.publishedHostIdentity, cdHash: "d".repeat(40) } },
+      },
+      { group: MAS_GATE_HANDOFF_PREDICATE_GROUPS.CLAIM_STATE, candidate: { ...handoff, claimedByPid: 99 } },
+    ];
+    for (const testCase of predicateCases) {
+      const failure = captureSynchronousFailure(() => validateMasHostHandoff(testCase.candidate ?? handoff, {
+        context,
+        session,
+        packageProof: testCase.proof ?? packageProof,
+      }));
+      expect(failure).toMatchObject({
+        coordinator: "MAS_GATE_COORDINATOR v1",
+        status: "failed",
+        diagnostic: {
+          schema: MAS_GATE_LAUNCH_DIAGNOSTIC_SCHEMA,
+          category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.UNKNOWN,
+          predicateGroup: testCase.group,
+        },
+      });
+      expect(JSON.stringify(failure)).not.toContain(context.runtimeRoot);
+      expect(JSON.stringify(failure)).not.toContain(session.ownerToken);
+    }
     for (const change of [
       { ownerToken: "other-owner" },
       { runId: "other-run" },

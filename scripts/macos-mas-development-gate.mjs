@@ -100,6 +100,14 @@ export const MAS_GATE_LAUNCH_FAILURE_CATEGORIES = Object.freeze({
   HANDOFF_CLAIM_TIMEOUT: "handoff-claim-timeout",
   CLAIMED_HANDOFF_INVALID: "claimed-handoff-invalid",
 });
+export const MAS_GATE_HANDOFF_PREDICATE_GROUPS = Object.freeze({
+  SCHEMA: "schema",
+  SESSION: "session",
+  ROOT: "root",
+  PACKAGE_PROOF: "package-proof",
+  INSTALLED_IDENTITY: "installed-identity",
+  CLAIM_STATE: "claim-state",
+});
 export const MAS_GATE_LAUNCH_LAST_CAUSES = Object.freeze({
   UNKNOWN: "unknown",
   HANDOFF_READ: "handoff-read",
@@ -728,7 +736,9 @@ export async function launchMasDevelopmentGate({
   } catch (error) {
     const diagnostic = readMasLaunchDiagnostic(error);
     if (error?.code === "MAS-GATE-CLEANUP-001") {
-      if (!diagnostic) attachMasLaunchDiagnostic(error, { category: failureCategory });
+      if (!diagnostic || diagnostic.category === MAS_GATE_LAUNCH_FAILURE_CATEGORIES.UNKNOWN) {
+        attachMasLaunchDiagnostic(error, { category: failureCategory });
+      }
       throw error;
     }
     throw coordinatorError(
@@ -1621,20 +1631,46 @@ async function waitForMasHostHandoffClaim(context, status, packageProof) {
     lastDiagnostic?.category === MAS_GATE_LAUNCH_FAILURE_CATEGORIES.CLAIMED_HANDOFF_INVALID
     ? lastDiagnostic.category
     : MAS_GATE_LAUNCH_LAST_CAUSES.UNKNOWN;
+  const lastPredicateGroup = lastDiagnostic?.category === MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ ||
+    lastDiagnostic?.category === MAS_GATE_LAUNCH_FAILURE_CATEGORIES.CLAIMED_HANDOFF_INVALID
+    ? lastDiagnostic.predicateGroup
+    : undefined;
   throw coordinatorError(
     `LaunchServices did not produce a claimed MAS host handoff within 5 seconds: ${describe(lastError)}`,
     lastError,
     {
       category: MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT,
       lastCause,
+      lastPredicateGroup,
     },
   );
 }
 
 export function validateMasHostHandoff(handoff, { context, session, state = "available", packageProof } = {}) {
   context = assertMasDevelopmentContext(context);
-  assertHandoffSessionBinding(context, session);
-  if (state !== "available" && state !== "claimed") throw coordinatorError("MAS host handoff state is unknown");
+  try {
+    assertHandoffSessionBinding(context, session);
+  } catch (error) {
+    if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) {
+      attachMasLaunchDiagnostic(error, { predicateGroup: MAS_GATE_HANDOFF_PREDICATE_GROUPS.SESSION });
+    }
+    throw error;
+  }
+  if (state !== "available" && state !== "claimed") {
+    throw coordinatorError("MAS host handoff state is unknown", undefined, {
+      predicateGroup: MAS_GATE_HANDOFF_PREDICATE_GROUPS.CLAIM_STATE,
+    });
+  }
+  const predicateGroup = masHostHandoffPredicateGroup({ handoff, context, session, state, packageProof });
+  if (predicateGroup) {
+    throw coordinatorError("MAS host handoff is not bound to the active session, exact MAS root, and installed bundle", undefined, {
+      predicateGroup,
+    });
+  }
+  return handoff;
+}
+
+function masHostHandoffPredicateGroup({ handoff, context, session, state, packageProof }) {
   const expectedKeys = [
     "activePath", "binaryDevice", "binaryInode", "binarySha256", "binarySize", "bundleIdentifier", "bundlePath",
     "bundleRealPath", "canonicalRuntimeRoot", "cdHash", "claimedAt", "claimedByPid", "designatedRequirement",
@@ -1644,35 +1680,54 @@ export function validateMasHostHandoff(handoff, { context, session, state = "ava
   const expectedRootIdentityKeys = ["dev", "gid", "ino", "mode", "nlink", "size", "type", "uid"];
   const packageIdentity = packageProof?.publishedHostIdentity;
   const expectedRelativeIdentity = context.identityRelativePath;
-  const valid = handoff && typeof handoff === "object" && !Array.isArray(handoff) &&
-    hasExactKeys(handoff, expectedKeys) && hasExactKeys(handoff.freshRootIdentity, expectedRootIdentityKeys) &&
-    packageProof && packageProof.status === "committed" && packageProof.transaction?.state === "committed" &&
-    packageProof.ownerToken === session.ownerToken && packageProof.runId === session.runId &&
-    packageProof.target === context.bundlePath && packageProof.identityPath === context.identityPath &&
-    packageProof.candidateFingerprint === packageProof.artifactBinding?.bundleFingerprint &&
-    packageIdentity && typeof packageIdentity === "object" && !Array.isArray(packageIdentity) &&
-    handoff.schema === MAS_GATE_HOST_HANDOFF_SCHEMA && handoff.version === 1 && handoff.state === state &&
-    handoff.ownerToken === session.ownerToken && handoff.runId === session.runId && handoff.phase === "ready" &&
-    handoff.canonicalRuntimeRoot === context.runtimeRoot && handoff.parentPath === context.parentPath &&
-    handoff.activePath === context.activePath && handoff.activePath === session.activePath && handoff.freshRootIdentity &&
-    recursivelyEqual(handoff.freshRootIdentity, session.freshRootIdentity) &&
-    handoff.identityRelativePath === expectedRelativeIdentity && handoff.identityPath === context.identityPath &&
-    handoff.bundlePath === context.bundlePath && handoff.bundleRealPath === context.bundlePath &&
-    handoff.executablePath === context.executablePath && handoff.bundleIdentifier === context.contract.bundleIdentifier &&
-    handoff.bundlePath === packageIdentity.bundlePath && handoff.bundleRealPath === packageIdentity.bundleRealPath &&
-    handoff.executablePath === packageIdentity.executablePath && handoff.bundleIdentifier === packageIdentity.bundleIdentifier &&
-    handoff.designatedRequirement === packageIdentity.designatedRequirement && handoff.cdHash === packageIdentity.cdHash &&
-    handoff.binarySha256 === packageIdentity.binarySha256 && handoff.binaryDevice === packageIdentity.binaryDevice &&
-    handoff.binaryInode === packageIdentity.binaryInode && handoff.binarySize === packageIdentity.binarySize &&
-    typeof handoff.designatedRequirement === "string" && handoff.designatedRequirement.length > 0 &&
-    typeof handoff.cdHash === "string" && /^[a-f0-9]{40}$/u.test(handoff.cdHash) &&
-    typeof handoff.binarySha256 === "string" && /^[a-f0-9]{64}$/u.test(handoff.binarySha256) &&
-    isNonNegativeInteger(handoff.binaryDevice) && isNonNegativeInteger(handoff.binaryInode) &&
-    Number.isSafeInteger(handoff.binarySize) && handoff.binarySize > 0 &&
-    (state === "available" ? handoff.claimedByPid === null && handoff.claimedAt === null :
-      Number.isInteger(handoff.claimedByPid) && handoff.claimedByPid > 1 && typeof handoff.claimedAt === "string" && handoff.claimedAt.length > 0);
-  if (!valid) throw coordinatorError("MAS host handoff is not bound to the active session, exact MAS root, and installed bundle");
-  return handoff;
+  if (!handoff || typeof handoff !== "object" || Array.isArray(handoff) ||
+      !hasExactKeys(handoff, expectedKeys) || !hasExactKeys(handoff.freshRootIdentity, expectedRootIdentityKeys)) {
+    return MAS_GATE_HANDOFF_PREDICATE_GROUPS.SCHEMA;
+  }
+  if (!packageProof || packageProof.status !== "committed" || packageProof.transaction?.state !== "committed" ||
+      packageProof.ownerToken !== session.ownerToken || packageProof.runId !== session.runId ||
+      packageProof.target !== context.bundlePath || packageProof.identityPath !== context.identityPath ||
+      packageProof.candidateFingerprint !== packageProof.artifactBinding?.bundleFingerprint) {
+    return MAS_GATE_HANDOFF_PREDICATE_GROUPS.PACKAGE_PROOF;
+  }
+  if (!packageIdentity || typeof packageIdentity !== "object" || Array.isArray(packageIdentity)) {
+    return MAS_GATE_HANDOFF_PREDICATE_GROUPS.INSTALLED_IDENTITY;
+  }
+  if (handoff.schema !== MAS_GATE_HOST_HANDOFF_SCHEMA || handoff.version !== 1) {
+    return MAS_GATE_HANDOFF_PREDICATE_GROUPS.SCHEMA;
+  }
+  if (handoff.state !== state) {
+    return MAS_GATE_HANDOFF_PREDICATE_GROUPS.CLAIM_STATE;
+  }
+  if (handoff.ownerToken !== session.ownerToken || handoff.runId !== session.runId || handoff.phase !== "ready") {
+    return MAS_GATE_HANDOFF_PREDICATE_GROUPS.SESSION;
+  }
+  if (handoff.canonicalRuntimeRoot !== context.runtimeRoot || handoff.parentPath !== context.parentPath ||
+      handoff.activePath !== context.activePath || handoff.activePath !== session.activePath ||
+      !handoff.freshRootIdentity || !recursivelyEqual(handoff.freshRootIdentity, session.freshRootIdentity) ||
+      handoff.identityRelativePath !== expectedRelativeIdentity || handoff.identityPath !== context.identityPath) {
+    return MAS_GATE_HANDOFF_PREDICATE_GROUPS.ROOT;
+  }
+  if (handoff.bundlePath !== context.bundlePath || handoff.bundleRealPath !== context.bundlePath ||
+      handoff.executablePath !== context.executablePath || handoff.bundleIdentifier !== context.contract.bundleIdentifier ||
+      handoff.bundlePath !== packageIdentity.bundlePath || handoff.bundleRealPath !== packageIdentity.bundleRealPath ||
+      handoff.executablePath !== packageIdentity.executablePath || handoff.bundleIdentifier !== packageIdentity.bundleIdentifier ||
+      handoff.designatedRequirement !== packageIdentity.designatedRequirement || handoff.cdHash !== packageIdentity.cdHash ||
+      handoff.binarySha256 !== packageIdentity.binarySha256 || handoff.binaryDevice !== packageIdentity.binaryDevice ||
+      handoff.binaryInode !== packageIdentity.binaryInode || handoff.binarySize !== packageIdentity.binarySize ||
+      typeof handoff.designatedRequirement !== "string" || handoff.designatedRequirement.length === 0 ||
+      typeof handoff.cdHash !== "string" || !/^[a-f0-9]{40}$/u.test(handoff.cdHash) ||
+      typeof handoff.binarySha256 !== "string" || !/^[a-f0-9]{64}$/u.test(handoff.binarySha256) ||
+      !isNonNegativeInteger(handoff.binaryDevice) || !isNonNegativeInteger(handoff.binaryInode) ||
+      !Number.isSafeInteger(handoff.binarySize) || handoff.binarySize <= 0) {
+    return MAS_GATE_HANDOFF_PREDICATE_GROUPS.INSTALLED_IDENTITY;
+  }
+  if (state === "available"
+    ? handoff.claimedByPid !== null || handoff.claimedAt !== null
+    : !Number.isInteger(handoff.claimedByPid) || handoff.claimedByPid <= 1 || typeof handoff.claimedAt !== "string" || handoff.claimedAt.length === 0) {
+    return MAS_GATE_HANDOFF_PREDICATE_GROUPS.CLAIM_STATE;
+  }
+  return null;
 }
 
 function hasExactKeys(value, expectedKeys) {
@@ -2091,6 +2146,7 @@ function sha256(value) {
 
 const MAS_GATE_LAUNCH_DIAGNOSTIC_PROPERTY = "masLaunchDiagnostic";
 const MAS_GATE_LAUNCH_FAILURE_CATEGORY_VALUES = new Set(Object.values(MAS_GATE_LAUNCH_FAILURE_CATEGORIES));
+const MAS_GATE_HANDOFF_PREDICATE_GROUP_VALUES = new Set(Object.values(MAS_GATE_HANDOFF_PREDICATE_GROUPS));
 const MAS_GATE_LAUNCH_LAST_CAUSE_VALUES = new Set(Object.values(MAS_GATE_LAUNCH_LAST_CAUSES));
 
 export function serializeMasDevelopmentGateFailure(error, fallbackCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.UNKNOWN) {
@@ -2104,8 +2160,10 @@ export function serializeMasDevelopmentGateFailure(error, fallbackCategory = MAS
     schema: MAS_GATE_LAUNCH_DIAGNOSTIC_SCHEMA,
     category,
   };
+  if (existing?.predicateGroup) diagnostic.predicateGroup = existing.predicateGroup;
   if (category === MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT) {
     diagnostic.lastCause = existing?.lastCause ?? MAS_GATE_LAUNCH_LAST_CAUSES.UNKNOWN;
+    if (existing?.lastPredicateGroup) diagnostic.lastPredicateGroup = existing.lastPredicateGroup;
   }
   return {
     coordinator: MAS_GATE_COORDINATOR_SCHEMA,
@@ -2114,16 +2172,25 @@ export function serializeMasDevelopmentGateFailure(error, fallbackCategory = MAS
   };
 }
 
-function attachMasLaunchDiagnostic(error, { category, lastCause } = {}) {
+function attachMasLaunchDiagnostic(error, { category, lastCause, predicateGroup, lastPredicateGroup } = {}) {
   if (!error || (typeof error !== "object" && typeof error !== "function")) return error;
+  const existing = readMasLaunchDiagnostic(error);
   const normalizedCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORY_VALUES.has(category)
     ? category
     : MAS_GATE_LAUNCH_FAILURE_CATEGORIES.UNKNOWN;
   const diagnostic = { category: normalizedCategory };
+  const normalizedPredicateGroup = MAS_GATE_HANDOFF_PREDICATE_GROUP_VALUES.has(predicateGroup)
+    ? predicateGroup
+    : existing?.predicateGroup;
+  if (normalizedPredicateGroup) diagnostic.predicateGroup = normalizedPredicateGroup;
   if (normalizedCategory === MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT) {
     diagnostic.lastCause = MAS_GATE_LAUNCH_LAST_CAUSE_VALUES.has(lastCause)
       ? lastCause
-      : MAS_GATE_LAUNCH_LAST_CAUSES.UNKNOWN;
+      : existing?.lastCause ?? MAS_GATE_LAUNCH_LAST_CAUSES.UNKNOWN;
+    const normalizedLastPredicateGroup = MAS_GATE_HANDOFF_PREDICATE_GROUP_VALUES.has(lastPredicateGroup)
+      ? lastPredicateGroup
+      : existing?.lastPredicateGroup;
+    if (normalizedLastPredicateGroup) diagnostic.lastPredicateGroup = normalizedLastPredicateGroup;
   }
   Object.defineProperty(error, MAS_GATE_LAUNCH_DIAGNOSTIC_PROPERTY, {
     configurable: true,
@@ -2140,10 +2207,16 @@ function readMasLaunchDiagnostic(error) {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate) ||
       !MAS_GATE_LAUNCH_FAILURE_CATEGORY_VALUES.has(candidate.category)) return null;
   const diagnostic = { category: candidate.category };
+  if (MAS_GATE_HANDOFF_PREDICATE_GROUP_VALUES.has(candidate.predicateGroup)) {
+    diagnostic.predicateGroup = candidate.predicateGroup;
+  }
   if (candidate.category === MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_CLAIM_TIMEOUT) {
     diagnostic.lastCause = MAS_GATE_LAUNCH_LAST_CAUSE_VALUES.has(candidate.lastCause)
       ? candidate.lastCause
       : MAS_GATE_LAUNCH_LAST_CAUSES.UNKNOWN;
+    if (MAS_GATE_HANDOFF_PREDICATE_GROUP_VALUES.has(candidate.lastPredicateGroup)) {
+      diagnostic.lastPredicateGroup = candidate.lastPredicateGroup;
+    }
   }
   return Object.freeze(diagnostic);
 }

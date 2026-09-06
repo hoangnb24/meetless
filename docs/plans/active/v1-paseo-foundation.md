@@ -2,11 +2,11 @@
 
 ## Current State
 
-- `plan_revision`: `v135`
+- `plan_revision`: `v136`
 - `current_frontier`: `R5-MAS-ATTEMPT20-ARGV-STABILITY-RUNTIME-PROOF`
 - `state`: `ATTEMPT20_RECOVERED_HANDOFF_INVALID_TOPOLOGY_EVIDENCE_GAP`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
-- `candidate`: local source fbbac36121637b9e6d26eb89dcbdedb31bc7dbfb accepted; contains reviewed fork pin a2c8ff349ffdf6f500eb09270c7f44af4c018bfc and bounded launch diagnostics. No MAS artifact contains this combined correction yet.
+- `candidate`: current local source candidate pending Lead acceptance; exact immutable identity is reported in the handback. It contains reviewed fork pin a2c8ff349ffdf6f500eb09270c7f44af4c018bfc and bounded launch diagnostics. No MAS artifact contains this combined correction yet.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
 - `Convex target`: owner-selected/observed project `hoang-bang/meetless`, existing dev deployment `frugal-mandrill-646`, reference `dev/hoang-bang`, region `US East (N. Virginia)`; production deployment does not exist
 - `failed_proof`: Attempt 12 artifact root `/private/tmp/meetless-mas-development-proof.pwHECm` has manifest SHA-256 `3c8fff584926cf0e1e0d082a65264b175d7e8a7c8b3eacf0cf007dba658b778a`, launch PID `18597`, and brief record `16777/no 18082`. It reached no accepted readiness; approximately 829 MB of attempt-created runtime state mixed with approximately 37 MB of pre-existing state, and the aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner confirmed no external/manual backup; classify the loss as unrecoverable and claim no reconstruction. No external gate was opened and no retry is authorized.
@@ -41,6 +41,46 @@ serialization proof required. Only coordinator/test/plan scope, one SERIAL
 writer. This is diagnostic evidence, not a fix claim or next-attempt authority.
 Future observer must retain the identifier and pass the already recorded
 nonempty topology serialization round-trip before install.
+
+### A20 bounded handoff-predicate diagnostic completion (2026-09-06)
+
+This source correction starts from exact parent HEAD
+`1ad2365d3d305026bfc36c5d1db0a1c605cf147e`. It changes only the coordinator,
+its existing coordinator test, and this plan. The existing
+`validateMasHostHandoff` acceptance conjunction remains the sole predicate
+owner and now reports one fixed group enum: `schema`, `session`, `root`,
+`package-proof`, `installed-identity`, or `claim-state`. The group is selected
+at the failing comparison boundary; no field value, proof, token, path, or raw
+error text is copied into the machine-readable diagnostic.
+
+Direct invalid handoff output is bounded as:
+
+```json
+{"coordinator":"MAS_GATE_COORDINATOR v1","status":"failed","diagnostic":{"schema":"MAS_GATE_LAUNCH_DIAGNOSTIC v1","category":"claimed-handoff-invalid","predicateGroup":"claim-state"}}
+```
+
+Claim timeout preserves the existing category and `lastCause`, with the
+sanitized group attached to that last cause:
+
+```json
+{"coordinator":"MAS_GATE_COORDINATOR v1","status":"failed","diagnostic":{"schema":"MAS_GATE_LAUNCH_DIAGNOSTIC v1","category":"handoff-claim-timeout","lastCause":"claimed-handoff-invalid","lastPredicateGroup":"claim-state"}}
+```
+
+Available-state failures retain `handoff-read` and claimed-state failures
+retain `claimed-handoff-invalid`; an available document with the wrong claim
+state is therefore reported as `claim-state`, not as an assertion that the host
+did not claim. The five-second polling deadline, lock release, acceptance
+conjuncts, success payload, and nonzero CLI failure behavior remain unchanged.
+
+Repository proof from root passed: coordinator `24/24`, transaction/source
+guard `112/112`, `npm run typecheck`, `node --check
+scripts/macos-mas-development-gate.mjs`, and whitespace checks. Tests cover a
+known valid fixture, one mutation per group, actual available/claimed/timeout
+propagation, CLI serializer allowlisting, and secret/path sanitization. No
+MAS package/install/launch/capture/TCC/credential/network/recovery attempt was
+run; this is diagnostic evidence only and does not repair A20 or authorize
+Attempt 21. The frozen authority aggregate remains
+`ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297`.
 
 Evidence-loss audit accepted: operator located omission in the retained A20
 wrapper observationSummary (~840); it emits counts/categories, not liveSamples
