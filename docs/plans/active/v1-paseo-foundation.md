@@ -4,6 +4,49 @@
 
 ### Owner immediate-launch directive (2026-09-06)
 
+Lead accepts namespace correction `1b00cb6ced00b7505c063247c57d406c2155dcba`
+over9bfd99a: complete three-file diff inspected, exact nested main plist and
+signed-code identifier enforced; helper checks and entitlement policy unchanged.
+Independent foundation judgment already established this bounded solution.
+Lead independently passed all13 development-package tests and diff-check;
+writer reports41 focused tests/typecheck. Accepted finding
+MAS-ELECTRON-NAMESPACE-001 closed at source level, live window still unproven.
+Admit one corrected package invocation under owner's fix/open request; operator
+owns isolated build only, Lead retains installed-session recovery and launch.
+No auxiliary observer or further automatic retry is authorized by this admission.
+
+Convergence ruling: accept independent finding `MAS-ELECTRON-NAMESPACE-001`.
+MAS replacement discards composed bundle identifiers; nested main Electron must
+use `com.meetless.app` plus existing ElectronTeamID so its Mach service uses the
+already-authorized application-group namespace. No authority/entitlement change.
+One source owner5973d610 receives helper/package-script/existing-test scope only,
+base9bfd99a, excluding Lead plan edits. Require final nested plist AND signed
+main-code identity verification, keep helpers unchanged, positive/negative local
+proof. No new observer, build, live run, or broad review loop in this correction.
+Lead will judge candidate against this frozen finding before packaging.
+
+Latest live result: old da35e0ca restored (exit0); SjjbjP installed (exit0),
+new run `cb1f4d4e-685b-4436-9170-83476e70991a`; launch claimed host48161
+(exit0). No visible application window was observed by on-screen CoreGraphics
+window metadata. Electron48180 fatally exited10:06:00.538 local:
+`63M98WD275.com.github.Electron.MachPortRendezvousServer.48180` denied1100.
+Recorder idle preceded fatal; SIGTERM teardown followed. TeamID correction was
+applied but is insufficient. Reject functional acceptance, no automatic rebuild.
+Source reviewer be99120b owns one read-only convergence check of actual bundle
+namespace, inherited sandbox and accepted application group before another
+correction. No auxiliary observer. New session not yet restored; preserve it and
+its logs pending read-only artifact inspection. Lead owns later safe recovery.
+
+Corrected artifact SjjbjP accepted for live replacement after Lead deep/strict
+codesign pass and nested ElectronTeamID63M98WD275 check. Manifest SHA is
+`baaa739f0b87a864f393da49f6828807244e6be9f50681ac875b5bfc158dc2c1`:
+the Peer prose handback copied a different suffix; actual manifest hash matches
+both artifact-binding-final.json and complete-validator-corrected.json, which
+Lead read. Do not propagate the erroneous prose hash. Package terminal exit0
+02:44:24.894Z–02:54:43.760Z, source9bfd99a, fingerprint00f9fae8...,
+CDHashb697b4088140842aafbaf4cc781889a734b3d3fe. Lead now owns coordinator
+restore of crashed da35e0ca, then one safe install/launch; no observer wrapper.
+
 Lead accepts source `5d3c566d3ba654cac57dfe2498f79adce5d6aa80` over
 9c1ec70: nested MAS Electron plist receives the existing accepted Team ID
 after archive replacement and before signing; signed-artifact validation checks
