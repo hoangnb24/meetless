@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import net from "node:net";
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstatSync, realpathSync } from "node:fs";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rmdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RuntimeConfig } from "./config.js";
@@ -25,7 +26,9 @@ const rendererAbortListeners = new WeakMap<Server, { signal: AbortSignal; listen
 const capturePermissionIntentHeader = "x-meetless-permission-intent";
 const capturePermissionIntentLifetimeMs = 5_000;
 const MAC_CHROMIUM_TEMP_DIRECTORY_PREFIX = "m-";
-const MAC_CHROMIUM_TEMP_SOCKET_NAME = "S";
+const MAC_CHROMIUM_TEMP_SOCKET_DIRECTORY_NAME = "S";
+const MAC_CHROMIUM_SINGLETON_SOCKET_NAME = "SingletonSocket";
+const MAC_CHROMIUM_SINGLETON_COOKIE_NAME = "SingletonCookie";
 export const MAC_CHROMIUM_PROCESS_SINGLETON_PATH_BYTES = 253;
 
 interface DirectoryIdentity {
@@ -36,6 +39,7 @@ interface DirectoryIdentity {
 export interface MacChromiumTempAllocation {
   readonly directory: string;
   readonly socketPath: string;
+  readonly cookiePath: string;
   release(): Promise<void>;
 }
 
@@ -66,7 +70,48 @@ export function localDaemonWebSocketUrl(listen: string): string {
 }
 
 export function isMacAppStoreDesktop(config: RuntimeConfig): boolean {
-  return isPackagedRuntime(config) && Boolean(config.environment.MEETLESS_APP_CONTAINER_SUPPORT_ROOT?.trim());
+  if (!isPackagedRuntime(config)) return false;
+  const configuredSupportRoot = config.environment.MEETLESS_APP_CONTAINER_SUPPORT_ROOT?.trim();
+  if (!configuredSupportRoot) return false;
+  const supportRoot = canonicalPathForValidation(configuredSupportRoot);
+  const runtimeRoot = canonicalPathForValidation(config.paths.root);
+  const recordingExports = canonicalPathForValidation(config.paths.recordingExports);
+  const identityRoot = canonicalPathForValidation(path.dirname(config.host.identity));
+  if (!supportRoot || !runtimeRoot || !recordingExports || !identityRoot) return false;
+  if (!isCanonicalMacAppStoreSupportRoot(supportRoot)) return false;
+  const expectedRuntimeRoot = path.join(supportRoot, "Meetless");
+  return runtimeRoot === expectedRuntimeRoot &&
+    recordingExports === path.join(expectedRuntimeRoot, "recordings") &&
+    identityRoot === expectedRuntimeRoot;
+}
+
+function canonicalPathForValidation(candidate: string): string | null {
+  if (!path.isAbsolute(candidate) || candidate.includes("\u0000")) return null;
+  const missingSegments: string[] = [];
+  let current = path.resolve(candidate);
+  while (true) {
+    try {
+      const info = lstatSync(current);
+      if (info.isSymbolicLink()) return null;
+      return path.join(realpathSync(current), ...missingSegments.reverse());
+    } catch (error) {
+      if (!isErrno(error, "ENOENT")) return null;
+      const parent = path.dirname(current);
+      if (parent === current) return null;
+      missingSegments.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+function isCanonicalMacAppStoreSupportRoot(supportRoot: string): boolean {
+  const dataRoot = path.resolve(supportRoot, "..", "..");
+  const containerRoot = path.dirname(dataRoot);
+  return supportRoot === path.join(dataRoot, "Library", "Application Support") &&
+    path.basename(dataRoot) === "Data" &&
+    path.basename(containerRoot) === "com.meetless.app" &&
+    path.basename(path.dirname(containerRoot)) === "Containers" &&
+    path.basename(path.dirname(path.dirname(containerRoot))) === "Library";
 }
 
 export function copyEnvironmentWithoutMacChromiumTmpDir(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -93,26 +138,36 @@ export async function allocateMacChromiumTemp(
   signal.throwIfAborted();
   const parentIdentity = await assertTrustedDirectory(tempRoot, "MAS Chromium temp root", true);
   let directory: string | null = null;
+  let directoryIdentity: DirectoryIdentity | undefined;
   let allocation: MacChromiumTempAllocation | null = null;
   try {
     directory = await mkdtemp(path.join(tempRoot, MAC_CHROMIUM_TEMP_DIRECTORY_PREFIX));
+    directoryIdentity = await assertTrustedDirectory(directory, "MAS Chromium temp allocation", true);
     await chmod(directory, 0o700);
     const relativeName = path.relative(tempRoot, directory);
     if (!/^m-[A-Za-z0-9]{6}$/u.test(relativeName)) {
       throw new Error("MAS Chromium temp allocation has an unexpected fresh directory name");
     }
-    const directoryIdentity = await assertTrustedDirectory(directory, "MAS Chromium temp allocation", true);
-    const socketPath = path.join(directory, MAC_CHROMIUM_TEMP_SOCKET_NAME);
-    const socketPathBytes = Buffer.byteLength(socketPath, "utf8");
-    if (socketPathBytes > MAC_CHROMIUM_PROCESS_SINGLETON_PATH_BYTES) {
+    const singletonDirectory = path.join(directory, MAC_CHROMIUM_TEMP_SOCKET_DIRECTORY_NAME);
+    const socketPath = path.join(singletonDirectory, MAC_CHROMIUM_SINGLETON_SOCKET_NAME);
+    const cookiePath = path.join(singletonDirectory, MAC_CHROMIUM_SINGLETON_COOKIE_NAME);
+    const singletonPaths = [
+      [MAC_CHROMIUM_SINGLETON_SOCKET_NAME, socketPath],
+      [MAC_CHROMIUM_SINGLETON_COOKIE_NAME, cookiePath],
+    ] as const;
+    const oversizedPath = singletonPaths
+      .map(([name, value]) => ({ name, value, bytes: Buffer.byteLength(value, "utf8") }))
+      .find(({ bytes }) => bytes > MAC_CHROMIUM_PROCESS_SINGLETON_PATH_BYTES);
+    if (oversizedPath) {
       throw new Error(
-        `MAS Chromium process-singleton path is ${socketPathBytes} UTF-8 bytes; ` +
+        `MAS Chromium process-singleton ${oversizedPath.name} path is ${oversizedPath.bytes} UTF-8 bytes; ` +
         `the Darwin allowance is ${MAC_CHROMIUM_PROCESS_SINGLETON_PATH_BYTES}`,
       );
     }
     allocation = createMacChromiumTempAllocation({
       directory,
       socketPath,
+      cookiePath,
       parent: tempRoot,
       parentIdentity,
       directoryIdentity,
@@ -126,9 +181,9 @@ export async function allocateMacChromiumTemp(
       } catch (cleanupError) {
         throw new AggregateError([error, cleanupError], "MAS Chromium temp allocation failed and cleanup failed");
       }
-    } else if (directory) {
+    } else if (directory && directoryIdentity) {
       try {
-        await removeOwnedMacChromiumTemp(directory, tempRoot, parentIdentity, undefined);
+        await removeOwnedMacChromiumTemp(directory, tempRoot, parentIdentity, directoryIdentity);
       } catch (cleanupError) {
         throw new AggregateError([error, cleanupError], "MAS Chromium temp allocation failed and cleanup failed");
       }
@@ -224,7 +279,8 @@ async function resolveMacChromiumTempRoot(config: RuntimeConfig): Promise<string
   if (!configuredSupportRoot || !path.isAbsolute(configuredSupportRoot) || configuredSupportRoot.includes("\u0000")) {
     throw new Error("MAS Chromium temp allocation requires the canonical absolute app-container support root");
   }
-  const supportRoot = path.resolve(configuredSupportRoot);
+  await assertTrustedDirectory(configuredSupportRoot, "MAS app-container support root", false);
+  const supportRoot = await realpath(configuredSupportRoot);
   const dataRoot = path.resolve(supportRoot, "..", "..");
   const containerRoot = path.dirname(dataRoot);
   const canonicalSupportRoot = path.join(dataRoot, "Library", "Application Support");
@@ -237,9 +293,20 @@ async function resolveMacChromiumTempRoot(config: RuntimeConfig): Promise<string
   ) {
     throw new Error("MAS Chromium temp allocation support root is outside the canonical Meetless app container");
   }
+  const runtimeRoot = await realpath(config.paths.root).catch(() => null);
+  const recordingExports = await realpath(path.dirname(config.paths.recordingExports)).catch(() => null);
+  const identityRoot = await realpath(path.dirname(config.host.identity)).catch(() => null);
+  if (
+    runtimeRoot !== path.join(supportRoot, "Meetless") ||
+    recordingExports !== path.join(supportRoot, "Meetless") ||
+    identityRoot !== path.join(supportRoot, "Meetless")
+  ) {
+    throw new Error(
+      "MAS Chromium temp allocation requires the packaged runtime root, recording exports, and host identity to remain under the canonical app-container Meetless root",
+    );
+  }
   await assertTrustedDirectory(containerRoot, "MAS app-container root", false);
   await assertTrustedDirectory(dataRoot, "MAS app-container Data root", false);
-  await assertTrustedDirectory(supportRoot, "MAS app-container support root", false);
 
   const tempRoot = path.join(dataRoot, "tmp");
   try {
@@ -287,6 +354,7 @@ function sameDirectoryIdentity(left: DirectoryIdentity, right: DirectoryIdentity
 function createMacChromiumTempAllocation(input: {
   directory: string;
   socketPath: string;
+  cookiePath: string;
   parent: string;
   parentIdentity: DirectoryIdentity;
   directoryIdentity: DirectoryIdentity;
@@ -295,6 +363,7 @@ function createMacChromiumTempAllocation(input: {
   return {
     directory: input.directory,
     socketPath: input.socketPath,
+    cookiePath: input.cookiePath,
     release: async () => {
       if (released) return;
       await removeOwnedMacChromiumTemp(
@@ -321,7 +390,15 @@ async function removeOwnedMacChromiumTemp(
     if (isErrno(error, "ENOENT")) return;
     throw new Error(`Refusing MAS Chromium temp cleanup: ${describe(error)}`);
   }
-  await rm(directory, { recursive: true, force: true });
+  try {
+    await rmdir(directory);
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return;
+    if (isErrno(error, "ENOTEMPTY") || isErrno(error, "EEXIST")) {
+      throw new Error("MAS Chromium temp allocation retained because the owned fresh root is non-empty");
+    }
+    throw error;
+  }
   try {
     await lstat(directory);
     throw new Error("MAS Chromium temp allocation remained after cleanup");
@@ -331,7 +408,14 @@ async function removeOwnedMacChromiumTemp(
   await assertTrustedDirectory(parent, "MAS Chromium temp root", true, parentIdentity);
 }
 
-export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number> {
+export interface DesktopLifecycleHooks {
+  closeRenderer?: (server: Server | null) => Promise<void>;
+}
+
+export async function runMeetlessDesktop(
+  config: RuntimeConfig,
+  hooks: DesktopLifecycleHooks = {},
+): Promise<number> {
   const owned = new HostOwnedRuntimeShutdown(config);
   const shutdown = owned.signals;
   let daemonChild: ChildProcess | null = null;
@@ -342,6 +426,7 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
   let hostAttested = false;
   let desktopAttestation: PackagedDesktopAttestation | null = null;
   let macChromiumTemp: MacChromiumTempAllocation | null = null;
+  let primaryError: unknown;
   try {
     desktopAttestation = isPackagedRuntime(config) ? await attestPackagedDesktop(config) : null;
     const hostIdentity = desktopAttestation?.identity ?? await assertDesktopLaunchedByHost(config);
@@ -448,16 +533,57 @@ export async function runMeetlessDesktop(config: RuntimeConfig): Promise<number>
     await owned.track("electron", electron);
     const result = await Promise.race([waitForExit(electron), waitForShutdown(shutdown.signal)]);
     return result.code ?? (result.signal ? 1 : 0);
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
     shutdown.dispose();
-    await closeRendererServer(rendererServer);
-    if (hostAttested) {
-      await shutdownOwnedRuntimeAndReleaseMacChromiumTemp(
+    try {
+      await cleanupMeetlessDesktop(
+        rendererServer,
         macChromiumTemp,
-        () => owned.shutdown({ daemonChild, daemonOwned }),
+        hooks.closeRenderer ?? closeRendererServer,
+        hostAttested
+          ? () => owned.shutdown({ daemonChild, daemonOwned })
+          : async () => undefined,
       );
+    } catch (cleanupError) {
+      if (primaryError) {
+        throw new AggregateError([primaryError, cleanupError], "Meetless desktop launch and cleanup failed");
+      }
+      throw cleanupError;
     }
   }
+}
+
+async function cleanupMeetlessDesktop(
+  rendererServer: Server | null,
+  allocation: MacChromiumTempAllocation | null,
+  closeRenderer: (server: Server | null) => Promise<void>,
+  shutdown: () => Promise<void>,
+): Promise<void> {
+  const errors: unknown[] = [];
+  try {
+    await closeRenderer(rendererServer);
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    await shutdownOwnedRuntimeAndReleaseMacChromiumTemp(allocation, shutdown);
+  } catch (error) {
+    errors.push(error);
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "Meetless desktop cleanup failed");
+}
+
+export async function cleanupMeetlessDesktopForTest(
+  rendererServer: Server | null,
+  allocation: MacChromiumTempAllocation | null,
+  closeRenderer: (server: Server | null) => Promise<void>,
+  shutdown: () => Promise<void>,
+): Promise<void> {
+  return cleanupMeetlessDesktop(rendererServer, allocation, closeRenderer, shutdown);
 }
 
 type OwnedGroupName = "daemon" | "renderer" | "electron";
