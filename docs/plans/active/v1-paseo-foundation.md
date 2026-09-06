@@ -2,7 +2,7 @@
 
 ## Current State
 
-- `plan_revision`: `v134`
+- `plan_revision`: `v135`
 - `current_frontier`: `R5-MAS-ATTEMPT20-ARGV-STABILITY-RUNTIME-PROOF`
 - `state`: `ATTEMPT20_RECOVERED_HANDOFF_INVALID_TOPOLOGY_EVIDENCE_GAP`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
@@ -16,6 +16,31 @@
 - `next_action`: read-only retained handoff/exit diagnosis and observer evidence-loss audit; A20 consumed, no further external attempt authorized.
 
 ### Attempt 20 terminal ruling and next diagnostic boundary
+
+Read-only foundation result: retained claimed handoff matches archived session
+bindings and recorded installed identity fields that remain available. The
+original package-proof snapshot is unavailable after rollback; no exact failing
+conjunct or comparator correction is proven. Note that the generic diagnostic
+claimed-handoff-invalid alone can also describe a not-yet-claimed document;
+the separately retained claimed document/timestamp establishes an actual claim,
+not that every poll saw it. Do not overstate the diagnostic's semantics.
+
+Retained lifecycle order is SIGTERM at00:38:20.516Z, exit00:38:20.532Z, then
+native daemon ESRCH/plugin owner-chain pruning. This supports teardown after
+signal, not pruning as the initiator. First signal sender remains unknown.
+No renderer/native/fork behavior correction is justified by these findings.
+
+Lead routes one bounded parent diagnostic completion: existing handoff validator
+retains a fixed failed predicate-group identifier, and launch timeout/CLI
+preserve that identifier without values. Keep the existing acceptance boolean,
+all checks, order/deadline and success output unchanged. Group results must be
+derived from the actual check owner, not a second independently maintained
+validator; no raw proof/handoff/tokens or comparator bypass. Positive valid
+handoff and controlled one-group-at-a-time negative tests plus real CLI-safe
+serialization proof required. Only coordinator/test/plan scope, one SERIAL
+writer. This is diagnostic evidence, not a fix claim or next-attempt authority.
+Future observer must retain the identifier and pass the already recorded
+nonempty topology serialization round-trip before install.
 
 Evidence-loss audit accepted: operator located omission in the retained A20
 wrapper observationSummary (~840); it emits counts/categories, not liveSamples
