@@ -6,6 +6,6 @@ the plan to `../completed/` only after the result is verified.
 
 ## Current Plans
 
-- [Meetless V1 release readiness](v1-paseo-foundation.md) — managed-transcription
-  fake-backed foundation proof, residual Mac App Store gates, paused M7-F29,
-  and TCC R3.
+- [Meetless V1 remaining release work](v1-paseo-foundation.md) — recording/TCC,
+  second-instance, managed-production, store, and legal/release gates after
+  the accepted MAS development UI handoff.

@@ -7,3 +7,4 @@ Lasting decisions future work must inherit:
 - [0003: Meetless runtime isolation and host ownership](0003-meetless-runtime-isolation-and-host-ownership.md)
 - [0004: Recording host and capture permission boundary](0004-recording-host-and-capture-permission-boundary.md)
 - [0005: Distribute Meetless through the Mac App Store with RevenueCat](0005-mac-app-store-and-revenuecat.md)
+- [0006: MAS development desktop integration](0006-mas-development-desktop-integration.md)

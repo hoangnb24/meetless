@@ -16,3 +16,14 @@ The first supported recording OS is macOS, with the V1 claim currently bounded
 to the verified macOS 26.4 arm64 host. Broader macOS versions and hardware may
 be added only after equivalent target validation. Windows and Linux are not in
 the first V1 recording matrix.
+
+## Current desktop verification status
+
+The macOS development App Store integration has a verified desktop UI handoff:
+the owner observed a visible, interactable window and confirmed the requested
+basic UI test. The latest local installation is intentionally stopped with its
+coordinator-preserved transaction backups retained. This is a desktop UI status,
+not a claim of real recording/TCC, second-instance routing, purchase/restore,
+managed-production, store publication, or release acceptance. See [the accepted
+MAS development integration decision](../decisions/0006-mas-development-desktop-integration.md)
+and [the retained execution history](../plans/completed/v1-paseo-foundation-mas-ui-history.md).

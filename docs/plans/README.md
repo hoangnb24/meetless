@@ -31,8 +31,8 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 ## Active Plans
 
 - [Meetless V1 release readiness](active/v1-paseo-foundation.md)
-  — managed-transcription fake-backed foundation proof, residual Mac App Store
-  gates, paused M7-F29, and TCC R3 candidate acceptance.
+  — remaining recording/TCC, second-instance, managed-production, store, and
+  legal/release gates after the accepted MAS development UI handoff.
 
 ## Completed Harness Improvements
 
@@ -48,6 +48,9 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 - [Meetless V1 release-readiness and TCC history](completed/v1-paseo-foundation-m7-accepted-history.md)
   — absorbed M7/TCC execution ledger preserved as evidence after plan
   reconciliation.
+- [Meetless V1 MAS UI closeout history](completed/v1-paseo-foundation-mas-ui-history.md)
+  — full superseded execution record through the accepted visible/interactable
+  MAS development UI handoff.
 - [Meeting library and chat implementation history](completed/meeting-library-chat-controls-implementation-history.md)
   — absorbed implementation, deletion, chat/design, and owner-retest evidence.
 - [Meeting library and chat owner acceptance](completed/meeting-library-chat-controls.md)

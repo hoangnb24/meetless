@@ -9,6 +9,7 @@ need. Ordinary bounded changes should rely on Git and pull-request history.
 
 ## Completed History
 
+- [Meetless V1 MAS UI closeout history](v1-paseo-foundation-mas-ui-history.md)
 - [Meetless V1 foundation, M0–M6, and new design](v1-paseo-foundation-m0-m6.md)
 - [Meetless V1 release-readiness and TCC history](v1-paseo-foundation-m7-accepted-history.md)
 - [Meeting library and chat implementation history](meeting-library-chat-controls-implementation-history.md)
