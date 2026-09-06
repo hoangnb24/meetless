@@ -2,9 +2,9 @@
 
 ## Current State
 
-- `plan_revision`: `v131`
+- `plan_revision`: `v132`
 - `current_frontier`: `R5-MAS-ATTEMPT20-ARGV-STABILITY-RUNTIME-PROOF`
-- `state`: `ATTEMPT20_OWNER_AUTHORIZED_PHASE1_ADMITTED`
+- `state`: `ATTEMPT20_ARTIFACT_ACCEPTED_PHASE2_ADMITTED`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
 - `candidate`: local source fbbac36121637b9e6d26eb89dcbdedb31bc7dbfb accepted; contains reviewed fork pin a2c8ff349ffdf6f500eb09270c7f44af4c018bfc and bounded launch diagnostics. No MAS artifact contains this combined correction yet.
 - `authority_contract_sha256`: `ffb467198389299cc1ca39187e6a05112bdf771101b4fd3a18221624a0ee0297` (old correction-base digest was `8b2c3a70917c2c7e5b26cf9bcfe8c19bb5abeb9a54f0aeec6bf256e5440dca91`; ordered SHA-256 manifest of ADR0003, amended ADR0005, product monetization, and macOS artifact-validation authority files)
@@ -13,7 +13,38 @@
 - `pending_ruling`: owner explicitly authorized named Attempt 20 below. Phase 1 only admitted now; Phase 2 needs Lead artifact acceptance. No retry beyond this one episode; excluded gates and push remain closed.
 - `diagnostic_source_candidate`: Lead-accepted `8759ec6d494018e2bfd7a01682b6f5af0fb2f409`, packaged and exercised in Attempt 17; its retained timeout diagnostic narrowed the failing readiness subcheck.
 - `blocked_by`: packaged native readiness and actual new-artifact role-configuration exclusion remain unproven. The A19 launch rejection predicate remains unknown; new diagnostics can retain it on a future authorized run.
-- `next_action`: sole SERIAL operator runs one fresh Phase-1 package/build/sign with durable terminal evidence and role-configuration exclusion audit; stop for artifact acceptance before install/launch.
+- `next_action`: same SERIAL operator runs one coordinator install/launch/observe/restore against the accepted A20 artifact; no rebuild or retry.
+
+### Attempt 20 artifact acceptance and Phase 2 admission
+
+Lead accepts Phase1 artifact at
+`/private/tmp/meetless-mas-development-proof.6ERTwm/release/macos/Meetless.app`.
+One invocation wrapper5055/npm5157, 2026-09-06T00:00:15.791Z to00:09:01.620Z,
+exit0/signal null, install/launch/recovery0. Source c65903cb433d63c88af3eb2f89014263fa67be2c,
+accepted correction fbbac361..., Paseo a2c8ff349.... Evidence retained at
+`/Users/tubakhuym/Library/Logs/Meetless-dev-proof/attempt20/run-e2PvLA`.
+Lead read terminal/full-validator/checkpoint and role audit, independently
+verified manifest hash, bundle fingerprint and deep/strict codesign/CDHash:
+
+- Manifest f47a9b3865da3ad429e4add0e867eb908210a0819be7d57e4f17b6796b41a864
+- Fingerprint b33954a438d1caee4cdd0b56a1337cbab524752f1468ea25afa32bd194e07fea
+- Artifact digest 5a4102e23e9c04983853e7f6e69797d389919f021842b6726a9a45e3b1534391
+- CDHash b0702e61c75d46d2d8e3587ff24f4246f5f65b85
+
+Artifact audit reports16208 entries,43 thin-arm64 Mach-O, packaged S/W title
+guards present and no emitted Room role profiles/prompts/setup/configuration.
+Generic runtime/provider/SDK matches are separately classified; this does not
+prove anything about external codex-room-setup or historical unshipped source.
+No source/protected changes or user runtime mutation occurred in Phase1.
+
+Under explicit named A20 owner authorization, separately admit Phase2 now:
+one install, one LaunchServices launch, pre-armed bounded observation retaining
+new CLI category/lastCause and native registration diagnostics, then mandatory
+coordinator package-first restore on success or failure. No repeat, rebuild,
+manual stop/cleanup, billing/production/capture/TCC/export or publication.
+Preflight validates current old-app/runtime baseline and absent live state.
+This is runtime proof, not authorization to leave the candidate running for
+the owner; successful proof precedes any user-test handoff decision.
 
 ### Attempt 20 explicit owner authorization (2026-09-06)
 
