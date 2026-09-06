@@ -2,7 +2,7 @@
 
 ## Current State
 
-- `plan_revision`: `v133`
+- `plan_revision`: `v134`
 - `current_frontier`: `R5-MAS-ATTEMPT20-ARGV-STABILITY-RUNTIME-PROOF`
 - `state`: `ATTEMPT20_RECOVERED_HANDOFF_INVALID_TOPOLOGY_EVIDENCE_GAP`
 - `depends_on`: accepted managed-transcription foundation candidate `cdc42fd44b8644b259a37876646cfd3f00aefa88`; production integration must preserve its policy, lifecycle, and local-publication boundaries
@@ -16,6 +16,21 @@
 - `next_action`: read-only retained handoff/exit diagnosis and observer evidence-loss audit; A20 consumed, no further external attempt authorized.
 
 ### Attempt 20 terminal ruling and next diagnostic boundary
+
+Evidence-loss audit accepted: operator located omission in the retained A20
+wrapper observationSummary (~840); it emits counts/categories, not liveSamples
+or topologySnapshots. Both observation.json and final summary use that output.
+Lead verified the serializer and its write call. No nonempty historical process
+arrays survive in retained evidence; empty prelaunch/final arrays do not fill
+that gap. Do not rewrite A20 files or imply runtime topology was proven.
+
+Before any future authorized install, the exact observation serialization path
+must round-trip a synthetic nonempty H/D/S/W/P/C fixture and retain PID, PPID,
+executable path and argv in liveSamples/processes/topology and topologySnapshots.
+The check must reject counts-only output before mutation. This is a bounded
+acceptance prerequisite for the next observer, not a new external attempt or
+permission to modify archived evidence. Handoff/lifecycle diagnosis remains
+with the existing read-only Peer; no duplicate dispatch or new review loop.
 
 Run9272f221-8055-4c8b-97db-9407b6d07cc2: install1/exit0, launch1/exit1,
 restore1/exit0. Lead read observation/launch-terminal evidence at
