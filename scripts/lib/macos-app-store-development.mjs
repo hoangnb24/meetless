@@ -305,7 +305,17 @@ export function validateR5DevelopmentSignature(output, label = "Meetless.app", {
   return { label, identifier, teamId, identity, signature, cdHash };
 }
 
-export function validateR5DevelopmentElectronInfo(info) {
+export function prepareR5DevelopmentElectronInfo(info) {
+  validateR5DevelopmentElectronInfo(info);
+  const prepared = {
+    ...info,
+    ElectronTeamID: R5_APP_STORE_TEAM_ID,
+  };
+  validateR5DevelopmentElectronInfo(prepared, { requireElectronTeamId: true });
+  return prepared;
+}
+
+export function validateR5DevelopmentElectronInfo(info, { requireElectronTeamId = false } = {}) {
   if (!info || typeof info !== "object" || Array.isArray(info)) {
     throw developmentError("extracted Electron MAS Info.plist is not a dictionary");
   }
@@ -314,6 +324,9 @@ export function validateR5DevelopmentElectronInfo(info) {
   }
   if (info.CFBundleVersion !== "41.2.0" && info.CFBundleShortVersionString !== "41.2.0") {
     throw developmentError("extracted Electron MAS bundle is not version 41.2.0");
+  }
+  if (requireElectronTeamId && info.ElectronTeamID !== R5_APP_STORE_TEAM_ID) {
+    throw developmentError("signed Electron MAS Info.plist ElectronTeamID does not match the accepted Apple Team ID");
   }
   return info;
 }

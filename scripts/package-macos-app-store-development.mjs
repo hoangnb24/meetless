@@ -40,6 +40,7 @@ import {
   parseMacAppStoreDevelopmentEntitlementResult,
   parseUnsignedCodesignProfileDiagnostic,
   parseMacAppStoreDevelopmentArguments,
+  prepareR5DevelopmentElectronInfo,
   prepareMacAppStoreDevelopmentInfo,
   projectMacAppStoreDevelopmentEntitlementEvidence,
   resolveMacAppStoreDevelopmentEmbeddedProfilePath,
@@ -244,13 +245,18 @@ async function replaceElectronRuntime(archivePath) {
     await readFile(path.join(extractedAppPath, "Contents", "Info.plist"), "utf8"),
     "extracted Electron MAS Info.plist",
   );
-  validateR5DevelopmentElectronInfo(extractedInfo);
+  const preparedInfo = prepareR5DevelopmentElectronInfo(extractedInfo);
   const extractedExecutablePath = path.join(extractedAppPath, "Contents", "MacOS", "Electron");
   await requireRegularFile(extractedExecutablePath, "extracted Electron MAS executable");
   const { stdout: fileOutput } = await run("file", [extractedExecutablePath]);
   validateR5DevelopmentElectronFileOutput(fileOutput);
   await rm(nestedElectronAppPath, { recursive: true, force: true });
   await cp(extractedAppPath, nestedElectronAppPath, { recursive: true, verbatimSymlinks: true });
+  await writeFile(
+    path.join(nestedElectronAppPath, "Contents", "Info.plist"),
+    plist.build(preparedInfo),
+    { mode: 0o644 },
+  );
 }
 
 async function injectBuildInputs() {
@@ -354,6 +360,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
       await readFile(path.join(nestedElectronAppPath, "Contents", "Info.plist"), "utf8"),
       "signed Electron MAS Info.plist",
     ),
+    { requireElectronTeamId: true },
   );
 
   const nestedSignatures = [];
