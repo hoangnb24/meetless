@@ -2,8 +2,8 @@
 
 ## Status
 
-- `plan_revision`: `v194` — expired sandbox restore observed; fresh purchase required
-- `state`: `PREMIUM_SANDBOX_FRESH_PURCHASE_READY`
+- `plan_revision`: `v202` — fresh sandbox purchase and managed enrollment accepted
+- `state`: `PREMIUM_SANDBOX_PURCHASE_ACCEPTED`
 - `historical_record`: [full superseded execution history](../completed/v1-paseo-foundation-mas-ui-history.md)
 - `authority_contract_sha256`: `7db7cd6d94781a1367d3f66aaf5a9febdd8abedc703117741a994ea64da8a1a0`
 
@@ -1587,9 +1587,180 @@ every five minutes and automatically stops renewing after the thirteenth
 attempt, so that original entitlement is no longer expected to be active. This
 observation does not reopen the correction: catalog/backend transport is
 healthy, and Restore correctly grants nothing when StoreKit exposes no current
-entitlement. The remaining live acceptance step is one new Human-present
-Monthly sandbox purchase on the corrected installed artifact, immediately
-followed by Refresh. Do not automate that purchase.
+entitlement. Human then completed a fresh Monthly purchase and Refresh. This is
+not accepted: the real RPC is now `status: "unavailable"`, and the UI retained
+only the Monthly package while dropping Annual. Runtime and hosted-development
+logs prove the Apple purchase reached pending enrollment; an enrollment-purpose
+challenge was created successfully, but no `enrollDevice` action followed and
+the plugin completed failed. The next Refresh then failed because the same
+device key was not enrolled.
+
+The native Keychain implementation queries an EC key by application tag without
+requiring `kSecAttrKeyClassPrivate`; the actual Keychain contains both public
+and private records under that tag, so the query can return the public key and
+`SecKeyCreateSignature` fails. The implementation also exports identity bytes
+directly from the selected key instead of deriving the public key from an
+explicitly private key. Reopen the smallest correction: select only the private
+EC key, derive its public key for identity, and prove a production-shaped
+identity/sign round trip plus rejection of the public-key selector regression
+without persisting test keys.
+
+During pending or unavailable enrollment, merge the previously observed
+Monthly and Annual catalog by package ID so a one-package mutation response
+cannot drop the other offering; authoritative active state must remain
+authoritative and must not resurrect stale plans. No entitlement, price,
+backend, receipt, transaction, packaging, signing, install, launch, or external
+deployment policy changes are authorized. Reopen if the fix requires deleting
+or rotating the existing device key, exposing raw challenges/transactions, or
+granting Premium before backend enrollment succeeds.
+
+The exact four-file correction has sorted `filename<TAB>SHA-256` aggregate
+`1278a135eec4dc6be7b1eb5b053aec556ba57529913715af19621dc967ad3275`.
+Lead inspection confirms the production Keychain create and lookup paths require
+an EC private key, public identity is derived with `SecKeyCopyPublicKey`, and
+signing rejects a public or otherwise unusable key. Pending/unavailable catalog
+merging is latest-wins by package ID, deduplicated in Monthly/Annual order,
+while active and ordinary authoritative inactive results are unchanged.
+Lead passed typecheck, 32/32 focused App tests, native build and Node-parent
+boundary tests, diff hygiene, and an independent ephemeral invocation of
+`SecKeyCreateRandomKey` using the production key-class attributes. A fresh
+read-only Peer matched every file hash and returned `ACCEPT`, finding no private
+key leak, persistence in tests, authority downgrade, or catalog-state bypass.
+Lead therefore ACCEPTS this exact source snapshot. The next frontier is one
+fresh production package and existing exact-artifact consumer before any
+transactional replacement of the installed app.
+
+That production frontier is complete for the exact accepted four-file source
+snapshot. The fresh package root is
+`/private/tmp/meetless-mas-premium-r5.qNxaAN`; its production manifest SHA-256
+is `dfc680685d2777ca0ded1de1643d6392049c56be6f9d59f5da3491be68085814`,
+bundle fingerprint is
+`aec848dd2f25eafc5213c4951f96d0707c502bf54d967aa0df3d767f69763ebb`, and
+artifact digest is
+`e0be3ba575a1fa3173c547563e143578a9c4e1efb5db0286ddb5e2699ca566d4`.
+The production package completed with 42 signed nested Mach-O entries, the
+contract-pinned MAS Electron archive, the locked hosted-development Convex URL,
+and the existing public SDK-key binding. The actual standalone artifact
+consumer passed against these exact bytes.
+
+The coordinator then restored and archived prior run
+`8975e3b9-920d-45af-b552-b4d9293ebdbf` and transactionally installed the exact
+fresh artifact as run `8e5658bd-724e-45ef-8adb-c274c35b2354`. The installed
+host SHA-256 is
+`121393db17bcb20ce9c131175ad548b16b20fbb6028774ff495de882e2ba8567`
+with CDHash `856df289933b8a05eab78b45396a56a419acf034`. Lead ACCEPTS the
+production package, exact-artifact consumer, and transactional install. The
+installed app has not yet been launched; the next frontier is one coordinator
+launch, readiness check, and read-only Premium RPC before returning control to
+Human for any explicit StoreKit action.
+
+The coordinator launched this exact installation successfully as
+`launch-claimed`; host PID `11065` claimed the expected run, binary SHA-256,
+CDHash, bundle path, and fresh runtime root. The daemon is listening on the
+expected private development endpoint. A real read-only client RPC against the
+running app returned authoritative `inactive` with both localized Monthly and
+Annual packages and `reason: null`. This proves the corrected app is live, the
+plugin is reachable, and the complete catalog survives before a new mutation.
+The next action belongs to Human: explicitly Restore (or make a new monthly
+sandbox purchase if Apple no longer exposes the earlier accelerated sandbox
+subscription), then press Refresh. No StoreKit action has been automated.
+
+Human completed a fresh Monthly sandbox purchase, observed the bounded UI
+timeout, explicitly refreshed, explicitly restored, and refreshed again. The
+result is REJECTED: Annual disappeared and the real RPC returned `unavailable`,
+no packages, with `store_unavailable`.
+
+Correlated runtime evidence identifies the production-path failure. Apple
+completion reached pending enrollment, but the hosted-development action
+returned the older credential shape: strict parsing reports missing/invalid
+`version`, `state`, and `naturalExpiryAt`. The checked-in
+`convex/managedAuthActions.ts` already emits the accepted strict v1 shape, so
+the exact locked hosted-development deployment is stale rather than the app
+using an incorrect endpoint. Separately, `retainPremiumCatalog` refuses to
+merge a later unavailable response when the previous catalog-bearing response
+is itself unavailable; that makes a second failure able to drop Annual.
+
+The bounded correction is to deploy the current checked-in Convex functions to
+the already selected `frugal-mandrill-646` development target without changing
+environment values, and to let a catalog-bearing unavailable UI state preserve
+Monthly and Annual across another unavailable/partial response. Active status
+remains authoritative and no client state may grant Premium. Production,
+provider, environment rotation, annual purchase, and automated StoreKit action
+remain closed. Reopen if the exact target cannot be proven, deployment asks to
+change configuration, or the current backend source does not produce the
+strict v1 credential shape.
+
+The UI correction removes the erroneous requirement that a prior
+catalog-bearing state be non-`unavailable` before it can preserve plans. Its
+focused positive and recurrence proofs passed as part of 61/61 Premium app,
+managed-auth, and Premium service tests; app and plugin TypeScript checks and
+diff hygiene also passed. The exact locked `.env.local` target was checked
+without exposing the public SDK key, then `convex dev --once` updated only
+`frugal-mandrill-646` and reported `Convex functions ready!`; no environment
+value was changed.
+
+Because the failed enrollment was cached in the old app process, Lead stopped
+it through the coordinator. Relaunch of that already-used package was correctly
+refused by the immutable package proof after the host had atomically rewritten
+its identity file. Lead did not bypass the gate. One fresh corrected artifact
+was built at `/private/tmp/meetless-mas-premium-r6.KnXjS3`; its manifest
+SHA-256 is `337f526c3ddc4fc39f9635b62649283e650b4cb5c8e4c69056f12894fdc3aaa8`,
+bundle fingerprint is
+`d9fcf01590e20f0f1d93c50edab01491fdf189cc32c71d722555f6c170c1f8af`,
+and artifact digest is
+`7c164d58a8d95f140d0efeeba1356819c08bc9232cae51e383cdf4fa414acfb1`.
+The production packager and standalone exact-artifact consumer passed with 42
+signed nested Mach-O entries and the locked Convex URL.
+
+Run `8e5658bd-724e-45ef-8adb-c274c35b2354` was restored and archived before
+the new artifact was transactionally installed as run
+`a6c34243-8954-44a2-bf14-55e13b20f86c`. The new installed host SHA-256 is
+`b341fd38c6454b7108f50eec56f963ee843eca4ee6c3f1f2690dbdd235b2059a`
+with CDHash `3e2507c8b1290ef9f9a715cc149351372500c002`. Coordinator launch completed as
+`launch-claimed`, and a real read-only RPC returned inactive with both Monthly
+and Annual localized packages and no failure reason. Lead ACCEPTS the local
+source guard, exact artifact, install, and pre-mutation live state. Final
+acceptance still requires Human's explicit Restore against the updated backend;
+no StoreKit action has been automated.
+
+Human instead selected Monthly again and then Refresh. The visible app retained
+both Monthly and Annual, and a real read-only RPC independently returned
+`inactive`, both packages, and no failure reason. Lead ACCEPTS the catalog
+retention correction on the live production-shaped path.
+
+This attempt did not create an active subscription. Native StoreKit unified
+diagnostics record the purchase request at 21:10:32 and RevenueCat's categorical
+terminal at 21:10:53 as `Purchase was cancelled`; the UI had reported pending
+and reached its bounded timeout. The updated backend successfully served strict
+`refreshDevice` actions for the already-enrolled device, but it received no new
+enrollment and no RevenueCat purchase event for this attempt. Therefore the
+inactive result is consistent with the trusted store evidence and must not be
+promoted to active. The remaining question is whether Human intentionally
+cancelled/closed the Apple sheet or Apple displayed an apparent success despite
+returning cancellation; that distinction controls whether another ordinary
+sandbox retry is sufficient or the native presentation/callback route must be
+reopened.
+
+Human then completed another Monthly sandbox purchase and explicitly observed
+Apple's `Purchase success`. The first Refresh still showed an intermediate
+Monthly-only catalog, but the next explicit Refresh converged to `Managed
+transcription is active`; the active surface intentionally hides purchase
+choices. A real read-only client RPC against the same running installation now
+returns authoritative `status: "active"`, `reason: null`, and the Monthly
+product associated with the transaction.
+
+Correlated hosted-development evidence records a successful enrollment chain
+for this exact interaction: `managedAuth:createDeviceChallenge`,
+`managedAuth:consumeEnrollment`, and `managedAuthActions:enrollDevice` all
+completed without error. Later `consumeRefresh` and `refreshDevice` calls also
+completed without error. This is the production-path proof that the private-key
+selection correction signs successfully, the deployed strict credential shape
+is accepted, and the app converges from the Apple purchase to backend-managed
+Premium. Lead ACCEPTS the sandbox Monthly purchase and managed-enrollment
+correction. The intermediate one-product catalog remains observable during
+convergence, but it does not grant or revoke access and is no longer a blocker
+for this accepted purchase path; reopen if it persists while access remains
+inactive/unavailable or if an authoritative Refresh stops returning active.
 
 ## Remaining work boundaries
 
