@@ -73,10 +73,13 @@ const ChallengeSchema = z.object({
 }).strict();
 
 const TokenSchema = z.object({
+  version: z.literal(1),
   authToken: z.string().min(1),
   expiresAt: z.number().int().positive(),
   deviceId: z.string().min(1),
   keyId: z.string().min(1),
+  state: z.enum(["active", "grace", "expired", "refunded", "revoked"]),
+  naturalExpiryAt: z.number().int().positive().nullable(),
 }).strict();
 
 /**
@@ -188,7 +191,12 @@ export class ConvexManagedCredentialSource {
   private async issue(functionName: string, args: Record<string, unknown>): Promise<ManagedConvexCredential> {
     const credential = TokenSchema.parse(await this.client.action(functionName, args));
     if (credential.expiresAt <= Date.now()) throw new Error("Managed Convex returned an expired device token");
-    return { authToken: credential.authToken };
+    return {
+      authToken: credential.authToken,
+      expiresAt: credential.expiresAt,
+      state: credential.state,
+      naturalExpiryAt: credential.naturalExpiryAt,
+    };
   }
 }
 

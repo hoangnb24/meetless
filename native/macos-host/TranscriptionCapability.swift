@@ -691,6 +691,16 @@ final class MeetlessTranscriptionCapability {
       writeResponse(client, requestId: "invalid", ok: false, status: "invalid", text: nil, languages: nil, usage: nil)
       return
     }
+    if operation == "premiumRecover" && !hasExactPremiumRecoverRequestKeys(request) {
+      writePremiumResponse(
+        client,
+        requestId: requestId,
+        ok: false,
+        outcome: "failed",
+        access: .unavailable("store_unavailable")
+      )
+      return
+    }
     if isHostProcessOperation(operation) {
       guard hasExactHostProcessRequestKeys(request, operation: operation) else {
         writeHostProcessError(client, requestId: requestId, reason: "host process protocol request shape is unsupported")
@@ -882,6 +892,30 @@ final class MeetlessTranscriptionCapability {
         return
       }
       writeCapturePermissionResponse(client, requestId: requestId, result: result)
+      return
+    }
+    if operation == "premiumRecover" {
+      let recovered: MeetlessPremiumMutationResult? = runtimeAuthorization.withValidLease(lease) {
+        premium.recover()
+      } ?? nil
+      guard let recovered else {
+        writePremiumResponse(
+          client,
+          requestId: requestId,
+          ok: false,
+          outcome: "failed",
+          access: .unavailable("store_unavailable")
+        )
+        return
+      }
+      writePremiumResponse(
+        client,
+        requestId: requestId,
+        ok: true,
+        outcome: recovered.outcome,
+        access: recovered.access,
+        appleSignedTransaction: recovered.appleSignedTransaction
+      )
       return
     }
     if operation == "premiumStatus" || operation == "premiumPurchase" || operation == "premiumRestore" {
@@ -1108,6 +1142,21 @@ final class MeetlessTranscriptionCapability {
     ]
     guard let data = try? JSONSerialization.data(withJSONObject: response) else { return }
     writeAll(descriptor, data: data + Data([10]))
+  }
+
+  private func hasExactPremiumRecoverRequestKeys(_ request: [String: Any]) -> Bool {
+    guard Set(request.keys) == Set(["version", "requestId", "operation"]),
+          let version = request["version"] as? NSNumber,
+          CFGetTypeID(version) != CFBooleanGetTypeID(),
+          version.intValue == 1,
+          version.doubleValue == 1,
+          let requestId = request["requestId"] as? String,
+          !requestId.isEmpty,
+          requestId == requestId.trimmingCharacters(in: .whitespacesAndNewlines),
+          request["operation"] as? String == "premiumRecover" else {
+      return false
+    }
+    return true
   }
 
   private func writePremiumResponse(

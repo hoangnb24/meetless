@@ -261,7 +261,7 @@ export const consumeEnrollment = internalMutation({
     const subject = stableDeviceSubject(args.deviceId);
     const tokenIdentifier = tokenIdentifierFor(config.authIssuer, subject);
     const principal = await ctx.db.query("managedPrincipals").withIndex("by_account_device", (q) => q.eq("accountId", verified.accountId).eq("deviceId", args.deviceId)).unique();
-    const entitlement = verified.currentState;
+    const entitlement = normalizeEntitlementState(verified.currentState, verified.expiresAtMs, now);
     const naturalExpiryAt = verified.expiresAtMs;
     if (principal) {
       await ctx.db.patch(principal._id, {
@@ -289,7 +289,15 @@ export const consumeEnrollment = internalMutation({
       });
     }
     await ctx.db.patch(challenge._id, { consumedAt: now });
-    return { subject, keyId: args.keyId, deviceId: args.deviceId, restored, accountId: verified.accountId };
+    return {
+      subject,
+      keyId: args.keyId,
+      deviceId: args.deviceId,
+      restored,
+      accountId: verified.accountId,
+      entitlement,
+      naturalExpiryAt,
+    };
   },
 });
 
@@ -313,8 +321,21 @@ export const consumeRefresh = internalMutation({
     if (!device || device.revokedAt !== null || device.publicKey !== args.publicKey) throw new Error("Managed refresh device is revoked or unknown");
     const principal = await ctx.db.query("managedPrincipals").withIndex("by_account_device", (q) => q.eq("accountId", device.accountId).eq("deviceId", device.deviceId)).unique();
     if (!principal || principal.revokedAt !== null || !principal.lineageVerified) throw new Error("Managed refresh principal is revoked or not verified");
-    await ctx.db.patch(challenge._id, { consumedAt: Date.now() });
-    return { subject: stableDeviceSubject(device.deviceId), keyId: device.keyId, deviceId: device.deviceId, accountId: device.accountId, issuer: config.authIssuer };
+    const now = Date.now();
+    const entitlement = normalizeEntitlementState(principal.entitlement, principal.naturalExpiryAt, now);
+    if (entitlement !== principal.entitlement) {
+      await ctx.db.patch(principal._id, { entitlement });
+    }
+    await ctx.db.patch(challenge._id, { consumedAt: now });
+    return {
+      subject: stableDeviceSubject(device.deviceId),
+      keyId: device.keyId,
+      deviceId: device.deviceId,
+      accountId: device.accountId,
+      issuer: config.authIssuer,
+      entitlement,
+      naturalExpiryAt: principal.naturalExpiryAt ?? null,
+    };
   },
 });
 
@@ -770,10 +791,11 @@ function addCleanupTotals(target: CleanupTotals, result: CleanupTotals): void {
 
 async function applyLineageProjection(ctx: MutationCtx, lineage: any): Promise<void> {
   const principals = await ctx.db.query("managedPrincipals").withIndex("by_account_device", (q) => q.eq("accountId", lineage.accountId)).collect();
+  const entitlement = normalizeEntitlementState(lineage.currentState, lineage.expiresAt, Date.now());
   for (const principal of principals) {
-    await ctx.db.patch(principal._id, { entitlement: lineage.currentState, naturalExpiryAt: lineage.expiresAt });
+    await ctx.db.patch(principal._id, { entitlement, naturalExpiryAt: lineage.expiresAt });
   }
-  if (lineage.currentState !== "refunded" && lineage.currentState !== "revoked") return;
+  if (entitlement !== "refunded" && entitlement !== "revoked") return;
   const jobs = await ctx.db.query("managedJobs").withIndex("by_timeline", (q) => q.eq("accountId", lineage.accountId)).collect();
   for (const job of jobs) {
     if (job.status !== "reserved" && job.status !== "running") continue;
@@ -782,4 +804,15 @@ async function applyLineageProjection(ctx: MutationCtx, lineage: any): Promise<v
     await ctx.db.patch(period._id, { reservedSeconds: period.reservedSeconds - job.billableSeconds });
     await ctx.db.patch(job._id, { status: "stopped", executionToken: null, failureReason: lineage.currentState });
   }
+}
+
+function normalizeEntitlementState(
+  state: AppleSubscriptionState,
+  naturalExpiryAt: number | null | undefined,
+  now: number,
+): AppleSubscriptionState {
+  if ((state === "active" || state === "grace") && naturalExpiryAt !== null && naturalExpiryAt !== undefined && naturalExpiryAt <= now) {
+    return "expired";
+  }
+  return state;
 }

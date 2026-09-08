@@ -25,7 +25,7 @@ vi.mock("../src/recording-provider.js", () => ({
   useRecording: () => recordingState.current,
 }));
 
-import { AppContent, loadCompanionRestoration } from "../src/App.js";
+import { AppContent, loadCompanionRestoration, retainPremiumCatalog } from "../src/App.js";
 
 describe("transcript meeting selection ordering", () => {
   let renderer: ReactTestRenderer | null = null;
@@ -35,6 +35,251 @@ describe("transcript meeting selection ordering", () => {
     renderer = null;
     recordingState.current = { enabled: false };
     vi.clearAllMocks();
+  });
+
+  test("dispatches Premium purchase progress immediately and ignores repeated purchase or restore actions", async () => {
+    const inactivePremium = {
+      entitlement: "premium" as const,
+      status: "inactive" as const,
+      packages: [{
+        packageId: "monthly" as const,
+        productId: "com.meetless.app.premium.monthly",
+        localizedPrice: "$9.99",
+        trialEligible: true,
+      }],
+      reason: null,
+    };
+    const purchaseCompletion = deferred<{ outcome: "cancelled"; access: typeof inactivePremium }>();
+    const purchasePremium = vi.fn(() => purchaseCompletion.promise);
+    const restorePremium = vi.fn(async () => ({ outcome: "active" as const, access: inactivePremium }));
+    connectMeetlessClient.mockResolvedValue({
+      client: {
+        listMeetings: async () => [],
+        getPremiumAccess: async () => inactivePremium,
+        purchasePremium,
+        restorePremium,
+      },
+      close: async () => undefined,
+      serverInfo: null,
+    });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await vi.waitFor(() => expect(surface().props.premiumAccess).toEqual(inactivePremium));
+
+    let firstPurchase!: Promise<void>;
+    await act(async () => { firstPurchase = surface().props.onPurchasePremium("monthly"); });
+    expect(surface().props.premiumPending).toBe(true);
+    expect(surface().props.premiumPendingAction).toBe("purchase");
+
+    await act(async () => {
+      await surface().props.onPurchasePremium("annual");
+      await surface().props.onRestorePremium();
+    });
+    expect(purchasePremium).toHaveBeenCalledOnce();
+    expect(purchasePremium).toHaveBeenCalledWith("monthly");
+    expect(restorePremium).not.toHaveBeenCalled();
+
+    purchaseCompletion.resolve({ outcome: "cancelled", access: inactivePremium });
+    await act(async () => { await firstPurchase; });
+    expect(surface().props.premiumPending).toBe(false);
+    expect(surface().props.premiumPendingAction).toBeNull();
+  });
+
+  test("caps local Premium pending at 30s and requires explicit refresh for late success", async () => {
+    const inactivePremium = {
+      entitlement: "premium" as const,
+      status: "inactive" as const,
+      packages: [{
+        packageId: "monthly" as const,
+        productId: "com.meetless.app.premium.monthly",
+        localizedPrice: "$9.99",
+        trialEligible: false,
+      }],
+      reason: null,
+    };
+    const activePremium = { ...inactivePremium, status: "active" as const };
+    const delayedStatus = deferred<typeof activePremium>();
+    const purchaseDeadline = deferred<never>();
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      const getPremiumAccess = vi.fn()
+        .mockResolvedValueOnce(inactivePremium)
+        .mockReturnValueOnce(delayedStatus.promise);
+      const purchasePremium = vi.fn(() => purchaseDeadline.promise);
+      connectMeetlessClient.mockResolvedValue({
+        client: {
+          listMeetings: async () => [],
+          getPremiumAccess,
+          purchasePremium,
+          restorePremium: vi.fn(async () => ({ outcome: "failed" as const, access: inactivePremium })),
+        },
+        close: async () => undefined,
+        serverInfo: null,
+      });
+      await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+      await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+      const surface = () => renderer!.root.findByType("MeetingListSurface");
+      await vi.waitFor(() => expect(surface().props.premiumAccess).toEqual(inactivePremium));
+
+      vi.useFakeTimers();
+      let purchaseRequest!: Promise<void>;
+      await act(async () => {
+        purchaseRequest = surface().props.onPurchasePremium("monthly");
+        await Promise.resolve();
+      });
+      expect(surface().props.premiumPending).toBe(true);
+      expect(surface().props.premiumPendingAction).toBe("purchase");
+      await act(async () => { vi.advanceTimersByTime(31_000); });
+      await act(async () => { await purchaseRequest; });
+      expect(surface().props.premiumPending).toBe(false);
+      expect(surface().props.premiumPendingAction).toBeNull();
+      expect(surface().props.premiumError).toBe("Premium is still being processed. Refresh to check again.");
+      expect(surface().props.premiumAccess).toEqual(inactivePremium);
+      expect(surface().props.onRefreshPremium).toBeTypeOf("function");
+      expect(info.mock.calls.map(([line]) => line).join(" ")).not.toContain('"outcome":"failed"');
+
+      await act(async () => {
+        delayedStatus.resolve(activePremium);
+        await surface().props.onRefreshPremium();
+      });
+      expect(surface().props.premiumPending).toBe(false);
+      expect(surface().props.premiumAccess).toEqual(activePremium);
+      expect(surface().props.premiumError).toBeNull();
+      expect(info.mock.calls.map(([line]) => line).filter((line) => line.includes('"stage":"ui_completion"')))
+        .toEqual([
+          '[meetless-premium] {"stage":"ui_completion","outcome":"pending"}',
+        ]);
+    } finally {
+      vi.useRealTimers();
+      info.mockRestore();
+    }
+  });
+
+  test("applies current inactive Premium access after an active mutation", async () => {
+    const inactivePremium = {
+      entitlement: "premium" as const,
+      status: "inactive" as const,
+      packages: [],
+      reason: null,
+    };
+    const activePremium = { ...inactivePremium, status: "active" as const };
+    const getPremiumAccess = vi.fn()
+      .mockResolvedValueOnce(inactivePremium)
+      .mockResolvedValue(inactivePremium);
+    connectMeetlessClient.mockResolvedValue({
+      client: {
+        listMeetings: async () => [],
+        getPremiumAccess,
+        purchasePremium: vi.fn(async () => ({ outcome: "active" as const, access: activePremium })),
+        restorePremium: vi.fn(async () => ({ outcome: "failed" as const, access: inactivePremium })),
+      },
+      close: async () => undefined,
+      serverInfo: null,
+    });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await vi.waitFor(() => expect(surface().props.premiumAccess).toEqual(inactivePremium));
+
+    await act(async () => { await surface().props.onPurchasePremium("monthly"); });
+    expect(surface().props.premiumAccess).toEqual(activePremium);
+    expect(getPremiumAccess).toHaveBeenCalledOnce();
+
+    await act(async () => { await surface().props.onRefreshPremium(); });
+    expect(getPremiumAccess).toHaveBeenCalledTimes(2);
+    expect(surface().props.premiumAccess).toEqual(inactivePremium);
+    expect(surface().props.premiumError).toBeNull();
+  });
+
+  test("retains a prior catalog only for an unavailable empty response", () => {
+    const catalog = {
+      entitlement: "premium" as const,
+      status: "inactive" as const,
+      packages: [
+        { packageId: "monthly" as const, productId: "com.meetless.app.premium.monthly", localizedPrice: "$9.99", trialEligible: false },
+        { packageId: "annual" as const, productId: "com.meetless.app.premium.annual", localizedPrice: "$89.99", trialEligible: false },
+      ],
+      reason: null,
+    };
+    const unavailable = { ...catalog, status: "unavailable" as const, packages: [], reason: "store_unavailable" as const };
+    expect(retainPremiumCatalog(unavailable, catalog)).toEqual({ ...unavailable, packages: catalog.packages });
+    expect(retainPremiumCatalog({ ...catalog, status: "active" as const, packages: [] }, catalog)).toEqual({ ...catalog, status: "active", packages: [] });
+    expect(retainPremiumCatalog({ ...unavailable, packages: [catalog.packages[0]] }, catalog)).toEqual({ ...unavailable, packages: [catalog.packages[0]] });
+    expect(retainPremiumCatalog(unavailable, { ...catalog, packages: [] })).toEqual(unavailable);
+  });
+
+  test("preserves monthly and annual plans when refresh reports unavailable", async () => {
+    const available = {
+      entitlement: "premium" as const,
+      status: "inactive" as const,
+      packages: [
+        { packageId: "monthly" as const, productId: "com.meetless.app.premium.monthly", localizedPrice: "$9.99", trialEligible: true },
+        { packageId: "annual" as const, productId: "com.meetless.app.premium.annual", localizedPrice: "$89.99", trialEligible: false },
+      ],
+      reason: null,
+    };
+    const unavailable = { ...available, status: "unavailable" as const, packages: [], reason: "store_unavailable" as const };
+    const getPremiumAccess = vi.fn().mockResolvedValueOnce(available).mockResolvedValueOnce(unavailable);
+    connectMeetlessClient.mockResolvedValue({
+      client: { listMeetings: async () => [], getPremiumAccess },
+      close: async () => undefined,
+      serverInfo: null,
+    });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await vi.waitFor(() => expect(surface().props.premiumAccess).toEqual(available));
+
+    await act(async () => { await surface().props.onRefreshPremium(); });
+    expect(surface().props.premiumAccess).toEqual({ ...unavailable, packages: available.packages });
+    expect(surface().props.premiumAccess.status).toBe("unavailable");
+    expect(surface().props.premiumAccess.reason).toBe("store_unavailable");
+    expect(surface().props.premiumError).toBe("Premium plans could not be loaded. Try again.");
+  });
+
+  test("fails closed when explicit Premium refresh fails after active access", async () => {
+    const inactivePremium = {
+      entitlement: "premium" as const,
+      status: "inactive" as const,
+      packages: [
+        { packageId: "monthly" as const, productId: "com.meetless.app.premium.monthly", localizedPrice: "$9.99", trialEligible: true },
+        { packageId: "annual" as const, productId: "com.meetless.app.premium.annual", localizedPrice: "$89.99", trialEligible: false },
+      ],
+      reason: null,
+    };
+    const activePremium = { ...inactivePremium, status: "active" as const };
+    const getPremiumAccess = vi.fn()
+      .mockResolvedValueOnce(inactivePremium)
+      .mockRejectedValue(new Error("backend unavailable"));
+    connectMeetlessClient.mockResolvedValue({
+      client: {
+        listMeetings: async () => [],
+        getPremiumAccess,
+        purchasePremium: vi.fn(async () => ({ outcome: "active" as const, access: activePremium })),
+        restorePremium: vi.fn(async () => ({ outcome: "failed" as const, access: inactivePremium })),
+      },
+      close: async () => undefined,
+      serverInfo: null,
+    });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await vi.waitFor(() => expect(surface().props.premiumAccess).toEqual(inactivePremium));
+
+    await act(async () => { await surface().props.onPurchasePremium("monthly"); });
+    expect(surface().props.premiumAccess).toEqual(activePremium);
+
+    await act(async () => { await surface().props.onRefreshPremium(); });
+    expect(surface().props.premiumAccess).toEqual({
+      entitlement: "premium",
+      status: "unavailable",
+      packages: inactivePremium.packages,
+      reason: "store_unavailable",
+    });
+    expect(surface().props.premiumError).toBe("Premium plans could not be loaded. Try again.");
+    expect(surface().props.premiumPending).toBe(false);
+    expect(surface().props.onRefreshPremium).toBeTypeOf("function");
   });
 
   test("late success and error from an old meeting cannot replace the current transcript or citation", async () => {
@@ -389,6 +634,66 @@ describe("transcript meeting selection ordering", () => {
     expect(askMeetingQuestionWithSelection).toHaveBeenCalledWith({
       meetingId: "m-1", question: "What changed?", selection,
     });
+  });
+
+  test("does not implicitly refresh Premium after an Ask entitlement error", async () => {
+    const activePremium = {
+      entitlement: "premium" as const,
+      status: "active" as const,
+      packages: [],
+      reason: null,
+    };
+    const inactivePremium = { ...activePremium, status: "inactive" as const };
+    const selection = {
+      provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high", featureValues: {},
+    };
+    const controls = {
+      version: 1 as const,
+      catalog: { providers: [] }, profiles: [], catalogError: null,
+      lastSelection: selection, lastSelectionState: "available" as const, lastSelectionError: null,
+    };
+    const getPremiumAccess = vi.fn()
+      .mockResolvedValueOnce(activePremium)
+      .mockResolvedValue(inactivePremium);
+    const askMeetingQuestionWithSelection = vi.fn(async () => {
+      throw new Error("Premium access required");
+    });
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getPremiumAccess,
+      getChatControls: vi.fn(async () => controls),
+      getMeetingTranscript: async () => transcriptResponse("m-1", "segment-m-1", "current citation"),
+      getMeetingChat: async () => chatResponse(),
+      discoverChatFeatures: async (asked: typeof selection) => featureResponse(asked),
+      askMeetingQuestionWithSelection,
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await vi.waitFor(() => expect(surface().props.premiumAccess).toEqual(activePremium));
+    expect(getPremiumAccess).toHaveBeenCalledOnce();
+
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    let askError: unknown;
+    await act(async () => {
+      try {
+        await surface().props.onAskQuestion("Transcribe this meeting");
+      } catch (reason) {
+        askError = reason;
+      }
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(askError).toEqual(new Error("Premium access required"));
+    expect(askMeetingQuestionWithSelection).toHaveBeenCalledWith({
+      meetingId: "m-1", question: "Transcribe this meeting", selection,
+    });
+    expect(getPremiumAccess).toHaveBeenCalledOnce();
+    expect(surface().props.premiumAccess).toEqual(activePremium);
+    expect(surface().props.chatError).toBe("Premium access required");
+    expect(surface().props.chatLoading).toBe(false);
+    expect(surface().props.onRefreshPremium).toBeTypeOf("function");
   });
 
   test("does not let a delayed initial controls response overwrite a newer local selection", async () => {

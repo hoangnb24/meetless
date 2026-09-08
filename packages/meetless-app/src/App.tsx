@@ -33,6 +33,77 @@ interface ActiveConnection {
   close?(): Promise<void>;
 }
 
+type PremiumPendingAction = "refresh" | "purchase" | "restore";
+type PremiumDiagnosticStage = "ui_dispatch" | "ui_completion";
+type PremiumDiagnosticOutcome = "started" | "active" | "cancelled" | "pending" | "failed";
+
+function logPremiumDiagnostic(stage: PremiumDiagnosticStage, outcome: PremiumDiagnosticOutcome): void {
+  if (typeof console === "undefined") return;
+  console.info(`[meetless-premium] ${JSON.stringify({ stage, outcome })}`);
+}
+
+function normalizedPremiumOutcome(outcome: "active" | "cancelled" | "pending" | "failed"): PremiumDiagnosticOutcome {
+  return outcome;
+}
+
+export const PREMIUM_UI_PENDING_TIMEOUT_MS = 30_000;
+const PREMIUM_STATUS_POLL_INTERVAL_MS = 250;
+
+type PremiumRpcResult<T> = { timedOut: false; value: T } | { timedOut: true };
+
+function premiumRpcWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<PremiumRpcResult<T>> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve({ timedOut: true });
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ timedOut: false, value });
+      },
+      (reason) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(reason);
+      },
+    );
+  });
+}
+
+function waitForPremiumStatusPoll(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, PREMIUM_STATUS_POLL_INTERVAL_MS));
+}
+
+function pendingPremiumAccessForUi(
+  access: PremiumAccessWire,
+  catalog: PremiumAccessWire | null = null,
+): PremiumAccessWire {
+  let pending = access.status === "active" ? { ...access, status: "inactive" as const, reason: null } : access;
+  if (catalog && catalog.status !== "unavailable") {
+    if (pending.status === "unavailable") pending = { ...pending, status: "inactive", reason: null };
+    if (pending.packages.length === 0 && catalog.packages.length > 0) {
+      pending = { ...pending, packages: catalog.packages };
+    }
+  }
+  return pending;
+}
+
+export function retainPremiumCatalog(
+  next: PremiumAccessWire,
+  previous: PremiumAccessWire | null,
+): PremiumAccessWire {
+  if (next.status === "unavailable" && next.packages.length === 0 && previous && previous.packages.length > 0) {
+    return { ...next, packages: previous.packages };
+  }
+  return next;
+}
+
 export function App() {
   const mode = useMemo(() => resolveAppMode(), []);
   const recordingEnabled = useMemo(() => supportsDesktopRecording(), []);
@@ -70,6 +141,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [chatError, setChatError] = useState<string | null>(null);
   const [premiumAccess, setPremiumAccess] = useState<PremiumAccessWire | null>(null);
   const [premiumPending, setPremiumPending] = useState(false);
+  const [premiumPendingAction, setPremiumPendingAction] = useState<PremiumPendingAction | null>(null);
   const [premiumError, setPremiumError] = useState<string | null>(null);
   const [managedDevices, setManagedDevices] = useState<ManagedDeviceWire[] | null>(null);
   const [managedDevicesPending, setManagedDevicesPending] = useState(false);
@@ -83,6 +155,8 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const chatSelectionRequest = useRef(0);
   const citationSequence = useRef(0);
   const selectedMeetingIdRef = useRef<string | null>(null);
+  const premiumOperationSequence = useRef(0);
+  const premiumOperation = useRef<{ token: number; action: PremiumPendingAction } | null>(null);
   const deletePendingRef = useRef(false);
   const deleteOperationEpoch = useRef(0);
   const layoutTier: LayoutTier = dimensions.width <= 639 ? "phone" : dimensions.width < 1120 ? "tablet" : "desktop";
@@ -113,7 +187,9 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     playback.current = null;
     connection.current = null;
     setPremiumAccess(null);
+    premiumOperation.current = null;
     setPremiumPending(false);
+    setPremiumPendingAction(null);
     setPremiumError(null);
     setManagedDevices(null);
     setManagedDevicesPending(false);
@@ -127,6 +203,23 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
 
   const isCurrentConnection = useCallback((active: ActiveConnection): boolean =>
     connection.current === active && connectionEpoch.current === active.epoch, []);
+
+  const beginPremiumOperation = useCallback((action: PremiumPendingAction): number | null => {
+    if (premiumOperation.current) return null;
+    const token = ++premiumOperationSequence.current;
+    premiumOperation.current = { token, action };
+    setPremiumPending(true);
+    setPremiumPendingAction(action);
+    setPremiumError(null);
+    return token;
+  }, []);
+
+  const endPremiumOperation = useCallback((token: number): void => {
+    if (premiumOperation.current?.token !== token) return;
+    premiumOperation.current = null;
+    setPremiumPending(false);
+    setPremiumPendingAction(null);
+  }, []);
 
   const refresh = useCallback(async () => {
     const active = connection.current;
@@ -144,58 +237,196 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setError(null);
   }, [isCurrentConnection, mode]);
 
+  const waitForPremiumActivation = useCallback(async (
+    active: ActiveConnection,
+    operation: number,
+    deadline: number,
+    fallback: PremiumAccessWire,
+    failureMessage: string,
+  ): Promise<void> => {
+    while (isCurrentConnection(active) && premiumOperation.current?.token === operation && Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      try {
+        const polled = await premiumRpcWithin(active.client.getPremiumAccess(), remaining);
+        if (polled.timedOut) break;
+        const access = polled.value;
+        if (!isCurrentConnection(active) || premiumOperation.current?.token !== operation) return;
+        if (access.status === "active") {
+          setPremiumAccess(access);
+          logPremiumDiagnostic("ui_completion", "active");
+          endPremiumOperation(operation);
+          return;
+        }
+        if (access.status === "unavailable") {
+          setPremiumAccess(pendingPremiumAccessForUi(fallback));
+          setPremiumError(failureMessage);
+          logPremiumDiagnostic("ui_completion", "failed");
+          endPremiumOperation(operation);
+          return;
+        }
+      } catch {
+        // A client deadline does not cancel the native/plugin operation. Keep
+        // the local state retryable until the bounded UI wait expires.
+      }
+      const pause = Math.min(PREMIUM_STATUS_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now()));
+      if (pause > 0) await premiumRpcWithin(waitForPremiumStatusPoll(), pause).catch(() => undefined);
+    }
+    if (!isCurrentConnection(active) || premiumOperation.current?.token !== operation) return;
+    setPremiumAccess(pendingPremiumAccessForUi(fallback));
+    setPremiumError("Premium is still being processed. Refresh to check again.");
+    logPremiumDiagnostic("ui_completion", "pending");
+  }, [endPremiumOperation, isCurrentConnection]);
+
+  const finishPremiumRpcTimeout = useCallback((
+    active: ActiveConnection,
+    operation: number,
+    fallback: PremiumAccessWire,
+  ): void => {
+    if (!isCurrentConnection(active) || premiumOperation.current?.token !== operation) return;
+    setPremiumAccess(pendingPremiumAccessForUi(fallback));
+    setPremiumError("Premium is still being processed. Refresh to check again.");
+    logPremiumDiagnostic("ui_completion", "pending");
+  }, [isCurrentConnection]);
+
   const refreshPremium = useCallback(async () => {
     const active = connection.current;
     if (!active) throw new Error("Meetless host is not connected yet");
-    setPremiumPending(true);
-    setPremiumError(null);
+    const operation = beginPremiumOperation("refresh");
+    if (operation === null) return;
+    const deadline = Date.now() + PREMIUM_UI_PENDING_TIMEOUT_MS;
     try {
-      const access = await active.client.getPremiumAccess();
-      if (isCurrentConnection(active)) setPremiumAccess(access);
+      const response = await premiumRpcWithin(active.client.getPremiumAccess(), Math.max(0, deadline - Date.now()));
+      if (response.timedOut) {
+        if (isCurrentConnection(active) && premiumOperation.current?.token === operation) {
+          setPremiumError("Premium is still being checked. Try Refresh again.");
+        }
+        return;
+      }
+      const access = response.value;
+      if (isCurrentConnection(active) && premiumOperation.current?.token === operation) {
+        setPremiumAccess((current) => retainPremiumCatalog(access, current));
+        if (access.status === "unavailable") {
+          setPremiumError("Premium plans could not be loaded. Try again.");
+        }
+      }
     } catch {
-      if (isCurrentConnection(active)) {
-        setPremiumAccess({ entitlement: "premium", status: "unavailable", packages: [], reason: "store_unavailable" });
+      if (isCurrentConnection(active) && premiumOperation.current?.token === operation) {
+        setPremiumAccess((current) => retainPremiumCatalog(
+          { entitlement: "premium", status: "unavailable", packages: [], reason: "store_unavailable" },
+          current,
+        ));
         setPremiumError("Premium plans could not be loaded. Try again.");
       }
     } finally {
-      if (isCurrentConnection(active)) setPremiumPending(false);
+      endPremiumOperation(operation);
     }
-  }, [isCurrentConnection]);
+  }, [beginPremiumOperation, endPremiumOperation, isCurrentConnection]);
 
   const purchasePremium = useCallback(async (packageId: "monthly" | "annual") => {
     const active = connection.current;
     if (!active) throw new Error("Meetless host is not connected yet");
-    setPremiumPending(true);
-    setPremiumError(null);
+    const operation = beginPremiumOperation("purchase");
+    if (operation === null) return;
+    const deadline = Date.now() + PREMIUM_UI_PENDING_TIMEOUT_MS;
+    logPremiumDiagnostic("ui_dispatch", "started");
     try {
-      const result = await active.client.purchasePremium(packageId);
-      if (!isCurrentConnection(active)) return;
+      const response = await premiumRpcWithin(
+        active.client.purchasePremium(packageId),
+        Math.max(0, deadline - Date.now()),
+      );
+      if (!isCurrentConnection(active) || premiumOperation.current?.token !== operation) return;
+      if (response.timedOut) {
+        finishPremiumRpcTimeout(active, operation, premiumAccess ?? { entitlement: "premium", status: "inactive", packages: [], reason: null });
+        return;
+      }
+      const result = response.value;
+      if (result.outcome === "pending") {
+        logPremiumDiagnostic("ui_completion", "pending");
+        await waitForPremiumActivation(
+          active,
+          operation,
+          deadline,
+          pendingPremiumAccessForUi(result.access, premiumAccess),
+          "Purchase could not complete. Try again.",
+        );
+        return;
+      }
+      logPremiumDiagnostic("ui_completion", normalizedPremiumOutcome(result.outcome));
       setPremiumAccess(result.access);
-      if (result.outcome === "failed") setPremiumError("Purchase could not complete. Try again.");
-      if (result.outcome === "pending") setPremiumError("Purchase is pending approval. Ask will unlock after approval.");
+      if (result.outcome === "failed") {
+        setPremiumError("Purchase could not complete. Try again.");
+      }
     } catch {
-      if (isCurrentConnection(active)) setPremiumError("Purchase could not complete. Try again.");
+      if (isCurrentConnection(active) && premiumOperation.current?.token === operation) {
+        logPremiumDiagnostic("ui_completion", "pending");
+        await waitForPremiumActivation(
+          active,
+          operation,
+          deadline,
+          pendingPremiumAccessForUi(
+            premiumAccess ?? { entitlement: "premium", status: "inactive", packages: [], reason: null },
+            premiumAccess,
+          ),
+          "Purchase could not complete. Try again.",
+        );
+      }
     } finally {
-      if (isCurrentConnection(active)) setPremiumPending(false);
+      endPremiumOperation(operation);
     }
-  }, [isCurrentConnection]);
+  }, [beginPremiumOperation, endPremiumOperation, finishPremiumRpcTimeout, isCurrentConnection, premiumAccess, waitForPremiumActivation]);
 
   const restorePremium = useCallback(async () => {
     const active = connection.current;
     if (!active) throw new Error("Meetless host is not connected yet");
-    setPremiumPending(true);
-    setPremiumError(null);
+    const operation = beginPremiumOperation("restore");
+    if (operation === null) return;
+    const deadline = Date.now() + PREMIUM_UI_PENDING_TIMEOUT_MS;
+    logPremiumDiagnostic("ui_dispatch", "started");
     try {
-      const result = await active.client.restorePremium();
-      if (!isCurrentConnection(active)) return;
+      const response = await premiumRpcWithin(
+        active.client.restorePremium(),
+        Math.max(0, deadline - Date.now()),
+      );
+      if (!isCurrentConnection(active) || premiumOperation.current?.token !== operation) return;
+      if (response.timedOut) {
+        finishPremiumRpcTimeout(active, operation, premiumAccess ?? { entitlement: "premium", status: "inactive", packages: [], reason: null });
+        return;
+      }
+      const result = response.value;
+      if (result.outcome === "pending") {
+        logPremiumDiagnostic("ui_completion", "pending");
+        await waitForPremiumActivation(
+          active,
+          operation,
+          deadline,
+          pendingPremiumAccessForUi(result.access, premiumAccess),
+          "No active Premium purchase was found.",
+        );
+        return;
+      }
+      logPremiumDiagnostic("ui_completion", normalizedPremiumOutcome(result.outcome));
       setPremiumAccess(result.access);
-      if (result.outcome !== "active") setPremiumError("No active Premium purchase was found.");
+      if (result.outcome !== "active") {
+        setPremiumError("No active Premium purchase was found.");
+      }
     } catch {
-      if (isCurrentConnection(active)) setPremiumError("Purchases could not be restored. Try again.");
+      if (isCurrentConnection(active) && premiumOperation.current?.token === operation) {
+        logPremiumDiagnostic("ui_completion", "pending");
+        await waitForPremiumActivation(
+          active,
+          operation,
+          deadline,
+          pendingPremiumAccessForUi(
+            premiumAccess ?? { entitlement: "premium", status: "inactive", packages: [], reason: null },
+            premiumAccess,
+          ),
+          "No active Premium purchase was found.",
+        );
+      }
     } finally {
-      if (isCurrentConnection(active)) setPremiumPending(false);
+      endPremiumOperation(operation);
     }
-  }, [isCurrentConnection]);
+  }, [beginPremiumOperation, endPremiumOperation, finishPremiumRpcTimeout, isCurrentConnection, premiumAccess, waitForPremiumActivation]);
 
   const listManagedDevices = useCallback(async () => {
     const active = connection.current;
@@ -396,13 +627,12 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     } catch (reason) {
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) {
         setChatError(reason instanceof Error ? reason.message : String(reason));
-        if (reason instanceof Error && /Premium/u.test(reason.message)) void refreshPremium();
       }
       throw reason;
     } finally {
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) setChatLoading(false);
     }
-  }, [chatSelection, isCurrentConnection, refreshPremium]);
+  }, [chatSelection, isCurrentConnection]);
 
   const retryQuestion = useCallback(async () => {
     const active = connection.current;
@@ -855,6 +1085,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         chatError={chatError}
         premiumAccess={premiumAccess}
         premiumPending={premiumPending}
+        premiumPendingAction={premiumPendingAction}
         premiumError={premiumError}
         managedDevices={managedDevices}
         managedDevicesPending={managedDevicesPending}

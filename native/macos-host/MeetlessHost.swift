@@ -16,6 +16,11 @@ private let meetlessDirectRuntimeRootRelativePath = "Library/Application Support
 private let meetlessAppStoreContainerSupportRelativePath = "Library/Containers/com.meetless.app/Data/Library/Application Support"
 private let meetlessAppStoreRuntimeRootRelativePath = "\(meetlessAppStoreContainerSupportRelativePath)/Meetless"
 private let meetlessAppStoreRecordingExportsRelativePath = "\(meetlessAppStoreContainerSupportRelativePath)/Meetless/recordings"
+private let meetlessConvexInfoPlistKey = "MeetlessConvexURL"
+private let meetlessConvexEnvironmentKey = "MEETLESS_CONVEX_URL"
+private let meetlessMasElectronBinaryDescriptorSchema = "MEETLESS_MAS_ELECTRON_BINARY v1"
+private let meetlessMasElectronBinaryPath = "Contents/Helpers/Electron.app/Contents/MacOS/Electron"
+private let meetlessMasLegacyElectronAppPath = "Contents/Resources/meetless/runtime/electron/Electron.app"
 private let meetlessMasGateLockFilename = ".meetless-mas-gate.lock"
 private let meetlessMasGateActiveFilename = ".meetless-mas-gate-session.active"
 private let meetlessMasGateIndexFilename = ".meetless-mas-gate-session.index"
@@ -139,6 +144,62 @@ private struct InstallationPackageContract: Decodable {
   let contractFilename: String
   let hostConfigRelativeToBundle: String
   let resources: [String: String]
+  let electronBinary: InstallationElectronBinaryDescriptor?
+}
+
+struct InstallationElectronBinaryDescriptor: Decodable {
+  let schema: String
+  let pathBase: String
+  let path: String
+
+  private struct AnyCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+      self.stringValue = stringValue
+      intValue = nil
+    }
+
+    init?(intValue: Int) {
+      stringValue = String(intValue)
+      self.intValue = intValue
+    }
+  }
+
+  private enum CodingKeys: String, CodingKey, CaseIterable {
+    case schema
+    case pathBase
+    case path
+  }
+
+  init(from decoder: Decoder) throws {
+    let allFields = try decoder.container(keyedBy: AnyCodingKey.self)
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let actualKeys = Set(allFields.allKeys.map(\.stringValue))
+    let expectedKeys = Set(CodingKeys.allCases.map(\.stringValue))
+    guard actualKeys == expectedKeys else {
+      throw hostPreflightError("MAS Electron descriptor has unexpected fields")
+    }
+    schema = try container.decode(String.self, forKey: .schema)
+    pathBase = try container.decode(String.self, forKey: .pathBase)
+    path = try container.decode(String.self, forKey: .path)
+  }
+}
+
+func meetlessValidatedMasElectronBinaryPath(
+  _ descriptor: InstallationElectronBinaryDescriptor,
+  electronResource: String
+) throws -> String {
+  guard
+    descriptor.schema == meetlessMasElectronBinaryDescriptorSchema,
+    descriptor.pathBase == "bundle",
+    descriptor.path == meetlessMasElectronBinaryPath,
+    electronResource == meetlessMasElectronBinaryPath
+  else {
+    throw hostPreflightError("MAS installation contract has no exact versioned bundle-relative Electron descriptor")
+  }
+  return descriptor.path
 }
 
 private struct InstallationEndpointPolicy: Decodable {
@@ -608,6 +669,69 @@ private func sha256(_ data: Data) -> String {
   SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
+func meetlessValidatedConvexURL(_ value: String?) throws -> String {
+  guard let value,
+        !value.isEmpty,
+        value.hasPrefix("https://"),
+        !value.contains("\\"),
+        value.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
+    throw hostPreflightError("MEETLESS_CONVEX_URL must be one exact public HTTPS Convex URL without whitespace")
+  }
+  guard
+    let components = URLComponents(string: value),
+    components.scheme?.lowercased() == "https",
+    let host = components.host,
+    !host.isEmpty,
+    components.user == nil,
+    components.password == nil,
+    components.query == nil,
+    components.fragment == nil,
+    !value.contains("?"),
+    !value.contains("#"),
+    value.range(of: #"(?i)^https://[^/?#]*@"#, options: .regularExpression) == nil,
+    components.percentEncodedPath.isEmpty || components.percentEncodedPath == "/"
+  else {
+    throw hostPreflightError("MEETLESS_CONVEX_URL must be one exact public HTTPS Convex URL with a root path and no credentials, query, or fragment")
+  }
+  return value
+}
+
+func meetlessValidatedPackagedConvexURL(info: [String: Any]?) throws -> String {
+  guard let value = info?[meetlessConvexInfoPlistKey] as? String else {
+    throw hostPreflightError("packaged MAS Info.plist MeetlessConvexURL is missing")
+  }
+  return try meetlessValidatedConvexURL(value)
+}
+
+func meetlessProjectManagedConvexEnvironment(
+  _ environment: [String: String],
+  runtimeRoot: String,
+  bundleInfo: [String: Any]?
+) throws -> [String: String] {
+  guard meetlessSignaturePolicy(forRuntimeRoot: runtimeRoot) == .appStoreDevelopment else {
+    return environment
+  }
+  var projected = environment
+  projected.removeValue(forKey: meetlessConvexEnvironmentKey)
+  projected[meetlessConvexEnvironmentKey] = try meetlessValidatedPackagedConvexURL(info: bundleInfo)
+  return projected
+}
+
+@discardableResult
+func meetlessRunRuntimeProcess(
+  _ process: Process,
+  environment: [String: String],
+  runtimeRoot: String,
+  bundleInfo: [String: Any]?
+) throws -> Process {
+  process.environment = environment
+  if meetlessSignaturePolicy(forRuntimeRoot: runtimeRoot) == .appStoreDevelopment {
+    process.environment?[meetlessConvexEnvironmentKey] = try meetlessValidatedPackagedConvexURL(info: bundleInfo)
+  }
+  try process.run()
+  return process
+}
+
 private func isSameOrDescendant(_ candidate: String, _ parent: String) -> Bool {
   let candidateComponents = URL(fileURLWithPath: candidate).standardizedFileURL.pathComponents
   let parentComponents = URL(fileURLWithPath: parent).standardizedFileURL.pathComponents
@@ -640,6 +764,38 @@ private func containedPath(_ parent: String, _ relative: String, label: String) 
     throw hostPreflightError("\(label) leaves its owning root")
   }
   return resolved
+}
+
+private func packagedElectronBinaryPath(
+  _ contract: InstallationContract,
+  packageRootRelative: String
+) throws -> String {
+  let isMas = contract.userSupportRelativePath == meetlessAppStoreRuntimeRootRelativePath
+  if isMas {
+    guard let descriptor = contract.package.electronBinary else {
+      throw hostPreflightError("MAS installation contract has no exact versioned bundle-relative Electron descriptor")
+    }
+    _ = try meetlessValidatedMasElectronBinaryPath(
+      descriptor,
+      electronResource: contract.package.resources["electronBinary"] ?? ""
+    )
+    let legacyPath = URL(fileURLWithPath: Bundle.main.bundlePath)
+      .appendingPathComponent(meetlessMasLegacyElectronAppPath)
+      .standardizedFileURL
+      .path
+    var legacyInformation = stat()
+    guard lstat(legacyPath, &legacyInformation) != 0 else {
+      throw hostPreflightError("MAS installation contract has the legacy nested Electron app layout")
+    }
+    return try bundleRelativePath(descriptor.path, label: "MAS Electron")
+  }
+  guard contract.package.electronBinary == nil else {
+    throw hostPreflightError("direct installation contract carries a MAS Electron descriptor")
+  }
+  guard let relative = contract.package.resources["electronBinary"] else {
+    throw hostPreflightError("packaged installation contract has no Electron resource")
+  }
+  return try bundleRelativePath(packageRootRelative + "/" + relative, label: "packaged Electron")
 }
 
 private func userHomeRelativePath(_ relative: String, label: String) throws -> String {
@@ -1003,6 +1159,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       throw hostPreflightError("packaged installation contract digest does not match host-config.json")
     }
     let contract = try JSONDecoder().decode(InstallationContract.self, from: contractData)
+    _ = try packagedElectronBinaryPath(contract, packageRootRelative: packageRootRelative)
     guard
       contract.schema == meetlessInstallationContractSchema,
       contract.bundleIdentifier == meetlessBundleIdentifier,
@@ -1099,6 +1256,9 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     guard configuration.repositoryRoot.hasPrefix(Bundle.main.bundlePath + "/") else {
       return
     }
+    if meetlessSignaturePolicy(forRuntimeRoot: configuration.runtimeRoot) == .appStoreDevelopment {
+      _ = try meetlessValidatedPackagedConvexURL(info: Bundle.main.infoDictionary)
+    }
     let packageRoot = configuration.repositoryRoot
     let markerPath = try containedPath(packageRoot, "meetless-package.json", label: "package marker")
     let markerData = try readRequiredData(markerPath, label: "package marker")
@@ -1106,6 +1266,10 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     let contractPath = try containedPath(packageRoot, marker.installationContract, label: "installation contract")
     let contractData = try readRequiredData(contractPath, label: "installation contract")
     let contract = try JSONDecoder().decode(InstallationContract.self, from: contractData)
+    let electronBinaryPath = try packagedElectronBinaryPath(
+      contract,
+      packageRootRelative: contract.package.rootRelativeToBundle
+    )
     guard
       marker.schema == meetlessPackageSchema,
       marker.target == "macos-arm64",
@@ -1133,7 +1297,12 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     let resourceLabels = marker.resources.keys.sorted()
     for label in resourceLabels {
       guard let relativePath = marker.resources[label] else { continue }
-      let resource = try containedPath(packageRoot, relativePath, label: "packaged resource \(label)")
+      let resource: String
+      if label == "electronBinary" {
+        resource = electronBinaryPath
+      } else {
+        resource = try containedPath(packageRoot, relativePath, label: "packaged resource \(label)")
+      }
       var isDirectory = ObjCBool(false)
       guard FileManager.default.fileExists(atPath: resource, isDirectory: &isDirectory) else {
         throw hostPreflightError("packaged resource \(label) is missing at \(resource)")
@@ -2185,6 +2354,11 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     for (key, value) in environment where isOpenAISecretEnvironmentEntry(key: key, value: value) {
       environment.removeValue(forKey: key)
     }
+    environment = try meetlessProjectManagedConvexEnvironment(
+      environment,
+      runtimeRoot: configuration.runtimeRoot,
+      bundleInfo: Bundle.main.infoDictionary,
+    )
     environment["MEETLESS_RUNTIME_ROOT"] = configuration.runtimeRoot
     environment["MEETLESS_LISTEN"] = configuration.listen
     environment["MEETLESS_RENDERER_ORIGIN"] = configuration.rendererOrigin
@@ -2256,7 +2430,6 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     if let containerSupportRoot = meetlessAppStoreContainerSupportRoot(for: configuration.runtimeRoot) {
       environment["MEETLESS_APP_CONTAINER_SUPPORT_ROOT"] = containerSupportRoot
     }
-    process.environment = environment
     let logs = URL(fileURLWithPath: configuration.runtimeRoot).appendingPathComponent("logs")
     try FileManager.default.createDirectory(
       at: logs,
@@ -2281,7 +2454,12 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
       runtimeAuthorization.clear(expected: process.processIdentifier)
       DispatchQueue.main.async { NSApp.terminate(nil) }
     }
-    try process.run()
+    try meetlessRunRuntimeProcess(
+      process,
+      environment: environment,
+      runtimeRoot: configuration.runtimeRoot,
+      bundleInfo: Bundle.main.infoDictionary
+    )
     runtime = process
     runtimeAuthorization.publish(process.processIdentifier)
   }

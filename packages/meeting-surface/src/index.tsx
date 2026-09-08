@@ -517,6 +517,7 @@ export interface MeetingListSurfaceProps {
   chatModel?: string | null;
   premiumAccess?: PremiumAccessWire | null;
   premiumPending?: boolean;
+  premiumPendingAction?: "refresh" | "purchase" | "restore" | null;
   premiumError?: string | null;
   onChatSelection?(provider: string, model: string): void;
   onAskQuestion?(question: string): Promise<void>;
@@ -582,6 +583,7 @@ export function MeetingListSurface({
   onRetryQuestion,
   premiumAccess = null,
   premiumPending = false,
+  premiumPendingAction = null,
   premiumError = null,
   onRefreshPremium,
   onPurchasePremium,
@@ -649,6 +651,7 @@ export function MeetingListSurface({
       onChangeHost={onChangeHost ? requestChangeHost : undefined}
       premiumAccess={premiumAccess}
       premiumPending={premiumPending}
+      premiumPendingAction={premiumPendingAction}
       premiumError={premiumError}
       onRefreshPremium={onRefreshPremium}
       onPurchasePremium={onPurchasePremium}
@@ -801,6 +804,7 @@ interface MeetingSidebarProps {
   onChangeHost?: () => void | Promise<void>;
   premiumAccess: PremiumAccessWire | null;
   premiumPending: boolean;
+  premiumPendingAction: "refresh" | "purchase" | "restore" | null;
   premiumError: string | null;
   onRefreshPremium?: () => Promise<void>;
   onPurchasePremium?: (packageId: "monthly" | "annual") => Promise<void>;
@@ -827,6 +831,7 @@ function MeetingSidebar({
   onChangeHost,
   premiumAccess,
   premiumPending,
+  premiumPendingAction,
   premiumError,
   onRefreshPremium,
   onPurchasePremium,
@@ -928,10 +933,11 @@ function MeetingSidebar({
         </View>
       </ScrollView>
       <View style={styles.sidebarFoot}>
-        {onPurchasePremium || onRestorePremium || onListManagedDevices ? (
+        {onRefreshPremium || onPurchasePremium || onRestorePremium || onListManagedDevices ? (
           <PremiumPanel
             access={premiumAccess}
             pending={premiumPending}
+            pendingAction={premiumPendingAction}
             error={premiumError}
             onRefresh={onRefreshPremium}
             onPurchase={onPurchasePremium}
@@ -960,6 +966,7 @@ function MeetingSidebar({
 function PremiumPanel({
   access,
   pending,
+  pendingAction,
   error,
   onRefresh,
   onPurchase,
@@ -972,6 +979,7 @@ function PremiumPanel({
 }: {
   access: PremiumAccessWire | null;
   pending: boolean;
+  pendingAction: "refresh" | "purchase" | "restore" | null;
   error: string | null;
   onRefresh?: () => Promise<void>;
   onPurchase?: (packageId: "monthly" | "annual") => Promise<void>;
@@ -984,26 +992,35 @@ function PremiumPanel({
 }) {
   const [devicesOpen, setDevicesOpen] = useState(false);
   const title = access?.status === "active" ? "Managed transcription is active" : "Managed transcription is Premium";
+  const packages = access && (access.status === "inactive" || access.status === "unavailable")
+    ? access.packages
+    : [];
+  const purchaseDisabled = pending || !onPurchase || access?.status === "unavailable";
   return (
     <View style={styles.premiumPanel} testID="premium-panel">
       <View style={styles.premiumHeading}>
         <Text style={styles.premiumTitle}>Premium</Text>
         <Text style={styles.premiumStatus}>{access ? title : "Checking access…"}</Text>
       </View>
-      {access?.status === "inactive" && access.packages.length > 0 ? (
+      {pending ? (
+        <Text accessibilityLiveRegion="polite" style={styles.premiumProgress} testID="premium-progress">
+          {pendingAction === "purchase" ? "Opening Apple purchase confirmation…" : pendingAction === "restore" ? "Restoring purchases…" : "Checking Premium plans…"}
+        </Text>
+      ) : null}
+      {packages.length > 0 ? (
         <View style={styles.premiumPackages}>
-          {access.packages.map((item) => (
+          {packages.map((item) => (
             <FocusPressable
               key={item.packageId}
               accessibilityLabel={`Buy ${item.packageId} Premium for ${item.localizedPrice}`}
               accessibilityRole="button"
-              accessibilityState={{ disabled: pending || !onPurchase }}
-              disabled={pending || !onPurchase}
-              onPress={() => void onPurchase?.(item.packageId)}
+              accessibilityState={{ disabled: purchaseDisabled }}
+              disabled={purchaseDisabled}
+              onPress={purchaseDisabled ? undefined : () => void onPurchase?.(item.packageId)}
               style={styles.secondaryButtonSmall}
               testID={`premium-purchase-${item.packageId}`}
             >
-              <Text style={styles.secondaryButtonText}>{item.packageId === "monthly" ? "Monthly" : "Annual"} · {item.localizedPrice}</Text>
+              <Text style={styles.secondaryButtonText}>{pending && pendingAction === "purchase" ? "Opening Apple confirmation…" : `${item.packageId === "monthly" ? "Monthly" : "Annual"} · ${item.localizedPrice}`}</Text>
             </FocusPressable>
           ))}
         </View>
@@ -1013,9 +1030,9 @@ function PremiumPanel({
           <Text style={styles.ghostButtonText}>{pending ? "Working…" : "Restore purchases"}</Text>
         </FocusPressable>
       ) : null}
-      {onRefresh && access?.status === "unavailable" ? (
+      {onRefresh ? (
         <FocusPressable accessibilityLabel="Retry Premium plans" accessibilityRole="button" accessibilityState={{ disabled: pending }} disabled={pending} onPress={() => void onRefresh()} style={styles.ghostButton} testID="premium-refresh">
-          <Text style={styles.ghostButtonText}>Try again</Text>
+          <Text style={styles.ghostButtonText}>{access?.status === "active" || access?.status === "inactive" ? "Refresh Premium" : "Try again"}</Text>
         </FocusPressable>
       ) : null}
       {error ? <Text accessibilityRole="alert" style={styles.premiumError} testID="premium-error">{error}</Text> : null}
@@ -2555,6 +2572,7 @@ const styles = StyleSheet.create({
   premiumHeading: { gap: 3 },
   premiumTitle: { color: colors.foreground, fontSize: 13.5, fontWeight: "600" },
   premiumStatus: { color: colors.muted, fontSize: 11.5, lineHeight: 17 },
+  premiumProgress: { color: colors.muted, fontSize: 11.5, lineHeight: 17 },
   premiumPackages: { gap: 6 },
   premiumError: { color: colors.warning, fontSize: 11.5, lineHeight: 17 },
   deviceList: { gap: 7, paddingTop: 4 },

@@ -274,6 +274,218 @@ describe("companion meeting surface", () => {
     renderer!.unmount();
   });
 
+  test("shows retained unavailable catalog as disabled evidence with retry and error", async () => {
+    const purchase = vi.fn(async () => undefined);
+    const refresh = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          hostConnectionStatus="online"
+          meetings={[]}
+          onRefresh={async () => undefined}
+          premiumAccess={{
+            entitlement: "premium",
+            status: "unavailable",
+            packages: [
+              { packageId: "monthly", productId: "com.meetless.app.premium.monthly", localizedPrice: "$9.99", trialEligible: true },
+              { packageId: "annual", productId: "com.meetless.app.premium.annual", localizedPrice: "$79.99", trialEligible: true },
+            ],
+            reason: "store_unavailable",
+          }}
+          premiumError="Premium plans could not be loaded. Try again."
+          onRefreshPremium={refresh}
+          onPurchasePremium={purchase}
+        />,
+      );
+    });
+
+    for (const packageId of ["monthly", "annual"] as const) {
+      const button = renderer!.root.findByProps({ testID: `premium-purchase-${packageId}` });
+      expect(button.props.disabled).toBe(true);
+      expect(button.props.accessibilityState).toEqual({ disabled: true });
+      expect(button.props.onPress).toBeUndefined();
+    }
+    const retry = renderer!.root.findByProps({ testID: "premium-refresh" });
+    expect(retry.findByType("Text").props.children).toBe("Try again");
+    expect(retry.props.disabled).toBe(false);
+    expect(renderer!.root.findByProps({ testID: "premium-error" }).props.children)
+      .toBe("Premium plans could not be loaded. Try again.");
+    await act(async () => { await retry.props.onPress(); });
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(purchase).not.toHaveBeenCalled();
+    renderer!.unmount();
+  });
+
+  test("hides package choices for active Premium even when a catalog is present", async () => {
+    const purchase = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          hostConnectionStatus="online"
+          meetings={[]}
+          onRefresh={async () => undefined}
+          premiumAccess={{
+            entitlement: "premium",
+            status: "active",
+            packages: [
+              { packageId: "monthly", productId: "com.meetless.app.premium.monthly", localizedPrice: "$9.99", trialEligible: false },
+              { packageId: "annual", productId: "com.meetless.app.premium.annual", localizedPrice: "$79.99", trialEligible: false },
+            ],
+            reason: null,
+          }}
+          onPurchasePremium={purchase}
+        />,
+      );
+    });
+
+    expect(renderer!.root.findAllByProps({ testID: "premium-purchase-monthly" })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ testID: "premium-purchase-annual" })).toHaveLength(0);
+    expect(purchase).not.toHaveBeenCalled();
+    renderer!.unmount();
+  });
+
+  test("keeps package choices hidden for unavailable access without a retained catalog", async () => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          hostConnectionStatus="online"
+          meetings={[]}
+          onRefresh={async () => undefined}
+          premiumAccess={{ entitlement: "premium", status: "unavailable", packages: [], reason: "store_unavailable" }}
+          onRefreshPremium={async () => undefined}
+          onPurchasePremium={async () => undefined}
+        />,
+      );
+    });
+
+    expect(renderer!.root.findAllByProps({ testID: "premium-purchase-monthly" })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ testID: "premium-purchase-annual" })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ testID: "premium-refresh" }).findByType("Text").props.children).toBe("Try again");
+    renderer!.unmount();
+  });
+
+  test("shows purchase progress immediately and disables repeat Premium actions while pending", async () => {
+    const purchase = vi.fn(async () => undefined);
+    const restore = vi.fn(async () => undefined);
+    const refresh = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          hostConnectionStatus="online"
+          meetings={[]}
+          onRefresh={async () => undefined}
+          premiumAccess={{
+            entitlement: "premium",
+            status: "inactive",
+            packages: [
+              { packageId: "monthly", productId: "com.meetless.app.premium.monthly", localizedPrice: "$9.99", trialEligible: true },
+              { packageId: "annual", productId: "com.meetless.app.premium.annual", localizedPrice: "$79.99", trialEligible: true },
+            ],
+            reason: null,
+          }}
+          premiumPending
+          premiumPendingAction="purchase"
+          onRefreshPremium={refresh}
+          onPurchasePremium={purchase}
+          onRestorePremium={restore}
+        />,
+      );
+    });
+
+    expect(renderer!.root.findByProps({ testID: "premium-progress" }).props.children)
+      .toBe("Opening Apple purchase confirmation…");
+    for (const packageId of ["monthly", "annual"] as const) {
+      const button = renderer!.root.findByProps({ testID: `premium-purchase-${packageId}` });
+      expect(button.props.disabled).toBe(true);
+      expect(button.props.accessibilityState).toEqual({ disabled: true });
+      expect(button.findByType("Text").props.children).toBe("Opening Apple confirmation…");
+    }
+    const restoreButton = renderer!.root.findByProps({ testID: "premium-restore" });
+    expect(restoreButton.props.disabled).toBe(true);
+    expect(restoreButton.props.accessibilityState).toEqual({ disabled: true });
+    expect(restoreButton.findByType("Text").props.children).toBe("Working…");
+    const refreshButton = renderer!.root.findByProps({ testID: "premium-refresh" });
+    expect(refreshButton.props.disabled).toBe(true);
+    expect(purchase).not.toHaveBeenCalled();
+    expect(restore).not.toHaveBeenCalled();
+    renderer!.unmount();
+  });
+
+  test.each([
+    ["active", { entitlement: "premium", status: "active", packages: [], reason: null }, "Refresh Premium"],
+    ["null", null, "Try again"],
+  ] as const)("renders the Premium refresh action for %s access and invokes it when enabled", async (_state, premiumAccess, expectedCopy) => {
+    const refresh = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          hostConnectionStatus="online"
+          meetings={[]}
+          onRefresh={async () => undefined}
+          premiumAccess={premiumAccess}
+          onRefreshPremium={refresh}
+        />,
+      );
+    });
+
+    const button = renderer!.root.findByProps({ testID: "premium-refresh" });
+    expect(button.props.disabled).toBe(false);
+    expect(button.props.accessibilityState).toEqual({ disabled: false });
+    expect(button.findByType("Text").props.children).toBe(expectedCopy);
+    await act(async () => { await button.props.onPress(); });
+    expect(refresh).toHaveBeenCalledOnce();
+    renderer!.unmount();
+  });
+
+  test.each([
+    ["active", { entitlement: "premium", status: "active", packages: [], reason: null }],
+    ["null", null],
+  ] as const)("disables the Premium refresh action for %s access while pending", async (_state, premiumAccess) => {
+    const refresh = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          hostConnectionStatus="online"
+          meetings={[]}
+          onRefresh={async () => undefined}
+          premiumAccess={premiumAccess}
+          premiumPending
+          onRefreshPremium={refresh}
+        />,
+      );
+    });
+
+    const button = renderer!.root.findByProps({ testID: "premium-refresh" });
+    expect(button.props.disabled).toBe(true);
+    expect(button.props.accessibilityState).toEqual({ disabled: true });
+    expect(refresh).not.toHaveBeenCalled();
+    renderer!.unmount();
+  });
+
   test("keeps a draggable Electron titlebar region above the meeting surface", async () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {

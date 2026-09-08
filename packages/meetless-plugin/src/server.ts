@@ -35,7 +35,11 @@ import {
   ManagedTimelineArtifactStore,
   type ConvexManagedTranscriptionResult,
 } from "./managed-transcription.js";
-import { NativePremiumAccessPort, PremiumService, UnavailablePremiumAccessPort } from "./premium-service.js";
+import {
+  NativePremiumAccessPort,
+  PremiumService,
+  UnavailablePremiumAccessPort,
+} from "./premium-service.js";
 import { ManagedDeviceWireSchema, type ManagedDeviceWire } from "@meetless/meeting-contracts";
 import {
   ConvexManagedCredentialSource,
@@ -162,17 +166,26 @@ export function getPremiumService(): PremiumService {
   premiumService ??= new PremiumService(new NativePremiumAccessPort(endpoint.bindArgument), {
     requireAppleSignedTransaction: true,
     onAppleSignedTransaction: enrollManagedAppleTransaction,
+    readAuthorization: async () => {
+      const credential = await refreshManagedAuthorization();
+      if (!credential.state) throw new Error("Managed authorization snapshot is missing state");
+      return {
+        state: credential.state,
+        naturalExpiryAt: credential.naturalExpiryAt ?? null,
+      };
+    },
   });
   return premiumService;
 }
 
 /** Consumes the opaque host JWS before the public Premium RPC resolves. */
-export async function enrollManagedAppleTransaction(signedTransaction: string): Promise<void> {
+export async function enrollManagedAppleTransaction(signedTransaction: string): Promise<ManagedConvexCredential> {
   if (!signedTransaction.trim()) throw new Error("Apple signed transaction is empty");
   managedCredential = await getManagedConvexCredentialSource().enroll({
     adapter: "app-store-server-api",
     signedTransaction,
   });
+  return managedCredential;
 }
 
 export async function listManagedDevices(): Promise<ManagedDeviceWire[]> {
@@ -371,10 +384,30 @@ export function getManagedConvexCredentialSource(): ConvexManagedCredentialSourc
 }
 
 async function managedClientWithCredential(): Promise<ConvexHttpManagedFunctionClient> {
-  const credential = managedCredential ?? await getManagedConvexCredentialSource().refresh();
+  const cachedCredential = managedCredential && !credentialNeedsRefresh(managedCredential) ? managedCredential : null;
+  const credential: ManagedConvexCredential = cachedCredential
+    ?? await getManagedConvexCredentialSource().refresh();
   managedCredential = credential;
   const client = new ConvexHttpManagedFunctionClient(requiredEnv("MEETLESS_CONVEX_URL"), { authToken: credential.authToken });
   return client;
+}
+
+async function refreshManagedAuthorization(): Promise<ManagedConvexCredential> {
+  const credential = await getManagedConvexCredentialSource().refresh();
+  managedCredential = credential;
+  return credential;
+}
+
+function credentialExpired(credential: ManagedConvexCredential): boolean {
+  return credential.expiresAt !== undefined && credential.expiresAt <= Date.now();
+}
+
+function credentialNeedsRefresh(credential: ManagedConvexCredential): boolean {
+  if (credentialExpired(credential)) return true;
+  return (credential.state === "active" || credential.state === "grace")
+    && credential.naturalExpiryAt !== undefined
+    && credential.naturalExpiryAt !== null
+    && credential.naturalExpiryAt <= Date.now();
 }
 
 export async function transcribeManagedRecording(input: {
@@ -383,8 +416,10 @@ export async function transcribeManagedRecording(input: {
   credential?: ManagedConvexCredential;
 }): Promise<ConvexManagedTranscriptionResult> {
   const source = getManagedConvexCredentialSource();
-  const credential = input.credential
-    ?? (input.appleVerification ? await source.enroll(input.appleVerification) : await source.refresh());
+  const suppliedCredential = input.credential;
+  const credential = suppliedCredential && !credentialNeedsRefresh(suppliedCredential)
+    ? suppliedCredential
+    : (input.appleVerification ? await source.enroll(input.appleVerification) : await source.refresh());
   const storeRoot = requiredAbsolute("MEETLESS_STORE_ROOT");
   const convexUrl = requiredEnv("MEETLESS_CONVEX_URL");
   const upload = new ConvexManagedUploadPort(new ConvexHttpManagedFunctionClient(convexUrl), {

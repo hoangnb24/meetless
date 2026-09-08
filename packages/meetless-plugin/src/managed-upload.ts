@@ -846,6 +846,10 @@ function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
  */
 export interface ManagedConvexCredential {
   readonly authToken: string;
+  /** Private backend authorization snapshot metadata; never sent as an RPC argument. */
+  readonly expiresAt?: number;
+  readonly state?: "active" | "grace" | "expired" | "refunded" | "revoked";
+  readonly naturalExpiryAt?: number | null;
 }
 
 export interface ManagedConvexFunctionClient {

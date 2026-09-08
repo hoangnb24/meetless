@@ -1,6 +1,8 @@
 import Darwin
 import CryptoKit
 import Foundation
+import AppKit
+import RevenueCat
 import Security
 @testable import MeetlessHostCore
 
@@ -339,6 +341,55 @@ private func testPackagedSignaturePolicyBoundary() {
   )
 }
 
+private func testMasElectronDescriptorBoundary() {
+  let expectedPath = "Contents/Helpers/Electron.app/Contents/MacOS/Electron"
+  let validObject: [String: Any] = [
+    "schema": "MEETLESS_MAS_ELECTRON_BINARY v1",
+    "pathBase": "bundle",
+    "path": expectedPath,
+  ]
+  guard let validData = try? JSONSerialization.data(withJSONObject: validObject) else {
+    check(false, "MAS Electron descriptor fixture must encode")
+    return
+  }
+  do {
+    let descriptor = try JSONDecoder().decode(InstallationElectronBinaryDescriptor.self, from: validData)
+    let resolved = try meetlessValidatedMasElectronBinaryPath(descriptor, electronResource: expectedPath)
+    check(resolved == expectedPath, "native MAS Electron descriptor must resolve the exact bundle-relative Helpers executable")
+  } catch {
+    check(false, "native MAS Electron descriptor fixture must pass strict validation: \(error)")
+  }
+
+  var extraField = validObject
+  extraField["extra"] = true
+  expectThrow("native MAS Electron descriptor must reject unknown fields") {
+    _ = try JSONDecoder().decode(
+      InstallationElectronBinaryDescriptor.self,
+      from: JSONSerialization.data(withJSONObject: extraField)
+    )
+  }
+
+  let invalidDescriptors: [(String, [String: Any])] = [
+    ("wrong schema", ["schema": "MEETLESS_MAS_ELECTRON_BINARY v0", "pathBase": "bundle", "path": expectedPath]),
+    ("wrong path base", ["schema": "MEETLESS_MAS_ELECTRON_BINARY v1", "pathBase": "package", "path": expectedPath]),
+    ("absolute path", ["schema": "MEETLESS_MAS_ELECTRON_BINARY v1", "pathBase": "bundle", "path": "/Contents/Helpers/Electron.app/Contents/MacOS/Electron"]),
+    ("traversal path", ["schema": "MEETLESS_MAS_ELECTRON_BINARY v1", "pathBase": "bundle", "path": "../Contents/Helpers/Electron.app/Contents/MacOS/Electron"]),
+  ]
+  for (label, object) in invalidDescriptors {
+    do {
+      let descriptor = try JSONDecoder().decode(
+        InstallationElectronBinaryDescriptor.self,
+        from: JSONSerialization.data(withJSONObject: object)
+      )
+      expectThrow("native MAS Electron descriptor must reject \(label)") {
+        _ = try meetlessValidatedMasElectronBinaryPath(descriptor, electronResource: expectedPath)
+      }
+    } catch {
+      check(false, "native MAS Electron descriptor \(label) fixture must decode for validation: \(error)")
+    }
+  }
+}
+
 private func fixtureIdentity(_ data: Data) -> StagedRangeIdentity {
   StagedRangeIdentity(
     byteLength: Int64(data.count),
@@ -421,6 +472,7 @@ private func testManagedAuthUsesOnlyPublicIdentityAndNonpersistentTestKeys() thr
 private final class FakePremiumAccess: MeetlessPremiumPurchaseAccess {
   var purchasedPackage: String?
   var restoreCount = 0
+  var retainedTerminal: MeetlessPremiumMutationResult?
   let inactive = MeetlessPremiumAccessResult(
     status: "inactive",
     packages: [MeetlessPremiumPackage(
@@ -442,6 +494,18 @@ private final class FakePremiumAccess: MeetlessPremiumPurchaseAccess {
     restoreCount += 1
     return MeetlessPremiumMutationResult(outcome: "active", access: active, appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.synthetic.signature")
   }
+  func recover() -> MeetlessPremiumMutationResult? {
+    defer { retainedTerminal = nil }
+    return retainedTerminal
+  }
+}
+
+private final class RecordingPremiumDiagnosticSink: MeetlessPremiumDiagnosticSink {
+  private(set) var events: [MeetlessPremiumDiagnostic] = []
+
+  func record(_ diagnostic: MeetlessPremiumDiagnostic) {
+    events.append(diagnostic)
+  }
 }
 
 private final class BlockingPremiumAccess: MeetlessPremiumPurchaseAccess {
@@ -462,6 +526,8 @@ private final class BlockingPremiumAccess: MeetlessPremiumPurchaseAccess {
   func restore() -> MeetlessPremiumMutationResult {
     MeetlessPremiumMutationResult(outcome: "failed", access: .unavailable("store_unavailable"))
   }
+
+  func recover() -> MeetlessPremiumMutationResult? { nil }
 }
 
 private final class FakeUploadSession: MeetlessUploadSession {
@@ -3345,6 +3411,26 @@ private func testPremiumSocketBoundary() {
   check(premium.restoreCount == 1, "Premium restore must run only after the explicit restore request")
   check(restore?["outcome"] as? String == "active", "Premium restore must return the normalized mutation outcome")
   check(restore?["appleSignedTransaction"] as? String == "eyJhbGciOiJFUzI1NiJ9.synthetic.signature", "Premium restore must carry opaque transaction material only to the trusted plugin boundary")
+
+  let wrongVersion = request("{\"version\":2,\"requestId\":\"premium-recover-version\",\"operation\":\"premiumRecover\"}")
+  check(wrongVersion?["ok"] as? Bool == false, "Premium recovery must reject an unsupported protocol version")
+  check(wrongVersion?["appleSignedTransaction"] == nil, "a rejected Premium recovery request must not expose transaction material")
+  let extraField = request("{\"version\":1,\"requestId\":\"premium-recover-extra\",\"operation\":\"premiumRecover\",\"extra\":true}")
+  check(extraField?["ok"] as? Bool == false, "Premium recovery must reject unknown request fields")
+  let emptyRecovery = request("{\"version\":1,\"requestId\":\"premium-recover-empty\",\"operation\":\"premiumRecover\"}")
+  check(emptyRecovery?["ok"] as? Bool == false, "Premium recovery without a retained terminal must remain empty")
+
+  premium.retainedTerminal = MeetlessPremiumMutationResult(
+    outcome: "active",
+    access: premium.active,
+    appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.retained.signature"
+  )
+  let recovered = request("{\"version\":1,\"requestId\":\"premium-recover\",\"operation\":\"premiumRecover\"}")
+  check(recovered?["ok"] as? Bool == true, "Premium recovery must return a retained terminal through the trusted private route")
+  check(recovered?["appleSignedTransaction"] as? String == "eyJhbGciOiJFUzI1NiJ9.retained.signature", "Premium recovery must return opaque transaction material only to the trusted plugin boundary")
+  let recoveredAgain = request("{\"version\":1,\"requestId\":\"premium-recover-again\",\"operation\":\"premiumRecover\"}")
+  check(recoveredAgain?["ok"] as? Bool == false, "Premium recovery must consume a retained terminal exactly once")
+  check(recoveredAgain?["appleSignedTransaction"] == nil, "a consumed Premium terminal must not be exposed again")
 }
 
 private func testPremiumPurchaseOutcomePolicy() {
@@ -3360,6 +3446,351 @@ private func testPremiumPurchaseOutcomePolicy() {
     meetlessPremiumPurchaseOutcome(succeeded: true, userCancelled: false, accessStatus: "active") == "active",
     "only an active entitlement may complete Premium purchase"
   )
+  check(
+    meetlessPremiumVerifiedPurchaseOutcome(succeeded: true, userCancelled: false, hasSignedTransaction: true) == "pending",
+    "a successful StoreKit callback must remain pending until backend enrollment"
+  )
+  check(
+    meetlessPremiumVerifiedPurchaseOutcome(succeeded: true, userCancelled: false, hasSignedTransaction: true) != "active",
+    "native StoreKit proof must not bypass trusted backend enrollment"
+  )
+  check(
+    meetlessPremiumVerifiedPurchaseOutcome(succeeded: true, userCancelled: true, hasSignedTransaction: true) == "cancelled",
+    "cancellation must remain cancelled even when transaction material is present"
+  )
+}
+
+private func testPremiumOperationSlotBoundary() {
+  let pending = MeetlessPremiumAccessResult(status: "inactive", packages: [], reason: nil)
+  let terminal = MeetlessPremiumMutationResult(outcome: "pending", access: pending, appleSignedTransaction: "opaque-jws")
+  let slot = MeetlessPremiumOperationSlot()
+  let lease: MeetlessPremiumOperationLease
+  switch slot.begin(kind: .purchase("monthly"), pendingAccess: pending) {
+  case .started(let value): lease = value
+  default:
+    check(false, "the first Premium operation must acquire the single slot")
+    return
+  }
+  switch slot.begin(kind: .purchase("monthly"), pendingAccess: pending) {
+  case .pending:
+    check(true, "an in-flight duplicate Premium operation must remain pending")
+  default:
+    check(false, "an in-flight duplicate Premium operation must not acquire a second slot")
+  }
+  switch slot.begin(kind: .restore, pendingAccess: pending) {
+  case .pending:
+    check(true, "a different in-flight Premium operation must remain pending")
+  default:
+    check(false, "a different in-flight Premium operation must not acquire a second slot")
+  }
+  slot.complete(lease, result: terminal)
+  slot.complete(lease, result: MeetlessPremiumMutationResult(outcome: "failed", access: .unavailable("store_unavailable")))
+  switch slot.begin(kind: .purchase("monthly"), pendingAccess: pending) {
+  case .terminal(let result):
+    check(result.appleSignedTransaction == "opaque-jws", "the first terminal callback must be retained for trusted plugin consumption")
+  default:
+    check(false, "a completed Premium operation must expose its retained terminal result")
+  }
+  switch slot.begin(kind: .purchase("monthly"), pendingAccess: pending) {
+  case .started(let newerLease):
+    check(true, "consuming a terminal result must release the single slot for a later retry")
+    slot.complete(lease, result: MeetlessPremiumMutationResult(outcome: "failed", access: .unavailable("store_unavailable")))
+    check(slot.recover() == nil, "a late completion from an old lease must not complete a newer Premium operation")
+    slot.complete(newerLease, result: MeetlessPremiumMutationResult(outcome: "cancelled", access: pending))
+    check(slot.recover()?.outcome == "cancelled", "the current Premium lease must still be able to complete after an old lease is rejected")
+  default:
+    check(false, "a consumed terminal result must not remain stuck in the Premium slot")
+  }
+}
+
+private enum PremiumCallbackFixtureError: Error {
+  case failed
+}
+
+private func premiumTestWindow() -> NSWindow {
+  NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 320, height: 120),
+    styleMask: [.titled],
+    backing: .buffered,
+    defer: false
+  )
+}
+
+private func waitForPremiumSemaphore(_ semaphore: DispatchSemaphore, timeout: TimeInterval = 2) -> Bool {
+  let deadline = Date().addingTimeInterval(timeout)
+  while Date() < deadline {
+    if semaphore.wait(timeout: .now()) == .success { return true }
+    _ = RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+  }
+  return semaphore.wait(timeout: .now()) == .success
+}
+
+private func waitForPremiumOperation(
+  _ operation: MeetlessPremiumCallbackOperation,
+  onPresentationDiagnostic: ((MeetlessPremiumDiagnosticOutcome) -> Void)? = nil,
+  onCallback: ((MeetlessPremiumStoreCallback) -> Void)? = nil,
+  timeout: TimeInterval = 2
+) -> MeetlessPremiumCallbackOperationResult? {
+  let completed = DispatchSemaphore(value: 0)
+  let resultLock = NSLock()
+  var result: MeetlessPremiumCallbackOperationResult?
+  DispatchQueue.global().async {
+    let next = operation.run(onPresentationDiagnostic: onPresentationDiagnostic, onCallback: onCallback)
+    resultLock.lock()
+    result = next
+    resultLock.unlock()
+    completed.signal()
+  }
+  guard waitForPremiumSemaphore(completed, timeout: timeout) else { return nil }
+  resultLock.lock()
+  defer { resultLock.unlock() }
+  return result
+}
+
+private func testPremiumPresentationSelectionAndDiagnostics() {
+  let monthly = meetlessPremiumExpectedPurchase(for: "monthly")
+  check(monthly?.productId == meetlessPremiumMonthlyProduct, "monthly purchase must select the approved product")
+  check(monthly?.packageType == .monthly, "monthly purchase must select the monthly RevenueCat package")
+  let annual = meetlessPremiumExpectedPurchase(for: "annual")
+  check(annual?.productId == meetlessPremiumAnnualProduct, "annual purchase must select the approved product")
+  check(annual?.packageType == .annual, "annual purchase must select the annual RevenueCat package")
+  check(meetlessPremiumExpectedPurchase(for: "unexpected") == nil, "unknown package identifiers must fail closed")
+
+  let firstWindow = premiumTestWindow()
+  let secondWindow = premiumTestWindow()
+  var nextWindow = 0
+  let lifecycleAnchor = MeetlessPremiumPresentationAnchor(
+    windowFactory: {
+      defer { nextWindow += 1 }
+      return nextWindow == 0 ? firstWindow : secondWindow
+    },
+    windowPresenter: { window in
+      window.makeKeyAndOrderFront(nil)
+      return true
+    }
+  )
+  let acquired = lifecycleAnchor.acquire()
+  check(acquired === firstWindow, "Premium anchor must acquire the first stable AppKit window")
+  check(lifecycleAnchor.isPresented, "Premium anchor must be visibly usable after acquisition")
+  check(!firstWindow.styleMask.contains(.closable), "Premium anchor must prevent user closure during confirmation")
+  check(!firstWindow.styleMask.contains(.miniaturizable), "Premium anchor must prevent user minimization during confirmation")
+  check(!firstWindow.isMovable, "Premium anchor must remain stable during confirmation")
+  check(!lifecycleAnchor.windowShouldClose(firstWindow), "Premium anchor delegate must reject user closure")
+  lifecycleAnchor.release()
+  check(!lifecycleAnchor.isPresented, "Premium anchor must release its window after completion")
+  let reacquired = lifecycleAnchor.acquire()
+  check(reacquired === secondWindow, "Premium anchor must reacquire a fresh stable window")
+  check(lifecycleAnchor.isPresented, "Premium anchor must be visibly usable after reacquisition")
+  lifecycleAnchor.release()
+
+  let unavailableAnchor = MeetlessPremiumPresentationAnchor(windowFactory: { nil })
+  check(unavailableAnchor.acquire() == nil, "an unavailable AppKit anchor must fail without creating a silent owner")
+  check(!unavailableAnchor.isPresented, "an unavailable AppKit anchor must remain lifecycle-safe")
+  let hiddenAnchor = MeetlessPremiumPresentationAnchor(
+    windowFactory: { premiumTestWindow() },
+    windowPresenter: { _ in false }
+  )
+  check(hiddenAnchor.acquire() == nil, "a hidden AppKit anchor must fail closed")
+  check(!hiddenAnchor.isPresented, "a hidden AppKit anchor must not remain owned")
+
+  let product = TestStoreProduct(
+    localizedTitle: "Premium",
+    price: Decimal(string: "9.99")!,
+    currencyCode: "USD",
+    localizedPriceString: "$9.99",
+    productIdentifier: meetlessPremiumMonthlyProduct,
+    productType: .autoRenewableSubscription,
+    localizedDescription: "Meetless Premium",
+    locale: Locale(identifier: "en_US")
+  ).toStoreProduct()
+  let package = Package(
+    identifier: "monthly",
+    packageType: .monthly,
+    storeProduct: product,
+    offeringIdentifier: "test",
+    webCheckoutUrl: nil
+  )
+  let sink = RecordingPremiumDiagnosticSink()
+  let routedWindow = premiumTestWindow()
+  let routingAnchor = MeetlessPremiumPresentationAnchor(
+    windowFactory: { routedWindow },
+    windowPresenter: { window in
+      window.makeKeyAndOrderFront(nil)
+      return true
+    }
+  )
+  var acquiredWindow: NSWindow?
+  var builderWindow: NSWindow?
+  let routedCallback = MeetlessPremiumStoreCallback(productId: meetlessPremiumMonthlyProduct, customerInfo: nil, error: nil, userCancelled: false)
+  let routingOperation = MeetlessPremiumCallbackOperation(
+    anchor: routingAnchor,
+    mutationLock: NSLock(),
+    invoke: { window, finish in
+      acquiredWindow = window
+      let parameters = meetlessPremiumPurchaseParameters(package: package, confirmationWindow: window)
+      builderWindow = parameters.confirmationWindow
+      sink.record(MeetlessPremiumDiagnostic(stage: .storeKitCallback, outcome: meetlessPremiumStoreCallbackOutcome(routedCallback)))
+      finish(routedCallback)
+    }
+  )
+  let routingResult = waitForPremiumOperation(
+    routingOperation,
+    onPresentationDiagnostic: { outcome in
+      sink.record(MeetlessPremiumDiagnostic(stage: .presentationReadiness, outcome: outcome))
+    }
+  )
+  if case .callback = routingResult {
+    check(true, "production purchase callback route must complete")
+  } else {
+    check(false, "production purchase callback route must complete")
+  }
+  check(acquiredWindow === routedWindow, "the callback invoker must receive the exact acquired NSWindow identity")
+  if #available(macOS 15.2, *) {
+    check(builderWindow === acquiredWindow, "macOS 15.2+ PurchaseParams must bind the exact acquired NSWindow")
+  } else {
+    check(builderWindow == nil, "pre-macOS 15.2 PurchaseParams must use default StoreKit confirmation")
+  }
+  check(sink.events == [
+    MeetlessPremiumDiagnostic(stage: .presentationReadiness, outcome: .ready),
+    MeetlessPremiumDiagnostic(stage: .storeKitCallback, outcome: .active),
+  ], "callback-driven diagnostics must be emitted by the exercised route")
+  check(!routingAnchor.isPresented, "callback completion must release the presentation anchor")
+
+  var duplicateCallbackCount = 0
+  let duplicateOperation = MeetlessPremiumCallbackOperation(
+    anchor: nil,
+    mutationLock: NSLock(),
+    invoke: { _, finish in
+      finish(routedCallback)
+      finish(routedCallback)
+    }
+  )
+  let duplicateResult = waitForPremiumOperation(
+    duplicateOperation,
+    onCallback: { _ in duplicateCallbackCount += 1 }
+  )
+  if case .callback = duplicateResult {
+    check(duplicateCallbackCount == 1, "duplicate SDK callbacks must have one accepted callback observer")
+  } else {
+    check(false, "duplicate SDK callback fixture must complete")
+  }
+
+  let mainThreadOperation = MeetlessPremiumCallbackOperation(
+    anchor: nil,
+    mutationLock: NSLock(),
+    invoke: { _, finish in finish(routedCallback) }
+  )
+  if case .mainThread = mainThreadOperation.run() {
+    check(true, "direct main-thread callback invocation must fail closed")
+  } else {
+    check(false, "direct main-thread callback invocation must fail closed")
+  }
+  let directInvocationSink = RecordingPremiumDiagnosticSink()
+  let directInvocationAccess = MeetlessRevenueCatPurchaseAccess(
+    apiKey: nil,
+    diagnosticSink: directInvocationSink,
+    presentationAnchor: MeetlessPremiumPresentationAnchor(windowFactory: { nil })
+  )
+  let directPurchase = directInvocationAccess.purchase(packageId: "monthly")
+  let directRestore = directInvocationAccess.restore()
+  check(directPurchase.outcome == "failed", "direct main-thread Premium purchase must fail closed")
+  check(directRestore.outcome == "failed", "direct main-thread Premium restore must fail closed")
+  check(
+    directInvocationSink.events == [
+      MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .mainThread),
+      MeetlessPremiumDiagnostic(stage: .trustedNativeCompletion, outcome: .failed),
+      MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .mainThread),
+      MeetlessPremiumDiagnostic(stage: .trustedNativeCompletion, outcome: .failed),
+    ],
+    "direct main-thread Premium calls must emit only trusted categorical failure diagnostics"
+  )
+
+  let callbackFixtures: [(MeetlessPremiumStoreCallback, MeetlessPremiumDiagnosticOutcome)] = [
+    (MeetlessPremiumStoreCallback(productId: meetlessPremiumMonthlyProduct, customerInfo: nil, error: nil, userCancelled: false), .active),
+    (MeetlessPremiumStoreCallback(productId: nil, customerInfo: nil, error: nil, userCancelled: true), .cancelled),
+    (MeetlessPremiumStoreCallback(productId: nil, customerInfo: nil, error: PremiumCallbackFixtureError.failed, userCancelled: false), .failed),
+  ]
+  for (callback, expectedOutcome) in callbackFixtures {
+    let callbackOperation = MeetlessPremiumCallbackOperation(
+      anchor: nil,
+      mutationLock: NSLock(),
+      invoke: { _, finish in finish(callback) }
+    )
+    guard let callbackResult = waitForPremiumOperation(callbackOperation), case .callback(let received) = callbackResult else {
+      check(false, "callback fixture must complete")
+      continue
+    }
+    check(
+      meetlessPremiumStoreCallbackOutcome(received) == expectedOutcome,
+      "callback fixture must map to its categorical (expectedOutcome.rawValue) outcome"
+    )
+  }
+
+  let heldAnchor = MeetlessPremiumPresentationAnchor(
+    windowFactory: { premiumTestWindow() },
+    windowPresenter: { window in
+      window.makeKeyAndOrderFront(nil)
+      return true
+    }
+  )
+  let sharedLock = NSLock()
+  let firstStarted = DispatchSemaphore(value: 0)
+  let firstCompleted = DispatchSemaphore(value: 0)
+  let finishLock = NSLock()
+  var firstFinish: ((MeetlessPremiumStoreCallback) -> Void)?
+  var firstResult: MeetlessPremiumCallbackOperationResult?
+  let firstResultLock = NSLock()
+  let firstOperation = MeetlessPremiumCallbackOperation(
+    anchor: heldAnchor,
+    mutationLock: sharedLock,
+    invoke: { _, finish in
+      finishLock.lock()
+      firstFinish = finish
+      finishLock.unlock()
+      firstStarted.signal()
+    }
+  )
+  DispatchQueue.global().async {
+    let result = firstOperation.run()
+    firstResultLock.lock()
+    firstResult = result
+    firstResultLock.unlock()
+    firstCompleted.signal()
+  }
+  check(waitForPremiumSemaphore(firstStarted), "first interactive callback must reach the invoker")
+  check(heldAnchor.isPresented, "interactive callback must retain its anchor before completion")
+  let secondOperation = MeetlessPremiumCallbackOperation(
+    anchor: heldAnchor,
+    mutationLock: sharedLock,
+    invoke: { _, finish in finish(routedCallback) }
+  )
+  let secondResult = waitForPremiumOperation(secondOperation)
+  if case .busy = secondResult {
+    check(true, "second interactive callback must fail closed while the first is in flight")
+  } else {
+    check(false, "second interactive callback must fail closed while the first is in flight")
+  }
+  check(heldAnchor.isPresented, "a busy second operation must not release the first operation's anchor")
+  finishLock.lock()
+  let completeFirst = firstFinish
+  finishLock.unlock()
+  completeFirst?(routedCallback)
+  check(waitForPremiumSemaphore(firstCompleted), "first interactive callback must finish from its callback")
+  firstResultLock.lock()
+  let completedFirst = firstResult
+  firstResultLock.unlock()
+  if case .callback = completedFirst {
+    check(true, "first interactive callback must return its callback result")
+  } else {
+    check(false, "first interactive callback must return its callback result")
+  }
+  check(!heldAnchor.isPresented, "callback completion must release serialization and the anchor together")
+  check(heldAnchor.acquire() != nil, "released callback serialization must allow a later acquisition")
+  heldAnchor.release()
+
+  let line = meetlessPremiumDiagnosticLine(MeetlessPremiumDiagnostic(stage: .presentationReadiness, outcome: .ready))
+  check(line == "MEETLESS_PREMIUM_DIAGNOSTIC v1 stage=presentation_readiness outcome=ready", "Premium diagnostics must use stable categorical codes")
+  check(!line.contains("signed") && !line.contains("secret") && !line.contains("receipt"), "Premium diagnostics must not expose transaction or secret material")
 }
 
 private func testPremiumWaitDoesNotBlockAuthorizationClearOrShutdown() throws {
@@ -3781,6 +4212,118 @@ private func testHostEnvironmentFiltering() {
   check(!isOpenAISecretEnvironmentEntry(key: "OPENAI_BASE_URL", value: "https://example.invalid"), "host may preserve non-secret OpenAI configuration")
 }
 
+private func testPackagedConvexEnvironmentBinding() {
+  let convexURL = "https://meetless-fixture.convex.cloud"
+  let masRuntimeRoot = "/Users/fixture/Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless"
+  let directRuntimeRoot = "/Users/fixture/Library/Application Support/Meetless"
+  let info: [String: Any] = ["MeetlessConvexURL": convexURL]
+  do {
+    let validated = try meetlessValidatedPackagedConvexURL(info: info)
+    check(validated == convexURL, "packaged Convex URL must preserve the exact outer Info.plist value")
+    let projected = try meetlessProjectManagedConvexEnvironment(
+      ["MEETLESS_CONVEX_URL": "https://ambient.invalid/", "MEETLESS_KEEP": "1"],
+      runtimeRoot: masRuntimeRoot,
+      bundleInfo: info,
+    )
+    check(projected["MEETLESS_CONVEX_URL"] == convexURL, "packaged runtime must project Convex URL from Bundle.main, not ambient environment")
+    check(projected["MEETLESS_KEEP"] == "1", "packaged Convex projection must preserve unrelated environment entries")
+    let direct = try meetlessProjectManagedConvexEnvironment(
+      ["MEETLESS_CONVEX_URL": "https://ambient.invalid/"],
+      runtimeRoot: directRuntimeRoot,
+      bundleInfo: nil,
+    )
+    check(direct["MEETLESS_CONVEX_URL"] == "https://ambient.invalid/", "direct runtime Convex environment behavior must remain unchanged")
+  } catch {
+    check(false, "valid packaged Convex URL projection must succeed")
+  }
+  for malformed in [
+    "http://meetless-fixture.convex.cloud/",
+    "https://meetless-fixture.convex.cloud/path",
+    "https://meetless-fixture.convex.cloud/?query=1",
+    "https://meetless-fixture.convex.cloud/#fragment",
+    "https://user:password@meetless-fixture.convex.cloud/",
+    "https://meetless-fixture.convex.cloud/ with-space",
+    "https:foo",
+    "https:/foo",
+    "https:///foo",
+    "https://meetless-fixture.convex.cloud\\path",
+    "",
+  ] {
+    expectThrow("malformed packaged Convex URL must fail closed", { _ = try meetlessValidatedConvexURL(malformed) })
+  }
+  expectThrow("missing packaged Convex URL must fail closed", { _ = try meetlessValidatedPackagedConvexURL(info: [:]) })
+  expectThrow("non-string packaged Convex URL must fail closed", { _ = try meetlessValidatedPackagedConvexURL(info: ["MeetlessConvexURL": 7]) })
+}
+
+private func testProductionRuntimeLaunchConvexBinding() {
+  let masRuntimeRoot = "/Users/fixture/Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless"
+  let directRuntimeRoot = "/Users/fixture/Library/Application Support/Meetless"
+  let signedURL = "https://signed-fixture.convex.cloud"
+  let ambientURL = "https://ambient.invalid/"
+
+  func runEnvironmentProbe(
+    runtimeRoot: String,
+    environment: [String: String],
+    bundleInfo: [String: Any]?
+  ) throws -> [String: String] {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = []
+    let output = Pipe()
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    try meetlessRunRuntimeProcess(
+      process,
+      environment: environment,
+      runtimeRoot: runtimeRoot,
+      bundleInfo: bundleInfo
+    )
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+      throw NSError(domain: "MeetlessHostTests", code: Int(process.terminationStatus), userInfo: nil)
+    }
+    guard let text = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) else {
+      throw NSError(domain: "MeetlessHostTests", code: 1, userInfo: nil)
+    }
+    var observed: [String: String] = [:]
+    for line in text.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+      let fields = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+      if fields.count == 2 {
+        observed[String(fields[0])] = String(fields[1])
+      }
+    }
+    return observed
+  }
+
+  do {
+    let observed = try runEnvironmentProbe(
+      runtimeRoot: masRuntimeRoot,
+      environment: [
+        "MEETLESS_CONVEX_URL": ambientURL,
+        "MEETLESS_CHILD_PROBE": "1",
+      ],
+      bundleInfo: ["MeetlessConvexURL": signedURL]
+    )
+    check(observed["MEETLESS_CONVEX_URL"] == signedURL, "production MAS child must observe the signed Bundle.main Convex URL")
+    check(observed["MEETLESS_CONVEX_URL"] != ambientURL, "production MAS child must not inherit the ambient Convex URL")
+    check(observed["MEETLESS_CHILD_PROBE"] == "1", "production MAS child launch must preserve unrelated environment entries")
+  } catch {
+    check(false, "production MAS child environment observation must succeed: \(error)")
+  }
+
+  do {
+    let observed = try runEnvironmentProbe(
+      runtimeRoot: directRuntimeRoot,
+      environment: ["MEETLESS_CONVEX_URL": ambientURL],
+      bundleInfo: nil
+    )
+    check(observed["MEETLESS_CONVEX_URL"] == ambientURL, "direct child must retain the ambient Convex URL behavior")
+  } catch {
+    check(false, "direct child environment observation must succeed: \(error)")
+  }
+}
+
 private func testCaptureSettingsFallbackPolicy() {
   check(meetlessSettingsNavigation(applicationOpened: true, fallbackOpened: false) == "system-settings-application", "supported System Settings application opening must be primary")
   check(meetlessSettingsNavigation(applicationOpened: false, fallbackOpened: true) == "best-effort-pane-url", "undocumented pane URL must be only a best-effort fallback")
@@ -3869,6 +4412,8 @@ private struct TranscriptionCapabilityTests {
     testLaunchCoordinatorLifecycle()
     testAppStoreContainerRuntimeResolutionBoundary()
     testPackagedSignaturePolicyBoundary()
+    testMasElectronDescriptorBoundary()
+    testProductionRuntimeLaunchConvexBinding()
     do { try testHostExecutableUsesPOSIXIdentity() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: POSIX host executable identity: \(error)\n".utf8))
@@ -3937,6 +4482,8 @@ private struct TranscriptionCapabilityTests {
     }
     testPremiumSocketBoundary()
     testPremiumPurchaseOutcomePolicy()
+    testPremiumOperationSlotBoundary()
+    testPremiumPresentationSelectionAndDiagnostics()
     do { try testPremiumWaitDoesNotBlockAuthorizationClearOrShutdown() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: Premium authorization lock lifecycle: \(error)\n".utf8))
@@ -3974,6 +4521,7 @@ private struct TranscriptionCapabilityTests {
     }
     testMultipartFields()
     testHostEnvironmentFiltering()
+    testPackagedConvexEnvironmentBinding()
     testCaptureSettingsFallbackPolicy()
     testProviderFailureNormalizationAndCancellation()
     testLegacyIdentityMigrationBoundary()

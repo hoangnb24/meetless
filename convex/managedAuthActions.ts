@@ -33,7 +33,13 @@ export const enrollDevice = action({
       signature: args.signature,
       apple: verified,
     });
-    return issueDeviceToken(enrolled.subject, enrolled.deviceId, enrolled.keyId);
+    return issueDeviceToken(
+      enrolled.subject,
+      enrolled.deviceId,
+      enrolled.keyId,
+      enrolled.entitlement,
+      enrolled.naturalExpiryAt,
+    );
   },
 });
 
@@ -48,7 +54,13 @@ export const refreshDevice = action({
   returns: v.any(),
   handler: async (ctx, args) => {
     const refreshed = await ctx.runMutation(anyApi.managedAuth.consumeRefresh, args);
-    return issueDeviceToken(refreshed.subject, refreshed.deviceId, refreshed.keyId);
+    return issueDeviceToken(
+      refreshed.subject,
+      refreshed.deviceId,
+      refreshed.keyId,
+      refreshed.entitlement,
+      refreshed.naturalExpiryAt,
+    );
   },
 });
 
@@ -77,10 +89,21 @@ export const processRevenueCatEvent = internalAction({
   },
 });
 
-async function issueDeviceToken(subject: string, deviceId: string, keyId: string) {
+async function issueDeviceToken(
+  subject: string,
+  deviceId: string,
+  keyId: string,
+  state: "active" | "grace" | "expired" | "refunded" | "revoked",
+  naturalExpiryAt: number | null,
+) {
   const config = readManagedRuntimeConfig();
   const nowSeconds = Math.floor(Date.now() / 1_000);
   const expiresAt = nowSeconds + DEVICE_JWT_TTL_SECONDS;
+  const normalizedState = (state === "active" || state === "grace")
+    && naturalExpiryAt !== null
+    && naturalExpiryAt <= nowSeconds * 1_000
+    ? "expired"
+    : state;
   const key = await importPKCS8(config.authPrivateKeyPkcs8, "ES256");
   const authToken = await new SignJWT({ sub: subject, deviceId, keyId })
     .setProtectedHeader({ alg: "ES256", typ: "JWT", kid: config.authKeyId })
@@ -90,9 +113,12 @@ async function issueDeviceToken(subject: string, deviceId: string, keyId: string
     .setExpirationTime(expiresAt)
     .sign(key);
   return {
+    version: 1,
     authToken,
     expiresAt: expiresAt * 1_000,
     deviceId,
     keyId,
+    state: normalizedState,
+    naturalExpiryAt,
   };
 }

@@ -284,9 +284,22 @@ complete validation always executes, including the exact expected RevenueCat
 public-key comparison. Fixture tests may inject only bounded low-level file,
 stat, inventory, Mach-O, or owner-tool evidence readers; those adapters cannot
 authorize quarantine or replace the final bundle realpath/fingerprint checks.
-This repository boundary does not reserve disk capacity, prevent arbitrary
-same-UID shell deletion, establish CI or branch protection, or prove a real
-MAS package/sign/install/launch. Those remain separate owner-authorized gates.
+This repository boundary does not reserve disk capacity, establish CI or
+branch protection, or prove a real MAS package/sign/install/launch. Those
+remain separate owner-authorized gates.
+
+The current interactive macOS account and processes deliberately acting with
+that same UID are trusted for this development package/coordinator boundary.
+The boundary detects malformed, stale, accidental, partial, path, identity,
+permission, and artifact changes; it does not authenticate same-UID files
+against a malicious process that can deliberately rewrite or delete the
+package, manifest, identity, and journals into a new self-consistent set.
+Deliberate same-UID deletion or rewrite is therefore outside this threat model,
+not a production-acceptance blocker. Adding a Keychain-backed MAC, privileged
+owner, or another trust anchor requires a separately authorized Human security
+decision. This limit does not relax receipt opacity, full pre-install artifact
+validation, installed-signature rechecks, or fail-closed package/runtime
+recovery.
 
 ### Attempt 12 incident classification
 
