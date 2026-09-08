@@ -10,16 +10,21 @@ import { inspectHostBundle } from "../packages/runtime/dist/host.js";
 import { inspectNativeArgumentVector } from "../packages/runtime/dist/readiness.js";
 import { enumeratePackageEntries, inspectMachO, inspectPackageMachOEntries } from "./lib/macos-package-inventory.mjs";
 import {
-  validateLicenseInventoryCoverage,
-  validateLicenseInventoryDocument,
   validateMacOSLoadPathClosure,
+  validateMacAppStoreDirectCompositionBinding,
+  validateLicenseInventoryBinding as validateStrictLicenseInventoryBinding,
   validateManifestDocument,
-  validateNoticeEvidence,
   validatePackageSymlinkClosure,
-  validateResolutionEvidencePaths,
   verifyIndividualMachOSignatures,
 } from "./validate-macos-package.mjs";
+import { MACOS_LICENSE_INVENTORY_PATH } from "./lib/macos-license-inventory.mjs";
 import { validateMacOSPackageInputDocument } from "./lib/macos-package-inputs.mjs";
+import {
+  MACOS_APP_STORE_PACKAGE_EVIDENCE_LAYOUT,
+  MACOS_APP_STORE_PACKAGE_EVIDENCE_SCHEMA,
+  verifyMacOSAppStorePackageEvidenceSources,
+  validateMasPackageEvidenceInputs,
+} from "./lib/macos-app-store-package-evidence.mjs";
 import {
   MACOS_APP_STORE_CONTRACT,
   MACOS_APP_STORE_CHILD_ENTITLEMENTS,
@@ -28,6 +33,8 @@ import {
   validateMacAppStoreEntitlementClosure,
 } from "./lib/macos-app-store-contract.mjs";
 import {
+  MACOS_APP_STORE_ELECTRON_BINARY_PATH,
+  MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH,
   validateMacAppStorePackageContract,
   validateMacAppStorePackagedHostConfiguration,
   validateMacAppStorePackagedMarker,
@@ -42,6 +49,7 @@ import {
   R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME,
   R5_APP_STORE_DEVELOPMENT_DEVICE_UDID,
   R5_APP_STORE_TEAM_ID,
+  R5_CONVEX_INFO_PLIST_KEY,
   R5_REVENUECAT_INFO_PLIST_KEY,
   classifyMacAppStoreDevelopmentMachO,
   parseMacAppStoreDevelopmentEntitlementResult,
@@ -52,6 +60,8 @@ import {
   validateR5DevelopmentElectronInfo,
   validateR5DevelopmentProfile,
   validateR5DevelopmentSignature,
+  validateBuildScopedConvexUrl,
+  validateHostedDevelopmentConvexUrl,
   validateRevenueCatPublicSdkKey,
 } from "./lib/macos-app-store-development.mjs";
 import {
@@ -707,10 +717,17 @@ export async function launchMasDevelopmentGate({
     if (packageLaunchProof.status !== "committed") {
       throw coordinatorError("MAS launch requires the package transaction's committed-only authorization proof");
     }
+    failureCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.PACKAGE_PROOF;
+    await validateMasDevelopmentInstalledSignatures({
+      manifestPath: packageLaunchProof.artifactBinding.manifestPath,
+      bundlePath: context.bundlePath,
+      artifactBinding: packageLaunchProof.artifactBinding,
+      dependencies,
+    });
     failureCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.HANDOFF_READ;
     const handoff = await readHostHandoff(status, context, packageLaunchProof);
     const launch = dependencies.launch ?? (async () => {
-      await execFileAsync("open", ["-g", "-a", context.bundlePath]);
+      await execFileAsync("open", ["-g", "-a", context.bundlePath], { env: environmentWithoutBuildInputs() });
     });
     failureCategory = MAS_GATE_LAUNCH_FAILURE_CATEGORIES.LOCK_FAILED;
     await lease.release();
@@ -855,6 +872,7 @@ const ARTIFACT_VALIDATION_ADAPTER_NAMES = new Set([
   "enumeratePackageEntries",
   "inspectPackageMachOEntries",
   "inspectMachO",
+  "verifyIndividualMachOSignatures",
 ]);
 
 function normalizeArtifactValidationAdapters(value) {
@@ -872,6 +890,7 @@ function normalizeArtifactValidationAdapters(value) {
 
 export async function validateMasDevelopmentInstallArtifact({ manifestPath, bundlePath, context, dependencies }) {
   const adapters = normalizeArtifactValidationAdapters(dependencies?.artifactValidationAdapters);
+  const expectedElectronArchiveSha256 = resolveExpectedElectronArchiveSha256(dependencies);
   const readArtifactFile = adapters.readSecureFile ?? readSecureFile;
   let manifest;
   let manifestBytes;
@@ -893,11 +912,130 @@ export async function validateMasDevelopmentInstallArtifact({ manifestPath, bund
       manifestBytes,
       proofRoot,
       expectedPublicSdkKey: resolveExpectedRevenueCatPublicSdkKey(dependencies),
+      expectedConvexUrl: resolveExpectedConvexUrl(dependencies),
+      expectedElectronArchiveSha256,
       adapters,
     });
   } catch (error) {
     if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) throw error;
     throw coordinatorError(`full MAS artifact validation failed before runtime/package mutation: ${describe(error)}`, error);
+  }
+}
+
+/**
+ * Re-check the installed signed closure immediately before LaunchServices is
+ * allowed to open it. App Store may add an opaque receipt below the nested
+ * Electron bundle after the source artifact preflight; this check deliberately
+ * uses only the immutable manifest's Mach-O paths and codesign's strict/deep
+ * verification, never package enumeration or receipt bytes.
+ */
+export async function validateMasDevelopmentInstalledSignatures({
+  manifestPath,
+  bundlePath,
+  artifactBinding,
+  dependencies = {},
+} = {}) {
+  const manifest = canonicalAbsolute(manifestPath, "MAS development manifest");
+  const logicalBundle = canonicalAbsolute(bundlePath, "installed MAS development bundle");
+  const bundleFilesystem = dependencies.packageFilesystem;
+  const bundle = bundleFilesystem === undefined
+    ? logicalBundle
+    : resolvePackageFilesystemPath(logicalBundle, { resolvePath: bundleFilesystem.resolvePath });
+  const adapters = normalizeArtifactValidationAdapters(dependencies.artifactValidationAdapters);
+  const runOwnerCommand = adapters.runMacOSCommand ?? runMacOSCommand;
+  try {
+    const expectedConvexUrl = resolveExpectedConvexUrl(dependencies);
+    const expectedConvexUrlSha256 = sha256(Buffer.from(expectedConvexUrl));
+    assertMasGateArtifactBinding(artifactBinding, { manifestPath: manifest });
+    const manifestBytes = await readSecureFile(manifest, "MAS development manifest");
+    if (sha256(manifestBytes) !== artifactBinding.manifestSha256) {
+      throw new Error("installed MAS signature proof manifest bytes differ from the immutable artifact binding");
+    }
+    const parsed = parseJsonObject(manifestBytes, "MAS development manifest");
+    if (parsed.schema !== "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1" ||
+        parsed.electron?.executable !== MACOS_APP_STORE_ELECTRON_BINARY_PATH ||
+        !Array.isArray(parsed.signature?.nestedMachO)) {
+      throw new Error("installed MAS signature proof manifest does not attest the exact Helpers Electron closure");
+    }
+    if (parsed.convexUrlEmbedded !== true || parsed.convexUrlSha256 !== expectedConvexUrlSha256) {
+      throw new Error("installed MAS signature proof manifest does not attest the expected build-scoped Convex URL hash");
+    }
+    const nestedPaths = parsed.signature.nestedMachO.map((entry) => entry?.path);
+    const allPaths = ["Contents/MacOS/MeetlessHost", ...nestedPaths];
+    if (allPaths.some((relativePath) => typeof relativePath !== "string" || !relativePath ||
+        path.posix.normalize(relativePath) !== relativePath || path.isAbsolute(relativePath) ||
+        relativePath === ".." || relativePath.startsWith("../") || relativePath.includes("/../")) ||
+        new Set(allPaths).size !== allPaths.length ||
+        !nestedPaths.includes(MACOS_APP_STORE_ELECTRON_BINARY_PATH)) {
+      throw new Error("installed MAS signature proof has an invalid or incomplete Mach-O path set");
+    }
+    const signatureDigest = sha256(Buffer.from(JSON.stringify(parsed.signature)));
+    if (signatureDigest !== artifactBinding.signatureDigest) {
+      throw new Error("installed MAS signature proof manifest signature evidence differs from the immutable artifact binding");
+    }
+    const mainElectronNestedSignature = parsed.signature.nestedMachO.find(
+      (entry) => entry?.path === MACOS_APP_STORE_ELECTRON_BINARY_PATH,
+    );
+    if (mainElectronNestedSignature?.identifier !== R5_APP_STORE_BUNDLE_ID) {
+      throw new Error(
+        `installed MAS signature proof main Electron identifier is ${String(mainElectronNestedSignature?.identifier)}; ` +
+        `expected ${R5_APP_STORE_BUNDLE_ID} under docs/decisions/0006-mas-development-desktop-integration.md; ` +
+        "regenerate the signed MAS artifact with the fixed main Electron identity",
+      );
+    }
+    const bundleInfo = await lstat(bundle);
+    if (bundleInfo.isSymbolicLink() || !bundleInfo.isDirectory() || bundleInfo.uid !== currentUid()) {
+      throw new Error("installed MAS development bundle is not one owned non-symlink directory");
+    }
+    if (await realpath(bundle) !== bundle) {
+      throw new Error("installed MAS development bundle root resolves through a symlink");
+    }
+    const outerInfo = parsePlistDocument(
+      await readSecureFile(path.join(bundle, "Contents", "Info.plist"), "installed signed outer Info.plist"),
+      "installed signed outer Info.plist",
+    );
+    validateMacAppStoreDevelopmentInfo(outerInfo, { convexUrl: expectedConvexUrl });
+    if (outerInfo[R5_CONVEX_INFO_PLIST_KEY] !== expectedConvexUrl || parsed.convexUrlSha256 !== sha256(Buffer.from(outerInfo[R5_CONVEX_INFO_PLIST_KEY]))) {
+      throw new Error("installed signed outer Info.plist Convex URL differs from the immutable manifest authority");
+    }
+    const legacyElectronPath = path.join(bundle, MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH);
+    const legacyInfo = await lstat(legacyElectronPath).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (legacyInfo) {
+      throw new Error(`installed MAS package contains the legacy Electron app layout at ${MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH}`);
+    }
+    const electronInfoPath = path.join(
+      bundle,
+      "Contents",
+      "Helpers",
+      "Electron.app",
+      "Contents",
+      "Info.plist",
+    );
+    validateR5DevelopmentElectronInfo(
+      parsePlistDocument(await readSecureFile(electronInfoPath, "installed Electron MAS Info.plist"), "installed Electron MAS Info.plist"),
+      { requireElectronTeamId: true, requireBundleIdentifier: true },
+    );
+    await runOwnerCommand("codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundle]);
+    for (const relativePath of allPaths) {
+      await runOwnerCommand("codesign", ["--verify", "--strict", "--verbose=2", path.join(bundle, relativePath)]);
+    }
+    validateR5DevelopmentSignature(
+      await readCodesignDisplay(path.join(bundle, MACOS_APP_STORE_ELECTRON_BINARY_PATH), runOwnerCommand),
+      MACOS_APP_STORE_ELECTRON_BINARY_PATH,
+      { expectedBundleIdentifier: R5_APP_STORE_BUNDLE_ID },
+    );
+    return {
+      status: "passed",
+      bundlePath: bundle,
+      manifestPath: manifest,
+      verifiedMachOPaths: allPaths,
+    };
+  } catch (error) {
+    if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) throw error;
+    throw coordinatorError(`installed MAS signature validation failed before launch: ${describe(error)}`, error);
   }
 }
 
@@ -909,7 +1047,18 @@ export async function validateMasDevelopmentInstallArtifact({ manifestPath, bund
  * deterministic for fixture tests, but no caller can supply a validation
  * result or artifact binding.
  */
-async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manifest, manifestBytes, proofRoot, expectedPublicSdkKey, adapters = {} }) {
+async function validateMasDevelopmentArtifact({
+  manifestPath,
+  bundlePath,
+  manifest,
+  manifestBytes,
+  proofRoot,
+  expectedPublicSdkKey,
+  expectedConvexUrl,
+  expectedElectronArchiveSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256,
+  adapters = {},
+}) {
+  const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedElectronArchiveSha256);
   const readArtifactFile = adapters.readSecureFile ?? readSecureFile;
   const secureDirectory = adapters.assertSecureDirectory ?? assertSecureDirectory;
   const secureFile = adapters.assertSecureFile ?? assertSecureFile;
@@ -917,7 +1066,12 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
   const enumerateEntries = adapters.enumeratePackageEntries ?? enumeratePackageEntries;
   const inspectMachOEntriesEvidence = adapters.inspectPackageMachOEntries ?? inspectPackageMachOEntries;
   const inspectMachOEvidence = adapters.inspectMachO ?? inspectMachO;
-  validateMasManifestDocument(manifest);
+  const verifyMachOSignaturesEvidence = adapters.verifyIndividualMachOSignatures ?? verifyIndividualMachOSignatures;
+  validateMasManifestDocument(manifest, {
+    expectedConvexUrl,
+    expectedElectronArchiveSha256: expectedArchiveSha256,
+  });
+  validateMacAppStoreDirectCompositionBinding(manifest.directComposition);
   const directCompositionPath = path.resolve(proofRoot, manifest.directComposition.path);
   const directCompositionBytes = await readArtifactFile(directCompositionPath, "retained direct composition manifest");
   if (sha256(directCompositionBytes) !== manifest.directComposition.sha256) {
@@ -940,18 +1094,24 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
   const contentsPath = path.join(bundlePath, "Contents");
   const packageRoot = path.join(contentsPath, "Resources", "meetless");
   const outerExecutablePath = path.join(contentsPath, "MacOS", "MeetlessHost");
-  const nestedElectronAppPath = path.join(packageRoot, "runtime", "electron", "Electron.app");
+  const nestedElectronAppPath = path.join(bundlePath, MACOS_APP_STORE_ELECTRON_BINARY_PATH.split("/Contents/MacOS/Electron")[0]);
   const nestedElectronExecutablePath = path.join(nestedElectronAppPath, "Contents", "MacOS", "Electron");
   const packageContractPath = path.join(packageRoot, "installation-contract.json");
   const packageMarkerPath = path.join(packageRoot, "meetless-package.json");
   const hostConfigPath = path.join(contentsPath, "Resources", "host-config.json");
 
   const outerInfo = parsePlistDocument(await readArtifactFile(path.join(contentsPath, "Info.plist"), "signed outer Info.plist"), "signed outer Info.plist");
-  validateMacAppStoreDevelopmentInfo(outerInfo, { publicSdkKey: expectedPublicSdkKey });
+  validateMacAppStoreDevelopmentInfo(outerInfo, {
+    publicSdkKey: expectedPublicSdkKey,
+    convexUrl: expectedConvexUrl,
+  });
   if (outerInfo[R5_REVENUECAT_INFO_PLIST_KEY] !== expectedPublicSdkKey) {
     throw new Error("signed outer Info.plist RevenueCat public SDK key differs from the expected authority");
   }
   if (manifest.revenueCatPublicSdkKeyEmbedded !== true) throw new Error("MAS manifest does not attest the public RevenueCat SDK key in the outer Info.plist");
+  if (manifest.convexUrlEmbedded !== true || manifest.convexUrlSha256 !== sha256(Buffer.from(expectedConvexUrl))) {
+    throw new Error("MAS manifest does not attest the expected build-scoped Convex URL hash");
+  }
 
   const contractBytes = await readArtifactFile(packageContractPath, "packaged MAS installation contract");
   const contract = parseJsonObject(contractBytes, "packaged MAS installation contract");
@@ -976,22 +1136,13 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
     throw new Error("MAS manifest packaged-contract evidence differs from the signed package files");
   }
 
-  const inventoryPath = path.resolve(bundlePath, directComposition.licenseInventory.path);
+  const masPackageEvidence = manifest.masPackageEvidence;
+  const inventoryPath = path.resolve(bundlePath, MACOS_LICENSE_INVENTORY_PATH);
   const inventoryBytes = await readArtifactFile(inventoryPath, "packaged MAS license inventory");
-  if (sha256(inventoryBytes) !== directComposition.licenseInventory.sha256) {
-    throw new Error("packaged MAS license inventory bytes differ from the validated direct composition");
+  if (sha256(inventoryBytes) !== masPackageEvidence.licenseInventory.sha256) {
+    throw new Error("packaged MAS license inventory bytes differ from the final MAS evidence");
   }
   const inventory = parseJsonObject(inventoryBytes, "packaged MAS license inventory");
-  validateLicenseInventoryDocument(inventory, { repositoryRoot });
-  validateLicenseInventoryCoverage(
-    inventory,
-    directComposition.entries,
-    directComposition.licenseInventory,
-    directComposition.macho,
-    { repositoryRoot, bundlePath },
-  );
-  await validateNoticeEvidence(inventory, bundlePath, repositoryRoot);
-  await validateResolutionEvidencePaths(inventory, repositoryRoot);
 
   await runOwnerCommand("codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundlePath]);
   const outerSignature = validateR5DevelopmentSignature(
@@ -1031,13 +1182,40 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
   await assertUnsignedCodesignProfile(profilePath, runOwnerCommand);
 
   const entries = await enumerateEntries(bundlePath);
+  const legacyElectronPrefix = `${MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH}/`;
+  if (entries.some((entry) => entry.path === MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH || entry.path.startsWith(legacyElectronPrefix))) {
+    throw new Error(`signed MAS package contains the legacy Electron app layout at ${MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH}`);
+  }
   await validatePackageSymlinkClosure(bundlePath, entries);
   const machoEntries = await inspectMachOEntriesEvidence(bundlePath, entries, { ownerMode: true });
   if (sha256(Buffer.from(JSON.stringify(entries))) !== manifest.artifact.sha256 ||
       entries.length !== manifest.artifact.entryCount || machoEntries.length !== manifest.artifact.machoEntryCount) {
     throw new Error("MAS manifest artifact inventory differs from the signed bundle");
   }
-  await verifyIndividualMachOSignatures(machoEntries, bundlePath, { ownerMode: true });
+  await verifyMachOSignaturesEvidence(machoEntries, bundlePath, { ownerMode: true });
+  validateMasPackageEvidenceInputs(masPackageEvidence, {
+    entries,
+    machoEntries,
+    inventory,
+    inventoryBytes,
+    bundlePath,
+    repositoryRoot,
+    candidateSnapshot: directComposition.candidateSnapshot,
+    expectedElectronArchiveSha256: expectedArchiveSha256,
+  });
+  if (masPackageEvidence.artifact.entryDigest !== manifest.artifact.sha256 ||
+      masPackageEvidence.artifact.entryCount !== manifest.artifact.entryCount ||
+      masPackageEvidence.artifact.machoEntryCount !== manifest.artifact.machoEntryCount ||
+      masPackageEvidence.signature.digest !== sha256(Buffer.from(JSON.stringify(manifest.signature)))) {
+    throw new Error("MAS final package evidence is not cross-bound to the manifest artifact and signature observations");
+  }
+  await verifyMacOSAppStorePackageEvidenceSources({
+    evidence: masPackageEvidence,
+    repositoryRoot,
+    bundlePath,
+    candidateSnapshot: directComposition.candidateSnapshot,
+    expectedElectronArchiveSha256: expectedArchiveSha256,
+  });
   const outerMachOEntry = machoEntries.find((entry) => entry.path === "Contents/MacOS/MeetlessHost");
   if (!outerMachOEntry) throw new Error("signed MAS package is missing the outer MeetlessHost Mach-O");
   const outerPolicy = classifyMacAppStoreDevelopmentMachO(outerMachOEntry, { outerMachOPath: "Contents/MacOS/MeetlessHost" });
@@ -1056,12 +1234,19 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
   if (!electronEntry) throw new Error("signed MAS package is missing the MAS Electron executable");
   validateThinArm64MachO(electronEntry, "MAS Electron");
   validateR5DevelopmentElectronFileOutput((await runOwnerCommand("file", [nestedElectronExecutablePath])).stdout);
-  validateR5DevelopmentElectronInfo(parsePlistDocument(await readArtifactFile(path.join(nestedElectronAppPath, "Contents", "Info.plist"), "signed Electron MAS Info.plist"), "signed Electron MAS Info.plist"));
+  validateR5DevelopmentElectronInfo(
+    parsePlistDocument(await readArtifactFile(path.join(nestedElectronAppPath, "Contents", "Info.plist"), "signed Electron MAS Info.plist"), "signed Electron MAS Info.plist"),
+    { requireElectronTeamId: true, requireBundleIdentifier: true },
+  );
   for (const entry of machoEntries.filter((candidate) => candidate.path !== outerMachOEntry.path)) {
     const absolute = path.resolve(bundlePath, entry.path);
     const policy = classifyMacAppStoreDevelopmentMachO(entry, { outerMachOPath: outerMachOEntry.path });
     validateThinArm64MachO(entry, entry.path);
-    const signature = validateR5DevelopmentSignature(await readCodesignDisplay(absolute, runOwnerCommand), entry.path, { expectedBundleIdentifier: null });
+    const signature = validateR5DevelopmentSignature(
+      await readCodesignDisplay(absolute, runOwnerCommand),
+      entry.path,
+      { expectedBundleIdentifier: entry.path === MACOS_APP_STORE_ELECTRON_BINARY_PATH ? R5_APP_STORE_BUNDLE_ID : null },
+    );
     const entitlements = await readCodesignEntitlementsForGate(absolute, policy.entitlementPolicy, entry.path, absolute, runOwnerCommand);
     validateMachOEntitlementsForGate(entitlements, policy, entry.path);
     if (policy.entitlementPolicy === MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.CHILD) {
@@ -1099,6 +1284,7 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
     platform: "mas",
     arch: "arm64",
     archiveName: "electron-v41.2.0-mas-arm64.zip",
+    archiveSha256: masPackageEvidence.electronArchiveSource.sha256,
     executable: nestedElectronRelativePath,
     architecture: "arm64",
     thin: true,
@@ -1126,10 +1312,10 @@ async function validateMasDevelopmentArtifact({ manifestPath, bundlePath, manife
     bundlePath,
     bundleFingerprint,
     artifactDigest: manifest.artifact.sha256,
-    candidateSnapshotDigest: directComposition.candidateSnapshot.digest,
-    packageInputDigest: directComposition.packageInputs.digest,
-    artifactInputDigest: directComposition.packageInputs.artifactInput.digest,
-    licenseDigest: directComposition.licenseInventory.sha256,
+    candidateSnapshotDigest: masPackageEvidence.packageInputs.sourceSnapshot.digest,
+    packageInputDigest: masPackageEvidence.packageInputs.digest,
+    artifactInputDigest: masPackageEvidence.packageInputs.artifactInput.digest,
+    licenseDigest: masPackageEvidence.licenseInventory.sha256,
     signatureDigest: sha256(Buffer.from(JSON.stringify(manifest.signature))),
     publicSdkKeySha256: sha256(Buffer.from(expectedPublicSdkKey)),
   });
@@ -1167,7 +1353,38 @@ function resolveExpectedRevenueCatPublicSdkKey(dependencies = {}) {
   }
 }
 
-function validateMasManifestDocument(manifest) {
+function resolveExpectedConvexUrl(dependencies = {}) {
+  const hasExplicitOverride = Object.prototype.hasOwnProperty.call(dependencies, "expectedConvexUrl");
+  const candidate = hasExplicitOverride ? dependencies.expectedConvexUrl : process.env.MEETLESS_CONVEX_URL;
+  try {
+    return hasExplicitOverride
+      ? validateBuildScopedConvexUrl(candidate)
+      : validateHostedDevelopmentConvexUrl(candidate);
+  } catch (error) {
+    throw new Error(`expected build-scoped Convex URL authority is unavailable or malformed: ${error instanceof Error ? error.message.replace(/MEETLESS_CONVEX_URL/gu, "expected Convex URL") : "invalid value"}`);
+  }
+}
+
+function resolveExpectedElectronArchiveSha256(dependencies = {}) {
+  return normalizeExpectedElectronArchiveSha256(dependencies?.expectedElectronArchiveSha256);
+}
+
+function normalizeExpectedElectronArchiveSha256(expectedSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256) {
+  if (typeof expectedSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(expectedSha256)) {
+    throw new Error(
+      `expected MAS Electron archive SHA-256 dependency is malformed: ${String(expectedSha256)}; ` +
+      "supply the accepted contract pin or one explicit test digest outside manifest and evidence data",
+    );
+  }
+  return expectedSha256;
+}
+
+function validateMasManifestDocument(
+  manifest,
+  { expectedConvexUrl, expectedElectronArchiveSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256 } = {},
+) {
+  const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedElectronArchiveSha256);
+  const expectedConvexUrlSha256 = sha256(Buffer.from(resolveExpectedConvexUrl({ expectedConvexUrl })));
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest) ||
       manifest.schema !== "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1" ||
       manifest.authority !== MACOS_APP_STORE_DEVELOPMENT_AUTHORITY ||
@@ -1177,6 +1394,9 @@ function validateMasManifestDocument(manifest) {
       manifest.signingIdentity !== R5_APP_STORE_DEVELOPMENT_IDENTITY ||
       manifest.revenueCatPublicSdkKeyEmbedded !== true) {
     throw new Error("MAS manifest schema, authority, bundle, team, signer, or public-key evidence is not exact");
+  }
+  if (manifest.convexUrlEmbedded !== true || manifest.convexUrlSha256 !== expectedConvexUrlSha256) {
+    throw new Error("MAS manifest build-scoped Convex URL hash is not bound to the expected authority");
   }
   if (!manifest.provisioningProfile || manifest.provisioningProfile.name !== R5_APP_STORE_DEVELOPMENT_PROFILE_NAME ||
       manifest.provisioningProfile.uuid !== R5_APP_STORE_DEVELOPMENT_PROFILE_UUID ||
@@ -1200,9 +1420,14 @@ function validateMasManifestDocument(manifest) {
   }
   if (!manifest.electron || manifest.electron.version !== MACOS_APP_STORE_CONTRACT.electron.version ||
       manifest.electron.platform !== MACOS_APP_STORE_CONTRACT.electron.platform || manifest.electron.arch !== MACOS_APP_STORE_CONTRACT.electron.arch ||
-      manifest.electron.archiveName !== MACOS_APP_STORE_CONTRACT.electron.archiveName || manifest.electron.architecture !== "arm64" ||
-      manifest.electron.thin !== true || typeof manifest.electron.executable !== "string") {
+      manifest.electron.archiveName !== MACOS_APP_STORE_CONTRACT.electron.archiveName ||
+      !/^[a-f0-9]{64}$/u.test(manifest.electron.archiveSha256 ?? "") ||
+      manifest.electron.architecture !== "arm64" || manifest.electron.thin !== true ||
+      manifest.electron.executable !== MACOS_APP_STORE_ELECTRON_BINARY_PATH) {
     throw new Error("MAS manifest Electron/Mach-O evidence is not exact");
+  }
+  if (manifest.electron.archiveSha256 !== expectedArchiveSha256) {
+    throw new Error(`MAS manifest Electron archive SHA-256 ${manifest.electron.archiveSha256} differs from the accepted pin ${expectedArchiveSha256}`);
   }
   if (!manifest.artifact || !/^[a-f0-9]{64}$/u.test(manifest.artifact.sha256 ?? "") ||
       !Number.isSafeInteger(manifest.artifact.entryCount) || manifest.artifact.entryCount < 1 ||
@@ -1214,6 +1439,15 @@ function validateMasManifestDocument(manifest) {
       typeof manifest.directComposition.artifactDigest !== "string" || !manifest.directComposition.artifactDigest) {
     throw new Error("MAS manifest packaged-contract or pinned direct-composition evidence is missing");
   }
+  if (!manifest.masPackageEvidence || typeof manifest.masPackageEvidence !== "object" ||
+      manifest.masPackageEvidence.schema !== MACOS_APP_STORE_PACKAGE_EVIDENCE_SCHEMA ||
+      manifest.masPackageEvidence.layout !== MACOS_APP_STORE_PACKAGE_EVIDENCE_LAYOUT ||
+      !manifest.masPackageEvidence.packageInputs ||
+      !manifest.masPackageEvidence.electronArchiveSource ||
+      manifest.electron.archiveSha256 !== manifest.masPackageEvidence.electronArchiveSource.sha256) {
+    throw new Error("MAS manifest final Helpers-scoped package evidence is missing");
+  }
+  validateStrictLicenseInventoryBinding(manifest.masPackageEvidence.licenseInventory);
   if (manifest.externalGates?.launch !== "not-run" || manifest.externalGates?.purchase !== "not-run" || manifest.externalGates?.distribution !== "not-claimed") {
     throw new Error("MAS manifest external gate status is not the closed authority value");
   }
@@ -1291,6 +1525,13 @@ async function runMacOSCommand(command, arguments_) {
     maxBuffer: 32 * 1024 * 1024,
     env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" },
   });
+}
+
+function environmentWithoutBuildInputs() {
+  const environment = { ...process.env };
+  delete environment.MEETLESS_REVENUECAT_PUBLIC_SDK_KEY;
+  delete environment.MEETLESS_CONVEX_URL;
+  return environment;
 }
 
 async function readCodesignDisplay(target, runCommand = runMacOSCommand) {

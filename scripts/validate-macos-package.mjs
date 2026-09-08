@@ -16,14 +16,18 @@ import {
   PACKAGE_SOURCE_SNAPSHOT_COMMAND,
 } from "./candidate-snapshot.mjs";
 import { PASEO_DEPENDENCY } from "./lib/paseo-dependency.mjs";
+import { MACOS_APP_STORE_CONTRACT } from "./lib/macos-app-store-contract.mjs";
 import {
   MACOS_LICENSE_INVENTORY_AUTHORITY,
   MACOS_LICENSE_INVENTORY_EXCLUDED_PATH_PREFIXES,
   MACOS_LICENSE_INVENTORY_MANIFEST_PATH,
+  MACOS_MAS_LICENSE_INVENTORY_MANIFEST_PATH,
   MACOS_LICENSE_INVENTORY_PATH,
   MACOS_LICENSE_INVENTORY_SCHEMA,
+  macOSMasLicenseLayout,
   REQUIRED_LICENSE_COMPONENTS,
   classifyArtifactPath,
+  createLicenseInventoryPackageInputBinding,
   digestArtifactEntries,
   digestComponentEntries,
   isNpmPackageManifestPath,
@@ -35,6 +39,11 @@ import {
   validateMacOSPackageInputDocument,
   verifyMacOSPackageInputs,
 } from "./lib/macos-package-inputs.mjs";
+import {
+  MACOS_MAS_SIGNING_BOUNDARY_PHASE_FINAL,
+  createMacOSMasSigningBoundDescriptor,
+  validateMacOSMasSigningBoundDescriptor,
+} from "./lib/macos-mas-signing-boundary.mjs";
 import {
   MACOS_HOST_CONFIG_SCHEMA,
   MACOS_INSTALLATION_CONTRACT,
@@ -220,6 +229,24 @@ export function digestManifest(manifestWithoutDigest) {
   return createHash("sha256").update(JSON.stringify(manifestWithoutDigest)).digest("hex");
 }
 
+export const MACOS_APP_STORE_DIRECT_COMPOSITION_MANIFEST_PATH = "release/macos/composition-manifest.direct.json";
+
+export function validateMacAppStoreDirectCompositionBinding(binding) {
+  const expectedKeys = ["artifactDigest", "path", "sha256"].sort();
+  const actualKeys = binding && typeof binding === "object" && !Array.isArray(binding) ? Object.keys(binding).sort() : [];
+  if (!binding || typeof binding !== "object" || Array.isArray(binding) ||
+      JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys) ||
+      binding.path !== MACOS_APP_STORE_DIRECT_COMPOSITION_MANIFEST_PATH ||
+      !/^[a-f0-9]{64}$/u.test(binding.sha256 ?? "") ||
+      !/^[a-f0-9]{64}$/u.test(binding.artifactDigest ?? "")) {
+    fail(
+      "MAS retained direct-composition binding must contain exactly path, sha256, and artifactDigest",
+      `retain ${MACOS_APP_STORE_DIRECT_COMPOSITION_MANIFEST_PATH} with its exact manifest and artifact SHA-256 values`,
+    );
+  }
+  return binding;
+}
+
 export function validateLicenseInventoryDocument(inventory, options = {}) {
   if (!inventory || typeof inventory !== "object" || Array.isArray(inventory)) {
     failLicense("license inventory is not an object", "generate the machine-readable inventory from the actual artifact");
@@ -234,8 +261,24 @@ export function validateLicenseInventoryDocument(inventory, options = {}) {
     failLicense(`license inventory target is ${String(inventory.target)}`, "inventory only the accepted macOS arm64 artifact");
   }
   const artifact = inventory.artifact;
-  if (!artifact || artifact.bundlePath !== "Meetless.app" || artifact.manifestPath !== MACOS_LICENSE_INVENTORY_MANIFEST_PATH || artifact.inventoryPath !== MACOS_LICENSE_INVENTORY_PATH) {
-    failLicense("license inventory artifact binding is missing or invalid", "bind the inventory to release/macos/composition-manifest.json and its packaged path");
+  const route = options.route ?? "direct";
+  if (!["direct", "mas"].includes(route)) {
+    failLicense(`license inventory route ${String(route)} is unsupported`, "validate the direct route or the accepted MAS Helpers route");
+  }
+  const expectedArchiveSha256 = route === "mas"
+    ? normalizeExpectedElectronArchiveSha256(options.expectedElectronArchiveSha256)
+    : null;
+  const expectedManifestPath = route === "mas" ? MACOS_MAS_LICENSE_INVENTORY_MANIFEST_PATH : MACOS_LICENSE_INVENTORY_MANIFEST_PATH;
+  if (!artifact || artifact.bundlePath !== "Meetless.app" || artifact.manifestPath !== expectedManifestPath || artifact.inventoryPath !== MACOS_LICENSE_INVENTORY_PATH) {
+    failLicense("license inventory artifact binding is missing or invalid", `bind the ${route === "mas" ? "MAS" : "direct"} inventory to ${expectedManifestPath} and its packaged path`);
+  }
+  if (route === "mas") {
+    if (JSON.stringify(artifact.masLayout) !== JSON.stringify(macOSMasLicenseLayout())) {
+      failLicense("MAS license inventory layout or archive-source binding is missing or stale", "regenerate the inventory with the exact app-store-development manifest, Helpers layout, and verified archive descriptor");
+    }
+    validateMasElectronArchiveSource(artifact.electronArchiveSource, expectedArchiveSha256);
+  } else if (artifact.masLayout !== undefined || artifact.electronArchiveSource !== undefined) {
+    failLicense("direct license inventory carries MAS-only layout or archive evidence", "preserve the direct composition manifest route without MAS fields");
   }
   if (
     !artifact.candidateSnapshot ||
@@ -254,8 +297,40 @@ export function validateLicenseInventoryDocument(inventory, options = {}) {
   if (!artifact.packageInputBinding || artifact.packageInputBinding.schema !== MACOS_PACKAGE_INPUT_SCHEMA || !/^[a-f0-9]{64}$/u.test(artifact.packageInputBinding.digest ?? "") || !/^[a-f0-9]{64}$/u.test(artifact.packageInputBinding.sourceSnapshotDigest ?? "") || artifact.packageInputBinding.sourceSnapshotDigest !== artifact.candidateSnapshot.digest || !/^[a-f0-9]{64}$/u.test(artifact.packageInputBinding.artifactInputDigest ?? "") || artifact.packageInputBinding.artifactInputDigest !== artifact.entryBinding.digest || !/^[a-f0-9]{64}$/u.test(artifact.packageInputBinding.packageMemberDigest ?? "") || !/^[a-f0-9]{64}$/u.test(artifact.packageInputBinding.workspaceMemberDigest ?? "") || !Number.isInteger(artifact.packageInputBinding.inputCount) || !Number.isInteger(artifact.packageInputBinding.packageMemberCount) || !Number.isInteger(artifact.packageInputBinding.workspaceMemberCount) || !Number.isInteger(artifact.packageInputBinding.lockMetadataGapCount)) {
     failLicense("license inventory package-input binding is missing or invalid", "bind the inventory to the source snapshot, package-input digest, and final artifact input digest");
   }
-  if (JSON.stringify(artifact.entryBinding.excludedPathPrefixes ?? []) !== JSON.stringify(MACOS_LICENSE_INVENTORY_EXCLUDED_PATH_PREFIXES) || !Array.isArray(artifact.entryBinding.excludedPaths) || !artifact.entryBinding.excludedPaths.includes(MACOS_LICENSE_INVENTORY_PATH) || artifact.entryBinding.excludedPaths.some((candidate) => typeof candidate !== "string")) {
-    failLicense("license inventory self-binding exclusions are not the accepted signing boundary", "exclude the inventory, signing metadata, and the observed Mach-O code-signature paths only");
+  const expectedExcludedPathPrefixes = route === "mas" ? [] : MACOS_LICENSE_INVENTORY_EXCLUDED_PATH_PREFIXES;
+  if (JSON.stringify(artifact.entryBinding.excludedPathPrefixes ?? []) !== JSON.stringify(expectedExcludedPathPrefixes) || !Array.isArray(artifact.entryBinding.excludedPaths) || !artifact.entryBinding.excludedPaths.includes(MACOS_LICENSE_INVENTORY_PATH) || artifact.entryBinding.excludedPaths.some((candidate) => typeof candidate !== "string")) {
+    failLicense(
+      "license inventory self-binding exclusions are not the accepted signing boundary",
+      route === "mas"
+        ? "exclude only the inventory, inspected Mach-O, and exact eight CodeResources paths"
+        : "exclude the inventory, signing metadata, and the observed Mach-O code-signature paths only",
+    );
+  }
+  if (route === "mas") {
+    let signingBoundary;
+    try {
+      signingBoundary = validateMacOSMasSigningBoundDescriptor(artifact.entryBinding.signingBoundary, {
+        expectedLicenseInventoryPath: MACOS_LICENSE_INVENTORY_PATH,
+      });
+    } catch (error) {
+      failLicense(
+        "MAS license inventory signing-boundary evidence is missing or invalid: " +
+        (error instanceof Error ? error.message : String(error)),
+        "retain the exact seven nested CodeResources and complete Mach-O path set in one shared descriptor",
+      );
+    }
+    if (JSON.stringify(artifact.entryBinding.excludedPaths) !== JSON.stringify(signingBoundary.excludedPaths) ||
+        JSON.stringify(artifact.packageInputBinding.signingBoundary) !== JSON.stringify(signingBoundary)) {
+      failLicense(
+        "MAS license inventory signing-boundary evidence is not cross-bound to package inputs",
+        "derive package-input and inventory ordinary exclusions from the same exact MAS descriptor",
+      );
+    }
+  } else if (artifact.entryBinding.signingBoundary !== undefined || artifact.packageInputBinding.signingBoundary !== undefined) {
+    failLicense(
+      "direct license inventory carries MAS signing-boundary evidence",
+      "preserve the direct route without MAS-only nested CodeResources exceptions",
+    );
   }
   if (artifact.entryBinding.signingBound !== undefined) {
     validateSigningBoundDocument(artifact.entryBinding.signingBound, "license inventory signing boundary");
@@ -289,6 +364,10 @@ export function validateLicenseInventoryCoverage(inventory, manifestEntries, man
   validateLicenseInventoryDocument(inventory, options);
   const actualPaths = new Set(manifestEntries.map((entry) => entry.path));
   const mappedPaths = new Map();
+  const route = options.route ?? "direct";
+  const masSigningPhase = route === "mas"
+    ? options.masSigningPhase ?? MACOS_MAS_SIGNING_BOUNDARY_PHASE_FINAL
+    : null;
   for (const component of inventory.components) {
     for (const relativePath of component.artifactPathScope.paths) {
       if (mappedPaths.has(relativePath)) {
@@ -297,7 +376,26 @@ export function validateLicenseInventoryCoverage(inventory, manifestEntries, man
       mappedPaths.set(relativePath, component.id);
     }
   }
-  const missing = [...actualPaths].filter((relativePath) => !mappedPaths.has(relativePath));
+  const excludedPaths = inventory.artifact.entryBinding.excludedPaths;
+  let expectedSigningBoundary = null;
+  if (route === "mas") {
+    expectedSigningBoundary = createMacOSMasSigningBoundDescriptor({
+      entries: manifestEntries,
+      machoPaths: [...new Set(manifestMacho)].sort((left, right) => left.localeCompare(right)),
+      licenseInventoryPath: MACOS_LICENSE_INVENTORY_PATH,
+      phase: masSigningPhase,
+    });
+    if (JSON.stringify(inventory.artifact.entryBinding.signingBoundary) !== JSON.stringify(expectedSigningBoundary) ||
+        JSON.stringify(inventory.artifact.packageInputBinding.signingBoundary) !== JSON.stringify(expectedSigningBoundary)) {
+      failLicense(
+        "MAS license inventory signing-boundary descriptor differs from the artifact",
+        "derive one exact shared descriptor from every final Mach-O and CodeResources entry",
+      );
+    }
+  }
+  const signerCodeResources = new Set(expectedSigningBoundary?.codeResources ?? []);
+  const missing = [...actualPaths].filter((relativePath) =>
+    !mappedPaths.has(relativePath) && !signerCodeResources.has(relativePath));
   if (missing.length) {
     failLicense(`artifact path ${missing[0]} has no component/provenance mapping`, "regenerate the inventory from the complete artifact closure");
   }
@@ -305,10 +403,10 @@ export function validateLicenseInventoryCoverage(inventory, manifestEntries, man
   if (extra.length) {
     failLicense(`inventory maps path ${extra[0]} that is not present in the artifact`, "remove stale inventory paths and regenerate the package");
   }
-  const excludedPaths = inventory.artifact.entryBinding.excludedPaths;
   const machoSet = new Set(manifestMacho);
   const signingBound = inventory.artifact.entryBinding.signingBound;
-  const declaredCodeResources = signingBound?.codeResources ?? [];
+  const declaredCodeResources = signingBound?.codeResources ??
+    (route === "mas" ? inventory.artifact.entryBinding.signingBoundary.codeResources : []);
   const actualCodeResources = [...actualPaths].filter(isCodeResourcesPath).sort((left, right) => left.localeCompare(right));
   if (signingBound) {
     const expectedCodeResources = signingBound.phase === "pre-outer"
@@ -324,7 +422,7 @@ export function validateLicenseInventoryCoverage(inventory, manifestEntries, man
     }
   }
   for (const excludedPath of excludedPaths) {
-    if (excludedPath === inventory.artifact.inventoryPath || excludedPath.startsWith("Contents/_CodeSignature/") || declaredCodeResources.includes(excludedPath)) continue;
+    if (excludedPath === inventory.artifact.inventoryPath || (route === "direct" && excludedPath.startsWith("Contents/_CodeSignature/")) || declaredCodeResources.includes(excludedPath)) continue;
     if (!machoSet.has(excludedPath)) {
       failLicense(`license inventory excludes non-Mach-O path ${excludedPath} from its artifact binding`, "exclude only the final Mach-O paths recorded by the composition manifest");
     }
@@ -334,7 +432,11 @@ export function validateLicenseInventoryCoverage(inventory, manifestEntries, man
       failLicense(`Mach-O path ${machoPath} is absent from the inventory signing boundary`, "regenerate the inventory after the final Mach-O set is known");
     }
   }
-  const expectedDigest = digestArtifactEntries(manifestEntries, { excludedPaths });
+  const expectedDigest = digestArtifactEntries(manifestEntries, {
+    excludedPaths,
+    signingBoundary: expectedSigningBoundary,
+    expectedMachoPaths: expectedSigningBoundary ? manifestMacho : null,
+  });
   if (inventory.artifact.entryBinding.digest !== expectedDigest) {
     failLicense("license inventory artifact entry binding does not match the composition manifest", "regenerate the inventory and composition manifest from one candidate");
   }
@@ -348,7 +450,11 @@ export function validateLicenseInventoryCoverage(inventory, manifestEntries, man
     }
   }
   for (const component of inventory.components) {
-    const expectedComponentHash = digestComponentEntries(manifestEntries, component.artifactPathScope.paths, { excludedPaths });
+    const expectedComponentHash = digestComponentEntries(manifestEntries, component.artifactPathScope.paths, {
+      excludedPaths,
+      signingBoundary: expectedSigningBoundary,
+      expectedMachoPaths: expectedSigningBoundary ? manifestMacho : null,
+    });
     if (component.provenance.versionOrHash.artifactScopeSha256 !== expectedComponentHash) {
       failLicense(`component ${component.id} artifact scope hash does not match the manifest`, "regenerate the inventory from the exact artifact closure");
     }
@@ -509,10 +615,93 @@ function isCodeResourcesPath(relativePath) {
   return typeof relativePath === "string" && /(?:^|\/)_CodeSignature\/CodeResources$/u.test(relativePath);
 }
 
-function validateLicenseInventoryBinding(binding) {
-  if (!binding || typeof binding !== "object" || Array.isArray(binding) || binding.schema !== MACOS_LICENSE_INVENTORY_SCHEMA || binding.path !== MACOS_LICENSE_INVENTORY_PATH || !/^[a-f0-9]{64}$/u.test(binding.sha256 ?? "") || !/^[a-f0-9]{64}$/u.test(binding.artifactEntryDigest ?? "") || !/^[a-f0-9]{64}$/u.test(binding.packageInputDigest ?? "") || !/^[a-f0-9]{64}$/u.test(binding.packageInputArtifactDigest ?? "") || !Number.isInteger(binding.componentCount) || binding.componentCount < REQUIRED_LICENSE_COMPONENTS.length || JSON.stringify(binding.excludedPathPrefixes ?? []) !== JSON.stringify(MACOS_LICENSE_INVENTORY_EXCLUDED_PATH_PREFIXES) || !Array.isArray(binding.excludedPaths)) {
+export function validateLicenseInventoryBinding(binding) {
+  const expectedExcludedPathPrefixes = binding?.signingBoundary !== undefined ? [] : MACOS_LICENSE_INVENTORY_EXCLUDED_PATH_PREFIXES;
+  if (!binding || typeof binding !== "object" || Array.isArray(binding) || binding.schema !== MACOS_LICENSE_INVENTORY_SCHEMA || binding.path !== MACOS_LICENSE_INVENTORY_PATH || !/^[a-f0-9]{64}$/u.test(binding.sha256 ?? "") || !/^[a-f0-9]{64}$/u.test(binding.artifactEntryDigest ?? "") || !/^[a-f0-9]{64}$/u.test(binding.packageInputDigest ?? "") || !/^[a-f0-9]{64}$/u.test(binding.packageInputArtifactDigest ?? "") || !Number.isInteger(binding.componentCount) || binding.componentCount < REQUIRED_LICENSE_COMPONENTS.length || JSON.stringify(binding.excludedPathPrefixes ?? []) !== JSON.stringify(expectedExcludedPathPrefixes) || !Array.isArray(binding.excludedPaths)) {
     failLicense("manifest license inventory binding is missing or invalid", "regenerate the composition manifest with the packaged inventory");
   }
+  if (binding.signingBoundary !== undefined) {
+    try {
+      const signingBoundary = validateMacOSMasSigningBoundDescriptor(binding.signingBoundary, {
+        expectedLicenseInventoryPath: MACOS_LICENSE_INVENTORY_PATH,
+      });
+      if (JSON.stringify(binding.excludedPaths) !== JSON.stringify(signingBoundary.excludedPaths)) {
+        failLicense(
+          "manifest MAS license inventory exclusions differ from its signing-boundary descriptor",
+          "retain the exact inventory, Mach-O, and nested CodeResources exclusions",
+        );
+      }
+    } catch (error) {
+      failLicense(
+        "manifest MAS license inventory signing-boundary binding is invalid: " +
+        (error instanceof Error ? error.message : String(error)),
+        "regenerate the MAS manifest from the shared exact MAS signing-bound descriptor",
+      );
+    }
+  }
+}
+
+export function validateMasLicenseInventoryPackageInputBinding(inventory, packageInputManifest) {
+  let expected;
+  try {
+    expected = createLicenseInventoryPackageInputBinding(packageInputManifest);
+  } catch (error) {
+    failLicense(
+      "MAS license inventory package-input provenance projection is missing or malformed: " +
+        (error instanceof Error ? error.message : String(error)),
+      "validate the complete package-input manifest before comparing it with license inventory evidence",
+    );
+  }
+  if (JSON.stringify(inventory?.artifact?.candidateSnapshot) !== JSON.stringify(packageInputManifest?.sourceSnapshot)) {
+    failLicense(
+      "MAS license inventory candidate snapshot differs from the evidence.packageInputs source snapshot",
+      "regenerate the MAS package-input and license inventory evidence from one exact candidate snapshot",
+    );
+  }
+  if (JSON.stringify(inventory?.artifact?.packageInputBinding) !== JSON.stringify(expected)) {
+    failLicense(
+      "MAS license inventory package-input binding differs from the evidence.packageInputs projection",
+      "regenerate package-input and license inventory evidence together from one validated package-input manifest",
+    );
+  }
+  return expected;
+}
+
+function validateMasElectronArchiveSource(
+  source,
+  expectedSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256,
+) {
+  const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedSha256);
+  const expectedKeys = ["archiveName", "path", "schema", "sha256"].sort();
+  const actualKeys = source && typeof source === "object" && !Array.isArray(source) ? Object.keys(source).sort() : [];
+  if (!source || typeof source !== "object" || Array.isArray(source) ||
+      JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys) ||
+      source.schema !== "MEETLESS_MAS_ELECTRON_ARCHIVE_SOURCE v1" ||
+      source.archiveName !== MACOS_APP_STORE_CONTRACT.electron.archiveName ||
+      typeof source.path !== "string" || !path.isAbsolute(source.path) || path.resolve(source.path) !== source.path ||
+      path.basename(source.path) !== source.archiveName || !/^[a-f0-9]{64}$/u.test(source.sha256 ?? "")) {
+    failLicense(
+      "MAS license inventory archive-source evidence is missing or malformed",
+      `record one absolute regular ${MACOS_APP_STORE_CONTRACT.electron.archiveName} path and its SHA-256`,
+    );
+  }
+  if (source.sha256 !== expectedArchiveSha256) {
+    failLicense(
+      `MAS license inventory archive ${source.archiveName} SHA-256 ${source.sha256} differs from the accepted pin ${expectedArchiveSha256}`,
+      "regenerate the route-aware inventory from the archive matching the expected out-of-band digest",
+    );
+  }
+  return source;
+}
+
+function normalizeExpectedElectronArchiveSha256(expectedSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256) {
+  if (typeof expectedSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(expectedSha256)) {
+    failLicense(
+      `expected MAS Electron archive SHA-256 is malformed: ${String(expectedSha256)}`,
+      "supply the accepted contract pin or one explicit test digest outside manifest and evidence data",
+    );
+  }
+  return expectedSha256;
 }
 
 function validateLicenseComponent(component, options = {}) {

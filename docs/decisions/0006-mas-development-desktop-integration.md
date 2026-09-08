@@ -28,6 +28,21 @@ the parent application-group namespace already authorized by the MAS package.
 No new application group, entitlement, profile, or signing allowance is
 introduced; helper identities remain unchanged.
 
+### MAS Electron bundle layout
+
+The MAS development artifact places the Electron application at exactly
+`Meetless.app/Contents/Helpers/Electron.app`; its main executable is
+`Contents/Helpers/Electron.app/Contents/MacOS/Electron`. The MAS installation
+contract carries the versioned descriptor
+`MEETLESS_MAS_ELECTRON_BINARY v1` with `pathBase: "bundle"` and that exact
+bundle-relative path. The runtime and native host resolve and attest this
+descriptor from the outer bundle root, reject absolute or traversal paths,
+symlink escapes, the legacy
+`Contents/Resources/meetless/runtime/electron/Electron.app` location, and any
+duplicate legacy nested app before launch. Other MAS resources remain
+package-root-relative. The direct/notarized composition retains its existing
+package-root-relative Electron route and carries no MAS descriptor.
+
 ### Host and Paseo ownership
 
 Meetless owns product policy, host handoff/readiness, recording policy, and

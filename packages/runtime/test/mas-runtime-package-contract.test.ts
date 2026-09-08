@@ -187,6 +187,39 @@ describe("Mac App Store runtime/package contract", () => {
     );
   });
 
+  test("requires the exact MAS descriptor and keeps it out of the direct host contract", async () => {
+    const directBundle = await createPackagedDirectFixture((contract) => {
+      contract.package.electronBinary = {
+        schema: "MEETLESS_MAS_ELECTRON_BINARY v1",
+        pathBase: "bundle",
+        path: "Contents/Helpers/Electron.app/Contents/MacOS/Electron",
+      };
+    });
+    const directContractSha256 = createHash("sha256").update(
+      await readFile(path.join(directBundle, "Contents/Resources/meetless/installation-contract.json")),
+    ).digest("hex");
+    expect(() => resolveHostConfiguration({
+      ...packagedHostConfiguration(),
+      installationContractSha256: directContractSha256,
+    }, directBundle)).toThrow(
+      /direct installation contract carries a MAS Electron descriptor/,
+    );
+
+    const masPackageRoot = await createPackagedMasFixture((contract) => {
+      delete contract.package.electronBinary;
+    });
+    const masContractSha256 = createHash("sha256").update(
+      await readFile(path.join(masPackageRoot, "installation-contract.json")),
+    ).digest("hex");
+    expect(() => resolveHostConfiguration(
+      {
+        ...macAppStorePackagedHostConfiguration(),
+        installationContractSha256: masContractSha256,
+      },
+      path.resolve(masPackageRoot, "../../.."),
+    )).toThrow(/packaged MAS installation contract has no exact bundle-relative Electron descriptor/);
+  });
+
   test("keeps packaged bind arguments stable across ordinary, long ASCII, and long Unicode homes", async () => {
     const root = await createPackagedMasFixture();
     const homes = [
@@ -363,27 +396,65 @@ describe("Mac App Store runtime/package contract", () => {
   });
 });
 
-async function createPackagedMasFixture(): Promise<string> {
+async function createPackagedMasFixture(
+  mutate?: (contract: Record<string, any>) => void,
+): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), "meetless-mas-contract-"));
   fixtureRoots.push(root);
-  const contractBytes = macAppStoreInstallationContractBytes();
-  const contractSha256 = macAppStoreInstallationContractSha256();
-  const marker = macAppStorePackagedMarker({ paseoCommit: FIXTURE_PASEO_COMMIT });
+  const bundle = path.join(root, "Meetless.app");
+  const packageRoot = path.join(bundle, "Contents", "Resources", "meetless");
+  const contract = structuredClone(macAppStoreInstallationContract()) as Record<string, any>;
+  mutate?.(contract);
+  const contractBytes = Buffer.from(`${JSON.stringify(contract, null, 2)}\n`);
+  const contractSha256 = createHash("sha256").update(contractBytes).digest("hex");
+  const marker = {
+    ...macAppStorePackagedMarker({ paseoCommit: FIXTURE_PASEO_COMMIT }),
+    installationContractSha256: contractSha256,
+    resources: { ...contract.package.resources },
+  };
   const hostConfiguration = macAppStorePackagedHostConfiguration({ contractSha256 });
 
-  await writeFile(path.join(root, "installation-contract.json"), contractBytes);
-  await writeFile(path.join(root, "meetless-package.json"), `${JSON.stringify(marker, null, 2)}\n`);
-  await writePackagedResources(root, marker.resources);
+  await mkdir(packageRoot, { recursive: true });
+  await writeFile(path.join(packageRoot, "installation-contract.json"), contractBytes);
+  await writeFile(path.join(packageRoot, "meetless-package.json"), `${JSON.stringify(marker, null, 2)}\n`);
+  await writePackagedResources(packageRoot, marker.resources);
 
-  expect(validateMacAppStorePackageContract(JSON.parse(contractBytes.toString("utf8")))).toBeTruthy();
-  expect(validateMacAppStorePackagedMarker(marker, { contractSha256 })).toBeTruthy();
-  expect(validateMacAppStorePackagedHostConfiguration(hostConfiguration, { contractSha256 })).toBeTruthy();
-  return root;
+  if (!mutate) {
+    expect(validateMacAppStorePackageContract(JSON.parse(contractBytes.toString("utf8")))).toBeTruthy();
+    expect(validateMacAppStorePackagedMarker(marker, { contractSha256 })).toBeTruthy();
+    expect(validateMacAppStorePackagedHostConfiguration(hostConfiguration, { contractSha256 })).toBeTruthy();
+  }
+  return packageRoot;
+}
+
+async function createPackagedDirectFixture(
+  mutate?: (contract: Record<string, any>) => void,
+): Promise<string> {
+  const root = await mkdtemp(path.join(tmpdir(), "meetless-direct-host-contract-"));
+  fixtureRoots.push(root);
+  const bundle = path.join(root, "Meetless.app");
+  const packageRoot = path.join(bundle, "Contents", "Resources", "meetless");
+  const contract = structuredClone(MACOS_INSTALLATION_CONTRACT) as Record<string, any>;
+  mutate?.(contract);
+  const contractBytes = Buffer.from(`${JSON.stringify(contract, null, 2)}\n`);
+  const contractSha256 = createHash("sha256").update(contractBytes).digest("hex");
+  const marker = {
+    ...packagedMarker({ paseoCommit: FIXTURE_PASEO_COMMIT }),
+    installationContractSha256: contractSha256,
+    resources: { ...contract.package.resources },
+  };
+  await mkdir(packageRoot, { recursive: true });
+  await writeFile(path.join(packageRoot, "installation-contract.json"), contractBytes);
+  await writeFile(path.join(packageRoot, "meetless-package.json"), `${JSON.stringify(marker, null, 2)}\n`);
+  return bundle;
 }
 
 async function writePackagedResources(root: string, resources: Record<string, string>): Promise<void> {
   for (const [name, relativePath] of Object.entries(resources)) {
-    const target = path.join(root, relativePath);
+    const resourceRoot = name === "electronBinary" && relativePath.startsWith("Contents/Helpers/")
+      ? path.resolve(root, "../../..")
+      : root;
+    const target = path.join(resourceRoot, relativePath);
     if (name === "rendererRoot") {
       await mkdir(target, { recursive: true });
     } else {

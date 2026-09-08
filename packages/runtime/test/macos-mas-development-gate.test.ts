@@ -4,7 +4,7 @@ import { lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, symlink, w
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import {
   createMasHostHandoff,
   classifyMasLsofResult,
@@ -28,6 +28,7 @@ import {
   serializeMasDevelopmentGateFailure,
   stopMasDevelopmentGate,
   validateMasDevelopmentInstallArtifact,
+  validateMasDevelopmentInstalledSignatures,
   validateMasHostHandoff,
 } from "../../../scripts/macos-mas-development-gate.mjs";
 import {
@@ -46,8 +47,34 @@ import {
   masGateLockPath,
   withMasGateLock,
 } from "../../../scripts/lib/macos-mas-gate-lock.mjs";
+import {
+  createMacOSAppStoreDirectCompositionSource,
+  finalizeMacOSAppStorePackageEvidence,
+  MACOS_MAS_EMBEDDED_PROFILE_PATH,
+  prepareMacOSAppStorePackageEvidence,
+  stageMacOSAppStoreEmbeddedProfile,
+  verifyMacOSAppStorePackageEvidenceSources,
+  validateMasPackageEvidenceInputs,
+} from "../../../scripts/lib/macos-app-store-package-evidence.mjs";
+import {
+  MACOS_MAS_SIGNING_BOUNDARY_PHASE_FINAL,
+  MACOS_MAS_SIGNING_BOUNDARY_PHASE_PRE_SIGN,
+  MACOS_MAS_SIGNING_MUTATED_CODE_RESOURCES,
+  MACOS_MAS_OUTER_CODE_RESOURCES_PATH,
+  validateMacOSMasSigningBoundaryEntries,
+} from "../../../scripts/lib/macos-mas-signing-boundary.mjs";
 import { freezeMasGateArtifactBinding } from "../../../scripts/lib/mas-gate-artifact-binding.mjs";
-import { inspectPackageMachOEntries } from "../../../scripts/lib/macos-package-inventory.mjs";
+import {
+  enumeratePackageEntries,
+  inspectPackageMachOEntries,
+} from "../../../scripts/lib/macos-package-inventory.mjs";
+import {
+  MACOS_LICENSE_INVENTORY_PATH,
+  createLicenseInventoryPackageInputBinding,
+  digestArtifactEntries,
+  selectArtifactEntriesForDigest,
+  writeMacOSLicenseInventory,
+} from "../../../scripts/lib/macos-license-inventory.mjs";
 import {
   macAppStoreInstallationContractBytes,
   macAppStoreInstallationContractSha256,
@@ -58,17 +85,28 @@ import {
   fingerprintPath,
   packageTransactionPaths,
   replacePackageBundle,
+  restorePackageTransaction,
 } from "../../../scripts/lib/macos-package-transaction.mjs";
-import { collectCandidateSnapshot } from "../../../scripts/candidate-snapshot.mjs";
 import {
+  createMacOSPackageElectronArchiveSource,
+  buildMacOSPackageInputSpecs,
+  collectMacOSPackageInputs,
   digestJson,
+  MACOS_PACKAGE_ELECTRON_LAYOUT_DIRECT,
+  MACOS_PACKAGE_ELECTRON_LAYOUT_MAS,
   snapshotBinding,
 } from "../../../scripts/lib/macos-package-inputs.mjs";
-import { digestManifest } from "../../../scripts/validate-macos-package.mjs";
+import { MACOS_APP_STORE_CONTRACT } from "../../../scripts/lib/macos-app-store-contract.mjs";
+import { collectCandidateSnapshot } from "../../../scripts/candidate-snapshot.mjs";
+import {
+  digestManifest,
+  validateLicenseInventoryCoverage,
+} from "../../../scripts/validate-macos-package.mjs";
 import {
   MACOS_APP_STORE_CHILD_ENTITLEMENTS,
   MACOS_APP_STORE_PARENT_ENTITLEMENTS,
 } from "../../../scripts/lib/macos-app-store-contract.mjs";
+import { HOSTED_DEV_TARGET } from "../../../scripts/prove-managed-convex-hosted-dev-target.mjs";
 import {
   MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES,
   R5_APP_STORE_DEVELOPMENT_DEVICE_UDID,
@@ -77,15 +115,26 @@ import {
   R5_APP_STORE_DEVELOPMENT_PROFILE_UUID,
   R5_APP_STORE_BUNDLE_ID,
   R5_APP_STORE_TEAM_ID,
+  R5_CONVEX_INFO_PLIST_KEY,
   R5_REVENUECAT_INFO_PLIST_KEY,
+  R5_APP_STORE_DEVELOPMENT_CONVEX_URL,
 } from "../../../scripts/lib/macos-app-store-development.mjs";
 import plist from "plist";
 
 const roots: string[] = [];
 const execFile = promisify(execFileCallback);
+const MAS_FIXTURE_ARCHIVE_BYTES = Buffer.from("deterministic MAS archive fixture bytes\n");
+const MAS_FIXTURE_ARCHIVE_SHA256 = createHash("sha256").update(MAS_FIXTURE_ARCHIVE_BYTES).digest("hex");
+const MAS_FIXTURE_CONVEX_URL = "https://meetless-fixture.convex.cloud/";
+let sharedMasValidationFixture: ReturnType<typeof makeMasValidationFixture> | null = null;
+let sharedMasValidationFixtureRoot: string | null = null;
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+afterAll(async () => {
+  if (sharedMasValidationFixtureRoot) await rm(sharedMasValidationFixtureRoot, { recursive: true, force: true });
 });
 
 async function captureLaunchFailure(operation: () => Promise<unknown>) {
@@ -124,64 +173,178 @@ async function seedMasSessionIndex(context: ReturnType<typeof masDevelopmentRunt
   );
 }
 
-async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: string; manifestPath: string }) {
-  const proofRoot = path.dirname(path.dirname(path.dirname(manifestPath)));
-  const retainedComposition = JSON.parse((await readFile(path.join(proofRoot, "release", "macos", "composition-manifest.json"))).toString("utf8"));
+function createDirectCompositionFixture({ template, candidateSnapshot, packageInputs, inventory, entries, machoEntries }: {
+  template: Record<string, any>;
+  candidateSnapshot: Record<string, any>;
+  packageInputs: Record<string, any>;
+  inventory: Record<string, any>;
+  entries: Array<Record<string, any>>;
+  machoEntries: Array<Record<string, any>>;
+}) {
+  const inventoryEntry = entries.find((entry) => entry.path === MACOS_LICENSE_INVENTORY_PATH && entry.type === "file");
+  if (!inventoryEntry) throw new Error("direct composition fixture is missing its license inventory entry");
+  const candidateBinding = snapshotBinding(candidateSnapshot);
+  const directComposition = {
+    ...template,
+    sourceCommit: candidateBinding.head,
+    paseoCommit: candidateBinding.paseoCommit,
+    candidateSnapshot: candidateBinding,
+    packageInputs,
+    licenseInventory: {
+      schema: inventory.schema,
+      path: MACOS_LICENSE_INVENTORY_PATH,
+      sha256: inventoryEntry.sha256,
+      artifactEntryDigest: inventory.artifact.entryBinding.digest,
+      excludedPathPrefixes: inventory.artifact.entryBinding.excludedPathPrefixes,
+      excludedPaths: inventory.artifact.entryBinding.excludedPaths,
+      componentCount: inventory.components.length,
+      packageInputDigest: inventory.artifact.packageInputBinding.digest,
+      packageInputArtifactDigest: inventory.artifact.packageInputBinding.artifactInputDigest,
+    },
+    renderer: {
+      ...template.renderer,
+      ...entries.find((entry) => entry.path === template.renderer.entry),
+    },
+    entries,
+    macho: machoEntries.map((entry) => entry.path),
+  };
+  return {
+    ...directComposition,
+    artifactDigest: digestManifest({ ...directComposition, artifactDigest: undefined }),
+  };
+}
+
+async function makeMasValidationFixture() {
+  if (sharedMasValidationFixture) return sharedMasValidationFixture;
+  const proofRoot = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-validation-fixture-")));
+  sharedMasValidationFixtureRoot = proofRoot;
+  const bundle = path.join(proofRoot, "release", "macos", "Meetless.app");
+  const manifestPath = path.join(proofRoot, "release", "macos", "app-store-development-manifest.json");
+  await mkdir(path.dirname(bundle), { recursive: true, mode: 0o700 });
+  await execFile("/bin/cp", ["-cR", path.resolve("release/macos/Meetless.app"), bundle]);
+  const legacyElectronAppPath = path.join(bundle, "Contents", "Resources", "meetless", "runtime", "electron", "Electron.app");
+  const nestedElectronAppPath = path.join(bundle, "Contents", "Helpers", "Electron.app");
+  await execFile("/bin/cp", [
+    "-cR",
+    path.resolve("packages/managed-transcription-foundation/dist"),
+    path.join(bundle, "Contents", "Resources", "meetless", "packages", "managed-transcription-foundation"),
+  ]);
+  // Compose the direct source before relocation through the existing direct
+  // package-input and inventory owners; retain those bytes unchanged while
+  // the shared MAS owner derives the post-relocation evidence below.
   const collectedSnapshot = collectCandidateSnapshot("package-source");
   const candidateSnapshot = {
     command: snapshotBinding(collectedSnapshot).command,
     ...collectedSnapshot,
     paseoCommit: collectedSnapshot.dependencyArtifacts.paseo.expectedCommit,
   };
-  const directComposition = structuredClone(retainedComposition);
-  directComposition.candidateSnapshot = candidateSnapshot;
-  directComposition.packageInputs = {
-    ...directComposition.packageInputs,
-    sourceSnapshot: snapshotBinding(candidateSnapshot),
-  };
-  directComposition.packageInputs.digest = digestJson({ ...directComposition.packageInputs, digest: undefined });
-
-  const inventoryPath = path.join(bundle, directComposition.licenseInventory.path);
-  const inventory = JSON.parse((await readFile(inventoryPath)).toString("utf8"));
-  inventory.artifact.candidateSnapshot = snapshotBinding(candidateSnapshot);
-  inventory.artifact.packageInputBinding = {
-    ...inventory.artifact.packageInputBinding,
-    digest: directComposition.packageInputs.digest,
-    sourceSnapshotDigest: candidateSnapshot.digest,
-  };
-  const inventoryBytes = Buffer.from(`${JSON.stringify(inventory)}\n`);
-  const inventorySha256 = createHash("sha256").update(inventoryBytes).digest("hex");
-  directComposition.licenseInventory = {
-    ...directComposition.licenseInventory,
-    sha256: inventorySha256,
-    packageInputDigest: directComposition.packageInputs.digest,
-  };
-  const inventoryEntry = directComposition.entries.find((entry: { path: string }) => entry.path === directComposition.licenseInventory.path);
-  if (!inventoryEntry) throw new Error("MAS fixture composition is missing its license inventory entry");
-  inventoryEntry.sha256 = inventorySha256;
-  inventoryEntry.size = inventoryBytes.byteLength;
-  directComposition.artifactDigest = digestManifest({ ...directComposition, artifactDigest: undefined });
+  const directPackageInputCollection = await collectMacOSPackageInputs({
+    bundlePath: bundle,
+    repositoryRoot: path.resolve("."),
+    candidateSnapshot,
+  });
+  const directInventory = await writeMacOSLicenseInventory({
+    bundlePath: bundle,
+    repositoryRoot: path.resolve("."),
+    candidateSnapshot,
+    packageInputManifest: directPackageInputCollection.manifest,
+    packageMetadata: directPackageInputCollection.packageMetadata,
+  });
+  const directEntries = await enumeratePackageEntries(bundle);
+  const directMachOEntries = await inspectPackageMachOEntries(bundle, directEntries, { ownerMode: true });
+  const directTemplate = JSON.parse((await readFile(path.join("release", "macos", "composition-manifest.json"))).toString("utf8"));
+  const directComposition = createDirectCompositionFixture({
+    template: directTemplate,
+    candidateSnapshot,
+    packageInputs: directPackageInputCollection.manifest,
+    inventory: directInventory,
+    entries: directEntries,
+    machoEntries: directMachOEntries,
+  });
   const directCompositionBytes = Buffer.from(`${JSON.stringify(directComposition)}\n`);
-  const entries = directComposition.entries;
+  const directCompositionSource = createMacOSAppStoreDirectCompositionSource({
+    binding: {
+      path: "release/macos/composition-manifest.direct.json",
+      sha256: createHash("sha256").update(directCompositionBytes).digest("hex"),
+      artifactDigest: directComposition.artifactDigest,
+    },
+    manifest: directComposition,
+  });
+  const profile = {
+    Name: R5_APP_STORE_DEVELOPMENT_PROFILE_NAME,
+    UUID: R5_APP_STORE_DEVELOPMENT_PROFILE_UUID,
+    Entitlements: {
+      "com.apple.application-identifier": [R5_APP_STORE_TEAM_ID, R5_APP_STORE_BUNDLE_ID].join("."),
+      "com.apple.developer.team-identifier": R5_APP_STORE_TEAM_ID,
+    },
+    ExpirationDate: new Date("2099-01-01T00:00:00.000Z"),
+    ProvisionedDevices: [R5_APP_STORE_DEVELOPMENT_DEVICE_UDID],
+  };
+  const profileBytes = Buffer.from(plist.build(profile));
+  await mkdir(path.dirname(nestedElectronAppPath), { recursive: true, mode: 0o755 });
+  await rename(legacyElectronAppPath, nestedElectronAppPath);
+  for (const framework of ["Mantle.framework", "ReactiveObjC.framework", "Squirrel.framework"]) {
+    await rm(path.join(nestedElectronAppPath, "Contents", "Frameworks", framework), { recursive: true, force: true });
+  }
+  for (const relativePath of MACOS_MAS_SIGNING_MUTATED_CODE_RESOURCES) {
+    await rm(path.join(bundle, relativePath), { force: true });
+  }
+  const archivePath = path.join(proofRoot, MACOS_APP_STORE_CONTRACT.electron.archiveName);
+  await writeFile(archivePath, MAS_FIXTURE_ARCHIVE_BYTES, { mode: 0o600 });
+  const electronArchiveSource = await createMacOSPackageElectronArchiveSource({
+    archivePath,
+    expectedSha256: MAS_FIXTURE_ARCHIVE_SHA256,
+  });
+  const embeddedProfile = await stageMacOSAppStoreEmbeddedProfile({
+    bundlePath: bundle,
+    profileBytes,
+  });
+  const packageEvidence = await prepareMacOSAppStorePackageEvidence({
+    bundlePath: bundle,
+    repositoryRoot: path.resolve("."),
+    candidateSnapshot: directCompositionSource.candidateSnapshot,
+    priorManifest: directCompositionSource.packageInputs,
+    electronArchiveSource,
+    embeddedProfile,
+    profileBytes,
+    expectedElectronArchiveSha256: MAS_FIXTURE_ARCHIVE_SHA256,
+  });
+  const preSignEntries = await enumeratePackageEntries(bundle);
+  const preSignMachOEntries = await inspectPackageMachOEntries(bundle, preSignEntries, { ownerMode: true });
+  const simulatedOuterCodeResourcesPath = path.join(bundle, MACOS_MAS_OUTER_CODE_RESOURCES_PATH);
+  await writeFile(simulatedOuterCodeResourcesPath, "simulated final outer CodeResources fixture\n", { mode: 0o644 });
+  for (const [index, relativePath] of MACOS_MAS_SIGNING_MUTATED_CODE_RESOURCES.entries()) {
+    const codeResourcesPath = path.join(bundle, relativePath);
+    await mkdir(path.dirname(codeResourcesPath), { recursive: true, mode: 0o755 });
+    await writeFile(codeResourcesPath, `simulated nested signer output ${index}\n`, { mode: 0o644 });
+  }
+  const entries = await enumeratePackageEntries(bundle);
   const inspectedEntries = await inspectPackageMachOEntries(bundle, entries, { ownerMode: true });
+  const inventoryPath = path.join(bundle, packageEvidence.licenseInventory.path);
+  const inventoryBytes = await readFile(inventoryPath);
   const outerExecutablePath = path.join(bundle, "Contents", "MacOS", "MeetlessHost");
   const nestedElectronExecutablePath = path.join(
     bundle,
     "Contents",
-    "Resources",
-    "meetless",
-    "runtime",
-    "electron",
+    "Helpers",
     "Electron.app",
     "Contents",
     "MacOS",
     "Electron",
   );
+  const nestedElectronRelativePath = path.relative(bundle, nestedElectronExecutablePath).split(path.sep).join("/");
+  const normalElectronHelperIdentifier = "com.github.Electron.helper";
+  const nestedSignatureIdentifier = (relativePath: string) => relativePath === nestedElectronRelativePath
+    ? R5_APP_STORE_BUNDLE_ID
+    : relativePath.endsWith("Electron Helper.app/Contents/MacOS/Electron Helper")
+      ? normalElectronHelperIdentifier
+      : "com.github.Electron.nested";
   const profilePath = path.join(bundle, "Contents", "embedded.provisionprofile");
   const publicSdkKey = "appl_test_fixture_public_key";
+  const convexUrl = MAS_FIXTURE_CONVEX_URL;
   const contract = macAppStoreInstallationContractBytes();
   const contractSha256 = macAppStoreInstallationContractSha256();
-  const marker = Buffer.from(`${JSON.stringify(macAppStorePackagedMarker({ paseoCommit: directComposition.candidateSnapshot.paseoCommit }))}\n`);
+  const marker = Buffer.from(`${JSON.stringify(macAppStorePackagedMarker({ paseoCommit: directCompositionSource.candidateSnapshot.paseoCommit }))}\n`);
   const hostConfiguration = Buffer.from(`${JSON.stringify(macAppStorePackagedHostConfiguration({ contractSha256 }))}\n`);
   const parentEntitlements = Object.fromEntries(MACOS_APP_STORE_PARENT_ENTITLEMENTS.map((key) => [
     key,
@@ -192,22 +355,14 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
     CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
     ElectronTeamID: R5_APP_STORE_TEAM_ID,
     [R5_REVENUECAT_INFO_PLIST_KEY]: publicSdkKey,
+    [R5_CONVEX_INFO_PLIST_KEY]: convexUrl,
   }));
   const electronInfo = Buffer.from(plist.build({
     CFBundleExecutable: "Electron",
     CFBundleVersion: "41.2.0",
+    CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
+    ElectronTeamID: R5_APP_STORE_TEAM_ID,
   }));
-  const profile = {
-    Name: R5_APP_STORE_DEVELOPMENT_PROFILE_NAME,
-    UUID: R5_APP_STORE_DEVELOPMENT_PROFILE_UUID,
-    Entitlements: {
-      "com.apple.application-identifier": `${R5_APP_STORE_TEAM_ID}.${R5_APP_STORE_BUNDLE_ID}`,
-      "com.apple.developer.team-identifier": R5_APP_STORE_TEAM_ID,
-    },
-    ExpirationDate: new Date("2099-01-01T00:00:00.000Z"),
-    ProvisionedDevices: [R5_APP_STORE_DEVELOPMENT_DEVICE_UDID],
-  };
-  const profileBytes = Buffer.from(plist.build(profile));
   const signature = {
     bundleIdentifier: R5_APP_STORE_BUNDLE_ID,
     teamId: R5_APP_STORE_TEAM_ID,
@@ -224,7 +379,7 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
         : MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.NONE;
     return {
       path: entry.path,
-      identifier: signature.bundleIdentifier,
+      identifier: nestedSignatureIdentifier(entry.path),
       teamId: signature.teamId,
       identity: signature.identity,
       cdHash: signature.cdHash,
@@ -243,6 +398,24 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
     markerTarget: JSON.parse(marker.toString("utf8")).target,
     hostRuntimeRootRelativePath: JSON.parse(hostConfiguration.toString("utf8")).runtimeRootRelativeToUserHome,
   };
+  const signatureEvidence = {
+    verified: true,
+    ...signature,
+    nestedMachOCount: nestedMachO.length,
+    nestedMachO,
+  };
+  const masPackageEvidence = await finalizeMacOSAppStorePackageEvidence({
+    bundlePath: bundle,
+    repositoryRoot: path.resolve("."),
+    candidateSnapshot: directCompositionSource.candidateSnapshot,
+    preparedEvidence: packageEvidence,
+    signature: signatureEvidence,
+    entries,
+    machoEntries: inspectedEntries,
+    embeddedProfile,
+    profileBytes,
+    expectedElectronArchiveSha256: MAS_FIXTURE_ARCHIVE_SHA256,
+  });
   const manifest = {
     schema: "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1",
     authority: "docs/decisions/0005-mac-app-store-and-revenuecat.md",
@@ -252,6 +425,8 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
     teamId: R5_APP_STORE_TEAM_ID,
     signingIdentity: R5_APP_STORE_DEVELOPMENT_IDENTITY,
     revenueCatPublicSdkKeyEmbedded: true,
+    convexUrlEmbedded: true,
+    convexUrlSha256: createHash("sha256").update(convexUrl).digest("hex"),
     provisioningProfile: {
       name: R5_APP_STORE_DEVELOPMENT_PROFILE_NAME,
       uuid: R5_APP_STORE_DEVELOPMENT_PROFILE_UUID,
@@ -259,12 +434,7 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
       provisionedDevices: [R5_APP_STORE_DEVELOPMENT_DEVICE_UDID],
       expirationDate: profile.ExpirationDate.toISOString(),
     },
-    signature: {
-      verified: true,
-      ...signature,
-      nestedMachOCount: nestedMachO.length,
-      nestedMachO,
-    },
+    signature: signatureEvidence,
     entitlements: {
       parentKeys: Object.keys(parentEntitlements).sort(),
       childKeys: [...MACOS_APP_STORE_CHILD_ENTITLEMENTS],
@@ -275,6 +445,7 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
       platform: "mas",
       arch: "arm64",
       archiveName: "electron-v41.2.0-mas-arm64.zip",
+      archiveSha256: packageEvidence.electronArchiveSource.sha256,
       executable: path.relative(bundle, nestedElectronExecutablePath).split(path.sep).join("/"),
       architecture: "arm64",
       thin: true,
@@ -286,10 +457,9 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
     },
     packagedContract,
     directComposition: {
-      path: "release/macos/composition-manifest.direct.json",
-      sha256: createHash("sha256").update(directCompositionBytes).digest("hex"),
-      artifactDigest: directComposition.artifactDigest,
+      ...directCompositionSource.binding,
     },
+    masPackageEvidence,
     externalGates: {
       launch: "not-run",
       purchase: "not-run",
@@ -306,10 +476,10 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
     [path.join(bundle, "Contents", "Resources", "host-config.json"), hostConfiguration],
     [inventoryPath, inventoryBytes],
     [profilePath, profileBytes],
-    [path.join(bundle, "Contents", "Resources", "meetless", "runtime", "electron", "Electron.app", "Contents", "Info.plist"), electronInfo],
+    [path.join(bundle, "Contents", "Helpers", "Electron.app", "Contents", "Info.plist"), electronInfo],
   ]);
-  const signatureText = [
-    `Identifier=${signature.bundleIdentifier}`,
+  const signatureText = (identifier: string) => [
+    `Identifier=${identifier}`,
     `TeamIdentifier=${signature.teamId}`,
     `Authority=${signature.identity}`,
     `Signature=${signature.signature}`,
@@ -343,7 +513,14 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
           stderr: `Executable=${isOuter && target === bundle ? outerExecutablePath : target}\n`,
         };
       }
-      if (command === "codesign" && arguments_.includes("--verbose=4")) return { stdout: signatureText, stderr: "" };
+      if (command === "codesign" && arguments_.includes("--verbose=4")) {
+        const target = arguments_.at(-1) as string;
+        const relativePath = path.relative(bundle, target).split(path.sep).join("/");
+        const identifier = target === bundle || target === outerExecutablePath
+          ? signature.bundleIdentifier
+          : nestedSignatureIdentifier(relativePath);
+        return { stdout: signatureText(identifier), stderr: "" };
+      }
       if (command === "codesign" && arguments_.includes("--verbose=2") && arguments_.at(-1) === profilePath) {
         const error = new Error("code object is not signed at all");
         Object.assign(error, { code: 1, stdout: "", stderr: "code object is not signed at all\n" });
@@ -355,6 +532,7 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
     },
     enumeratePackageEntries: async () => entries,
     inspectPackageMachOEntries: async () => inspectedEntries,
+    verifyIndividualMachOSignatures: async () => undefined,
     inspectMachO: async (target: string) => {
       const entry = machoByPath.get(path.relative(bundle, target).split(path.sep).join("/"));
       if (!entry) return null;
@@ -365,10 +543,791 @@ async function makeMasValidationFixture({ bundle, manifestPath }: { bundle: stri
       };
     },
   };
-  return { adapters, publicSdkKey };
+  sharedMasValidationFixture = Promise.resolve({
+    adapters,
+    publicSdkKey,
+    convexUrl,
+    bundlePath: bundle,
+    manifestPath,
+    expectedElectronArchiveSha256: MAS_FIXTURE_ARCHIVE_SHA256,
+    directInventory,
+    preSignEntries,
+    preSignMachOEntries,
+    preparedEvidence: packageEvidence,
+  });
+  return sharedMasValidationFixture;
+}
+
+async function makeInstalledSignatureFixture({
+  mutatePlist,
+  manifestIdentifier = R5_APP_STORE_BUNDLE_ID,
+  signedIdentifier = R5_APP_STORE_BUNDLE_ID,
+  convexUrl = "https://meetless-installed-fixture.convex.cloud/",
+}: {
+  mutatePlist?: (info: Record<string, unknown>) => void;
+  manifestIdentifier?: string;
+  signedIdentifier?: string;
+  convexUrl?: string;
+} = {}) {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-installed-signature-fixture-")));
+  roots.push(root);
+  const bundle = path.join(root, "Meetless.app");
+  const outerPath = path.join(bundle, "Contents", "MacOS", "MeetlessHost");
+  const electronRelativePath = "Contents/Helpers/Electron.app/Contents/MacOS/Electron";
+  const electronPath = path.join(bundle, electronRelativePath);
+  const electronInfoPath = path.join(bundle, "Contents", "Helpers", "Electron.app", "Contents", "Info.plist");
+  const outerInfoPath = path.join(bundle, "Contents", "Info.plist");
+  const manifestPath = path.join(root, "app-store-development-manifest.json");
+  await mkdir(path.dirname(outerPath), { recursive: true, mode: 0o755 });
+  await mkdir(path.dirname(electronPath), { recursive: true, mode: 0o755 });
+  await writeFile(outerPath, "outer Mach-O fixture\n", { mode: 0o755 });
+  await writeFile(electronPath, "Electron Mach-O fixture\n", { mode: 0o755 });
+  await writeFile(outerInfoPath, plist.build({
+    CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
+    ElectronTeamID: R5_APP_STORE_TEAM_ID,
+    [R5_REVENUECAT_INFO_PLIST_KEY]: "appl_installed_fixture_public_key",
+    [R5_CONVEX_INFO_PLIST_KEY]: convexUrl,
+  }), { mode: 0o600 });
+  const electronInfo: Record<string, unknown> = {
+    CFBundleExecutable: "Electron",
+    CFBundleVersion: "41.2.0",
+    CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
+    ElectronTeamID: R5_APP_STORE_TEAM_ID,
+  };
+  mutatePlist?.(electronInfo);
+  await writeFile(electronInfoPath, plist.build(electronInfo), { mode: 0o600 });
+  const manifest = {
+    schema: "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1",
+    convexUrlEmbedded: true,
+    convexUrlSha256: createHash("sha256").update(convexUrl).digest("hex"),
+    electron: { executable: electronRelativePath },
+    signature: { nestedMachO: [{ path: electronRelativePath, identifier: manifestIdentifier }] },
+  };
+  const manifestBytes = Buffer.from(`${JSON.stringify(manifest)}\n`);
+  await writeFile(manifestPath, manifestBytes, { mode: 0o600 });
+  const artifactBinding = freezeMasGateArtifactBinding({
+    schema: "MAS_GATE_ARTIFACT_BINDING v1",
+    version: 1,
+    manifestPath,
+    manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+    bundlePath: bundle,
+    bundleFingerprint: "a".repeat(64),
+    artifactDigest: "b".repeat(64),
+    candidateSnapshotDigest: "c".repeat(64),
+    packageInputDigest: "d".repeat(64),
+    artifactInputDigest: "e".repeat(64),
+    licenseDigest: "f".repeat(64),
+    signatureDigest: createHash("sha256").update(JSON.stringify(manifest.signature)).digest("hex"),
+    publicSdkKeySha256: "0".repeat(64),
+  });
+  const commands: Array<{ command: string; arguments_: string[] }> = [];
+  const signatureText = [
+    `Identifier=${signedIdentifier}`,
+    `TeamIdentifier=${R5_APP_STORE_TEAM_ID}`,
+    `Authority=${R5_APP_STORE_DEVELOPMENT_IDENTITY}`,
+    "Signature=CMS",
+    `CDHash=${"a".repeat(40)}`,
+  ].join("\n");
+  const dependencies = {
+    expectedConvexUrl: convexUrl,
+    artifactValidationAdapters: {
+      runMacOSCommand: async (command: string, arguments_: string[]) => {
+        commands.push({ command, arguments_ });
+        if (command === "codesign" && arguments_.includes("--display") && arguments_.includes("--verbose=4")) {
+          return { stdout: signatureText, stderr: "" };
+        }
+        return { stdout: "", stderr: "" };
+      },
+    },
+  };
+  return {
+    root,
+    bundle,
+    electronPath,
+    electronInfoPath,
+    outerInfoPath,
+    convexUrl,
+    manifestPath,
+    artifactBinding,
+    dependencies,
+    commands,
+    receiptPath: path.join(bundle, "Contents", "Helpers", "Electron.app", "Contents", "_MASReceipt", "receipt"),
+  };
 }
 
 describe("MAS development gate coordinator", () => {
+  it("requires the locked hosted-development URL for the production authority path", async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-url-authority-test-")));
+    roots.push(root);
+    const bundlePath = path.join(root, "release", "macos", "Meetless.app");
+    const manifestPath = path.join(root, "release", "macos", "app-store-development-manifest.json");
+    await mkdir(path.dirname(bundlePath), { recursive: true, mode: 0o700 });
+    await writeFile(manifestPath, `${JSON.stringify({
+      bundlePath: "release/macos/Meetless.app",
+      directComposition: { path: "release/macos/composition-manifest.direct.json" },
+    })}\n`, { mode: 0o600 });
+    const previous = process.env.MEETLESS_CONVEX_URL;
+    try {
+      delete process.env.MEETLESS_CONVEX_URL;
+      await expect(validateMasDevelopmentInstallArtifact({
+        manifestPath,
+        bundlePath,
+        dependencies: { expectedRevenueCatPublicSdkKey: "appl_url_authority_test" },
+      })).rejects.toThrow(/expected build-scoped Convex URL authority/);
+
+      process.env.MEETLESS_CONVEX_URL = HOSTED_DEV_TARGET.cloudUrl.replace(".convex.cloud", ".alternate.convex.cloud");
+      await expect(validateMasDevelopmentInstallArtifact({
+        manifestPath,
+        bundlePath,
+        dependencies: { expectedRevenueCatPublicSdkKey: "appl_url_authority_test" },
+      })).rejects.toThrow(/hosted-development target/);
+    } finally {
+      if (previous === undefined) delete process.env.MEETLESS_CONVEX_URL;
+      else process.env.MEETLESS_CONVEX_URL = previous;
+    }
+    expect(R5_APP_STORE_DEVELOPMENT_CONVEX_URL).toBe(HOSTED_DEV_TARGET.cloudUrl);
+  });
+
+  it("binds MAS package inputs to Helpers while preserving the direct Electron prefix", () => {
+    const direct = buildMacOSPackageInputSpecs({ electronLayout: MACOS_PACKAGE_ELECTRON_LAYOUT_DIRECT });
+    const mas = buildMacOSPackageInputSpecs({
+      electronLayout: MACOS_PACKAGE_ELECTRON_LAYOUT_MAS,
+      electronArchiveSource: {
+        schema: "MEETLESS_MAS_ELECTRON_ARCHIVE_SOURCE v1",
+        archiveName: MACOS_APP_STORE_CONTRACT.electron.archiveName,
+        path: path.resolve("/tmp", MACOS_APP_STORE_CONTRACT.electron.archiveName),
+        sha256: MACOS_APP_STORE_CONTRACT.electron.sha256,
+      },
+    });
+    const directElectron = direct.find(({ id }) => id === "electron-runtime-input");
+    const masElectron = mas.find(({ id }) => id === "electron-runtime-input");
+    expect(directElectron?.artifactPathPrefixes).toContain("Contents/Resources/meetless/runtime/electron/");
+    expect(directElectron?.artifactPathPrefixes).not.toContain("Contents/Helpers/Electron.app/");
+    expect(masElectron?.artifactPathPrefixes).toContain("Contents/Helpers/Electron.app/");
+    expect(masElectron?.artifactPathPrefixes).not.toContain("Contents/Resources/meetless/runtime/electron/");
+    expect(() => buildMacOSPackageInputSpecs({ electronLayout: "unexpected" as never })).toThrow(/accepted MAS Contents\/Helpers layout/);
+  });
+
+  it("binds the staged profile and exact seven nested CodeResources across MAS evidence", { timeout: 300_000 }, async () => {
+    const fixture = await makeMasValidationFixture();
+    const manifest = JSON.parse((await fixture.adapters.readSecureFile(fixture.manifestPath, "fixture manifest")).toString("utf8"));
+    const evidence = manifest.masPackageEvidence;
+    const inventoryBytes = await readFile(path.join(fixture.bundlePath, evidence.licenseInventory.path));
+    const inventory = JSON.parse(inventoryBytes.toString("utf8"));
+    const entries = await fixture.adapters.enumeratePackageEntries();
+    const machoEntries = await fixture.adapters.inspectPackageMachOEntries();
+    const profileBytes = await readFile(path.join(fixture.bundlePath, MACOS_MAS_EMBEDDED_PROFILE_PATH));
+    expect(validateMacOSMasSigningBoundaryEntries(fixture.preSignEntries, {
+      phase: MACOS_MAS_SIGNING_BOUNDARY_PHASE_PRE_SIGN,
+      expectedMachoPaths: fixture.preSignMachOEntries.map((entry) => entry.path),
+    })).toEqual([MACOS_MAS_OUTER_CODE_RESOURCES_PATH]);
+    expect(validateMacOSMasSigningBoundaryEntries(entries, {
+      phase: MACOS_MAS_SIGNING_BOUNDARY_PHASE_FINAL,
+      expectedMachoPaths: machoEntries.map((entry) => entry.path),
+    })).toEqual(evidence.signingBoundary.codeResources);
+    const validation = () => validateMasPackageEvidenceInputs(evidence, {
+      entries,
+      machoEntries,
+      inventory,
+      inventoryBytes,
+      bundlePath: fixture.bundlePath,
+      candidateSnapshot: manifest.directComposition.candidateSnapshot,
+      embeddedProfile: evidence.embeddedProfile,
+      profileBytes,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+    });
+
+    expect(validation()).toBe(evidence);
+    expect(evidence.embeddedProfile).toMatchObject({
+      path: MACOS_MAS_EMBEDDED_PROFILE_PATH,
+      sha256: createHash("sha256").update(profileBytes).digest("hex"),
+      size: profileBytes.byteLength,
+    });
+    expect(evidence.embeddedProfile.sha256).toBe(manifest.provisioningProfile.sha256);
+    const masElectronComponent = inventory.components.find((component: { id: string }) => component.id === "electron-chromium");
+    expect(masElectronComponent?.provenance.sourceType).toBe("pinned-MAS-Electron-archive-and-Chromium-runtime");
+    expect(path.isAbsolute(evidence.electronArchiveSource.path)).toBe(true);
+    expect(masElectronComponent?.provenance.sourcePaths).toEqual([
+      "docs/decisions/0001-maintained-paseo-fork.md",
+      "scripts/package-macos.mjs",
+      evidence.electronArchiveSource.path,
+    ]);
+    const directElectronComponent = fixture.directInventory.components.find((component: { id: string }) => component.id === "electron-chromium");
+    expect(directElectronComponent?.provenance.sourceType).toBe("Electron-distribution-and-Chromium-runtime");
+    expect(directElectronComponent?.provenance.sourcePaths).toEqual([
+      "docs/decisions/0001-maintained-paseo-fork.md",
+      "scripts/package-macos.mjs",
+      "node_modules/electron/package.json",
+      "node_modules/electron/LICENSE",
+      "node_modules/electron/dist/LICENSES.chromium.html",
+    ]);
+    expect(evidence.signingBoundary.signingMutatedCodeResources).toEqual([...MACOS_MAS_SIGNING_MUTATED_CODE_RESOURCES]);
+    expect(evidence.signingBoundary.codeResources).toHaveLength(MACOS_MAS_SIGNING_MUTATED_CODE_RESOURCES.length + 1);
+    expect(evidence.signingBoundary.codeResources).toContain(MACOS_MAS_OUTER_CODE_RESOURCES_PATH);
+    expect(evidence.artifact.codeResources.map((entry: { path: string }) => entry.path)).toEqual(evidence.signingBoundary.codeResources);
+    expect(evidence.packageInputs.artifactInput.excludedPaths).toEqual(evidence.signingBoundary.excludedPaths);
+    expect(inventory.artifact.entryBinding.signingBoundary).toEqual(evidence.signingBoundary);
+    expect(inventory.artifact.packageInputBinding).toEqual(createLicenseInventoryPackageInputBinding(evidence.packageInputs));
+    expect(fixture.preparedEvidence.signingBoundary).toEqual(evidence.signingBoundary);
+  });
+
+  it.each([
+    ["head", (snapshot: Record<string, any>) => { snapshot.head = snapshot.head === "0".repeat(40) ? "1".repeat(40) : "0".repeat(40); }],
+    ["paseoCommit", (snapshot: Record<string, any>) => { snapshot.paseoCommit = snapshot.paseoCommit === "0".repeat(40) ? "1".repeat(40) : "0".repeat(40); }],
+  ] as const)("rejects an independently stale valid-format inventory candidate snapshot %s", { timeout: 300_000 }, async (_label, mutate) => {
+    const fixture = await makeMasValidationFixture();
+    const manifest = JSON.parse((await fixture.adapters.readSecureFile(fixture.manifestPath, "fixture manifest")).toString("utf8"));
+    const evidence = manifest.masPackageEvidence;
+    const inventoryBytes = await readFile(path.join(fixture.bundlePath, evidence.licenseInventory.path));
+    const inventory = JSON.parse(inventoryBytes.toString("utf8"));
+    mutate(inventory.artifact.candidateSnapshot);
+    const entries = await fixture.adapters.enumeratePackageEntries();
+    const machoEntries = await fixture.adapters.inspectPackageMachOEntries();
+
+    expect(() => validateMasPackageEvidenceInputs(evidence, {
+      entries,
+      machoEntries,
+      inventory,
+      inventoryBytes,
+      bundlePath: fixture.bundlePath,
+      candidateSnapshot: manifest.directComposition.candidateSnapshot,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+    })).toThrow(/MAS license inventory candidate snapshot differs from the evidence\.packageInputs source snapshot/);
+  });
+
+  it.each([
+    ["package-input digest", (binding: Record<string, any>) => { binding.digest = "0".repeat(64); }],
+    ["source snapshot digest", (binding: Record<string, any>) => { binding.sourceSnapshotDigest = "1".repeat(64); }],
+    ["artifact-input digest", (binding: Record<string, any>) => { binding.artifactInputDigest = "2".repeat(64); }],
+    ["signing boundary", (binding: Record<string, any>) => { binding.signingBoundary = { ...binding.signingBoundary, phase: MACOS_MAS_SIGNING_BOUNDARY_PHASE_FINAL }; }],
+    ["package member digest", (binding: Record<string, any>) => { binding.packageMemberDigest = "3".repeat(64); }],
+    ["package member count", (binding: Record<string, any>) => { binding.packageMemberCount += 1; }],
+    ["workspace member digest", (binding: Record<string, any>) => { binding.workspaceMemberDigest = "4".repeat(64); }],
+    ["workspace member count", (binding: Record<string, any>) => { binding.workspaceMemberCount += 1; }],
+    ["input count", (binding: Record<string, any>) => { binding.inputCount += 1; }],
+    ["lock metadata gap count", (binding: Record<string, any>) => { binding.lockMetadataGapCount += 1; }],
+  ] as const)("rejects an independently stale %s inventory package-input binding", { timeout: 300_000 }, async (_label, mutate) => {
+    const fixture = await makeMasValidationFixture();
+    const manifest = JSON.parse((await fixture.adapters.readSecureFile(fixture.manifestPath, "fixture manifest")).toString("utf8"));
+    const evidence = manifest.masPackageEvidence;
+    const inventoryBytes = await readFile(path.join(fixture.bundlePath, evidence.licenseInventory.path));
+    const inventory = JSON.parse(inventoryBytes.toString("utf8"));
+    mutate(inventory.artifact.packageInputBinding);
+    const entries = await fixture.adapters.enumeratePackageEntries();
+    const machoEntries = await fixture.adapters.inspectPackageMachOEntries();
+
+    expect(() => validateMasPackageEvidenceInputs(evidence, {
+      entries,
+      machoEntries,
+      inventory,
+      inventoryBytes,
+      bundlePath: fixture.bundlePath,
+      candidateSnapshot: manifest.directComposition.candidateSnapshot,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+    })).toThrow(/package-input binding differs from the evidence\.packageInputs projection/);
+  });
+
+  it("rejects a self-consistent inventory summary rewrite at the MAS evidence boundary", { timeout: 300_000 }, async () => {
+    const fixture = await makeMasValidationFixture();
+    const manifest = JSON.parse((await fixture.adapters.readSecureFile(fixture.manifestPath, "fixture manifest")).toString("utf8"));
+    const evidence = manifest.masPackageEvidence;
+    const inventoryBytes = await readFile(path.join(fixture.bundlePath, evidence.licenseInventory.path));
+    const inventory = JSON.parse(inventoryBytes.toString("utf8"));
+    const rewritten = structuredClone(inventory);
+    const jsClosure = rewritten.components.find((component: Record<string, any>) => component.id === "js-closure");
+    if (!jsClosure) throw new Error("fixture inventory is missing js-closure");
+    const lockMetadataGaps = jsClosure.declaredLicenseEvidence.lockMetadataGaps ?? [];
+    jsClosure.declaredLicenseEvidence.lockMetadataGaps = [
+      ...lockMetadataGaps,
+      { lockFile: "package-lock.json", lockPath: "node_modules/forged", name: "forged", version: null },
+    ];
+    rewritten.summary.lockMetadataGapCount += 1;
+    rewritten.artifact.packageInputBinding.lockMetadataGapCount = rewritten.summary.lockMetadataGapCount;
+    const entries = await fixture.adapters.enumeratePackageEntries();
+    const machoEntries = await fixture.adapters.inspectPackageMachOEntries();
+
+    expect(() => validateLicenseInventoryCoverage(
+      rewritten,
+      entries,
+      evidence.licenseInventory,
+      machoEntries.map((entry: { path: string }) => entry.path),
+      {
+        route: "mas",
+        masSigningPhase: MACOS_MAS_SIGNING_BOUNDARY_PHASE_FINAL,
+        expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+      },
+    )).not.toThrow();
+    expect(() => validateMasPackageEvidenceInputs(evidence, {
+      entries,
+      machoEntries,
+      inventory: rewritten,
+      inventoryBytes,
+      bundlePath: fixture.bundlePath,
+      candidateSnapshot: manifest.directComposition.candidateSnapshot,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+    })).toThrow(/package-input binding differs from the evidence\.packageInputs projection/);
+  });
+
+  it("applies the same package-input cross-binding at installed-consumer source validation", { timeout: 300_000 }, async () => {
+    const fixture = await makeMasValidationFixture();
+    const manifest = JSON.parse((await fixture.adapters.readSecureFile(fixture.manifestPath, "fixture manifest")).toString("utf8"));
+    const evidence = manifest.masPackageEvidence;
+    const inventoryPath = path.join(fixture.bundlePath, evidence.licenseInventory.path);
+    const originalInventoryBytes = await readFile(inventoryPath);
+    const inventory = JSON.parse(originalInventoryBytes.toString("utf8"));
+    inventory.artifact.packageInputBinding.inputCount += 1;
+    await writeFile(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`, { mode: 0o644 });
+    try {
+      await expect(verifyMacOSAppStorePackageEvidenceSources({
+        evidence,
+        repositoryRoot: path.resolve("."),
+        bundlePath: fixture.bundlePath,
+        candidateSnapshot: evidence.packageInputs.sourceSnapshot,
+        expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+      })).rejects.toThrow(/package-input binding differs from the evidence\.packageInputs projection/);
+    } finally {
+      await writeFile(inventoryPath, originalInventoryBytes, { mode: 0o644 });
+    }
+  });
+
+  it.each([
+    ["head", (snapshot: Record<string, any>) => { snapshot.head = snapshot.head === "0".repeat(40) ? "1".repeat(40) : "0".repeat(40); }],
+    ["paseoCommit", (snapshot: Record<string, any>) => { snapshot.paseoCommit = snapshot.paseoCommit === "0".repeat(40) ? "1".repeat(40) : "0".repeat(40); }],
+  ] as const)("rejects an independently stale %s inventory candidate snapshot at installed-consumer validation", { timeout: 300_000 }, async (_label, mutate) => {
+    const fixture = await makeMasValidationFixture();
+    const manifest = JSON.parse((await fixture.adapters.readSecureFile(fixture.manifestPath, "fixture manifest")).toString("utf8"));
+    const evidence = manifest.masPackageEvidence;
+    const inventoryPath = path.join(fixture.bundlePath, evidence.licenseInventory.path);
+    const originalInventoryBytes = await readFile(inventoryPath);
+    const inventory = JSON.parse(originalInventoryBytes.toString("utf8"));
+    mutate(inventory.artifact.candidateSnapshot);
+    await writeFile(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`, { mode: 0o644 });
+    try {
+      await expect(verifyMacOSAppStorePackageEvidenceSources({
+        evidence,
+        repositoryRoot: path.resolve("."),
+        bundlePath: fixture.bundlePath,
+        candidateSnapshot: evidence.packageInputs.sourceSnapshot,
+        expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+      })).rejects.toThrow(/MAS license inventory candidate snapshot differs from the evidence\.packageInputs source snapshot/);
+    } finally {
+      await writeFile(inventoryPath, originalInventoryBytes, { mode: 0o644 });
+    }
+  });
+
+  it("rejects signer-created nested CodeResources during the pre-sign phase", { timeout: 300_000 }, async () => {
+    const fixture = await makeMasValidationFixture();
+    const manifest = JSON.parse((await fixture.adapters.readSecureFile(fixture.manifestPath, "fixture manifest")).toString("utf8"));
+    const evidence = fixture.preparedEvidence;
+    const inventoryBytes = await readFile(path.join(fixture.bundlePath, evidence.licenseInventory.path));
+    const inventory = JSON.parse(inventoryBytes.toString("utf8"));
+    const nestedPath = MACOS_MAS_SIGNING_MUTATED_CODE_RESOURCES[0];
+    const tooEarlyEntries = [...fixture.preSignEntries, { path: nestedPath, type: "file", size: 1, sha256: "1".repeat(64) }]
+      .sort((left, right) => left.path.localeCompare(right.path));
+    expect(() => validateMasPackageEvidenceInputs(evidence, {
+      entries: tooEarlyEntries,
+      machoEntries: fixture.preSignMachOEntries,
+      inventory,
+      inventoryBytes,
+      bundlePath: fixture.bundlePath,
+      candidateSnapshot: manifest.directComposition.candidateSnapshot,
+      validateInventory: false,
+      masSigningPhase: MACOS_MAS_SIGNING_BOUNDARY_PHASE_PRE_SIGN,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+    })).toThrow(/pre-sign package CodeResources path set differs from the exact MAS signer-mutated set/);
+  });
+
+  it("rejects absent, mutated, or substituted embedded profile evidence before MAS acceptance", { timeout: 300_000 }, async () => {
+    const fixture = await makeMasValidationFixture();
+    const manifest = JSON.parse((await fixture.adapters.readSecureFile(fixture.manifestPath, "fixture manifest")).toString("utf8"));
+    const evidence = manifest.masPackageEvidence;
+    const inventoryBytes = await readFile(path.join(fixture.bundlePath, evidence.licenseInventory.path));
+    const inventory = JSON.parse(inventoryBytes.toString("utf8"));
+    const entries = await fixture.adapters.enumeratePackageEntries();
+    const machoEntries = await fixture.adapters.inspectPackageMachOEntries();
+    const options = {
+      machoEntries,
+      inventory,
+      inventoryBytes,
+      bundlePath: fixture.bundlePath,
+      candidateSnapshot: manifest.directComposition.candidateSnapshot,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+    };
+    const absent = entries.filter((entry) => entry.path !== MACOS_MAS_EMBEDDED_PROFILE_PATH);
+    expect(() => validateMasPackageEvidenceInputs(evidence, { ...options, entries: absent })).toThrow(/embedded profile entry is absent/);
+
+    const mutated = entries.map((entry) => entry.path === MACOS_MAS_EMBEDDED_PROFILE_PATH
+      ? { ...entry, sha256: "0".repeat(64) }
+      : entry);
+    expect(() => validateMasPackageEvidenceInputs(evidence, { ...options, entries: mutated })).toThrow(/embedded profile entry is absent or differs/);
+
+    expect(() => validateMasPackageEvidenceInputs(evidence, {
+      ...options,
+      entries,
+      profileBytes: Buffer.from("substituted profile bytes\n"),
+    })).toThrow(/embedded profile bytes differ/);
+  });
+
+  it("rejects missing or extra nested CodeResources and ordinary-payload mutation", { timeout: 300_000 }, async () => {
+    const fixture = await makeMasValidationFixture();
+    const manifest = JSON.parse((await fixture.adapters.readSecureFile(fixture.manifestPath, "fixture manifest")).toString("utf8"));
+    const evidence = manifest.masPackageEvidence;
+    const inventoryBytes = await readFile(path.join(fixture.bundlePath, evidence.licenseInventory.path));
+    const inventory = JSON.parse(inventoryBytes.toString("utf8"));
+    const entries = await fixture.adapters.enumeratePackageEntries();
+    const machoEntries = await fixture.adapters.inspectPackageMachOEntries();
+    const options = {
+      machoEntries,
+      inventory,
+      inventoryBytes,
+      bundlePath: fixture.bundlePath,
+      candidateSnapshot: manifest.directComposition.candidateSnapshot,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+    };
+    const nestedPath = MACOS_MAS_SIGNING_MUTATED_CODE_RESOURCES[0];
+    expect(() => validateMasPackageEvidenceInputs(evidence, {
+      ...options,
+      entries: entries.filter((entry) => entry.path !== nestedPath),
+    })).toThrow(/exact MAS signer-mutated/);
+
+    const extraPath = "Contents/Helpers/Electron.app/Contents/Frameworks/Unexpected.framework/_CodeSignature/CodeResources";
+    const extraEntries = [...entries, { path: extraPath, type: "file", size: 1, sha256: "1".repeat(64) }]
+      .sort((left, right) => left.path.localeCompare(right.path));
+    expect(() => validateMasPackageEvidenceInputs(evidence, { ...options, entries: extraEntries })).toThrow(/exact MAS signer-mutated/);
+
+    const ordinary = entries.map((entry) => entry.path === "Contents/Info.plist"
+      ? { ...entry, sha256: "2".repeat(64) }
+      : entry);
+    expect(() => validateMasPackageEvidenceInputs(evidence, { ...options, entries: ordinary })).toThrow(/package-input artifact digest differs/);
+  });
+
+  it("keeps arbitrary outer signature payload in the MAS digest while preserving the direct prefix", { timeout: 300_000 }, async () => {
+    const fixture = await makeMasValidationFixture();
+    const manifest = JSON.parse((await fixture.adapters.readSecureFile(fixture.manifestPath, "fixture manifest")).toString("utf8"));
+    const evidence = manifest.masPackageEvidence;
+    const entries = await fixture.adapters.enumeratePackageEntries();
+    const masDigestOptions = {
+      excludedPaths: evidence.signingBoundary.excludedPaths,
+      signingBoundary: evidence.signingBoundary,
+      expectedMachoPaths: evidence.signingBoundary.machoPaths,
+    };
+    const extraPath = "Contents/_CodeSignature/Unexpected";
+    const extraEntry = { path: extraPath, type: "file", size: 1, sha256: "1".repeat(64) };
+    const withExtra = [...entries, extraEntry].sort((left, right) => left.path.localeCompare(right.path));
+
+    expect(selectArtifactEntriesForDigest(withExtra).length).toBe(selectArtifactEntriesForDigest(entries).length);
+    expect(digestArtifactEntries(withExtra)).toBe(digestArtifactEntries(entries));
+    expect(selectArtifactEntriesForDigest(withExtra, masDigestOptions).length)
+      .toBe(selectArtifactEntriesForDigest(entries, masDigestOptions).length + 1);
+    expect(digestArtifactEntries(withExtra, masDigestOptions)).not.toBe(digestArtifactEntries(entries, masDigestOptions));
+
+    const mutatedExtra = withExtra.map((entry) => entry.path === extraPath
+      ? { ...entry, sha256: "2".repeat(64) }
+      : entry);
+    expect(digestArtifactEntries(mutatedExtra, masDigestOptions)).not.toBe(digestArtifactEntries(withExtra, masDigestOptions));
+    expect(digestArtifactEntries(mutatedExtra)).toBe(digestArtifactEntries(withExtra));
+  });
+
+  it("rejects an arbitrary mutation of the final outer CodeResources payload", { timeout: 300_000 }, async () => {
+    const fixture = await makeMasValidationFixture();
+    const manifest = JSON.parse((await fixture.adapters.readSecureFile(fixture.manifestPath, "fixture manifest")).toString("utf8"));
+    const evidence = manifest.masPackageEvidence;
+    const inventoryBytes = await readFile(path.join(fixture.bundlePath, evidence.licenseInventory.path));
+    const inventory = JSON.parse(inventoryBytes.toString("utf8"));
+    const entries = await fixture.adapters.enumeratePackageEntries();
+    const machoEntries = await fixture.adapters.inspectPackageMachOEntries();
+    const mutatedEntries = entries.map((entry) => entry.path === MACOS_MAS_OUTER_CODE_RESOURCES_PATH
+      ? { ...entry, sha256: "0".repeat(64) }
+      : entry);
+    expect(() => validateMasPackageEvidenceInputs(evidence, {
+      entries: mutatedEntries,
+      machoEntries,
+      inventory,
+      inventoryBytes,
+      bundlePath: fixture.bundlePath,
+      candidateSnapshot: manifest.directComposition.candidateSnapshot,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+    })).toThrow(/final MAS artifact-entry evidence differs from the signed bundle/);
+  });
+
+  it("rejects stale direct-layout package evidence and final entry mutations", { timeout: 300_000 }, async () => {
+    const fixture = await makeMasValidationFixture();
+    const manifest = JSON.parse((await fixture.adapters.readSecureFile(fixture.manifestPath, "fixture manifest")).toString("utf8"));
+    const inventoryBytes = await readFile(path.join(fixture.bundlePath, manifest.masPackageEvidence.licenseInventory.path));
+    const inventory = JSON.parse(inventoryBytes.toString("utf8"));
+    const entries = await fixture.adapters.enumeratePackageEntries();
+    const machoEntries = await fixture.adapters.inspectPackageMachOEntries();
+    const directEvidence = structuredClone(manifest.masPackageEvidence);
+    const electronInput = directEvidence.packageInputs.inputs.find((input: { id: string }) => input.id === "electron-runtime-input");
+    if (!electronInput) throw new Error("fixture MAS package input is missing Electron");
+    electronInput.artifactPathPrefixes = electronInput.artifactPathPrefixes.map((prefix: string) =>
+      prefix.startsWith("Contents/Helpers/Electron.app/")
+        ? prefix.replace("Contents/Helpers/Electron.app/", "Contents/Resources/meetless/runtime/electron/")
+        : prefix,
+    );
+    directEvidence.packageInputs.digest = digestJson({ ...directEvidence.packageInputs, digest: undefined });
+    expect(() => validateMasPackageEvidenceInputs(directEvidence, {
+      entries,
+      machoEntries,
+      inventory,
+      inventoryBytes,
+      bundlePath: fixture.bundlePath,
+      candidateSnapshot: manifest.directComposition.candidateSnapshot,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+    })).toThrow(/direct Electron prefix/);
+
+    const staleInventory = structuredClone(inventory);
+    staleInventory.artifact.manifestPath = "release/macos/composition-manifest.json";
+    expect(() => validateMasPackageEvidenceInputs(manifest.masPackageEvidence, {
+      entries,
+      machoEntries,
+      inventory: staleInventory,
+      inventoryBytes,
+      bundlePath: fixture.bundlePath,
+      candidateSnapshot: manifest.directComposition.candidateSnapshot,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+    })).toThrow(/license inventory artifact binding is missing or invalid/);
+
+    const mutatedEntries = entries.map((entry, index) => index === 0 ? { ...entry, sha256: "0".repeat(64) } : entry);
+    expect(() => validateMasPackageEvidenceInputs(manifest.masPackageEvidence, {
+      entries: mutatedEntries,
+      machoEntries,
+      inventory,
+      inventoryBytes,
+      bundlePath: fixture.bundlePath,
+      candidateSnapshot: manifest.directComposition.candidateSnapshot,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+    })).toThrow(/artifact-entry evidence differs from the signed bundle/);
+  });
+
+  it("passes strict/deep MAS signature proof before and after an opaque Helpers receipt is inserted", async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-receipt-signature-test-")));
+    roots.push(root);
+    const bundle = path.join(root, "Meetless.app");
+    const outerPath = path.join(bundle, "Contents", "MacOS", "MeetlessHost");
+    const electronRelativePath = "Contents/Helpers/Electron.app/Contents/MacOS/Electron";
+    const electronPath = path.join(bundle, electronRelativePath);
+    const electronInfoPath = path.join(bundle, "Contents", "Helpers", "Electron.app", "Contents", "Info.plist");
+    const outerInfoPath = path.join(bundle, "Contents", "Info.plist");
+    await mkdir(path.dirname(outerPath), { recursive: true, mode: 0o755 });
+    await mkdir(path.dirname(electronPath), { recursive: true, mode: 0o755 });
+    await writeFile(outerPath, "outer Mach-O fixture\n", { mode: 0o755 });
+    await writeFile(electronPath, "Electron Mach-O fixture\n", { mode: 0o755 });
+    const convexUrl = "https://meetless-installed-receipt-fixture.convex.cloud/";
+    await writeFile(outerInfoPath, plist.build({
+      CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
+      ElectronTeamID: R5_APP_STORE_TEAM_ID,
+      [R5_REVENUECAT_INFO_PLIST_KEY]: "appl_installed_receipt_fixture_key",
+      [R5_CONVEX_INFO_PLIST_KEY]: convexUrl,
+    }), { mode: 0o600 });
+    await writeFile(electronInfoPath, plist.build({
+      CFBundleExecutable: "Electron",
+      CFBundleVersion: "41.2.0",
+      CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
+      ElectronTeamID: R5_APP_STORE_TEAM_ID,
+    }), { mode: 0o600 });
+
+    const manifestPath = path.join(root, "app-store-development-manifest.json");
+    const manifest = {
+      schema: "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1",
+      convexUrlEmbedded: true,
+      convexUrlSha256: createHash("sha256").update(convexUrl).digest("hex"),
+      electron: { executable: electronRelativePath },
+      signature: { nestedMachO: [{ path: electronRelativePath, identifier: R5_APP_STORE_BUNDLE_ID }] },
+    };
+    const manifestBytes = Buffer.from(`${JSON.stringify(manifest)}\n`);
+    await writeFile(manifestPath, manifestBytes, { mode: 0o600 });
+    const artifactBinding = freezeMasGateArtifactBinding({
+      schema: "MAS_GATE_ARTIFACT_BINDING v1",
+      version: 1,
+      manifestPath,
+      manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+      bundlePath: bundle,
+      bundleFingerprint: "a".repeat(64),
+      artifactDigest: "b".repeat(64),
+      candidateSnapshotDigest: "c".repeat(64),
+      packageInputDigest: "d".repeat(64),
+      artifactInputDigest: "e".repeat(64),
+      licenseDigest: "f".repeat(64),
+      signatureDigest: createHash("sha256").update(JSON.stringify(manifest.signature)).digest("hex"),
+      publicSdkKeySha256: "0".repeat(64),
+    });
+    const commands: Array<{ command: string; arguments_: string[] }> = [];
+    const electronSignatureText = [
+      `Identifier=${R5_APP_STORE_BUNDLE_ID}`,
+      `TeamIdentifier=${R5_APP_STORE_TEAM_ID}`,
+      `Authority=${R5_APP_STORE_DEVELOPMENT_IDENTITY}`,
+      "Signature=CMS",
+      `CDHash=${"a".repeat(40)}`,
+    ].join("\n");
+    const dependencies = {
+      expectedConvexUrl: convexUrl,
+      artifactValidationAdapters: {
+        runMacOSCommand: async (command: string, arguments_: string[]) => {
+          commands.push({ command, arguments_ });
+          if (command === "codesign" && arguments_.includes("--display") && arguments_.includes("--verbose=4")) {
+            return { stdout: electronSignatureText, stderr: "" };
+          }
+          return { stdout: "", stderr: "" };
+        },
+      },
+    };
+    const expectedCommands = [
+      ["codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundle]],
+      ["codesign", ["--verify", "--strict", "--verbose=2", outerPath]],
+      ["codesign", ["--verify", "--strict", "--verbose=2", electronPath]],
+      ["codesign", ["--display", "--verbose=4", electronPath]],
+    ];
+
+    await expect(validateMasDevelopmentInstalledSignatures({ manifestPath, bundlePath: bundle, artifactBinding, dependencies })).resolves.toMatchObject({ status: "passed" });
+    expect(commands).toEqual(expectedCommands.map(([command, arguments_]) => ({ command, arguments_ })));
+
+    const receiptDirectory = path.join(bundle, "Contents", "Helpers", "Electron.app", "Contents", "_MASReceipt");
+    await mkdir(receiptDirectory, { recursive: true, mode: 0o755 });
+    await writeFile(path.join(receiptDirectory, "receipt"), "opaque receipt bytes are never inspected\n", { mode: 0o600 });
+    commands.length = 0;
+    await expect(validateMasDevelopmentInstalledSignatures({ manifestPath, bundlePath: bundle, artifactBinding, dependencies })).resolves.toMatchObject({ status: "passed" });
+    expect(commands).toEqual(expectedCommands.map(([command, arguments_]) => ({ command, arguments_ })));
+
+    await mkdir(path.join(bundle, "Contents", "Resources", "meetless", "runtime", "electron", "Electron.app"), { recursive: true, mode: 0o755 });
+    await expect(validateMasDevelopmentInstalledSignatures({ manifestPath, bundlePath: bundle, artifactBinding, dependencies })).rejects.toThrow(/legacy Electron app layout/);
+  });
+
+  it("rejects a self-consistent alternate Convex URL when the out-of-band authority differs", async () => {
+    const fixture = await makeInstalledSignatureFixture({ convexUrl: "https://alternate-fixture.convex.cloud/" });
+    await expect(validateMasDevelopmentInstalledSignatures({
+      manifestPath: fixture.manifestPath,
+      bundlePath: fixture.bundle,
+      artifactBinding: fixture.artifactBinding,
+      dependencies: { ...fixture.dependencies, expectedConvexUrl: "https://meetless-authority.convex.cloud/" },
+    })).rejects.toThrow(/expected build-scoped Convex URL hash/);
+  });
+
+  it("rejects a signed outer Info.plist Convex URL mismatch before launch", async () => {
+    const fixture = await makeInstalledSignatureFixture();
+    const outerInfo = plist.parse((await readFile(fixture.outerInfoPath)).toString("utf8")) as Record<string, unknown>;
+    outerInfo[R5_CONVEX_INFO_PLIST_KEY] = "https://alternate-fixture.convex.cloud/";
+    await writeFile(fixture.outerInfoPath, plist.build(outerInfo), { mode: 0o600 });
+    await expect(validateMasDevelopmentInstalledSignatures({
+      manifestPath: fixture.manifestPath,
+      bundlePath: fixture.bundle,
+      artifactBinding: fixture.artifactBinding,
+      dependencies: fixture.dependencies,
+    })).rejects.toThrow(/different build-scoped Convex URL/);
+  });
+
+  it.each<[string, Parameters<typeof makeInstalledSignatureFixture>[0], RegExp]>([
+    ["missing plist CFBundleIdentifier", { mutatePlist: (info) => { delete info.CFBundleIdentifier; } }, /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app/],
+    ["wrong plist CFBundleIdentifier", { mutatePlist: (info) => { info.CFBundleIdentifier = "com.github.Electron"; } }, /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app/],
+    ["missing ElectronTeamID", { mutatePlist: (info) => { delete info.ElectronTeamID; } }, /signed Electron MAS Info\.plist ElectronTeamID does not match the accepted Apple Team ID/],
+    ["wrong ElectronTeamID", { mutatePlist: (info) => { info.ElectronTeamID = "WRONGTEAMID"; } }, /signed Electron MAS Info\.plist ElectronTeamID does not match the accepted Apple Team ID/],
+    ["wrong immutable manifest main Electron identifier", { manifestIdentifier: "com.github.Electron" }, /main Electron identifier is com\.github\.Electron; expected com\.meetless\.app/],
+    ["wrong actual codesign main Electron identifier", { signedIdentifier: "com.github.Electron" }, /signature identifier is com\.github\.Electron, expected com\.meetless\.app/],
+  ])("rejects %s during launch signature recheck without reading receipt bytes", async (_label, options, expectedDiagnostic) => {
+    const fixture = await makeInstalledSignatureFixture(options);
+    await mkdir(path.dirname(fixture.receiptPath), { recursive: true, mode: 0o755 });
+    await writeFile(fixture.receiptPath, "opaque receipt bytes are never inspected\n", { mode: 0o600 });
+    const receiptBytes = await readFile(fixture.receiptPath);
+    const bundleIdentity = await lstat(fixture.bundle);
+
+    await expect(validateMasDevelopmentInstalledSignatures({
+      manifestPath: fixture.manifestPath,
+      bundlePath: fixture.bundle,
+      artifactBinding: fixture.artifactBinding,
+      dependencies: fixture.dependencies,
+    })).rejects.toThrow(expectedDiagnostic);
+    await expect(readFile(fixture.receiptPath)).resolves.toEqual(receiptBytes);
+    await expect(lstat(fixture.bundle)).resolves.toMatchObject({
+      dev: bundleIdentity.dev,
+      ino: bundleIdentity.ino,
+      nlink: bundleIdentity.nlink,
+      size: bundleIdentity.size,
+    });
+    expect(fixture.commands.some(({ arguments_ }) => arguments_.some((argument) => argument.includes("_MASReceipt")))).toBe(false);
+  });
+
+  it.each([
+    ["missing plist CFBundleIdentifier", "missing-plist-bundle-id", /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app/],
+    ["wrong plist CFBundleIdentifier", "wrong-plist-bundle-id", /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app/],
+    ["missing ElectronTeamID", "missing-plist-team-id", /signed Electron MAS Info\.plist ElectronTeamID does not match the accepted Apple Team ID/],
+    ["wrong ElectronTeamID", "wrong-plist-team-id", /signed Electron MAS Info\.plist ElectronTeamID does not match the accepted Apple Team ID/],
+    ["wrong signed main Electron identifier", "wrong-signed-main-id", /Contents\/Helpers\/Electron\.app\/Contents\/MacOS\/Electron signature identifier is com\.github\.Electron, expected com\.meetless\.app/],
+  ] as const)("rejects %s before install/runtime mutation", { timeout: 300_000 }, async (_label, mutation, expectedDiagnostic) => {
+    const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-electron-identity-negative-test-")));
+    roots.push(base);
+    const context = masDevelopmentRuntimeContext({ userHome: base });
+    await mkdir(context.parentPath, { recursive: true, mode: 0o700 });
+    await mkdir(context.runtimeRoot, { recursive: true, mode: 0o700 });
+    await seedMasSessionIndex(context);
+    const prior = path.join(context.runtimeRoot, "prior.txt");
+    await writeFile(prior, "prior\n", { mode: 0o600 });
+    const packageTargetBefore = await lstat(context.bundlePath).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    const sessionIndexPath = path.join(context.parentPath, MAS_GATE_SESSION_INDEX_BASENAME);
+    const sessionIndexBytes = await readFile(sessionIndexPath, "utf8");
+    const fixture = await makeMasValidationFixture();
+    const electronInfoPath = path.resolve(fixture.bundlePath, "Contents", "Helpers", "Electron.app", "Contents", "Info.plist");
+    const mainElectronPath = path.resolve(fixture.bundlePath, "Contents", "Helpers", "Electron.app", "Contents", "MacOS", "Electron");
+    const originalReadSecureFile = fixture.adapters.readSecureFile;
+    const originalRunMacOSCommand = fixture.adapters.runMacOSCommand;
+    const adapters = {
+      ...fixture.adapters,
+      readSecureFile: async (target: string, label: string) => {
+        const bytes = await originalReadSecureFile(target, label);
+        if (path.resolve(target) !== electronInfoPath || !mutation.startsWith("missing-plist") && !mutation.startsWith("wrong-plist")) {
+          return bytes;
+        }
+        const info = plist.parse(bytes.toString("utf8")) as Record<string, unknown>;
+        if (mutation === "missing-plist-bundle-id") delete info.CFBundleIdentifier;
+        if (mutation === "wrong-plist-bundle-id") info.CFBundleIdentifier = "com.github.Electron";
+        if (mutation === "missing-plist-team-id") delete info.ElectronTeamID;
+        if (mutation === "wrong-plist-team-id") info.ElectronTeamID = "WRONGTEAMID";
+        return Buffer.from(plist.build(info));
+      },
+      runMacOSCommand: async (command: string, arguments_: string[]) => {
+        const result = await originalRunMacOSCommand(command, arguments_);
+        const target = arguments_.at(-1);
+        if (mutation !== "wrong-signed-main-id" || command !== "codesign" || !arguments_.includes("--verbose=4") || typeof target !== "string" || path.resolve(target) !== mainElectronPath) {
+          return result;
+        }
+        return {
+          ...result,
+          stdout: result.stdout.replace("Identifier=com.meetless.app", "Identifier=com.github.Electron"),
+        };
+      },
+    };
+
+    await expect(installMasDevelopmentGate({
+      manifestPath: fixture.manifestPath,
+      bundlePath: fixture.bundlePath,
+      requiredFreeBytes: 1,
+      context,
+      dependencies: {
+        expectedRevenueCatPublicSdkKey: fixture.publicSdkKey,
+        expectedConvexUrl: fixture.convexUrl,
+        expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+        artifactValidationAdapters: adapters,
+      },
+    })).rejects.toThrow(expectedDiagnostic);
+    await expect(readFile(prior, "utf8")).resolves.toBe("prior\n");
+    await expect(readFile(sessionIndexPath, "utf8")).resolves.toBe(sessionIndexBytes);
+    await expect(lstat(context.activePath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(context.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
+    if (packageTargetBefore) {
+      await expect(lstat(context.bundlePath)).resolves.toMatchObject({
+        dev: packageTargetBefore.dev,
+        ino: packageTargetBefore.ino,
+        nlink: packageTargetBefore.nlink,
+        size: packageTargetBefore.size,
+      });
+    } else {
+      await expect(lstat(context.bundlePath)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    await expect(lstat(context.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("serializes unknown launch failures into the fixed diagnostic shape", () => {
     const secret = "owner-token=/private/secret/runtime-root";
     const serialized = serializeMasDevelopmentGateFailure(new Error(secret), "not-an-accepted-category");
@@ -908,8 +1867,34 @@ describe("MAS development gate coordinator", () => {
     await writeFile(path.join(packageTarget, "Contents", "marker"), "prior package\n");
     await mkdir(path.join(packageSource, "Contents"), { recursive: true, mode: 0o700 });
     await writeFile(path.join(packageSource, "Contents", "marker"), "candidate package\n");
+    await mkdir(path.join(packageSource, "Contents", "Helpers", "Electron.app", "Contents"), { recursive: true, mode: 0o700 });
+    const convexUrl = "https://meetless-launch-fixture.convex.cloud/";
+    await writeFile(path.join(packageSource, "Contents", "Info.plist"), plist.build({
+      CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
+      ElectronTeamID: R5_APP_STORE_TEAM_ID,
+      [R5_REVENUECAT_INFO_PLIST_KEY]: "appl_launch_fixture_public_key",
+      [R5_CONVEX_INFO_PLIST_KEY]: convexUrl,
+    }), { mode: 0o600 });
+    await writeFile(path.join(packageSource, "Contents", "Helpers", "Electron.app", "Contents", "Info.plist"), plist.build({
+      CFBundleExecutable: "Electron",
+      CFBundleVersion: "41.2.0",
+      CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
+      ElectronTeamID: R5_APP_STORE_TEAM_ID,
+    }), { mode: 0o600 });
     const manifestPath = path.join(base, "app-store-development-manifest.json");
-    const manifestBytes = Buffer.from("retained package manifest\n");
+    const manifest = {
+      schema: "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1",
+      convexUrlEmbedded: true,
+      convexUrlSha256: createHash("sha256").update(convexUrl).digest("hex"),
+      electron: { executable: "Contents/Helpers/Electron.app/Contents/MacOS/Electron" },
+      signature: {
+        nestedMachO: [{
+          path: "Contents/Helpers/Electron.app/Contents/MacOS/Electron",
+          identifier: R5_APP_STORE_BUNDLE_ID,
+        }],
+      },
+    };
+    const manifestBytes = Buffer.from(`${JSON.stringify(manifest)}\n`);
     await writeFile(manifestPath, manifestBytes, { mode: 0o600 });
     const packageFingerprint = await fingerprintPath(packageSource);
     if (!packageFingerprint) throw new Error("package fixture source fingerprint is missing");
@@ -925,7 +1910,7 @@ describe("MAS development gate coordinator", () => {
       packageInputDigest: "c".repeat(64),
       artifactInputDigest: "d".repeat(64),
       licenseDigest: "e".repeat(64),
-      signatureDigest: "f".repeat(64),
+      signatureDigest: createHash("sha256").update(JSON.stringify(manifest.signature)).digest("hex"),
       publicSdkKeySha256: createHash("sha256").update("fixture-public-key").digest("hex"),
     });
     const packageTransaction = await replacePackageBundle({
@@ -987,6 +1972,10 @@ describe("MAS development gate coordinator", () => {
     const available = createMasHostHandoff(context, session, installed);
     await writeFile(path.join(session.activePath, "host-handoff.json"), `${JSON.stringify(available)}\n`, { mode: 0o600 });
     const packageJournalPath = packageTransactionPaths(context.bundlePath, session.runId).journal;
+    let interruptAfterPackageRecord = false;
+    let injectLateReceipt = false;
+    let lateReceiptInjected = false;
+    let interruptAfterUpgradeWrite = false;
     const packageFilesystem = {
       resolvePath: (candidate: string) => {
         const logicalParent = path.dirname(context.bundlePath);
@@ -995,16 +1984,62 @@ describe("MAS development gate coordinator", () => {
         if (candidate.startsWith(prefix)) return path.join(packageParent, candidate.slice(prefix.length));
         return candidate;
       },
+      lstat: (candidate: string) => lstat(candidate),
+      beforePendingRetainedInspection: async (retained: any) => {
+        if (!injectLateReceipt || lateReceiptInjected || retained.source !== packageTransaction.paths.displaced) return;
+        lateReceiptInjected = true;
+        const receiptDirectory = path.join(
+          retained.path,
+          "Contents", "Helpers", "Electron.app", "Contents", "_MASReceipt",
+        );
+        await mkdir(receiptDirectory, { recursive: true, mode: 0o700 });
+        await writeFile(path.join(receiptDirectory, "receipt"), "opaque late receipt\n", { mode: 0o600 });
+      },
+      afterPackageRetentionRecordWrite: async (record: any) => {
+        if (interruptAfterPackageRecord && record.source === packageTransaction.paths.displaced) {
+          interruptAfterPackageRecord = false;
+          throw new Error("one-shot coordinator interruption after durable package record");
+        }
+      },
+      afterPackageRetentionUpgradeWrite: async (records: any[]) => {
+        if (interruptAfterUpgradeWrite && records.some((record) => record.source === packageTransaction.paths.displaced)) {
+          interruptAfterUpgradeWrite = false;
+          throw new Error("one-shot coordinator interruption after durable late-receipt upgrade");
+        }
+      },
     };
+    let launchElectronIdentifier = R5_APP_STORE_BUNDLE_ID;
+    const launchElectronSignatureText = () => [
+      `Identifier=${launchElectronIdentifier}`,
+      `TeamIdentifier=${R5_APP_STORE_TEAM_ID}`,
+      `Authority=${R5_APP_STORE_DEVELOPMENT_IDENTITY}`,
+      "Signature=CMS",
+      `CDHash=${"a".repeat(40)}`,
+    ].join("\n");
     const launchDependencies = {
+      expectedConvexUrl: convexUrl,
       processRows: async () => [],
       listeners: async () => [],
       sockets: async () => [],
       packageFilesystem,
+      artifactValidationAdapters: {
+        runMacOSCommand: async (command: string, arguments_: string[]) => {
+          if (command === "codesign" && arguments_.includes("--display") && arguments_.includes("--verbose=4")) {
+            return { stdout: launchElectronSignatureText(), stderr: "" };
+          }
+          return { stdout: "", stderr: "" };
+        },
+      },
     };
     const narrativeDigestOutsideRuntimeContract = "0".repeat(64);
     await expect(attestMasGateRuntimeRoot(session.quarantinePath)).resolves.toEqual(session.priorAggregateAttestation);
     expect(session.priorAggregateAttestation.digest).not.toBe(narrativeDigestOutsideRuntimeContract);
+    await expect(validateMasDevelopmentInstalledSignatures({
+      manifestPath,
+      bundlePath: context.bundlePath,
+      artifactBinding,
+      dependencies: launchDependencies,
+    })).resolves.toMatchObject({ status: "passed" });
     const composedStatus = await readMasDevelopmentGateStatus({
       context,
       dependencies: launchDependencies,
@@ -1014,7 +2049,37 @@ describe("MAS development gate coordinator", () => {
       phase: "ready",
       package: { status: "committed", state: "committed", journalPath: packageJournalPath },
     });
-    await rm(path.join(session.activePath, "host-handoff.json"));
+    const handoffPath = path.join(session.activePath, "host-handoff.json");
+    await rm(handoffPath);
+    launchElectronIdentifier = "com.github.Electron";
+    let launchIdentityFailure: any = null;
+    let identityFailureLaunchCalled = false;
+    let identityFailureHandoffWaited = false;
+    try {
+      await launchMasDevelopmentGate({
+        context,
+        dependencies: {
+          ...launchDependencies,
+          launch: async () => { identityFailureLaunchCalled = true; },
+          waitForHandoff: async () => {
+            identityFailureHandoffWaited = true;
+            return available;
+          },
+        },
+      });
+    } catch (error) {
+      launchIdentityFailure = error;
+    } finally {
+      launchElectronIdentifier = R5_APP_STORE_BUNDLE_ID;
+    }
+    expect(launchIdentityFailure).toMatchObject({ cause: expect.any(Error) });
+    expect(String(launchIdentityFailure?.cause?.message)).toMatch(/signature identifier is com\.github\.Electron, expected com\.meetless\.app/);
+    expect(identityFailureLaunchCalled).toBe(false);
+    expect(identityFailureHandoffWaited).toBe(false);
+    await expect(lstat(handoffPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await writeFile(handoffPath, `${JSON.stringify(available)}\n`, { mode: 0o600 });
+    await rm(handoffPath);
+
     const handoffReadFailure = await captureLaunchFailure(() => launchMasDevelopmentGate({
       context,
       dependencies: {
@@ -1097,23 +2162,79 @@ describe("MAS development gate coordinator", () => {
     expect(result.handoff.state).toBe("claimed");
     expect(result).not.toHaveProperty("readiness");
 
-    const originalIdentity = await lstat(context.identityPath);
-    const republishedIdentityPath = `${context.identityPath}.native-republication`;
-    await writeFile(republishedIdentityPath, await readFile(context.identityPath), { mode: 0o600 });
-    await rename(republishedIdentityPath, context.identityPath);
-    const republishedIdentity = await lstat(context.identityPath);
-    expect(republishedIdentity.ino).not.toBe(originalIdentity.ino);
+    interruptAfterPackageRecord = true;
+    await expect(restorePackageTransaction(packageTransaction, {
+      ownerToken: packageTransaction.ownerToken,
+      target: packageTransaction.target,
+      identityPath: packageTransaction.identityPath,
+      runtimeRootPath: context.runtimeRoot,
+      requireRecoveryProof: true,
+      expectedArtifactBinding: artifactBinding,
+      filesystem: packageFilesystem,
+    })).rejects.toThrow("one-shot coordinator interruption after durable package record");
+    const interruptedPackageJournal = JSON.parse(await readFile(packageTransaction.paths.journal, "utf8"));
+    expect(interruptedPackageJournal.state).toBe("target-restored");
+    expect(interruptedPackageJournal.cleanupSource).toBe(packageTransaction.paths.displaced);
+    expect(interruptedPackageJournal.cleanupPath).toBeDefined();
+    expect(interruptedPackageJournal.retainedPackageDisposables.records).toHaveLength(1);
+    expect(interruptedPackageJournal.retainedPackageDisposables.records[0].receipt).toBeNull();
+
+    injectLateReceipt = true;
+    interruptAfterUpgradeWrite = true;
+    await expect(restorePackageTransaction(packageTransaction, {
+      ownerToken: packageTransaction.ownerToken,
+      target: packageTransaction.target,
+      identityPath: packageTransaction.identityPath,
+      runtimeRootPath: context.runtimeRoot,
+      requireRecoveryProof: true,
+      expectedArtifactBinding: artifactBinding,
+      filesystem: packageFilesystem,
+    })).rejects.toThrow("one-shot coordinator interruption after durable late-receipt upgrade");
+    expect(lateReceiptInjected).toBe(true);
+    const interruptedUpgradeJournal = JSON.parse(await readFile(packageTransaction.paths.journal, "utf8"));
+    const interruptedUpgradeRecord = interruptedUpgradeJournal.retainedPackageDisposables.records[0];
+    expect(interruptedUpgradeJournal.cleanupPath).toBe(interruptedUpgradeRecord.path);
+    expect(interruptedUpgradeRecord).toMatchObject({
+      schema: "MAS_PACKAGE_DISPOSABLE_RETENTION v3",
+      receipt: {
+        relative: "Contents/Helpers/Electron.app/Contents/_MASReceipt/receipt",
+      },
+    });
+    expect(interruptedUpgradeRecord.receiptChain).toHaveLength(5);
 
     const restored = await restoreMasDevelopmentGate({
       context,
-      dependencies: launchDependencies,
+      dependencies: {
+        ...launchDependencies,
+        packageFilesystem: { resolvePath: packageFilesystem.resolvePath },
+      },
     });
     expect(restored.status).toBe("restored");
+    expect(restored.packageRollbackBeforeRuntimeRestore).toBe(true);
+    expect(restored.session.phase).toBe("archived");
     await expect(readFile(path.join(packageTarget, "Contents", "marker"), "utf8")).resolves.toBe("prior package\n");
     await expect(lstat(context.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readFile(path.join(context.runtimeRoot, "prior-runtime-state"), "utf8")).resolves.toBe("prior runtime\n");
     await expect(lstat(session.freshRetainedPath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
-    await expect(lstat(packageTransaction.paths.journal)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(packageTransaction.paths.journal)).resolves.toBeDefined();
+    const retainedPackageJournal = JSON.parse(await readFile(packageTransaction.paths.journal, "utf8"));
+    const retainedRecord = retainedPackageJournal.retainedPackageDisposables.records[0];
+    const retainedSuffix = createHash("sha256")
+      .update(`${packageTransaction.paths.displaced}\0displaced package`)
+      .digest("hex")
+      .slice(0, 16);
+    expect(retainedRecord).toMatchObject({
+      schema: "MAS_PACKAGE_DISPOSABLE_RETENTION v3",
+      source: packageTransaction.paths.displaced,
+      path: `${packageTransaction.paths.displaced}.m7-cleanup-${session.runId}-${retainedSuffix}`,
+      packageRole: "candidate",
+      packageFingerprint: packageTransaction.candidateFingerprint,
+      receipt: {
+        relative: "Contents/Helpers/Electron.app/Contents/_MASReceipt/receipt",
+      },
+    });
+    expect(retainedRecord.receiptChain).toHaveLength(5);
+    expect(retainedRecord).toEqual(interruptedUpgradeRecord);
   });
 
   it("does not synthesize post-install active/ready or consult package state before quarantine attestation", async () => {
@@ -1293,6 +2414,7 @@ describe("MAS development gate coordinator", () => {
       context,
       dependencies: {
         expectedRevenueCatPublicSdkKey: "appl_test_validator_authority",
+        expectedConvexUrl: MAS_FIXTURE_CONVEX_URL,
         validateArtifact: async () => {
           forgedValidatorCalled = true;
           return { status: "passed", artifactBinding: forgedBinding };
@@ -1311,6 +2433,7 @@ describe("MAS development gate coordinator", () => {
       context,
       dependencies: {
         expectedRevenueCatPublicSdkKey: "appl_test_validator_authority",
+        expectedConvexUrl: MAS_FIXTURE_CONVEX_URL,
         artifactValidationAdapters: { fingerprintPath: async () => "f".repeat(64) },
       },
     })).rejects.toThrow(/not an allowed low-level function/);
@@ -1323,13 +2446,14 @@ describe("MAS development gate coordinator", () => {
       context,
       dependencies: {
         expectedRevenueCatPublicSdkKey: "appl_test_validator_authority",
+        expectedConvexUrl: MAS_FIXTURE_CONVEX_URL,
         artifactBinding: forgedBinding,
         validateArtifact: async () => ({ status: "passed", artifactBinding: forgedBinding }),
       },
     })).rejects.toThrow(/MAS development manifest/);
   });
 
-  it("rejects a wrong public key or missing license evidence before runtime quarantine", async () => {
+  it("rejects a wrong public key or missing license evidence before runtime quarantine", { timeout: 300_000 }, async () => {
     const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-validation-negative-test-")));
     roots.push(base);
     const context = masDevelopmentRuntimeContext({ userHome: base });
@@ -1338,21 +2462,32 @@ describe("MAS development gate coordinator", () => {
     await seedMasSessionIndex(context);
     const prior = path.join(context.runtimeRoot, "prior.txt");
     await writeFile(prior, "prior\n");
-    const bundle = path.resolve("release/macos/Meetless.app");
-    const manifestPath = path.resolve("release/macos/app-store-development-manifest.json");
-    const fixture = await makeMasValidationFixture({ bundle, manifestPath });
+    const fixture = await makeMasValidationFixture();
+    const { bundlePath: bundle, manifestPath } = fixture;
     const baseDependencies = {
       processRows: async () => [],
       listeners: async () => [],
       sockets: async () => [],
       openHandles: async () => [],
       artifactValidationAdapters: fixture.adapters,
+      expectedRevenueCatPublicSdkKey: fixture.publicSdkKey,
+      expectedConvexUrl: fixture.convexUrl,
     };
     await expect(validateMasDevelopmentInstallArtifact({
       manifestPath,
       bundlePath: bundle,
       context,
-      dependencies: { ...baseDependencies, expectedRevenueCatPublicSdkKey: "appl_wrong_fixture_public_key" },
+      dependencies: baseDependencies,
+    })).rejects.toThrow(/accepted pin/);
+    const fixtureDependencies = {
+      ...baseDependencies,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+    };
+    await expect(validateMasDevelopmentInstallArtifact({
+      manifestPath,
+      bundlePath: bundle,
+      context,
+      dependencies: { ...fixtureDependencies, expectedRevenueCatPublicSdkKey: "appl_wrong_fixture_public_key" },
     })).rejects.toThrow(/different RevenueCat public SDK key/);
 
     const originalReadSecureFile = fixture.adapters.readSecureFile;
@@ -1367,7 +2502,7 @@ describe("MAS development gate coordinator", () => {
       bundlePath: bundle,
       context,
       dependencies: {
-        ...baseDependencies,
+        ...fixtureDependencies,
         expectedRevenueCatPublicSdkKey: fixture.publicSdkKey,
         artifactValidationAdapters: missingLicenseAdapters,
       },
@@ -1388,7 +2523,7 @@ describe("MAS development gate coordinator", () => {
       requiredFreeBytes: 1,
       context,
       dependencies: {
-        ...baseDependencies,
+        ...fixtureDependencies,
         artifactValidationAdapters: symlinkEvidenceAdapters,
       },
     })).rejects.toThrow(/packaged symlink|full MAS artifact validation/);
@@ -1409,7 +2544,7 @@ describe("MAS development gate coordinator", () => {
       requiredFreeBytes: 1,
       context,
       dependencies: {
-        ...baseDependencies,
+        ...fixtureDependencies,
         artifactValidationAdapters: loadPathEvidenceAdapters,
       },
     })).rejects.toThrow(/external dependency|full MAS artifact validation/);
@@ -1417,7 +2552,53 @@ describe("MAS development gate coordinator", () => {
     await expect(lstat(context.activePath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("runs complete policy with low-level fixture adapters and passes the unchanged binding to composition", async () => {
+  it.each([
+    ["opaque MAS receipt", "Contents/Helpers/Electron.app/Contents/_MASReceipt/receipt"],
+    ["absolute external file", path.resolve("/tmp/meetless-forbidden-license-inventory.json")],
+  ])("rejects a manifest-selected %s before reading it", async (_label, suppliedPath) => {
+    const fixture = await makeMasValidationFixture();
+    const { bundlePath, manifestPath } = fixture;
+    const originalManifest = JSON.parse((await fixture.adapters.readSecureFile(manifestPath, "fixture manifest")).toString("utf8"));
+    const mutatedManifest = structuredClone(originalManifest);
+    mutatedManifest.masPackageEvidence.licenseInventory.path = suppliedPath;
+    const mutatedManifestBytes = Buffer.from(`${JSON.stringify(mutatedManifest)}\n`);
+    const forbiddenPath = path.isAbsolute(suppliedPath)
+      ? suppliedPath
+      : path.resolve(bundlePath, suppliedPath);
+    const readTargets: string[] = [];
+    const ownerCommands: string[] = [];
+    const originalReadSecureFile = fixture.adapters.readSecureFile;
+    const adapters = {
+      ...fixture.adapters,
+      readSecureFile: async (target: string, label: string) => {
+        const resolved = path.resolve(target);
+        readTargets.push(resolved);
+        if (resolved === path.resolve(forbiddenPath)) throw new Error(`forbidden target read: ${resolved}`);
+        if (resolved === path.resolve(manifestPath)) return mutatedManifestBytes;
+        return originalReadSecureFile(target, label);
+      },
+      runMacOSCommand: async (command: string, arguments_: string[]) => {
+        ownerCommands.push(`${command} ${arguments_.join(" ")}`);
+        return fixture.adapters.runMacOSCommand(command, arguments_);
+      },
+    };
+
+    await expect(validateMasDevelopmentInstallArtifact({
+      manifestPath,
+      bundlePath,
+      dependencies: {
+        expectedRevenueCatPublicSdkKey: fixture.publicSdkKey,
+        expectedConvexUrl: fixture.convexUrl,
+        expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
+        artifactValidationAdapters: adapters,
+      },
+    })).rejects.toThrow(/manifest license inventory binding is missing or invalid/);
+    expect(readTargets).toEqual([path.resolve(manifestPath)]);
+    expect(readTargets).not.toContain(path.resolve(forbiddenPath));
+    expect(ownerCommands).toEqual([]);
+  });
+
+  it("runs complete policy with low-level fixture adapters and passes the unchanged binding to composition", { timeout: 300_000 }, async () => {
     const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-binding-composition-test-")));
     roots.push(base);
     const context = masDevelopmentRuntimeContext({ userHome: base });
@@ -1426,16 +2607,34 @@ describe("MAS development gate coordinator", () => {
     await seedMasSessionIndex(context);
     await writeFile(path.join(context.runtimeRoot, "opaque-state"), "preserve me\n");
 
-    const bundle = path.resolve("release/macos/Meetless.app");
-    const manifestPath = path.resolve("release/macos/app-store-development-manifest.json");
-    const fixture = await makeMasValidationFixture({ bundle, manifestPath });
+    const fixture = await makeMasValidationFixture();
+    const { bundlePath: bundle, manifestPath } = fixture;
+    const fixtureManifest = JSON.parse((await fixture.adapters.readSecureFile(manifestPath, "fixture manifest")).toString("utf8"));
+    expect(fixtureManifest.signature.nestedMachO.find((entry: { path: string }) => entry.path === "Contents/Helpers/Electron.app/Contents/MacOS/Electron")).toMatchObject({
+      identifier: R5_APP_STORE_BUNDLE_ID,
+    });
+    expect(fixtureManifest.signature.nestedMachO.find((entry: { path: string }) => entry.path.endsWith("Electron Helper.app/Contents/MacOS/Electron Helper"))).toMatchObject({
+      identifier: "com.github.Electron.helper",
+    });
+    const inventoryReads: string[] = [];
+    const originalReadSecureFile = fixture.adapters.readSecureFile;
+    const validationAdapters = {
+      ...fixture.adapters,
+      readSecureFile: async (target: string, label: string) => {
+        const resolved = path.resolve(target);
+        if (resolved.endsWith(`/${MACOS_LICENSE_INVENTORY_PATH}`)) inventoryReads.push(resolved);
+        return originalReadSecureFile(target, label);
+      },
+    };
     const dependencies = {
       expectedRevenueCatPublicSdkKey: fixture.publicSdkKey,
+      expectedConvexUrl: fixture.convexUrl,
+      expectedElectronArchiveSha256: fixture.expectedElectronArchiveSha256,
       processRows: async () => [],
       listeners: async () => [],
       sockets: async () => [],
       openHandles: async () => [],
-      artifactValidationAdapters: fixture.adapters,
+      artifactValidationAdapters: validationAdapters,
     };
     const validation = await validateMasDevelopmentInstallArtifact({
       manifestPath,
@@ -1443,6 +2642,7 @@ describe("MAS development gate coordinator", () => {
       context,
       dependencies,
     });
+    expect(inventoryReads).toEqual([path.resolve(bundle, MACOS_LICENSE_INVENTORY_PATH)]);
     const runtimeLease = await acquireMasGateLock({ parentPath: context.parentPath });
     let session;
     try {

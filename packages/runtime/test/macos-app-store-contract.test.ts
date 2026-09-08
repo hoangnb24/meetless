@@ -16,7 +16,13 @@ describe("Mac App Store distribution contract", () => {
     expect(MACOS_APP_STORE_CONTRACT).toMatchObject({
       target: "macos-app-store-arm64",
       bundleIdentifier: "com.meetless.app",
-      electron: { version: "41.2.0", platform: "mas", arch: "arm64" },
+      electron: {
+        version: "41.2.0",
+        platform: "mas",
+        arch: "arm64",
+        archiveName: "electron-v41.2.0-mas-arm64.zip",
+        sha256: "e153b855ba023f1edfcad4a07b22c30b4d48af57530c04808cffc6c75e17bc7d",
+      },
       state: { owner: "app-container", externalExport: "user-selected-security-scoped-destination" },
       signing: {
         identityKind: "Apple Distribution",
@@ -34,6 +40,10 @@ describe("Mac App Store distribution contract", () => {
       ...MACOS_APP_STORE_CONTRACT,
       electron: { ...MACOS_APP_STORE_CONTRACT.electron, platform: "darwin" },
     })).toThrow(/mas arm64 artifact/);
+    expect(() => validateMacAppStoreContract({
+      ...MACOS_APP_STORE_CONTRACT,
+      electron: { ...MACOS_APP_STORE_CONTRACT.electron, sha256: "0".repeat(64) },
+    })).toThrow(/SHA-256/);
     expect(() => validateMacAppStoreContract({
       ...MACOS_APP_STORE_CONTRACT,
       state: { ...MACOS_APP_STORE_CONTRACT.state, owner: "user-home" },

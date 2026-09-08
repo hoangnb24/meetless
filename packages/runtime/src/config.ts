@@ -45,6 +45,10 @@ const INSTALLATION_CONTRACT_SCHEMA = "MEETLESS_INSTALLATION_CONTRACT v1";
 const INSTALLATION_CONTRACT_FILENAME = "installation-contract.json";
 const HOST_CONFIG_SCHEMA = "MEETLESS_MACOS_HOST_CONFIG v2";
 const MACOS_APP_STORE_CONTRACT_AUTHORITY = "docs/decisions/0005-mac-app-store-and-revenuecat.md";
+export const MACOS_APP_STORE_ELECTRON_BINARY_DESCRIPTOR_SCHEMA = "MEETLESS_MAS_ELECTRON_BINARY v1";
+export const MACOS_APP_STORE_ELECTRON_BINARY_PATH = "Contents/Helpers/Electron.app/Contents/MacOS/Electron";
+const MACOS_APP_STORE_ELECTRON_BINARY_PATH_BASE = "bundle";
+const MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH = "Contents/Resources/meetless/runtime/electron/Electron.app";
 export const MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH =
   "Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless";
 export const MACOS_APP_STORE_RECORDING_EXPORTS_RELATIVE_PATH =
@@ -65,6 +69,12 @@ const RelativeContractPathSchema = z.string().min(1).refine((value) =>
   !path.isAbsolute(value) && !value.split("/").some((part) => part === ".." || part === ""),
   "must be a non-empty relative path without traversal",
 );
+
+const MacAppStoreElectronBinaryDescriptorSchema = z.object({
+  schema: z.literal(MACOS_APP_STORE_ELECTRON_BINARY_DESCRIPTOR_SCHEMA),
+  pathBase: z.literal(MACOS_APP_STORE_ELECTRON_BINARY_PATH_BASE),
+  path: z.literal(MACOS_APP_STORE_ELECTRON_BINARY_PATH),
+}).strict();
 
 const InstallationContractShape = {
   schema: z.literal(INSTALLATION_CONTRACT_SCHEMA),
@@ -105,6 +115,7 @@ const InstallationContractShape = {
       ffmpeg: RelativeContractPathSchema,
       ffprobe: RelativeContractPathSchema,
     }).strict(),
+    electronBinary: MacAppStoreElectronBinaryDescriptorSchema.optional(),
   }).strict(),
   host: z.object({
     executableRelativeToBundle: RelativeContractPathSchema,
@@ -650,7 +661,9 @@ function parseInstallationContract(contractPath: string, source: string): Instal
   let decoded: unknown;
   try {
     decoded = JSON.parse(readFileSync(contractPath, "utf8"));
-    return InstallationContractSchema.parse(decoded);
+    const contract = InstallationContractSchema.parse(decoded);
+    assertInstallationContractElectronLayout(contract, source);
+    return contract;
   } catch (error) {
     const endpointPolicy = isRecord(decoded) && isRecord(decoded.runtime)
       ? decoded.runtime.endpointPolicy
@@ -668,6 +681,36 @@ function parseInstallationContract(contractPath: string, source: string): Instal
   }
 }
 
+function assertInstallationContractElectronLayout(contract: InstallationContract, source: string): void {
+  const descriptor = contract.package.electronBinary;
+  const isMacAppStore = isMacAppStoreInstallationContract(contract);
+  if (isMacAppStore) {
+    if (!descriptor || JSON.stringify(descriptor) !== JSON.stringify({
+      schema: MACOS_APP_STORE_ELECTRON_BINARY_DESCRIPTOR_SCHEMA,
+      pathBase: MACOS_APP_STORE_ELECTRON_BINARY_PATH_BASE,
+      path: MACOS_APP_STORE_ELECTRON_BINARY_PATH,
+    })) {
+      throw new Error(
+        `${source} Meetless installation contract MAS Electron descriptor is missing or invalid. ` +
+        `Authority: ${MACOS_APP_STORE_CONTRACT_AUTHORITY}. Next action: use the exact versioned bundle-relative Helpers descriptor.`,
+      );
+    }
+    if (contract.package.resources.electronBinary !== MACOS_APP_STORE_ELECTRON_BINARY_PATH) {
+      throw new Error(
+        `${source} Meetless installation contract MAS electronBinary resource is not the exact bundle-relative Helpers path. ` +
+        `Authority: ${MACOS_APP_STORE_CONTRACT_AUTHORITY}. Next action: rebuild the MAS package with ${MACOS_APP_STORE_ELECTRON_BINARY_PATH}.`,
+      );
+    }
+    return;
+  }
+  if (descriptor !== undefined) {
+    throw new Error(
+      `${source} Meetless installation contract carries a MAS Electron descriptor outside the MAS target. ` +
+      "Authority: docs/decisions/0002-direct-notarized-macos-dmg.md. Next action: restore the direct package contract.",
+    );
+  }
+}
+
 function resolvePackagedRuntimeResources(
   repositoryRoot: string,
   manifest: PackagedRuntimeManifest,
@@ -679,18 +722,38 @@ function resolvePackagedRuntimeResources(
   if (JSON.stringify(manifest.resources) !== JSON.stringify(installationContract.package.resources)) {
     throw new Error("Packaged marker resources differ from the installation contract");
   }
+  const electronDescriptor = installationContract.package.electronBinary;
+  const bundleRoot = electronDescriptor
+    ? resolvePackagedBundleRoot(repositoryRoot, installationContract)
+    : null;
+  if (bundleRoot) {
+    const legacyElectronApp = path.join(bundleRoot, MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH);
+    if (lstatSync(legacyElectronApp, { throwIfNoEntry: false })) {
+      throw new Error(
+        `Packaged MAS bundle contains the legacy Electron app layout at ${MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH}. ` +
+        `Authority: ${MACOS_APP_STORE_CONTRACT_AUTHORITY}. Next action: rebuild the package with Electron under Contents/Helpers.`,
+      );
+    }
+  }
   const resources = Object.fromEntries(
     Object.entries(manifest.resources).map(([name, relativePath]) => {
       if (path.isAbsolute(relativePath)) {
         throw new Error(`Packaged resource ${name} must be relative to ${repositoryRoot}`);
       }
       const resolved = path.resolve(repositoryRoot, relativePath);
-      const relative = path.relative(repositoryRoot, resolved);
-      if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      const resourceRoot = name === "electronBinary" && bundleRoot ? bundleRoot : repositoryRoot;
+      const resourceResolved = name === "electronBinary" && bundleRoot
+        ? path.resolve(bundleRoot, relativePath)
+        : resolved;
+      const resourceRelative = path.relative(resourceRoot, resourceResolved);
+      if (resourceRelative.startsWith("..") || path.isAbsolute(resourceRelative)) {
         throw new Error(`Packaged resource ${name} escapes the package root: ${relativePath}`);
       }
-      assertPackagedResourceResolution(resolved, repositoryRoot, name);
-      return [name, resolved];
+      if (name === "electronBinary" && bundleRoot && relativePath !== electronDescriptor?.path) {
+        throw new Error(`Packaged MAS electronBinary differs from its bundle-relative descriptor: ${relativePath}`);
+      }
+      assertPackagedResourceResolution(resourceResolved, resourceRoot, name);
+      return [name, resourceResolved];
     }),
   ) as Record<keyof PackagedRuntimeManifest["resources"], string>;
   assertPackagedDirectory(resources.rendererRoot, "renderer");
@@ -699,6 +762,16 @@ function resolvePackagedRuntimeResources(
     assertPackagedRegularFile(resourcePath, name);
   }
   return { ...resources, paseoCommit: manifest.paseoCommit };
+}
+
+function resolvePackagedBundleRoot(packageRoot: string, contract: InstallationContract): string {
+  const packageRelative = contract.package.rootRelativeToBundle;
+  const packageSegments = packageRelative.split("/").filter((segment) => segment.length > 0);
+  const bundleRoot = packageSegments.reduce((candidate) => path.dirname(candidate), path.resolve(packageRoot));
+  if (path.resolve(bundleRoot, packageRelative) !== path.resolve(packageRoot)) {
+    throw new Error(`Packaged MAS package root does not match ${packageRelative}; refusing bundle-relative Electron resolution`);
+  }
+  return bundleRoot;
 }
 
 function resolveRelativePackagePath(packageRoot: string, relativePath: string, label: string): string {

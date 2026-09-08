@@ -8,13 +8,33 @@ import {
 import {
   PACKAGE_SOURCE_SNAPSHOT_COMMAND,
 } from "../candidate-snapshot.mjs";
+import { MACOS_APP_STORE_CONTRACT } from "./macos-app-store-contract.mjs";
+import {
+  createMacOSMasSigningBoundDescriptor,
+  MACOS_MAS_SIGNING_BOUNDARY_PHASE_PRE_SIGN,
+  validateMacOSMasSigningBoundDescriptor,
+} from "./macos-mas-signing-boundary.mjs";
 
 export const MACOS_LICENSE_INVENTORY_SCHEMA = "MEETLESS_MACOS_LICENSE_INVENTORY v2";
 export const MACOS_LICENSE_INVENTORY_PATH = "Contents/Resources/meetless/notices/license-inventory.json";
 export const MACOS_LICENSE_INVENTORY_MANIFEST_PATH = "release/macos/composition-manifest.json";
+export const MACOS_MAS_LICENSE_INVENTORY_MANIFEST_PATH = "release/macos/app-store-development-manifest.json";
+export const MACOS_MAS_LICENSE_LAYOUT_SCHEMA = "MEETLESS_MACOS_LICENSE_INVENTORY_MAS_LAYOUT v1";
 export const MACOS_LICENSE_INVENTORY_AUTHORITY = "docs/decisions/0001-maintained-paseo-fork.md";
 export const MACOS_LICENSE_INVENTORY_EXCLUDED_PATH_PREFIXES = ["Contents/_CodeSignature/"];
 export const MACOS_LICENSE_INVENTORY_EXCLUDED_PATHS = [MACOS_LICENSE_INVENTORY_PATH];
+export const MACOS_DIRECT_ELECTRON_APP_PATH_PREFIX = "Contents/Resources/meetless/runtime/electron/";
+export const MACOS_MAS_ELECTRON_APP_PATH_PREFIX = "Contents/Helpers/Electron.app/";
+
+export function macOSMasLicenseLayout() {
+  return {
+    schema: MACOS_MAS_LICENSE_LAYOUT_SCHEMA,
+    layout: "mas",
+    manifestPath: MACOS_MAS_LICENSE_INVENTORY_MANIFEST_PATH,
+    electronAppPath: "Contents/Helpers/Electron.app",
+    electronBinaryPath: "Contents/Helpers/Electron.app/Contents/MacOS/Electron",
+  };
+}
 
 export const REQUIRED_LICENSE_COMPONENTS = [
   "meetless",
@@ -47,10 +67,87 @@ export async function writeMacOSLicenseInventory(options) {
   return inventory;
 }
 
-export async function buildMacOSLicenseInventory({ bundlePath, repositoryRoot, candidateSnapshot, packageInputManifest, packageMetadata, mediaSources }) {
+export async function buildMacOSLicenseInventory({
+  bundlePath,
+  repositoryRoot,
+  candidateSnapshot,
+  packageInputManifest,
+  packageMetadata,
+  mediaSources,
+  manifestPath = MACOS_LICENSE_INVENTORY_MANIFEST_PATH,
+  masLayout = null,
+  electronArchiveSource = null,
+  expectedElectronArchiveSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256,
+  masSigningPhase = MACOS_MAS_SIGNING_BOUNDARY_PHASE_PRE_SIGN,
+}) {
+  const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedElectronArchiveSha256);
+  const isMas = masLayout !== null;
+  if (manifestPath !== (isMas ? MACOS_MAS_LICENSE_INVENTORY_MANIFEST_PATH : MACOS_LICENSE_INVENTORY_MANIFEST_PATH)) {
+    throw new Error(
+      `license inventory manifest path ${manifestPath} is invalid for the selected ${isMas ? "MAS" : "direct"} route; Authority: ${MACOS_LICENSE_INVENTORY_AUTHORITY}. ` +
+      `Next action: use ${isMas ? MACOS_MAS_LICENSE_INVENTORY_MANIFEST_PATH : MACOS_LICENSE_INVENTORY_MANIFEST_PATH}`,
+    );
+  }
+  if (isMas && JSON.stringify(masLayout) !== JSON.stringify(macOSMasLicenseLayout())) {
+    throw new Error(
+      `MAS license inventory layout evidence is not the exact Helpers contract; Authority: ${MACOS_LICENSE_INVENTORY_AUTHORITY}. ` +
+      "Next action: regenerate the inventory with the exact MAS manifest and Helpers paths",
+    );
+  }
+  if (isMas && masSigningPhase !== MACOS_MAS_SIGNING_BOUNDARY_PHASE_PRE_SIGN) {
+    throw new Error(
+      `MAS license inventory cannot be derived during the ${String(masSigningPhase)} phase; Authority: ${MACOS_LICENSE_INVENTORY_AUTHORITY}. ` +
+      "Next action: write the inventory from the outer-only pre-sign package before the final outer signature is created",
+    );
+  }
+  if (isMas) {
+    validateMasElectronArchiveSource(electronArchiveSource, expectedArchiveSha256);
+    if (JSON.stringify(packageInputManifest?.electronArchiveSource) !== JSON.stringify(electronArchiveSource)) {
+      throw new Error(
+        `MAS license inventory archive source is not the package-input source; Authority: ${MACOS_LICENSE_INVENTORY_AUTHORITY}. ` +
+        "Next action: carry the exact verified archive descriptor from package-input collection into the inventory",
+      );
+    }
+  }
+  if (!isMas && electronArchiveSource !== null) {
+    throw new Error(
+      `direct license inventory cannot carry MAS Electron archive evidence; Authority: ${MACOS_LICENSE_INVENTORY_AUTHORITY}. ` +
+      "Next action: preserve the direct composition route",
+    );
+  }
   const entries = await enumeratePackageEntries(bundlePath);
   const machoEntries = await inspectPackageMachOEntries(bundlePath, entries);
   const machoPaths = new Set(machoEntries.map((entry) => entry.path));
+  const signingBoundary = isMas
+    ? createMacOSMasSigningBoundDescriptor({
+      entries,
+      machoPaths: [...machoPaths],
+      licenseInventoryPath: MACOS_LICENSE_INVENTORY_PATH,
+      phase: masSigningPhase,
+    })
+    : null;
+  if (isMas) {
+    let packageInputBoundary;
+    try {
+      packageInputBoundary = validateMacOSMasSigningBoundDescriptor(packageInputManifest?.artifactInput?.signingBoundary, {
+        expectedLicenseInventoryPath: MACOS_LICENSE_INVENTORY_PATH,
+      });
+    } catch (error) {
+      throw new Error(
+        "MAS license inventory signing-boundary evidence is missing or invalid: " +
+        (error instanceof Error ? error.message : String(error)) +
+        "; Authority: " + MACOS_LICENSE_INVENTORY_AUTHORITY +
+        ". Next action: derive package-input and inventory evidence from one exact MAS signing-bound descriptor",
+      );
+    }
+    if (JSON.stringify(packageInputBoundary) !== JSON.stringify(signingBoundary)) {
+      throw new Error(
+        "MAS license inventory signing-boundary evidence differs from package inputs; Authority: " +
+        MACOS_LICENSE_INVENTORY_AUTHORITY +
+        ". Next action: carry one shared exact descriptor through both MAS evidence owners",
+      );
+    }
+  }
   const plannedEntries = [...new Map(entries.concat([
     { path: MACOS_LICENSE_INVENTORY_PATH, type: "file", size: 0, sha256: "0".repeat(64) },
     { path: "Contents/_CodeSignature/CodeResources", type: "file", size: 0, sha256: "0".repeat(64) },
@@ -70,8 +167,13 @@ export async function buildMacOSLicenseInventory({ bundlePath, repositoryRoot, c
     );
   }
 
-  const excludedPaths = [...new Set([MACOS_LICENSE_INVENTORY_PATH, ...machoPaths])].sort((left, right) => left.localeCompare(right));
-  const actualEntryDigest = digestArtifactEntries(entries, { excludedPaths });
+  const excludedPaths = signingBoundary?.excludedPaths ??
+    [...new Set([MACOS_LICENSE_INVENTORY_PATH, ...machoPaths])].sort((left, right) => left.localeCompare(right));
+  const actualEntryDigest = digestArtifactEntries(entries, {
+    excludedPaths,
+    signingBoundary,
+    expectedMachoPaths: [...machoPaths],
+  });
   const packageRoot = path.join(bundlePath, "Contents", "Resources", "meetless");
   const workspaceMembers = await collectWorkspaceMembers(bundlePath);
   const metadata = packageMetadata ?? await collectMacOSPackageMetadata(packageRoot, repositoryRoot, workspaceMembers);
@@ -85,6 +187,9 @@ export async function buildMacOSLicenseInventory({ bundlePath, repositoryRoot, c
     candidateSnapshot,
     bundlePath,
     mediaSources,
+    masLayout,
+    electronArchiveSource,
+    signingBoundary,
   });
   const discoveredOverlapRules = buildOverlapRules(componentPaths, overlapRules);
   const inventory = {
@@ -93,17 +198,22 @@ export async function buildMacOSLicenseInventory({ bundlePath, repositoryRoot, c
     target: "macos-arm64",
     artifact: {
       bundlePath: "Meetless.app",
-      manifestPath: MACOS_LICENSE_INVENTORY_MANIFEST_PATH,
+      manifestPath,
       inventoryPath: MACOS_LICENSE_INVENTORY_PATH,
+      ...(isMas ? { masLayout: { ...masLayout } } : {}),
+      ...(isMas ? { electronArchiveSource: { ...electronArchiveSource } } : {}),
       candidateSnapshot: snapshotBinding(candidateSnapshot),
       entryBinding: {
         algorithm: "sha256",
         digest: actualEntryDigest,
-        excludedPathPrefixes: MACOS_LICENSE_INVENTORY_EXCLUDED_PATH_PREFIXES,
+        excludedPathPrefixes: isMas ? [] : MACOS_LICENSE_INVENTORY_EXCLUDED_PATH_PREFIXES,
         excludedPaths,
-        explanation: "The signing CodeResources file, self-referential inventory, and Mach-O code signatures are cross-bound by the composition manifest; repeated ad-hoc signing rewrites Mach-O signature bytes.",
+        ...(signingBoundary ? { signingBoundary } : {}),
+        explanation: isMas
+          ? "The exact seven nested and outer MAS signer-mutated CodeResources paths, self-referential inventory, and Mach-O code signatures are cross-bound by one shared descriptor; the final artifact binding retains every CodeResources path and hash."
+          : "The signing CodeResources file, self-referential inventory, and Mach-O code signatures are cross-bound by the composition manifest; repeated ad-hoc signing rewrites Mach-O signature bytes.",
       },
-      packageInputBinding: packageInputBinding(packageInputManifest),
+      packageInputBinding: createLicenseInventoryPackageInputBinding(packageInputManifest),
     },
     overlapRules: discoveredOverlapRules,
     components,
@@ -143,7 +253,7 @@ export function classifyArtifactPath(relativePath, entry = {}, machoPaths = new 
     return "capture-helper";
   }
   if (relativePath === "Contents/Resources/meetless/runtime/node") return "node";
-  if (relativePath.startsWith("Contents/Resources/meetless/runtime/electron/")) return "electron-chromium";
+  if (relativePath.startsWith(MACOS_DIRECT_ELECTRON_APP_PATH_PREFIX) || relativePath.startsWith(MACOS_MAS_ELECTRON_APP_PATH_PREFIX)) return "electron-chromium";
   if (relativePath.startsWith("Contents/Resources/meetless/runtime/media/")) return "ffmpeg-media";
   if (relativePath.startsWith("Contents/Resources/meetless/node_modules/unzip-crx-3/")) return "unzip-crx-3";
   if (isNativePath(relativePath, entry, machoPaths)) return "native-binaries";
@@ -193,15 +303,33 @@ export function isWorkspacePackageManifestPath(relativePath) {
   return workspaceRelativePath.length > 0 && !workspaceRelativePath.includes("/");
 }
 
+export function selectArtifactEntriesForDigest(entries, options = {}) {
+  const signingBoundary = options.signingBoundary
+    ? validateMacOSMasSigningBoundDescriptor(options.signingBoundary, {
+      expectedMachoPaths: options.expectedMachoPaths ?? null,
+      expectedLicenseInventoryPath: options.expectedLicenseInventoryPath ?? MACOS_LICENSE_INVENTORY_PATH,
+    })
+    : null;
+  const requestedExcludedPaths = options.excludedPaths ?? null;
+  if (signingBoundary && requestedExcludedPaths !== null &&
+      JSON.stringify([...requestedExcludedPaths].sort((left, right) => left.localeCompare(right))) !== JSON.stringify(signingBoundary.excludedPaths)) {
+    throw new Error(
+      `MAS artifact digest exclusions differ from the shared signing-boundary descriptor; Authority: ${MACOS_LICENSE_INVENTORY_AUTHORITY}. ` +
+      "Next action: pass the exact inventory, inspected Mach-O, and eight CodeResources exclusions without a broad CodeResources prefix",
+    );
+  }
+  const excludedPaths = new Set(signingBoundary?.excludedPaths ?? requestedExcludedPaths ?? []);
+  if (signingBoundary) return entries.filter((entry) => !excludedPaths.has(entry.path));
+  return entries.filter((entry) => !isExcludedArtifactPath(entry.path) && !excludedPaths.has(entry.path));
+}
+
 export function digestArtifactEntries(entries, options = {}) {
-  const excludedPaths = new Set(options.excludedPaths ?? []);
-  return digestEntries(entries.filter((entry) => !isExcludedArtifactPath(entry.path) && !excludedPaths.has(entry.path)));
+  return digestEntries(selectArtifactEntriesForDigest(entries, options));
 }
 
 export function digestComponentEntries(entries, paths, options = {}) {
   const pathSet = new Set(paths);
-  const excludedPaths = new Set(options.excludedPaths ?? []);
-  return digestEntries(entries.filter((entry) => pathSet.has(entry.path) && !isExcludedArtifactPath(entry.path) && !excludedPaths.has(entry.path)));
+  return digestEntries(selectArtifactEntriesForDigest(entries, options).filter((entry) => pathSet.has(entry.path)));
 }
 
 export function isExcludedArtifactPath(relativePath) {
@@ -240,7 +368,7 @@ function isNativePath(relativePath, entry, machoPaths) {
 }
 
 function isAssetPath(relativePath) {
-  if (relativePath.startsWith("Contents/Resources/meetless/runtime/electron/")) return false;
+  if (relativePath.startsWith(MACOS_DIRECT_ELECTRON_APP_PATH_PREFIX) || relativePath.startsWith(MACOS_MAS_ELECTRON_APP_PATH_PREFIX)) return false;
   if (relativePath.endsWith("/silero_vad.onnx")) return false;
   return /\.(?:png|jpe?g|gif|webp|svg|ico|icns|ttf|otf|woff2?|eot)$/iu.test(relativePath);
 }
@@ -265,8 +393,8 @@ function isMeetlessPath(relativePath, entry) {
   return entry.type === "symlink" && typeof entry.target === "string" && entry.target.includes("packages/");
 }
 
-async function buildComponents({ componentPaths, entries, excludedPaths, machoPaths, packageMetadata, repositoryRoot, candidateSnapshot, bundlePath, mediaSources }) {
-  const context = { componentPaths, entries, excludedPaths, machoPaths, packageMetadata, repositoryRoot, candidateSnapshot, bundlePath, mediaSources };
+async function buildComponents({ componentPaths, entries, excludedPaths, machoPaths, packageMetadata, repositoryRoot, candidateSnapshot, bundlePath, mediaSources, masLayout, electronArchiveSource, signingBoundary }) {
+  const context = { componentPaths, entries, excludedPaths, machoPaths, packageMetadata, repositoryRoot, candidateSnapshot, bundlePath, mediaSources, masLayout, electronArchiveSource, signingBoundary };
   const components = [];
   for (const id of REQUIRED_LICENSE_COMPONENTS) components.push(await buildComponent(id, context));
   const unresolvedPaths = componentPaths.get("unresolved") ?? [];
@@ -276,7 +404,11 @@ async function buildComponents({ componentPaths, entries, excludedPaths, machoPa
 
 async function buildComponent(id, context) {
   const paths = [...new Set(context.componentPaths.get(id) ?? [])].sort((left, right) => left.localeCompare(right));
-  const artifactHash = digestComponentEntries(context.entries, paths, { excludedPaths: context.excludedPaths });
+  const artifactHash = digestComponentEntries(context.entries, paths, {
+    excludedPaths: context.excludedPaths,
+    signingBoundary: context.signingBoundary,
+    expectedMachoPaths: [...context.machoPaths],
+  });
   const packageMetadata = context.packageMetadata;
   const base = {
     id,
@@ -286,8 +418,8 @@ async function buildComponent(id, context) {
       paths,
     },
     provenance: {
-      sourceType: sourceType(id),
-      sourcePaths: sourcePaths(id),
+      sourceType: sourceType(id, context),
+      sourcePaths: sourcePaths(id, context),
       versionOrHash: {
         artifactScopeSha256: artifactHash,
         ...versionOrHash(id, packageMetadata, context.candidateSnapshot),
@@ -321,10 +453,10 @@ async function buildComponent(id, context) {
   return base;
 }
 
-function sourceType(id) {
+function sourceType(id, context = {}) {
   if (id === "paseo") return "git-submodule-and-generated-Paseo-closure";
   if (id === "js-closure" || id === "unzip-crx-3" || id === "sherpa-model-assets") return "npm-production-closure-and-model-output";
-  if (id === "electron-chromium") return "Electron-distribution-and-Chromium-runtime";
+  if (id === "electron-chromium") return context.masLayout ? "pinned-MAS-Electron-archive-and-Chromium-runtime" : "Electron-distribution-and-Chromium-runtime";
   if (id === "node") return "Node-runtime-binary";
   if (id === "ffmpeg-media") return "configured-ffmpeg-closure";
   if (id === "fonts-assets") return "packaged-static-assets";
@@ -332,11 +464,14 @@ function sourceType(id) {
   return "Meetless-source-and-package-assembly";
 }
 
-function sourcePaths(id) {
+function sourcePaths(id, context = {}) {
   const common = ["docs/decisions/0001-maintained-paseo-fork.md", "scripts/package-macos.mjs"];
   if (id === "paseo") return [...common, "vendor/paseo", "vendor/paseo/package.json", "vendor/paseo/package-lock.json"];
   if (id === "js-closure") return [...common, "package.json", "package-lock.json"];
-  if (id === "electron-chromium") return [...common, "node_modules/electron/package.json", "node_modules/electron/LICENSE", "node_modules/electron/dist/LICENSES.chromium.html"];
+  if (id === "electron-chromium") {
+    if (context.masLayout) return [...common, context.electronArchiveSource?.path ?? "MAS Electron archive source (required)"];
+    return [...common, "node_modules/electron/package.json", "node_modules/electron/LICENSE", "node_modules/electron/dist/LICENSES.chromium.html"];
+  }
   if (id === "node") return [...common, "process.execPath (package builder input)"];
   if (id === "native-binaries") return [
     ...common,
@@ -755,6 +890,43 @@ export async function collectMacOSPackageMetadata(packageRoot, repositoryRoot, w
   };
 }
 
+function validateMasElectronArchiveSource(
+  source,
+  expectedSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256,
+) {
+  const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedSha256);
+  const expectedKeys = ["archiveName", "path", "schema", "sha256"].sort();
+  const actualKeys = source && typeof source === "object" && !Array.isArray(source) ? Object.keys(source).sort() : [];
+  if (!source || typeof source !== "object" || Array.isArray(source) ||
+      JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys) ||
+      source.schema !== "MEETLESS_MAS_ELECTRON_ARCHIVE_SOURCE v1" ||
+      source.archiveName !== MACOS_APP_STORE_CONTRACT.electron.archiveName ||
+      typeof source.path !== "string" || !path.isAbsolute(source.path) || path.resolve(source.path) !== source.path ||
+      path.basename(source.path) !== source.archiveName || !/^[a-f0-9]{64}$/u.test(source.sha256 ?? "")) {
+    throw new Error(
+      `MAS license inventory archive source is missing or malformed; Authority: ${MACOS_LICENSE_INVENTORY_AUTHORITY}. ` +
+      `Next action: carry one absolute regular ${MACOS_APP_STORE_CONTRACT.electron.archiveName} path and its SHA-256`,
+    );
+  }
+  if (source.sha256 !== expectedArchiveSha256) {
+    throw new Error(
+      `MAS license inventory archive ${source.archiveName} SHA-256 ${source.sha256} differs from the accepted pin ${expectedArchiveSha256}; Authority: ${MACOS_LICENSE_INVENTORY_AUTHORITY}. ` +
+      "Next action: regenerate the route-aware inventory from the archive matching the expected out-of-band digest",
+    );
+  }
+  return source;
+}
+
+function normalizeExpectedElectronArchiveSha256(expectedSha256) {
+  if (typeof expectedSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(expectedSha256)) {
+    throw new Error(
+      `expected MAS Electron archive SHA-256 is malformed: ${String(expectedSha256)}; Authority: ${MACOS_LICENSE_INVENTORY_AUTHORITY}. ` +
+      "Next action: supply the accepted contract pin or one explicit test digest outside manifest and evidence data",
+    );
+  }
+  return expectedSha256;
+}
+
 function packageComponent(artifactRoot) {
   const packageRoot = resolveNpmPackageRoot(artifactRoot);
   const name = packageRoot?.name;
@@ -897,7 +1069,12 @@ function snapshotBinding(snapshot) {
   };
 }
 
-function packageInputBinding(packageInputManifest) {
+/**
+ * Derive the one package-input provenance projection stored in license
+ * inventory evidence. Callers validate the complete package-input manifest
+ * through macos-package-inputs before comparing this exact projection.
+ */
+export function createLicenseInventoryPackageInputBinding(packageInputManifest) {
   if (!packageInputManifest) {
     return {
       schema: "MEETLESS_MACOS_PACKAGE_INPUTS v1",
@@ -917,6 +1094,9 @@ function packageInputBinding(packageInputManifest) {
     digest: packageInputManifest.digest,
     sourceSnapshotDigest: packageInputManifest.sourceSnapshot.digest,
     artifactInputDigest: packageInputManifest.artifactInput.digest,
+    ...(packageInputManifest.artifactInput.signingBoundary
+      ? { signingBoundary: packageInputManifest.artifactInput.signingBoundary }
+      : {}),
     packageMemberDigest: packageInputManifest.packageMemberDigest,
     workspaceMemberDigest: packageInputManifest.workspaceMemberDigest,
     inputCount: packageInputManifest.inputs.length,

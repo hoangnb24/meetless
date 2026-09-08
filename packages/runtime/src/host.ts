@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -34,6 +34,9 @@ const MEETLESS_INSTALLATION_CONTRACT_SCHEMA = "MEETLESS_INSTALLATION_CONTRACT v1
 const MEETLESS_PACKAGE_SCHEMA = "MEETLESS_MACOS_PACKAGE v2";
 const DIRECT_RUNTIME_ROOT_RELATIVE_PATH = "Library/Application Support/Meetless";
 const MACOS_APP_CONTAINER_SUPPORT_ROOT_SUFFIX = "/Library/Containers/com.meetless.app/Data/Library/Application Support";
+const MACOS_APP_STORE_ELECTRON_BINARY_DESCRIPTOR_SCHEMA = "MEETLESS_MAS_ELECTRON_BINARY v1";
+const MACOS_APP_STORE_ELECTRON_BINARY_PATH = "Contents/Helpers/Electron.app/Contents/MacOS/Electron";
+const MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH = "Contents/Resources/meetless/runtime/electron/Electron.app";
 
 const HostLaunchConfigurationSchema = z.object({
   repositoryRoot: z.string().min(1),
@@ -134,6 +137,11 @@ const InstallationContractSchema = z.object({
     contractFilename: z.literal("installation-contract.json"),
     hostConfigRelativeToBundle: RelativeHostPathSchema,
     resources: z.record(z.string(), RelativeHostPathSchema),
+    electronBinary: z.object({
+      schema: z.literal(MACOS_APP_STORE_ELECTRON_BINARY_DESCRIPTOR_SCHEMA),
+      pathBase: z.literal("bundle"),
+      path: z.literal(MACOS_APP_STORE_ELECTRON_BINARY_PATH),
+    }).strict().optional(),
   }).strict(),
   host: z.record(z.string(), z.string()),
   dmg: z.record(z.string(), z.string()),
@@ -281,6 +289,7 @@ export function resolveHostConfiguration(
       error,
     );
   }
+  validatePackagedElectronLayout(contract, canonicalBundle);
   const markerPath = resolveContainedPath(packageRoot, "meetless-package.json", "package marker");
   const marker = parseJsonRequired(readFileSyncRequired(markerPath, "package marker"), markerPath) as Record<string, unknown>;
   if (
@@ -308,7 +317,13 @@ export function resolveHostConfiguration(
   }
   validateHostEndpointPolicy(parsed.recordingEndpointName, parsed.transcriptionEndpointName);
   for (const [name, relativePath] of Object.entries(contract.package.resources)) {
-    resolveBundleRelativePath(packageRoot, relativePath, `packaged ${name}`);
+    const root = name === "electronBinary" && contract.package.electronBinary
+      ? canonicalBundle
+      : packageRoot;
+    const resolved = resolveBundleRelativePath(root, relativePath, `packaged ${name}`);
+    if (name === "electronBinary" && contract.package.electronBinary && resolved !== path.resolve(canonicalBundle, contract.package.electronBinary.path)) {
+      throw endpointConfigurationError("packaged MAS electronBinary differs from its bundle-relative descriptor");
+    }
   }
   const runtimeRoot = resolvePackagedRuntimeRoot(parsed.runtimeRootRelativeToUserHome, context);
   const identityPath = resolveContainedPath(runtimeRoot, parsed.identityRelativeToRuntimeRoot, "host identity");
@@ -338,6 +353,27 @@ export function resolveHostConfiguration(
     recordingEndpointName: parsed.recordingEndpointName,
     transcriptionEndpointName: parsed.transcriptionEndpointName,
   });
+}
+
+function validatePackagedElectronLayout(
+  contract: z.infer<typeof InstallationContractSchema>,
+  bundlePath: string,
+): void {
+  const isMas = contract.userSupportRelativePath === MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH;
+  if (isMas) {
+    const descriptor = contract.package.electronBinary;
+    if (!descriptor || contract.package.resources.electronBinary !== MACOS_APP_STORE_ELECTRON_BINARY_PATH) {
+      throw endpointConfigurationError("packaged MAS installation contract has no exact bundle-relative Electron descriptor");
+    }
+    const legacyPath = path.join(bundlePath, MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH);
+    if (lstatSync(legacyPath, { throwIfNoEntry: false })) {
+      throw endpointConfigurationError("packaged MAS bundle contains the legacy nested Electron app layout");
+    }
+    return;
+  }
+  if (contract.package.electronBinary !== undefined) {
+    throw endpointConfigurationError("direct installation contract carries a MAS Electron descriptor");
+  }
 }
 
 function resolvePackagedCaptureHelperPath(contractValue: unknown, packageRoot: string): string {

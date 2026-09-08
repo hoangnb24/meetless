@@ -505,11 +505,11 @@ describe("macOS standalone Mach-O signing boundary", () => {
     ["missing audio input on MeetlessHost", (fixture: any) => {
       const image = fixture.signatureState.nestedMachO.find((entry: any) => entry.path === "Contents/MacOS/MeetlessHost");
       image.entitlementsSha256 = null; image.entitlementsCanonicalSha256 = null; image.entitlementKeys = [];
-    }, /Contents\/MacOS\/MeetlessHost.*observed keys \[\].*docs\/plans\/active\/v1-paseo-foundation\.md/],
+    }, /Contents\/MacOS\/MeetlessHost.*observed keys \[\].*docs\/specs\/macos-artifact-validation\.md/],
     ["missing audio input on meetless-capture", (fixture: any) => {
       const image = fixture.signatureState.nestedMachO.find((entry: any) => entry.path.endsWith("meetless-capture"));
       image.entitlementsSha256 = null; image.entitlementsCanonicalSha256 = null; image.entitlementKeys = [];
-    }, /meetless-capture.*observed keys \[\].*docs\/plans\/active\/v1-paseo-foundation\.md/],
+    }, /meetless-capture.*observed keys \[\].*docs\/specs\/macos-artifact-validation\.md/],
     ["outer re-sign state with dropped host entitlement", (fixture: any) => {
       const image = fixture.signatureState.nestedMachO.find((entry: any) => entry.path === "Contents/MacOS/MeetlessHost");
       image.entitlementsSha256 = null; image.entitlementsCanonicalSha256 = null; image.entitlementKeys = [];
@@ -522,7 +522,7 @@ describe("macOS standalone Mach-O signing boundary", () => {
       });
       fixture.order.nestedMachO.push("Contents/Resources/unapproved-tool");
       fixture.order.all = [...fixture.order.nestedMachO, fixture.order.outer];
-    }, /unmapped entitlement-bearing image Contents\/Resources\/unapproved-tool.*v1-paseo-foundation.*approved/s],
+    }, /unmapped entitlement-bearing image Contents\/Resources\/unapproved-tool.*docs\/specs\/macos-artifact-validation.*approved/s],
     ["union entitlement plist", (fixture: any) => {
       const image = fixture.signatureState.nestedMachO.find((entry: any) => entry.path.endsWith("runtime/node"));
       image.entitlementsSha256 = "d".repeat(64);

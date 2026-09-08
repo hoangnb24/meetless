@@ -7,7 +7,8 @@
     "version": "41.2.0",
     "platform": "mas",
     "arch": "arm64",
-    "archiveName": "electron-v41.2.0-mas-arm64.zip"
+    "archiveName": "electron-v41.2.0-mas-arm64.zip",
+    "sha256": "e153b855ba023f1edfcad4a07b22c30b4d48af57530c04808cffc6c75e17bc7d"
   },
   "state": {
     "owner": "app-container",

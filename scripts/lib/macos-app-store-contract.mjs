@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 export const MACOS_APP_STORE_CONTRACT_SCHEMA = "MEETLESS_MAC_APP_STORE_CONTRACT v1";
 export const MACOS_APP_STORE_APPLICATION_GROUP_KEY = "com.apple.security.application-groups";
 export const MACOS_APP_STORE_DEFAULT_TEAM_ID = "63M98WD275";
+export const MACOS_APP_STORE_ELECTRON_ARCHIVE_NAME = "electron-v41.2.0-mas-arm64.zip";
+export const MACOS_APP_STORE_ELECTRON_ARCHIVE_SHA256 = "e153b855ba023f1edfcad4a07b22c30b4d48af57530c04808cffc6c75e17bc7d";
 export const MACOS_APP_STORE_PARENT_ENTITLEMENTS = Object.freeze([
   "com.apple.security.app-sandbox",
   MACOS_APP_STORE_APPLICATION_GROUP_KEY,
@@ -36,7 +38,10 @@ export function validateMacAppStoreContract(value) {
   if (value.electron?.version !== "41.2.0" || value.electron?.platform !== "mas" || value.electron?.arch !== "arm64") {
     fail("Electron must use the pinned 41.2.0 mas arm64 artifact");
   }
-  if (value.electron?.archiveName !== "electron-v41.2.0-mas-arm64.zip") fail("Electron archive name drifted");
+  if (value.electron?.archiveName !== MACOS_APP_STORE_ELECTRON_ARCHIVE_NAME) fail("Electron archive name drifted");
+  if (value.electron?.sha256 !== MACOS_APP_STORE_ELECTRON_ARCHIVE_SHA256) {
+    fail("Electron archive SHA-256 drifted; use the accepted downloaded MAS archive pin");
+  }
   if (value.state?.owner !== "app-container") fail("writable state must be app-container owned");
   if (value.state?.applicationSupportRelativePath !== "Meetless") fail("container Application Support path drifted");
   if (value.state?.recordingExportsRelativePath !== "Meetless/recordings") fail("container recording path drifted");

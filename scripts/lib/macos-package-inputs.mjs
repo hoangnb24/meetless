@@ -5,6 +5,7 @@ import {
   MACOS_LICENSE_INVENTORY_PATH,
   collectMacOSPackageMetadata,
   digestArtifactEntries,
+  selectArtifactEntriesForDigest,
   collectWorkspaceMembers,
 } from "./macos-license-inventory.mjs";
 import { enumeratePackageEntries, inspectPackageMachOEntries } from "./macos-package-inventory.mjs";
@@ -13,9 +14,21 @@ import {
   PACKAGE_SOURCE_MODE,
   PACKAGE_SOURCE_SNAPSHOT_COMMAND,
 } from "../candidate-snapshot.mjs";
+import { MACOS_APP_STORE_CONTRACT } from "./macos-app-store-contract.mjs";
+import {
+  createMacOSMasSigningBoundDescriptor,
+  MACOS_MAS_SIGNING_BOUNDARY_PHASE_FINAL,
+  MACOS_MAS_SIGNING_BOUNDARY_PHASE_PRE_SIGN,
+  validateMacOSMasSigningBoundDescriptor,
+} from "./macos-mas-signing-boundary.mjs";
 
 export const MACOS_PACKAGE_INPUT_SCHEMA = "MEETLESS_MACOS_PACKAGE_INPUTS v1";
 export const MACOS_PACKAGE_INPUT_AUTHORITY = "docs/decisions/0001-maintained-paseo-fork.md";
+export const MACOS_PACKAGE_ELECTRON_LAYOUT_DIRECT = "direct";
+export const MACOS_PACKAGE_ELECTRON_LAYOUT_MAS = "mas";
+export const MACOS_PACKAGE_ELECTRON_ARTIFACT_PREFIX_DIRECT = "Contents/Resources/meetless/runtime/electron/";
+export const MACOS_PACKAGE_ELECTRON_ARTIFACT_PREFIX_MAS = "Contents/Helpers/Electron.app/";
+export const MACOS_PACKAGE_ELECTRON_ARCHIVE_SOURCE_SCHEMA = "MEETLESS_MAS_ELECTRON_ARCHIVE_SOURCE v1";
 
 const PACKAGE_INPUT_ACTION =
   "rebuild the package-input manifest from the current source, generated build outputs, shipped dependency closure, and final artifact inputs";
@@ -58,19 +71,47 @@ export async function collectMacOSPackageInputs({
   mediaSources = null,
   priorManifest = null,
   packageMetadata = null,
+  electronLayout = MACOS_PACKAGE_ELECTRON_LAYOUT_DIRECT,
+  electronArchiveSource = null,
+  expectedElectronArchiveSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256,
+  masSigningPhase = MACOS_MAS_SIGNING_BOUNDARY_PHASE_PRE_SIGN,
 }) {
+  const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedElectronArchiveSha256);
   const packageRoot = path.join(bundlePath, "Contents", "Resources", "meetless");
   const workspaceMembers = await collectWorkspaceMembers(bundlePath);
   const metadata = packageMetadata ?? await collectMacOSPackageMetadata(packageRoot, repositoryRoot, workspaceMembers);
-  const specs = buildMacOSPackageInputSpecs({ candidateSnapshot, mediaSources, priorManifest });
+  const verifiedElectronArchiveSource = electronLayout === MACOS_PACKAGE_ELECTRON_LAYOUT_MAS
+    ? await verifyMacOSPackageElectronArchiveSource(electronArchiveSource, expectedArchiveSha256)
+    : rejectDirectElectronArchiveSource(electronArchiveSource);
+  const specs = buildMacOSPackageInputSpecs({
+    candidateSnapshot,
+    mediaSources,
+    priorManifest,
+    electronLayout,
+    electronArchiveSource: verifiedElectronArchiveSource,
+    expectedElectronArchiveSha256: expectedArchiveSha256,
+  });
   const inputs = [];
   for (const spec of specs) inputs.push(await hashInputSpec(spec, repositoryRoot, priorManifest));
 
   const entries = await enumeratePackageEntries(bundlePath);
   const machoEntries = await inspectPackageMachOEntries(bundlePath, entries);
   const machoPaths = machoEntries.map((entry) => entry.path);
-  const excludedPaths = [...new Set([MACOS_LICENSE_INVENTORY_PATH, ...machoPaths])].sort((left, right) => left.localeCompare(right));
-  const artifactEntries = entries.filter((entry) => !excludedPaths.includes(entry.path) && !entry.path.startsWith("Contents/_CodeSignature/"));
+  const signingBoundary = electronLayout === MACOS_PACKAGE_ELECTRON_LAYOUT_MAS
+    ? createMacOSMasSigningBoundDescriptor({
+      entries,
+      machoPaths,
+      licenseInventoryPath: MACOS_LICENSE_INVENTORY_PATH,
+      phase: masSigningPhase,
+    })
+    : null;
+  const excludedPaths = signingBoundary?.excludedPaths ??
+    [...new Set([MACOS_LICENSE_INVENTORY_PATH, ...machoPaths])].sort((left, right) => left.localeCompare(right));
+  const artifactEntries = selectArtifactEntriesForDigest(entries, {
+    excludedPaths,
+    signingBoundary,
+    expectedMachoPaths: machoPaths,
+  });
   const packageMembers = metadata.members.map((member) => ({ ...member })).sort((left, right) => left.packageJsonPath.localeCompare(right.packageJsonPath));
   const packagedWorkspaceMembers = [...metadata.workspaceMembers].sort((left, right) => left.packageJsonPath.localeCompare(right.packageJsonPath));
   const packageInputBase = {
@@ -83,13 +124,19 @@ export async function collectMacOSPackageInputs({
     lockMetadataGaps: metadata.lockMetadataGaps,
     artifactInput: {
       algorithm: "sha256",
-      digest: digestArtifactEntries(entries, { excludedPaths }),
+      digest: digestArtifactEntries(entries, {
+        excludedPaths,
+        signingBoundary,
+        expectedMachoPaths: machoPaths,
+      }),
       entryCount: artifactEntries.length,
       excludedPaths,
+      ...(signingBoundary ? { signingBoundary } : {}),
     },
     packageMemberDigest: digestJson(packageMembers),
     workspaceMemberDigest: digestJson(packagedWorkspaceMembers),
     lockMetadataGapCount: metadata.lockMetadataGaps.length,
+    ...(verifiedElectronArchiveSource ? { electronArchiveSource: verifiedElectronArchiveSource } : {}),
   };
   return {
     manifest: {
@@ -100,13 +147,34 @@ export async function collectMacOSPackageInputs({
   };
 }
 
-export async function verifyMacOSPackageInputs({ manifest, repositoryRoot, bundlePath, candidateSnapshot }) {
-  validateMacOSPackageInputDocument(manifest, candidateSnapshot);
+export async function verifyMacOSPackageInputs({
+  manifest,
+  repositoryRoot,
+  bundlePath,
+  candidateSnapshot,
+  electronLayout = MACOS_PACKAGE_ELECTRON_LAYOUT_DIRECT,
+  electronArchiveSource = null,
+  expectedElectronArchiveSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256,
+  masSigningPhase = MACOS_MAS_SIGNING_BOUNDARY_PHASE_FINAL,
+}) {
+  const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedElectronArchiveSha256);
+  const verifiedElectronArchiveSource = electronLayout === MACOS_PACKAGE_ELECTRON_LAYOUT_MAS
+    ? await verifyMacOSPackageElectronArchiveSource(electronArchiveSource, expectedArchiveSha256)
+    : rejectDirectElectronArchiveSource(electronArchiveSource);
+  validateMacOSPackageInputDocument(manifest, candidateSnapshot, {
+    electronLayout,
+    electronArchiveSource: verifiedElectronArchiveSource,
+    expectedElectronArchiveSha256: expectedArchiveSha256,
+  });
   const current = await collectMacOSPackageInputs({
     repositoryRoot,
     bundlePath,
     candidateSnapshot,
     priorManifest: manifest,
+    electronLayout,
+    electronArchiveSource: verifiedElectronArchiveSource,
+    masSigningPhase,
+    expectedElectronArchiveSha256: expectedArchiveSha256,
   });
   const actualPaths = (await enumeratePackageEntries(bundlePath)).map((entry) => entry.path);
   for (const input of manifest.inputs) {
@@ -122,7 +190,16 @@ export async function verifyMacOSPackageInputs({ manifest, repositoryRoot, bundl
   return current;
 }
 
-export function validateMacOSPackageInputDocument(manifest, candidateSnapshot = null) {
+export function validateMacOSPackageInputDocument(
+  manifest,
+  candidateSnapshot = null,
+  {
+    electronLayout = MACOS_PACKAGE_ELECTRON_LAYOUT_DIRECT,
+    electronArchiveSource = null,
+    expectedElectronArchiveSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256,
+  } = {},
+) {
+  const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedElectronArchiveSha256);
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
     throw new Error(`package-input manifest is not an object; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. Next action: ${PACKAGE_INPUT_ACTION}`);
   }
@@ -154,6 +231,43 @@ export function validateMacOSPackageInputDocument(manifest, candidateSnapshot = 
     ids.add(input.id);
     for (const sourcePath of input.sourcePaths) if (typeof sourcePath !== "string" || !sourcePath) throw new Error(`package-input ${input.id} has an empty source path; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. Next action: ${PACKAGE_INPUT_ACTION}`);
     for (const artifactPath of input.artifactPathPrefixes) if (typeof artifactPath !== "string" || !artifactPath) throw new Error(`package-input ${input.id} has an empty artifact binding; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. Next action: ${PACKAGE_INPUT_ACTION}`);
+  }
+  if (electronLayout === MACOS_PACKAGE_ELECTRON_LAYOUT_MAS) {
+    const manifestArchiveSource = validateMacOSPackageElectronArchiveSource(manifest.electronArchiveSource, expectedArchiveSha256);
+    const suppliedArchiveSource = electronArchiveSource
+      ? validateMacOSPackageElectronArchiveSource(electronArchiveSource, expectedArchiveSha256)
+      : null;
+    if (!suppliedArchiveSource || JSON.stringify(manifestArchiveSource) !== JSON.stringify(suppliedArchiveSource)) {
+      throw new Error(`package-input MAS Electron archive descriptor is not the explicit verified source; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. Next action: pass the downloaded MAS archive descriptor through collection and verification`);
+    }
+    const electronInput = manifest.inputs.find((input) => input.id === "electron-runtime-input");
+    if (!electronInput || JSON.stringify(electronInput.sourcePaths) !== JSON.stringify([manifestArchiveSource.path]) ||
+        JSON.stringify(electronInput.resolvedPaths ?? []) !== JSON.stringify([manifestArchiveSource.path]) ||
+        electronInput.artifactPathPrefixes.some((prefix) => prefix === MACOS_PACKAGE_ELECTRON_ARTIFACT_PREFIX_DIRECT || prefix.startsWith(MACOS_PACKAGE_ELECTRON_ARTIFACT_PREFIX_DIRECT)) ||
+        !electronInput.artifactPathPrefixes.includes(MACOS_PACKAGE_ELECTRON_ARTIFACT_PREFIX_MAS)) {
+      throw new Error(`package-input MAS Electron source or Helpers artifact binding is stale; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. Next action: bind the verified archive to Contents/Helpers/Electron.app/`);
+    }
+    let signingBoundary;
+    try {
+      signingBoundary = validateMacOSMasSigningBoundDescriptor(manifest.artifactInput?.signingBoundary, {
+        expectedLicenseInventoryPath: MACOS_LICENSE_INVENTORY_PATH,
+      });
+    } catch (error) {
+      throw new Error(
+        "package-input MAS signing-boundary evidence is missing or invalid: " +
+        (error instanceof Error ? error.message : String(error)) +
+        "; Authority: " + MACOS_PACKAGE_INPUT_AUTHORITY +
+        ". Next action: derive one exact MAS signing-bound descriptor from the pre-sign package entries",
+      );
+    }
+    if (JSON.stringify(manifest.artifactInput?.excludedPaths) !== JSON.stringify(signingBoundary.excludedPaths)) {
+      throw new Error(
+        "package-input MAS ordinary exclusions do not match its signing-boundary descriptor; Authority: " + MACOS_PACKAGE_INPUT_AUTHORITY + ". " +
+        "Next action: exclude only the inventory, Mach-O, and exact nested CodeResources paths",
+      );
+    }
+  } else if (manifest.electronArchiveSource !== undefined) {
+    throw new Error(`direct package-input manifest contains an MAS Electron archive descriptor; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. Next action: preserve the direct node_modules/electron input shape`);
   }
   validateMemberArray(manifest.packageMembers, "package member");
   validateMemberArray(manifest.workspaceMembers, "workspace member");
@@ -188,7 +302,19 @@ export function digestJson(value) {
   return sha256(JSON.stringify(value));
 }
 
-export function buildMacOSPackageInputSpecs({ candidateSnapshot, mediaSources, priorManifest } = {}) {
+export function buildMacOSPackageInputSpecs({
+  candidateSnapshot,
+  mediaSources,
+  priorManifest,
+  electronLayout = MACOS_PACKAGE_ELECTRON_LAYOUT_DIRECT,
+  electronArchiveSource = null,
+  expectedElectronArchiveSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256,
+} = {}) {
+  const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedElectronArchiveSha256);
+  const electronArtifactPrefix = electronArtifactPrefixForLayout(electronLayout);
+  const verifiedElectronArchiveSource = electronLayout === MACOS_PACKAGE_ELECTRON_LAYOUT_MAS
+    ? validateMacOSPackageElectronArchiveSource(electronArchiveSource, expectedArchiveSha256)
+    : rejectDirectElectronArchiveSource(electronArchiveSource);
   const specs = [
     {
       id: "root-package-manifests",
@@ -235,8 +361,11 @@ export function buildMacOSPackageInputSpecs({ candidateSnapshot, mediaSources, p
     {
       id: "electron-runtime-input",
       kind: "electron-chromium-runtime",
-      sourcePaths: ["node_modules/electron/package.json", "node_modules/electron/LICENSE", "node_modules/electron/dist/LICENSES.chromium.html", "node_modules/electron/dist/Electron.app"],
-      artifactPathPrefixes: ["Contents/Resources/meetless/runtime/electron/", "Contents/Resources/meetless/notices/Electron-", "Contents/Resources/meetless/notices/Chromium-"],
+      sourcePaths: verifiedElectronArchiveSource
+        ? [verifiedElectronArchiveSource.path]
+        : ["node_modules/electron/package.json", "node_modules/electron/LICENSE", "node_modules/electron/dist/LICENSES.chromium.html", "node_modules/electron/dist/Electron.app"],
+      ...(verifiedElectronArchiveSource ? { resolvedPaths: [verifiedElectronArchiveSource.path] } : {}),
+      artifactPathPrefixes: [electronArtifactPrefix, "Contents/Resources/meetless/notices/Electron-", "Contents/Resources/meetless/notices/Chromium-"],
     },
     {
       id: "node-runtime-input",
@@ -247,6 +376,19 @@ export function buildMacOSPackageInputSpecs({ candidateSnapshot, mediaSources, p
     },
   ];
   const media = mediaSources?.closure ?? priorManifest?.inputs?.filter((input) => input.id.startsWith("media-"))?.map((input) => ({ source: input.resolvedPaths?.[0], destination: input.artifactPathPrefixes?.[0]?.replace("Contents/Resources/meetless/", "") })) ?? [];
+  if (electronLayout === MACOS_PACKAGE_ELECTRON_LAYOUT_MAS) {
+    const assembly = specs.find((spec) => spec.id === "package-assembly-scripts");
+    if (assembly) {
+      assembly.sourcePaths = [
+        ...assembly.sourcePaths,
+        "scripts/package-macos-app-store-development.mjs",
+        "scripts/lib/macos-app-store-package-evidence.mjs",
+        "scripts/lib/macos-license-inventory.mjs",
+        "scripts/lib/macos-mas-signing-boundary.mjs",
+        "scripts/lib/macos-package-inputs.mjs",
+      ];
+    }
+  }
   for (const [index, item] of media.entries()) {
     if (!item?.source) continue;
     specs.push({
@@ -258,6 +400,116 @@ export function buildMacOSPackageInputSpecs({ candidateSnapshot, mediaSources, p
     });
   }
   return specs;
+}
+
+function electronArtifactPrefixForLayout(layout) {
+  if (layout === MACOS_PACKAGE_ELECTRON_LAYOUT_DIRECT) return MACOS_PACKAGE_ELECTRON_ARTIFACT_PREFIX_DIRECT;
+  if (layout === MACOS_PACKAGE_ELECTRON_LAYOUT_MAS) return MACOS_PACKAGE_ELECTRON_ARTIFACT_PREFIX_MAS;
+  throw new Error(
+    `unsupported macOS Electron package layout ${String(layout)}; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. ` +
+    "Next action: select the direct package-root layout or the accepted MAS Contents/Helpers layout",
+  );
+}
+
+export function validateMacOSPackageElectronArchiveSource(
+  source,
+  expectedSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256,
+) {
+  const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedSha256);
+  const expectedKeys = ["archiveName", "path", "schema", "sha256"].sort();
+  const actualKeys = source && typeof source === "object" && !Array.isArray(source) ? Object.keys(source).sort() : [];
+  if (!source || typeof source !== "object" || Array.isArray(source) ||
+      JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys) ||
+      source.schema !== MACOS_PACKAGE_ELECTRON_ARCHIVE_SOURCE_SCHEMA ||
+      source.archiveName !== MACOS_APP_STORE_CONTRACT.electron.archiveName ||
+      typeof source.path !== "string" || !path.isAbsolute(source.path) || path.resolve(source.path) !== source.path || path.basename(source.path) !== source.archiveName ||
+      !/^[a-f0-9]{64}$/u.test(source.sha256 ?? "")) {
+    throw new Error(
+      `MAS Electron archive source descriptor is missing or malformed; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. ` +
+      `Next action: provide one absolute regular ${MACOS_APP_STORE_CONTRACT.electron.archiveName} path and its SHA-256`,
+    );
+  }
+  if (source.sha256 !== expectedArchiveSha256) {
+    throw new Error(
+      `MAS Electron archive ${source.archiveName} SHA-256 ${source.sha256} differs from the accepted pin ${expectedArchiveSha256}; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. ` +
+      "Next action: discard the downloaded bytes and obtain the archive matching the expected out-of-band digest",
+    );
+  }
+  return source;
+}
+
+export async function verifyMacOSPackageElectronArchiveSource(
+  source,
+  expectedSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256,
+) {
+  const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedSha256);
+  const descriptor = validateMacOSPackageElectronArchiveSource(source, expectedArchiveSha256);
+  const inspected = await lstat(descriptor.path).catch(() => null);
+  if (!inspected || inspected.isSymbolicLink() || !inspected.isFile()) {
+    throw new Error(
+      `MAS Electron archive source ${descriptor.path} is missing or is not a regular non-symlink file; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. ` +
+      "Next action: retain the exact downloaded archive bytes before extraction",
+    );
+  }
+  const bytes = await readFile(descriptor.path);
+  if (sha256(bytes) !== descriptor.sha256) {
+    throw new Error(
+      `MAS Electron archive source ${descriptor.path} bytes differ from its descriptor; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. ` +
+      "Next action: reject the archive and rebuild from the exact downloaded bytes",
+    );
+  }
+  return descriptor;
+}
+
+export async function createMacOSPackageElectronArchiveSource({
+  archivePath,
+  archiveName = MACOS_APP_STORE_CONTRACT.electron.archiveName,
+  expectedSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256,
+} = {}) {
+  const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedSha256);
+  if (typeof archivePath !== "string" || !archivePath) {
+    throw new Error(
+      `MAS Electron archive path is missing; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. ` +
+      "Next action: pass the exact downloaded archive path to the shared source owner",
+    );
+  }
+  const resolvedPath = path.resolve(archivePath);
+  const inspected = await lstat(resolvedPath).catch(() => null);
+  if (!inspected || inspected.isSymbolicLink() || !inspected.isFile()) {
+    throw new Error(
+      `MAS Electron archive source ${resolvedPath} is missing or is not a regular non-symlink file; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. ` +
+      "Next action: retain the exact downloaded archive bytes before extraction",
+    );
+  }
+  const bytes = await readFile(resolvedPath);
+  const source = {
+    schema: MACOS_PACKAGE_ELECTRON_ARCHIVE_SOURCE_SCHEMA,
+    archiveName,
+    path: resolvedPath,
+    sha256: sha256(bytes),
+  };
+  validateMacOSPackageElectronArchiveSource(source, expectedArchiveSha256);
+  return source;
+}
+
+function normalizeExpectedElectronArchiveSha256(expectedSha256) {
+  if (typeof expectedSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(expectedSha256)) {
+    throw new Error(
+      `expected MAS Electron archive SHA-256 is malformed: ${String(expectedSha256)}; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. ` +
+      "Next action: supply the accepted contract pin or one explicit test digest outside manifest and evidence data",
+    );
+  }
+  return expectedSha256;
+}
+
+function rejectDirectElectronArchiveSource(source) {
+  if (source !== null && source !== undefined) {
+    throw new Error(
+      `direct package-input collection cannot receive an MAS Electron archive descriptor; Authority: ${MACOS_PACKAGE_INPUT_AUTHORITY}. ` +
+      "Next action: preserve the direct node_modules/electron input route",
+    );
+  }
+  return null;
 }
 
 function priorResolvedPath(priorManifest, id) {

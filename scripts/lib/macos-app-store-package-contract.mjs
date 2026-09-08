@@ -9,6 +9,10 @@ import {
 import { MACOS_APP_STORE_CONTRACT } from "./macos-app-store-contract.mjs";
 
 export const MACOS_APP_STORE_PACKAGE_CONTRACT_AUTHORITY = "docs/decisions/0005-mac-app-store-and-revenuecat.md";
+export const MACOS_APP_STORE_ELECTRON_BINARY_DESCRIPTOR_SCHEMA = "MEETLESS_MAS_ELECTRON_BINARY v1";
+export const MACOS_APP_STORE_ELECTRON_BINARY_PATH = "Contents/Helpers/Electron.app/Contents/MacOS/Electron";
+export const MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH = "Contents/Resources/meetless/runtime/electron/Electron.app";
+const MACOS_APP_STORE_ELECTRON_BINARY_PATH_BASE = "bundle";
 const MACOS_APP_STORE_CONTAINER_SUPPORT_RELATIVE_PATH =
   "Library/Containers/com.meetless.app/Data/Library/Application Support";
 export const MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH = [
@@ -27,9 +31,24 @@ export function macAppStoreInstallationContract() {
     userSupportRelativePath: MACOS_APP_STORE_RUNTIME_ROOT_RELATIVE_PATH,
     recordingExportsRelativePath: MACOS_APP_STORE_RECORDING_EXPORTS_RELATIVE_PATH,
     runtime: { ...contract.runtime },
-    package: { ...contract.package, resources: { ...contract.package.resources } },
+    package: {
+      ...contract.package,
+      resources: {
+        ...contract.package.resources,
+        electronBinary: MACOS_APP_STORE_ELECTRON_BINARY_PATH,
+      },
+      electronBinary: macAppStoreElectronBinaryDescriptor(),
+    },
     host: { ...contract.host },
     dmg: { ...contract.dmg },
+  };
+}
+
+export function macAppStoreElectronBinaryDescriptor() {
+  return {
+    schema: MACOS_APP_STORE_ELECTRON_BINARY_DESCRIPTOR_SCHEMA,
+    pathBase: MACOS_APP_STORE_ELECTRON_BINARY_PATH_BASE,
+    path: MACOS_APP_STORE_ELECTRON_BINARY_PATH,
   };
 }
 
@@ -80,8 +99,21 @@ export function validateMacAppStorePackageContract(value) {
     );
   }
   validateEndpointPolicy(value.runtime?.endpointPolicy, "installation contract");
+  validateMacAppStoreElectronBinaryDescriptor(value.package?.electronBinary);
   if (JSON.stringify(value) !== JSON.stringify(expected)) {
     throw macAppStoreContractError("the packaged installation contract does not match the app-container MAS contract");
+  }
+  return value;
+}
+
+export function validateMacAppStoreElectronBinaryDescriptor(value) {
+  const expected = macAppStoreElectronBinaryDescriptor();
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      JSON.stringify(value) !== JSON.stringify(expected)) {
+    throw macAppStoreContractError(
+      "the MAS installation contract Electron descriptor is missing or differs from the exact bundle-relative Helpers path",
+      `restore ${JSON.stringify(expected)} and remove the legacy ${MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH} layout`,
+    );
   }
   return value;
 }

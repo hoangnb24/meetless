@@ -7,6 +7,7 @@ import {
   MACOS_APP_STORE_PARENT_ENTITLEMENTS,
 } from "./macos-app-store-contract.mjs";
 import { PASEO_DEPENDENCY } from "./paseo-dependency.mjs";
+import { HOSTED_DEV_TARGET } from "../prove-managed-convex-hosted-dev-target.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -19,6 +20,8 @@ export const R5_APP_STORE_DEVELOPMENT_IDENTITY = "Apple Development: Long Le (33
 export const R5_APP_STORE_TEAM_ID = "63M98WD275";
 export const R5_APP_STORE_BUNDLE_ID = "com.meetless.app";
 export const R5_REVENUECAT_INFO_PLIST_KEY = "MeetlessRevenueCatAPIKey";
+export const R5_CONVEX_INFO_PLIST_KEY = "MeetlessConvexURL";
+export const R5_APP_STORE_DEVELOPMENT_CONVEX_URL = HOSTED_DEV_TARGET.cloudUrl;
 export const MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES = Object.freeze({
   PARENT: "parent",
   CHILD: "child",
@@ -249,7 +252,48 @@ export function validateRevenueCatPublicSdkKey(value) {
   return key;
 }
 
-export function prepareMacAppStoreDevelopmentInfo(info, publicSdkKey) {
+export function validateBuildScopedConvexUrl(value, { expectedUrl = null } = {}) {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim() || /\s/u.test(value)) {
+    throw developmentError("MEETLESS_CONVEX_URL must be one exact public HTTPS Convex URL without whitespace");
+  }
+  if (!value.startsWith("https://") || value.includes("\\")) {
+    throw developmentError("MEETLESS_CONVEX_URL must use the canonical HTTPS Convex URL authority spelling");
+  }
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw developmentError("MEETLESS_CONVEX_URL must be one exact public HTTPS Convex URL");
+  }
+  const schemeSeparator = value.indexOf("://");
+  const authorityAndSuffix = schemeSeparator >= 0 ? value.slice(schemeSeparator + 3) : "";
+  const suffixStart = authorityAndSuffix.search(/[/?#]/u);
+  const authority = suffixStart < 0 ? authorityAndSuffix : authorityAndSuffix.slice(0, suffixStart);
+  const suffix = suffixStart < 0 ? "" : authorityAndSuffix.slice(suffixStart);
+  const rawPath = suffix.split(/[?#]/u, 1)[0];
+  if (
+    parsed.protocol !== "https:" ||
+    !parsed.hostname ||
+    authority.includes("@") ||
+    parsed.username ||
+    parsed.password ||
+    value.includes("?") ||
+    value.includes("#") ||
+    (rawPath !== "" && rawPath !== "/")
+  ) {
+    throw developmentError("MEETLESS_CONVEX_URL must be one exact public HTTPS Convex URL with a root path and no credentials, query, or fragment");
+  }
+  if (expectedUrl !== null && value !== expectedUrl) {
+    throw developmentError(`MEETLESS_CONVEX_URL must match the exact hosted-development target ${expectedUrl}`);
+  }
+  return value;
+}
+
+export function validateHostedDevelopmentConvexUrl(value) {
+  return validateBuildScopedConvexUrl(value, { expectedUrl: R5_APP_STORE_DEVELOPMENT_CONVEX_URL });
+}
+
+export function prepareMacAppStoreDevelopmentInfo(info, publicSdkKey, convexUrl) {
   if (!info || typeof info !== "object" || Array.isArray(info)) {
     throw developmentError("outer Info.plist is not a dictionary");
   }
@@ -257,12 +301,13 @@ export function prepareMacAppStoreDevelopmentInfo(info, publicSdkKey) {
     ...info,
     ElectronTeamID: R5_APP_STORE_TEAM_ID,
     [R5_REVENUECAT_INFO_PLIST_KEY]: validateRevenueCatPublicSdkKey(publicSdkKey),
+    [R5_CONVEX_INFO_PLIST_KEY]: validateBuildScopedConvexUrl(convexUrl),
   };
-  validateMacAppStoreDevelopmentInfo(prepared, { publicSdkKey });
+  validateMacAppStoreDevelopmentInfo(prepared, { publicSdkKey, convexUrl });
   return prepared;
 }
 
-export function validateMacAppStoreDevelopmentInfo(info, { publicSdkKey = null } = {}) {
+export function validateMacAppStoreDevelopmentInfo(info, { publicSdkKey = null, convexUrl = null } = {}) {
   if (!info || typeof info !== "object" || Array.isArray(info)) {
     throw developmentError("outer Info.plist is not a dictionary");
   }
@@ -275,6 +320,10 @@ export function validateMacAppStoreDevelopmentInfo(info, { publicSdkKey = null }
   const actualKey = validateRevenueCatPublicSdkKey(info[R5_REVENUECAT_INFO_PLIST_KEY]);
   if (publicSdkKey !== null && actualKey !== validateRevenueCatPublicSdkKey(publicSdkKey)) {
     throw developmentError("signed outer Info.plist contains a different RevenueCat public SDK key");
+  }
+  const actualConvexUrl = validateBuildScopedConvexUrl(info[R5_CONVEX_INFO_PLIST_KEY]);
+  if (convexUrl !== null && actualConvexUrl !== validateBuildScopedConvexUrl(convexUrl)) {
+    throw developmentError("signed outer Info.plist contains a different build-scoped Convex URL");
   }
   return info;
 }

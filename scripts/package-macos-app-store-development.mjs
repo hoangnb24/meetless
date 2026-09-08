@@ -23,11 +23,23 @@ import {
   macAppStoreInstallationContractSha256,
   macAppStorePackagedHostConfiguration,
   macAppStorePackagedMarker,
+  MACOS_APP_STORE_ELECTRON_BINARY_PATH,
+  MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH,
   validateMacAppStorePackageContract,
   validateMacAppStorePackagedHostConfiguration,
   validateMacAppStorePackagedMarker,
 } from "./lib/macos-app-store-package-contract.mjs";
 import { resolveMacOSDmgPaths } from "./lib/macos-dmg-contract.mjs";
+import {
+  createMacOSAppStoreDirectCompositionSource,
+  finalizeMacOSAppStorePackageEvidence,
+  prepareMacOSAppStorePackageEvidence,
+  stageMacOSAppStoreEmbeddedProfile,
+} from "./lib/macos-app-store-package-evidence.mjs";
+import {
+  createMacOSPackageElectronArchiveSource,
+  verifyMacOSPackageElectronArchiveSource,
+} from "./lib/macos-package-inputs.mjs";
 import {
   MACOS_APP_STORE_DEVELOPMENT_AUTHORITY,
   MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES,
@@ -50,6 +62,7 @@ import {
   validateR5DevelopmentElectronInfo,
   validateR5DevelopmentProfile,
   validateR5DevelopmentSignature,
+  validateHostedDevelopmentConvexUrl,
   validateRevenueCatPublicSdkKey,
 } from "./lib/macos-app-store-development.mjs";
 
@@ -57,11 +70,13 @@ const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseMacAppStoreDevelopmentArguments(process.argv.slice(2));
 const publicSdkKey = readBuildScopedPublicSdkKey();
+const convexUrl = readBuildScopedConvexUrl();
 const packagePaths = resolveMacOSDmgPaths(repositoryRoot, { proofRoot: options.proofRoot });
 const bundlePath = packagePaths.sourceAppPath;
 const contentsPath = path.join(bundlePath, "Contents");
 const packageRoot = path.join(contentsPath, "Resources", "meetless");
-const nestedElectronAppPath = path.join(contentsPath, "Resources", "meetless", "runtime", "electron", "Electron.app");
+const legacyNestedElectronAppPath = path.join(bundlePath, MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH);
+const nestedElectronAppPath = path.join(bundlePath, MACOS_APP_STORE_ELECTRON_BINARY_PATH.split("/Contents/MacOS/Electron")[0]);
 const nestedElectronExecutablePath = path.join(nestedElectronAppPath, "Contents", "MacOS", "Electron");
 const nestedElectronRelativePath = path.relative(bundlePath, nestedElectronExecutablePath).split(path.sep).join("/");
 const directManifestPath = path.join(packagePaths.releaseRoot, "composition-manifest.direct.json");
@@ -85,9 +100,22 @@ async function main() {
   await runComposer();
   const directComposition = await retainDirectCompositionManifest();
   await applyMacAppStorePackageContract();
-  const archivePath = await downloadMasElectron();
-  await replaceElectronRuntime(archivePath);
+  const electronArchiveSource = await downloadMasElectron();
+  await replaceElectronRuntime(electronArchiveSource);
   await injectBuildInputs();
+  const embeddedProfile = await stageMacOSAppStoreEmbeddedProfile({
+    bundlePath,
+    profileBytes: profileSnapshot.bytes,
+  });
+  const packageEvidence = await prepareMacOSAppStorePackageEvidence({
+    bundlePath,
+    repositoryRoot,
+    candidateSnapshot: directComposition.candidateSnapshot,
+    priorManifest: directComposition.packageInputs,
+    electronArchiveSource,
+    embeddedProfile,
+    profileBytes: profileSnapshot.bytes,
+  });
   await assertProfileSnapshotUnchanged(profileSnapshot);
   await signMasBundle(profileSnapshot.path);
 
@@ -96,6 +124,8 @@ async function main() {
     profileBytes: profileSnapshot.bytes,
     profileSnapshot,
     directComposition,
+    packageEvidence,
+    embeddedProfile,
   });
   await writeFile(masManifestPath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
   process.stdout.write(`${JSON.stringify({
@@ -112,6 +142,8 @@ async function main() {
     signatureVerified: evidence.signature.verified,
     nestedMachOCount: evidence.signature.nestedMachOCount,
     revenueCatPublicSdkKeyEmbedded: evidence.revenueCatPublicSdkKeyEmbedded,
+    convexUrlEmbedded: evidence.convexUrlEmbedded,
+    convexUrlSha256: evidence.convexUrlSha256,
     externalGates: evidence.externalGates,
   }, null, 2)}\n`);
 }
@@ -119,6 +151,12 @@ async function main() {
 function readBuildScopedPublicSdkKey() {
   const value = validateRevenueCatPublicSdkKey(process.env.MEETLESS_REVENUECAT_PUBLIC_SDK_KEY);
   delete process.env.MEETLESS_REVENUECAT_PUBLIC_SDK_KEY;
+  return value;
+}
+
+function readBuildScopedConvexUrl() {
+  const value = validateHostedDevelopmentConvexUrl(process.env.MEETLESS_CONVEX_URL);
+  delete process.env.MEETLESS_CONVEX_URL;
   return value;
 }
 
@@ -190,11 +228,14 @@ async function retainDirectCompositionManifest() {
   }
   await rm(directManifestPath, { force: true });
   await rename(packagePaths.manifestPath, directManifestPath);
-  return {
-    path: path.relative(options.proofRoot, directManifestPath).split(path.sep).join("/"),
-    sha256: sha256(manifestBytes),
-    artifactDigest: manifest.artifactDigest,
-  };
+  return createMacOSAppStoreDirectCompositionSource({
+    binding: {
+      path: path.relative(options.proofRoot, directManifestPath).split(path.sep).join("/"),
+      sha256: sha256(manifestBytes),
+      artifactDigest: manifest.artifactDigest,
+    },
+    manifest,
+  });
 }
 
 async function applyMacAppStorePackageContract() {
@@ -231,14 +272,20 @@ async function downloadMasElectron() {
   if (path.basename(archivePath) !== electron.archiveName) {
     throw developmentError(`Electron download returned ${path.basename(archivePath)}, expected ${electron.archiveName}`);
   }
-  return archivePath;
+  const source = await createMacOSPackageElectronArchiveSource({
+    archivePath,
+    expectedSha256: electron.sha256,
+  });
+  await verifyMacOSPackageElectronArchiveSource(source);
+  return source;
 }
 
-async function replaceElectronRuntime(archivePath) {
+async function replaceElectronRuntime(electronArchiveSource) {
+  const source = await verifyMacOSPackageElectronArchiveSource(electronArchiveSource);
   const extractionRoot = path.join(options.proofRoot, "electron-mas");
   await rm(extractionRoot, { recursive: true, force: true });
   await mkdir(extractionRoot, { recursive: true, mode: 0o700 });
-  await run("ditto", ["-x", "-k", archivePath, extractionRoot]);
+  await run("ditto", ["-x", "-k", source.path, extractionRoot]);
   const extractedAppPath = path.join(extractionRoot, "Electron.app");
   await requireDirectory(extractedAppPath, "extracted Electron MAS app");
   const extractedInfo = parsePlistDocument(
@@ -250,8 +297,13 @@ async function replaceElectronRuntime(archivePath) {
   await requireRegularFile(extractedExecutablePath, "extracted Electron MAS executable");
   const { stdout: fileOutput } = await run("file", [extractedExecutablePath]);
   validateR5DevelopmentElectronFileOutput(fileOutput);
+  await rm(legacyNestedElectronAppPath, { recursive: true, force: true });
+  await mkdir(path.dirname(nestedElectronAppPath), { recursive: true, mode: 0o755 });
   await rm(nestedElectronAppPath, { recursive: true, force: true });
   await cp(extractedAppPath, nestedElectronAppPath, { recursive: true, verbatimSymlinks: true });
+  if (await pathExists(legacyNestedElectronAppPath)) {
+    throw developmentError(`legacy MAS Electron app remains at ${MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH}`);
+  }
   await writeFile(
     path.join(nestedElectronAppPath, "Contents", "Info.plist"),
     plist.build(preparedInfo),
@@ -259,10 +311,17 @@ async function replaceElectronRuntime(archivePath) {
   );
 }
 
+async function pathExists(candidate) {
+  return lstat(candidate).then(() => true, (error) => {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  });
+}
+
 async function injectBuildInputs() {
   const infoPath = path.join(contentsPath, "Info.plist");
   const info = parsePlistDocument(await readFile(infoPath, "utf8"), "outer Info.plist");
-  const prepared = prepareMacAppStoreDevelopmentInfo(info, publicSdkKey);
+  const prepared = prepareMacAppStoreDevelopmentInfo(info, publicSdkKey, convexUrl);
   await writeFile(infoPath, plist.build(prepared), { mode: 0o644 });
 }
 
@@ -291,7 +350,7 @@ async function signMasBundle(provisioningProfilePath) {
   );
 }
 
-async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, directComposition }) {
+async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, directComposition, packageEvidence, embeddedProfile }) {
   const packagedContract = await readPackagedContractFiles();
   await assertProfileSnapshotUnchanged(profileSnapshot);
   await run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundlePath]);
@@ -300,7 +359,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
     "Meetless.app",
   );
   const outerInfo = parsePlistDocument(await readFile(path.join(contentsPath, "Info.plist"), "utf8"), "signed outer Info.plist");
-  validateMacAppStoreDevelopmentInfo(outerInfo, { publicSdkKey });
+  validateMacAppStoreDevelopmentInfo(outerInfo, { publicSdkKey, convexUrl });
   const actualParent = await readCodesignEntitlements(
     bundlePath,
     MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.PARENT,
@@ -321,10 +380,10 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
   if (!embeddedProfileBytes.equals(profileBytes)) {
     throw developmentError("embedded development provisioning profile bytes differ from the immutable selected-profile snapshot");
   }
-  const embeddedProfile = validateR5DevelopmentProfile(
+  const parsedEmbeddedProfile = validateR5DevelopmentProfile(
     parsePlistDocument((await run("security", ["cms", "-D", "-i", profilePath])).stdout, "embedded development provisioning profile"),
   );
-  if (embeddedProfile.UUID !== profile.UUID || embeddedProfile.Name !== profile.Name) {
+  if (parsedEmbeddedProfile.UUID !== profile.UUID || parsedEmbeddedProfile.Name !== profile.Name) {
     throw developmentError("signed bundle embeds a different R5 development profile");
   }
   await assertUnsignedCodesignProfileData(profilePath);
@@ -393,6 +452,31 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
     });
   }
 
+  const signature = {
+    verified: true,
+    bundleIdentifier: outerSignature.identifier,
+    teamId: outerSignature.teamId,
+    identity: outerSignature.identity,
+    signature: outerSignature.signature,
+    cdHash: outerSignature.cdHash,
+    nestedMachOCount: nestedSignatures.length,
+    nestedMachO: nestedSignatures,
+  };
+  const masPackageEvidence = await finalizeMacOSAppStorePackageEvidence({
+    bundlePath,
+    repositoryRoot,
+    candidateSnapshot: directComposition.candidateSnapshot,
+    preparedEvidence: packageEvidence,
+    signature,
+    entries,
+    machoEntries,
+    embeddedProfile,
+    profileBytes,
+  });
+  if (masPackageEvidence.embeddedProfile.sha256 !== profileSnapshot.sha256) {
+    throw developmentError("MAS embedded profile evidence is not cross-bound to the immutable provisioning-profile snapshot");
+  }
+
   return {
     schema: "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1",
     authority: MACOS_APP_STORE_DEVELOPMENT_AUTHORITY,
@@ -402,6 +486,8 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
     teamId: R5_APP_STORE_TEAM_ID,
     signingIdentity: R5_APP_STORE_DEVELOPMENT_IDENTITY,
     revenueCatPublicSdkKeyEmbedded: true,
+    convexUrlEmbedded: true,
+    convexUrlSha256: sha256(Buffer.from(convexUrl)),
     provisioningProfile: {
       name: profile.Name,
       uuid: profile.UUID,
@@ -411,16 +497,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
         ? profile.ExpirationDate.toISOString()
         : new Date(profile.ExpirationDate).toISOString(),
     },
-    signature: {
-      verified: true,
-      bundleIdentifier: outerSignature.identifier,
-      teamId: outerSignature.teamId,
-      identity: outerSignature.identity,
-      signature: outerSignature.signature,
-      cdHash: outerSignature.cdHash,
-      nestedMachOCount: nestedSignatures.length,
-      nestedMachO: nestedSignatures,
-    },
+    signature,
     entitlements: {
       parentKeys: Object.keys(actualParent).sort(),
       childKeys: MACOS_APP_STORE_CHILD_ENTITLEMENTS,
@@ -431,6 +508,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
       platform: MACOS_APP_STORE_CONTRACT.electron.platform,
       arch: MACOS_APP_STORE_CONTRACT.electron.arch,
       archiveName: MACOS_APP_STORE_CONTRACT.electron.archiveName,
+      archiveSha256: packageEvidence.electronArchiveSource.sha256,
       executable: nestedElectronRelativePath,
       architecture: "arm64",
       thin: true,
@@ -441,7 +519,8 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
       machoEntryCount: machoEntries.length,
     },
     packagedContract,
-    directComposition,
+    directComposition: directComposition.binding,
+    masPackageEvidence,
     externalGates: {
       launch: "not-run",
       purchase: "not-run",
@@ -590,6 +669,7 @@ function parsePlistDocument(text, label) {
 function environmentWithoutSdkKey() {
   const environment = { ...process.env };
   delete environment.MEETLESS_REVENUECAT_PUBLIC_SDK_KEY;
+  delete environment.MEETLESS_CONVEX_URL;
   return environment;
 }
 

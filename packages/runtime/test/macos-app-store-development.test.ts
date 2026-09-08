@@ -1,5 +1,8 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { describe, expect, test } from "vitest";
 import {
   prepareMacAppStoreDevelopmentInfo,
@@ -9,6 +12,8 @@ import {
   R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME,
   R5_APP_STORE_DEVELOPMENT_PROFILE_NAME,
   R5_APP_STORE_DEVELOPMENT_PROFILE_UUID,
+  R5_APP_STORE_DEVELOPMENT_CONVEX_URL,
+  R5_CONVEX_INFO_PLIST_KEY,
   MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES,
   classifyMacAppStoreDevelopmentMachO,
   createMacAppStoreDevelopmentSigningOptions,
@@ -20,17 +25,35 @@ import {
   resolveR5DevelopmentProfilePath,
   resolveMacAppStoreDevelopmentEmbeddedProfilePath,
   validateMacAppStoreDevelopmentInfo,
+  validateBuildScopedConvexUrl,
+  validateHostedDevelopmentConvexUrl,
   validateR5DevelopmentElectronFileOutput,
   validateR5DevelopmentElectronInfo,
   validateR5DevelopmentProfile,
   validateR5DevelopmentSignature,
   validateRevenueCatPublicSdkKey,
 } from "../../../scripts/lib/macos-app-store-development.mjs";
+import { HOSTED_DEV_TARGET } from "../../../scripts/prove-managed-convex-hosted-dev-target.mjs";
 import {
+  createMacOSPackageElectronArchiveSource,
+  verifyMacOSPackageElectronArchiveSource,
+} from "../../../scripts/lib/macos-package-inputs.mjs";
+import {
+  MACOS_APP_STORE_CONTRACT,
   validateEntitlementKeys,
 } from "../../../scripts/lib/macos-app-store-contract.mjs";
+import {
+  MACOS_APP_STORE_ELECTRON_BINARY_PATH,
+  macAppStoreInstallationContract,
+  validateMacAppStorePackageContract,
+} from "../../../scripts/lib/macos-app-store-package-contract.mjs";
+import {
+  createMacOSAppStoreDirectCompositionSource,
+} from "../../../scripts/lib/macos-app-store-package-evidence.mjs";
 
 const CODESIGN_ENTITLEMENT_WARNING = "warning: Specifying ':' in the path is deprecated and will not work in a future release";
+const MAS_FIXTURE_ARCHIVE_BYTES = Buffer.from("deterministic archive fixture\n");
+const MAS_FIXTURE_ARCHIVE_SHA256 = createHash("sha256").update(MAS_FIXTURE_ARCHIVE_BYTES).digest("hex");
 
 function entitlementCommandResult(executablePath, stdout = "", { warning = true } = {}) {
   return {
@@ -93,20 +116,144 @@ describe("Mac App Store development package boundary", () => {
     expect(() => validateRevenueCatPublicSdkKey(undefined)).toThrow(/public Apple SDK key/);
   });
 
+  test("accepts only an exact root HTTPS Convex URL", () => {
+    const convexUrl = "https://meetless-fixture.convex.cloud/";
+    expect(validateBuildScopedConvexUrl(convexUrl)).toBe(convexUrl);
+    for (const malformed of [
+      "http://meetless-fixture.convex.cloud/",
+      "https://meetless-fixture.convex.cloud/path",
+      "https://meetless-fixture.convex.cloud/?query=1",
+      "https://meetless-fixture.convex.cloud/#fragment",
+      "https://user:password@meetless-fixture.convex.cloud/",
+      "https://meetless-fixture.convex.cloud/ with-space",
+      "https:foo",
+      "https:/foo",
+      "https:///foo",
+      "https://meetless-fixture.convex.cloud\\path",
+      "",
+    ]) {
+      expect(() => validateBuildScopedConvexUrl(malformed)).toThrow(/HTTPS Convex URL/);
+    }
+  });
+
+  test("locks production Convex authority to the hosted-development target", () => {
+    expect(R5_APP_STORE_DEVELOPMENT_CONVEX_URL).toBe(HOSTED_DEV_TARGET.cloudUrl);
+    expect(validateHostedDevelopmentConvexUrl(HOSTED_DEV_TARGET.cloudUrl)).toBe(HOSTED_DEV_TARGET.cloudUrl);
+    for (const alternate of [
+      "https://meetless-fixture.convex.cloud",
+      "https://frugal-mandrill-646.convex.cloud/",
+    ]) {
+      expect(() => validateHostedDevelopmentConvexUrl(alternate)).toThrow(/hosted-development target/);
+    }
+  });
+
+  test("binds MAS evidence to the exact archive bytes and accepted pin", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-mas-archive-test-"));
+    const archivePath = path.join(root, MACOS_APP_STORE_CONTRACT.electron.archiveName);
+    try {
+      await writeFile(archivePath, MAS_FIXTURE_ARCHIVE_BYTES, { mode: 0o600 });
+      const source = await createMacOSPackageElectronArchiveSource({
+        archivePath,
+        expectedSha256: MAS_FIXTURE_ARCHIVE_SHA256,
+      });
+      await expect(verifyMacOSPackageElectronArchiveSource(source, MAS_FIXTURE_ARCHIVE_SHA256)).resolves.toEqual(source);
+
+      const alternateRoot = await mkdtemp(path.join(tmpdir(), "meetless-mas-archive-alternate-test-"));
+      try {
+        const alternatePath = path.join(alternateRoot, MACOS_APP_STORE_CONTRACT.electron.archiveName);
+        const alternateBytes = Buffer.from("self-consistent alternate archive fixture\n");
+        const alternateSha256 = createHash("sha256").update(alternateBytes).digest("hex");
+        await writeFile(alternatePath, alternateBytes, { mode: 0o600 });
+        const alternateSource = await createMacOSPackageElectronArchiveSource({
+          archivePath: alternatePath,
+          expectedSha256: alternateSha256,
+        });
+        await expect(verifyMacOSPackageElectronArchiveSource(alternateSource)).rejects.toThrow(/accepted pin/);
+        await expect(createMacOSPackageElectronArchiveSource({ archivePath: alternatePath })).rejects.toThrow(/accepted pin/);
+      } finally {
+        await rm(alternateRoot, { recursive: true, force: true });
+      }
+
+      await writeFile(archivePath, "mutated archive fixture\n", { mode: 0o600 });
+      await expect(verifyMacOSPackageElectronArchiveSource(source, MAS_FIXTURE_ARCHIVE_SHA256)).rejects.toThrow(/bytes differ/);
+      await expect(createMacOSPackageElectronArchiveSource({ archivePath, expectedSha256: "not-a-sha" })).rejects.toThrow(/malformed/);
+      await rm(archivePath);
+      await expect(verifyMacOSPackageElectronArchiveSource(source, MAS_FIXTURE_ARCHIVE_SHA256)).rejects.toThrow(/missing/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("adds and validates only build-scoped public SDK metadata", () => {
+    const convexUrl = "https://meetless-fixture.convex.cloud/";
     const prepared = prepareMacAppStoreDevelopmentInfo(
       { CFBundleIdentifier: "com.meetless.app", CFBundleName: "Meetless" },
       "appl_1234567890",
+      convexUrl,
     );
     expect(prepared).toMatchObject({
       CFBundleIdentifier: "com.meetless.app",
       ElectronTeamID: "63M98WD275",
       MeetlessRevenueCatAPIKey: "appl_1234567890",
+      [R5_CONVEX_INFO_PLIST_KEY]: convexUrl,
     });
-    expect(validateMacAppStoreDevelopmentInfo(prepared, { publicSdkKey: "appl_1234567890" })).toBe(prepared);
+    expect(validateMacAppStoreDevelopmentInfo(prepared, { publicSdkKey: "appl_1234567890", convexUrl })).toBe(prepared);
     expect(() => validateMacAppStoreDevelopmentInfo({ ...prepared, CFBundleIdentifier: "com.other.app" })).toThrow(/bundle identifier/);
     expect(() => validateMacAppStoreDevelopmentInfo({ ...prepared, MeetlessRevenueCatAPIKey: "sk_secret" })).toThrow(/public Apple SDK key/);
     expect(() => validateMacAppStoreDevelopmentInfo(prepared, { publicSdkKey: "appl_0987654321" })).toThrow(/different/);
+    expect(() => validateMacAppStoreDevelopmentInfo(prepared, { convexUrl: "https://other-fixture.convex.cloud/" })).toThrow(/different build-scoped Convex URL/);
+    expect(() => validateMacAppStoreDevelopmentInfo({ ...prepared, [R5_CONVEX_INFO_PLIST_KEY]: "http://insecure.invalid/" })).toThrow(/HTTPS Convex URL/);
+  });
+
+  test("binds the MAS contract to the Helpers Electron path and preserves the direct route", () => {
+    const contract = macAppStoreInstallationContract();
+    expect(contract.package.electronBinary).toEqual({
+      schema: "MEETLESS_MAS_ELECTRON_BINARY v1",
+      pathBase: "bundle",
+      path: MACOS_APP_STORE_ELECTRON_BINARY_PATH,
+    });
+    expect(contract.package.resources.electronBinary).toBe(MACOS_APP_STORE_ELECTRON_BINARY_PATH);
+    expect(JSON.parse(readFileSync("scripts/lib/macos-package-contract.json", "utf8")).package.resources.electronBinary).toBe(
+      "runtime/electron/Electron.app/Contents/MacOS/Electron",
+    );
+    expect(() => validateMacAppStorePackageContract({
+      ...contract,
+      package: {
+        ...contract.package,
+        electronBinary: { ...contract.package.electronBinary, pathBase: "package" },
+      },
+    })).toThrow(/exact bundle-relative Helpers path/);
+  });
+
+  test("keeps the direct binding small while carrying its exact evidence privately", () => {
+    const candidateSnapshot = { schema: "candidate", digest: "snapshot" };
+    const packageInputs = { schema: "package-inputs", digest: "inputs" };
+    const binding = {
+      path: "release/macos/composition-manifest.direct.json",
+      sha256: "a".repeat(64),
+      artifactDigest: "b".repeat(64),
+    };
+    const source = createMacOSAppStoreDirectCompositionSource({
+      binding,
+      manifest: { artifactDigest: binding.artifactDigest, candidateSnapshot, packageInputs },
+    });
+
+    expect(source.binding).toEqual(binding);
+    expect(Object.keys(source.binding).sort()).toEqual(["artifactDigest", "path", "sha256"]);
+    expect(source.candidateSnapshot).toBe(candidateSnapshot);
+    expect(source.packageInputs).toBe(packageInputs);
+    expect(() => createMacOSAppStoreDirectCompositionSource({
+      binding: { ...binding, extra: true },
+      manifest: { artifactDigest: binding.artifactDigest, candidateSnapshot, packageInputs },
+    })).toThrow(/exactly path, sha256, and artifactDigest/);
+    expect(() => createMacOSAppStoreDirectCompositionSource({
+      binding,
+      manifest: { artifactDigest: "other", candidateSnapshot, packageInputs },
+    })).toThrow(/cross-bound incorrectly/);
+
+    const productionSource = readFileSync(new URL("../../../scripts/package-macos-app-store-development.mjs", import.meta.url), "utf8");
+    expect(productionSource).toContain("return createMacOSAppStoreDirectCompositionSource({");
+    expect(productionSource).toContain("directComposition: directComposition.binding");
   });
 
   test("proves the pinned MAS Electron and certificate-backed signature shape", () => {
@@ -178,6 +325,18 @@ describe("Mac App Store development package boundary", () => {
     expect(source).toContain("{ expectedBundleIdentifier: R5_APP_STORE_BUNDLE_ID }");
   });
 
+  test("stages the immutable profile before MAS pre-sign evidence and signing", () => {
+    const source = readFileSync(new URL("../../../scripts/package-macos-app-store-development.mjs", import.meta.url), "utf8");
+    const stageIndex = source.indexOf("const embeddedProfile = await stageMacOSAppStoreEmbeddedProfile");
+    const prepareIndex = source.indexOf("const packageEvidence = await prepareMacOSAppStorePackageEvidence");
+    const signIndex = source.indexOf("await signMasBundle(profileSnapshot.path)");
+    expect(stageIndex).toBeGreaterThanOrEqual(0);
+    expect(prepareIndex).toBeGreaterThan(stageIndex);
+    expect(signIndex).toBeGreaterThan(prepareIndex);
+    expect(source).toContain("preEmbedProvisioningProfile: true");
+    expect(source).toContain("profileBytes: profileSnapshot.bytes");
+  });
+
   test("ignores only the normalized embedded profile and preserves code-object signing routes", () => {
     const bundlePath = "/tmp/mas-proof/release/Meetless.app";
     const parentEntitlementsPath = "/tmp/mas-proof/parent.entitlements.plist";
@@ -237,7 +396,7 @@ describe("Mac App Store development package boundary", () => {
     });
 
     const child = classifyMacAppStoreDevelopmentMachO({
-      path: "Contents/Resources/meetless/runtime/electron/Electron.app/Contents/MacOS/Electron",
+      path: "Contents/Helpers/Electron.app/Contents/MacOS/Electron",
       machOFileType: "MH_EXECUTE",
     });
     expect(child.entitlementPolicy).toBe(MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.CHILD);

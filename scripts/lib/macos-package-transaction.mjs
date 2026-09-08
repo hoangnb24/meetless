@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { cp, lstat, mkdir, open, readFile, readlink, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, open, readFile, readlink, readdir, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { acquireMasGateLock, assertMasGateMutationLease, masGateLockPath } from "./macos-mas-gate-lock.mjs";
 import { assertMasGateArtifactBinding, freezeMasGateArtifactBinding } from "./mas-gate-artifact-binding.mjs";
@@ -7,6 +7,52 @@ import { assertMacOSPackageParent } from "./macos-package-parent-policy.mjs";
 
 export const PACKAGE_TRANSACTION_SCHEMA = "MAS_PACKAGE_TRANSACTION v4";
 export const PACKAGE_TRANSACTION_VERSION = 4;
+const MAS_GATE_CLEANUP_DIAGNOSTIC_CODE = "MAS-GATE-CLEANUP-001";
+const APPLE_RECEIPT_AUTHORITY = "docs/decisions/0005-mac-app-store-and-revenuecat.md";
+const APPLE_RECEIPT_NEXT_ACTION = "restore the exact signed package and rerun MAS artifact validation";
+const APPLE_RECEIPT_LAYOUTS = Object.freeze([
+  Object.freeze({
+    id: "mas-helpers",
+    relativePath: Object.freeze([
+      "Contents", "Helpers", "Electron.app", "Contents", "_MASReceipt", "receipt",
+    ]),
+    directoryRelativePath: Object.freeze([
+      "Contents", "Helpers", "Electron.app", "Contents", "_MASReceipt",
+    ]),
+  }),
+  Object.freeze({
+    id: "legacy-resources",
+    relativePath: Object.freeze([
+      "Contents", "Resources", "meetless", "runtime", "electron", "Electron.app", "Contents", "_MASReceipt", "receipt",
+    ]),
+    directoryRelativePath: Object.freeze([
+      "Contents", "Resources", "meetless", "runtime", "electron", "Electron.app", "Contents", "_MASReceipt",
+    ]),
+  }),
+]);
+const APPLE_RECEIPT_RELATIVE_PATH = APPLE_RECEIPT_LAYOUTS[0].relativePath;
+const APPLE_RECEIPT_DIRECTORY_RELATIVE_PATH = APPLE_RECEIPT_LAYOUTS[0].directoryRelativePath;
+const APPLE_RECEIPT_RULE = `the fingerprint exception applies only to one regular file at ${APPLE_RECEIPT_RELATIVE_PATH.join("/")}; historical journals may attest ${APPLE_RECEIPT_LAYOUTS[1].relativePath.join("/")}`;
+const APPLE_RECEIPT_RETENTION_RULE = "a rollback cleanup may retain only the exact remaining receipt-bearing disposable tree; receipt bytes are opaque and never read, hashed, or individually mutated";
+// MAS_PACKAGE_TRANSACTION v4 remains the coordinator contract. Package
+// retention is an explicit versioned nested extension. Legacy v3 receipt
+// records are normalized into the retained-package set without being dropped;
+// the legacy scalar remains as a compatibility alias for the first record.
+const RETAINED_RECEIPT_SCHEMA = "MAS_PACKAGE_RECEIPT_RETENTION v3";
+const RETAINED_RECEIPT_VERSION = 3;
+const LEGACY_RETAINED_PACKAGE_SCHEMA = "MAS_PACKAGE_DISPOSABLE_RETENTION v1";
+const LEGACY_RETAINED_PACKAGE_VERSION = 1;
+const LEGACY_RETAINED_PACKAGE_SCHEMA_V2 = "MAS_PACKAGE_DISPOSABLE_RETENTION v2";
+const LEGACY_RETAINED_PACKAGE_VERSION_V2 = 2;
+const RETAINED_PACKAGE_SCHEMA = "MAS_PACKAGE_DISPOSABLE_RETENTION v3";
+const RETAINED_PACKAGE_VERSION = 3;
+const RETAINED_PACKAGE_SET_SCHEMA = "MAS_PACKAGE_DISPOSABLE_RETENTION_SET v1";
+const RETAINED_PACKAGE_SET_VERSION = 1;
+const MAX_RETAINED_PACKAGE_DISPOSABLES = 4;
+const RETENTION_INVENTORY_SCHEMA = "MAS_PACKAGE_RECEIPT_INVENTORY v2";
+const RETENTION_INVENTORY_VERSION = 2;
+const STABLE_ORDINARY_ATTESTATION_SCHEMA = "MAS_PACKAGE_STABLE_ORDINARY_ATTESTATION v1";
+const STABLE_ORDINARY_ATTESTATION_VERSION = 1;
 export const PACKAGE_TRANSACTION_RECOVERABLE_STATES = Object.freeze([
   "prepared",
   "staged",
@@ -133,6 +179,9 @@ async function replacePackageBundleWithLease(input) {
     cleanupSource: null,
     cleanupFingerprint: null,
     cleanupIdentity: null,
+    cleanupReceiptObserved: false,
+    retainedCleanup: null,
+    retainedPackageDisposables: emptyRetainedPackageDisposables(),
     identityTemporaryPath: null,
     identityTemporaryFingerprint: null,
     identityTemporaryIdentity: null,
@@ -325,7 +374,8 @@ export async function finalizePackageTransaction(transaction, options = {}) {
       throw new Error(`cannot finalize a package transaction in state ${transaction.state}`);
     }
     if (transaction.state === "committed") {
-      await assertOwnedPath(transaction.target, transaction.candidateFingerprint, "installed package", transaction.candidateIdentity);
+      await assertNoReceiptBearingFinalizationCleanup(transaction, lockedOptions.filesystem);
+      await assertOwnedPath(transaction.target, transaction.candidateFingerprint, "installed package", transaction.candidateIdentity, lockedOptions.filesystem);
       await assertIdentityState(transaction, transaction.nextIdentityFingerprint);
       await transition(transaction, "finalizing", lockedOptions.faultAt);
     }
@@ -343,10 +393,16 @@ async function preparePackageMutationLease(transaction, options, lockLease) {
   await lockLease.assertHeld();
 }
 
-export async function fingerprintPath(root) {
-  if (!(await exists(root))) return null;
+export async function fingerprintPath(root, filesystem = undefined) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
+  const rootInfo = await packageLstat(evidenceFilesystem, root).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!rootInfo) return null;
   const entries = [];
-  await fingerprintVisit(root, root, entries);
+  await inspectAppleReceiptBoundary(root, evidenceFilesystem);
+  await fingerprintVisit(root, root, entries, evidenceFilesystem);
   return digest(Buffer.from(JSON.stringify(entries.sort((left, right) => left.relative.localeCompare(right.relative)))));
 }
 
@@ -370,6 +426,7 @@ export async function readPackageTransactionProof(options = {}) {
   const identity = await assertAuthorizedPublishedIdentity(record.transaction, {
     expectedArtifactBinding: options.expectedArtifactBinding,
     runtimeRootPath: record.physicalRuntimeRootPath,
+    filesystem: record.filesystem,
   });
   return packageProofResult(record, {
     status: "committed",
@@ -392,6 +449,7 @@ export async function readPackageRecoveryProof(options = {}) {
   const physicalState = await assertAuthorizedRecoverablePackageState(record.transaction, {
     expectedArtifactBinding: options.expectedArtifactBinding,
     runtimeRootPath: record.physicalRuntimeRootPath,
+    filesystem: record.filesystem,
   });
   return packageProofResult(record, {
     status: "recoverable",
@@ -400,6 +458,7 @@ export async function readPackageRecoveryProof(options = {}) {
     currentIdentityFingerprint: physicalState.identityFingerprint,
     currentIdentity: physicalState.identity,
     publishedHostIdentity: physicalState.identityDocument,
+    retainedPackageUpgrades: physicalState.retainedPackageUpgrades,
   });
 }
 
@@ -441,7 +500,7 @@ async function readPackageTransactionRecord({
   if (resolvePackagePath(adapter, packageIdentityTemporaryPath(identityPath, runId), "package proof identity temporary") !== packageIdentityTemporaryPath(physicalIdentityPath, runId)) {
     throw new Error("package proof filesystem mapping changed the fixed identity temporary target/run path");
   }
-  const physicalJournalInfo = await lstat(physicalPaths.journal).catch((error) => {
+  const physicalJournalInfo = await packageLstat(adapter, physicalPaths.journal).catch((error) => {
     if (error?.code === "ENOENT") return null;
     throw error;
   });
@@ -449,7 +508,7 @@ async function readPackageTransactionRecord({
     if (!allowMissing) {
       throw new Error(`package proof journal is missing at the fixed target/run-derived path ${logicalPaths.journal}`);
     }
-    const identityInfo = await lstat(physicalIdentityPath).catch((error) => {
+    const identityInfo = await packageLstat(adapter, physicalIdentityPath).catch((error) => {
       if (error?.code === "ENOENT") return null;
       throw error;
     });
@@ -462,7 +521,7 @@ async function readPackageTransactionRecord({
       [physicalPaths.displaced, "displaced package"],
       [packageIdentityTemporaryPath(physicalIdentityPath, runId), "package identity temporary"],
     ]) {
-      const residue = await lstat(candidate).catch((error) => {
+      const residue = await packageLstat(adapter, candidate).catch((error) => {
         if (error?.code === "ENOENT") return null;
         throw error;
       });
@@ -485,6 +544,7 @@ async function readPackageTransactionRecord({
   try {
     transaction = normalizeTransaction(JSON.parse(await readFile(physicalPaths.journal, "utf8")));
   } catch (error) {
+    if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) throw error;
     throw new Error(`package proof journal is malformed: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (transaction.runId !== runId) {
@@ -501,6 +561,7 @@ async function readPackageTransactionRecord({
     transaction,
     logicalPaths,
     physicalRuntimeRootPath,
+    filesystem: adapter,
     logicalTarget: target,
     logicalIdentityPath: identityPath,
   };
@@ -525,12 +586,41 @@ function packageProofResult(record, values) {
 }
 
 function normalizePackageFilesystem(filesystem) {
-  if (filesystem === undefined) return { resolvePath: (candidate) => candidate };
-  if (!filesystem || typeof filesystem !== "object" || Array.isArray(filesystem) ||
-      typeof filesystem.resolvePath !== "function" || Object.keys(filesystem).some((name) => name !== "resolvePath")) {
-    throw new Error("package proof filesystem must expose only one low-level resolvePath adapter");
+  if (filesystem === undefined) {
+    return {
+      resolvePath: (candidate) => candidate,
+      lstat: (candidate) => lstat(candidate),
+      beforeDisposableRemoval: null,
+      beforePackageRetentionAttestation: null,
+      beforePendingRetainedInspection: null,
+      afterPackageRetentionRecordWrite: null,
+      afterPackageRetentionUpgradeWrite: null,
+    };
   }
-  return filesystem;
+  if (!filesystem || typeof filesystem !== "object" || Array.isArray(filesystem) ||
+      typeof filesystem.resolvePath !== "function" ||
+      Object.keys(filesystem).some((name) => !["resolvePath", "lstat", "beforeDisposableRemoval", "beforePackageRetentionAttestation", "beforePendingRetainedInspection", "afterPackageRetentionRecordWrite", "afterPackageRetentionUpgradeWrite"].includes(name)) ||
+      (filesystem.lstat !== undefined && typeof filesystem.lstat !== "function") ||
+      (filesystem.beforeDisposableRemoval !== undefined && typeof filesystem.beforeDisposableRemoval !== "function") ||
+      (filesystem.beforePackageRetentionAttestation !== undefined && typeof filesystem.beforePackageRetentionAttestation !== "function") ||
+      (filesystem.beforePendingRetainedInspection !== undefined && typeof filesystem.beforePendingRetainedInspection !== "function") ||
+      (filesystem.afterPackageRetentionRecordWrite !== undefined && typeof filesystem.afterPackageRetentionRecordWrite !== "function") ||
+      (filesystem.afterPackageRetentionUpgradeWrite !== undefined && typeof filesystem.afterPackageRetentionUpgradeWrite !== "function")) {
+    throw new Error("package proof filesystem must expose resolvePath and optional low-level retention evidence seams");
+  }
+  return {
+    resolvePath: filesystem.resolvePath,
+    lstat: filesystem.lstat ?? ((candidate) => lstat(candidate)),
+    beforeDisposableRemoval: filesystem.beforeDisposableRemoval ?? null,
+    beforePackageRetentionAttestation: filesystem.beforePackageRetentionAttestation ?? null,
+    beforePendingRetainedInspection: filesystem.beforePendingRetainedInspection ?? null,
+    afterPackageRetentionRecordWrite: filesystem.afterPackageRetentionRecordWrite ?? null,
+    afterPackageRetentionUpgradeWrite: filesystem.afterPackageRetentionUpgradeWrite ?? null,
+  };
+}
+
+async function packageLstat(filesystem, candidate) {
+  return filesystem.lstat(candidate);
 }
 
 function resolvePackagePath(filesystem, candidate, label) {
@@ -555,8 +645,10 @@ async function loadTransaction(transactionOrJournal) {
 
 async function restoreToPrevious(transaction, options = {}) {
   const { faultAt, lockLease } = options;
-  await reconcilePendingCleanup(transaction, lockLease);
-  await reconcileIdentityTemporary(transaction, lockLease);
+  const evidenceFilesystem = options.filesystem;
+  await reconcileRetainedPackageUpgrades(transaction, evidenceFilesystem);
+  await reconcilePendingCleanup(transaction, lockLease, evidenceFilesystem);
+  await reconcileIdentityTemporary(transaction, lockLease, evidenceFilesystem);
   if (transaction.state !== "restoring" && transaction.state !== "target-displaced" &&
       transaction.state !== "target-restored" && transaction.state !== "target-removed" &&
       transaction.state !== "identity-restored") {
@@ -565,12 +657,12 @@ async function restoreToPrevious(transaction, options = {}) {
 
   const expectedPrior = transaction.previous.targetExists ? transaction.previous.targetFingerprint : null;
   const expectedCandidate = transaction.candidateFingerprint ?? transaction.sourceFingerprint;
-  const targetFingerprint = await fingerprintPath(transaction.target);
-  const targetIdentity = await packagePathIdentity(transaction.target);
-  const displacedFingerprint = await fingerprintPath(transaction.paths.displaced);
-  const displacedIdentity = await packagePathIdentity(transaction.paths.displaced);
-  const backupFingerprint = await fingerprintPath(transaction.paths.backup);
-  const backupIdentity = await packagePathIdentity(transaction.paths.backup);
+  const targetFingerprint = await fingerprintPath(transaction.target, evidenceFilesystem);
+  const targetIdentity = await packagePathIdentity(transaction.target, evidenceFilesystem);
+  const displacedFingerprint = await fingerprintPath(transaction.paths.displaced, evidenceFilesystem);
+  const displacedIdentity = await packagePathIdentity(transaction.paths.displaced, evidenceFilesystem);
+  const backupFingerprint = await fingerprintPath(transaction.paths.backup, evidenceFilesystem);
+  const backupIdentity = await packagePathIdentity(transaction.paths.backup, evidenceFilesystem);
   const candidateIdentity = transaction.candidateIdentity ?? transaction.stagingIdentity;
   const priorIdentity = transaction.previous.targetIdentity;
 
@@ -581,7 +673,7 @@ async function restoreToPrevious(transaction, options = {}) {
     throw new Error("refusing package recovery; displaced artifact identity changed or is an unowned collision");
   }
   if (targetFingerprint !== null && targetFingerprint !== expectedPrior && targetFingerprint !== expectedCandidate) {
-    throw new Error("refusing package recovery; canonical target changed outside the package transaction");
+    throw new Error(packageFingerprintBoundaryDiagnostic("refusing package recovery; canonical target changed outside the package transaction"));
   }
   if (targetFingerprint === expectedPrior && !samePackageIdentity(targetIdentity, priorIdentity)) {
     throw new Error("refusing package recovery; canonical target is an unowned prior-content collision");
@@ -593,7 +685,7 @@ async function restoreToPrevious(transaction, options = {}) {
     throw new Error("refusing package recovery; package backup is an unowned prior-content collision");
   }
   if (transaction.stagingFingerprint !== undefined && transaction.stagingFingerprint !== null) {
-    const stagingIdentity = await packagePathIdentity(transaction.paths.staging);
+    const stagingIdentity = await packagePathIdentity(transaction.paths.staging, evidenceFilesystem);
     if (stagingIdentity !== null && !samePackageIdentity(stagingIdentity, transaction.stagingIdentity)) {
       throw new Error("refusing package recovery; package staging identity changed outside the transaction");
     }
@@ -602,23 +694,23 @@ async function restoreToPrevious(transaction, options = {}) {
   if (expectedPrior !== null) {
     if (targetFingerprint === expectedCandidate) {
       if (displacedFingerprint !== null) throw new Error("refusing package recovery; two candidate artifacts are present");
-      await moveOwnedPath(transaction, transaction.target, transaction.paths.displaced, expectedCandidate, "installed package", lockLease, candidateIdentity);
+      await moveOwnedPath(transaction, transaction.target, transaction.paths.displaced, expectedCandidate, "installed package", lockLease, candidateIdentity, evidenceFilesystem);
       await transition(transaction, "target-displaced", faultAt);
     }
-    const currentTarget = await fingerprintPath(transaction.target);
+    const currentTarget = await fingerprintPath(transaction.target, evidenceFilesystem);
     if (currentTarget === null) {
-      const currentBackup = await fingerprintPath(transaction.paths.backup);
+      const currentBackup = await fingerprintPath(transaction.paths.backup, evidenceFilesystem);
       if (currentBackup !== expectedPrior) {
         throw new Error("refusing package recovery; prior package backup is missing or changed");
       }
-      await assertOwnedPath(transaction.paths.backup, expectedPrior, "prior package backup", priorIdentity);
+      await assertOwnedPath(transaction.paths.backup, expectedPrior, "prior package backup", priorIdentity, evidenceFilesystem);
       await lockLease.renameNoReplace(transaction.paths.backup, transaction.target, packageRenameOptions(transaction.target));
-      await assertOwnedPath(transaction.target, expectedPrior, "restored prior package", priorIdentity);
+      await assertOwnedPath(transaction.target, expectedPrior, "restored prior package", priorIdentity, evidenceFilesystem);
       await transition(transaction, "target-restored", faultAt);
     } else if (currentTarget === expectedPrior) {
       if (backupFingerprint !== null) {
         if (backupFingerprint !== expectedPrior) throw new Error("refusing package recovery; backup ownership fingerprint changed");
-        await removeOwnedPath(transaction, transaction.paths.backup, expectedPrior, "prior package backup", lockLease, priorIdentity);
+        await removeOwnedPath(transaction, transaction.paths.backup, expectedPrior, "prior package backup", lockLease, priorIdentity, evidenceFilesystem);
       }
       if (transaction.state === "target-displaced") await transition(transaction, "target-restored", faultAt);
     } else {
@@ -626,7 +718,7 @@ async function restoreToPrevious(transaction, options = {}) {
     }
   } else {
     if (targetFingerprint === expectedCandidate) {
-      await removeOwnedPath(transaction, transaction.target, expectedCandidate, "installed package", lockLease, candidateIdentity);
+      await removeOwnedPath(transaction, transaction.target, expectedCandidate, "installed package", lockLease, candidateIdentity, evidenceFilesystem);
     } else if (targetFingerprint !== null) {
       throw new Error("refusing package recovery; a package appeared where no prior target was recorded");
     }
@@ -639,36 +731,62 @@ async function restoreToPrevious(transaction, options = {}) {
   }
 
   if (await exists(transaction.paths.displaced)) {
-    await removeOwnedPath(transaction, transaction.paths.displaced, expectedCandidate, "displaced package", lockLease, candidateIdentity);
+    await removeOwnedPath(transaction, transaction.paths.displaced, expectedCandidate, "displaced package", lockLease, candidateIdentity, evidenceFilesystem);
   }
   if (await exists(transaction.paths.staging)) {
-    await removeOwnedPath(transaction, transaction.paths.staging, transaction.stagingFingerprint ?? transaction.sourceFingerprint, "package staging", lockLease, transaction.stagingIdentity);
+    await removeOwnedPath(transaction, transaction.paths.staging, transaction.stagingFingerprint ?? transaction.sourceFingerprint, "package staging", lockLease, transaction.stagingIdentity, evidenceFilesystem);
   }
-  await restoreIdentity(transaction, lockLease);
+  await restoreIdentity(transaction, lockLease, evidenceFilesystem);
   if (transaction.state !== "identity-restored") await transition(transaction, "identity-restored", faultAt);
-  await removeJournal(transaction);
+  if (transaction.retainedPackageDisposables.records.length === 0) await removeJournal(transaction);
 }
 
 async function finishFinalization(transaction, options = {}) {
   const { faultAt, lockLease } = options;
-  await reconcilePendingCleanup(transaction, lockLease);
-  await reconcileIdentityTemporary(transaction, lockLease);
-  await assertOwnedPath(transaction.target, transaction.candidateFingerprint, "installed package", transaction.candidateIdentity);
+  const evidenceFilesystem = options.filesystem;
+  await assertNoReceiptBearingFinalizationCleanup(transaction, evidenceFilesystem);
+  await reconcilePendingCleanup(transaction, lockLease, evidenceFilesystem);
+  await reconcileIdentityTemporary(transaction, lockLease, evidenceFilesystem);
+  await assertNoReceiptBearingFinalizationCleanup(transaction, evidenceFilesystem);
+  await assertOwnedPath(transaction.target, transaction.candidateFingerprint, "installed package", transaction.candidateIdentity, evidenceFilesystem);
   await assertIdentityState(transaction, transaction.nextIdentityFingerprint);
   if (await exists(transaction.paths.backup)) {
-    await removeOwnedPath(transaction, transaction.paths.backup, transaction.backupFingerprint, "prior package backup", lockLease, transaction.backupIdentity ?? transaction.previous.targetIdentity);
+    await removeOwnedPath(transaction, transaction.paths.backup, transaction.backupFingerprint, "prior package backup", lockLease, transaction.backupIdentity ?? transaction.previous.targetIdentity, evidenceFilesystem);
   }
   if (await exists(transaction.paths.staging)) {
-    await removeOwnedPath(transaction, transaction.paths.staging, transaction.stagingFingerprint ?? transaction.sourceFingerprint, "package staging", lockLease, transaction.stagingIdentity);
+    await removeOwnedPath(transaction, transaction.paths.staging, transaction.stagingFingerprint ?? transaction.sourceFingerprint, "package staging", lockLease, transaction.stagingIdentity, evidenceFilesystem);
   }
   if (await exists(transaction.paths.displaced)) {
-    await removeOwnedPath(transaction, transaction.paths.displaced, transaction.candidateFingerprint, "displaced package", lockLease, transaction.candidateIdentity);
+    await removeOwnedPath(transaction, transaction.paths.displaced, transaction.candidateFingerprint, "displaced package", lockLease, transaction.candidateIdentity, evidenceFilesystem);
   }
   if (transaction.state !== "finalized") await transition(transaction, "finalized", faultAt);
   await removeJournal(transaction);
 }
 
-async function restoreIdentity(transaction, lockLease) {
+async function assertNoReceiptBearingFinalizationCleanup(transaction, filesystem = undefined) {
+  if (isPackageRollbackState(transaction.state)) return;
+  const candidates = [
+    [transaction.paths.backup, "prior package backup"],
+    [transaction.paths.staging, "package staging"],
+    [transaction.paths.displaced, "displaced package"],
+  ];
+  if (transaction.cleanupPath !== null) candidates.push([transaction.cleanupPath, "pending package cleanup disposable"]);
+  if (transaction.cleanupSource !== null) candidates.push([transaction.cleanupSource, "pending package cleanup source"]);
+  if (transaction.identityTemporaryPath !== null) candidates.push([transaction.identityTemporaryPath, "package identity temporary"]);
+  for (const retained of transaction.retainedPackageDisposables.records) {
+    candidates.push([retained.path, "retained package cleanup disposable"]);
+  }
+  for (const [candidate, label] of candidates) {
+    if (!(await exists(candidate))) continue;
+    const boundary = await inspectAppleReceiptBoundary(candidate, filesystem);
+    if (boundary.kind === "invalid") throw boundary.error;
+    if (boundary.kind === "valid") {
+      throw packageCleanupError(`finalization found receipt-bearing ${label}; finalization refuses before mutation`);
+    }
+  }
+}
+
+async function restoreIdentity(transaction, lockLease, filesystem = undefined) {
   const previousBytes = transaction.previous.identityBytes;
   const current = await readBytes(transaction.identityPath);
   const currentDigest = digest(current);
@@ -679,7 +797,7 @@ async function restoreIdentity(transaction, lockLease) {
   }
   if (currentDigest === previousDigest) return;
   if (previousBytes === null) {
-    const currentIdentity = await packagePathIdentity(transaction.identityPath);
+    const currentIdentity = await packagePathIdentity(transaction.identityPath, filesystem);
     if (transaction.artifactBinding && !sameRecoveryPublishedIdentity(currentIdentity, transaction.identityPublishedIdentity)) {
       throw new Error("refusing to restore package identity; published ownership metadata changed beyond the authorized inode republication");
     }
@@ -687,7 +805,7 @@ async function restoreIdentity(transaction, lockLease) {
     if (!expectedIdentity) {
       throw new Error("refusing to restore package identity; published ownership identity is missing");
     }
-    await removeOwnedPath(transaction, transaction.identityPath, await fingerprintPath(transaction.identityPath), "package identity", lockLease, expectedIdentity);
+    await removeOwnedPath(transaction, transaction.identityPath, await fingerprintPath(transaction.identityPath, filesystem), "package identity", lockLease, expectedIdentity, filesystem);
   } else {
     await writeBytesAtomic(transaction.identityPath, previousBytes, { lease: lockLease, noReplace: false });
   }
@@ -713,7 +831,9 @@ async function requireAuthorizedRecoveryTransaction(transaction, options) {
 async function assertAuthorizedPublishedIdentity(transaction, {
   expectedArtifactBinding,
   runtimeRootPath,
+  filesystem,
 } = {}) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
   if (transaction.state !== "committed") {
     throw new Error(`package identity authorization requires committed package state; observed ${transaction.state}`);
   }
@@ -760,39 +880,39 @@ async function assertAuthorizedPublishedIdentity(transaction, {
   }
   await assertNoSymlinkAncestors(transaction.identityPath, runtimeRootPath);
   await assertNoSymlinkAncestors(transaction.target, path.dirname(transaction.target));
-  if (await packagePathIdentity(packageIdentityTemporaryPath(transaction.identityPath, transaction.runId)) !== null) {
+  if (await packagePathIdentity(packageIdentityTemporaryPath(transaction.identityPath, transaction.runId), evidenceFilesystem) !== null) {
     throw new Error("package identity authorization has a temporary or collision identity at the exact run-derived path");
   }
-  if (await packagePathIdentity(transaction.paths.staging) !== null || await packagePathIdentity(transaction.paths.displaced) !== null) {
+  if (await packagePathIdentity(transaction.paths.staging, evidenceFilesystem) !== null || await packagePathIdentity(transaction.paths.displaced, evidenceFilesystem) !== null) {
     throw new Error("package identity authorization has a staging or displaced package collision");
   }
-  const backupFingerprint = await fingerprintPath(transaction.paths.backup);
+  const backupFingerprint = await fingerprintPath(transaction.paths.backup, evidenceFilesystem);
   if (transaction.previous.targetExists) {
     assertExactPackageIdentity(transaction.previous.targetIdentity, "package identity authorization prior package identity", "directory");
     assertExactPackageIdentity(transaction.backupIdentity, "package identity authorization backup identity", "directory");
     if (backupFingerprint !== transaction.previous.targetFingerprint ||
-        !samePackageIdentity(await packagePathIdentity(transaction.paths.backup), transaction.previous.targetIdentity) ||
+      !samePackageIdentity(await packagePathIdentity(transaction.paths.backup, evidenceFilesystem), transaction.previous.targetIdentity) ||
         transaction.backupFingerprint !== transaction.previous.targetFingerprint) {
-      throw new Error("package identity authorization prior-package backup is missing or changed");
+      throw new Error(packageFingerprintBoundaryDiagnostic("package identity authorization prior-package backup is missing or changed"));
     }
   } else if (backupFingerprint !== null) {
     throw new Error("package identity authorization has a prior-package backup collision for a fresh target");
   }
 
-  const candidateFingerprint = await fingerprintPath(transaction.target);
+  const candidateFingerprint = await fingerprintPath(transaction.target, evidenceFilesystem);
   if (candidateFingerprint !== transaction.candidateFingerprint) {
-    throw new Error("package identity authorization candidate package fingerprint changed");
+    throw new Error(packageFingerprintBoundaryDiagnostic("package identity authorization candidate package fingerprint changed"));
   }
-  const candidateIdentity = await packagePathIdentity(transaction.target);
+  const candidateIdentity = await packagePathIdentity(transaction.target, evidenceFilesystem);
   if (!samePackageIdentity(candidateIdentity, transaction.candidateIdentity)) {
     throw new Error("package identity authorization candidate package identity changed");
   }
-  const bytes = await readIdentityBytes(transaction.identityPath, "package identity authorization current identity");
+  const bytes = await readIdentityBytes(transaction.identityPath, "package identity authorization current identity", evidenceFilesystem);
   if (bytes === null) throw new Error("package identity authorization published identity is missing");
   if (!Buffer.isBuffer(bytes) || Buffer.compare(bytes, transaction.nextIdentityBytes) !== 0 || digest(bytes) !== transaction.nextIdentityFingerprint) {
     throw new Error("package identity authorization current bytes do not exactly match nextIdentityBytes and digest");
   }
-  const metadata = await packagePathIdentity(transaction.identityPath);
+  const metadata = await packagePathIdentity(transaction.identityPath, evidenceFilesystem);
   if (!samePackageIdentity(metadata, transaction.identityPublishedIdentity)) {
     throw new Error("package identity authorization current file metadata does not exactly match identityPublishedIdentity");
   }
@@ -802,7 +922,9 @@ async function assertAuthorizedPublishedIdentity(transaction, {
 async function assertAuthorizedRecoverablePackageState(transaction, {
   expectedArtifactBinding,
   runtimeRootPath,
+  filesystem,
 } = {}) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
   if (!PACKAGE_TRANSACTION_RECOVERABLE_STATES.includes(transaction.state)) {
     throw new Error(`package recovery authorization rejects unknown or non-rollback state ${String(transaction.state)}`);
   }
@@ -821,12 +943,12 @@ async function assertAuthorizedRecoverablePackageState(transaction, {
   const candidateIdentity = transaction.candidateIdentity;
   const stagingFingerprint = transaction.stagingFingerprint ?? transaction.sourceFingerprint;
   const stagingIdentity = transaction.stagingIdentity;
-  const target = await packagePathSnapshot(transaction.target);
-  const staging = await packagePathSnapshot(transaction.paths.staging);
-  const backup = await packagePathSnapshot(transaction.paths.backup);
-  const displaced = await packagePathSnapshot(transaction.paths.displaced);
-  const identity = await identitySnapshot(transaction.identityPath);
-  const temporary = await packagePathSnapshot(packageIdentityTemporaryPath(transaction.identityPath, transaction.runId));
+  const target = await packagePathSnapshot(transaction.target, evidenceFilesystem);
+  const staging = await packagePathSnapshot(transaction.paths.staging, evidenceFilesystem);
+  const backup = await packagePathSnapshot(transaction.paths.backup, evidenceFilesystem);
+  const displaced = await packagePathSnapshot(transaction.paths.displaced, evidenceFilesystem);
+  const identity = await identitySnapshot(transaction.identityPath, evidenceFilesystem);
+  const temporary = await packagePathSnapshot(packageIdentityTemporaryPath(transaction.identityPath, transaction.runId), evidenceFilesystem);
 
   assertRecoveryJournalIdentityShape(transaction, state);
   const identityDocument = transaction.nextIdentityBytes === undefined
@@ -880,7 +1002,7 @@ async function assertAuthorizedRecoverablePackageState(transaction, {
   if (stagingExpected || (stagingAllowedInFlight && staging.fingerprint !== null)) {
     if (transaction.stagingFingerprint !== candidateFingerprint || stagingFingerprint !== candidateFingerprint ||
         !staging.fingerprint || staging.fingerprint !== stagingFingerprint) {
-      throw new Error(`package recovery ${state} staging artifact is missing or changed`);
+      throw new Error(packageFingerprintBoundaryDiagnostic(`package recovery ${state} staging artifact is missing or changed`));
     }
     assertExactPackageIdentity(stagingIdentity, "package recovery staging identity", "directory");
     if (!samePackageIdentity(staging.identity, stagingIdentity)) {
@@ -892,7 +1014,7 @@ async function assertAuthorizedRecoverablePackageState(transaction, {
 
   if (candidateTargetRequired && (!target.fingerprint || target.fingerprint !== candidateFingerprint ||
       !samePackageIdentity(target.identity, candidateIdentity))) {
-    throw new Error(`package recovery ${state} candidate package is missing or changed`);
+    throw new Error(packageFingerprintBoundaryDiagnostic(`package recovery ${state} candidate package is missing or changed`));
   }
 
   const backupExpected = transaction.previous.targetExists &&
@@ -902,7 +1024,7 @@ async function assertAuthorizedRecoverablePackageState(transaction, {
   if (backupExpected || backupAllowedInFlight) {
     if (backup.fingerprint !== priorFingerprint || !samePackageIdentity(backup.identity, priorIdentity) ||
         transaction.backupFingerprint !== priorFingerprint) {
-      throw new Error(`package recovery ${state} prior package backup is missing or changed`);
+      throw new Error(packageFingerprintBoundaryDiagnostic(`package recovery ${state} prior package backup is missing or changed`));
     }
     assertExactPackageIdentity(transaction.backupIdentity, "package recovery backup identity", "directory");
   } else if (backup.fingerprint !== null) {
@@ -917,7 +1039,7 @@ async function assertAuthorizedRecoverablePackageState(transaction, {
   }
   if (transaction.previous.targetExists && ["prepared", "staged"].includes(state) &&
       (!target.fingerprint || target.fingerprint !== priorFingerprint || !samePackageIdentity(target.identity, priorIdentity))) {
-    throw new Error(`package recovery ${state} prior package target is missing or changed`);
+    throw new Error(packageFingerprintBoundaryDiagnostic(`package recovery ${state} prior package target is missing or changed`));
   }
   if (!transaction.previous.targetExists && ["prepared", "staged", "target-backed-up"].includes(state) && target.fingerprint !== null) {
     throw new Error(`package recovery ${state} has a package target where prior absence was recorded`);
@@ -967,7 +1089,7 @@ async function assertAuthorizedRecoverablePackageState(transaction, {
       throw new Error(`package recovery ${state} displaced candidate lacks its journaled identity`);
     }
     if (displaced.fingerprint !== candidateFingerprint || !samePackageIdentity(displaced.identity, candidateIdentity)) {
-      throw new Error(`package recovery ${state} displaced candidate is missing or changed`);
+      throw new Error(packageFingerprintBoundaryDiagnostic(`package recovery ${state} displaced candidate is missing or changed`));
     }
   }
 
@@ -1025,12 +1147,13 @@ async function assertAuthorizedRecoverablePackageState(transaction, {
   }
 
   assertRecoveryIdentityTemporaryState(transaction, temporary, identity, state);
-  await assertRecoveryCleanupState(transaction, state);
+  const cleanupState = await assertRecoveryCleanupState(transaction, state, evidenceFilesystem);
   return {
     identityBytes: identity.bytes,
     identityFingerprint: identity.fingerprint,
     identity: identity.identity,
     identityDocument,
+    retainedPackageUpgrades: cleanupState.retainedPackageUpgrades,
   };
 }
 
@@ -1084,22 +1207,23 @@ function assertRecoveryJournalIdentityShape(transaction, state) {
   }
 }
 
-async function packagePathSnapshot(candidate) {
+async function packagePathSnapshot(candidate, filesystem = undefined) {
   return {
-    fingerprint: await fingerprintPath(candidate),
-    identity: await packagePathIdentity(candidate),
+    fingerprint: await fingerprintPath(candidate, filesystem),
+    identity: await packagePathIdentity(candidate, filesystem),
   };
 }
 
-async function identitySnapshot(candidate) {
-  const info = await lstat(candidate).catch((error) => {
+async function identitySnapshot(candidate, filesystem = undefined) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
+  const info = await packageLstat(evidenceFilesystem, candidate).catch((error) => {
     if (error?.code === "ENOENT") return null;
     throw error;
   });
   if (!info) return { bytes: null, fingerprint: null, identity: null };
   const identity = packageIdentityOf(info);
   if (!info.isFile() || info.isSymbolicLink()) {
-    return { bytes: null, fingerprint: await fingerprintPath(candidate), identity };
+    return { bytes: null, fingerprint: await fingerprintPath(candidate, evidenceFilesystem), identity };
   }
   const bytes = await readFile(candidate);
   return {
@@ -1109,8 +1233,9 @@ async function identitySnapshot(candidate) {
   };
 }
 
-async function readIdentityBytes(candidate, label) {
-  const info = await lstat(candidate).catch((error) => {
+async function readIdentityBytes(candidate, label, filesystem = undefined) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
+  const info = await packageLstat(evidenceFilesystem, candidate).catch((error) => {
     if (error?.code === "ENOENT") return null;
     throw error;
   });
@@ -1244,68 +1369,93 @@ function assertRecoveryIdentityTemporaryState(transaction, temporary, identity, 
   }
 }
 
-async function assertRecoveryCleanupState(transaction, state) {
-  const fields = [transaction.cleanupPath, transaction.cleanupSource, transaction.cleanupFingerprint, transaction.cleanupIdentity];
-  if (fields.every((value) => value === null)) {
-    for (const [candidate, label] of [
-      [transaction.target, "installed package"],
-      [transaction.identityPath, "package identity"],
-      [transaction.paths.staging, "package staging"],
-      [transaction.paths.backup, "prior package backup"],
-      [transaction.paths.displaced, "displaced package"],
-    ]) {
-      const cleanupPath = cleanupPathFor(transaction, candidate, label);
-      if ((await packagePathSnapshot(cleanupPath)).fingerprint !== null) {
-        throw new Error(`package recovery ${state} has an unjournaled cleanup collision for ${label}`);
-      }
+async function assertRecoveryCleanupState(transaction, state, filesystem = undefined) {
+  try {
+    return await assertRecoveryCleanupStateUnchecked(transaction, state, filesystem);
+  } catch (error) {
+    if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) throw error;
+    throw packageCleanupError(`package recovery ${state} cleanup validation failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function assertRecoveryCleanupStateUnchecked(transaction, state, filesystem = undefined) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
+  const retainedRecords = transaction.retainedPackageDisposables.records;
+  const retainedPackageUpgrades = [];
+  if (retainedRecords.length > 0) {
+    if (!isPackageRollbackState(state)) {
+      throw packageCleanupError(`package recovery ${state} contains retained package evidence outside rollback`);
     }
-    return;
+    for (const [index, retained] of retainedRecords.entries()) {
+      const inspection = await inspectRetainedPackageCleanup(transaction, retained, evidenceFilesystem, `package recovery retained package ${index}`);
+      if (inspection.upgrade !== null) retainedPackageUpgrades.push(inspection.upgrade.description);
+    }
   }
-  if (fields.some((value) => value === null)) {
-    throw new Error(`package recovery ${state} cleanup intent is incomplete`);
+
+  const cleanupKind = assertCleanupIntentStructure(transaction, `package recovery ${state}`);
+  const pending = retainedRecords.find((record) => record.path === transaction.cleanupPath && record.source === transaction.cleanupSource);
+  await assertNoUnexpectedCleanupCollisions(
+    transaction,
+    state,
+    retainedRecords,
+    cleanupKind === null ? null : transaction.cleanupPath,
+    evidenceFilesystem,
+  );
+  if (cleanupKind === null) {
+    return { retainedPackageDisposables: transaction.retainedPackageDisposables, retainedPackageUpgrades };
   }
+
+  if (pending) {
+    if (cleanupKind !== "package") {
+      throw packageCleanupError(`package recovery ${state} retained package evidence is not bound to a package path`);
+    }
+    const source = await packagePathSnapshot(transaction.cleanupSource, evidenceFilesystem);
+    const disposable = await packagePathSnapshot(transaction.cleanupPath, evidenceFilesystem);
+    if (source.fingerprint !== null || disposable.fingerprint === null ||
+        transaction.cleanupFingerprint !== (pending.packageFingerprint ?? pending.candidateFingerprint) ||
+        !samePackageDirectoryBinding(transaction.cleanupIdentity, pending.rootIdentity) ||
+        !samePackageDirectoryBinding(disposable.identity, pending.rootIdentity)) {
+      throw packageCleanupError(`package recovery ${state} retained package evidence does not match its durable disposable`);
+    }
+    return { retainedPackageDisposables: transaction.retainedPackageDisposables, retainedPackageUpgrades };
+  }
+
   const temporaryCleanupInFlight = state === "candidate-installed" &&
     transaction.identityTemporaryPath !== null && transaction.cleanupSource === transaction.identityTemporaryPath;
   if (!["restoring", "target-displaced", "target-restored", "target-removed", "identity-restored"].includes(state) &&
       !temporaryCleanupInFlight) {
-    throw new Error(`package recovery ${state} contains cleanup intent before rollback`);
+    throw packageCleanupError(`package recovery ${state} contains cleanup intent before rollback`);
   }
-  assertCanonicalPackagePath(transaction.cleanupPath, "package recovery cleanup path");
-  assertCanonicalPackagePath(transaction.cleanupSource, "package recovery cleanup source");
-  if (!transaction.cleanupIdentity || !["directory", "file"].includes(transaction.cleanupIdentity.type) ||
-      !/^[a-f0-9]{64}$/u.test(transaction.cleanupFingerprint)) {
-    throw new Error(`package recovery ${state} cleanup ownership is invalid`);
-  }
-  assertExactPackageIdentity(transaction.cleanupIdentity, "package recovery cleanup identity", transaction.cleanupIdentity.type);
-  const allowedSources = new Set([
-    transaction.target,
-    transaction.identityPath,
-    transaction.paths.staging,
-    transaction.paths.backup,
-    transaction.paths.displaced,
-    transaction.identityTemporaryPath,
-  ].filter((candidate) => typeof candidate === "string"));
-  if (!allowedSources.has(transaction.cleanupSource)) throw new Error("package recovery cleanup source is outside the transaction-owned path set");
-  const cleanupPrefix = `${transaction.cleanupSource}.m7-cleanup-${transaction.runId}-`;
-  if (!transaction.cleanupPath.startsWith(cleanupPrefix) || !/^[a-f0-9]{16}$/u.test(transaction.cleanupPath.slice(cleanupPrefix.length))) {
-    throw new Error("package recovery cleanup path is not the deterministic sibling of its source");
-  }
-  const source = await packagePathSnapshot(transaction.cleanupSource);
-  const disposable = await packagePathSnapshot(transaction.cleanupPath);
+  const cleanupLabel = cleanupLabelForSource(transaction, transaction.cleanupSource);
+  const source = await packagePathSnapshot(transaction.cleanupSource, evidenceFilesystem);
+  const disposable = await packagePathSnapshot(transaction.cleanupPath, evidenceFilesystem);
   if (source.fingerprint !== null && disposable.fingerprint !== null) {
-    throw new Error(`package recovery ${state} cleanup source and disposable are both present`);
+    throw packageCleanupError(`package recovery ${state} cleanup source and disposable are both present`);
   }
   if (source.fingerprint !== null && (source.fingerprint !== transaction.cleanupFingerprint ||
       !samePackageIdentity(source.identity, transaction.cleanupIdentity))) {
-    throw new Error(`package recovery ${state} cleanup source ownership changed`);
+    throw packageCleanupError(`package recovery ${state} cleanup source ownership changed`);
+  }
+  if (source.fingerprint === null && disposable.fingerprint !== null) {
+    if (cleanupKind === "package") {
+      await inspectPackageCleanupResidue(transaction, {
+        path: transaction.cleanupPath,
+        source: transaction.cleanupSource,
+        label: cleanupLabel,
+        packageFingerprint: transaction.cleanupFingerprint,
+        rootIdentity: transaction.cleanupIdentity,
+      }, evidenceFilesystem, { sourceRoot: transaction.source, buildRecord: false });
+      return { retainedPackageDisposables: transaction.retainedPackageDisposables, retainedPackageUpgrades };
+    }
   }
   if (disposable.fingerprint !== null && (disposable.fingerprint !== transaction.cleanupFingerprint ||
       !samePackageIdentity(disposable.identity, transaction.cleanupIdentity))) {
-    throw new Error(`package recovery ${state} cleanup disposable ownership changed`);
+    throw packageCleanupError(`package recovery ${state} cleanup disposable ownership changed`);
   }
   if (source.fingerprint === null && disposable.fingerprint === null) {
-    throw new Error(`package recovery ${state} cleanup source and disposable are both missing`);
+    throw packageCleanupError(`package recovery ${state} cleanup source and disposable are both missing`);
   }
+  return { retainedPackageDisposables: transaction.retainedPackageDisposables, retainedPackageUpgrades };
 }
 
 function assertExactPackageIdentity(identity, label, expectedType) {
@@ -1359,16 +1509,17 @@ async function assertIdentityState(transaction, expectedDigest) {
   }
 }
 
-async function assertOwnedPath(candidate, expectedFingerprint, label, expectedIdentity = null) {
-  const actual = await fingerprintPath(candidate);
+async function assertOwnedPath(candidate, expectedFingerprint, label, expectedIdentity = null, filesystem = undefined) {
+  const actual = await fingerprintPath(candidate, filesystem);
   if (actual !== expectedFingerprint) throw new Error(`refusing to modify ${label}; ownership fingerprint changed`);
-  if (expectedIdentity !== null && !samePackageIdentity(await packagePathIdentity(candidate), expectedIdentity)) {
+  if (expectedIdentity !== null && !samePackageIdentity(await packagePathIdentity(candidate, filesystem), expectedIdentity)) {
     throw new Error(`refusing to modify ${label}; ownership identity changed`);
   }
 }
 
-async function packagePathIdentity(candidate) {
-  const info = await lstat(candidate).catch((error) => {
+async function packagePathIdentity(candidate, filesystem = undefined) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
+  const info = await packageLstat(evidenceFilesystem, candidate).catch((error) => {
     if (error?.code === "ENOENT") return null;
     throw error;
   });
@@ -1392,6 +1543,10 @@ function samePackageIdentity(actual, expected) {
   return Boolean(actual && expected) && ["type", "mode", "uid", "gid", "dev", "ino", "nlink", "size"].every((field) => actual[field] === expected[field]);
 }
 
+function samePackageDirectoryBinding(actual, expected) {
+  return Boolean(actual && expected) && ["type", "mode", "uid", "gid", "dev", "ino"].every((field) => actual[field] === expected[field]);
+}
+
 function sameRecoveryPublishedIdentity(actual, expected) {
   return Boolean(actual && expected) && ["type", "mode", "uid", "gid", "dev", "nlink", "size"].every((field) => actual[field] === expected[field]);
 }
@@ -1407,13 +1562,28 @@ function validateOptionalPackageIdentity(identity, label) {
   }
 }
 
-async function removeOwnedPath(transaction, candidate, expectedFingerprint, label = "transaction path", lease, expectedIdentity = null) {
+async function removeOwnedPath(transaction, candidate, expectedFingerprint, label = "transaction path", lease, expectedIdentity = null, filesystem = undefined) {
   if (!lease || typeof lease.renameNoReplace !== "function") throw new Error(`cannot remove ${label} without the live native mutation-session lease`);
   if (!expectedIdentity) throw new Error(`cannot remove ${label} without its durable ownership identity`);
   if (!(await exists(candidate))) return;
-  await assertOwnedPath(candidate, expectedFingerprint, label, expectedIdentity);
+  const sourceReceiptBoundary = await inspectAppleReceiptBoundary(candidate, filesystem);
+  if (sourceReceiptBoundary.kind === "invalid") throw sourceReceiptBoundary.error;
+  const receiptObserved = sourceReceiptBoundary.kind === "valid";
+  if (receiptObserved && !isPackageRollbackState(transaction.state)) {
+    throw packageCleanupError(`receipt-bearing cleanup is not authorized during ${transaction.state}; finalization must not delete it`);
+  }
+  if (receiptObserved) {
+    await inspectReceiptCleanupResidue(transaction, {
+      path: candidate,
+      source: candidate,
+      label,
+      packageFingerprint: expectedFingerprint,
+      rootIdentity: expectedIdentity,
+    }, filesystem, { sourceRoot: transaction.source, buildRecord: false });
+  }
+  await assertOwnedPath(candidate, expectedFingerprint, label, expectedIdentity, filesystem);
   const disposable = cleanupPathFor(transaction, candidate, label);
-  const existingDisposable = await fingerprintPath(disposable);
+  const existingDisposable = await fingerprintPath(disposable, filesystem);
   if (existingDisposable !== null) {
     throw new Error(`refusing to remove ${label}; disposable cleanup path already exists`);
   }
@@ -1421,37 +1591,151 @@ async function removeOwnedPath(transaction, candidate, expectedFingerprint, labe
   transaction.cleanupSource = candidate;
   transaction.cleanupFingerprint = expectedFingerprint;
   transaction.cleanupIdentity = expectedIdentity;
+  transaction.cleanupReceiptObserved = receiptObserved;
   await writeJournal(transaction);
   if (await exists(candidate)) {
     await lease.renameNoReplace(candidate, disposable, protectedRenameOptions(transaction, candidate, disposable));
   }
-  await assertOwnedPath(disposable, expectedFingerprint, `${label} disposable`, expectedIdentity);
-  await rm(disposable, { recursive: true, force: true });
+  let disposableReceiptBoundary = await inspectAppleReceiptBoundary(disposable, filesystem);
+  if (disposableReceiptBoundary.kind === "invalid") throw disposableReceiptBoundary.error;
+  if (receiptObserved && disposableReceiptBoundary.kind !== "valid") {
+    throw packageCleanupError("receipt-bearing cleanup boundary disappeared or changed after the owned rename; refusing deletion");
+  }
+  await assertOwnedPath(disposable, expectedFingerprint, `${label} disposable`, expectedIdentity, filesystem);
+  disposableReceiptBoundary = await inspectAppleReceiptBoundary(disposable, filesystem);
+  if (disposableReceiptBoundary.kind === "invalid") throw disposableReceiptBoundary.error;
+  if (isPackageRollbackState(transaction.state) && isPackageTransactionPath(transaction, candidate)) {
+    await retainPackageCleanup(transaction, {
+      path: disposable,
+      source: candidate,
+      label,
+      packageFingerprint: expectedFingerprint,
+      rootIdentity: expectedIdentity,
+    }, filesystem);
+    return;
+  }
+  if (disposableReceiptBoundary.kind === "valid") {
+    if (!isPackageRollbackState(transaction.state)) {
+      throw packageCleanupError(`receipt-bearing cleanup is not authorized during ${transaction.state}; finalization must not delete it`);
+    }
+    await retainReceiptCleanup(transaction, {
+      path: disposable,
+      source: candidate,
+      label,
+      packageFingerprint: expectedFingerprint,
+      rootIdentity: expectedIdentity,
+    }, filesystem);
+    return;
+  }
+  if (receiptObserved) {
+    throw packageCleanupError("receipt-bearing cleanup boundary disappeared or changed before deletion");
+  }
+  await filesystem?.beforeDisposableRemoval?.(disposable);
+  const cleanupResult = await removeDisposableTreeWithoutRecursiveRm(disposable, filesystem);
+  if (cleanupResult.receiptBoundary.kind === "valid") {
+    transaction.cleanupReceiptObserved = true;
+    await writeJournal(transaction);
+    if (!isPackageRollbackState(transaction.state)) {
+      throw packageCleanupError(`receipt-bearing cleanup is not authorized during ${transaction.state}; finalization must not delete it`);
+    }
+    await retainReceiptCleanup(transaction, {
+      path: disposable,
+      source: candidate,
+      label,
+      packageFingerprint: expectedFingerprint,
+      rootIdentity: expectedIdentity,
+    }, filesystem);
+    return;
+  }
   transaction.cleanupPath = null;
   transaction.cleanupSource = null;
   transaction.cleanupFingerprint = null;
   transaction.cleanupIdentity = null;
+  transaction.cleanupReceiptObserved = false;
   await writeJournal(transaction);
 }
 
-async function moveOwnedPath(transaction, source, destination, expectedFingerprint, label, lease, expectedIdentity = null) {
+async function moveOwnedPath(transaction, source, destination, expectedFingerprint, label, lease, expectedIdentity = null, filesystem = undefined) {
   if (!lease || typeof lease.renameNoReplace !== "function") throw new Error(`cannot move ${label} without the live native mutation-session lease`);
   if (!expectedIdentity) throw new Error(`cannot move ${label} without its durable ownership identity`);
-  await assertOwnedPath(source, expectedFingerprint, label, expectedIdentity);
+  await assertOwnedPath(source, expectedFingerprint, label, expectedIdentity, filesystem);
   if (await exists(destination)) throw new Error(`refusing to move ${label}; destination already exists`);
   await lease.renameNoReplace(source, destination, protectedRenameOptions(transaction, source, destination));
-  await assertOwnedPath(destination, expectedFingerprint, `moved ${label}`, expectedIdentity);
+  await assertOwnedPath(destination, expectedFingerprint, `moved ${label}`, expectedIdentity, filesystem);
 }
 
-async function reconcilePendingCleanup(transaction, lease) {
+async function reconcileRetainedPackageUpgrades(transaction, filesystem = undefined) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
+  if (transaction.retainedPackageDisposables.records.length === 0) return;
+  const upgrades = [];
+  for (const [index, retained] of transaction.retainedPackageDisposables.records.entries()) {
+    const inspection = await inspectRetainedPackageCleanup(
+      transaction,
+      retained,
+      evidenceFilesystem,
+      `package recovery retained package ${index}`,
+    );
+    if (inspection.upgrade !== null) upgrades.push(inspection.upgrade);
+  }
+  if (upgrades.length === 0) return;
+  await applyRetainedPackageUpgrades(transaction, upgrades, evidenceFilesystem);
+}
+
+async function applyRetainedPackageUpgrades(transaction, upgrades, filesystem) {
+  if (upgrades.length === 0) return;
+  const applied = [];
+  for (const upgrade of upgrades) {
+    const index = transaction.retainedPackageDisposables.records.findIndex((record) =>
+      record.source === upgrade.record.source && record.path === upgrade.record.path);
+    if (index < 0) throw packageCleanupError("package recovery retained receipt upgrade lost its exact journal record");
+    const previous = transaction.retainedPackageDisposables.records[index];
+    transaction.retainedPackageDisposables.records[index] = upgrade.record;
+    if (transaction.retainedCleanup !== null &&
+        Buffer.compare(serializeSortedJson(transaction.retainedCleanup), serializeSortedJson(previous)) === 0) {
+      transaction.retainedCleanup = upgrade.record;
+    }
+    applied.push(upgrade.record);
+  }
+  await writeJournal(transaction);
+  await filesystem?.afterPackageRetentionUpgradeWrite?.(applied);
+}
+
+async function reconcilePendingCleanup(transaction, lease, filesystem = undefined) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
   if (!transaction.cleanupPath) return;
   if (!transaction.cleanupSource || !transaction.cleanupFingerprint || !transaction.cleanupIdentity) {
     throw new Error("refusing package recovery; cleanup intent is incomplete");
   }
-  const sourceFingerprint = await fingerprintPath(transaction.cleanupSource);
-  const sourceIdentity = await packagePathIdentity(transaction.cleanupSource);
-  const disposableFingerprint = await fingerprintPath(transaction.cleanupPath);
-  const disposableIdentity = await packagePathIdentity(transaction.cleanupPath);
+  const packageCleanup = isPackageRollbackState(transaction.state) &&
+    isPackageTransactionPath(transaction, transaction.cleanupSource);
+  const pendingRetained = transaction.retainedPackageDisposables.records.find((record) =>
+    record.source === transaction.cleanupSource && record.path === transaction.cleanupPath);
+  if (pendingRetained) {
+    if (!packageCleanup) throw packageCleanupError("retained package provenance is attached to a non-package cleanup intent");
+    await evidenceFilesystem.beforePendingRetainedInspection?.(pendingRetained);
+    const inspection = await inspectRetainedPackageCleanup(transaction, pendingRetained, evidenceFilesystem, "package recovery pending retained package");
+    if (inspection.upgrade !== null) {
+      await applyRetainedPackageUpgrades(transaction, [inspection.upgrade], evidenceFilesystem);
+    }
+    const appliedPendingRetained = transaction.retainedPackageDisposables.records.find((record) =>
+      record.source === transaction.cleanupSource && record.path === transaction.cleanupPath);
+    if (!appliedPendingRetained) throw packageCleanupError("package recovery pending retained package lost its exact journal record");
+    const pendingSource = await packagePathSnapshot(transaction.cleanupSource, evidenceFilesystem);
+    const pendingDisposable = await packagePathSnapshot(transaction.cleanupPath, evidenceFilesystem);
+    if (pendingSource.fingerprint !== null || pendingDisposable.fingerprint === null ||
+        transaction.cleanupFingerprint !== (appliedPendingRetained.packageFingerprint ?? appliedPendingRetained.candidateFingerprint) ||
+        !samePackageDirectoryBinding(transaction.cleanupIdentity, appliedPendingRetained.rootIdentity) ||
+        !samePackageDirectoryBinding(pendingDisposable.identity, appliedPendingRetained.rootIdentity)) {
+      throw packageCleanupError("package recovery pending retained package is not at its journaled disposable path");
+    }
+    clearCleanupIntent(transaction, transaction.cleanupSource === transaction.identityTemporaryPath && transaction.identityTemporaryPath !== null);
+    await writeJournal(transaction);
+    return;
+  }
+  const sourceFingerprint = await fingerprintPath(transaction.cleanupSource, evidenceFilesystem);
+  const sourceIdentity = await packagePathIdentity(transaction.cleanupSource, evidenceFilesystem);
+  let disposableFingerprint = await fingerprintPath(transaction.cleanupPath, evidenceFilesystem);
+  let disposableIdentity = await packagePathIdentity(transaction.cleanupPath, evidenceFilesystem);
   if (sourceFingerprint !== null && disposableFingerprint !== null) {
     throw new Error("refusing package recovery; cleanup source and disposable are both present");
   }
@@ -1461,14 +1745,33 @@ async function reconcilePendingCleanup(transaction, lease) {
   if (sourceIdentity !== null && !samePackageIdentity(sourceIdentity, transaction.cleanupIdentity)) {
     throw new Error("refusing package recovery; cleanup source ownership identity changed");
   }
-  if (disposableFingerprint !== null && disposableFingerprint !== transaction.cleanupFingerprint) {
-    throw new Error("refusing package recovery; cleanup disposable ownership fingerprint changed");
-  }
-  if (disposableIdentity !== null && !samePackageIdentity(disposableIdentity, transaction.cleanupIdentity)) {
-    throw new Error("refusing package recovery; cleanup disposable ownership identity changed");
-  }
   if (sourceFingerprint === null && disposableFingerprint === null) {
     throw new Error("refusing package recovery; cleanup source and disposable are both missing");
+  }
+  const identityTemporaryCleanup = transaction.cleanupSource === transaction.identityTemporaryPath &&
+    transaction.identityTemporaryPath !== null;
+  const sourceReceiptBoundary = sourceFingerprint === null
+    ? { kind: "absent" }
+    : await inspectAppleReceiptBoundary(transaction.cleanupSource, evidenceFilesystem);
+  if (sourceReceiptBoundary.kind === "invalid") throw sourceReceiptBoundary.error;
+  if (transaction.cleanupReceiptObserved && sourceFingerprint !== null && sourceReceiptBoundary.kind !== "valid") {
+    throw packageCleanupError("receipt-bearing cleanup boundary disappeared or changed before recovery resumed; refusing deletion");
+  }
+  if (sourceReceiptBoundary.kind === "valid" && !isPackageRollbackState(transaction.state)) {
+    throw packageCleanupError(`receipt-bearing cleanup is not authorized during ${transaction.state}; finalization must not delete it`);
+  }
+  if (sourceReceiptBoundary.kind === "valid") {
+    if (!transaction.cleanupReceiptObserved) {
+      transaction.cleanupReceiptObserved = true;
+      await writeJournal(transaction);
+    }
+    await inspectReceiptCleanupResidue(transaction, {
+      path: transaction.cleanupSource,
+      source: transaction.cleanupSource,
+      label: cleanupLabelForSource(transaction, transaction.cleanupSource),
+      packageFingerprint: transaction.cleanupFingerprint,
+      rootIdentity: transaction.cleanupIdentity,
+    }, evidenceFilesystem, { sourceRoot: transaction.source, buildRecord: false });
   }
   if (sourceFingerprint !== null) {
     await lease.renameNoReplace(
@@ -1477,14 +1780,86 @@ async function reconcilePendingCleanup(transaction, lease) {
       protectedRenameOptions(transaction, transaction.cleanupSource, transaction.cleanupPath),
     );
   }
-  await assertOwnedPath(transaction.cleanupPath, transaction.cleanupFingerprint, "cleanup disposable", transaction.cleanupIdentity);
-  await rm(transaction.cleanupPath, { recursive: true, force: true });
-  const identityTemporaryCleanup = transaction.cleanupSource === transaction.identityTemporaryPath &&
-    transaction.identityTemporaryPath !== null;
+  disposableFingerprint = await fingerprintPath(transaction.cleanupPath, evidenceFilesystem);
+  disposableIdentity = await packagePathIdentity(transaction.cleanupPath, evidenceFilesystem);
+  let disposableReceiptBoundary = await inspectAppleReceiptBoundary(transaction.cleanupPath, evidenceFilesystem);
+  if (disposableReceiptBoundary.kind === "invalid") throw disposableReceiptBoundary.error;
+  if (disposableReceiptBoundary.kind === "valid" && !transaction.cleanupReceiptObserved) {
+    transaction.cleanupReceiptObserved = true;
+    await writeJournal(transaction);
+  }
+  if (disposableReceiptBoundary.kind === "valid") {
+    if (!isPackageRollbackState(transaction.state)) {
+      throw packageCleanupError(`receipt-bearing cleanup is not authorized during ${transaction.state}; finalization must not delete it`);
+    }
+    await retainReceiptCleanup(transaction, {
+      path: transaction.cleanupPath,
+      source: transaction.cleanupSource,
+      label: cleanupLabelForSource(transaction, transaction.cleanupSource),
+      packageFingerprint: transaction.cleanupFingerprint,
+      rootIdentity: transaction.cleanupIdentity,
+    }, evidenceFilesystem, identityTemporaryCleanup);
+    return;
+  }
+  if (transaction.cleanupReceiptObserved) {
+    throw packageCleanupError("receipt-bearing cleanup boundary disappeared or changed before deletion resumed");
+  }
+  if (disposableFingerprint !== null && disposableFingerprint !== transaction.cleanupFingerprint) {
+    throw new Error("refusing package recovery; cleanup disposable ownership fingerprint changed");
+  }
+  if (disposableIdentity !== null && !samePackageIdentity(disposableIdentity, transaction.cleanupIdentity)) {
+    throw new Error("refusing package recovery; cleanup disposable ownership identity changed");
+  }
+  await assertOwnedPath(transaction.cleanupPath, transaction.cleanupFingerprint, "cleanup disposable", transaction.cleanupIdentity, evidenceFilesystem);
+  disposableReceiptBoundary = await inspectAppleReceiptBoundary(transaction.cleanupPath, evidenceFilesystem);
+  if (disposableReceiptBoundary.kind === "invalid") throw disposableReceiptBoundary.error;
+  if (disposableReceiptBoundary.kind === "valid") {
+    transaction.cleanupReceiptObserved = true;
+    await writeJournal(transaction);
+    if (!isPackageRollbackState(transaction.state)) {
+      throw packageCleanupError(`receipt-bearing cleanup is not authorized during ${transaction.state}; finalization must not delete it`);
+    }
+    await retainReceiptCleanup(transaction, {
+      path: transaction.cleanupPath,
+      source: transaction.cleanupSource,
+      label: cleanupLabelForSource(transaction, transaction.cleanupSource),
+      packageFingerprint: transaction.cleanupFingerprint,
+      rootIdentity: transaction.cleanupIdentity,
+    }, evidenceFilesystem, identityTemporaryCleanup);
+    return;
+  }
+  if (packageCleanup) {
+    await retainPackageCleanup(transaction, {
+      path: transaction.cleanupPath,
+      source: transaction.cleanupSource,
+      label: cleanupLabelForSource(transaction, transaction.cleanupSource),
+      packageFingerprint: transaction.cleanupFingerprint,
+      rootIdentity: transaction.cleanupIdentity,
+    }, evidenceFilesystem, identityTemporaryCleanup);
+    return;
+  }
+  await evidenceFilesystem.beforeDisposableRemoval?.(transaction.cleanupPath);
+  const cleanupResult = await removeDisposableTreeWithoutRecursiveRm(transaction.cleanupPath, evidenceFilesystem);
+  if (cleanupResult.receiptBoundary.kind === "valid") {
+    transaction.cleanupReceiptObserved = true;
+    await writeJournal(transaction);
+    if (!isPackageRollbackState(transaction.state)) {
+      throw packageCleanupError(`receipt-bearing cleanup is not authorized during ${transaction.state}; finalization must not delete it`);
+    }
+    await retainReceiptCleanup(transaction, {
+      path: transaction.cleanupPath,
+      source: transaction.cleanupSource,
+      label: cleanupLabelForSource(transaction, transaction.cleanupSource),
+      packageFingerprint: transaction.cleanupFingerprint,
+      rootIdentity: transaction.cleanupIdentity,
+    }, evidenceFilesystem, identityTemporaryCleanup);
+    return;
+  }
   transaction.cleanupPath = null;
   transaction.cleanupSource = null;
   transaction.cleanupFingerprint = null;
   transaction.cleanupIdentity = null;
+  transaction.cleanupReceiptObserved = false;
   if (identityTemporaryCleanup) {
     transaction.identityTemporaryPath = null;
     transaction.identityTemporaryFingerprint = null;
@@ -1493,16 +1868,786 @@ async function reconcilePendingCleanup(transaction, lease) {
   await writeJournal(transaction);
 }
 
+async function removeDisposableTreeWithoutRecursiveRm(root, filesystem = undefined) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
+  const rootInfo = await packageLstat(evidenceFilesystem, root).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!rootInfo) throw packageCleanupError(`receipt-safe cleanup disposable root disappeared before deletion: ${root}`);
+  if (!rootInfo.isDirectory()) {
+    const boundary = await inspectAppleReceiptBoundary(root, evidenceFilesystem);
+    if (boundary.kind === "invalid") throw boundary.error;
+    if (boundary.kind === "valid") return { receiptBoundary: boundary };
+    if (!rootInfo.isFile() && !rootInfo.isSymbolicLink()) {
+      throw packageCleanupError(`receipt-safe cleanup cannot remove unsupported disposable root ${root}`);
+    }
+    await unlink(root);
+    return { receiptBoundary: { kind: "absent" } };
+  }
+  const snapshot = await collectReceiptRetentionSnapshot(root, filesystem, { requireReceipt: false });
+  if (snapshot.receiptChain !== null || snapshot.receipt !== null) {
+    return { receiptBoundary: { kind: "valid" } };
+  }
+  const entries = [...snapshot.inventory.entries].sort((left, right) => {
+    const leftDepth = left.relative.split("/").length;
+    const rightDepth = right.relative.split("/").length;
+    return rightDepth - leftDepth || right.relative.localeCompare(left.relative);
+  });
+  for (const entry of entries) {
+    const candidate = path.join(root, ...entry.relative.split("/"));
+    try {
+      if (entry.identity.type === "directory") {
+        await rmdir(candidate);
+      } else {
+        await unlink(candidate);
+      }
+    } catch (error) {
+      const boundary = await inspectAppleReceiptBoundary(root, filesystem);
+      if (boundary.kind === "invalid") throw boundary.error;
+      if (boundary.kind === "valid") return { receiptBoundary: boundary };
+      throw packageCleanupError(`receipt-safe cleanup could not remove the journaled ordinary ${entry.identity.type} ${candidate}: ${error?.code ?? String(error)}`);
+    }
+  }
+  try {
+    await rmdir(root);
+  } catch (error) {
+    const boundary = await inspectAppleReceiptBoundary(root, filesystem);
+    if (boundary.kind === "invalid") throw boundary.error;
+    if (boundary.kind === "valid") return { receiptBoundary: boundary };
+    throw packageCleanupError(`receipt-safe cleanup could not remove the empty disposable root ${root}: ${error?.code ?? String(error)}`);
+  }
+  return { receiptBoundary: { kind: "absent" } };
+}
+
+async function retainPackageCleanup(transaction, {
+  path: cleanupPath,
+  source,
+  label,
+  packageFingerprint,
+  rootIdentity,
+} = {}, filesystem = undefined, identityTemporaryCleanup = false) {
+  if (!isPackageRollbackState(transaction.state)) {
+    throw packageCleanupError(`package cleanup retention is not authorized during ${transaction.state}`);
+  }
+  if (!isPackageTransactionPath(transaction, source)) {
+    throw packageCleanupError(`package cleanup retention source is not one transaction-owned application package path`);
+  }
+  await filesystem?.beforePackageRetentionAttestation?.(cleanupPath);
+  const retained = await inspectPackageCleanupResidue(transaction, {
+    path: cleanupPath,
+    source,
+    label,
+    packageFingerprint,
+    rootIdentity,
+  }, filesystem, { sourceRoot: transaction.source });
+  const records = transaction.retainedPackageDisposables.records;
+  if (records.some((record) => record.path === retained.path || record.source === retained.source)) {
+    throw packageCleanupError("package cleanup retention would overwrite an existing retained package record");
+  }
+  if (records.length >= MAX_RETAINED_PACKAGE_DISPOSABLES) {
+    throw packageCleanupError("package cleanup retention exceeds the bounded retained package record set");
+  }
+  records.push(retained);
+  if (transaction.retainedCleanup === null) transaction.retainedCleanup = retained;
+  // The first write durably records the post-rename provenance while the
+  // cleanup intent still points at the moved tree. Only after that fsync may
+  // recovery clear the intent; a crash between these writes is recoverable
+  // without deleting the package tree.
+  await writeJournal(transaction);
+  await filesystem?.afterPackageRetentionRecordWrite?.(retained);
+  clearCleanupIntent(transaction, identityTemporaryCleanup);
+  await writeJournal(transaction);
+}
+
+async function retainReceiptCleanup(transaction, details, filesystem = undefined, identityTemporaryCleanup = false) {
+  return retainPackageCleanup(transaction, details, filesystem, identityTemporaryCleanup);
+}
+
+function clearCleanupIntent(transaction, identityTemporaryCleanup = false) {
+  transaction.cleanupPath = null;
+  transaction.cleanupSource = null;
+  transaction.cleanupFingerprint = null;
+  transaction.cleanupIdentity = null;
+  transaction.cleanupReceiptObserved = false;
+  if (identityTemporaryCleanup) {
+    transaction.identityTemporaryPath = null;
+    transaction.identityTemporaryFingerprint = null;
+    transaction.identityTemporaryIdentity = null;
+  }
+}
+
 function cleanupPathFor(transaction, candidate, label) {
   const suffix = createHash("sha256").update(`${candidate}\0${label}`).digest("hex").slice(0, 16);
   return `${candidate}.m7-cleanup-${transaction.runId}-${suffix}`;
+}
+
+function cleanupLabelForSource(transaction, source) {
+  return source === transaction.target ? "installed package"
+    : source === transaction.identityPath ? "package identity"
+      : source === transaction.paths.staging ? "package staging"
+        : source === transaction.paths.backup ? "prior package backup"
+          : source === transaction.paths.displaced ? "displaced package"
+            : source === transaction.identityTemporaryPath ? "package identity temporary"
+              : null;
+}
+
+function packageRoleForSource(transaction, source) {
+  if ([transaction.target, transaction.paths.staging, transaction.paths.displaced].includes(source)) return "candidate";
+  if (source === transaction.paths.backup) return "prior";
+  return null;
+}
+
+function packageFingerprintForSource(transaction, source) {
+  const role = packageRoleForSource(transaction, source);
+  if (role === "candidate") return transaction.candidateFingerprint;
+  if (role === "prior" && transaction.previous.targetExists) return transaction.previous.targetFingerprint;
+  return null;
+}
+
+function isPackageTransactionPath(transaction, candidate) {
+  return [transaction.target, transaction.paths.staging, transaction.paths.backup, transaction.paths.displaced].includes(candidate);
+}
+
+function cleanupSourceKindForTransaction(transaction, source) {
+  if (isPackageTransactionPath(transaction, source)) return "package";
+  if (source === transaction.identityPath || source === transaction.identityTemporaryPath) return "identity";
+  return null;
+}
+
+function assertCleanupIntentStructure(transaction, label) {
+  const fields = [transaction.cleanupPath, transaction.cleanupSource, transaction.cleanupFingerprint, transaction.cleanupIdentity];
+  if (fields.every((value) => value === null)) return null;
+  if (fields.some((value) => value === null)) {
+    throw packageCleanupError(`${label} cleanup intent is incomplete`);
+  }
+  assertCanonicalPackagePath(transaction.cleanupPath, `${label} cleanup path`);
+  assertCanonicalPackagePath(transaction.cleanupSource, `${label} cleanup source`);
+  if (!/^[a-f0-9]{64}$/u.test(transaction.cleanupFingerprint)) {
+    throw packageCleanupError(`${label} cleanup ownership fingerprint is invalid`);
+  }
+  const cleanupKind = cleanupSourceKindForTransaction(transaction, transaction.cleanupSource);
+  if (cleanupKind === null) {
+    throw packageCleanupError(`${label} cleanup source is outside the transaction-owned path set`);
+  }
+  const expectedIdentityType = cleanupKind === "package" ? "directory" : "file";
+  try {
+    assertExactPackageIdentity(transaction.cleanupIdentity, `${label} cleanup identity`, expectedIdentityType);
+  } catch (error) {
+    if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) throw error;
+    throw packageCleanupError(`${label} cleanup ownership is invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const cleanupLabel = cleanupLabelForSource(transaction, transaction.cleanupSource);
+  if (!cleanupLabel || transaction.cleanupPath !== cleanupPathFor(transaction, transaction.cleanupSource, cleanupLabel)) {
+    throw packageCleanupError(`${label} cleanup path is not the exact deterministic sibling of its source`);
+  }
+  return cleanupKind;
+}
+
+function cleanupSlotsForTransaction(transaction) {
+  const slots = [
+    [transaction.target, "installed package"],
+    [transaction.identityPath, "package identity"],
+    [transaction.paths.staging, "package staging"],
+    [transaction.paths.backup, "prior package backup"],
+    [transaction.paths.displaced, "displaced package"],
+  ];
+  slots.push([
+    transaction.identityTemporaryPath ?? packageIdentityTemporaryPath(transaction.identityPath, transaction.runId),
+    "package identity temporary",
+  ]);
+  return slots.map(([source, label]) => ({
+    source,
+    label,
+    path: cleanupPathFor(transaction, source, label),
+  }));
+}
+
+async function assertNoUnexpectedCleanupCollisions(transaction, state, retainedRecords, pendingCleanupPath, filesystem) {
+  const allowedPaths = new Set([
+    ...retainedRecords.map((record) => record.path),
+    ...(pendingCleanupPath === null ? [] : [pendingCleanupPath]),
+  ]);
+  const seen = new Set();
+  for (const slot of cleanupSlotsForTransaction(transaction)) {
+    if (seen.has(slot.path) || allowedPaths.has(slot.path)) continue;
+    seen.add(slot.path);
+    if (await packagePathIdentity(slot.path, filesystem) !== null) {
+      throw packageCleanupError(
+        `package recovery ${state} has an unexpected cleanup collision for ${slot.label} at ${slot.path}; ` +
+          "only validated retained paths and the exact current pending intent may exist",
+      );
+    }
+  }
+}
+
+function isPackageRollbackState(state) {
+  return ["restoring", "target-displaced", "target-restored", "target-removed", "identity-restored"].includes(state);
+}
+
+function emptyRetainedPackageDisposables() {
+  return {
+    schema: RETAINED_PACKAGE_SET_SCHEMA,
+    version: RETAINED_PACKAGE_SET_VERSION,
+    records: [],
+  };
+}
+
+function assertRetainedPackageDisposablesShape(transaction, label) {
+  try {
+    assertExactObjectKeys(transaction.retainedPackageDisposables, ["schema", "version", "records"], label);
+    if (transaction.retainedPackageDisposables.schema !== RETAINED_PACKAGE_SET_SCHEMA ||
+        transaction.retainedPackageDisposables.version !== RETAINED_PACKAGE_SET_VERSION ||
+        !Array.isArray(transaction.retainedPackageDisposables.records) ||
+        transaction.retainedPackageDisposables.records.length > MAX_RETAINED_PACKAGE_DISPOSABLES) {
+      throw packageCleanupError(`${label} is not one bounded versioned retained-package set`);
+    }
+    const seenSources = new Set();
+    const seenPaths = new Set();
+    transaction.retainedPackageDisposables.records.forEach((record, index) => {
+      assertRetainedPackageRecordShape(transaction, record, `${label} record ${index}`);
+      if (seenSources.has(record.source) || seenPaths.has(record.path)) {
+        throw packageCleanupError(`${label} contains duplicate retained package source or path`);
+      }
+      seenSources.add(record.source);
+      seenPaths.add(record.path);
+    });
+  } catch (error) {
+    if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) throw error;
+    throw packageCleanupError(`${label} is malformed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function assertRetainedReceiptCleanupShape(transaction, retained, label) {
+  try {
+    assertRetainedPackageRecordShape(transaction, retained, label);
+  } catch (error) {
+    if (error?.code === MAS_GATE_CLEANUP_DIAGNOSTIC_CODE) throw error;
+    throw packageCleanupError(`${label} is malformed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function assertRetainedPackageRecordShape(transaction, retained, label) {
+  if (!isPackageRollbackState(transaction.state)) throw packageCleanupError(`${label} is present outside the package rollback state set`);
+  const legacyReceiptRecord = retained.schema === RETAINED_RECEIPT_SCHEMA && retained.version === RETAINED_RECEIPT_VERSION;
+  const legacyPackageRecord = retained.schema === LEGACY_RETAINED_PACKAGE_SCHEMA && retained.version === LEGACY_RETAINED_PACKAGE_VERSION;
+  const legacyPackageRecordV2 = retained.schema === LEGACY_RETAINED_PACKAGE_SCHEMA_V2 && retained.version === LEGACY_RETAINED_PACKAGE_VERSION_V2;
+  const packageRecord = retained.schema === RETAINED_PACKAGE_SCHEMA && retained.version === RETAINED_PACKAGE_VERSION;
+  if (!legacyReceiptRecord && !legacyPackageRecord && !legacyPackageRecordV2 && !packageRecord) {
+    throw packageCleanupError(`${label} has an unsupported retained-package record schema`);
+  }
+  if (legacyReceiptRecord || legacyPackageRecord || legacyPackageRecordV2) {
+    assertExactObjectKeys(retained, [
+      "schema", "version", "source", "path", "label", "candidateFingerprint", "rootIdentity", "journalRootIdentity", "inventory", "receiptChain", "receipt",
+    ], label);
+    if (typeof retained.source !== "string" || typeof retained.path !== "string" ||
+        typeof retained.label !== "string" || retained.candidateFingerprint !== transaction.candidateFingerprint ||
+        packageRoleForSource(transaction, retained.source) !== "candidate") {
+      throw packageCleanupError(`${label} is legacy candidate-only provenance and cannot attest a prior package`);
+    }
+  } else {
+    assertExactObjectKeys(retained, [
+      "schema", "version", "source", "path", "label", "packageRole", "packageFingerprint", "rootIdentity", "journalRootIdentity", "inventory", "stableAttestation", "receiptChain", "receipt",
+    ], label);
+    const expectedRole = packageRoleForSource(transaction, retained.source);
+    const expectedFingerprint = packageFingerprintForSource(transaction, retained.source);
+    if (typeof retained.source !== "string" || typeof retained.path !== "string" ||
+        typeof retained.label !== "string" || retained.packageRole !== expectedRole ||
+        retained.packageFingerprint !== expectedFingerprint) {
+      throw packageCleanupError(`${label} is not bound to the exact transaction package role and fingerprint`);
+    }
+  }
+  assertCanonicalPackagePath(retained.source, `${label} source`);
+  assertCanonicalPackagePath(retained.path, `${label} path`);
+  const expectedLabel = cleanupLabelForSource(transaction, retained.source);
+  if (!expectedLabel || retained.label !== expectedLabel ||
+      retained.path !== cleanupPathFor(transaction, retained.source, expectedLabel)) {
+    throw packageCleanupError(`${label} path or source is outside the exact journal-bound cleanup slot`);
+  }
+  assertExactPackageIdentity(retained.rootIdentity, `${label} root identity`, "directory");
+  assertExactPackageIdentity(retained.journalRootIdentity, `${label} journal root identity`, "directory");
+  if (!samePackageDirectoryBinding(retained.rootIdentity, retained.journalRootIdentity)) {
+    throw packageCleanupError(`${label} root identity is no longer bound to the journaled disposable root`);
+  }
+  assertRetentionInventoryAttestationShape(retained.inventory, `${label} inventory`);
+  if (packageRecord) {
+    assertStableOrdinaryAttestationShape(retained.stableAttestation, `${label} stable ordinary attestation`);
+  }
+
+  if (retained.receiptChain === null || retained.receipt === null) {
+    if ((!packageRecord && !legacyPackageRecord && !legacyPackageRecordV2) || retained.receiptChain !== null || retained.receipt !== null) {
+      throw packageCleanupError(`${label} receipt provenance is incomplete`);
+    }
+    return;
+  }
+  const receiptLayout = receiptLayoutForRelative(retained.receipt.relative);
+  if (!receiptLayout) {
+    throw packageCleanupError(`${label} receipt path is outside the exact accepted Apple-managed boundary`);
+  }
+  const expectedChain = receiptLayout.directoryRelativePath.map((_segment, index) =>
+    receiptLayout.directoryRelativePath.slice(0, index + 1).join("/"));
+  if (!Array.isArray(retained.receiptChain) || retained.receiptChain.length !== expectedChain.length) {
+    throw packageCleanupError(`${label} receipt directory chain is incomplete`);
+  }
+  retained.receiptChain.forEach((entry, index) => {
+    assertExactObjectKeys(entry, ["relative", "identity"], `${label} receipt directory entry`);
+    if (entry.relative !== expectedChain[index]) throw packageCleanupError(`${label} contains an unexpected receipt directory path`);
+    assertExactPackageIdentity(entry.identity, `${label} receipt directory ${entry.relative}`, "directory");
+  });
+  assertExactObjectKeys(retained.receipt, ["relative", "identity"], `${label} receipt`);
+  assertExactPackageIdentity(retained.receipt.identity, `${label} receipt identity`, "file");
+  if (retained.receipt.identity.nlink !== 1) throw packageCleanupError(`${label} receipt leaf has a hard-link collision`);
+}
+
+function assertRetentionInventoryAttestationShape(inventory, label) {
+  assertExactObjectKeys(inventory, ["schema", "version", "digest", "entryCount"], label);
+  if (inventory.schema !== RETENTION_INVENTORY_SCHEMA || inventory.version !== RETENTION_INVENTORY_VERSION ||
+      typeof inventory.digest !== "string" || !/^[a-f0-9]{64}$/u.test(inventory.digest) ||
+      !Number.isSafeInteger(inventory.entryCount) || inventory.entryCount < 0) {
+    throw packageCleanupError(`${label} is not one compact versioned inventory attestation`);
+  }
+}
+
+function assertStableOrdinaryAttestationShape(attestation, label) {
+  assertExactObjectKeys(attestation, ["schema", "version", "digest", "entryCount"], label);
+  if (attestation.schema !== STABLE_ORDINARY_ATTESTATION_SCHEMA || attestation.version !== STABLE_ORDINARY_ATTESTATION_VERSION ||
+      typeof attestation.digest !== "string" || !/^[a-f0-9]{64}$/u.test(attestation.digest) ||
+      !Number.isSafeInteger(attestation.entryCount) || attestation.entryCount < 0) {
+    throw packageCleanupError(`${label} is not one stable ordinary-tree attestation`);
+  }
+}
+
+function stableOrdinaryAttestationForInventory(inventory) {
+  const entries = inventory.entries.map((entry) => {
+    const identity = entry.identity;
+    const normalized = {
+      relative: entry.relative,
+      type: identity.type,
+      mode: identity.mode,
+      uid: identity.uid,
+      gid: identity.gid,
+      dev: identity.dev,
+      ino: identity.ino,
+      content: entry.content,
+    };
+    if (identity.type === "file" || identity.type === "symlink") {
+      normalized.nlink = identity.nlink;
+      normalized.size = identity.size;
+    }
+    return normalized;
+  });
+  return {
+    schema: STABLE_ORDINARY_ATTESTATION_SCHEMA,
+    version: STABLE_ORDINARY_ATTESTATION_VERSION,
+    digest: digest(Buffer.from(JSON.stringify(entries))),
+    entryCount: entries.length,
+  };
+}
+
+function sameStableOrdinaryAttestation(actual, expected) {
+  return actual.schema === expected.schema && actual.version === expected.version &&
+    actual.digest === expected.digest && actual.entryCount === expected.entryCount;
+}
+
+function assertRetentionInventorySnapshotShape(inventory, label) {
+  assertExactObjectKeys(inventory, ["schema", "version", "digest", "entries"], label);
+  if (inventory.schema !== RETENTION_INVENTORY_SCHEMA || inventory.version !== RETENTION_INVENTORY_VERSION ||
+      typeof inventory.digest !== "string" || !/^[a-f0-9]{64}$/u.test(inventory.digest) || !Array.isArray(inventory.entries)) {
+    throw packageCleanupError(`${label} is not one complete versioned inventory`);
+  }
+  const normalized = [];
+  let previousRelative = null;
+  for (const entry of inventory.entries) {
+    assertExactObjectKeys(entry, ["relative", "identity", "content"], `${label} entry`);
+    if (typeof entry.relative !== "string" || entry.relative === "." ||
+        (previousRelative !== null && entry.relative.localeCompare(previousRelative) <= 0)) {
+      throw packageCleanupError(`${label} paths are not unique and sorted`);
+    }
+    previousRelative = entry.relative;
+    if (!entry.identity || typeof entry.identity !== "object" || Array.isArray(entry.identity) ||
+        !["directory", "file", "symlink"].includes(entry.identity.type)) {
+      throw packageCleanupError(`${label} contains an unsupported special entry`);
+    }
+    assertExactPackageIdentity(entry.identity, `${label} ${entry.relative} identity`, entry.identity.type);
+    if (!entry.content || typeof entry.content !== "object" || Array.isArray(entry.content)) {
+      throw packageCleanupError(`${label} ${entry.relative} content record is malformed`);
+    }
+    if (entry.identity.type === "directory") {
+      assertExactObjectKeys(entry.content, ["kind"], `${label} ${entry.relative} directory content`);
+      if (entry.content.kind !== "directory") throw packageCleanupError(`${label} ${entry.relative} directory content is malformed`);
+    } else if (entry.identity.type === "file") {
+      assertExactObjectKeys(entry.content, ["kind", "size", "sha256"], `${label} ${entry.relative} file content`);
+      if (entry.content.kind !== "file" || !Number.isSafeInteger(entry.content.size) || entry.content.size < 0 ||
+          typeof entry.content.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(entry.content.sha256)) {
+        throw packageCleanupError(`${label} ${entry.relative} file content is malformed`);
+      }
+    } else {
+      assertExactObjectKeys(entry.content, ["kind", "target", "sha256"], `${label} ${entry.relative} symlink content`);
+      if (entry.content.kind !== "symlink" || typeof entry.content.target !== "string" ||
+          typeof entry.content.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(entry.content.sha256)) {
+        throw packageCleanupError(`${label} ${entry.relative} symlink content is malformed`);
+      }
+    }
+    normalized.push(normalizeRetentionInventoryEntry(entry));
+  }
+  if (digest(Buffer.from(JSON.stringify(normalized))) !== inventory.digest) {
+    throw packageCleanupError(`${label} digest does not match its complete retained inventory`);
+  }
+}
+
+function normalizeRetentionInventoryEntry(entry) {
+  return {
+    relative: entry.relative,
+    identity: entry.identity,
+    content: entry.content,
+  };
+}
+
+async function inspectRetainedPackageCleanup(transaction, retained, filesystem = undefined, label = "package recovery retained package") {
+  assertRetainedPackageRecordShape(transaction, retained, label);
+  const actualSnapshot = await inspectPackageCleanupResidue(transaction, {
+    path: retained.path,
+    source: retained.source,
+    label: retained.label,
+    packageFingerprint: retained.packageFingerprint ?? retained.candidateFingerprint,
+    rootIdentity: retained.rootIdentity,
+  }, filesystem, { sourceRoot: null, journalRootIdentity: retained.journalRootIdentity, buildRecord: false });
+  const actual = retainedPackageRecordFromSnapshot(transaction, {
+    source: retained.source,
+    path: retained.path,
+    label: retained.label,
+    packageFingerprint: retained.packageFingerprint ?? retained.candidateFingerprint,
+    rootIdentity: actualSnapshot.rootIdentity,
+    journalRootIdentity: retained.journalRootIdentity,
+  }, actualSnapshot, retained.schema);
+  if (sameRetainedPackageRecord(actual, retained)) {
+    return { record: retained, upgrade: null };
+  }
+  const upgrade = inspectMonotonicReceiptUpgrade(transaction, retained, actualSnapshot, label);
+  if (upgrade === null) {
+    throw packageCleanupError("package recovery retained receipt provenance no longer matches the untouched disposable tree");
+  }
+  return { record: retained, upgrade };
+}
+
+function sameRetainedPackageRecord(actual, expected) {
+  const bindingOnly = (record) => ({
+    ...record,
+    rootIdentity: Object.fromEntries(["type", "mode", "uid", "gid", "dev", "ino"].map((field) => [field, record.rootIdentity[field]])),
+  });
+  return Buffer.compare(serializeSortedJson(bindingOnly(actual)), serializeSortedJson(bindingOnly(expected))) === 0;
+}
+
+async function inspectRetainedReceiptCleanup(transaction, retained, filesystem = undefined) {
+  return inspectRetainedPackageCleanup(transaction, retained, filesystem, "package recovery retained cleanup");
+}
+
+function retainedPackageRecordFromSnapshot(transaction, {
+  source,
+  path: cleanupPath,
+  label,
+  packageFingerprint,
+  rootIdentity,
+  journalRootIdentity,
+} = {}, snapshot, recordSchema = RETAINED_PACKAGE_SCHEMA) {
+  const role = packageRoleForSource(transaction, source);
+  if (recordSchema === RETAINED_RECEIPT_SCHEMA || recordSchema === LEGACY_RETAINED_PACKAGE_SCHEMA || recordSchema === LEGACY_RETAINED_PACKAGE_SCHEMA_V2) {
+    return {
+      schema: recordSchema,
+      version: recordSchema === RETAINED_RECEIPT_SCHEMA ? RETAINED_RECEIPT_VERSION
+        : recordSchema === LEGACY_RETAINED_PACKAGE_SCHEMA_V2 ? LEGACY_RETAINED_PACKAGE_VERSION_V2
+          : LEGACY_RETAINED_PACKAGE_VERSION,
+      source,
+      path: cleanupPath,
+      label,
+      candidateFingerprint: packageFingerprint,
+      rootIdentity,
+      journalRootIdentity,
+      inventory: {
+        schema: RETENTION_INVENTORY_SCHEMA,
+        version: RETENTION_INVENTORY_VERSION,
+        digest: snapshot.inventory.digest,
+        entryCount: snapshot.inventory.entries.length,
+      },
+      receiptChain: snapshot.receiptChain,
+      receipt: snapshot.receipt,
+    };
+  }
+  return {
+    schema: RETAINED_PACKAGE_SCHEMA,
+    version: RETAINED_PACKAGE_VERSION,
+    source,
+    path: cleanupPath,
+    label,
+    packageRole: role,
+    packageFingerprint,
+    rootIdentity,
+    journalRootIdentity,
+    inventory: {
+      schema: RETENTION_INVENTORY_SCHEMA,
+      version: RETENTION_INVENTORY_VERSION,
+      digest: snapshot.inventory.digest,
+      entryCount: snapshot.inventory.entries.length,
+    },
+    stableAttestation: stableOrdinaryAttestationForInventory(snapshot.inventory),
+    receiptChain: snapshot.receiptChain,
+    receipt: snapshot.receipt,
+  };
+}
+
+function inspectMonotonicReceiptUpgrade(transaction, retained, actualSnapshot, label) {
+  const isStableRecord = retained.schema === RETAINED_PACKAGE_SCHEMA && retained.version === RETAINED_PACKAGE_VERSION;
+  if (!isStableRecord || retained.receiptChain !== null || retained.receipt !== null ||
+      actualSnapshot.receiptChain === null || actualSnapshot.receipt === null) {
+    return null;
+  }
+  const actualStable = stableOrdinaryAttestationForInventory(actualSnapshot.inventory);
+  if (retained.inventory.entryCount !== actualStable.entryCount || !sameStableOrdinaryAttestation(actualStable, retained.stableAttestation)) {
+    throw packageCleanupError(`${label} cannot perform the monotonic receipt provenance upgrade because the stable ordinary attestation changed`);
+  }
+  const upgraded = retainedPackageRecordFromSnapshot(transaction, {
+    source: retained.source,
+    path: retained.path,
+    label: retained.label,
+    packageFingerprint: retained.packageFingerprint,
+    rootIdentity: actualSnapshot.rootIdentity,
+    journalRootIdentity: retained.journalRootIdentity,
+  }, actualSnapshot, RETAINED_PACKAGE_SCHEMA);
+  assertRetainedPackageRecordShape(transaction, upgraded, `${label} monotonic receipt upgrade`);
+  return {
+    record: upgraded,
+    description: {
+      source: retained.source,
+      path: retained.path,
+      label: retained.label,
+      packageRole: retained.packageRole,
+      packageFingerprint: retained.packageFingerprint,
+      fromSchema: retained.schema,
+      fromVersion: retained.version,
+      toSchema: upgraded.schema,
+      toVersion: upgraded.version,
+      inventory: upgraded.inventory,
+      stableAttestation: upgraded.stableAttestation,
+      rootIdentity: upgraded.rootIdentity,
+      journalRootIdentity: upgraded.journalRootIdentity,
+      receiptChain: upgraded.receiptChain,
+      receipt: upgraded.receipt,
+    },
+  };
+}
+
+async function inspectPackageCleanupResidue(transaction, {
+  path: cleanupPath,
+  source,
+  label,
+  packageFingerprint,
+  candidateFingerprint,
+  rootIdentity,
+} = {}, filesystem = undefined, {
+  sourceRoot = transaction.source,
+  buildRecord = true,
+  journalRootIdentity = rootIdentity,
+  recordSchema = RETAINED_PACKAGE_SCHEMA,
+} = {}) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
+  const expectedPackageRole = packageRoleForSource(transaction, source);
+  const expectedPackageFingerprint = packageFingerprintForSource(transaction, source);
+  const observedPackageFingerprint = packageFingerprint ?? candidateFingerprint;
+  if (!expectedPackageRole || observedPackageFingerprint !== expectedPackageFingerprint) {
+    throw packageCleanupError("package cleanup is not bound to the exact transaction package role and fingerprint");
+  }
+  const rootInfo = await packageLstat(evidenceFilesystem, cleanupPath).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw packageCleanupError(`package cleanup root metadata is unavailable: ${error?.code ?? String(error)}`);
+  });
+  if (!rootInfo) throw packageCleanupError("package cleanup disposable root is missing");
+  const actualRootIdentity = packageIdentityOf(rootInfo);
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory() || !samePackageDirectoryBinding(actualRootIdentity, rootIdentity)) {
+    throw packageCleanupError("package cleanup disposable root has changed type, ownership, or identity");
+  }
+  const actual = {
+    ...(await collectReceiptRetentionSnapshot(cleanupPath, evidenceFilesystem, { requireReceipt: false })),
+    rootIdentity: actualRootIdentity,
+  };
+  const actualFingerprint = await fingerprintPath(cleanupPath, evidenceFilesystem);
+  if (expectedPackageRole === "candidate" && sourceRoot !== null) {
+    const sourceInfo = await packageLstat(evidenceFilesystem, sourceRoot).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw packageCleanupError(`artifact-bound package source metadata is unavailable: ${error?.code ?? String(error)}`);
+    });
+    if (sourceInfo) {
+      const sourceFingerprint = await fingerprintPath(sourceRoot, evidenceFilesystem);
+      if (sourceFingerprint !== observedPackageFingerprint && actual.receiptChain !== null) {
+        throw packageCleanupError("artifact-bound package source fingerprint is not the exact candidate fingerprint");
+      }
+      if (sourceFingerprint === observedPackageFingerprint) {
+        const sourceSnapshot = await collectReceiptRetentionSnapshot(sourceRoot, evidenceFilesystem, { requireReceipt: false });
+        if (sourceSnapshot.receiptChain === null && actual.receiptChain === null) {
+          assertRetentionInventoryExact(sourceSnapshot.inventory, actual.inventory, "package cleanup");
+        } else {
+          assertRetentionSubset(sourceSnapshot.inventory, actual.inventory, "package cleanup");
+          assertReceiptChainBinding(sourceSnapshot.receiptChain, actual.receiptChain, "package cleanup");
+        }
+      }
+    } else if (actual.receiptChain !== null) {
+      throw packageCleanupError("artifact-bound package source is missing; no unchanged-subset proof is available");
+    }
+  }
+  if (actual.receiptChain === null || expectedPackageRole === "prior") {
+    if (actualFingerprint !== observedPackageFingerprint) {
+      throw packageCleanupError("package cleanup fingerprint no longer matches its transaction-owned package");
+    }
+  }
+  if (!buildRecord) return actual;
+  const retained = retainedPackageRecordFromSnapshot(transaction, {
+    source,
+    path: cleanupPath,
+    label,
+    packageFingerprint: observedPackageFingerprint,
+    rootIdentity: actualRootIdentity,
+    journalRootIdentity,
+  }, actual, recordSchema);
+  assertRetainedPackageRecordShape(transaction, retained, "package cleanup provenance");
+  return retained;
+}
+
+async function inspectReceiptCleanupResidue(transaction, details, filesystem = undefined, options = {}) {
+  const actual = await inspectPackageCleanupResidue(transaction, details, filesystem, options);
+  if (options.requireReceipt === false || actual.receiptChain !== null) return actual;
+  throw packageCleanupError("receipt-bearing cleanup does not contain the exact Apple receipt boundary");
+}
+
+function assertRetentionInventoryExact(sourceInventory, retainedInventory, label) {
+  if (sourceInventory.entries.length !== retainedInventory.entries.length) {
+    throw packageCleanupError(`${label} full ordinary inventory is incomplete or contains an added path`);
+  }
+  for (let index = 0; index < sourceInventory.entries.length; index += 1) {
+    const source = sourceInventory.entries[index];
+    const retained = retainedInventory.entries[index];
+    if (source.relative !== retained.relative || source.identity.type !== retained.identity.type ||
+        source.identity.mode !== retained.identity.mode || JSON.stringify(source.content) !== JSON.stringify(retained.content)) {
+      throw packageCleanupError(`${label} full ordinary inventory changed path, type, mode, bytes, or symlink target`);
+    }
+  }
+}
+
+function assertRetentionSubset(sourceInventory, retainedInventory, label) {
+  const sourceByPath = new Map(sourceInventory.entries.map((entry) => [entry.relative, entry]));
+  for (const retained of retainedInventory.entries) {
+    const source = sourceByPath.get(retained.relative);
+    if (!source) throw packageCleanupError(`${label} contains an added ordinary path ${retained.relative}`);
+    if (source.identity.type !== retained.identity.type) {
+      throw packageCleanupError(`${label} ordinary path ${retained.relative} changed type`);
+    }
+    const fieldsToCompare = ["mode"];
+    if (fieldsToCompare.some((field) => source.identity[field] !== retained.identity[field])) {
+      throw packageCleanupError(`${label} ordinary path ${retained.relative} changed copy-stable mode`);
+    }
+    if (JSON.stringify(source.content) !== JSON.stringify(retained.content)) {
+      throw packageCleanupError(`${label} ordinary path ${retained.relative} changed bytes or symlink target`);
+    }
+  }
+}
+
+function assertReceiptChainBinding(sourceChain, retainedChain, label) {
+  if (sourceChain === null) return;
+  if (retainedChain === null) {
+    throw packageCleanupError(`${label} Apple receipt directory chain disappeared`);
+  }
+  for (let index = 0; index < retainedChain.length; index += 1) {
+    const source = sourceChain[index];
+    const retained = retainedChain[index];
+    if (!source || source.relative !== retained.relative || source.identity.type !== "directory" ||
+        source.identity.mode !== retained.identity.mode) {
+      throw packageCleanupError(`${label} Apple receipt directory chain changed path, type, or copy-stable mode`);
+    }
+  }
+}
+
+async function collectReceiptRetentionSnapshot(root, filesystem = undefined, { requireReceipt = true } = {}) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
+  const entries = [];
+  let receiptChain = null;
+  let receipt = null;
+  let receiptLayout = null;
+
+  async function visit(candidate) {
+    const info = await packageLstat(evidenceFilesystem, candidate).catch((error) => {
+      throw packageCleanupError(`receipt-bearing cleanup metadata is unavailable at ${candidate}: ${error?.code ?? String(error)}`);
+    });
+    const relative = path.relative(root, candidate).split(path.sep).join("/") || ".";
+    const boundary = classifyAppleReceiptBoundary(root, candidate);
+    if (boundary?.kind === "invalid") throw appleReceiptBoundaryError(boundary.path, boundary.reason);
+    if (boundary?.kind === "directory") {
+      if (receiptLayout !== null) {
+        throw appleReceiptBoundaryError(candidate, "the package contains both the fixed MAS and historical Apple receipt boundaries");
+      }
+      receiptLayout = boundary.layout;
+      if (relative !== receiptLayout.directoryRelativePath.join("/")) {
+        throw appleReceiptBoundaryError(candidate, "the Apple receipt path is outside the exact accepted nested Electron app boundary");
+      }
+      const validated = await validateAppleReceiptDirectory(candidate, boundary.path, evidenceFilesystem);
+      receiptChain = [];
+      for (let index = 0; index < receiptLayout.directoryRelativePath.length; index += 1) {
+        const chainRelative = receiptLayout.directoryRelativePath.slice(0, index + 1).join("/");
+        const chainInfo = await packageLstat(evidenceFilesystem, path.join(root, ...receiptLayout.directoryRelativePath.slice(0, index + 1)));
+        if (chainInfo.isSymbolicLink() || !chainInfo.isDirectory()) {
+          throw packageCleanupError(`receipt-bearing cleanup path ${chainRelative} is not one non-symlink directory`);
+        }
+        receiptChain.push({ relative: chainRelative, identity: packageIdentityOf(chainInfo) });
+      }
+      receipt = {
+        relative: receiptLayout.relativePath.join("/"),
+        identity: validated.receiptIdentity,
+      };
+      return;
+    }
+    if (info.isSymbolicLink()) {
+      const target = await readlink(candidate);
+      entries.push({
+        relative,
+        identity: packageIdentityOf(info),
+        content: { kind: "symlink", target, sha256: digest(Buffer.from(target)) },
+      });
+      return;
+    }
+    if (info.isFile()) {
+      const bytes = await readFile(candidate);
+      entries.push({
+        relative,
+        identity: packageIdentityOf(info),
+        content: { kind: "file", size: bytes.byteLength, sha256: digest(bytes) },
+      });
+      return;
+    }
+    if (!info.isDirectory()) throw packageCleanupError(`receipt-bearing cleanup contains unsupported special entry ${candidate}`);
+    if (relative !== ".") {
+      entries.push({ relative, identity: packageIdentityOf(info), content: { kind: "directory" } });
+    }
+    const names = (await readdir(candidate)).sort();
+    for (const name of names) await visit(path.join(candidate, name));
+  }
+
+  await visit(root);
+  if (requireReceipt && (!receiptChain || !receipt)) {
+    throw packageCleanupError("receipt-bearing cleanup does not contain the exact Apple receipt boundary");
+  }
+  entries.sort((left, right) => left.relative.localeCompare(right.relative));
+  const inventory = {
+    schema: RETENTION_INVENTORY_SCHEMA,
+    version: RETENTION_INVENTORY_VERSION,
+    digest: digest(Buffer.from(JSON.stringify(entries.map(normalizeRetentionInventoryEntry)))),
+    entries,
+  };
+  assertRetentionInventorySnapshotShape(inventory, "receipt-bearing cleanup inventory");
+  return { inventory, receiptChain, receipt };
 }
 
 function packageIdentityTemporaryPath(identityPath, runId) {
   return `${identityPath}.m7.${runId}.identity.tmp`;
 }
 
-async function reconcileIdentityTemporary(transaction, lease) {
+async function reconcileIdentityTemporary(transaction, lease, filesystem = undefined) {
   if (transaction.identityTemporaryPath === null) {
     if (transaction.identityTemporaryFingerprint !== null) {
       throw new Error("refusing package recovery; identity temporary fingerprint has no temporary path");
@@ -1512,10 +2657,11 @@ async function reconcileIdentityTemporary(transaction, lease) {
   if (typeof transaction.identityTemporaryFingerprint !== "string") {
     throw new Error("refusing package recovery; identity temporary construction intent is incomplete");
   }
-  const temporaryFingerprint = await fingerprintPath(transaction.identityTemporaryPath);
-  const temporaryIdentity = await packagePathIdentity(transaction.identityTemporaryPath);
-  const identityFingerprint = await fingerprintPath(transaction.identityPath);
-  const identityIdentity = await packagePathIdentity(transaction.identityPath);
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
+  const temporaryFingerprint = await fingerprintPath(transaction.identityTemporaryPath, evidenceFilesystem);
+  const temporaryIdentity = await packagePathIdentity(transaction.identityTemporaryPath, evidenceFilesystem);
+  const identityFingerprint = await fingerprintPath(transaction.identityPath, evidenceFilesystem);
+  const identityIdentity = await packagePathIdentity(transaction.identityPath, evidenceFilesystem);
   if (temporaryFingerprint !== null && temporaryFingerprint !== transaction.identityTemporaryFingerprint) {
     throw new Error("refusing package recovery; identity temporary ownership fingerprint changed");
   }
@@ -1529,7 +2675,7 @@ async function reconcileIdentityTemporary(transaction, lease) {
     throw new Error("refusing package recovery; identity temporary ownership identity changed");
   }
   if (temporaryFingerprint !== null) {
-    await removeOwnedPath(transaction, transaction.identityTemporaryPath, temporaryFingerprint, "package identity temporary", lease, transaction.identityTemporaryIdentity);
+    await removeOwnedPath(transaction, transaction.identityTemporaryPath, temporaryFingerprint, "package identity temporary", lease, transaction.identityTemporaryIdentity, evidenceFilesystem);
   } else if (identityFingerprint !== null) {
     if (!samePackageIdentity(identityIdentity, transaction.identityTemporaryIdentity)) {
       throw new Error("refusing package recovery; identity destination is an unowned same-content collision");
@@ -1552,6 +2698,7 @@ async function removeJournal(transaction) {
     throw new Error("refusing to remove a package transaction journal with a changed owner or state");
   }
   await rm(transaction.paths.journal, { force: true });
+  await syncDirectory(path.dirname(transaction.paths.journal));
 }
 
 async function transition(transaction, state, faultAt) {
@@ -1563,8 +2710,29 @@ async function transition(transaction, state, faultAt) {
 async function writeJournal(transaction) {
   const bytes = Buffer.from(`${JSON.stringify(transaction, replacer, 2)}\n`);
   const temporary = `${transaction.paths.journal}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
-  await rename(temporary, transaction.paths.journal);
+  const descriptor = await open(temporary, "wx", 0o600);
+  try {
+    await descriptor.writeFile(bytes);
+    await descriptor.sync();
+  } finally {
+    await descriptor.close();
+  }
+  try {
+    await rename(temporary, transaction.paths.journal);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => {});
+    throw error;
+  }
+  await syncDirectory(path.dirname(transaction.paths.journal));
+}
+
+async function syncDirectory(directoryPath) {
+  const descriptor = await open(directoryPath, "r");
+  try {
+    await descriptor.sync();
+  } finally {
+    await descriptor.close();
+  }
 }
 
 function assertRequiredInput(input) {
@@ -1576,6 +2744,21 @@ function assertRequiredInput(input) {
 function assertTransaction(transaction, options = {}) {
   if (!transaction || transaction.schema !== PACKAGE_TRANSACTION_SCHEMA || transaction.version !== PACKAGE_TRANSACTION_VERSION || typeof transaction.ownerToken !== "string") {
     throw new Error("invalid package transaction journal");
+  }
+  if (!("cleanupReceiptObserved" in transaction)) transaction.cleanupReceiptObserved = false;
+  if (!("retainedCleanup" in transaction)) transaction.retainedCleanup = null;
+  if (!("retainedPackageDisposables" in transaction)) {
+    transaction.retainedPackageDisposables = {
+      schema: RETAINED_PACKAGE_SET_SCHEMA,
+      version: RETAINED_PACKAGE_SET_VERSION,
+      records: transaction.retainedCleanup === null ? [] : [transaction.retainedCleanup],
+    };
+  }
+  if (transaction.retainedCleanup === null && transaction.retainedPackageDisposables?.records?.length > 0) {
+    transaction.retainedCleanup = transaction.retainedPackageDisposables.records[0];
+  }
+  if (typeof transaction.cleanupReceiptObserved !== "boolean") {
+    throw new Error("package transaction cleanup receipt observation marker is invalid");
   }
   if (!/^[-A-Za-z0-9]+$/u.test(transaction.runId ?? "")) throw new Error("invalid package transaction run ID");
   if (options.ownerToken !== undefined && transaction.ownerToken !== options.ownerToken) {
@@ -1648,6 +2831,13 @@ function assertTransaction(transaction, options = {}) {
   if (transaction.identityPublishedIdentity !== null && transaction.identityTemporaryIdentity !== null) {
     throw new Error("package transaction published and temporary identity records are inconsistent");
   }
+  assertRetainedPackageDisposablesShape(transaction, "package transaction retained package disposables");
+  const retainedRecords = transaction.retainedPackageDisposables.records;
+  if (transaction.retainedCleanup !== null) {
+    if (!retainedRecords.some((record) => Buffer.compare(serializeSortedJson(record), serializeSortedJson(transaction.retainedCleanup)) === 0)) {
+      throw packageCleanupError("package transaction legacy retained cleanup is not represented in the retained package set");
+    }
+  }
   transaction.previous.identityBytes = reviveBuffer(transaction.previous.identityBytes);
   transaction.nextIdentityBytes = reviveBuffer(transaction.nextIdentityBytes);
   if (transaction.identityTemporaryPath === null && transaction.identityTemporaryFingerprint !== null) {
@@ -1669,33 +2859,35 @@ function assertTransaction(transaction, options = {}) {
     throw new Error("MAS package transaction artifact binding is required");
   }
   const cleanupFields = [transaction.cleanupPath, transaction.cleanupSource, transaction.cleanupFingerprint, transaction.cleanupIdentity];
-  if (cleanupFields.some((value) => value !== null) && cleanupFields.some((value) => value === null)) {
-    throw new Error("package transaction cleanup intent is malformed");
+  const cleanupKind = assertCleanupIntentStructure(transaction, "package transaction");
+  const pendingRetainedRecord = cleanupKind !== null
+    ? retainedRecords.find((record) => record.path === transaction.cleanupPath && record.source === transaction.cleanupSource)
+    : null;
+  if (pendingRetainedRecord !== null && pendingRetainedRecord !== undefined &&
+      ((pendingRetainedRecord.packageFingerprint ?? pendingRetainedRecord.candidateFingerprint) !== transaction.cleanupFingerprint ||
+       !samePackageDirectoryBinding(pendingRetainedRecord.rootIdentity, transaction.cleanupIdentity))) {
+    throw packageCleanupError("package transaction retained package provenance does not match pending cleanup ownership");
   }
-  if (transaction.cleanupPath !== null) {
-    assertCanonicalPackagePath(transaction.cleanupPath, "package transaction cleanup path");
-    assertCanonicalPackagePath(transaction.cleanupSource, "package transaction cleanup source");
-    if (!/^[a-f0-9]{64}$/u.test(transaction.cleanupFingerprint)) throw new Error("package transaction cleanup fingerprint is invalid");
-    const allowedSources = new Set([
-      transaction.target,
-      transaction.identityPath,
-      transaction.paths.staging,
-      transaction.paths.backup,
-      transaction.paths.displaced,
-      transaction.identityTemporaryPath,
-    ].filter((candidate) => typeof candidate === "string"));
-    if (!allowedSources.has(transaction.cleanupSource)) {
-      throw new Error("package transaction cleanup source is outside the transaction-owned path set");
-    }
-    const cleanupPrefix = `${transaction.cleanupSource}.m7-cleanup-${transaction.runId}-`;
-    if (!transaction.cleanupPath.startsWith(cleanupPrefix) ||
-        !/^[a-f0-9]{16}$/u.test(transaction.cleanupPath.slice(cleanupPrefix.length))) {
-      throw new Error("package transaction cleanup path is not the deterministic sibling of its source");
-    }
+  if (transaction.cleanupReceiptObserved && cleanupFields.every((value) => value === null)) {
+    throw packageCleanupError("package transaction receipt observation marker has no pending cleanup intent");
   }
 }
 
 function normalizeTransaction(transaction) {
+  if (transaction && typeof transaction === "object") {
+    if (!("cleanupReceiptObserved" in transaction)) transaction.cleanupReceiptObserved = false;
+    if (!("retainedCleanup" in transaction)) transaction.retainedCleanup = null;
+    if (!("retainedPackageDisposables" in transaction)) {
+      transaction.retainedPackageDisposables = {
+        schema: RETAINED_PACKAGE_SET_SCHEMA,
+        version: RETAINED_PACKAGE_SET_VERSION,
+        records: transaction.retainedCleanup === null ? [] : [transaction.retainedCleanup],
+      };
+    }
+    if (transaction.retainedCleanup === null && transaction.retainedPackageDisposables?.records?.length > 0) {
+      transaction.retainedCleanup = transaction.retainedPackageDisposables.records[0];
+    }
+  }
   assertTransaction(transaction);
   return transaction;
 }
@@ -1715,8 +2907,16 @@ function reviveBuffer(value) {
   return value;
 }
 
-async function fingerprintVisit(root, candidate, entries) {
-  const inspected = await lstat(candidate);
+async function fingerprintVisit(root, candidate, entries, filesystem) {
+  const receiptBoundary = classifyAppleReceiptBoundary(root, candidate);
+  if (receiptBoundary?.kind === "invalid") {
+    throw appleReceiptBoundaryError(receiptBoundary.path, receiptBoundary.reason);
+  }
+  if (receiptBoundary?.kind === "directory") {
+    await validateAppleReceiptDirectory(candidate, receiptBoundary.path, filesystem);
+    return;
+  }
+  const inspected = await packageLstat(filesystem, candidate);
   const relative = path.relative(root, candidate).split(path.sep).join("/");
   if (inspected.isSymbolicLink()) {
     const target = await readlink(candidate);
@@ -1729,7 +2929,127 @@ async function fingerprintVisit(root, candidate, entries) {
     return;
   }
   if (!inspected.isDirectory()) return;
-  for (const name of (await readdir(candidate)).sort()) await fingerprintVisit(root, path.join(candidate, name), entries);
+  for (const name of (await readdir(candidate)).sort()) await fingerprintVisit(root, path.join(candidate, name), entries, filesystem);
+}
+
+async function inspectAppleReceiptBoundary(root, filesystem = undefined) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
+  let found = null;
+  async function visit(candidate) {
+    const relative = path.relative(root, candidate).split(path.sep).join("/");
+    const boundary = classifyAppleReceiptBoundary(root, candidate);
+    if (boundary?.kind === "invalid") throw appleReceiptBoundaryError(boundary.path, boundary.reason);
+    if (boundary?.kind === "directory") {
+      if (relative !== boundary.layout.directoryRelativePath.join("/")) {
+        throw appleReceiptBoundaryError(candidate, "the receipt path is outside the exact accepted nested Electron app boundary");
+      }
+      const validated = await validateAppleReceiptDirectory(candidate, boundary.path, evidenceFilesystem);
+      if (found !== null) {
+        throw appleReceiptBoundaryError(candidate, "the package contains both the fixed MAS and historical Apple receipt boundaries");
+      }
+      found = { kind: "valid", path: candidate, layout: boundary.layout, ...validated };
+      return;
+    }
+    const info = await packageLstat(evidenceFilesystem, candidate).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!info || info.isSymbolicLink() || !info.isDirectory()) return;
+    for (const name of (await readdir(candidate)).sort()) await visit(path.join(candidate, name));
+  }
+  const rootInfo = await packageLstat(evidenceFilesystem, root).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!rootInfo) return { kind: "absent" };
+  await visit(root);
+  return found ?? { kind: "absent" };
+}
+
+function classifyAppleReceiptBoundary(root, candidate) {
+  const relative = path.relative(root, candidate);
+  const segments = relative ? relative.split(path.sep) : [];
+  const receiptDirectoryIndex = segments.indexOf("_MASReceipt");
+  if (receiptDirectoryIndex < 0) return null;
+
+  const boundaryPath = path.join(root, ...segments.slice(0, receiptDirectoryIndex + 1));
+  for (const layout of APPLE_RECEIPT_LAYOUTS) {
+    const isExpectedDirectory = segments.length === layout.directoryRelativePath.length &&
+      segments.every((segment, index) => segment === layout.directoryRelativePath[index]);
+    const isExpectedReceipt = segments.length === layout.relativePath.length &&
+      segments.every((segment, index) => segment === layout.relativePath[index]);
+    if (isExpectedDirectory || isExpectedReceipt) {
+      return { kind: "directory", path: path.join(root, ...layout.directoryRelativePath), layout };
+    }
+  }
+  return { kind: "invalid", path: boundaryPath, reason: "the receipt path is outside the exact accepted nested Electron app boundary" };
+}
+
+function receiptLayoutForRelative(relative) {
+  return APPLE_RECEIPT_LAYOUTS.find((layout) => layout.relativePath.join("/") === relative) ?? null;
+}
+
+async function validateAppleReceiptDirectory(candidate, boundaryPath, filesystem = undefined) {
+  const evidenceFilesystem = filesystem ?? normalizePackageFilesystem();
+  let directoryInfo;
+  try {
+    directoryInfo = await packageLstat(evidenceFilesystem, candidate);
+  } catch (_error) {
+    throw appleReceiptBoundaryError(boundaryPath, "the Apple receipt directory disappeared while it was being fingerprinted");
+  }
+  if (directoryInfo.isSymbolicLink() || !directoryInfo.isDirectory()) {
+    throw appleReceiptBoundaryError(boundaryPath, "_MASReceipt must be one non-symlink directory");
+  }
+
+  let names;
+  try {
+    names = (await readdir(candidate)).sort();
+  } catch (_error) {
+    throw appleReceiptBoundaryError(boundaryPath, "the Apple receipt directory could not be enumerated without following a changed boundary");
+  }
+  if (names.length !== 1 || names[0] !== "receipt") {
+    throw appleReceiptBoundaryError(boundaryPath, "_MASReceipt must contain exactly one regular receipt leaf and no sibling or nested entry");
+  }
+
+  const receiptPath = path.join(candidate, "receipt");
+  let receiptInfo;
+  try {
+    receiptInfo = await packageLstat(evidenceFilesystem, receiptPath);
+  } catch (_error) {
+    throw appleReceiptBoundaryError(receiptPath, "the Apple receipt leaf disappeared while it was being fingerprinted");
+  }
+  if (receiptInfo.isSymbolicLink() || !receiptInfo.isFile() || receiptInfo.nlink !== 1) {
+    throw appleReceiptBoundaryError(receiptPath, "the Apple receipt leaf must be one regular non-symlink file with no hard-link collision");
+  }
+  return {
+    directoryIdentity: packageIdentityOf(directoryInfo),
+    receiptIdentity: packageIdentityOf(receiptInfo),
+  };
+}
+
+function appleReceiptBoundaryError(candidate, reason) {
+  const error = new Error(
+    `package fingerprint rejected Apple-managed receipt boundary ${candidate}: ${reason}. ` +
+      `Authority: ${APPLE_RECEIPT_AUTHORITY}; ${APPLE_RECEIPT_RULE}. ` +
+      `Next action: ${APPLE_RECEIPT_NEXT_ACTION}; for interrupted rollback, leave the receipt-bearing disposable tree intact and run MAS gate status/recovery.`,
+  );
+  error.code = MAS_GATE_CLEANUP_DIAGNOSTIC_CODE;
+  return error;
+}
+
+function packageCleanupError(reason) {
+  const error = new Error(
+    `${MAS_GATE_CLEANUP_DIAGNOSTIC_CODE}: package rollback retained-residue validation failed. ` +
+      `Authority: ${APPLE_RECEIPT_AUTHORITY}; ${APPLE_RECEIPT_RETENTION_RULE}. ` +
+      "Next action: leave /Applications, the receipt-bearing disposable tree, and its journal intact; run MAS gate status/recovery. " +
+      `Reason: ${reason}`,
+  );
+  error.code = MAS_GATE_CLEANUP_DIAGNOSTIC_CODE;
+  return error;
+}
+
+function packageFingerprintBoundaryDiagnostic(reason) {
+  return `${reason} outside the exact Apple-managed receipt boundary. Authority: ${APPLE_RECEIPT_AUTHORITY}; ${APPLE_RECEIPT_RULE}. Next action: ${APPLE_RECEIPT_NEXT_ACTION}.`;
 }
 
 async function writeBytesAtomic(filePath, bytes, {
