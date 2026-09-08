@@ -47,6 +47,14 @@ operations, and measurements for reliability or performance.
 Plans, checklists, and completion messages do not prove product behavior by
 themselves.
 
+For fixtures, generated manifests, packaged artifacts, signing, release
+evidence, or production acceptance, apply the [production-evidence pattern](patterns/production-evidence.md).
+Fixture-only evidence can establish local/unit confidence but cannot support
+production acceptance; acceptance requires the actual production producer/path,
+exact candidate or artifact, actual consumer and provenance chain, strict shared
+contracts where applicable, positive and negative proof, and explicit Lead
+acceptance.
+
 ### Does The Work Encode An Invariant?
 
 For architecture, reliability, security, or quality boundaries:

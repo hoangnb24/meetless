@@ -14,6 +14,8 @@ Start with the smallest applicable surface.
 - [`specs/`](specs/README.md): stable operational validation specifications.
 - [`patterns/encoding-invariants.md`](patterns/encoding-invariants.md): method for
   encoding an accepted repository rule.
+- [`patterns/production-evidence.md`](patterns/production-evidence.md): reusable
+  evidence rule for production acceptance and exact artifact review.
 - [`post-m3-electron-harness.md`](post-m3-electron-harness.md): commands and
   evidence boundary for the owner-authorized Electron recording proof.
 - [`macos-capture-spike.md`](macos-capture-spike.md): accepted macOS recording

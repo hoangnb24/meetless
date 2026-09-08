@@ -19,6 +19,10 @@ validation material.
   edits; configurable defaults are not authority.
 - For architecture, reliability, security, or quality invariant work, read
   `docs/patterns/encoding-invariants.md` and enforce only accepted rules.
+- For work involving fixtures, generated manifests, packaged artifacts, signing,
+  release evidence, or production acceptance, read
+  the [production-evidence pattern](docs/patterns/production-evidence.md) and
+  follow its evidence rule.
 - Report reusable agent friction. Change guidance, tools, runbooks, or validation
   for that purpose only when explicitly asked to use `$improve-harness`.
 - Also pause when product intent remains ambiguous, recovery is difficult,
