@@ -87,21 +87,27 @@ function pendingPremiumAccessForUi(
   let pending = access.status === "active" ? { ...access, status: "inactive" as const, reason: null } : access;
   if (catalog && catalog.status !== "unavailable") {
     if (pending.status === "unavailable") pending = { ...pending, status: "inactive", reason: null };
-    if (pending.packages.length === 0 && catalog.packages.length > 0) {
-      pending = { ...pending, packages: catalog.packages };
-    }
   }
-  return pending;
+  return retainPremiumCatalog(pending, catalog, { preserveDuringPending: true });
 }
 
 export function retainPremiumCatalog(
   next: PremiumAccessWire,
   previous: PremiumAccessWire | null,
+  { preserveDuringPending = false }: { preserveDuringPending?: boolean } = {},
 ): PremiumAccessWire {
-  if (next.status === "unavailable" && next.packages.length === 0 && previous && previous.packages.length > 0) {
-    return { ...next, packages: previous.packages };
-  }
-  return next;
+  if (
+    next.status === "active" ||
+    (next.status !== "unavailable" && !preserveDuringPending) ||
+    !previous ||
+    previous.packages.length === 0
+  ) return next;
+
+  const packagesById = new Map(previous.packages.map((item) => [item.packageId, item] as const));
+  for (const item of next.packages) packagesById.set(item.packageId, item);
+  const packages = (["monthly", "annual"] as const)
+    .flatMap((packageId) => packagesById.has(packageId) ? [packagesById.get(packageId)!] : []);
+  return packages.length > 0 ? { ...next, packages } : next;
 }
 
 export function App() {
@@ -352,7 +358,11 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         return;
       }
       logPremiumDiagnostic("ui_completion", normalizedPremiumOutcome(result.outcome));
-      setPremiumAccess(result.access);
+      setPremiumAccess((current) => retainPremiumCatalog(
+        result.access,
+        current,
+        { preserveDuringPending: result.outcome !== "active" },
+      ));
       if (result.outcome === "failed") {
         setPremiumError("Purchase could not complete. Try again.");
       }
@@ -405,7 +415,11 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         return;
       }
       logPremiumDiagnostic("ui_completion", normalizedPremiumOutcome(result.outcome));
-      setPremiumAccess(result.access);
+      setPremiumAccess((current) => retainPremiumCatalog(
+        result.access,
+        current,
+        { preserveDuringPending: result.outcome !== "active" },
+      ));
       if (result.outcome !== "active") {
         setPremiumError("No active Premium purchase was found.");
       }

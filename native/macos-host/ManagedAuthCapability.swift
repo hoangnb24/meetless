@@ -56,27 +56,13 @@ final class MeetlessManagedKeychain {
   func identity() throws -> MeetlessManagedDeviceIdentity {
     let deviceId = try loadOrCreateDeviceId()
     let key = try loadOrCreatePrivateKey(deviceId: deviceId)
-    return try publicIdentity(deviceId: deviceId, key: key)
+    return try meetlessManagedPublicIdentity(deviceId: deviceId, privateKey: key)
   }
 
   func sign(challenge: Data) throws -> (identity: MeetlessManagedDeviceIdentity, signature: String) {
     let identity = try self.identity()
     guard let key = loadPrivateKey() else { throw managedAuthError("managed device signing key is unavailable") }
-    var error: Unmanaged<CFError>?
-    guard let signature = SecKeyCreateSignature(
-      key,
-      .ecdsaSignatureMessageX962SHA256,
-      challenge as CFData,
-      &error
-    ) as Data? else {
-      throw managedAuthError("managed device signing failed")
-    }
-    do {
-      let raw = try P256.Signing.ECDSASignature(derRepresentation: signature).rawRepresentation
-      return (identity, encodeBase64Url(raw))
-    } catch {
-      throw managedAuthError("managed device signature format is invalid")
-    }
+    return (identity, try meetlessManagedSign(privateKey: key, challenge: challenge))
   }
 
   private func loadOrCreateDeviceId() throws -> String {
@@ -101,6 +87,7 @@ final class MeetlessManagedKeychain {
     var error: Unmanaged<CFError>?
     let attributes: [String: Any] = [
       kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+      kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
       kSecAttrKeySizeInBits as String: 256,
       kSecAttrIsPermanent as String: true,
       kSecAttrApplicationTag as String: privateTag,
@@ -117,15 +104,10 @@ final class MeetlessManagedKeychain {
   }
 
   private func loadPrivateKey() -> SecKey? {
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassKey,
-      kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-      kSecAttrApplicationTag as String: privateTag,
-      kSecReturnRef as String: true,
-      kSecMatchLimit as String: kSecMatchLimitOne,
-    ]
+    let query = meetlessManagedPrivateKeyQuery(applicationTag: privateTag)
     var result: CFTypeRef?
     guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
+    guard let result, CFGetTypeID(result) == SecKeyGetTypeID() else { return nil }
     return (result as! SecKey)
   }
 
@@ -146,17 +128,67 @@ final class MeetlessManagedKeychain {
     return value
   }
 
-  private func publicIdentity(deviceId: String, key: SecKey) throws -> MeetlessManagedDeviceIdentity {
-    var error: Unmanaged<CFError>?
-    guard let representation = SecKeyCopyExternalRepresentation(key, &error) as Data?, representation.count == 65, representation.first == 4 else {
-      throw managedAuthError("managed P-256 public key could not be exported")
-    }
-    let digest = SHA256.hash(data: representation).map { String(format: "%02x", $0) }.joined()
-    return MeetlessManagedDeviceIdentity(
-      deviceId: deviceId,
-      keyId: "managed-p256-v1-" + String(digest.prefix(16)),
-      publicKey: encodeBase64Url(representation)
-    )
+}
+
+func meetlessManagedPrivateKeyQuery(applicationTag: Data) -> [String: Any] {
+  [
+    kSecClass as String: kSecClassKey,
+    kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+    kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
+    kSecAttrApplicationTag as String: applicationTag,
+    kSecReturnRef as String: true,
+    kSecMatchLimit as String: kSecMatchLimitOne,
+  ]
+}
+
+private func meetlessManagedPrivateSecKeyIsUsable(_ key: SecKey) -> Bool {
+  guard let attributes = SecKeyCopyAttributes(key) as? [String: Any] else { return false }
+  return attributes[kSecAttrKeyType as String] as? String == kSecAttrKeyTypeECSECPrimeRandom as String &&
+    attributes[kSecAttrKeyClass as String] as? String == kSecAttrKeyClassPrivate as String &&
+    (attributes[kSecAttrKeySizeInBits as String] as? NSNumber)?.intValue == 256 &&
+    SecKeyIsAlgorithmSupported(key, .sign, .ecdsaSignatureMessageX962SHA256)
+}
+
+func meetlessManagedPublicIdentity(
+  deviceId: String,
+  privateKey: SecKey
+) throws -> MeetlessManagedDeviceIdentity {
+  guard meetlessManagedPrivateSecKeyIsUsable(privateKey) else {
+    throw managedAuthError("managed device signing key is not an EC P-256 private key")
+  }
+  var error: Unmanaged<CFError>?
+  guard let publicKey = SecKeyCopyPublicKey(privateKey),
+        let representation = SecKeyCopyExternalRepresentation(publicKey, &error) as Data?,
+        representation.count == 65,
+        representation.first == 4 else {
+    throw managedAuthError("managed P-256 public key could not be exported")
+  }
+  let digest = SHA256.hash(data: representation).map { String(format: "%02x", $0) }.joined()
+  return MeetlessManagedDeviceIdentity(
+    deviceId: deviceId,
+    keyId: "managed-p256-v1-" + String(digest.prefix(16)),
+    publicKey: encodeBase64Url(representation)
+  )
+}
+
+func meetlessManagedSign(privateKey: SecKey, challenge: Data) throws -> String {
+  guard meetlessManagedPrivateSecKeyIsUsable(privateKey) else {
+    throw managedAuthError("managed device signing key is not an EC P-256 private key")
+  }
+  var error: Unmanaged<CFError>?
+  guard let signature = SecKeyCreateSignature(
+    privateKey,
+    .ecdsaSignatureMessageX962SHA256,
+    challenge as CFData,
+    &error
+  ) as Data? else {
+    throw managedAuthError("managed device signing failed")
+  }
+  do {
+    let raw = try P256.Signing.ECDSASignature(derRepresentation: signature).rawRepresentation
+    return encodeBase64Url(raw)
+  } catch {
+    throw managedAuthError("managed device signature format is invalid")
   }
 }
 

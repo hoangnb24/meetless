@@ -450,6 +450,54 @@ private final class FakeManagedAuth: MeetlessManagedAuthAccess {
   }
 }
 
+private func testManagedAuthPrivateSecKeyBoundary() throws {
+  var error: Unmanaged<CFError>?
+  let attributes: [String: Any] = [
+    kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+    kSecAttrKeySizeInBits as String: 256,
+    kSecAttrIsPermanent as String: false,
+  ]
+  guard let privateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &error),
+        let publicKey = SecKeyCopyPublicKey(privateKey) else {
+    throw NSError(domain: "MeetlessHostTests", code: 61, userInfo: [NSLocalizedDescriptionKey: "ephemeral managed-auth key could not be created"])
+  }
+
+  let applicationTag = Data("com.meetless.managed-device.fixture.p256.private".utf8)
+  let query = meetlessManagedPrivateKeyQuery(applicationTag: applicationTag)
+  check(
+    query[kSecAttrKeyType as String] as? String == kSecAttrKeyTypeECSECPrimeRandom as String &&
+      query[kSecAttrApplicationTag as String] as? Data == applicationTag &&
+      query[kSecAttrKeyClass as String] as? String == kSecAttrKeyClassPrivate as String,
+    "managed-auth production lookup must require EC, the exact application tag, and a private key"
+  )
+
+  let identity = try meetlessManagedPublicIdentity(deviceId: "fixture-device", privateKey: privateKey)
+  let signed = try meetlessManagedSign(privateKey: privateKey, challenge: Data("challenge-bytes".utf8))
+  guard let publicBytes = decodeBase64Url(identity.publicKey),
+        let signatureBytes = decodeBase64Url(signed) else {
+    throw NSError(domain: "MeetlessHostTests", code: 62, userInfo: [NSLocalizedDescriptionKey: "managed-auth identity/signature is not base64url"])
+  }
+  check(publicBytes.count == 65 && publicBytes.first == 4, "managed-auth identity must export exactly uncompressed 65-byte P-256 public bytes")
+  check(signatureBytes.count == 64, "managed-auth signature must export exactly 64 raw P-256 signature bytes")
+  do {
+    let exportedPublicKey = try P256.Signing.PublicKey(x963Representation: publicBytes)
+    let signature = try P256.Signing.ECDSASignature(rawRepresentation: signatureBytes)
+    check(
+      exportedPublicKey.isValidSignature(signature, for: Data("challenge-bytes".utf8)),
+      "managed-auth signature must verify against the public identity derived from the private SecKey"
+    )
+  } catch {
+    check(false, "managed-auth ephemeral private SecKey must produce valid P-256 public/signature material: \(error)")
+  }
+
+  expectThrow("managed-auth public-key selector regression must fail closed") {
+    _ = try meetlessManagedPublicIdentity(deviceId: "fixture-device", privateKey: publicKey)
+  }
+  expectThrow("managed-auth public-key signing regression must fail closed") {
+    _ = try meetlessManagedSign(privateKey: publicKey, challenge: Data("challenge-bytes".utf8))
+  }
+}
+
 private func testManagedAuthUsesOnlyPublicIdentityAndNonpersistentTestKeys() throws {
   let access = FakeManagedAuth()
   let identity = try access.identity()
@@ -4414,6 +4462,10 @@ private struct TranscriptionCapabilityTests {
     testPackagedSignaturePolicyBoundary()
     testMasElectronDescriptorBoundary()
     testProductionRuntimeLaunchConvexBinding()
+    do { try testManagedAuthPrivateSecKeyBoundary() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: managed auth private SecKey boundary: \(error)\n".utf8))
+    }
     do { try testHostExecutableUsesPOSIXIdentity() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: POSIX host executable identity: \(error)\n".utf8))

@@ -205,8 +205,62 @@ describe("transcript meeting selection ordering", () => {
     const unavailable = { ...catalog, status: "unavailable" as const, packages: [], reason: "store_unavailable" as const };
     expect(retainPremiumCatalog(unavailable, catalog)).toEqual({ ...unavailable, packages: catalog.packages });
     expect(retainPremiumCatalog({ ...catalog, status: "active" as const, packages: [] }, catalog)).toEqual({ ...catalog, status: "active", packages: [] });
-    expect(retainPremiumCatalog({ ...unavailable, packages: [catalog.packages[0]] }, catalog)).toEqual({ ...unavailable, packages: [catalog.packages[0]] });
+    const latestMonthly = { ...catalog.packages[0], localizedPrice: "$10.99" };
+    expect(retainPremiumCatalog({ ...unavailable, packages: [latestMonthly] }, catalog)).toEqual({
+      ...unavailable,
+      packages: [latestMonthly, catalog.packages[1]],
+    });
+    const pendingMonthly = { ...catalog, status: "inactive" as const, packages: [latestMonthly] };
+    expect(retainPremiumCatalog(pendingMonthly, catalog, { preserveDuringPending: true })).toEqual({
+      ...pendingMonthly,
+      packages: [latestMonthly, catalog.packages[1]],
+    });
+    expect(retainPremiumCatalog(pendingMonthly, catalog)).toBe(pendingMonthly);
+    expect(retainPremiumCatalog({ ...unavailable, packages: [catalog.packages[0], catalog.packages[0]] }, catalog)).toEqual({
+      ...unavailable,
+      packages: catalog.packages,
+    });
+    expect(retainPremiumCatalog(
+      { ...unavailable, packages: [latestMonthly] },
+      { ...unavailable, packages: catalog.packages },
+    )).toEqual({ ...unavailable, packages: [latestMonthly, catalog.packages[1]] });
     expect(retainPremiumCatalog(unavailable, { ...catalog, packages: [] })).toEqual(unavailable);
+  });
+
+  test.each(["pending", "failed"] as const)("retains both Premium plans after a %s partial purchase response", async (outcome) => {
+    const catalog = {
+      entitlement: "premium" as const,
+      status: "inactive" as const,
+      packages: [
+        { packageId: "monthly" as const, productId: "com.meetless.app.premium.monthly", localizedPrice: "$9.99", trialEligible: true },
+        { packageId: "annual" as const, productId: "com.meetless.app.premium.annual", localizedPrice: "$89.99", trialEligible: false },
+      ],
+      reason: null,
+    };
+    const partial = { ...catalog, packages: [catalog.packages[0]] };
+    const unavailable = { ...catalog, status: "unavailable" as const, packages: [], reason: "store_unavailable" as const };
+    const getPremiumAccess = vi.fn()
+      .mockResolvedValueOnce(catalog)
+      .mockResolvedValue(unavailable);
+    const purchasePremium = vi.fn(async () => ({ outcome, access: partial }));
+    connectMeetlessClient.mockResolvedValue({
+      client: { listMeetings: async () => [], getPremiumAccess, purchasePremium },
+      close: async () => undefined,
+      serverInfo: null,
+    });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await vi.waitFor(() => expect(surface().props.premiumAccess).toEqual(catalog));
+
+    await act(async () => { await surface().props.onPurchasePremium("monthly"); });
+    expect(purchasePremium).toHaveBeenCalledWith("monthly");
+    expect(surface().props.premiumAccess.status).toBe("inactive");
+    expect(surface().props.premiumAccess.packages.map((item: { packageId: string }) => item.packageId)).toEqual(["monthly", "annual"]);
+    expect(surface().props.premiumAccess.status).not.toBe("active");
+    expect(surface().props.onRefreshPremium).toBeTypeOf("function");
+    expect(surface().props.onPurchasePremium).toBeTypeOf("function");
+    expect(surface().props.premiumError).toBe("Purchase could not complete. Try again.");
   });
 
   test("preserves monthly and annual plans when refresh reports unavailable", async () => {
@@ -220,7 +274,11 @@ describe("transcript meeting selection ordering", () => {
       reason: null,
     };
     const unavailable = { ...available, status: "unavailable" as const, packages: [], reason: "store_unavailable" as const };
-    const getPremiumAccess = vi.fn().mockResolvedValueOnce(available).mockResolvedValueOnce(unavailable);
+    const partialUnavailable = { ...unavailable, packages: [available.packages[0]] };
+    const getPremiumAccess = vi.fn()
+      .mockResolvedValueOnce(available)
+      .mockResolvedValueOnce(unavailable)
+      .mockResolvedValueOnce(partialUnavailable);
     connectMeetlessClient.mockResolvedValue({
       client: { listMeetings: async () => [], getPremiumAccess },
       close: async () => undefined,
@@ -236,6 +294,9 @@ describe("transcript meeting selection ordering", () => {
     expect(surface().props.premiumAccess.status).toBe("unavailable");
     expect(surface().props.premiumAccess.reason).toBe("store_unavailable");
     expect(surface().props.premiumError).toBe("Premium plans could not be loaded. Try again.");
+
+    await act(async () => { await surface().props.onRefreshPremium(); });
+    expect(surface().props.premiumAccess).toEqual({ ...partialUnavailable, packages: available.packages });
   });
 
   test("fails closed when explicit Premium refresh fails after active access", async () => {
