@@ -15,7 +15,10 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { resolveRuntimeConfig, snapshotPackagedMediaClosure } from "../src/config.js";
+import { prepareRuntime, resolveRuntimeConfig, snapshotPackagedMediaClosure } from "../src/config.js";
+
+import { MACOS_INSTALLATION_CONTRACT, installationContractBytes, packagedMarker } from "../../../scripts/lib/macos-package-contract.mjs";
+import { macAppStoreInstallationContract, macAppStoreInstallationContractBytes, macAppStorePackagedMarker } from "../../../scripts/lib/macos-app-store-package-contract.mjs";
 
 const roots = new Set<string>();
 
@@ -23,6 +26,108 @@ afterEach(async () => {
   await Promise.all([...roots].map((root) => rm(root, { recursive: true, force: true })));
   roots.clear();
 });
+
+// Regression for issue #8: the MAS plugin received container snapshot paths and
+// failed to spawn ffmpeg on Retry save. These fixtures prove routing/validation,
+// not code signing or sandbox execution; acceptance requires the actual MAS app.
+describe("packaged runtime media routing", () => {
+  test("MAS selects bundle tools without creating a writable executable snapshot", async () => {
+    const { config } = await preparedMediaFixture("mas");
+    await prepareRuntime(config);
+    expect(config.environment.MEETLESS_FFMPEG).toBe(config.packageResources?.ffmpeg);
+    expect(config.environment.MEETLESS_FFPROBE).toBe(config.packageResources?.ffprobe);
+    expect(await readdir(config.paths.root)).not.toContain("media-tools");
+  });
+
+  test("MAS preserves an existing container snapshot byte-for-byte and never selects it", async () => {
+    const { config, packageRoot, sourceRoot } = await preparedMediaFixture("mas");
+    await mkdir(config.paths.root, { recursive: true, mode: 0o700 });
+    const snapshot = await snapshotPackagedMediaClosure({
+      runtimeRoot: config.paths.root, packageRoot,
+      ffmpeg: config.packageResources!.ffmpeg, ffprobe: config.packageResources!.ffprobe,
+    });
+    const before = await closureState(snapshot.root);
+    await writeFile(path.join(sourceRoot, "bin/ffmpeg"), "new bundled ffmpeg\n");
+    await prepareRuntime(config);
+    expect(config.environment.MEETLESS_FFMPEG).toBe(config.packageResources?.ffmpeg);
+    expect(config.environment.MEETLESS_FFPROBE).toBe(config.packageResources?.ffprobe);
+    expect(await closureState(snapshot.root)).toEqual(before);
+  });
+
+  test.each([
+    ["missing closure", async (sourceRoot: string) => {
+      await rm(sourceRoot, { recursive: true });
+    }, /packaged media closure is missing/],
+    ["missing sibling lib", async (sourceRoot: string) => {
+      await rm(path.join(sourceRoot, "lib"), { recursive: true });
+    }, /must contain sibling bin and lib/],
+    ["invalid ffmpeg", async (sourceRoot: string) => {
+      await writeFile(path.join(sourceRoot, "bin/ffmpeg"), "");
+    }, /ffmpeg must resolve to a non-empty regular file/],
+    ["escaping library", async (sourceRoot: string) => {
+      await writeFile(path.join(path.dirname(sourceRoot), "outside.dylib"), "outside\n");
+      await symlink("../../outside.dylib", path.join(sourceRoot, "lib/escape.dylib"));
+    }, /symlink .* escapes/],
+  ] as const)("MAS rejects %s even when an old container snapshot exists", async (_name, mutate, diagnostic) => {
+    const { config, packageRoot, sourceRoot } = await preparedMediaFixture("mas");
+    await mkdir(config.paths.root, { recursive: true, mode: 0o700 });
+    const snapshot = await snapshotPackagedMediaClosure({
+      runtimeRoot: config.paths.root, packageRoot,
+      ffmpeg: config.packageResources!.ffmpeg, ffprobe: config.packageResources!.ffprobe,
+    });
+    const before = await closureState(snapshot.root);
+    await mutate(sourceRoot);
+    await expect(prepareRuntime(config)).rejects.toThrow(diagnostic);
+    expect(await closureState(snapshot.root)).toEqual(before);
+  });
+
+  test("direct-DMG still selects the complete writable snapshot", async () => {
+    const { config } = await preparedMediaFixture("direct");
+    await prepareRuntime(config);
+    expect(config.environment.MEETLESS_FFMPEG).toBe(path.join(config.paths.root, "media-tools/bin/ffmpeg"));
+    expect(config.environment.MEETLESS_FFPROBE).toBe(path.join(config.paths.root, "media-tools/bin/ffprobe"));
+    expect(await readFile(path.join(config.paths.root, "media-tools/lib/libavdevice.dylib"), "utf8")).toBe("packaged dylib\n");
+  });
+});
+
+async function preparedMediaFixture(layout: "mas" | "direct") {
+  const root = await mkdtemp(path.join(tmpdir(), "meetless-media-routing-"));
+  roots.add(root);
+  const bundle = path.join(root, "Meetless.app");
+  const packageRoot = path.join(bundle, "Contents/Resources/meetless");
+  const contract = layout === "mas" ? macAppStoreInstallationContract() : MACOS_INSTALLATION_CONTRACT;
+  const contractBytes = layout === "mas" ? macAppStoreInstallationContractBytes() : installationContractBytes();
+  const marker = (layout === "mas" ? macAppStorePackagedMarker : packagedMarker)({
+    paseoCommit: "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc",
+  });
+  await mkdir(packageRoot, { recursive: true });
+  await writeFile(path.join(packageRoot, "installation-contract.json"), contractBytes);
+  await writeFile(path.join(packageRoot, "meetless-package.json"), JSON.stringify(marker));
+  for (const [name, relative] of Object.entries(contract.package.resources) as [string, string][]) {
+    const target = path.join(layout === "mas" && name === "electronBinary" ? bundle : packageRoot, relative);
+    await mkdir(name === "rendererRoot" ? target : path.dirname(target), { recursive: true });
+    if (name !== "rendererRoot") await writeFile(target, `${name}\n`, { mode: 0o755 });
+  }
+  const sourceRoot = path.join(packageRoot, "runtime/media");
+  await mkdir(path.join(sourceRoot, "lib"));
+  await writeFile(path.join(sourceRoot, "lib/libavdevice.62.dylib"), "packaged dylib\n");
+  await symlink("libavdevice.62.dylib", path.join(sourceRoot, "lib/libavdevice.dylib"));
+  const config = resolveRuntimeConfig({ repositoryRoot: packageRoot, userHome: path.join(root, "home"), environment: {} });
+  return { config, packageRoot, sourceRoot };
+}
+
+async function closureState(root: string): Promise<unknown[]> {
+  const result: unknown[] = [];
+  for (const name of (await readdir(root)).sort()) {
+    const target = path.join(root, name);
+    const info = await lstat(target);
+    result.push([name, info.mode, info.ino, info.mtimeMs,
+      info.isSymbolicLink() ? await readlink(target)
+        : info.isDirectory() ? await closureState(target)
+          : createHash("sha256").update(await readFile(target)).digest("hex")]);
+  }
+  return result;
+}
 
 describe("packaged media closure snapshot", () => {
   test("copies bin/lib bytes, modes, symlinks, and reuses the exact owned snapshot", async () => {

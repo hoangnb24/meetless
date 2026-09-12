@@ -283,6 +283,7 @@ export interface RuntimePaths {
 
 export interface RuntimeConfig {
   packaged: boolean;
+  macAppStore: boolean;
   packageResources: PackagedRuntimeResources | null;
   listen: string;
   rendererOrigin: string;
@@ -490,6 +491,7 @@ export function resolveRuntimeConfig(input: {
   );
   return {
     packaged,
+    macAppStore,
     packageResources,
     listen,
     rendererOrigin,
@@ -1010,6 +1012,23 @@ async function packagedMediaTools(config: RuntimeConfig): Promise<[string, strin
     );
   }
   const packageRoot = path.resolve(config.paths.plugin, "..", "..");
+  if (config.macAppStore) {
+    // ADR0005: the host verifies the signed bundle; copying an executable into
+    // writable container state loses the MAS execution provenance. Validate the
+    // whole bundle closure, but never enter the snapshot recovery/update path.
+    try {
+      const source = derivePackagedMediaRoot(config.packageResources.ffmpeg, config.packageResources.ffprobe);
+      await assertPackagedMediaSourceBoundToPackage(source, packageRoot);
+      await inspectSourceRequired(source.root, source.ffmpeg, source.ffprobe);
+      return [source.ffmpeg, source.ffprobe];
+    } catch (error) {
+      throw new Error(
+        `Mac App Store bundled media closure is invalid: ${describe(error)}. ` +
+          `Authority: ${MACOS_APP_STORE_CONTRACT_AUTHORITY}. ` +
+          "Next action: rebuild the signed app with its complete bin/lib media closure; do not execute or remove the preserved container snapshot.",
+      );
+    }
+  }
   const snapshot = await snapshotPackagedMediaClosure({
     runtimeRoot: config.paths.root,
     packageRoot,
