@@ -1051,6 +1051,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         onStart={recording.start}
         onStop={recording.stop}
         pending={recording.pending || deletePending}
+        pendingAction={recording.pendingAction}
         status={recording.status}
       /> : null}
       <MeetingListSurface

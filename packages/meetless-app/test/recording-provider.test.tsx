@@ -1,8 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { RecordingStrip } from "@meetless/meeting-surface";
 import type { RecordingStatusWire } from "@meetless/meeting-contracts";
 import { RecordingProvider, useRecording } from "../src/recording-provider.js";
+
+vi.mock("@expo/vector-icons", () => ({ MaterialCommunityIcons: (props: Record<string, unknown>) => React.createElement("MaterialCommunityIcons", props) }));
+
+// The real client requires the same versioned endpoint composition as the host URL.
+const rendererHref = `http://127.0.0.1/?meetlessEndpoints=${encodeURIComponent(JSON.stringify({
+  schema: "MEETLESS_RUNTIME_ENDPOINTS v1", mode: "packaged", workingDirectory: "/private/runtime",
+  recording: { role: "recording", name: "recording.sock", bindArgument: "recording.sock", canonicalPath: "/private/runtime/recording.sock" },
+  transcription: { role: "transcription", name: "transcription.sock", bindArgument: "transcription.sock", canonicalPath: "/private/runtime/transcription.sock" },
+}))}`;
 
 const idle: RecordingStatusWire = {
   status: "idle", recordingId: null, meetingId: null, title: null, elapsedMs: 0,
@@ -27,6 +37,7 @@ function ConnectedStrip() {
     onStart={state.start}
     onStop={state.stop}
     pending={state.pending}
+    pendingAction={state.pendingAction}
     status={state.status}
   />;
 }
@@ -74,7 +85,7 @@ describe("production recording UI status delivery", () => {
       }
       return undefined;
     });
-    vi.stubGlobal("window", {
+    vi.stubGlobal("window", { location: { href: rendererHref },
       paseoDesktop: {
         platform: "darwin", invoke,
         events: { on: async (_event: string, next: (payload: unknown) => void) => {
@@ -114,7 +125,7 @@ describe("production recording UI status delivery", () => {
       command: "start",
       initial: idle,
       response: { ...recording, status: "recoverable" as const, error: "capture start interrupted" },
-      expectedError: "Completed audio is safe. Retry save is available.",
+      expectedError: "Audio is not saved yet. Recorded chunks are still being checked; retry is not available.",
       retryVisible: false,
     },
     {
@@ -124,7 +135,7 @@ describe("production recording UI status delivery", () => {
       response: { ...recording, status: "recoverable" as const, inventoryState: "complete" as const,
         chunkCount: 2, microphoneCount: 1, systemCount: 1, inventoryDigest: "digest", retryEligible: true,
         error: "finalization interrupted" },
-      expectedError: "Completed audio is safe. Retry save is available.",
+      expectedError: "Audio could not be saved. Retry saving the recorded chunks.",
       retryVisible: true,
     },
     {
@@ -136,7 +147,7 @@ describe("production recording UI status delivery", () => {
       response: { ...recording, status: "recoverable" as const, inventoryState: "complete" as const,
         chunkCount: 2, microphoneCount: 1, systemCount: 1, inventoryDigest: "digest", retryEligible: true,
         error: "MP3 retry failed" },
-      expectedError: "Completed audio is safe. Retry save is available.",
+      expectedError: "Audio could not be saved. Retry saving the recorded chunks.",
       retryVisible: true,
     },
   ])("uses the correlated $caseName status when no separate status event arrives", async ({ command, initial, response, expectedError, retryVisible }) => {
@@ -162,7 +173,7 @@ describe("production recording UI status delivery", () => {
       }
       return undefined;
     });
-    vi.stubGlobal("window", {
+    vi.stubGlobal("window", { location: { href: rendererHref },
       paseoDesktop: {
         platform: "darwin", invoke,
         events: { on: async (_event: string, next: (payload: unknown) => void) => {
@@ -190,6 +201,73 @@ describe("production recording UI status delivery", () => {
     expect(renderer!.root.findAllByProps({ testID: "recording-retry" }).length > 0).toBe(retryVisible);
   });
 
+  test.each([
+    ["stop", true],
+    ["retryFinalization", true],
+    ["retryFinalization", false],
+  ] as const)("%s reports progress, blocks duplicates, and handles saved response ok=%s", async (command, savedResponseOk) => {
+    let handler: ((payload: unknown) => void) | null = null;
+    const recoverable: RecordingStatusWire = { ...recording, status: "recoverable", inventoryState: "complete",
+      chunkCount: 2, microphoneCount: 1, systemCount: 1, inventoryDigest: "digest", retryEligible: true,
+      error: "encoder interrupted" };
+    const initial = command === "stop" ? recording : recoverable;
+    let respond: ((status: RecordingStatusWire, ok: boolean) => void) | null = null;
+    const requests: string[] = [];
+    const invoke = vi.fn(async (bridgeCommand: string, args?: Record<string, unknown>) => {
+      if (bridgeCommand === "desktop_daemon_status") return { home: "/private/runtime/paseo-home" };
+      if (bridgeCommand === "open_local_daemon_transport") return "delayed-session";
+      if (bridgeCommand === "send_local_daemon_transport_message") {
+        const request = JSON.parse(String(args?.text)) as { requestId: string; command: string };
+        const deliver = (status: RecordingStatusWire, ok: boolean) => handler?.({
+          sessionId: args?.sessionId, kind: "message", text: JSON.stringify({
+            version: 1, requestId: request.requestId, ok, status, error: ok ? null : status.status === "saved" ? "saved recording cleanup failed" : "encoder interrupted",
+          }),
+        });
+        if (request.command === "status") queueMicrotask(() => deliver(initial, true));
+        else { requests.push(request.command); respond = deliver; }
+      }
+    });
+    vi.stubGlobal("window", { location: { href: rendererHref }, paseoDesktop: { platform: "darwin", invoke,
+      events: { on: async (_event: string, next: (payload: unknown) => void) => { handler = next; return () => { handler = null; }; } },
+    } });
+    await act(async () => { renderer = create(<RecordingProvider enabled><ConnectedStrip /></RecordingProvider>); });
+    await vi.waitFor(() => expect(renderer!.root.findByType(RecordingStrip).props.status).toEqual(initial));
+    const buttonId = command === "stop" ? "recording-stop" : "recording-retry";
+    await act(async () => {
+      const press = renderer!.root.findByProps({ testID: buttonId }).props.onPress;
+      press(); press();
+    });
+    expect(requests).toEqual([command]);
+    expect(renderer!.root.findByProps({ testID: buttonId }).props.disabled).toBe(true);
+    expect(renderer!.root.findByProps({ testID: "recording-state" }).children.join(""))
+      .toBe(command === "stop" ? "Saving audio…" : "Retrying save…");
+    expect(renderer!.root.findAllByProps({ testID: "recording-error" })).toHaveLength(0);
+    await act(async () => { respond!(recoverable, false); });
+    expect(renderer!.root.findByProps({ testID: "recording-retry" }).props.disabled).toBe(false);
+    expect(renderer!.root.findByProps({ testID: "recording-error" }).children.join(""))
+      .toBe("Audio could not be saved. Retry saving the recorded chunks.");
+    await act(async () => { renderer!.root.findByProps({ testID: "recording-error-details-toggle" }).props.onPress(); });
+    expect(renderer!.root.findByProps({ testID: "recording-error-details" }).children.join(""))
+      .toContain("recording-production");
+    await act(async () => { renderer!.root.findByProps({ testID: "recording-retry" }).props.onPress(); });
+    expect(renderer!.root.findByProps({ testID: "recording-state" }).children.join("")).toBe("Retrying save…");
+    const saved = { ...recoverable, status: "saved" as const, retryEligible: false, outputPath: "/private/recording.mp3" };
+    await act(async () => { respond!(saved, savedResponseOk); });
+    expect(requests).toEqual([command, "retryFinalization"]);
+    expect(renderer!.root.findByType(RecordingStrip).props.status).toEqual(saved);
+    expect(renderer!.root.findByProps({ testID: "recording-state" }).children.join("")).toBe("Audio saved locally");
+    if (savedResponseOk) {
+      expect(renderer!.root.findAllByProps({ testID: "recording-error" })).toHaveLength(0);
+    } else {
+      expect(renderer!.root.findByProps({ testID: "recording-error" }).children.join(""))
+        .toBe("Audio is saved locally, but the last action could not finish. Check Error details.");
+      await act(async () => { renderer!.root.findByProps({ testID: "recording-error-details-toggle" }).props.onPress(); });
+      expect(renderer!.root.findByProps({ testID: "recording-error-details" }).children.join(""))
+        .toContain("saved recording cleanup failed");
+    }
+    expect(renderer!.root.findAllByProps({ testID: "recording-retry" })).toHaveLength(0);
+  });
+
   test("does not send Start when a user-initiated permission request returns denied", async () => {
     let intent = 0;
     const fetchMock = vi.fn(async (input: string) => ({
@@ -202,7 +280,7 @@ describe("production recording UI status delivery", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
     const invoke = vi.fn(async (command: string) => command === "open_local_daemon_transport" ? "permission-session" : undefined);
-    vi.stubGlobal("window", {
+    vi.stubGlobal("window", { location: { href: rendererHref },
       paseoDesktop: { platform: "darwin", invoke, events: { on: async () => () => undefined } },
     });
     await act(async () => { renderer = create(<RecordingProvider enabled><ConnectedStrip /></RecordingProvider>); });
@@ -232,7 +310,7 @@ describe("production recording UI status delivery", () => {
       },
     }));
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("window", { paseoDesktop: { platform: "darwin", invoke: async (command: string) => command === "open_local_daemon_transport" ? "recheck-session" : undefined, events: { on: async () => () => undefined } } });
+    vi.stubGlobal("window", { location: { href: rendererHref }, paseoDesktop: { platform: "darwin", invoke: async (command: string) => command === "open_local_daemon_transport" ? "recheck-session" : undefined, events: { on: async () => () => undefined } } });
     await act(async () => { renderer = create(<RecordingProvider enabled><ConnectedPermissionProbe /></RecordingProvider>); });
     await vi.waitFor(() => expect(renderer!.root.findByType(ProbeView).props.state.permissions.microphone).toBe("notDetermined"));
     await act(async () => { await renderer!.root.findByType(ProbeView).props.state.recheckPermissions(); });
@@ -256,7 +334,7 @@ describe("production recording UI status delivery", () => {
       };
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("window", { paseoDesktop: { platform: "darwin", invoke: async (command: string) => command === "open_local_daemon_transport" ? "transport-recovery-session" : undefined, events: { on: async () => () => undefined } } });
+    vi.stubGlobal("window", { location: { href: rendererHref }, paseoDesktop: { platform: "darwin", invoke: async (command: string) => command === "open_local_daemon_transport" ? "transport-recovery-session" : undefined, events: { on: async () => () => undefined } } });
 
     await act(async () => { renderer = create(<RecordingProvider enabled><ConnectedPermissionProbe /></RecordingProvider>); });
     await vi.waitFor(() => expect(renderer!.root.findByType(ProbeView).props.state.permissions).toMatchObject({
@@ -290,7 +368,7 @@ describe("production recording UI status delivery", () => {
       return { ok: true, json: async () => ({ microphone: "denied", systemAudio: "authorized" }) };
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("window", { paseoDesktop: { platform: "darwin", invoke: async (command: string) => command === "open_local_daemon_transport" ? "settings-failure-session" : undefined, events: { on: async () => () => undefined } } });
+    vi.stubGlobal("window", { location: { href: rendererHref }, paseoDesktop: { platform: "darwin", invoke: async (command: string) => command === "open_local_daemon_transport" ? "settings-failure-session" : undefined, events: { on: async () => () => undefined } } });
 
     await act(async () => { renderer = create(<RecordingProvider enabled><ConnectedPermissionProbe /></RecordingProvider>); });
     await vi.waitFor(() => expect(renderer!.root.findByType(ProbeView).props.state.permissions.microphone).toBe("denied"));

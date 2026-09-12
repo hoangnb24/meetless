@@ -103,8 +103,6 @@ export class TranscriptionService {
     try {
       await Promise.all([this.options.sourceSnapshots.initialize(), this.options.inspector.initialize()]);
       await this.store.reconcileTranscriptPublications(pending.map((entry) => entry.meetingId));
-      const consent = await this.store.transcriptionConsent();
-      if (consent.status === "granted") await this.scheduleSavedRecordings();
     } finally {
       for (const entry of pending) entry.lease.release();
     }
@@ -115,9 +113,7 @@ export class TranscriptionService {
   }
 
   async grantConsent(): Promise<{ status: "granted"; grantedAt: string }> {
-    const consent = await this.store.grantTranscriptionConsent();
-    if (await this.provider.status() === "configured") await this.scheduleSavedRecordings();
-    return consent;
+    return this.store.grantTranscriptionConsent();
   }
 
   async scheduleSavedRecordings(): Promise<void> {

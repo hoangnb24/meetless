@@ -22,6 +22,7 @@ interface RecordingContextValue {
   status: RecordingStatusWire;
   displayElapsedMs: number;
   pending: boolean;
+  pendingAction: "stop" | "retry" | null;
   error: string | null;
   permissions: CapturePermissionState;
   start(title: string): Promise<void>;
@@ -41,6 +42,8 @@ export function RecordingProvider({ enabled, children }: { enabled: boolean; chi
   const [receivedAt, setReceivedAt] = useState(Date.now());
   const [tick, setTick] = useState(Date.now());
   const [pending, setPending] = useState(false);
+  const operationInFlight = useRef(false);
+  const [pendingAction, setPendingAction] = useState<"stop" | "retry" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<CapturePermissionState>({
     microphone: null,
@@ -75,7 +78,7 @@ export function RecordingProvider({ enabled, children }: { enabled: boolean; chi
   }, []);
 
   const accept = useCallback((next: RecordingStatusWire) => {
-    setStatus(next); setReceivedAt(Date.now()); setError(next.error);
+    setStatus(next); setReceivedAt(Date.now()); setError(next.status === "saved" ? null : next.error);
   }, []);
 
   useEffect(() => {
@@ -105,13 +108,17 @@ export function RecordingProvider({ enabled, children }: { enabled: boolean; chi
     return () => clearInterval(timer);
   }, [status.paused, status.status]);
 
-  const invoke = useCallback(async (operation: (active: DesktopRecordingClient) => Promise<RecordingStatusWire>) => {
-    const active = client.current;
-    if (!active) throw new Error("Desktop recording controls are not connected");
-    setPending(true); setError(null);
-    try { accept(await operation(active)); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); throw reason; }
-    finally { setPending(false); }
+  const invoke = useCallback(async (operation: (active: DesktopRecordingClient) => Promise<RecordingStatusWire>, action: "stop" | "retry" | null = null) => {
+    if (operationInFlight.current) return;
+    operationInFlight.current = true;
+    setPending(true); setPendingAction(action); setError(null);
+    try {
+      const active = client.current;
+      if (!active) throw new Error("Desktop recording controls are not connected");
+      accept(await operation(active));
+    }
+    catch (reason) { setError(describe(reason)); }
+    finally { operationInFlight.current = false; setPending(false); setPendingAction(null); }
   }, [accept]);
 
   const value = useMemo<RecordingContextValue>(() => ({
@@ -119,11 +126,14 @@ export function RecordingProvider({ enabled, children }: { enabled: boolean; chi
     status,
     displayElapsedMs: status.elapsedMs + (status.status === "recording" && !status.paused ? Math.max(0, tick - receivedAt) : 0),
     pending,
+    pendingAction,
     error,
     permissions,
     start: async (title) => {
+      if (operationInFlight.current) return;
       const active = client.current;
       if (!active) throw new Error("Desktop recording controls are not connected");
+      operationInFlight.current = true;
       setPending(true); setError(null);
       try {
         const ready = await loadPermissions("request");
@@ -136,13 +146,14 @@ export function RecordingProvider({ enabled, children }: { enabled: boolean; chi
         setError(reason instanceof Error ? reason.message : String(reason));
         throw reason;
       } finally {
+        operationInFlight.current = false;
         setPending(false);
       }
     },
     pause: () => invoke((active) => active.pause()),
     resume: () => invoke((active) => active.resume()),
-    stop: () => invoke((active) => active.stop()),
-    retry: () => invoke((active) => active.retryFinalization()),
+    stop: () => invoke((active) => active.stop(), "stop"),
+    retry: () => invoke((active) => active.retryFinalization(), "retry"),
     recheckPermissions: async () => { await loadPermissions().catch(() => undefined); },
     openPermissionSettings: async (source) => {
       try {
@@ -157,7 +168,7 @@ export function RecordingProvider({ enabled, children }: { enabled: boolean; chi
         }));
       }
     },
-  }), [accept, enabled, error, invoke, loadPermissions, pending, permissions, receivedAt, status, tick]);
+  }), [accept, enabled, error, invoke, loadPermissions, pending, pendingAction, permissions, receivedAt, status, tick]);
 
   return <RecordingContext.Provider value={value}>{children}</RecordingContext.Provider>;
 }

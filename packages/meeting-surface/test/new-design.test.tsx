@@ -843,7 +843,7 @@ describe("new-design composition", () => {
 
   test.each([
     ["interrupted", "Recording interrupted"],
-    ["finalizing", "Saving local audio"],
+    ["finalizing", "Saving audio…"],
     ["saved", "Audio saved locally"],
     ["failed", "Recording needs attention"],
   ] as const)("maps %s recording state to user language", async (status, title) => {

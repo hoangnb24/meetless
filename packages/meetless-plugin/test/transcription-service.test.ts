@@ -100,7 +100,29 @@ describe("saved recording transcription composition", () => {
     });
   });
 
-  test("startup resumes an in-flight request with budget and publishes after the remaining attempt", async () => {
+  test("granting consent retains saved audio without scheduling or calling a configured provider", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-transcription-consent-"));
+    roots.add(root);
+    const store = new MeetingStore({ root, now: () => now });
+    await createSavedRecording(store, "m-consent", "r-consent");
+    const provider: TranscriptionProvider = { status: vi.fn(async () => "configured"), transcribe: vi.fn() };
+    const service = new TranscriptionService(store, provider, {
+      inspector: restartInspector(root), sourceSnapshots: passThroughSnapshots(),
+    });
+    const schedule = vi.spyOn(service, "scheduleSavedRecordings");
+    const before = await store.listRecordings();
+
+    await expect(service.grantConsent()).resolves.toEqual({ status: "granted", grantedAt: now });
+
+    expect(await store.transcriptionConsent()).toEqual({ status: "granted", grantedAt: now });
+    expect(await store.listRecordings()).toEqual(before);
+    expect(await store.getTranscriptForMeeting("m-consent")).toBeNull();
+    expect(schedule).not.toHaveBeenCalled();
+    expect(provider.status).not.toHaveBeenCalled();
+    expect(provider.transcribe).not.toHaveBeenCalled();
+  });
+
+  test("startup reconciles an in-flight request without auto-dispatching native work", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-transcription-restart-"));
     roots.add(root);
     const store = new MeetingStore({ root, now: () => now });
@@ -120,9 +142,9 @@ describe("saved recording transcription composition", () => {
     await service.initialize();
 
     await vi.waitFor(async () => {
-      expect(await restarted.getTranscript(transcript.id)).toMatchObject({ status: "ready", requestCount: 2 });
+      expect(await restarted.getTranscript(transcript.id)).toMatchObject({ status: "pending", requestCount: 1 });
     });
-    expect(transcribe).toHaveBeenCalledOnce();
+    expect(transcribe).not.toHaveBeenCalled();
   });
 
   test("startup terminalizes an exhausted in-flight request and does not schedule a provider call", async () => {
@@ -183,7 +205,7 @@ describe("saved recording transcription composition", () => {
     expect(await store.getTranscriptForMeeting("m-tamper")).toBeNull();
   });
 
-  test("native PID readiness retries complete before durable transcription attempts begin", async () => {
+  test("startup does not inspect or dispatch native work for a saved recording", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-transcription-readiness-"));
     roots.add(root);
     const store = new MeetingStore({ root, now: () => now });
@@ -217,11 +239,8 @@ describe("saved recording transcription composition", () => {
     );
 
     await service.initialize();
-    await vi.waitFor(async () => {
-      expect(await store.getTranscriptForMeeting("m-readiness")).toMatchObject({ status: "ready", requestCount: 1 });
-    });
-    expect(events.slice(0, 3)).toEqual(["status-1", "status-2", "status-3"]);
-    expect(events.filter((event) => event === "transcribe")).toHaveLength(1);
+    expect(await store.getTranscriptForMeeting("m-readiness")).toBeNull();
+    expect(events).toEqual([]);
   });
 });
 

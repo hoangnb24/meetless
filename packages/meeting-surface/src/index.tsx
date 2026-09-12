@@ -363,6 +363,7 @@ export function RecordingStrip(props: {
   status: RecordingStatusWire;
   elapsedMs: number;
   pending: boolean;
+  pendingAction?: "stop" | "retry" | null;
   error: string | null;
   onStart(title: string): Promise<void>;
   onPause(): Promise<void>;
@@ -374,7 +375,11 @@ export function RecordingStrip(props: {
 
   const active = props.status.status === "recording";
   const recoverable = props.status.status === "recoverable" && props.status.retryEligible;
-  const state = recordingStateCopy(props.status);
+  const saving = props.pendingAction === "stop" || props.pendingAction === "retry";
+  const state = saving
+    ? { title: props.pendingAction === "retry" ? "Retrying save…" : "Saving audio…", detail: "Please wait for the save result.", tone: "accent" }
+    : recordingStateCopy(props.status);
+  const error = !saving ? props.error ?? (props.status.status !== "saved" ? props.status.error : null) : null;
   const seconds = Math.floor(props.elapsedMs / 1000);
 
   if (active) {
@@ -389,7 +394,7 @@ export function RecordingStrip(props: {
             style={styles.recordingTime}
             testID="recording-state"
           >
-            {props.status.paused ? "Paused" : "Recording"} · {formatClock(seconds)}
+            {saving ? "Saving audio…" : `${props.status.paused ? "Paused" : "Recording"} · ${formatClock(seconds)}`}
           </Text>
         </View>
         <FocusPressable
@@ -397,7 +402,7 @@ export function RecordingStrip(props: {
           accessibilityRole="button"
           accessibilityState={{ disabled: props.pending }}
           disabled={props.pending}
-          onPress={() => void (props.status.paused ? props.onResume() : props.onPause())}
+          onPress={() => void (props.status.paused ? props.onResume() : props.onPause()).catch(() => undefined)}
           style={styles.recordingSecondary}
           testID="recording-pause-resume"
         >
@@ -408,12 +413,13 @@ export function RecordingStrip(props: {
           accessibilityRole="button"
           accessibilityState={{ disabled: props.pending }}
           disabled={props.pending}
-          onPress={() => void props.onStop()}
+          onPress={() => void props.onStop().catch(() => undefined)}
           style={styles.recordingAction}
           testID="recording-stop"
         >
-          <Text style={styles.buttonText}>Stop</Text>
+          <Text style={styles.buttonText}>{props.pendingAction === "stop" ? "Saving…" : "Stop"}</Text>
         </FocusPressable>
+        {error ? <RecordingError status={props.status} error={error} /> : null}
       </View>
     );
   }
@@ -432,16 +438,30 @@ export function RecordingStrip(props: {
           accessibilityRole="button"
           accessibilityState={{ disabled: props.pending }}
           disabled={props.pending}
-          onPress={() => void props.onRetry()}
+          onPress={() => void props.onRetry().catch(() => undefined)}
           style={styles.recordingAction}
           testID="recording-retry"
         >
-          <Text style={styles.buttonText}>Retry save</Text>
+          <Text style={styles.buttonText}>{props.pendingAction === "retry" ? "Retrying save…" : "Retry save"}</Text>
         </FocusPressable>
       ) : null}
-      {props.error || props.status.error ? <Text style={styles.recordingError} testID="recording-error">{recordingErrorCopy(props.status, props.error)}</Text> : null}
+      {error ? <RecordingError status={props.status} error={error} /> : null}
     </View>
   );
+}
+
+function RecordingError({ status, error }: { status: RecordingStatusWire; error: string }) {
+  const [showDetails, setShowDetails] = useState(false);
+  return <View>
+    <Text accessibilityLiveRegion="polite" style={styles.recordingError} testID="recording-error">{recordingErrorCopy(status, error)}</Text>
+    <FocusPressable accessibilityRole="button" accessibilityLabel="Recording error details"
+      onPress={() => setShowDetails((shown) => !shown)} testID="recording-error-details-toggle">
+      <Text style={styles.recordingButtonText}>{showDetails ? "Hide details" : "Error details"}</Text>
+    </FocusPressable>
+    {showDetails ? <Text selectable style={styles.recordingDetail} testID="recording-error-details">
+      {`Recording: ${status.recordingId ?? "unavailable"}\n${error}${status.error && status.error !== error ? `\n${status.error}` : ""}`}
+    </Text> : null}
+  </View>;
 }
 
 export interface SurfaceLayoutModel {
@@ -2305,7 +2325,7 @@ function TranscriptState({
   if (!transcript && providerStatus === "invalid") return <TranscriptStateMessage detail="Transcription is not available until its setup is repaired." testID="transcript-failed" title="Transcription needs attention" />;
   if (!transcript && providerStatus === "missing") return <TranscriptStateMessage detail="Transcription is not configured yet. Your saved audio remains local." testID="transcript-empty" title="Transcript waiting" />;
   if (!transcript) {
-    if (selectedMeeting?.status === "processing") return <TranscriptStateMessage testID="transcript-processing" title="Transcribing" detail="Your saved audio is safe while the transcript is prepared." />;
+    if (selectedMeeting?.status === "processing") return <TranscriptStateMessage testID="transcript-not-started" title="Transcript not started" detail="Transcription starts only when you choose Transcribe." />;
     return <TranscriptStateMessage testID="transcript-empty" title="Transcript not available yet" detail="The saved recording remains safe." />;
   }
   if (transcript.status === "pending" || transcript.status === "transcribing") {
@@ -2429,9 +2449,9 @@ function FocusTextInput({ style, onFocus, onBlur, ...props }: TextInputProps) {
 function recordingStateCopy(status: RecordingStatusWire): { title: string; detail: string; tone: "accent" | "warning" | "neutral" } {
   switch (status.status) {
     case "interrupted": return { title: "Recording interrupted", detail: "Meetless is checking whether completed audio can be saved.", tone: "warning" };
-    case "recoverable": return { title: "Needs attention", detail: "Your completed audio is safe. Retry saving the MP3 without recording again.", tone: "warning" };
-    case "finalizing": return { title: "Saving local audio", detail: "Your recording is safe while the MP3 is finalized.", tone: "accent" };
-    case "saved": return { title: "Audio saved locally", detail: "The transcript will continue as a separate step.", tone: "accent" };
+    case "recoverable": return { title: "Audio not saved yet", detail: status.retryEligible ? "Recorded chunks are available for another save attempt." : "Meetless is checking recorded chunks before another save attempt.", tone: "warning" };
+    case "finalizing": return { title: "Saving audio…", detail: "Please wait for the save result.", tone: "accent" };
+    case "saved": return { title: "Audio saved locally", detail: "Transcription starts only when you choose Transcribe.", tone: "accent" };
     case "failed": return { title: "Recording needs attention", detail: recordingFailureDetail(status.error), tone: "warning" };
     case "recording": return { title: "Recording", detail: "", tone: "accent" };
     case "idle": return { title: "", detail: "", tone: "neutral" };
@@ -2439,7 +2459,14 @@ function recordingStateCopy(status: RecordingStatusWire): { title: string; detai
 }
 
 function recordingErrorCopy(status: RecordingStatusWire, error?: string | null): string {
-  if (status.status === "recoverable") return "Completed audio is safe. Retry save is available.";
+  if (status.status === "saved") return "Audio is saved locally, but the last action could not finish. Check Error details.";
+  if (status.status === "recoverable") {
+    if (!status.retryEligible) return "Audio is not saved yet. Recorded chunks are still being checked; retry is not available.";
+    const normalized = (error ?? status.error ?? "").toLowerCase();
+    if (/enospc|disk full|no space/u.test(normalized)) return "Audio could not be saved. Free up disk space, then retry saving the recorded chunks.";
+    if (/eperm|eacces|permission denied|not permitted/u.test(normalized)) return "Audio could not be saved because access was denied. Check Error details before retrying.";
+    return "Audio could not be saved. Retry saving the recorded chunks.";
+  }
   const operationDetail = recordingStartErrorCopy(error);
   if (operationDetail !== "Recording needs attention. Try again.") return operationDetail;
   if (status.status === "failed") return recordingFailureDetail(status.error ?? error);
@@ -2470,7 +2497,7 @@ function meetingStatusCopy(status: MeetingWire["status"]): { label: string; tone
   switch (status) {
     case "ready": return { label: "Ready", tone: "ready" };
     case "recording": return { label: "Recording", tone: "working" };
-    case "processing": return { label: "Processing audio", tone: "working" };
+    case "processing": return { label: "Transcript not ready", tone: "neutral" };
     case "draft": return { label: "Needs attention", tone: "attention" };
     case "archived": return { label: "Archived", tone: "neutral" };
   }

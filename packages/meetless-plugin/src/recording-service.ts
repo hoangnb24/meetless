@@ -157,7 +157,7 @@ export class RecordingService {
       inventoryDigest: recording.inventory.pointer?.digest ?? null,
       retryEligible: recording.status === "recoverable" && recording.inventory.state === "complete",
       outputPath: recording.savedOutput?.destination ?? recording.finalization?.publishIntent.destination ?? null,
-      error: recording.inventory.error ?? recording.failureReason ?? recording.interruption?.reason ?? null,
+      error: recording.status === "saved" ? null : recording.inventory.error ?? recording.failureReason ?? recording.interruption?.reason ?? null,
     };
   }
 
@@ -544,7 +544,6 @@ export class RecordingService {
         });
       }
       await this.finalizationCheckpoint("after-cleanup", recording.id);
-      this.config.transcription?.schedule(saved);
     } finally {
       this.releaseRecordingWork(recording.id);
     }

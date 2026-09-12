@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { promisify } from "node:util";
 import { MeetingStore } from "@meetless/meeting-store";
 import { RecordingService, RecordingStartRollbackError } from "../src/recording-service.js";
@@ -11,6 +11,7 @@ import { RecordingInventoryReconciler } from "../src/inventory.js";
 import { managedTimelineStagingDirectory } from "../src/finalizer.js";
 import { resolveFixtureExportNow } from "../src/server.js";
 import { MeetingLifecycleCoordinator } from "../src/meeting-lifecycle-coordinator.js";
+import type { TranscriptionService } from "../src/transcription-service.js";
 
 const roots = new Set<string>();
 const services = new Set<RecordingService>();
@@ -418,7 +419,11 @@ describe("daemon recording service", () => {
   }, 30_000);
 
   test("serializes pause/resume, preserves collision bytes, publishes a playable MP3, then cleans chunks", async () => {
-    const config = await fixtureConfig();
+    const transcription = {
+      initialize: vi.fn(async () => undefined),
+      schedule: vi.fn(),
+    } as unknown as TranscriptionService;
+    const config = await fixtureConfig({ transcription });
     const collision = path.join(config.exportRoot, "12-17-08-26.mp3");
     await mkdir(config.exportRoot, { recursive: true });
     await writeFile(collision, "existing recording bytes", { encoding: "utf8", flag: "wx" });
@@ -439,6 +444,7 @@ describe("daemon recording service", () => {
     const saved = await service.execute({ version: 1, requestId: "stop", command: "stop" });
 
     expect(saved).toMatchObject({ status: "saved", outputPath: path.join(config.exportRoot, "12-17-08-26-2.mp3") });
+    expect(transcription.schedule).not.toHaveBeenCalled();
     expect(await readFile(collision, "utf8")).toBe("existing recording bytes");
     expect((await readdir(path.join(config.storeRoot, "sessions", saved.recordingId!))).filter((name) => name.endsWith(".wav"))).toEqual([]);
     expect((await readdir(config.exportRoot)).filter((name) => name.includes(".managed.wav.stage"))).toEqual([]);
@@ -456,6 +462,8 @@ describe("daemon recording service", () => {
     const chunkCount = recoverable.chunkCount;
     const saved = await service.execute({ version: 1, requestId: "retry", command: "retryFinalization" });
     expect(saved.status).toBe("saved");
+    expect(saved.error).toBeNull();
+    expect((await service.store.listRecordings()).find((entry) => entry.id === saved.recordingId)?.interruption).not.toBeNull();
     expect(saved).toMatchObject({ inventoryDigest: digest, chunkCount, chunks: [] });
   }, 30_000);
 
