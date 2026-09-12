@@ -14,12 +14,45 @@ managed transcription is unavailable, and offers the appropriate purchase,
 restore, or quota-status path. Ask and user-supplied transcription remain
 available.
 
+## Transcription routing
+
+**Transcribe** is an explicit action for each saved recording, with cloud
+disclosure and consent in that flow. Stop only saves audio; saved without a
+transcript is a normal completed state. Premium, previous consent, relaunch,
+and a quota reset never start upload or transcription automatically.
+Meetless selects the route at its trusted boundary:
+
+| Available access | Route |
+| --- | --- |
+| A valid user-supplied provider/API key is configured | Use that BYOK route without Premium or managed quota. |
+| No valid BYOK is configured and Premium is active | Use Meetless-managed transcription through Convex. |
+| No valid BYOK is configured and Premium is inactive | Keep the audio local and offer purchase or restore; do not call a transcription provider. |
+| Purchase status cannot be verified | Keep the audio local and expose recovery; do not grant managed access or call a transcription provider. |
+
+The first release defers BYOK entry and credential-management UI, so its
+**Transcribe** action uses the Premium managed route. Recording, saving, and
+playback remain free. This delivery scope does not remove future free BYOK
+precedence or change the free Ask and citation policy.
+
+For the managed route, the app uploads to Meetless Cloud and Convex invokes
+OpenAI Transcription using a Meetless-owned provider credential stored only in
+the backend environment. The user does not choose a provider, supply a key, or
+manage that credential. The app and its Keychain must not contain or read the
+Meetless-owned OpenAI credential. A Keychain-held per-device signing key may be
+used only to authenticate an enrolled Mac to Meetless Cloud; it is not a
+transcription-provider credential.
+
 ## Managed transcription preparation
 
 Recording and canonical timeline preparation may remain entirely local; V1 does
 not impose a cloud duration cap on that work. Cloud preparation and upload
 begin only after the user explicitly chooses Meetless-managed transcription for
 the recording. Completing or saving a recording never uploads it automatically.
+
+Before upload, check that remaining managed allowance covers the whole
+recording. If it does not, explain the limit, do not process a partial recording,
+and preserve local audio for a later explicit attempt when allowance is
+available.
 
 After that action, the one logical canonical timeline is physically segmented
 into ordered upload/provider chunks of at most 10 minutes; the final chunk may
@@ -43,7 +76,9 @@ cap in V1; any later safety ceiling requires new owner authority.
 
 Monthly and annual subscribers receive one backend-configured managed-
 transcription allowance in each subscription-anchored monthly quota period.
-The subscriber allowance amount is not finalized by this policy. Production
+The subscriber allowance amount is not finalized by this policy. Analyze costs
+and obtain the product owner’s decision before choosing that amount; no paid
+number is approved. Production
 must fail closed and remain undeployable unless an explicit subscriber
 allowance is configured. A non-production hosted canary may use an explicitly
 labeled test allowance; that test value is never product authority. Annual
@@ -74,6 +109,11 @@ eligible.
 - Dismiss the paywall without losing meeting context.
 - Retry after a recoverable store error.
 - Continue using every free feature when purchase services are unavailable.
+
+When Transcribe is blocked by missing Premium, offer purchase or restore in the
+recording context. A successful purchase updates Premium automatically without
+manual Refresh. The user selects **Transcribe** again; the app does not resume
+the earlier request automatically.
 
 Cancellation is not an error and never grants Premium. Restore or customer-info
 refresh grants managed transcription only when the `premium` entitlement is

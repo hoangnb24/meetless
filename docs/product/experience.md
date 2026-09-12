@@ -91,8 +91,9 @@ available.
 - Capture writes recoverable chunks. A failed finalization must not require a
   new recording.
 - Stop creates a collision-safe local MP3 under `~/Documents/meetings/`.
-- Saved audio transcribes automatically after one-time cloud-processing
-  disclosure and consent.
+- Stop only saves local audio. Each saved recording needs an explicit
+  **Transcribe** action, with cloud disclosure and consent attached to that action.
+  Premium, previous consent, relaunch, and quota reset never start it automatically.
 - Transcript segments have stable IDs and audio ranges.
 - Ask is scoped to one open meeting. Supported answers require known segment
   citations. Unsupported answers must state that the meeting has insufficient
@@ -141,6 +142,8 @@ The experience must feel clear, calm, and recoverable. Each state must answer:
 → `Active recording`
 → `Stop`
 → `Saving local audio`
+→ `Audio saved — Transcribe available`
+→ `User selects Transcribe; cloud disclosure and access checks`
 → `Transcribing`
 → `Meeting ready`
 → `Read transcript`
@@ -162,8 +165,15 @@ The experience must feel clear, calm, and recoverable. Each state must answer:
   Resume after the recording helper or host session is lost.
 - MP3 finalization fails → keep the meeting and completed audio visible → Retry
   save without recording again.
-- Transcription consent is unknown → disclose cloud processing → Allow and
-  continue, or leave the saved local recording untranscribed.
+- The user selects Transcribe for a saved recording → disclose cloud processing
+  and obtain consent as needed → check access and whole-recording allowance.
+- Premium is inactive → offer purchase or restore in the recording context →
+  successful purchase updates Premium automatically; the user selects Transcribe
+  again. Do not resume the earlier request automatically.
+- Remaining managed allowance cannot cover the whole recording → explain before
+  upload, keep local audio, and wait for a later explicit attempt. Do not
+  transcribe only part of the recording.
+- The user leaves audio untranscribed → show a normal saved state.
 - Transcription fails → keep saved audio and offer Retry transcription.
 - Ask fails → keep prior messages and the failed question → Retry that question.
 - The meeting has insufficient support → show the required insufficient-evidence
@@ -192,7 +202,7 @@ The user selects **Record meeting** from the desktop shell.
 7. Show active state, title, elapsed time, Pause, and Stop.
 8. On Stop, move immediately to a saving state. Do not imply that the transcript
    is ready.
-9. Confirm when the MP3 is safe. Continue transcription as a separate state.
+9. Confirm when the MP3 is safe. Offer **Transcribe** as a separate user action.
 10. Keep the meeting visible in the library throughout processing.
 
 **Decision points**
@@ -204,8 +214,8 @@ The user selects **Record meeting** from the desktop shell.
 
 **Exit conditions**
 
-- Saved and transcribing.
-- Saved without transcription consent.
+- Audio saved without a transcript; this is a normal completed state.
+- Transcribing only after the user separately selects **Transcribe**.
 - Recoverable save failure.
 - Terminal capture failure with no valid media.
 
@@ -487,14 +497,15 @@ Separate safe capture from later processing and remove uncertainty after Stop.
 
 **Primary action**
 
-None during normal progress; **Retry save** or **Retry transcription** on a
+**Transcribe** when audio is saved without a transcript. None during normal
+saving or transcription progress; **Retry save** or **Retry transcription** on a
 recoverable failure. For a terminal no-media failure, use **Back to meetings**.
 
 **States**
 
 - Finalizing audio.
-- Audio saved.
-- Waiting for transcription consent.
+- Audio saved without a transcript — normal completion, with Transcribe available.
+- Waiting for transcription consent after the explicit Transcribe action.
 - Transcribing.
 - Ready.
 - Recoverable save failure.
@@ -510,12 +521,14 @@ Meeting detail or continued background processing.
 
 **Purpose**
 
-Explain cloud processing before the first saved recording is sent for
-transcription. Confirm that the local recording is already safe.
+Explain cloud processing as part of the explicit **Transcribe** action for a
+saved recording. Confirm that the local recording is already safe. Previous
+consent never starts transcription for another recording automatically.
 
 **Entry conditions**
 
-Saved local audio exists and cloud-transcription consent is unknown.
+The user selects **Transcribe** for saved local audio and cloud-transcription
+consent is needed. Saving alone does not enter this flow.
 
 **Required information**
 
@@ -525,7 +538,7 @@ Saved local audio exists and cloud-transcription consent is unknown.
 
 **Primary action**
 
-**Allow cloud transcription**.
+**Transcribe**, with cloud disclosure and any required consent in that flow.
 
 **Secondary actions**
 
@@ -541,8 +554,17 @@ untranscribed.
 
 **Exit / transition**
 
-Allow moves to Transcribing. Not now leaves the meeting saved without a
-transcript and permits normal navigation.
+In V1, **Transcribe** selects Meetless-managed transcription through Convex;
+API-key entry UI is deferred. Future valid configured BYOK takes precedence
+without Premium or managed quota, as defined in [monetization](monetization.md).
+If Premium is inactive or cannot be verified, preserve the saved recording and
+show purchase, restore, or recovery instead of calling a provider. A successful
+purchase updates Premium without manual Refresh, but the user must select
+Transcribe again. Before upload, require enough allowance for the whole
+recording; otherwise explain the limit and preserve audio for a later explicit
+attempt. Never process a partial recording or automatically start after a quota
+reset. Not now leaves the meeting in the normal saved-without-transcript state
+and permits normal navigation.
 
 ### Screen: Wide meeting detail
 
@@ -1131,7 +1153,8 @@ their authority level.
 - Recording controls must remain available independent of route.
 - Audio capture is recoverable and finalization can retry without recording
   again.
-- Saved audio transcribes automatically after one-time consent.
+- Stop only saves audio; each recording requires the user to select Transcribe.
+  Saved without a transcript is normal completion.
 - The meeting list, complete timed transcript, meeting-scoped Ask, durable chat,
   validated citations, and bounded citation playback are V1 behavior.
 - Supported answers need citations. Insufficient evidence must be explicit.

@@ -45,6 +45,14 @@ and annual packages. The app supports purchase and restore. A missing,
 unconfigured, or unreachable purchase service never grants Premium, but also
 does not disable Ask, local meeting evidence, or user-supplied transcription.
 
+Stop only saves local audio; saved without a transcript is normal completion.
+The user selects **Transcribe** separately for each recording, with cloud
+disclosure and consent in that flow. Premium, previous consent, relaunch, and
+quota reset never start upload or transcription automatically. Missing Premium
+offers purchase or restore in the recording context. A successful purchase
+updates Premium without manual Refresh, but the user must select Transcribe
+again; the app does not resume the earlier request automatically.
+
 ### Observed catalog state (2026-08-31)
 
 The following catalog objects were observed in the owner-selected Apple and
@@ -94,7 +102,8 @@ enrollment is macOS-host only, and Family Sharing is disabled.
 
 Monthly and annual products receive one backend-configured allowance in each
 subscription-anchored monthly period. The subscriber allowance amount is not
-finalized. Production must fail closed and remain undeployable without an
+finalized. Cost analysis and an explicit product-owner decision are required
+before choosing the paid allowance; no number is approved. Production must fail closed and remain undeployable without an
 explicit configured subscriber allowance. A non-production hosted canary may
 use an explicitly labeled test allowance, never product authority. Annual
 allowance is released one monthly period at a time and unused allowance does
@@ -102,6 +111,10 @@ not roll over. The seven-day trial receives 18,000 seconds total during the
 seven-day trial. Product changes and restore do not reset a current period.
 Each period snapshots its configured limit, so a later reduction cannot change
 an already-started period.
+
+Before upload, the remaining managed allowance must cover the whole recording.
+If it does not, explain the limit, do not process a partial recording, and retain
+local audio for a later explicit attempt when allowance is available.
 
 Admission atomically reserves quota. Settlement is idempotent for the stable
 subscriber, audio, and chunk identities: duplicate requests, retries, and
@@ -163,6 +176,22 @@ action bodies. Provider execution remains replaceable, and this boundary does
 not change the free Ask or user-supplied/BYOK paths. US East versus EU West is
 deferred until before cloud production deployment. Production region,
 deployment, credentials, and provider calls remain owner/external gates.
+
+The V1 **Transcribe** route is Meetless-managed
+transcription. The app sends the saved recording to the Meetless Convex
+deployment, and a Convex backend action calls OpenAI Transcription using the
+Meetless-owned provider credential. That credential is backend-only: it is not
+embedded in the app, stored in the app Keychain, or read through the native
+OpenAI transcription capability. The enrolled Mac's Keychain-backed device key
+may sign managed-auth challenges but cannot authorize or execute provider calls
+by itself.
+
+When a valid user-supplied provider/API key exists, the routing boundary selects
+BYOK before managed transcription and bypasses RevenueCat entitlement and
+managed quota. V1 defers its settings and credential-entry UI; the shipped
+Transcribe action has no provider choice and uses the Premium managed Convex
+route. Recording, saving, and playback remain free. This delivery scope does
+not remove future free BYOK policy or change Ask and citation behavior.
 
 ### Runtime and data boundary
 

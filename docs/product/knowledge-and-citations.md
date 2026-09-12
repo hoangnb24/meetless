@@ -6,8 +6,8 @@ audio ranges accepted in Milestone 3.
 
 From that meeting screen, the user selects an existing Paseo-supported
 coding-agent provider and model, including Codex, and starts or continues a chat
-scoped only to the open meeting. Transcription is automatic; chat is user
-initiated.
+scoped only to the open meeting. Transcription starts only when the user selects
+**Transcribe** for that saved recording; chat is also user initiated.
 
 Meeting chat history is durable. Leaving the meeting or restarting the app does
 not discard the thread; reopening the meeting restores its previous messages so
