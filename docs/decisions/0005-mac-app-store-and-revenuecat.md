@@ -208,139 +208,51 @@ native errors do not enter ordinary logs or durable meeting state. RevenueCat's
 public Apple SDK key is supplied at build time and may be embedded in the app;
 secret keys are forbidden from the bundle and repository.
 
-### MAS runtime-root preservation
+### Local MAS development loop
 
-The canonical app-container runtime root is one app-owned preservation unit.
-Repository-authorized MAS/package gate operations must never recursively delete
-that root or any subtree. A marker inside the root proves only that marker; it
-does not prove ownership of the surrounding state. The package transaction
-continues to own only the `/Applications` bundle and package identity.
+The owner-approved development route is the simple loop accepted on 2026-09-10:
+`npm run dev:mas` builds and signs, validates and publishes the artifact to
+ignored durable storage, replaces the installed development app, opens it
+through LaunchServices, and verifies the real Meetless plugin. Ordinary
+relaunch uses `npm run dev:mas:launch`, without build, install, or data reset.
+See [the current development guide](../macos-development.md) before operating
+an app or runtime.
 
-Before a gate writes runtime state, installs, or launches, a plain-data
-`MAS_GATE_SESSION_TRANSACTION v2` boundary must acquire its fixed sibling
-transaction slot and the stable kernel-backed sibling lock, validate the exact
-contract-derived root and parent, reject symlink/path/device/ownership
-ambiguity, prove no live owned runtime through its caller-supplied adapter, and
-receive an explicit positive free-space requirement. The gate holds that lock
-through mutation. It atomically renames the entire existing root into
-same-volume quarantine, creates a secure fresh root, and records intent and
-rename transitions in a journal outside the root with durable atomic writes.
-The parent-side construction intent is durably published before construction
-directory creation, and the construction directory is journaled before
-publication to the fixed active slot. This makes the post-mkdir/pre-first-
-journal crash window discoverable: recovery may recreate the exact absent
-directory or adopt only the exact empty construction path bound to that intent;
-unexpected bytes remain retained and make the session fail closed. Every
-protected move is executed by the persistent native mutation session while it
-holds the same sibling kernel lock as `MeetlessHost`, using macOS
-`renameatx_np` with `RENAME_EXCL | RENAME_NOFOLLOW_ANY`. The destination is
-checked for absence for diagnosis, but no reservation or ordinary-rename
-fallback authorizes the move; a race returns kernel `EEXIST` and preserves both
-source and destination. Native-helper death before the syscall leaves the
-source untouched; death after the syscall is recovered by inspecting both
-paths. There is no copy fallback and no recursive removal in this boundary.
-Before that syscall, the helper starts from a trusted filesystem-root
-descriptor and traverses every pathname component with descriptor-relative
-`openat` and `O_NOFOLLOW`. A `runtime-sibling` move must resolve both parents
-to the held lock-parent descriptor; a `package-sibling` move must resolve both
-parents to the pinned package-parent descriptor; and a `runtime-child` move
-must resolve both parents beneath the previously bound runtime-root
-descriptor. A pathname ancestor replaced by a symlink or another directory
-therefore fails the authorized descriptor/path-class check before mutation.
-Unexpected concurrency, physical boundary ambiguity, or a changed lock
-identity retains every remaining root and fails closed.
+The fresh loop recursively deletes the canonical app-container runtime. It is
+permitted only for disposable test state whose reset the owner has authorized.
+An earlier reset authorization does not make later recordings disposable.
+Use `npm run dev:mas:update` to preserve data, with retained app/runtime backups
+and the stable host lock held during replacement; `-- --reuse-current` revalidates
+and installs the existing candidate without rebuilding. Do not fall back to the
+legacy coordinator or invent a transaction framework.
+Legacy session remnants block the simple route and require separately scoped
+disposition. This decision grants no deletion of recordings, retained evidence,
+Keychain, TCC, purchase state, or unrelated container state.
 
-The native host participates in the same stable sibling lock. With no active
-transaction, ordinary direct/production startup remains valid while holding
-that lock. With an active transaction, startup requires a one-time durable
-handoff bound to the exact owner token, run, fresh-root identity, active slot,
-MAS bundle identity, executable bytes, and identity path; the host claims and
-holds the lock for its lifetime. The gate may reacquire it only after explicit
-stop and absence proof, and every repository lease caller must verify its live
-kernel holder before filesystem work. JavaScript may issue only bounded
-commands to the native mutation session; it cannot mutate a protected name
-after an independent liveness check. The MAS coordinator recognizes the
-production H→D→S→W→P→C topology by exact executable/argv evidence, including
-the titled `Paseo Supervisor` process and the exact packaged
-`vendor/paseo/packages/server/dist/server/server/daemon-worker.js` worker;
-listeners, sockets, and open handles are part of the absence observation.
-Handoff replay, wrong-root, wrong-bundle, wrong-owner, lock contention, live
-descendants, incomplete/malformed evidence, and unknown process inspection all
-fail closed. The generic stop command has no ambient MAS-authority bypass and
-always refuses the MAS root; only the MAS coordinator owns the stop capability.
+The owner rejected the transaction-v3 proposal and automatic recovery design.
+Historical coordinator instructions and one-time reset permissions do not
+control this development route.
 
-After proven stop and package rollback, the boundary reacquires the stable lock,
-atomically detaches the fresh root to retained session evidence, and restores
-the exact prior root or prior absence. Package identity rollback therefore
-precedes runtime restoration. The fresh root and journal remain retained by
-default. A completed session may later be archived by sibling rename to free
-the fixed active slot; deleting retained evidence is outside this decision and
-requires a separate owner-authorized policy. The journal and aggregate
-attestation record only the runtime-root transaction contract, metadata,
-file-byte digests, literal symlink targets, and hardlink equivalence needed to
-detect mutation; they do not record child inventories, credentials, receipts,
-or raw private content. Recovery is monotonic and idempotent across every
-mkdir, rename, and journal-publication boundary; if exact intent is unavailable
-or roots are both, neither, swapped, or changed, all bytes are retained and
-the actionable `MAS-GATE-CLEANUP-001` diagnostic directs the operator to leave
-roots intact and run status/recovery.
+### Release and security validation remains required
 
-This rollback claim is limited to the entire canonical runtime root. App-group
-state, Preferences/Caches outside that root, Keychain, TCC, StoreKit/RevenueCat,
-LaunchServices, and remote state are retained and reported; they are neither
-cleaned nor claimed rolled back by this transaction.
+Simplifying development does not weaken strict release/App Store validation.
+Complete read-only artifact validation remains required before installation,
+with the installed signed closure rechecked before launch. The exact candidate, manifest and installed signed closure still require their
+existing validation: package inputs and pinned dependencies; licenses/notices;
+symlinks and load paths; signer, profile, entitlements, Mach-O and Electron;
+installation contract and marker; and the expected RevenueCat public SDK key.
+Preserve exact artifact identity and provenance through packaging, installation
+and the actual consumer. A fixture or successful startup is not production
+acceptance; use the [production-evidence rule](../patterns/production-evidence.md).
+Store purchase, restore, upload and publication remain separate evidence gates.
 
-The repository-authorized MAS installation coordinator requires the exact
-release manifest and completes the existing full read-only MAS artifact
-validation before beginning the runtime transaction or mutating `/Applications`.
-The validator is composed from the repository's complete package validator and
-MAS-specific policy: license/notices/package-inputs, symlink/load-path,
-signer/profile/entitlements/Mach-O/Electron, contract/marker/pinned candidate
-inputs, and exact expected RevenueCat public SDK-key comparison. It returns a
-frozen plain `MAS_GATE_ARTIFACT_BINDING v1` containing the manifest hash,
-canonical bundle path/fingerprint, artifact/candidate/package-input/artifact-
-input/license/signature digests, and only the public-key SHA-256. The package
-transaction is `MAS_PACKAGE_TRANSACTION v4`: it also journals the device/inode
-identity of every transaction-owned package root and temporary identity file,
-and constrains cleanup intent to deterministic transaction-owned siblings. It
-receives that DTO, rechecks the source and manifest before staging and before
-moving the prior `/Applications` bundle, validates the staged copy, and
-requires the installed fingerprint and root identity to equal validated
-staging. Package rollback precedes runtime-root restore; every failure retains
-or restores pre-existing state and fails closed. The coordinator has no
-caller-supplied validator result, artifact binding, or validator callback:
-complete validation always executes, including the exact expected RevenueCat
-public-key comparison. Fixture tests may inject only bounded low-level file,
-stat, inventory, Mach-O, or owner-tool evidence readers; those adapters cannot
-authorize quarantine or replace the final bundle realpath/fingerprint checks.
-This repository boundary does not reserve disk capacity, establish CI or
-branch protection, or prove a real MAS package/sign/install/launch. Those
-remain separate owner-authorized gates.
-
-The current interactive macOS account and processes deliberately acting with
-that same UID are trusted for this development package/coordinator boundary.
-The boundary detects malformed, stale, accidental, partial, path, identity,
-permission, and artifact changes; it does not authenticate same-UID files
-against a malicious process that can deliberately rewrite or delete the
-package, manifest, identity, and journals into a new self-consistent set.
-Deliberate same-UID deletion or rewrite is therefore outside this threat model,
-not a production-acceptance blocker. Adding a Keychain-backed MAC, privileged
-owner, or another trust anchor requires a separately authorized Human security
-decision. This limit does not relax receipt opacity, full pre-install artifact
-validation, installed-signature rechecks, or fail-closed package/runtime
-recovery.
-
-### Attempt 12 incident classification
-
-Attempt 12 is classified as unrecoverable loss caused by an unauthorized shape
-of repository-authorized MAS cleanup: approximately 829 MB of attempt-created
-runtime state was mixed with approximately 37 MB of pre-existing state, and the
-aggregate fell from approximately 37,632 KB to approximately 24 KB. The owner
-confirmed that no external or manual backup exists. No reconstruction is
-claimed. The attempt produced no accepted readiness evidence, all package,
-install, launch, and external gates remain closed, and no retry is authorized.
-The preservation boundary above is a lasting correction required before any
-future gate.
+The current interactive macOS account and deliberate same-UID processes remain
+trusted for the development boundary. Detect malformed, stale, partial, path,
+identity, permission and artifact changes; this is not protection against a
+malicious same-UID process rewriting a self-consistent package and its evidence.
+This limit does not relax receipt opacity, artifact validation, signature
+rechecks or fail-closed handling of ambiguous state. New trust anchors or
+release/security policy require separate owner authority.
 
 ### R5 repository owner decisions
 

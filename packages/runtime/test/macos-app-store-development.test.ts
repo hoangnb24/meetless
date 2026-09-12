@@ -571,7 +571,7 @@ describe("Mac App Store development package boundary", () => {
 
   test("resolves the accepted profile from the current user's Xcode directory", () => {
     expect(resolveR5DevelopmentProfilePath("/Users/example")).toBe(
-      "/Users/example/Library/Developer/Xcode/UserData/Provisioning Profiles/828a0bac-887f-4e60-9e4b-9da7690178bc.mobileprovision",
+      "/Users/example/Library/Developer/Xcode/UserData/Provisioning Profiles/cafeb0dd-3935-4bcc-b08d-22f392b9a0ee.mobileprovision",
     );
   });
 

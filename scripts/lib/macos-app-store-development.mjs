@@ -13,7 +13,7 @@ const execFileAsync = promisify(execFile);
 
 export const MACOS_APP_STORE_DEVELOPMENT_AUTHORITY = "docs/decisions/0005-mac-app-store-and-revenuecat.md";
 export const R5_APP_STORE_DEVELOPMENT_PROFILE_NAME = "Meetless Mac App Store R5 Sandbox Development";
-export const R5_APP_STORE_DEVELOPMENT_PROFILE_UUID = "828a0bac-887f-4e60-9e4b-9da7690178bc";
+export const R5_APP_STORE_DEVELOPMENT_PROFILE_UUID = "cafeb0dd-3935-4bcc-b08d-22f392b9a0ee";
 export const R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME = `${R5_APP_STORE_DEVELOPMENT_PROFILE_UUID}.mobileprovision`;
 export const R5_APP_STORE_DEVELOPMENT_DEVICE_UDID = "00006041-000861C60EFA401C";
 export const R5_APP_STORE_DEVELOPMENT_IDENTITY = "Apple Development: Long Le (335C7MY4H4)";
