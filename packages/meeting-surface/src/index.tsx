@@ -10,6 +10,7 @@ import {
   View,
   type PressableProps,
   type TextInputProps,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import type {
@@ -386,39 +387,41 @@ export function RecordingStrip(props: {
     return (
       <View style={styles.recordingStrip} testID="global-recording-strip">
         <ElectronTitlebarDragRegion regionID="recording-titlebar-drag-region" />
-        <View style={styles.recordingLiveDot} accessibilityElementsHidden />
-        <View style={styles.recordingIdentity}>
-          <Text style={styles.recordingTitle} numberOfLines={1}>{props.status.title ?? "Meeting"}</Text>
-          <Text
-            accessibilityLiveRegion="polite"
-            style={styles.recordingTime}
-            testID="recording-state"
+        <View style={styles.recordingSummaryRow} testID="recording-summary-row">
+          <View style={styles.recordingLiveDot} accessibilityElementsHidden />
+          <View style={styles.recordingIdentity}>
+            <Text style={styles.recordingTitle} numberOfLines={1}>{props.status.title ?? "Meeting"}</Text>
+            <Text
+              accessibilityLiveRegion="polite"
+              style={styles.recordingTime}
+              testID="recording-state"
+            >
+              {saving ? "Saving audio…" : `${props.status.paused ? "Paused" : "Recording"} · ${formatClock(seconds)}`}
+            </Text>
+          </View>
+          <FocusPressable
+            accessibilityLabel={props.status.paused ? "Resume recording" : "Pause recording"}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: props.pending }}
+            disabled={props.pending}
+            onPress={() => void (props.status.paused ? props.onResume() : props.onPause()).catch(() => undefined)}
+            style={styles.recordingSecondary}
+            testID="recording-pause-resume"
           >
-            {saving ? "Saving audio…" : `${props.status.paused ? "Paused" : "Recording"} · ${formatClock(seconds)}`}
-          </Text>
+            <Text style={styles.recordingButtonText}>{props.status.paused ? "Resume" : "Pause"}</Text>
+          </FocusPressable>
+          <FocusPressable
+            accessibilityLabel="Stop recording and save audio"
+            accessibilityRole="button"
+            accessibilityState={{ disabled: props.pending }}
+            disabled={props.pending}
+            onPress={() => void props.onStop().catch(() => undefined)}
+            style={styles.recordingAction}
+            testID="recording-stop"
+          >
+            <Text style={styles.buttonText}>{props.pendingAction === "stop" ? "Saving…" : "Stop"}</Text>
+          </FocusPressable>
         </View>
-        <FocusPressable
-          accessibilityLabel={props.status.paused ? "Resume recording" : "Pause recording"}
-          accessibilityRole="button"
-          accessibilityState={{ disabled: props.pending }}
-          disabled={props.pending}
-          onPress={() => void (props.status.paused ? props.onResume() : props.onPause()).catch(() => undefined)}
-          style={styles.recordingSecondary}
-          testID="recording-pause-resume"
-        >
-          <Text style={styles.recordingButtonText}>{props.status.paused ? "Resume" : "Pause"}</Text>
-        </FocusPressable>
-        <FocusPressable
-          accessibilityLabel="Stop recording and save audio"
-          accessibilityRole="button"
-          accessibilityState={{ disabled: props.pending }}
-          disabled={props.pending}
-          onPress={() => void props.onStop().catch(() => undefined)}
-          style={styles.recordingAction}
-          testID="recording-stop"
-        >
-          <Text style={styles.buttonText}>{props.pendingAction === "stop" ? "Saving…" : "Stop"}</Text>
-        </FocusPressable>
         {error ? <RecordingError status={props.status} error={error} /> : null}
       </View>
     );
@@ -427,24 +430,26 @@ export function RecordingStrip(props: {
   return (
     <View style={styles.recordingStrip} testID="global-recording-strip">
       <ElectronTitlebarDragRegion regionID="recording-titlebar-drag-region" />
-      <View style={[styles.recordingLiveDot, state.tone === "warning" && styles.recordingLiveDotWarning]} accessibilityElementsHidden />
-      <View style={styles.recordingIdentity}>
-        <Text accessibilityLiveRegion="polite" style={styles.recordingTitle} testID="recording-state">{state.title}</Text>
-        <Text style={styles.recordingDetail}>{state.detail}</Text>
+      <View style={styles.recordingSummaryRow} testID="recording-summary-row">
+        <View style={[styles.recordingLiveDot, state.tone === "warning" && styles.recordingLiveDotWarning]} accessibilityElementsHidden />
+        <View style={styles.recordingIdentity}>
+          <Text accessibilityLiveRegion="polite" style={styles.recordingTitle} testID="recording-state">{state.title}</Text>
+          <Text style={styles.recordingDetail}>{state.detail}</Text>
+        </View>
+        {recoverable ? (
+          <FocusPressable
+            accessibilityLabel="Retry saving the recording"
+            accessibilityRole="button"
+            accessibilityState={{ disabled: props.pending }}
+            disabled={props.pending}
+            onPress={() => void props.onRetry().catch(() => undefined)}
+            style={styles.recordingAction}
+            testID="recording-retry"
+          >
+            <Text style={styles.buttonText}>{props.pendingAction === "retry" ? "Retrying save…" : "Retry save"}</Text>
+          </FocusPressable>
+        ) : null}
       </View>
-      {recoverable ? (
-        <FocusPressable
-          accessibilityLabel="Retry saving the recording"
-          accessibilityRole="button"
-          accessibilityState={{ disabled: props.pending }}
-          disabled={props.pending}
-          onPress={() => void props.onRetry().catch(() => undefined)}
-          style={styles.recordingAction}
-          testID="recording-retry"
-        >
-          <Text style={styles.buttonText}>{props.pendingAction === "retry" ? "Retrying save…" : "Retry save"}</Text>
-        </FocusPressable>
-      ) : null}
       {error ? <RecordingError status={props.status} error={error} /> : null}
     </View>
   );
@@ -452,15 +457,17 @@ export function RecordingStrip(props: {
 
 function RecordingError({ status, error }: { status: RecordingStatusWire; error: string }) {
   const [showDetails, setShowDetails] = useState(false);
-  return <View>
+  return <View style={styles.recordingErrorPanel} testID="recording-error-panel">
     <Text accessibilityLiveRegion="polite" style={styles.recordingError} testID="recording-error">{recordingErrorCopy(status, error)}</Text>
     <FocusPressable accessibilityRole="button" accessibilityLabel="Recording error details"
       onPress={() => setShowDetails((shown) => !shown)} testID="recording-error-details-toggle">
       <Text style={styles.recordingButtonText}>{showDetails ? "Hide details" : "Error details"}</Text>
     </FocusPressable>
-    {showDetails ? <Text selectable style={styles.recordingDetail} testID="recording-error-details">
-      {`Recording: ${status.recordingId ?? "unavailable"}\n${error}${status.error && status.error !== error ? `\n${status.error}` : ""}`}
-    </Text> : null}
+    {showDetails ? <ScrollView style={styles.recordingDiagnosticsScroll} contentContainerStyle={styles.recordingDiagnosticsContent} testID="recording-diagnostics-scroll">
+      <Text selectable style={[styles.recordingDetail, styles.recordingDiagnosticText]} testID="recording-error-details">
+        {`Recording: ${status.recordingId ?? "unavailable"}\n${error}${status.error && status.error !== error ? `\n${status.error}` : ""}`}
+      </Text>
+    </ScrollView> : null}
   </View>;
 }
 
@@ -503,6 +510,7 @@ export interface MeetingListSurfaceProps {
   canCreate?: boolean;
   canRecord?: boolean;
   recordingSetup?: RecordingSetupController;
+  currentRecording?: RecordingStatusWire;
   pending?: boolean;
   error?: string | null;
   connectionLabel: string;
@@ -568,6 +576,7 @@ export function MeetingListSurface({
   canCreate = false,
   canRecord = canCreate,
   recordingSetup,
+  currentRecording,
   pending = false,
   error = null,
   hostConnectionStatus = "online",
@@ -662,6 +671,7 @@ export function MeetingListSurface({
       error={error}
       hostLabel={hostLabel}
       meetings={meetings}
+      currentRecording={currentRecording}
       onOpenRecordingSetup={recordingSetup?.available ? openRecordingSetup : undefined}
       onOpenTranscript={interactive ? onOpenTranscript : undefined}
       onRefresh={onRefresh}
@@ -686,6 +696,7 @@ export function MeetingListSurface({
 
   const detail = (
     <MeetingDetail
+      currentRecording={currentRecording}
       layoutTier={tier}
       consentStatus={consentStatus}
       onBack={onBack}
@@ -810,6 +821,7 @@ function AppTopbar({
 }
 
 interface MeetingSidebarProps {
+  currentRecording?: RecordingStatusWire;
   canRecord: boolean;
   hostConnectionStatus: "online" | "connecting" | "reconnecting" | "offline" | "revalidating";
   error: string | null;
@@ -842,6 +854,7 @@ function MeetingSidebar({
   error,
   hostLabel,
   meetings,
+  currentRecording,
   onOpenRecordingSetup,
   onOpenTranscript,
   onRefresh,
@@ -921,7 +934,7 @@ function MeetingSidebar({
               <Text style={styles.listGroup}>{group.label}</Text>
               {group.meetings.map((meeting) => {
                 const selected = selectedMeetingId === meeting.id;
-                const status = meetingStatusCopy(meeting.status);
+                const status = meetingStatusCopy(meeting, currentRecording);
                 return (
                   <FocusPressable
                     key={meeting.id}
@@ -1222,6 +1235,7 @@ function PermissionGuidance({ source, label, onOpen, onRecheck }: {
 }
 
 interface MeetingDetailProps {
+  currentRecording?: RecordingStatusWire;
   layoutTier: LayoutTier;
   consentStatus: "unknown" | "granted";
   onBack?: () => void;
@@ -1266,6 +1280,7 @@ interface MeetingDetailProps {
 
 function MeetingDetail(props: MeetingDetailProps) {
   const {
+    currentRecording,
     layoutTier,
     consentStatus,
     onBack,
@@ -1318,7 +1333,7 @@ function MeetingDetail(props: MeetingDetailProps) {
   }
 
   const title = selectedMeeting?.title ?? "Meeting";
-  const detailStatus = selectedMeeting ? meetingStatusCopy(selectedMeeting.status).label : "Meeting";
+  const detailStatus = selectedMeeting ? meetingStatusCopy(selectedMeeting, currentRecording).label : "Meeting";
   const duration = transcript ? formatDuration(transcript.audioDurationMs) : null;
   const showTranscript = layoutTier === "desktop" || task === "transcript";
   const showAsk = layoutTier === "desktop" || task === "ask";
@@ -1371,6 +1386,7 @@ function MeetingDetail(props: MeetingDetailProps) {
       <View style={[styles.detailContent, layoutTier === "desktop" && styles.desktopDetailContent]}>
         {showTranscript ? (
           <TranscriptPane
+            audioNotSaved={meetingAudioNotSaved(selectedMeeting, currentRecording)}
             layoutTier={layoutTier}
             interactive={interactive}
             consentStatus={consentStatus}
@@ -1536,6 +1552,7 @@ function TaskSwitcher({ task, onTaskChange }: { task: MeetingTask; onTaskChange(
 }
 
 function TranscriptPane({
+  audioNotSaved,
   layoutTier,
   interactive,
   consentStatus,
@@ -1551,6 +1568,7 @@ function TranscriptPane({
   citationEvidence,
   testID,
 }: {
+  audioNotSaved: boolean;
   layoutTier: LayoutTier;
   interactive: boolean;
   consentStatus: "unknown" | "granted";
@@ -1570,9 +1588,12 @@ function TranscriptPane({
     <View style={[styles.pane, layoutTier === "desktop" && styles.transcriptPane]} testID={testID}>
       <View style={styles.paneHead}><Text style={styles.paneTitle}>Transcript</Text></View>
       <ScrollView style={styles.paneScroll} contentContainerStyle={styles.paneScrollContent} testID={layoutTier === "desktop" ? "transcript-pane-scroll" : "transcript-detail-scroll"}>
+        {audioNotSaved && !transcript ? (
+          <TranscriptStateMessage testID="transcript-audio-not-saved" title="Audio not saved yet" detail="Save the recording before starting transcription." />
+        ) : <>
         {consentStatus !== "granted" && onGrantTranscriptionConsent && !transcriptLoading ? (
           <View style={styles.disclosure} testID="transcription-disclosure">
-            <Text style={styles.disclosureTitle}>Your recording is saved locally.</Text>
+            <Text style={styles.disclosureTitle}>Cloud transcription</Text>
             <Text style={styles.disclosureText}>To create the transcript, the saved MP3 will be sent to OpenAI for one-time cloud transcription. Ask stays unavailable until the transcript is ready.</Text>
             <FocusPressable accessibilityLabel="Allow cloud transcription" accessibilityRole="button" accessibilityState={{ disabled: pending || !interactive }} disabled={pending || !interactive} onPress={() => void onGrantTranscriptionConsent()} style={styles.primaryButton} testID="transcription-consent"><Text style={styles.buttonText}>Allow cloud transcription</Text></FocusPressable>
           </View>
@@ -1588,6 +1609,7 @@ function TranscriptPane({
           onRetryTranscription={onRetryTranscription}
           highlightedSegmentId={citationEvidence?.segmentId ?? null}
         />
+        </>}
       </ScrollView>
     </View>
   );
@@ -2326,7 +2348,7 @@ function TranscriptState({
   if (!transcript && providerStatus === "missing") return <TranscriptStateMessage detail="Transcription is not configured yet. Your saved audio remains local." testID="transcript-empty" title="Transcript waiting" />;
   if (!transcript) {
     if (selectedMeeting?.status === "processing") return <TranscriptStateMessage testID="transcript-not-started" title="Transcript not started" detail="Transcription starts only when you choose Transcribe." />;
-    return <TranscriptStateMessage testID="transcript-empty" title="Transcript not available yet" detail="The saved recording remains safe." />;
+    return <TranscriptStateMessage testID="transcript-empty" title="Transcript not available yet" detail="No transcript is available for this meeting yet." />;
   }
   if (transcript.status === "pending" || transcript.status === "transcribing") {
     return <TranscriptStateMessage detail="Your saved audio is safe while the transcript is prepared." testID="transcript-processing" title="Transcribing" />;
@@ -2493,10 +2515,29 @@ function recordingStartErrorCopy(error: string | null | undefined): string {
   return "Recording needs attention. Try again.";
 }
 
-function meetingStatusCopy(status: MeetingWire["status"]): { label: string; tone: "ready" | "working" | "attention" | "neutral" } {
-  switch (status) {
+function meetingAudioNotSaved(meeting: MeetingWire | null, currentRecording?: RecordingStatusWire): boolean {
+  if (!meeting) return false;
+  if (currentRecording?.meetingId === meeting.id && currentRecording.status !== "idle") {
+    return currentRecording.status !== "saved";
+  }
+  return meeting.status === "recording";
+}
+
+function meetingStatusCopy(meeting: MeetingWire, currentRecording?: RecordingStatusWire): { label: string; tone: "ready" | "working" | "attention" | "neutral" } {
+  if (meeting.status !== "ready" && meeting.status !== "archived" && currentRecording?.meetingId === meeting.id) {
+    switch (currentRecording.status) {
+      case "recording": return { label: currentRecording.paused ? "Paused" : "Recording", tone: "working" };
+      case "finalizing": return { label: "Saving audio…", tone: "working" };
+      case "recoverable": return { label: "Audio not saved yet", tone: "attention" };
+      case "interrupted": return { label: "Recording interrupted", tone: "attention" };
+      case "failed": return { label: "Recording needs attention", tone: "attention" };
+      case "saved": return { label: "Audio saved locally", tone: "neutral" };
+      case "idle": break;
+    }
+  }
+  switch (meeting.status) {
     case "ready": return { label: "Ready", tone: "ready" };
-    case "recording": return { label: "Recording", tone: "working" };
+    case "recording": return { label: "Audio not saved yet", tone: "neutral" };
     case "processing": return { label: "Transcript not ready", tone: "neutral" };
     case "draft": return { label: "Needs attention", tone: "attention" };
     case "archived": return { label: "Archived", tone: "neutral" };
@@ -2757,7 +2798,12 @@ const styles = StyleSheet.create({
   proposedTag: { color: colors.muted, fontFamily: mono, fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", borderColor: colors.borderSoft, borderWidth: 1, borderRadius: 5, paddingHorizontal: 6, paddingVertical: 3 },
   proposedNotice: { color: colors.muted, fontSize: 12, lineHeight: 18 },
   setupActions: { flexDirection: "row", justifyContent: "flex-end", alignItems: "center", gap: 8, marginTop: 8 },
-  recordingStrip: { minHeight: recordingStripGeometry.stripMinHeight, flexShrink: 0, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingTop: recordingStripGeometry.controlTopY, paddingBottom: RECORDING_STRIP_VERTICAL_PADDING, borderBottomColor: colors.borderSoft, borderBottomWidth: 1, backgroundColor: colors.surface },
+  recordingStrip: { minHeight: recordingStripGeometry.stripMinHeight, flexShrink: 0, flexDirection: "column", alignItems: "stretch", gap: 12, paddingHorizontal: 16, paddingTop: recordingStripGeometry.controlTopY, paddingBottom: RECORDING_STRIP_VERTICAL_PADDING, borderBottomColor: colors.borderSoft, borderBottomWidth: 1, backgroundColor: colors.surface },
+  recordingSummaryRow: { flexDirection: "row", alignItems: "center", gap: 12, minWidth: 0 },
+  recordingErrorPanel: { minWidth: 0, width: "100%", gap: 6 },
+  recordingDiagnosticsScroll: { maxHeight: 180, flexGrow: 0, minWidth: 0 },
+  recordingDiagnosticsContent: { width: "100%" },
+  recordingDiagnosticText: { width: "100%", ...(Platform.OS === "web" ? { overflowWrap: "anywhere" } : {}) } as TextStyle,
   recordingLiveDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.danger },
   recordingLiveDotWarning: { backgroundColor: colors.warning },
   recordingIdentity: { flex: 1, minWidth: 0, gap: 2 },
@@ -2767,7 +2813,7 @@ const styles = StyleSheet.create({
   recordingAction: { minHeight: 40, alignItems: "center", justifyContent: "center", paddingHorizontal: 14, borderRadius: 6, backgroundColor: colors.accent },
   recordingSecondary: { minHeight: 40, alignItems: "center", justifyContent: "center", paddingHorizontal: 14, borderColor: colors.border, borderWidth: 1, borderRadius: 6, backgroundColor: "rgba(255,255,255,0.04)" },
   recordingButtonText: { color: colors.secondary, fontSize: 13, fontWeight: "500" },
-  recordingError: { color: colors.dangerText, fontSize: 12, lineHeight: 17, maxWidth: 240 },
+  recordingError: { color: colors.dangerText, fontSize: 12, lineHeight: 17 },
   focusRing: { borderColor: colors.accentHover, borderWidth: 1, shadowColor: colors.accent, shadowOpacity: 0.7, shadowRadius: 4, shadowOffset: { width: 0, height: 0 } },
   hidden: { display: "none" },
 });

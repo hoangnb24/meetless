@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import type { TranscriptWire } from "@meetless/meeting-contracts";
+import type { RecordingStatusWire, TranscriptWire } from "@meetless/meeting-contracts";
 import {
   clearsElectronTitlebarHitTest,
   ELECTRON_TITLEBAR_HIT_TEST_HEIGHT,
@@ -85,6 +85,63 @@ describe("global recording strip", () => {
     await act(async () => { button.props.onPress(); });
     expect(retry).toHaveBeenCalledOnce();
     renderer!.unmount();
+  });
+
+  test("keeps expanded long diagnostics outside the recording summary and controls", async () => {
+    const diagnostic = `Command failed: /Applications/Meetless.app/${"long-media-path/".repeat(80)}ffmpeg\ncapture stopped with durably closed chunks`;
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<RecordingStrip elapsedMs={12_000} error={diagnostic}
+        onPause={async () => undefined} onResume={async () => undefined} onRetry={async () => undefined}
+        onStart={async () => undefined} onStop={async () => undefined} pending={false}
+        status={{ status: "recoverable", recordingId: "r-1", meetingId: "m-1", title: "Sync", elapsedMs: 12_000,
+          paused: false, chunks: [], inventoryState: "complete", chunkCount: 2, microphoneCount: 1,
+          systemCount: 1, inventoryDigest: "digest", retryEligible: true, outputPath: null, error: diagnostic }} />);
+    });
+    await act(async () => { renderer!.root.findByProps({ testID: "recording-error-details-toggle" }).props.onPress(); });
+    const summary = renderer!.root.findByProps({ testID: "recording-summary-row" });
+    expect(summary.findByProps({ testID: "recording-state" }).props.children).toBe("Audio not saved yet");
+    expect(summary.findByProps({ testID: "recording-retry" }).props.disabled).toBe(false);
+    expect(summary.findAllByProps({ testID: "recording-error-panel" })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ testID: "recording-diagnostics-scroll" })
+      .findByProps({ testID: "recording-error-details" }).props.children).toBe(`Recording: r-1\n${diagnostic}`);
+    await act(async () => { renderer!.unmount(); });
+  });
+
+  test.each([
+    ["recoverable", false, "m-1", "recording", "Audio not saved yet"],
+    ["recoverable", false, "m-1", "processing", "Audio not saved yet"],
+    ["recoverable", false, "another-meeting", "recording", "Audio not saved yet"],
+    ["recording", false, "m-1", "recording", "Recording"],
+    ["recording", true, "m-1", "recording", "Paused"],
+    ["finalizing", false, "m-1", "processing", "Saving audio…"],
+    ["saved", false, "m-1", "processing", "Audio saved locally"],
+    ["saved", false, "m-1", "recording", "Audio saved locally"],
+    ["saved", false, "m-1", "ready", "Ready"],
+    ["saved", false, "m-1", "archived", "Archived"],
+  ] as const)("projects %s paused=%s current=%s parent=%s consistently in list and detail", async (status, paused, meetingId, parentStatus, expected) => {
+    const currentRecording: RecordingStatusWire = { status, paused, meetingId, recordingId: "r-1", title: "Sync",
+      elapsedMs: 12_000, chunks: [], inventoryState: "complete", chunkCount: 2, microphoneCount: 1,
+      systemCount: 1, inventoryDigest: "digest", retryEligible: status === "recoverable", outputPath: null, error: null };
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<MeetingListSurface hostLabel="this host" connectionLabel="Host online"
+        onRefresh={async () => undefined} selectedMeetingId="m-1" currentRecording={currentRecording}
+        onGrantTranscriptionConsent={async () => undefined}
+        meetings={[{ id: "m-1", title: "Sync", status: parentStatus, createdAt: "2026-09-12T10:00:00.000Z", updatedAt: "2026-09-12T10:00:00.000Z" }]} />);
+    });
+    const labels = (testID: string) => renderer!.root.findByProps({ testID }).findAllByType("Text").map((node) => node.props.children);
+    expect(labels("meeting-m-1")).toContain(expected);
+    expect(labels("meeting-detail-header")).toContain(expected);
+    const unsaved = status !== "saved";
+    expect(renderer!.root.findAllByProps({ testID: "transcript-audio-not-saved" }).length > 0).toBe(unsaved);
+    expect(renderer!.root.findAllByProps({ testID: "transcription-disclosure" })).toHaveLength(unsaved ? 0 : 1);
+    if (unsaved) expect(labels("meeting-detail")).not.toContain("The saved recording remains safe.");
+    if (status !== "recording" || meetingId !== "m-1") {
+      expect(labels("meeting-m-1")).not.toContain("Recording");
+      expect(labels("meeting-detail-header")).not.toContain("Recording");
+    }
+    await act(async () => { renderer!.unmount(); });
   });
 
   test("hides Retry while inventory reconciliation is incomplete", async () => {

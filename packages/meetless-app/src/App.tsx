@@ -939,6 +939,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         error={error}
         hostLabel="this host"
         meetings={meetings}
+        currentRecording={recording.enabled ? recording.status : undefined}
         recordingSetup={mode === "desktop" ? {
           available: recordingEntryAvailable,
           pending: recording.pending,
