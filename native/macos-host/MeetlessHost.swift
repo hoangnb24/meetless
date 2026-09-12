@@ -610,6 +610,23 @@ private func logError(_ message: String) {
   NSLog("MeetlessHost: %@", message)
 }
 
+/// The same owner/private log serves native diagnostics and the child runtime.
+func openMeetlessRuntimeLog(runtimeRoot: String) throws -> FileHandle {
+  let logs = URL(fileURLWithPath: runtimeRoot).appendingPathComponent("logs")
+  try FileManager.default.createDirectory(
+    at: logs,
+    withIntermediateDirectories: true,
+    attributes: [.posixPermissions: 0o700]
+  )
+  let logURL = logs.appendingPathComponent("host-runtime.log")
+  if !FileManager.default.fileExists(atPath: logURL.path) {
+    FileManager.default.createFile(atPath: logURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+  }
+  let log = try FileHandle(forWritingTo: logURL)
+  try log.seekToEnd()
+  return log
+}
+
 final class MeetlessProcessRegistrationDiagnosticFileSink: MeetlessProcessRegistrationDiagnosticSink {
   private let fileHandle: FileHandle
   private let lock = NSLock()
@@ -949,6 +966,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
   private var runtime: Process?
   private var runtimeLog: FileHandle?
   private var registrationDiagnosticSink: MeetlessProcessRegistrationDiagnosticFileSink?
+  private var premiumDiagnosticSink: MeetlessPremiumDiagnosticFileSink?
   private var lockDescriptor: Int32 = -1
   private var signalSources: [DispatchSourceSignal] = []
   private var configuration: HostConfiguration?
@@ -984,6 +1002,13 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
           if configuration.endpointPolicy != nil {
             try self.enterPackagedRuntimeWorkingDirectory(configuration.runtimeRoot)
           }
+          let log = try openMeetlessRuntimeLog(runtimeRoot: configuration.runtimeRoot)
+          self.runtimeLog = log
+          guard let premiumSink = MeetlessPremiumDiagnosticFileSink(duplicating: log) else {
+            throw hostPreflightError("native Premium diagnostic log could not be attached")
+          }
+          self.premiumDiagnosticSink = premiumSink
+          let premium = MeetlessRevenueCatPurchaseAccess(diagnosticSink: premiumSink)
           let capability: MeetlessTranscriptionCapability
           guard let hostIdentity = self.publishedHostIdentity else {
             throw hostPreflightError("host identity was not published before capability startup")
@@ -1029,6 +1054,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
               workingDirectory: configuration.runtimeRoot,
               stagingDirectory: configuration.transcriptionStaging,
               runtimeAuthorization: self.runtimeAuthorization,
+              premium: premium,
               processPolicy: processPolicy,
               hostIdentity: hostIdentity,
               hostPID: getpid()
@@ -1038,6 +1064,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
               socketPath: configuration.transcriptionSocket,
               stagingDirectory: configuration.transcriptionStaging,
               runtimeAuthorization: self.runtimeAuthorization,
+              premium: premium,
               processPolicy: processPolicy,
               hostIdentity: hostIdentity,
               hostPID: getpid()
@@ -1080,6 +1107,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     removeOwnedRegistryIfReleased(registry)
     runtimeAuthorization.setRegistrationDiagnosticSink(nil)
     registrationDiagnosticSink = nil
+    premiumDiagnosticSink = nil
     if lockDescriptor >= 0 {
       _ = lockf(lockDescriptor, F_ULOCK, 0)
       close(lockDescriptor)
@@ -2430,19 +2458,9 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     if let containerSupportRoot = meetlessAppStoreContainerSupportRoot(for: configuration.runtimeRoot) {
       environment["MEETLESS_APP_CONTAINER_SUPPORT_ROOT"] = containerSupportRoot
     }
-    let logs = URL(fileURLWithPath: configuration.runtimeRoot).appendingPathComponent("logs")
-    try FileManager.default.createDirectory(
-      at: logs,
-      withIntermediateDirectories: true,
-      attributes: [.posixPermissions: 0o700]
-    )
-    let logURL = logs.appendingPathComponent("host-runtime.log")
-    if !FileManager.default.fileExists(atPath: logURL.path) {
-      FileManager.default.createFile(atPath: logURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+    guard let log = runtimeLog else {
+      throw hostPreflightError("host runtime log was not prepared before capability startup")
     }
-    let log = try FileHandle(forWritingTo: logURL)
-    try log.seekToEnd()
-    runtimeLog = log
     registrationDiagnosticSink = attachMeetlessProcessRegistrationDiagnosticSink(
       to: runtimeAuthorization,
       duplicating: log

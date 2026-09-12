@@ -57,6 +57,26 @@ final class MeetlessPremiumStandardErrorDiagnosticSink: MeetlessPremiumDiagnosti
   }
 }
 
+/// Host-owned categorical diagnostics. A duplicated descriptor survives the
+/// caller closing its handle and does not depend on LaunchServices stderr.
+final class MeetlessPremiumDiagnosticFileSink: MeetlessPremiumDiagnosticSink {
+  private let fileHandle: FileHandle
+  private let lock = NSLock()
+
+  init?(duplicating fileHandle: FileHandle) {
+    let descriptor = dup(fileHandle.fileDescriptor)
+    guard descriptor >= 0 else { return nil }
+    self.fileHandle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+  }
+
+  func record(_ diagnostic: MeetlessPremiumDiagnostic) {
+    let data = Data((meetlessPremiumDiagnosticLine(diagnostic) + "\n").utf8)
+    lock.lock()
+    defer { lock.unlock() }
+    try? fileHandle.write(contentsOf: data)
+  }
+}
+
 struct MeetlessPremiumPackage {
   let packageId: String
   let productId: String

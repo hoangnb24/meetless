@@ -3492,6 +3492,51 @@ private func testPremiumSocketBoundary() {
   check(recoveredAgain?["appleSignedTransaction"] == nil, "a consumed Premium terminal must not be exposed again")
 }
 
+private func testPremiumHostLogSurvivesUnavailableStandardError() throws {
+  let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("meetless-premium-log-\(UUID().uuidString)")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let log = try openMeetlessRuntimeLog(runtimeRoot: root.path)
+  guard let sink = MeetlessPremiumDiagnosticFileSink(duplicating: log) else {
+    check(false, "production Premium sink must duplicate the host log descriptor")
+    return
+  }
+  let operationId = "12345678-1234-4123-8123-123456789abc"
+  let savedError = dup(STDERR_FILENO)
+  guard savedError >= 0 else { throw NSError(domain: "MeetlessHostTests", code: 80) }
+  let null = try FileHandle(forWritingTo: URL(fileURLWithPath: "/dev/null"))
+  defer { try? null.close() }
+  guard dup2(null.fileDescriptor, STDERR_FILENO) >= 0 else {
+    close(savedError)
+    throw NSError(domain: "MeetlessHostTests", code: 81)
+  }
+  do {
+    defer { _ = dup2(savedError, STDERR_FILENO); close(savedError) }
+    let access = MeetlessRevenueCatPurchaseAccess(apiKey: nil, diagnosticSink: sink)
+    _ = access.purchase(packageId: "monthly", operationId: operationId)
+  }
+  // The actual adapter emitted invocation/completion; no SDK purchase is run.
+  try log.write(contentsOf: Data("runtime-still-writable\n".utf8))
+  try log.close()
+  sink.record(MeetlessPremiumDiagnostic(stage: .storeKitCallback, outcome: .active, operationId: operationId))
+  DispatchQueue.concurrentPerform(iterations: 32) { _ in
+    sink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .invoked, operationId: UUID().uuidString))
+  }
+  sink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeCompletion, outcome: .failed, operationId: "receipt-account-secret-raw-error"))
+  let url = root.appendingPathComponent("logs/host-runtime.log")
+  let text = try String(contentsOf: url, encoding: .utf8)
+  let lines = text.split(separator: "\n").map(String.init)
+  check(lines.count == 37, "all concurrent diagnostics and the runtime write must remain whole retained lines")
+  check(lines.contains("runtime-still-writable"), "Premium sink must not close the runtime's original descriptor")
+  for stage in ["trusted_native_invocation", "storekit_callback", "trusted_native_completion"] {
+    check(lines.contains { $0.contains("stage=\(stage)") && $0.contains("operationId=\(operationId)") }, "all native categorical stages must be retained independently of stderr")
+  }
+  check(lines.filter { $0.contains("stage=trusted_native_completion") && $0.contains("operationId=\(operationId)") }.count == 1, "one actual adapter terminal must produce one retained completion")
+  check(!text.contains("receipt-account-secret-raw-error"), "invalid operation identity must never leak raw material")
+  check(lines.filter { $0.hasPrefix("MEETLESS_PREMIUM_DIAGNOSTIC") }.allSatisfy { $0.utf8.count < 256 && $0.contains(" timestampMs=") }, "categorical records must remain bounded and timestamped")
+  let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+  check((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600, "native diagnostics must use the existing private host-runtime log permissions")
+}
+
 private func testPremiumPurchaseOutcomePolicy() {
   check(
     meetlessPremiumPurchaseOutcome(succeeded: true, userCancelled: true, accessStatus: "inactive") == "cancelled",
@@ -4544,6 +4589,10 @@ private struct TranscriptionCapabilityTests {
     do { try testPackagedEndpointCompositionAndOwnership() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: packaged endpoint composition and ownership: \(error)\n".utf8))
+    }
+    do { try testPremiumHostLogSurvivesUnavailableStandardError() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: Premium host log persistence: \(error)\n".utf8))
     }
     testPremiumSocketBoundary()
     testPremiumPurchaseOutcomePolicy()
