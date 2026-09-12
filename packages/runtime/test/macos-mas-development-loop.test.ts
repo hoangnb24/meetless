@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   assertExactMasDevelopmentInstallPath,
+  probeMasDevelopmentPlugin,
   prepareMasUpdateDirectory,
   parseMasDevelopmentLoopArguments,
   prepareMasDevelopmentCandidate,
@@ -256,4 +257,52 @@ test("reuse-current bypasses only production and still rejects invalid current a
   expect(script).toContain("validate: validateProofRoot");
   expect(script).toContain("dependencies: expected");
   expect(script).toContain("artifactBinding: validation.artifactBinding");
+});
+
+
+test("fresh readiness child avoids real Node pre-build module cache", async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-readiness-cache-")));
+  roots.push(root);
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const { pathToFileURL } = await import("node:url");
+  const moduleUrl = pathToFileURL(path.resolve(import.meta.dirname, "../../../scripts/lib/macos-mas-development-loop.mjs")).href;
+  const program = `
+    import { writeFile } from "node:fs/promises";
+    import { pathToFileURL } from "node:url";
+    import path from "node:path";
+    const root = process.argv[1];
+    const contracts = path.join(root, "contracts.mjs");
+    const client = path.join(root, "client.mjs");
+    await writeFile(contracts, "export const original = true;");
+    await import(pathToFileURL(contracts).href);
+    await writeFile(contracts, "export const original = true; export const addedAfterBuild = 2;");
+    await writeFile(client, [
+      "import { addedAfterBuild } from './contracts.mjs';",
+      "export async function connectMeetlessClient(options) {",
+      "  if (options.url !== 'ws://127.0.0.1:16777/ws' || options.clientType !== 'cli') throw new Error('wrong endpoint');",
+      "  return { client: { listMeetings: async () => Array(addedAfterBuild).fill({}) }, close: async () => {} };",
+      "}",
+    ].join("\\n"));
+    let staleCacheFailed = false;
+    try { await import(pathToFileURL(client).href); }
+    catch (error) { staleCacheFailed = error.message.includes("does not provide an export named 'addedAfterBuild'"); }
+    if (!staleCacheFailed) throw new Error("same-process regression was not reproduced");
+    const { probeMasDevelopmentPlugin } = await import(process.argv[2]);
+    const result = await probeMasDevelopmentPlugin(pathToFileURL(client).href);
+    if (result.meetingCount !== 2) throw new Error("fresh child did not read rebuilt contracts");
+    process.stdout.write("old-cache-reproduced;fresh-child-passed");
+  `;
+  const result = await promisify(execFile)(process.execPath, ["--input-type=module", "-e", program, root, moduleUrl]);
+  expect(result.stdout).toBe("old-cache-reproduced;fresh-child-passed");
+});
+
+
+test("readiness child failure reports a category without module or client details", async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-readiness-error-")));
+  roots.push(root);
+  const { pathToFileURL } = await import("node:url");
+  const client = path.join(root, "client.mjs");
+  await writeFile(client, "throw new Error('private-client-detail');");
+  await expect(probeMasDevelopmentPlugin(pathToFileURL(client).href)).rejects.toThrow(/^Meetless plugin readiness probe failed$/);
 });

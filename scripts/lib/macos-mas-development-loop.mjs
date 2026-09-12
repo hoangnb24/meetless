@@ -263,3 +263,38 @@ export async function prepareMasDevelopmentCandidate({ reuseCurrent, produce, va
   // Reuse is only a producer bypass: the exact same full validation is required.
   return validate(proofRoot);
 }
+
+
+// Build can replace the client/contracts modules after this process imported the
+// artifact validator. A fresh process avoids mixing old cached exports with the
+// newly built client while still probing the real installed host endpoint.
+export async function probeMasDevelopmentPlugin(clientModuleUrl, { execute = execFileAsync } = {}) {
+  try {
+    const { stdout } = await execute(process.execPath, ["--input-type=module", "-e", `
+      try {
+        const { connectMeetlessClient } = await import(process.argv[1]);
+        const connected = await connectMeetlessClient({
+          url: "ws://127.0.0.1:16777/ws",
+          clientId: "mas-development-loop-" + process.pid,
+          clientType: "cli",
+        });
+        try {
+          const meetings = await connected.client.listMeetings();
+          process.stdout.write(JSON.stringify({ meetingCount: meetings.length }));
+        } finally {
+          await connected.close();
+        }
+      } catch {
+        process.stderr.write("Meetless plugin readiness probe failed\\n");
+        process.exitCode = 1;
+      }
+    `, clientModuleUrl], { timeout: 10_000, maxBuffer: 64 * 1024 });
+    const result = JSON.parse(stdout);
+    if (!Number.isSafeInteger(result.meetingCount) || result.meetingCount < 0) {
+      throw new Error("Meetless plugin readiness probe returned an invalid meeting count");
+    }
+    return result;
+  } catch {
+    throw new Error("Meetless plugin readiness probe failed");
+  }
+}

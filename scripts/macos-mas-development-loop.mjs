@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   copyTreeWithDitto,
+  probeMasDevelopmentPlugin,
   parseMasDevelopmentLoopArguments,
   prepareMasDevelopmentCandidate,
   updateMasDevelopmentInstall,
@@ -125,26 +126,18 @@ async function launchAndVerify() {
       if (identity.bundlePath !== paths.installPath || identity.bundleIdentifier !== "com.meetless.app") {
         throw new Error("published host identity does not match the installed Meetless app");
       }
-      const { connectMeetlessClient } = await import(pathToFileURL(path.join(repositoryRoot, "packages/meetless-client/dist/index.js")).href);
-      const connected = await connectMeetlessClient({
-        url: "ws://127.0.0.1:16777/ws",
-        clientId: `mas-development-loop-${process.pid}`,
-        clientType: "cli",
-      });
-      try {
-        const meetings = await connected.client.listMeetings();
-        process.stdout.write(`${JSON.stringify({
-          status: "owner-test-ready",
-          installedApp: paths.installPath,
-          durableArtifact: paths.bundlePath,
-          runtimeRoot: paths.runtimeRoot,
-          plugin: "meetless",
-          meetingCount: meetings.length,
-        }, null, 2)}\n`);
-        return;
-      } finally {
-        await connected.close();
-      }
+      const { meetingCount } = await probeMasDevelopmentPlugin(
+        pathToFileURL(path.join(paths.installPath, "Contents/Resources/meetless/packages/meetless-client/dist/index.js")).href,
+      );
+      process.stdout.write(`${JSON.stringify({
+        status: "owner-test-ready",
+        installedApp: paths.installPath,
+        durableArtifact: paths.bundlePath,
+        runtimeRoot: paths.runtimeRoot,
+        plugin: "meetless",
+        meetingCount,
+      }, null, 2)}\n`);
+      return;
     } catch (error) {
       lastError = error;
       await delay(250);
