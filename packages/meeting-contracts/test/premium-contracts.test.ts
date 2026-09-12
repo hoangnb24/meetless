@@ -4,6 +4,7 @@ import {
   MeetingManagedDeviceRevokeRpc,
   MeetingManagedDevicesRpc,
   MeetingPremiumPurchaseRpc,
+  MeetingPremiumOperationRpc,
   PremiumAccessWireSchema,
   PremiumMutationResultWireSchema,
 } from "../src/index.js";
@@ -21,7 +22,11 @@ describe("Premium wire contracts", () => {
       }],
       reason: null,
     })).toMatchObject({ status: "active" });
-    expect(MeetingPremiumPurchaseRpc.input.parse({ packageId: "annual" })).toEqual({ packageId: "annual" });
+    const operationId = "12345678-1234-4123-8123-123456789abc";
+    expect(MeetingPremiumPurchaseRpc.input.parse({ packageId: "annual", operationId })).toEqual({ packageId: "annual", operationId });
+    expect(MeetingPremiumOperationRpc.input.parse({ operationId })).toEqual({ operationId });
+    expect(() => MeetingPremiumOperationRpc.input.parse({ operationId: "account-or-transaction" })).toThrow();
+    expect(() => MeetingPremiumPurchaseRpc.input.parse({ packageId: "monthly" })).toThrow();
   });
 
   test("rejects contradictory access states and raw store diagnostics", () => {

@@ -181,14 +181,21 @@ export const MeetingPremiumStatusRpc = defineRpc({
 
 export const MeetingPremiumPurchaseRpc = defineRpc({
   name: "meeting.premium.purchase",
-  input: z.object({ packageId: z.enum(["monthly", "annual"]) }).strict(),
+  input: z.object({ packageId: z.enum(["monthly", "annual"]), operationId: z.uuid() }).strict(),
   output: PremiumMutationResultWireSchema,
 });
 
 export const MeetingPremiumRestoreRpc = defineRpc({
   name: "meeting.premium.restore",
-  input: z.object({}).strict(),
+  input: z.object({ operationId: z.uuid() }).strict(),
   output: PremiumMutationResultWireSchema,
+});
+
+/** Polling observes one mutation; it never dispatches another store operation. */
+export const MeetingPremiumOperationRpc = defineRpc({
+  name: "meeting.premium.operation",
+  input: z.object({ operationId: z.uuid() }).strict(),
+  output: PremiumMutationResultWireSchema.nullable(),
 });
 
 /** Device management is anonymous and intentionally excludes host/computer names. */

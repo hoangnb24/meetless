@@ -22,6 +22,7 @@ describe("Meetless plugin contribution", () => {
       "meeting.transcript",
       "meeting.transcription.consent",
       "meeting.citation.resolve",
+      "meeting.premium.operation",
       "meeting.premium.status",
       "meeting.premium.purchase",
       "meeting.premium.restore",

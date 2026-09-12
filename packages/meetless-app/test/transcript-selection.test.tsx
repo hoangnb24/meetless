@@ -77,7 +77,7 @@ describe("transcript meeting selection ordering", () => {
       await surface().props.onRestorePremium();
     });
     expect(purchasePremium).toHaveBeenCalledOnce();
-    expect(purchasePremium).toHaveBeenCalledWith("monthly");
+    expect(purchasePremium).toHaveBeenCalledWith("monthly", expect.stringMatching(/^[0-9a-f-]{36}$/u));
     expect(restorePremium).not.toHaveBeenCalled();
 
     purchaseCompletion.resolve({ outcome: "cancelled", access: inactivePremium });
@@ -86,74 +86,60 @@ describe("transcript meeting selection ordering", () => {
     expect(surface().props.premiumPendingAction).toBeNull();
   });
 
-  test("caps local Premium pending at 30s and requires explicit refresh for late success", async () => {
-    const inactivePremium = {
-      entitlement: "premium" as const,
-      status: "inactive" as const,
-      packages: [{
-        packageId: "monthly" as const,
-        productId: "com.meetless.app.premium.monthly",
-        localizedPrice: "$9.99",
-        trialEligible: false,
-      }],
-      reason: null,
-    };
-    const activePremium = { ...inactivePremium, status: "active" as const };
-    const delayedStatus = deferred<typeof activePremium>();
-    const purchaseDeadline = deferred<never>();
+  test.each([
+    { outcome: "active", route: "poll", action: "purchase" },
+    { outcome: "cancelled", route: "poll", action: "purchase" },
+    { outcome: "failed", route: "poll", action: "purchase" },
+    { outcome: "active", route: "direct", action: "purchase" },
+    { outcome: "active", route: "pending", action: "purchase" },
+    { outcome: "active", route: "poll", action: "restore" },
+    { outcome: "active", route: "unknown", action: "purchase" },
+  ] as const)("keeps the UUID pending beyond 30s and automatically applies late $outcome via $route for $action", async ({ outcome, route, action }) => {
+    const inactivePremium = { entitlement: "premium" as const, status: "inactive" as const, packages: [], reason: null };
+    const terminalAccess = { ...inactivePremium, status: outcome === "active" ? "active" as const : "inactive" as const };
+    const delayedResult = deferred<{ outcome: typeof outcome; access: typeof terminalAccess }>();
+    const purchaseDeadline = deferred<{ outcome: typeof outcome; access: typeof terminalAccess }>();
+    const blockedPoll = deferred<never>();
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     try {
-      const getPremiumAccess = vi.fn()
-        .mockResolvedValueOnce(inactivePremium)
-        .mockReturnValueOnce(delayedStatus.promise);
-      const purchasePremium = vi.fn(() => purchaseDeadline.promise);
+      const getPremiumAccess = vi.fn(async () => inactivePremium);
+      const mutation = () => route === "pending" ? Promise.resolve({ outcome: "pending", access: inactivePremium }) : route === "unknown" ? Promise.reject(new Error("transport interrupted")) : purchaseDeadline.promise;
+      const purchasePremium = vi.fn(mutation);
+      const restorePremium = vi.fn(mutation);
+      const getPremiumOperation = vi.fn(() => route === "direct" ? blockedPoll.promise : delayedResult.promise);
+      if (route === "unknown") getPremiumOperation.mockResolvedValueOnce(null as never);
+      const transcribeMeeting = vi.fn();
       connectMeetlessClient.mockResolvedValue({
-        client: {
-          listMeetings: async () => [],
-          getPremiumAccess,
-          purchasePremium,
-          restorePremium: vi.fn(async () => ({ outcome: "failed" as const, access: inactivePremium })),
-        },
-        close: async () => undefined,
-        serverInfo: null,
+        client: { listMeetings: async () => [], getPremiumAccess, purchasePremium, restorePremium, getPremiumOperation, transcribeMeeting },
+        close: async () => undefined, serverInfo: null,
       });
       await act(async () => { renderer = create(<AppContent mode="desktop" />); });
-      await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
       const surface = () => renderer!.root.findByType("MeetingListSurface");
       await vi.waitFor(() => expect(surface().props.premiumAccess).toEqual(inactivePremium));
-
       vi.useFakeTimers();
       let purchaseRequest!: Promise<void>;
-      await act(async () => {
-        purchaseRequest = surface().props.onPurchasePremium("monthly");
-        await Promise.resolve();
-      });
+      await act(async () => { purchaseRequest = action === "purchase" ? surface().props.onPurchasePremium("monthly") : surface().props.onRestorePremium(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(31_000); });
       expect(surface().props.premiumPending).toBe(true);
-      expect(surface().props.premiumPendingAction).toBe("purchase");
-      await act(async () => { vi.advanceTimersByTime(31_000); });
-      await act(async () => { await purchaseRequest; });
-      expect(surface().props.premiumPending).toBe(false);
-      expect(surface().props.premiumPendingAction).toBeNull();
-      expect(surface().props.premiumError).toBe("Premium is still being processed. Refresh to check again.");
-      expect(surface().props.premiumAccess).toEqual(inactivePremium);
-      expect(surface().props.onRefreshPremium).toBeTypeOf("function");
-      expect(info.mock.calls.map(([line]) => line).join(" ")).not.toContain('"outcome":"failed"');
-
-      await act(async () => {
-        delayedStatus.resolve(activePremium);
-        await surface().props.onRefreshPremium();
-      });
-      expect(surface().props.premiumPending).toBe(false);
-      expect(surface().props.premiumAccess).toEqual(activePremium);
+      expect(surface().props.premiumPendingAction).toBe(action);
       expect(surface().props.premiumError).toBeNull();
-      expect(info.mock.calls.map(([line]) => line).filter((line) => line.includes('"stage":"ui_completion"')))
-        .toEqual([
-          '[meetless-premium] {"stage":"ui_completion","outcome":"pending"}',
-        ]);
-    } finally {
-      vi.useRealTimers();
-      info.mockRestore();
-    }
+      await act(async () => { await surface().props.onPurchasePremium("monthly"); await surface().props.onRestorePremium(); });
+      const dispatched = action === "purchase" ? purchasePremium : restorePremium;
+      expect(dispatched).toHaveBeenCalledOnce();
+      expect(action === "purchase" ? restorePremium : purchasePremium).not.toHaveBeenCalled();
+      const operationId = dispatched.mock.calls[0]![action === "purchase" ? 1 : 0];
+      expect(getPremiumOperation).toHaveBeenCalledWith(operationId);
+      expect(info.mock.calls.map(([line]) => line).join(" ")).not.toContain('"stage":"ui_completion"');
+      await act(async () => { (route === "direct" ? purchaseDeadline : delayedResult).resolve({ outcome, access: terminalAccess }); await purchaseRequest; });
+      expect(surface().props.premiumPending).toBe(false);
+      expect(surface().props.premiumAccess).toEqual(terminalAccess);
+      expect(surface().props.premiumError).toBe(outcome === "failed" ? "Purchase could not complete. Try again." : null);
+      expect(getPremiumAccess).toHaveBeenCalledOnce();
+      expect(transcribeMeeting).not.toHaveBeenCalled();
+      const completions = info.mock.calls.map(([line]) => line).filter((line) => line.includes('"stage":"ui_completion"'));
+      expect(completions).toHaveLength(1);
+      expect(JSON.parse(completions[0].replace("[meetless-premium] ", ""))).toMatchObject({ stage: "ui_completion", outcome, operationId });
+    } finally { vi.useRealTimers(); info.mockRestore(); }
   });
 
   test("applies current inactive Premium access after an active mutation", async () => {
@@ -244,7 +230,7 @@ describe("transcript meeting selection ordering", () => {
       .mockResolvedValue(unavailable);
     const purchasePremium = vi.fn(async () => ({ outcome, access: partial }));
     connectMeetlessClient.mockResolvedValue({
-      client: { listMeetings: async () => [], getPremiumAccess, purchasePremium },
+      client: { listMeetings: async () => [], getPremiumAccess, purchasePremium, getPremiumOperation: vi.fn(async () => ({ outcome: "failed", access: partial })) },
       close: async () => undefined,
       serverInfo: null,
     });
@@ -254,7 +240,7 @@ describe("transcript meeting selection ordering", () => {
     await vi.waitFor(() => expect(surface().props.premiumAccess).toEqual(catalog));
 
     await act(async () => { await surface().props.onPurchasePremium("monthly"); });
-    expect(purchasePremium).toHaveBeenCalledWith("monthly");
+    expect(purchasePremium).toHaveBeenCalledWith("monthly", expect.stringMatching(/^[0-9a-f-]{36}$/u));
     expect(surface().props.premiumAccess.status).toBe("inactive");
     expect(surface().props.premiumAccess.packages.map((item: { packageId: string }) => item.packageId)).toEqual(["monthly", "annual"]);
     expect(surface().props.premiumAccess.status).not.toBe("active");

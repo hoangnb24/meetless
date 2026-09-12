@@ -914,28 +914,29 @@ final class MeetlessTranscriptionCapability {
         ok: true,
         outcome: recovered.outcome,
         access: recovered.access,
-        appleSignedTransaction: recovered.appleSignedTransaction
+        appleSignedTransaction: recovered.appleSignedTransaction,
+        operationId: recovered.operationId
       )
       return
     }
     if operation == "premiumStatus" || operation == "premiumPurchase" || operation == "premiumRestore" {
-      let result = runtimeAuthorization.withValidLease(lease) { () -> (String, MeetlessPremiumAccessResult, String?) in
-        if operation == "premiumStatus" { return ("status", premium.status(), nil) }
+      let result = runtimeAuthorization.withValidLease(lease) { () -> (String, MeetlessPremiumAccessResult, String?, String?) in
+        if operation == "premiumStatus" { return ("status", premium.status(), nil, nil) }
         if operation == "premiumRestore" {
-          let restored = premium.restore()
-          return (restored.outcome, restored.access, restored.appleSignedTransaction)
+          let restored = premium.restore(operationId: (request["operationId"] as? String).flatMap { UUID(uuidString: $0) == nil ? nil : $0 } ?? UUID().uuidString)
+          return (restored.outcome, restored.access, restored.appleSignedTransaction, restored.operationId)
         }
         guard let packageId = request["packageId"] as? String, packageId == "monthly" || packageId == "annual" else {
-          return ("failed", .unavailable("store_unavailable"), nil)
+          return ("failed", .unavailable("store_unavailable"), nil, nil)
         }
-        let purchased = premium.purchase(packageId: packageId)
-        return (purchased.outcome, purchased.access, purchased.appleSignedTransaction)
+        let purchased = premium.purchase(packageId: packageId, operationId: (request["operationId"] as? String).flatMap { UUID(uuidString: $0) == nil ? nil : $0 } ?? UUID().uuidString)
+        return (purchased.outcome, purchased.access, purchased.appleSignedTransaction, purchased.operationId)
       }
       guard let result else {
         writePremiumResponse(client, requestId: requestId, ok: false, outcome: "failed", access: .unavailable("store_unavailable"))
         return
       }
-      writePremiumResponse(client, requestId: requestId, ok: true, outcome: result.0, access: result.1, appleSignedTransaction: result.2)
+      writePremiumResponse(client, requestId: requestId, ok: true, outcome: result.0, access: result.1, appleSignedTransaction: result.2, operationId: result.3)
       return
     }
     guard operation == "transcribe",
@@ -1165,7 +1166,8 @@ final class MeetlessTranscriptionCapability {
     ok: Bool,
     outcome: String,
     access: MeetlessPremiumAccessResult,
-    appleSignedTransaction: String? = nil
+    appleSignedTransaction: String? = nil,
+    operationId: String? = nil
   ) {
     let packages: [[String: Any]] = access.packages.map { package in
       [
@@ -1189,6 +1191,7 @@ final class MeetlessTranscriptionCapability {
       ],
     ]
     if let appleSignedTransaction { response["appleSignedTransaction"] = appleSignedTransaction }
+    if let operationId { response["operationId"] = operationId }
     guard let data = try? JSONSerialization.data(withJSONObject: response) else { return }
     writeAll(descriptor, data: data + Data([10]))
   }

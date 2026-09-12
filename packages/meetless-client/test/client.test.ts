@@ -151,6 +151,15 @@ describe("Meetless capability gate", () => {
     expect(invokePluginRpc).toHaveBeenCalledWith("meetless", "meeting.delete", { meetingId: "m-1" });
   });
 
+  test("returns a typed Premium failure before dispatch when the client is not ready", async () => {
+    const invokePluginRpc = vi.fn();
+    const client = new MeetlessClient(daemon({ invokePluginRpc }));
+    const operationId = "12345678-1234-4123-8123-123456789abc";
+    await expect(client.purchasePremium("monthly", operationId)).resolves.toMatchObject({ outcome: "failed" });
+    await expect(client.restorePremium(operationId)).resolves.toMatchObject({ outcome: "failed" });
+    expect(invokePluginRpc).not.toHaveBeenCalled();
+  });
+
   test("routes Premium status, purchase, and restore through strict plugin RPCs", async () => {
     const access = {
       entitlement: "premium" as const,
@@ -173,14 +182,17 @@ describe("Meetless capability gate", () => {
     await client.initialize();
 
     await expect(client.getPremiumAccess()).resolves.toEqual(access);
-    await expect(client.purchasePremium("monthly")).resolves.toMatchObject({ outcome: "active" });
-    await expect(client.restorePremium()).resolves.toMatchObject({ outcome: "active" });
+    const operationId = "12345678-1234-4123-8123-123456789abc";
+    await expect(client.getPremiumOperation(operationId)).resolves.toMatchObject({ outcome: "active" });
+    await expect(client.purchasePremium("monthly", operationId)).resolves.toMatchObject({ outcome: "active" });
+    await expect(client.restorePremium(operationId)).resolves.toMatchObject({ outcome: "active" });
     await expect(client.listPremiumDevices()).resolves.toEqual([{ deviceId: "device-1", label: "This Mac", enrolledAt: 1_000, lastActiveAt: 2_000, revokedAt: null, current: true }]);
     await expect(client.revokePremiumDevice("device-2")).resolves.toEqual({ deviceId: "device-2", outcome: "revoked" });
     expect(invokePluginRpc.mock.calls).toEqual([
       ["meetless", "meeting.premium.status", {}],
-      ["meetless", "meeting.premium.purchase", { packageId: "monthly" }],
-      ["meetless", "meeting.premium.restore", {}],
+      ["meetless", "meeting.premium.operation", { operationId }],
+      ["meetless", "meeting.premium.purchase", { packageId: "monthly", operationId }],
+      ["meetless", "meeting.premium.restore", { operationId }],
       ["meetless", "meeting.premium.devices", {}],
       ["meetless", "meeting.premium.devices.revoke", { deviceId: "device-2" }],
     ]);

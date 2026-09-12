@@ -40,6 +40,7 @@ enum MeetlessPremiumDiagnosticOutcome: String {
 struct MeetlessPremiumDiagnostic: Equatable {
   let stage: MeetlessPremiumDiagnosticStage
   let outcome: MeetlessPremiumDiagnosticOutcome
+  var operationId: String? = nil
 }
 
 protocol MeetlessPremiumDiagnosticSink {
@@ -47,7 +48,7 @@ protocol MeetlessPremiumDiagnosticSink {
 }
 
 func meetlessPremiumDiagnosticLine(_ diagnostic: MeetlessPremiumDiagnostic) -> String {
-  "MEETLESS_PREMIUM_DIAGNOSTIC v1 stage=\(diagnostic.stage.rawValue) outcome=\(diagnostic.outcome.rawValue)"
+  "MEETLESS_PREMIUM_DIAGNOSTIC v1 stage=\(diagnostic.stage.rawValue) outcome=\(diagnostic.outcome.rawValue)" + (diagnostic.operationId.flatMap { UUID(uuidString: $0) == nil ? nil : $0 }.map { " operationId=\($0)" } ?? "") + " timestampMs=\(Int64(Date().timeIntervalSince1970 * 1000))"
 }
 
 final class MeetlessPremiumStandardErrorDiagnosticSink: MeetlessPremiumDiagnosticSink {
@@ -77,11 +78,13 @@ struct MeetlessPremiumMutationResult {
   let outcome: String
   let access: MeetlessPremiumAccessResult
   let appleSignedTransaction: String?
+  let operationId: String?
 
-  init(outcome: String, access: MeetlessPremiumAccessResult, appleSignedTransaction: String? = nil) {
+  init(outcome: String, access: MeetlessPremiumAccessResult, appleSignedTransaction: String? = nil, operationId: String? = nil) {
     self.outcome = outcome
     self.access = access
     self.appleSignedTransaction = appleSignedTransaction
+    self.operationId = operationId
   }
 }
 
@@ -90,6 +93,13 @@ protocol MeetlessPremiumPurchaseAccess {
   func purchase(packageId: String) -> MeetlessPremiumMutationResult
   func restore() -> MeetlessPremiumMutationResult
   func recover() -> MeetlessPremiumMutationResult?
+  func purchase(packageId: String, operationId: String) -> MeetlessPremiumMutationResult
+  func restore(operationId: String) -> MeetlessPremiumMutationResult
+}
+
+extension MeetlessPremiumPurchaseAccess {
+  func purchase(packageId: String, operationId: String) -> MeetlessPremiumMutationResult { purchase(packageId: packageId) }
+  func restore(operationId: String) -> MeetlessPremiumMutationResult { restore() }
 }
 
 func meetlessPremiumPurchaseOutcome(succeeded: Bool, userCancelled: Bool, accessStatus: String) -> String {
@@ -409,7 +419,8 @@ final class MeetlessPremiumOperationSlot {
 
   func begin(
     kind: MeetlessPremiumOperationKind,
-    pendingAccess: MeetlessPremiumAccessResult
+    pendingAccess: MeetlessPremiumAccessResult,
+    operationId: String = UUID().uuidString
   ) -> MeetlessPremiumOperationDecision {
     lock.lock()
     defer { lock.unlock() }
@@ -420,9 +431,15 @@ final class MeetlessPremiumOperationSlot {
       }
       return .pending(current.pendingAccess)
     }
-    let lease = MeetlessPremiumOperationLease(id: UUID().uuidString, kind: kind)
+    let lease = MeetlessPremiumOperationLease(id: operationId, kind: kind)
     entry = Entry(lease: lease, pendingAccess: pendingAccess, terminal: nil)
     return .started(lease)
+  }
+
+  func currentOperationId() -> String? {
+    lock.lock()
+    defer { lock.unlock() }
+    return entry?.lease.id
   }
 
   func pendingAccess() -> MeetlessPremiumAccessResult? {
@@ -439,11 +456,13 @@ final class MeetlessPremiumOperationSlot {
     return terminal
   }
 
-  func complete(_ lease: MeetlessPremiumOperationLease, result: MeetlessPremiumMutationResult) {
+  @discardableResult
+  func complete(_ lease: MeetlessPremiumOperationLease, result: MeetlessPremiumMutationResult) -> Bool {
     lock.lock()
     defer { lock.unlock() }
-    guard entry?.lease.id == lease.id, entry?.terminal == nil else { return }
-    entry?.terminal = result
+    guard entry?.lease.id == lease.id, entry?.terminal == nil else { return false }
+    entry?.terminal = MeetlessPremiumMutationResult(outcome: result.outcome, access: result.access, appleSignedTransaction: result.appleSignedTransaction, operationId: lease.id)
+    return true
   }
 }
 #endif
@@ -504,57 +523,60 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
   }
 
   func purchase(packageId: String) -> MeetlessPremiumMutationResult {
+    purchase(packageId: packageId, operationId: UUID().uuidString)
+  }
+
+  func purchase(packageId: String, operationId: String) -> MeetlessPremiumMutationResult {
     guard !Thread.isMainThread else {
-      diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .mainThread))
-      return failedMutation(access: .unavailable("store_unavailable"))
+      diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .mainThread, operationId: operationId))
+      return failedMutation(access: .unavailable("store_unavailable"), operationId: operationId)
     }
-    diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .invoked))
+    diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .invoked, operationId: operationId))
     guard let purchases else {
-      return failedMutation(access: .unavailable("not_configured"))
+      return failedMutation(access: .unavailable("not_configured"), operationId: operationId)
     }
     guard meetlessPremiumExpectedPurchase(for: packageId) != nil else {
-      return failedMutation(access: .unavailable("store_unavailable"))
+      return failedMutation(access: .unavailable("store_unavailable"), operationId: operationId)
     }
     let pendingAccess = MeetlessPremiumAccessResult(status: "inactive", packages: [], reason: nil)
-    switch operationSlot.begin(kind: .purchase(packageId), pendingAccess: pendingAccess) {
+    switch operationSlot.begin(kind: .purchase(packageId), pendingAccess: pendingAccess, operationId: operationId) {
     case .pending(let access):
-      diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .busy))
-      recordCompletion(outcome: "pending")
-      return MeetlessPremiumMutationResult(outcome: "pending", access: access)
+      diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .busy, operationId: operationId))
+      return MeetlessPremiumMutationResult(outcome: "pending", access: access, operationId: operationSlot.currentOperationId())
     case .terminal(let result):
       return result
     case .started(let lease):
       startPurchase(lease: lease, purchases: purchases, packageId: packageId)
-      recordCompletion(outcome: "pending")
-      return MeetlessPremiumMutationResult(outcome: "pending", access: pendingAccess)
+      return MeetlessPremiumMutationResult(outcome: "pending", access: pendingAccess, operationId: lease.id)
     }
   }
 
   func restore() -> MeetlessPremiumMutationResult {
+    restore(operationId: UUID().uuidString)
+  }
+
+  func restore(operationId: String) -> MeetlessPremiumMutationResult {
     guard !Thread.isMainThread else {
-      diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .mainThread))
-      return failedMutation(access: .unavailable("store_unavailable"))
+      diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .mainThread, operationId: operationId))
+      return failedMutation(access: .unavailable("store_unavailable"), operationId: operationId)
     }
-    diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .invoked))
+    diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .invoked, operationId: operationId))
     if let recovered = operationSlot.recover() {
-      recordCompletion(outcome: recovered.outcome)
       return recovered
     }
     guard let purchases else {
-      return failedMutation(access: .unavailable("not_configured"))
+      return failedMutation(access: .unavailable("not_configured"), operationId: operationId)
     }
     let pendingAccess = MeetlessPremiumAccessResult(status: "inactive", packages: [], reason: nil)
-    switch operationSlot.begin(kind: .restore, pendingAccess: pendingAccess) {
+    switch operationSlot.begin(kind: .restore, pendingAccess: pendingAccess, operationId: operationId) {
     case .pending(let access):
-      diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .busy))
-      recordCompletion(outcome: "pending")
-      return MeetlessPremiumMutationResult(outcome: "pending", access: access)
+      diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .busy, operationId: operationId))
+      return MeetlessPremiumMutationResult(outcome: "pending", access: access, operationId: operationSlot.currentOperationId())
     case .terminal(let result):
       return result
     case .started(let lease):
       startRestore(lease: lease, purchases: purchases)
-      recordCompletion(outcome: "pending")
-      return MeetlessPremiumMutationResult(outcome: "pending", access: pendingAccess)
+      return MeetlessPremiumMutationResult(outcome: "pending", access: pendingAccess, operationId: lease.id)
     }
   }
 
@@ -646,7 +668,7 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
     callback: MeetlessPremiumStoreCallback,
     hasAnchor: Bool
   ) {
-    recordStoreKitCallback(callback)
+    recordStoreKitCallback(callback, operationId: lease.id)
     let releaseAnchor = { [weak self] in
       guard hasAnchor else { return }
       DispatchQueue.main.async { self?.presentationAnchor.release() }
@@ -691,7 +713,7 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
   }
 
   private func resolveRestore(lease: MeetlessPremiumOperationLease, callback: MeetlessPremiumStoreCallback) {
-    recordStoreKitCallback(callback)
+    recordStoreKitCallback(callback, operationId: lease.id)
     guard callback.error == nil else {
       finish(lease: lease, result: MeetlessPremiumMutationResult(
         outcome: "failed",
@@ -717,8 +739,8 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
   }
 
   private func finish(lease: MeetlessPremiumOperationLease, result: MeetlessPremiumMutationResult) {
-    operationSlot.complete(lease, result: result)
-    recordCompletion(outcome: result.outcome)
+    guard operationSlot.complete(lease, result: result) else { return }
+    recordCompletion(outcome: result.outcome, operationId: lease.id)
   }
 
   private func inactiveAccess(for package: Package) -> MeetlessPremiumAccessResult {
@@ -743,8 +765,8 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
   }
 
   private func finish(lease: MeetlessPremiumOperationLease, result: MeetlessPremiumMutationResult) {
-    operationSlot.complete(lease, result: result)
-    recordCompletion(outcome: result.outcome)
+    guard operationSlot.complete(lease, result: result) else { return }
+    recordCompletion(outcome: result.outcome, operationId: lease.id)
   }
   #endif
 
@@ -794,9 +816,9 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
     }
   }
 
-  private func failedMutation(access: MeetlessPremiumAccessResult) -> MeetlessPremiumMutationResult {
-    recordCompletion(outcome: "failed")
-    return MeetlessPremiumMutationResult(outcome: "failed", access: access)
+  private func failedMutation(access: MeetlessPremiumAccessResult, operationId: String? = nil) -> MeetlessPremiumMutationResult {
+    recordCompletion(outcome: "failed", operationId: operationId)
+    return MeetlessPremiumMutationResult(outcome: "failed", access: access, operationId: operationId)
   }
 
   #if canImport(AppKit)
@@ -816,15 +838,16 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
     return failedMutation(access: .unavailable("store_unavailable"))
   }
 
-  private func recordStoreKitCallback(_ callback: MeetlessPremiumStoreCallback) {
+  private func recordStoreKitCallback(_ callback: MeetlessPremiumStoreCallback, operationId: String) {
     diagnosticSink.record(MeetlessPremiumDiagnostic(
       stage: .storeKitCallback,
-      outcome: meetlessPremiumStoreCallbackOutcome(callback)
+      outcome: meetlessPremiumStoreCallbackOutcome(callback),
+      operationId: operationId
     ))
   }
   #endif
 
-  private func recordCompletion(outcome: String) {
+  private func recordCompletion(outcome: String, operationId: String? = nil) {
     let normalized: MeetlessPremiumDiagnosticOutcome
     switch outcome {
     case "active": normalized = .active
@@ -832,7 +855,7 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
     case "pending": normalized = .pending
     default: normalized = .failed
     }
-    diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeCompletion, outcome: normalized))
+    diagnosticSink.record(MeetlessPremiumDiagnostic(stage: .trustedNativeCompletion, outcome: normalized, operationId: operationId))
   }
 
   #if canImport(StoreKit)

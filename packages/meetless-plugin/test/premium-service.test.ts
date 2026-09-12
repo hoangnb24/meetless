@@ -1,3 +1,5 @@
+import net from "node:net";
+import { mkdtemp, rm } from "node:fs/promises";
 import { describe, expect, test, vi } from "vitest";
 import {
   NativePremiumAccessPort,
@@ -165,23 +167,24 @@ describe("Premium service", () => {
     expect(nativeStatus).toHaveBeenCalledOnce();
   });
 
-  test("lets explicit Restore consume a retained terminal without redispatching StoreKit Restore", async () => {
-    const restore = vi.fn(async () => ({ outcome: "active" as const, access: activeAccess }));
-    const recover = vi.fn(async () => ({
-      outcome: "active" as const,
-      access: activeAccess,
-      appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.restore.signature",
-    }));
+  test.each(["active", "cancelled", "failed"] as const)("drains an old %s result under its UUID before a new explicit Restore", async (outcome) => {
+    const oldId = "12345678-1234-4123-8123-123456789abc";
+    const newId = "12345678-1234-4123-8123-123456789abd";
+    const signedTransaction = "eyJhbGciOiJFUzI1NiJ9.restore.signature";
+    const restore = vi.fn(async () => ({ outcome: "active" as const, access: activeAccess, appleSignedTransaction: signedTransaction, operationId: newId }));
+    const recover = vi.fn().mockResolvedValueOnce({ outcome, access: activeAccess, operationId: oldId,
+      ...(outcome === "active" ? { appleSignedTransaction: signedTransaction } : {}),
+    }).mockResolvedValue(null);
     const enroll = vi.fn(async () => activeAuthorization());
     const service = new PremiumService(accessPort({ recover, restore }), {
-      onAppleSignedTransaction: enroll,
-      requireAppleSignedTransaction: true,
+      onAppleSignedTransaction: enroll, requireAppleSignedTransaction: true,
     });
-
-    await expect(service.restore()).resolves.toEqual({ outcome: "active", access: activeAccess });
+    await expect(service.restore(newId)).resolves.toEqual({ outcome: "active", access: activeAccess });
+    await expect(service.operationResult(oldId)).resolves.toMatchObject({ outcome });
+    await expect(service.operationResult(newId)).resolves.toMatchObject({ outcome: "active" });
     expect(recover).toHaveBeenCalledOnce();
     expect(enroll).toHaveBeenCalledOnce();
-    expect(restore).not.toHaveBeenCalled();
+    expect(restore).toHaveBeenCalledExactlyOnceWith(newId);
   });
 
   test("retains only the latest bounded transaction digest for dedupe", async () => {
@@ -261,19 +264,19 @@ describe("Premium service", () => {
     const second = service.purchase("monthly");
     recovery.resolve(null);
     await vi.waitFor(() => expect(purchase).toHaveBeenCalledOnce());
-    await expect(second).resolves.toMatchObject({ outcome: "pending" });
+    await expect(second).resolves.toMatchObject({ outcome: "failed" });
     expect(purchase).toHaveBeenCalledOnce();
     nativeResult.resolve({ outcome: "pending", access: activeAccess });
     await expect(first).resolves.toMatchObject({ outcome: "pending" });
   });
 
-  test("converges a native terminal transaction only on explicit status refresh", async () => {
+  test("converges a native terminal transaction through operation polling without redispatch", async () => {
     const signedTransaction = "eyJhbGciOiJFUzI1NiJ9.synthetic.signature";
     const enroll = vi.fn(async () => activeAuthorization());
-    const purchase = vi.fn()
-      .mockResolvedValueOnce({ outcome: "pending" as const, access: activeAccess })
+    const purchase = vi.fn().mockResolvedValue({ outcome: "pending" as const, access: activeAccess });
+    const recover = vi.fn().mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ outcome: "pending" as const, access: activeAccess, appleSignedTransaction: signedTransaction });
-    const service = new PremiumService(accessPort({ purchase }), {
+    const service = new PremiumService(accessPort({ purchase, recover }), {
       onAppleSignedTransaction: enroll,
       requireAppleSignedTransaction: true,
     });
@@ -282,7 +285,7 @@ describe("Premium service", () => {
     expect(enroll).not.toHaveBeenCalled();
     await expect(service.status()).resolves.toMatchObject({ status: "inactive" });
     await vi.waitFor(async () => expect(await service.status()).toMatchObject({ status: "active" }));
-    expect(purchase).toHaveBeenCalledTimes(2);
+    expect(purchase).toHaveBeenCalledOnce();
     expect(enroll).toHaveBeenCalledOnce();
   });
 
@@ -299,12 +302,12 @@ describe("Premium service", () => {
       requireAppleSignedTransaction: true,
     });
 
-    await expect(service.purchase("monthly")).resolves.toEqual({
+    await expect(service.purchase("monthly", "12345678-1234-4123-8123-123456789abc")).resolves.toEqual({
       outcome: "pending",
       access: { ...activeAccess, status: "inactive", reason: null },
     });
     await expect(service.status()).resolves.toMatchObject({ status: "inactive" });
-    await expect(service.purchase("monthly")).resolves.toEqual({
+    await expect(service.purchase("monthly", "12345678-1234-4123-8123-123456789abc")).resolves.toEqual({
       outcome: "pending",
       access: { ...activeAccess, status: "inactive", reason: null },
     });
@@ -321,23 +324,22 @@ describe("Premium service", () => {
       outcome: "cancelled";
       access: typeof activeAccess;
     }>();
-    const purchase = vi.fn()
-      .mockResolvedValueOnce({ outcome: "pending" as const, access: activeAccess })
-      .mockImplementation(() => terminal.promise);
+    const purchase = vi.fn().mockResolvedValue({ outcome: "pending" as const, access: activeAccess });
+    const recover = vi.fn().mockResolvedValueOnce(null).mockImplementation(() => terminal.promise);
     const service = new PremiumService(accessPort({
-      purchase,
+      purchase, recover,
       status: vi.fn(async () => ({ ...activeAccess, status: "inactive" as const, reason: null })),
     }));
 
     await expect(service.purchase("monthly")).resolves.toMatchObject({ outcome: "pending" });
     const firstRefresh = service.status();
     const secondRefresh = service.status();
-    await expect(secondRefresh).resolves.toMatchObject({ status: "inactive" });
-    expect(purchase).toHaveBeenCalledTimes(2);
+    expect(purchase).toHaveBeenCalledOnce();
 
     terminal.resolve({ outcome: "cancelled", access: activeAccess });
     await expect(firstRefresh).resolves.toMatchObject({ status: "inactive" });
-    expect(purchase).toHaveBeenCalledTimes(2);
+    await expect(secondRefresh).resolves.toMatchObject({ status: "inactive" });
+    expect(purchase).toHaveBeenCalledOnce();
   });
 
   test("keeps status pending while the native callback is delayed", async () => {
@@ -394,6 +396,104 @@ describe("Premium service", () => {
     });
   });
 
+  test.each(["cancelled", "failed"] as const)("retains late %s after ordinary status consumes native recovery", async (outcome) => {
+    const operationId = "12345678-1234-4123-8123-123456789abc";
+    const recover = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ outcome, access: activeAccess, operationId }).mockResolvedValue(null);
+    const purchase = vi.fn(async () => ({ outcome: "pending" as const, access: activeAccess, operationId }));
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      const service = new PremiumService(accessPort({ purchase, recover }));
+      await expect(service.purchase("monthly", operationId)).resolves.toMatchObject({ outcome: "pending" });
+      await expect(service.operationResult(operationId)).resolves.toMatchObject({ outcome: "pending" });
+      await service.status();
+      await expect(service.operationResult(operationId)).resolves.toMatchObject({ outcome });
+      await service.status();
+      await expect(service.purchase("monthly", operationId)).resolves.toMatchObject({ outcome });
+      expect(purchase).toHaveBeenCalledOnce();
+      const completions = info.mock.calls.map(([line]) => JSON.parse(line.replace("[meetless-premium] ", "")))
+        .filter((event) => event.stage === "plugin_completion");
+      expect(completions).toHaveLength(1);
+      expect(completions[0]).toMatchObject({ outcome, operationId });
+    } finally { info.mockRestore(); }
+  });
+
+  test("waits for old verified enrollment before dispatching a fresh UUID and enrolls each transaction once", async () => {
+    const oldId = "12345678-1234-4123-8123-123456789abc";
+    const newId = "12345678-1234-4123-8123-123456789abd";
+    const enrollment = deferred<PremiumAuthorizationSnapshot>();
+    const oldTransaction = "eyJhbGciOiJFUzI1NiJ9.old.signature";
+    const newTransaction = "eyJhbGciOiJFUzI1NiJ9.new.signature";
+    const enroll = vi.fn().mockReturnValueOnce(enrollment.promise).mockResolvedValue(activeAuthorization());
+    const restore = vi.fn(async () => ({ outcome: "pending" as const, access: activeAccess, appleSignedTransaction: newTransaction, operationId: newId }));
+    const recover = vi.fn().mockResolvedValueOnce({ outcome: "pending", access: activeAccess, appleSignedTransaction: oldTransaction, operationId: oldId }).mockResolvedValue(null);
+    const service = new PremiumService(accessPort({ recover, restore }), { onAppleSignedTransaction: enroll, requireAppleSignedTransaction: true });
+    const requested = service.restore(newId);
+    await vi.waitFor(() => expect(enroll).toHaveBeenCalledOnce());
+    expect(restore).not.toHaveBeenCalled();
+    await expect(service.operationResult(newId)).resolves.toMatchObject({ outcome: "pending" });
+    enrollment.resolve(activeAuthorization());
+    await requested;
+    await vi.waitFor(async () => expect(await service.operationResult(newId)).toMatchObject({ outcome: "active" }));
+    await expect(service.operationResult(oldId)).resolves.toMatchObject({ outcome: "active" });
+    await service.status();
+    await service.restore(newId);
+    expect(restore).toHaveBeenCalledExactlyOnceWith(newId);
+    expect(enroll.mock.calls).toEqual([[oldTransaction], [newTransaction]]);
+  });
+
+  test("recovers through the real native socket after losing the dispatched purchase response", async () => {
+    const directory = await mkdtemp("/private/tmp/meetless-premium-rpc-");
+    const socketPath = `${directory}/p.sock`;
+    const operationId = "12345678-1234-4123-8123-123456789abc";
+    let purchased = 0;
+    let recovered = false;
+    const server = net.createServer((socket) => {
+      socket.setEncoding("utf8");
+      let buffer = "";
+      socket.on("data", (chunk) => {
+        buffer += chunk;
+        if (!buffer.includes("\n")) return;
+        const request = JSON.parse(buffer.trim());
+        if (request.operation === "premiumPurchase") {
+          purchased += 1;
+          expect(request.operationId).toBe(operationId);
+          socket.destroy(); // StoreKit already owns the action; RPC response is lost.
+          return;
+        }
+        const hasTerminal = request.operation === "premiumRecover" && purchased === 1 && !recovered;
+        if (hasTerminal) recovered = true;
+        socket.end(JSON.stringify({ version: 1, requestId: request.requestId, type: "premium.access",
+          ok: hasTerminal, outcome: hasTerminal ? "cancelled" : "failed", access: activeAccess,
+          ...(hasTerminal ? { operationId } : {}),
+        }) + "\n");
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    try {
+      const service = new PremiumService(new NativePremiumAccessPort(socketPath));
+      await expect(service.purchase("monthly", operationId)).resolves.toMatchObject({ outcome: "pending" });
+      await expect(service.operationResult(operationId)).resolves.toMatchObject({ outcome: "cancelled" });
+      await expect(service.purchase("monthly", operationId)).resolves.toMatchObject({ outcome: "cancelled" });
+      expect(purchased).toBe(1);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a pending operation owned across a failed recovery observation", async () => {
+    const operationId = "12345678-1234-4123-8123-123456789abc";
+    const recover = vi.fn().mockResolvedValueOnce(null).mockRejectedValueOnce(new Error("private native detail"))
+      .mockResolvedValueOnce({ outcome: "cancelled", access: activeAccess, operationId });
+    const purchase = vi.fn(async () => ({ outcome: "pending" as const, access: activeAccess, operationId }));
+    const service = new PremiumService(accessPort({ purchase, recover }));
+    await service.purchase("monthly", operationId);
+    await expect(service.operationResult(operationId)).resolves.toMatchObject({ outcome: "pending" });
+    await expect(service.operationResult(operationId)).resolves.toMatchObject({ outcome: "cancelled" });
+    expect(purchase).toHaveBeenCalledOnce();
+  });
+
   test("emits categorical plugin completion diagnostics without exposing purchase data", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     try {
@@ -406,9 +506,10 @@ describe("Premium service", () => {
         access: { ...activeAccess, status: "inactive", reason: null },
       });
       const lines = info.mock.calls.map(([line]) => line);
-      expect(lines).toEqual([
-        '[meetless-premium] {"stage":"plugin_rpc_dispatch","outcome":"started"}',
-        '[meetless-premium] {"stage":"plugin_completion","outcome":"cancelled"}',
+      const events = lines.map((line) => JSON.parse(line.replace("[meetless-premium] ", "")));
+      expect(events).toEqual([
+        { stage: "plugin_rpc_dispatch", outcome: "started", operationId: expect.any(String), timestampMs: expect.any(Number) },
+        { stage: "plugin_completion", outcome: "cancelled", operationId: events[0].operationId, timestampMs: expect.any(Number) },
       ]);
       expect(lines.join(" ")).not.toMatch(/monthly|premium\.monthly|receipt|signed|secret/u);
     } finally {
@@ -435,10 +536,11 @@ describe("Premium service", () => {
         outcome: "failed",
         access: { entitlement: "premium", status: "unavailable", packages: [], reason: "store_unavailable" },
       });
-      expect(info.mock.calls.map(([line]) => line)).toEqual([
-        '[meetless-premium] {"stage":"plugin_rpc_dispatch","outcome":"started"}',
-        '[meetless-premium] {"stage":"native_rpc_dispatch","outcome":"started"}',
-        '[meetless-premium] {"stage":"plugin_completion","outcome":"failed"}',
+      const events = info.mock.calls.map(([line]) => JSON.parse(line.replace("[meetless-premium] ", "")));
+      expect(events).toEqual([
+        { stage: "plugin_rpc_dispatch", outcome: "started", operationId: expect.any(String), timestampMs: expect.any(Number) },
+        { stage: "native_rpc_dispatch", outcome: "started", operationId: events[0].operationId, timestampMs: expect.any(Number) },
+        { stage: "plugin_completion", outcome: "failed", operationId: events[0].operationId, timestampMs: expect.any(Number) },
       ]);
     } finally {
       info.mockRestore();

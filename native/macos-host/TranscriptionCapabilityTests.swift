@@ -542,6 +542,14 @@ private final class FakePremiumAccess: MeetlessPremiumPurchaseAccess {
     restoreCount += 1
     return MeetlessPremiumMutationResult(outcome: "active", access: active, appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.synthetic.signature")
   }
+  func purchase(packageId: String, operationId: String) -> MeetlessPremiumMutationResult {
+    let result = purchase(packageId: packageId)
+    return MeetlessPremiumMutationResult(outcome: result.outcome, access: result.access, appleSignedTransaction: result.appleSignedTransaction, operationId: operationId)
+  }
+  func restore(operationId: String) -> MeetlessPremiumMutationResult {
+    let result = restore()
+    return MeetlessPremiumMutationResult(outcome: result.outcome, access: result.access, appleSignedTransaction: result.appleSignedTransaction, operationId: operationId)
+  }
   func recover() -> MeetlessPremiumMutationResult? {
     defer { retainedTerminal = nil }
     return retainedTerminal
@@ -3448,7 +3456,8 @@ private func testPremiumSocketBoundary() {
   let statusPackages = statusAccess?["packages"] as? [[String: Any]]
   check(statusPackages?.first?["localizedPrice"] as? String == "799.000 ₫", "Premium status must preserve only store-localized price text")
 
-  let purchase = request("{\"version\":1,\"requestId\":\"premium-purchase\",\"operation\":\"premiumPurchase\",\"packageId\":\"monthly\"}")
+  let purchase = request("{\"version\":1,\"requestId\":\"premium-purchase\",\"operation\":\"premiumPurchase\",\"packageId\":\"monthly\",\"operationId\":\"12345678-1234-4123-8123-123456789abc\"}")
+  check(purchase?["operationId"] as? String == "12345678-1234-4123-8123-123456789abc", "socket purchase must preserve the original operation UUID independently from requestId")
   check(premium.purchasedPackage == "monthly", "Premium purchase must forward only an allowed package identifier")
   check(purchase?["outcome"] as? String == "active", "Premium purchase must return the normalized mutation outcome")
   let purchaseAccess = purchase?["access"] as? [String: Any]
@@ -3471,9 +3480,11 @@ private func testPremiumSocketBoundary() {
   premium.retainedTerminal = MeetlessPremiumMutationResult(
     outcome: "active",
     access: premium.active,
-    appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.retained.signature"
+    appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.retained.signature",
+    operationId: "12345678-1234-4123-8123-123456789abc"
   )
   let recovered = request("{\"version\":1,\"requestId\":\"premium-recover\",\"operation\":\"premiumRecover\"}")
+  check(recovered?["operationId"] as? String == "12345678-1234-4123-8123-123456789abc", "recovery must preserve the old operation UUID without relabeling")
   check(recovered?["ok"] as? Bool == true, "Premium recovery must return a retained terminal through the trusted private route")
   check(recovered?["appleSignedTransaction"] as? String == "eyJhbGciOiJFUzI1NiJ9.retained.signature", "Premium recovery must return opaque transaction material only to the trusted plugin boundary")
   let recoveredAgain = request("{\"version\":1,\"requestId\":\"premium-recover-again\",\"operation\":\"premiumRecover\"}")
@@ -3531,10 +3542,11 @@ private func testPremiumOperationSlotBoundary() {
   default:
     check(false, "a different in-flight Premium operation must not acquire a second slot")
   }
-  slot.complete(lease, result: terminal)
-  slot.complete(lease, result: MeetlessPremiumMutationResult(outcome: "failed", access: .unavailable("store_unavailable")))
+  check(slot.complete(lease, result: terminal), "first completion must be accepted for one terminal diagnostic")
+  check(!slot.complete(lease, result: MeetlessPremiumMutationResult(outcome: "failed", access: .unavailable("store_unavailable"))), "duplicate completion must not authorize another terminal diagnostic")
   switch slot.begin(kind: .purchase("monthly"), pendingAccess: pending) {
   case .terminal(let result):
+    check(result.operationId == lease.id, "retained result must preserve its operation UUID")
     check(result.appleSignedTransaction == "opaque-jws", "the first terminal callback must be retained for trusted plugin consumption")
   default:
     check(false, "a completed Premium operation must expose its retained terminal result")
@@ -3739,16 +3751,17 @@ private func testPremiumPresentationSelectionAndDiagnostics() {
     diagnosticSink: directInvocationSink,
     presentationAnchor: MeetlessPremiumPresentationAnchor(windowFactory: { nil })
   )
-  let directPurchase = directInvocationAccess.purchase(packageId: "monthly")
-  let directRestore = directInvocationAccess.restore()
+  let operationId = "12345678-1234-4123-8123-123456789abc"
+  let directPurchase = directInvocationAccess.purchase(packageId: "monthly", operationId: operationId)
+  let directRestore = directInvocationAccess.restore(operationId: operationId)
   check(directPurchase.outcome == "failed", "direct main-thread Premium purchase must fail closed")
   check(directRestore.outcome == "failed", "direct main-thread Premium restore must fail closed")
   check(
     directInvocationSink.events == [
-      MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .mainThread),
-      MeetlessPremiumDiagnostic(stage: .trustedNativeCompletion, outcome: .failed),
-      MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .mainThread),
-      MeetlessPremiumDiagnostic(stage: .trustedNativeCompletion, outcome: .failed),
+      MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .mainThread, operationId: operationId),
+      MeetlessPremiumDiagnostic(stage: .trustedNativeCompletion, outcome: .failed, operationId: operationId),
+      MeetlessPremiumDiagnostic(stage: .trustedNativeInvocation, outcome: .mainThread, operationId: operationId),
+      MeetlessPremiumDiagnostic(stage: .trustedNativeCompletion, outcome: .failed, operationId: operationId),
     ],
     "direct main-thread Premium calls must emit only trusted categorical failure diagnostics"
   )
@@ -3837,7 +3850,7 @@ private func testPremiumPresentationSelectionAndDiagnostics() {
   heldAnchor.release()
 
   let line = meetlessPremiumDiagnosticLine(MeetlessPremiumDiagnostic(stage: .presentationReadiness, outcome: .ready))
-  check(line == "MEETLESS_PREMIUM_DIAGNOSTIC v1 stage=presentation_readiness outcome=ready", "Premium diagnostics must use stable categorical codes")
+  check(line.hasPrefix("MEETLESS_PREMIUM_DIAGNOSTIC v1 stage=presentation_readiness outcome=ready timestampMs="), "Premium diagnostics must use stable categorical codes")
   check(!line.contains("signed") && !line.contains("secret") && !line.contains("receipt"), "Premium diagnostics must not expose transaction or secret material")
 }
 

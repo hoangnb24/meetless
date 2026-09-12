@@ -13,6 +13,7 @@ import {
   MeetingCreateRpc,
   MeetingDeleteRpc,
   MeetingListRpc,
+  MeetingPremiumOperationRpc,
   MeetingPremiumPurchaseRpc,
   MeetingPremiumRestoreRpc,
   MeetingPremiumStatusRpc,
@@ -60,17 +61,21 @@ export default function contribute(plugin: PluginContext) {
     const server = await import("./src/server.js");
     return server.getCitationPlaybackService().resolve({ meetingId, segmentId });
   });
+  plugin.handle(MeetingPremiumOperationRpc, async ({ operationId }) => {
+    const server = await import("./src/server.js");
+    return server.getPremiumService().operationResult(operationId);
+  });
   plugin.handle(MeetingPremiumStatusRpc, async () => {
     const server = await import("./src/server.js");
     return server.getPremiumService().status();
   });
-  plugin.handle(MeetingPremiumPurchaseRpc, async ({ packageId }) => {
+  plugin.handle(MeetingPremiumPurchaseRpc, async ({ packageId, operationId }) => {
     const server = await import("./src/server.js");
-    return server.getPremiumService().purchase(packageId);
+    return server.getPremiumService().purchase(packageId, operationId);
   });
-  plugin.handle(MeetingPremiumRestoreRpc, async () => {
+  plugin.handle(MeetingPremiumRestoreRpc, async ({ operationId }) => {
     const server = await import("./src/server.js");
-    return server.getPremiumService().restore();
+    return server.getPremiumService().restore(operationId);
   });
   plugin.handle(MeetingManagedDevicesRpc, async () => {
     const server = await import("./src/server.js");

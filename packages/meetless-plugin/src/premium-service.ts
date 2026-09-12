@@ -27,9 +27,9 @@ interface PremiumEnrollmentResult {
   readonly authorization: PremiumAuthorizationSnapshot | null;
 }
 
-function logPremiumDiagnostic(stage: PremiumDiagnosticStage, outcome: PremiumDiagnosticOutcome): void {
+function logPremiumDiagnostic(stage: PremiumDiagnosticStage, outcome: PremiumDiagnosticOutcome, operationId?: string): void {
   if (typeof console === "undefined") return;
-  console.info(`[meetless-premium] ${JSON.stringify({ stage, outcome })}`);
+  console.info(`[meetless-premium] ${JSON.stringify({ stage, outcome, ...(operationId ? { operationId } : {}), timestampMs: Date.now() })}`);
 }
 
 const NativePremiumResponseSchema = z.object({
@@ -41,6 +41,7 @@ const NativePremiumResponseSchema = z.object({
   access: PremiumAccessWireSchema,
   /** Trusted host/plugin field; PremiumService strips it before RPC return. */
   appleSignedTransaction: z.string().trim().min(1).optional(),
+  operationId: z.uuid().optional(),
 }).strict();
 
 type NativePremiumOperation = "premiumStatus" | "premiumPurchase" | "premiumRestore" | "premiumRecover";
@@ -48,12 +49,13 @@ type NativePremiumOperation = "premiumStatus" | "premiumPurchase" | "premiumRest
 export interface PremiumMutationResultInternal extends PremiumMutationResultWire {
   /** Opaque JWS retained inside the trusted plugin path only. */
   readonly appleSignedTransaction?: string;
+  readonly operationId?: string;
 }
 
 export interface PremiumAccessPort {
   status(): Promise<PremiumAccessWire>;
-  purchase(packageId: "monthly" | "annual"): Promise<PremiumMutationResultInternal>;
-  restore(): Promise<PremiumMutationResultInternal>;
+  purchase(packageId: "monthly" | "annual", operationId?: string): Promise<PremiumMutationResultInternal>;
+  restore(operationId?: string): Promise<PremiumMutationResultInternal>;
   /** Private native/plugin recovery; null means no retained native terminal. */
   recover(): Promise<PremiumMutationResultInternal | null>;
 }
@@ -69,7 +71,7 @@ export class UnavailablePremiumAccessPort implements PremiumAccessPort {
     return { outcome: "failed", access: unavailablePremium(this.reason) };
   }
 
-  async restore(): Promise<PremiumMutationResultInternal> {
+  async restore(operationId?: string): Promise<PremiumMutationResultInternal> {
     return { outcome: "failed", access: unavailablePremium(this.reason) };
   }
 
@@ -85,6 +87,12 @@ export class PremiumRequiredError extends Error {
   }
 }
 
+class NativePremiumRequestError extends Error {
+  constructor(readonly dispatched: boolean) {
+    super("Premium purchase service is unavailable");
+  }
+}
+
 export class NativePremiumAccessPort implements PremiumAccessPort {
   constructor(private readonly socketPath: string) {}
 
@@ -93,32 +101,33 @@ export class NativePremiumAccessPort implements PremiumAccessPort {
     return response.access;
   }
 
-  async purchase(packageId: "monthly" | "annual"): Promise<PremiumMutationResultInternal> {
-    const response = await this.request("premiumPurchase", packageId);
-    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction };
+  async purchase(packageId: "monthly" | "annual", operationId?: string): Promise<PremiumMutationResultInternal> {
+    const response = await this.request("premiumPurchase", packageId, operationId);
+    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction, operationId: response.operationId };
   }
 
-  async restore(): Promise<PremiumMutationResultInternal> {
-    const response = await this.request("premiumRestore");
-    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction };
+  async restore(operationId?: string): Promise<PremiumMutationResultInternal> {
+    const response = await this.request("premiumRestore", undefined, operationId);
+    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction, operationId: response.operationId };
   }
 
   async recover(): Promise<PremiumMutationResultInternal | null> {
     const response = await this.request("premiumRecover");
     if (!response.ok) return null;
-    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction };
+    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction, operationId: response.operationId };
   }
 
-  private request(operation: NativePremiumOperation, packageId?: "monthly" | "annual") {
+  private request(operation: NativePremiumOperation, packageId?: "monthly" | "annual", operationId?: string) {
     if (operation === "premiumPurchase" || operation === "premiumRestore") {
-      logPremiumDiagnostic("native_rpc_dispatch", "started");
+      logPremiumDiagnostic("native_rpc_dispatch", "started", operationId);
     }
     const requestId = randomUUID();
-    const message = JSON.stringify({ version: 1, requestId, operation, ...(packageId ? { packageId } : {}) });
+    const message = JSON.stringify({ version: 1, requestId, operation, ...(packageId ? { packageId } : {}), ...(operationId ? { operationId } : {}) });
     return new Promise<z.infer<typeof NativePremiumResponseSchema>>((resolve, reject) => {
       const socket = net.createConnection(this.socketPath);
       let buffer = "";
       let settled = false;
+      let dispatched = false;
       const finish = (callback: () => void) => {
         if (settled) return;
         settled = true;
@@ -126,7 +135,8 @@ export class NativePremiumAccessPort implements PremiumAccessPort {
         callback();
       };
       socket.setEncoding("utf8");
-      socket.once("error", () => finish(() => reject(new Error("Premium purchase service is unavailable"))));
+      socket.once("error", () => finish(() => reject(new NativePremiumRequestError(dispatched))));
+      socket.once("close", () => finish(() => reject(new NativePremiumRequestError(dispatched))));
       socket.on("data", (chunk: string) => {
         buffer += chunk;
         const newline = buffer.indexOf("\n");
@@ -136,10 +146,13 @@ export class NativePremiumAccessPort implements PremiumAccessPort {
           if (response.requestId !== requestId) throw new Error("native request identity mismatch");
           finish(() => resolve(response));
         } catch {
-          finish(() => reject(new Error("Premium purchase service returned an invalid response")));
+          finish(() => reject(new NativePremiumRequestError(dispatched)));
         }
       });
-      socket.once("connect", () => socket.end(`${message}\n`));
+      socket.once("connect", () => {
+        dispatched = true;
+        socket.end(`${message}\n`);
+      });
     });
   }
 }
@@ -149,6 +162,27 @@ export function unavailablePremium(reason: PremiumAccessWire["reason"] = "store_
 }
 
 export class PremiumService {
+  private readonly operations = new Map<string, { token: number; result: PremiumMutationResultWire }>();
+  private readonly operationIds = new Map<number, string>();
+
+  async operationResult(operationId: string): Promise<PremiumMutationResultWire | null> {
+    const entry = this.operations.get(operationId);
+    if (!entry) return null;
+    if (entry.result.outcome === "pending" && !this.enrollment) {
+      await this.reconcilePendingMutation();
+    }
+    return this.operations.get(operationId)!.result;
+  }
+
+  private retainResult(token: number, result: PremiumMutationResultWire): void {
+    const operationId = this.operationIds.get(token);
+    if (!operationId) return;
+    const entry = this.operations.get(operationId);
+    if (entry && entry.result.outcome !== "pending") return;
+    this.operations.set(operationId, { token, result });
+    if (result.outcome !== "pending") logPremiumDiagnostic("plugin_completion", result.outcome, operationId);
+  }
+
   private pendingMutation: {
     readonly token: number;
     readonly kind: "purchase" | "restore";
@@ -170,7 +204,6 @@ export class PremiumService {
   private verifiedAccess: PremiumAccessWire | null = null;
   private lastAccess: PremiumAccessWire | null = null;
   private operationSequence = 0;
-  private nativeRequestInFlight: number | null = null;
   private reconciliationInFlight: Promise<void> | null = null;
   private recoveryInFlight: Promise<PremiumMutationResultWire | null> | null = null;
   private enrollmentFailure = false;
@@ -186,7 +219,7 @@ export class PremiumService {
   ) {}
 
   async status(): Promise<PremiumAccessWire> {
-    if (this.pendingMutation && !this.enrollment && this.nativeRequestInFlight === null) {
+    if (this.pendingMutation && !this.enrollment) {
       await this.reconcilePendingMutation();
     }
     if (this.enrollment) return this.enrollment.access;
@@ -243,74 +276,73 @@ export class PremiumService {
     if ((await this.status()).status !== "active") throw new PremiumRequiredError();
   }
 
-  async purchase(packageId: "monthly" | "annual"): Promise<PremiumMutationResultWire> {
-    if (this.pendingMutation && !this.enrollment && this.nativeRequestInFlight === null) {
-      await this.reconcilePendingMutation();
-    }
-    if (this.enrollment || this.pendingMutation) {
-      return { outcome: "pending", access: this.enrollment?.access ?? this.pendingMutation!.access };
-    }
-    const recovered = await this.recoverRetainedTerminal();
-    if (recovered) return recovered;
-    const concurrentAccess = this.currentEnrollmentAccess() ?? this.currentPendingAccess();
-    if (concurrentAccess) {
-      return { outcome: "pending", access: concurrentAccess };
-    }
-    this.enrollmentFailure = false;
-    const token = ++this.operationSequence;
-    this.pendingMutation = {
-      token,
-      kind: "purchase",
-      packageId,
-      access: pendingPremiumAccess(this.lastAccess ?? unavailablePremium()),
-    };
-    return this.dispatchMutation(token, () => this.access.purchase(packageId));
+  purchase(packageId: "monthly" | "annual", operationId: string = randomUUID()): Promise<PremiumMutationResultWire> {
+    return this.beginMutation(operationId, "purchase", packageId);
   }
 
-  async restore(): Promise<PremiumMutationResultWire> {
-    if (this.pendingMutation && !this.enrollment && this.nativeRequestInFlight === null) {
-      await this.reconcilePendingMutation();
-    }
-    if (this.enrollment || this.pendingMutation) {
-      return { outcome: "pending", access: this.enrollment?.access ?? this.pendingMutation!.access };
-    }
-    const recovered = await this.recoverRetainedTerminal();
-    if (recovered) {
-      logPremiumDiagnostic("plugin_rpc_dispatch", "started");
-      logPremiumDiagnostic("plugin_completion", recovered.outcome);
-      return recovered;
-    }
-    const concurrentAccess = this.currentEnrollmentAccess() ?? this.currentPendingAccess();
-    if (concurrentAccess) {
-      return { outcome: "pending", access: concurrentAccess };
-    }
-    this.enrollmentFailure = false;
+  restore(operationId: string = randomUUID()): Promise<PremiumMutationResultWire> {
+    return this.beginMutation(operationId, "restore");
+  }
+
+  private admissionToken: number | null = null;
+
+  private async beginMutation(
+    operationId: string,
+    kind: "purchase" | "restore",
+    packageId?: "monthly" | "annual",
+  ): Promise<PremiumMutationResultWire> {
+    z.uuid().parse(operationId);
+    const previous = this.operations.get(operationId);
+    if (previous) return (await this.operationResult(operationId))!;
     const token = ++this.operationSequence;
-    this.pendingMutation = {
-      token,
-      kind: "restore",
-      access: pendingPremiumAccess(this.lastAccess ?? unavailablePremium()),
-    };
-    return this.dispatchMutation(token, () => this.access.restore());
+    this.operationIds.set(token, operationId);
+    const pendingAccess = pendingPremiumAccess(this.lastAccess ?? unavailablePremium());
+    this.retainResult(token, { outcome: "pending", access: pendingAccess });
+    logPremiumDiagnostic("plugin_rpc_dispatch", "started", operationId);
+    // A different action cannot acquire an already-owned StoreKit operation.
+    // Repeating the same UUID above only observes that operation's result.
+    if (this.admissionToken !== null || this.pendingMutation) {
+      const result = failedPremiumResult();
+      this.retainResult(token, result);
+      return result;
+    }
+    this.admissionToken = token;
+    try {
+      // Recovery belongs to its original operation, never to this new UUID.
+      // Finish trusted enrollment before dispatching the newly requested action.
+      await this.recoverRetainedTerminal();
+      if (this.enrollment) await this.enrollment.promise;
+      this.enrollmentFailure = false;
+      this.pendingMutation = { token, kind, packageId, access: pendingAccess };
+      this.admissionToken = null;
+      return await this.dispatchMutation(token, () => kind === "purchase"
+        ? this.access.purchase(packageId!, operationId)
+        : this.access.restore(operationId));
+    } finally {
+      if (this.admissionToken === token) this.admissionToken = null;
+    }
   }
 
   private async dispatchMutation(
     token: number,
     operation: () => Promise<PremiumMutationResultInternal>,
   ): Promise<PremiumMutationResultWire> {
-    logPremiumDiagnostic("plugin_rpc_dispatch", "started");
-    this.nativeRequestInFlight = token;
     try {
       const result = await this.complete(await operation(), token);
       if (this.pendingMutation?.token === token && result.outcome !== "pending") this.pendingMutation = null;
-      logPremiumDiagnostic("plugin_completion", result.outcome);
+      this.retainResult(token, result);
       return result;
-    } catch {
+    } catch (error) {
+      const retained = this.operations.get(this.operationIds.get(token)!)?.result;
+      if (retained && retained.outcome !== "pending") return retained;
+      if (error instanceof NativePremiumRequestError && error.dispatched) {
+        // Losing a socket after dispatch cannot cancel StoreKit. Recovery is
+        // read-only and can still retrieve its later categorical completion.
+        return retained ?? { outcome: "pending", access: pendingPremiumAccess(unavailablePremium()) };
+      }
       if (this.pendingMutation?.token === token) this.pendingMutation = null;
-      logPremiumDiagnostic("plugin_completion", "failed");
-      return { outcome: "failed", access: unavailablePremium() };
-    } finally {
-      if (this.nativeRequestInFlight === token) this.nativeRequestInFlight = null;
+      this.retainResult(token, failedPremiumResult());
+      return failedPremiumResult();
     }
   }
 
@@ -330,25 +362,21 @@ export class PremiumService {
 
   private async reconcilePendingMutationOnce(): Promise<void> {
     const pending = this.pendingMutation;
-    if (!pending || this.enrollment || this.nativeRequestInFlight !== null) return;
-    const operation = pending.kind === "purchase"
-      ? () => this.access.purchase(pending.packageId!)
-      : () => this.access.restore();
-    this.nativeRequestInFlight = pending.token;
+    if (!pending || this.enrollment) return;
+    const operation = () => this.access.recover();
     try {
-      const result = await this.complete(await operation(), pending.token);
+      const recovered = await operation();
+      if (!recovered) return;
+      const result = await this.complete(recovered, pending.token);
+      this.retainResult(pending.token, result);
       if (this.pendingMutation?.token !== pending.token) return;
       if (result.outcome !== "pending") {
         this.pendingMutation = null;
         this.lastAccess = result.access;
       }
     } catch {
-      if (this.pendingMutation?.token === pending.token) {
-        this.pendingMutation = null;
-        this.lastAccess = unavailablePremium();
-      }
-    } finally {
-      if (this.nativeRequestInFlight === pending.token) this.nativeRequestInFlight = null;
+      // A failed observation is not a native terminal outcome. Keep ownership
+      // and retry recovery; never redispatch purchase or invent cancellation.
     }
   }
 
@@ -358,7 +386,14 @@ export class PremiumService {
     const operation = (async () => {
       const retained = await this.access.recover();
       if (!retained) return null;
+      if (retained.operationId) {
+        const known = this.operations.get(retained.operationId);
+        if (known && known.result.outcome !== "pending") return known.result;
+        this.operationIds.set(token, retained.operationId);
+        this.retainResult(token, { outcome: "pending", access: pendingPremiumAccess(retained.access) });
+      }
       const result = await this.complete(retained, token);
+      this.retainResult(token, result);
       if (this.pendingMutation?.token === token && result.outcome !== "pending") {
         this.pendingMutation = null;
       }
@@ -374,6 +409,20 @@ export class PremiumService {
   }
 
   private async complete(result: PremiumMutationResultInternal, token: number): Promise<PremiumMutationResultWire> {
+    const requestedId = this.operationIds.get(token);
+    const retained = requestedId ? this.operations.get(requestedId)?.result : null;
+    if (retained && retained.outcome !== "pending") return retained;
+    if (result.operationId && requestedId && result.operationId !== requestedId) {
+      // A host retained across daemon restart can still own an older action.
+      // Reconcile its terminal under that identity, never report it as this purchase.
+      if (result.outcome !== "pending" || result.appleSignedTransaction) {
+        const recoveredToken = ++this.operationSequence;
+        this.operationIds.set(recoveredToken, result.operationId);
+        const recovered = await this.complete(result, recoveredToken);
+        this.retainResult(recoveredToken, recovered);
+      }
+      return failedPremiumResult();
+    }
     const parsed = PremiumMutationResultWireSchema.parse({ outcome: result.outcome, access: result.access });
     const signedTransaction = result.appleSignedTransaction;
     if (parsed.outcome === "pending") {
@@ -486,13 +535,13 @@ export class PremiumService {
       if (this.pendingMutation?.token === entry.token) this.pendingMutation = null;
       this.verifiedAccess = activePremiumAccess(entry.sourceAccess);
       this.lastAccess = this.verifiedAccess;
-      if (entry.reportCompletion) logPremiumDiagnostic("plugin_completion", "active");
+      this.retainResult(entry.token, { outcome: "active", access: this.verifiedAccess });
     } else {
       if (this.pendingMutation?.token === entry.token) this.pendingMutation = null;
       this.verifiedAccess = null;
       this.lastAccess = unavailablePremium();
       this.enrollmentFailure = true;
-      if (entry.reportCompletion) logPremiumDiagnostic("plugin_completion", "failed");
+      this.retainResult(entry.token, failedPremiumResult());
     }
   }
 

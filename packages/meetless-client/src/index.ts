@@ -14,6 +14,7 @@ import {
   MeetingDeleteRpc,
   MeetingCitationResolveRpc,
   MeetingListRpc,
+  MeetingPremiumOperationRpc,
   MeetingPremiumPurchaseRpc,
   MeetingPremiumRestoreRpc,
   MeetingPremiumStatusRpc,
@@ -338,21 +339,38 @@ export class MeetlessClient {
     );
   }
 
-  async purchasePremium(packageId: "monthly" | "annual"): Promise<PremiumMutationResultWire> {
-    this.requireReady();
+  async purchasePremium(packageId: "monthly" | "annual", operationId: string): Promise<PremiumMutationResultWire> {
+    // This local rejection is authoritative: no RPC/native operation was dispatched.
+    if (!this.ready) return {
+      outcome: "failed",
+      access: { entitlement: "premium", status: "unavailable", packages: [], reason: "store_unavailable" },
+    };
     return callPluginRpc(
       MeetingPremiumPurchaseRpc,
       (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
-      { packageId },
+      { packageId, operationId },
     );
   }
 
-  async restorePremium(): Promise<PremiumMutationResultWire> {
-    this.requireReady();
+  async restorePremium(operationId: string): Promise<PremiumMutationResultWire> {
+    // This local rejection is authoritative: no RPC/native operation was dispatched.
+    if (!this.ready) return {
+      outcome: "failed",
+      access: { entitlement: "premium", status: "unavailable", packages: [], reason: "store_unavailable" },
+    };
     return callPluginRpc(
       MeetingPremiumRestoreRpc,
       (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
-      {},
+      { operationId },
+    );
+  }
+
+  async getPremiumOperation(operationId: string): Promise<PremiumMutationResultWire | null> {
+    this.requireReady();
+    return callPluginRpc(
+      MeetingPremiumOperationRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
+      { operationId },
     );
   }
 
