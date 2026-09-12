@@ -84,15 +84,18 @@ async function fresh({ preserveData = false, reuseCurrent = false } = {}) {
     },
   });
   await quitInstalledApp();
-  const validateInstalled = () => validateMasDevelopmentInstalledSignatures({
+  const validateInstalled = (bundlePath = paths.installPath) => validateMasDevelopmentInstalledSignatures({
     manifestPath: paths.manifestPath,
-    bundlePath: paths.installPath,
+    bundlePath,
     artifactBinding: validation.artifactBinding,
     dependencies: expected,
   });
   if (preserveData) {
-    const backupRoot = await updateMasDevelopmentInstall(paths, { validateInstalled });
-    process.stdout.write(`MAS update retained app and runtime backup: ${backupRoot}\n`);
+    const retained = await updateMasDevelopmentInstall(paths, {
+      validateInstalled,
+      reportPrepared: (locations) => process.stdout.write(`${JSON.stringify({ status: "update-prepared", ...locations })}\n`),
+    });
+    process.stdout.write(`MAS update retained app/runtime backup: ${retained.backupRoot}; previous whole app: ${retained.retainedAppPath}\n`);
   } else {
     await resetMasDevelopmentRuntime(paths);
     await prepareOwnedInstallDirectory(paths.installPath, { uid: process.getuid(), gid: process.getgid() });

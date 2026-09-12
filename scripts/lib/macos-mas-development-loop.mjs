@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
@@ -169,84 +170,113 @@ export async function updateMasDevelopmentInstall(paths, {
   assertStopped = assertMasUpdateStopped,
   inspect = lstat,
   copyTree = copyTreeWithDitto,
-  prepareInstall = prepareMasUpdateDirectory,
+  makeDirectory = mkdir,
+  assertParent = assertMacOSPackageParent,
+  reportPrepared = () => {},
   validateInstalled,
-  uid = process.getuid(),
-  gid = process.getgid(),
 } = {}) {
   assertExactMasDevelopmentInstallPath(paths.installPath);
   if (typeof validateInstalled !== "function") throw new Error("MAS update requires installed signature validation");
+  const packageParent = path.dirname(paths.installPath);
+  await assertParent(packageParent);
   let lease;
   try {
-    lease = await acquireLock({ parentPath: paths.runtimeParent, packageParentPath: path.dirname(paths.installPath) });
+    lease = await acquireLock({ parentPath: paths.runtimeParent, packageParentPath: packageParent });
   } catch (error) {
     throw new Error("MAS update could not acquire the stable host lock; leave app/runtime intact and resolve the lock owner or lock diagnostic before retrying", { cause: error });
   }
+  const inspectDirectory = async (target, allowMissing = false) => {
+    const info = await inspect(target).catch((error) => {
+      if (allowMissing && error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (info && (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid())) {
+      throw new Error(`MAS update requires a current-user-owned non-symlink directory: ${target}`);
+    }
+    return info;
+  };
+  const sameDirectory = (left, right) => left && right && left.dev === right.dev && left.ino === right.ino;
+  const move = async (source, destination) => {
+    await lease.assertHeld();
+    await lease.renameNoReplace(source, destination, {
+      pathClass: "package-sibling",
+      authorizedParentPath: packageParent,
+    });
+  };
   try {
     await lease.assertHeld();
     await assertStopped(paths);
-    for (const target of [paths.installPath, paths.runtimeRoot]) {
-      const info = await inspect(target);
-      if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`MAS update requires an existing non-symlink directory: ${target}`);
-    }
+    const original = await inspectDirectory(paths.installPath);
+    await inspectDirectory(paths.runtimeRoot);
     const backupParent = path.join(path.dirname(paths.proofRoot), "update-backups");
     await mkdir(backupParent, { recursive: true, mode: 0o700 });
     const backupRoot = await mkdtemp(path.join(backupParent, "backup-"));
-    await copyTree(paths.installPath, path.join(backupRoot, "Meetless.app"));
-    await copyTree(paths.runtimeRoot, path.join(backupRoot, "runtime"));
-    await lease.assertHeld();
-    await assertStopped(paths);
+    const suffix = randomUUID();
+    const stagedAppPath = path.join(packageParent, `.Meetless-update-${suffix}.app`);
+    const retainedAppPath = path.join(packageParent, `.Meetless-previous-${suffix}.app`);
+    const failedAppPath = path.join(packageParent, `.Meetless-failed-${suffix}.app`);
+    const retained = `backup: ${backupRoot}; previous app: ${retainedAppPath}; staged app: ${stagedAppPath}; failed app: ${failedAppPath}`;
+    let staged;
+    let replacementStarted = false;
     try {
+      await copyTree(paths.installPath, path.join(backupRoot, "Meetless.app"));
+      await copyTree(paths.runtimeRoot, path.join(backupRoot, "runtime"));
       await lease.assertHeld();
-      await prepareInstall(paths.installPath, { uid, gid });
+      // Reserve a fresh sibling, never reuse or recursively clear an app root.
+      await makeDirectory(stagedAppPath, { mode: 0o700 });
+      await copyTree(paths.bundlePath, stagedAppPath);
+      staged = await inspectDirectory(stagedAppPath);
+      await validateInstalled(stagedAppPath);
       await lease.assertHeld();
-      await copyTree(paths.bundlePath, paths.installPath);
+      await assertStopped(paths);
+      if (!sameDirectory(await inspectDirectory(paths.installPath), original) ||
+          !sameDirectory(await inspectDirectory(stagedAppPath), staged)) {
+        throw new Error("MAS update app directory identity changed before replacement");
+      }
+      await reportPrepared({ backupRoot, retainedAppPath, stagedAppPath, failedAppPath });
+      replacementStarted = true;
+      await move(paths.installPath, retainedAppPath);
+      await move(stagedAppPath, paths.installPath);
+      if (!sameDirectory(await inspectDirectory(paths.installPath), staged) ||
+          !sameDirectory(await inspectDirectory(retainedAppPath), original)) {
+        throw new Error("MAS update app directory identity changed during replacement");
+      }
+      await validateInstalled(paths.installPath);
       await lease.assertHeld();
-      await validateInstalled();
+      return { backupRoot, retainedAppPath };
     } catch (error) {
+      if (!replacementStarted) {
+        throw new Error(`MAS update failed before replacement; installed app untouched; retained ${retained}`, { cause: error });
+      }
+      let originalUntouched = false;
       try {
         await lease.assertHeld();
         await assertStopped(paths, { allowMissingApp: true });
-        await lease.assertHeld();
-        await prepareInstall(paths.installPath, { uid, gid, allowMissingApp: true });
-        await lease.assertHeld();
-        await copyTree(path.join(backupRoot, "Meetless.app"), paths.installPath);
+        const installed = await inspectDirectory(paths.installPath, true);
+        const previous = await inspectDirectory(retainedAppPath, true);
+        originalUntouched = sameDirectory(installed, original) && previous === null;
+        if (!originalUntouched) {
+          if (!sameDirectory(previous, original)) throw new Error("previous app identity is ambiguous");
+          if (installed) {
+            if (!sameDirectory(installed, staged) || await inspectDirectory(stagedAppPath, true)) {
+              throw new Error("replacement app identity is ambiguous");
+            }
+            await move(paths.installPath, failedAppPath);
+          }
+          await move(retainedAppPath, paths.installPath);
+          if (!sameDirectory(await inspectDirectory(paths.installPath), original)) {
+            throw new Error("restored app identity differs from original");
+          }
+        }
       } catch (rollbackError) {
-        throw new Error(`MAS update failed and app rollback failed; retained backup: ${backupRoot}`, { cause: new AggregateError([error, rollbackError]) });
+        throw new Error(`MAS update failed; rollback stopped to preserve ambiguous state; retained ${retained}`, { cause: new AggregateError([error, rollbackError]) });
       }
-      throw new Error(`MAS update failed; previous app restored, runtime untouched; retained backup: ${backupRoot}`, { cause: error });
+      const outcome = originalUntouched ? "original app untouched" : "previous whole app restored, runtime untouched";
+      throw new Error(`MAS update failed; ${outcome}; retained ${retained}`, { cause: error });
     }
-    return backupRoot;
   } finally {
     await lease.release();
   }
-}
-
-
-export async function prepareMasUpdateDirectory(target, {
-  uid = process.getuid(),
-  allowMissingApp = false,
-  assertParent = assertMacOSPackageParent,
-  inspect = lstat,
-  remove = rm,
-  makeDirectory = mkdir,
-} = {}) {
-  assertExactMasDevelopmentInstallPath(target);
-  if (uid !== process.getuid()) throw new Error("MAS update requires the current user's UID");
-  await assertParent(path.dirname(target));
-  const existing = await inspect(target).catch((error) => {
-    if (allowMissingApp && error?.code === "ENOENT") return null;
-    throw error;
-  });
-  const assertOwned = (info) => {
-    if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid) {
-      throw new Error("MAS update target must be a current-user-owned non-symlink directory");
-    }
-  };
-  if (existing) assertOwned(existing);
-  await remove(target, { recursive: true, force: allowMissingApp });
-  await makeDirectory(target);
-  assertOwned(await inspect(target));
 }
 
 export function parseMasDevelopmentLoopArguments(arguments_) {

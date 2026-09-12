@@ -1,11 +1,10 @@
-import { cp, mkdtemp, mkdir, readFile, writeFile, lstat, realpath } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, writeFile, lstat, realpath, chmod, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   assertExactMasDevelopmentInstallPath,
   probeMasDevelopmentPlugin,
-  prepareMasUpdateDirectory,
   parseMasDevelopmentLoopArguments,
   prepareMasDevelopmentCandidate,
   assertMasUpdateStopped,
@@ -96,55 +95,7 @@ describe("data-preserving MAS update", () => {
     await assertMasUpdateStopped(paths, { list: async () => [".meetless-mas-gate.lock"], execute: quiet });
   });
 
-  test.each(["success", "signature", "partial-prepare"])("keeps runtime and a backup for %s", async (scenario) => {
-    const fail = scenario !== "success";
-    const root = await mkdtemp(path.join(tmpdir(), "meetless-update-test-"));
-    roots.push(root);
-    const paths = { ...resolveMasDevelopmentLoopPaths(root, root), runtimeRoot: path.join(root, "runtime") };
-    const installed = path.join(root, "installed");
-    await mkdir(installed);
-    await mkdir(paths.bundlePath, { recursive: true });
-    await mkdir(paths.runtimeRoot);
-    await writeFile(path.join(installed, "app"), "old");
-    await writeFile(path.join(paths.bundlePath, "app"), "new");
-    await writeFile(path.join(paths.runtimeRoot, "recording"), "keep me");
-    const mapped = (candidate: string) => candidate === paths.installPath ? installed : candidate;
-    let stops = 0;
-    let prepares = 0;
-    let held = false;
-    const operation = updateMasDevelopmentInstall(paths, {
-      acquireLock: async () => {
-        held = true;
-        return { assertHeld: async () => { expect(held).toBe(true); }, release: async () => { held = false; } };
-      },
-      assertStopped: async (_paths: unknown, options?: { allowMissingApp: boolean }) => {
-        expect(held).toBe(true);
-        stops += 1;
-        if (stops === 3) expect(options?.allowMissingApp).toBe(true);
-      },
-      inspect: async (target: string) => (await import("node:fs/promises")).lstat(mapped(target)),
-      copyTree: async (from: string, to: string) => cp(mapped(from), mapped(to), { recursive: true }),
-      prepareInstall: async () => {
-        expect(held).toBe(true);
-        prepares += 1;
-        await (await import("node:fs/promises")).rm(installed, { recursive: true, force: true });
-        if (scenario === "partial-prepare" && prepares === 1) throw new Error("mkdir failed after rm");
-        await mkdir(installed);
-      },
-      validateInstalled: async () => { if (fail) throw new Error("bad signature"); },
-    });
-    if (fail) await expect(operation).rejects.toThrow("previous app restored, runtime untouched");
-    else await operation;
-    expect(stops).toBe(fail ? 3 : 2);
-    expect(held).toBe(false);
-    expect(await readFile(path.join(installed, "app"), "utf8")).toBe(fail ? "old" : "new");
-    expect(await readFile(path.join(paths.runtimeRoot, "recording"), "utf8")).toBe("keep me");
-    const { readdir } = await import("node:fs/promises");
-    const backupParent = path.join(path.dirname(paths.proofRoot), "update-backups");
-    const [backup] = await readdir(backupParent);
-    expect(await readFile(path.join(backupParent, backup!, "runtime/recording"), "utf8")).toBe("keep me");
-    expect(await readFile(path.join(backupParent, backup!, "Meetless.app/app"), "utf8")).toBe("old");
-  });
+
 });
 
 
@@ -186,6 +137,7 @@ test.skipIf(process.platform !== "darwin")("native stable lock rejects another h
 test("update refuses a held lock before copying or replacing anything", async () => {
   const paths = resolveMasDevelopmentLoopPaths("/repo", "/Users/owner");
   await expect(updateMasDevelopmentInstall(paths, {
+    assertParent: async () => {},
     acquireLock: async () => { throw new Error("held by host"); },
     validateInstalled: async () => {},
     assertStopped: async () => { throw new Error("must not inspect after refused lock"); },
@@ -193,52 +145,6 @@ test("update refuses a held lock before copying or replacing anything", async ()
   })).rejects.toThrow("could not acquire the stable host lock");
 });
 
-
-describe("current-user update preparation", () => {
-  const target = "/Applications/Meetless.app";
-  const owned = { uid: process.getuid!(), isDirectory: () => true, isSymbolicLink: () => false };
-  test("uses only filesystem removal/creation with validated parent and final ownership", async () => {
-    const calls: string[] = [];
-    await prepareMasUpdateDirectory(target, {
-      assertParent: async (parent: string) => { expect(parent).toBe("/Applications"); calls.push("parent"); },
-      inspect: async () => { calls.push("inspect"); return owned; },
-      remove: async () => { calls.push("remove"); },
-      makeDirectory: async () => { calls.push("mkdir"); },
-    });
-    expect(calls).toEqual(["parent", "inspect", "remove", "mkdir", "inspect"]);
-  });
-  test.each(["path", "owner", "symlink", "uid", "parent", "permission", "missing", "final-owner"])("rejects %s without elevation", async (failure) => {
-    let inspections = 0;
-    let removed = false;
-    const options = {
-      uid: failure === "uid" ? process.getuid!() + 1 : process.getuid!(),
-      assertParent: async () => { if (failure === "parent") throw new Error("parent rejected"); },
-      inspect: async () => {
-        inspections += 1;
-        if (failure === "missing") throw Object.assign(new Error("missing"), { code: "ENOENT" });
-        return { ...owned, uid: failure === "owner" || (failure === "final-owner" && inspections === 2) ? -1 : owned.uid,
-          isSymbolicLink: () => failure === "symlink" };
-      },
-      remove: async () => { removed = true; if (failure === "permission") throw Object.assign(new Error("EACCES"), { code: "EACCES" }); },
-      makeDirectory: async () => {},
-    };
-    await expect(prepareMasUpdateDirectory(failure === "path" ? "/Applications/Other.app" : target, options)).rejects.toThrow();
-    expect(removed).toBe(["permission", "final-owner"].includes(failure));
-  });
-  test("allows a missing exact app only for rollback", async () => {
-    let inspections = 0;
-    await prepareMasUpdateDirectory(target, {
-      allowMissingApp: true,
-      assertParent: async () => {},
-      inspect: async () => {
-        if (inspections++ === 0) throw Object.assign(new Error("missing"), { code: "ENOENT" });
-        return owned;
-      },
-      remove: async (_target: string, options: { force: boolean }) => { expect(options.force).toBe(true); },
-      makeDirectory: async () => {},
-    });
-  });
-});
 
 test("reuse-current bypasses only production and still rejects invalid current artifacts", async () => {
   expect(parseMasDevelopmentLoopArguments(["update", "--reuse-current"])).toEqual({ command: "update", reuseCurrent: true });
@@ -305,4 +211,141 @@ test("readiness child failure reports a category without module or client detail
   const client = path.join(root, "client.mjs");
   await writeFile(client, "throw new Error('private-client-detail');");
   await expect(probeMasDevelopmentPlugin(pathToFileURL(client).href)).rejects.toThrow(/^Meetless plugin readiness probe failed$/);
+});
+
+
+describe.skipIf(process.platform !== "darwin" || process.getuid?.() === 0)("whole-app preserving swap", () => {
+  test.each(["success", "stage-signature", "second-move", "installed-signature", "collision", "ambiguous"])("retains protected receipt and runtime for %s", async (scenario) => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-receipt-swap-")));
+    roots.push(root);
+    const packageParent = path.join(root, "Applications");
+    const runtimeParent = path.join(root, "data");
+    await mkdir(packageParent, { mode: 0o700 });
+    await mkdir(runtimeParent, { mode: 0o700 });
+    const paths = { ...resolveMasDevelopmentLoopPaths(root, root), runtimeParent, runtimeRoot: path.join(runtimeParent, "runtime") };
+    const mapped = (value: string) => value.startsWith("/Applications/") ? path.join(packageParent, path.basename(value)) : value;
+    const installed = mapped(paths.installPath);
+    const receiptDirectory = path.join(installed, "Contents/_MASReceipt");
+    await mkdir(receiptDirectory, { recursive: true });
+    await writeFile(path.join(receiptDirectory, "receipt"), "OS-owned receipt fixture");
+    await writeFile(path.join(installed, "app"), "old");
+    await chmod(receiptDirectory, 0o500);
+    const original = await lstat(installed);
+    const receipt = await lstat(path.join(receiptDirectory, "receipt"));
+    await mkdir(paths.bundlePath, { recursive: true });
+    await writeFile(path.join(paths.bundlePath, "app"), "new");
+    await mkdir(paths.runtimeRoot);
+    await writeFile(path.join(paths.runtimeRoot, "recording"), "keep me");
+    const runtimeIdentity = await lstat(paths.runtimeRoot);
+    let moves = 0;
+    let released = false;
+    const validated: string[] = [];
+    let reported = false;
+    const lock = await acquireMasGateLock({ parentPath: runtimeParent, packageParentPath: packageParent });
+    const lockIdentity = await lstat(lock.lockPath);
+    try {
+      const operation = updateMasDevelopmentInstall(paths, {
+        assertParent: async (parent: string) => { expect(parent).toBe("/Applications"); },
+        acquireLock: async () => ({
+          assertHeld: () => lock.assertHeld(),
+          release: async () => { await lock.release(); released = true; },
+          renameNoReplace: async (from: string, to: string, options: { pathClass: string; authorizedParentPath: string }) => {
+            expect(options).toEqual({ pathClass: "package-sibling", authorizedParentPath: "/Applications" });
+            moves += 1;
+            if (moves === 1) {
+              expect(validated).toEqual([expect.stringContaining(".Meetless-update-")]);
+              expect(reported).toBe(true);
+            }
+            if (scenario === "collision" && moves === 1) {
+              await mkdir(mapped(to));
+              await writeFile(path.join(mapped(to), "collision"), "do not overwrite");
+            }
+            if ((scenario === "second-move" || scenario === "ambiguous") && moves === 2) {
+              if (scenario === "ambiguous") {
+                await mkdir(mapped(to));
+                await writeFile(path.join(mapped(to), "foreign"), "do not move");
+              }
+              throw new Error("injected second-move failure");
+            }
+            await lock.renameNoReplace(mapped(from), mapped(to), { pathClass: "package-sibling", authorizedParentPath: packageParent });
+          },
+        }),
+        assertStopped: async () => { await lock.assertHeld(); },
+        inspect: (target: string) => lstat(mapped(target)),
+        makeDirectory: (target: string, options: { mode: number }) => mkdir(mapped(target), options),
+        copyTree: (from: string, to: string) => cp(mapped(from), mapped(to), { recursive: true }),
+        reportPrepared: async () => { reported = true; },
+        validateInstalled: async (target: string) => {
+          validated.push(target);
+          expect(await readFile(path.join(mapped(target), "app"), "utf8")).toBe("new");
+          if (scenario === "stage-signature" || (scenario === "installed-signature" && target === paths.installPath)) throw new Error("injected signature failure");
+        },
+      });
+      if (scenario === "success") {
+        const result = await operation;
+        expect(await readFile(path.join(mapped(result.retainedAppPath), "app"), "utf8")).toBe("old");
+      } else {
+        await expect(operation).rejects.toThrow(scenario === "stage-signature" ? "before replacement" :
+          ["collision", "ambiguous"].includes(scenario) ? "preserve ambiguous state" : "previous whole app restored");
+      }
+      expect(released).toBe(true);
+      const entries = await readdir(packageParent);
+      const oldRoot = scenario === "success" || scenario === "ambiguous"
+        ? path.join(packageParent, entries.find((entry) => entry.startsWith(".Meetless-previous-"))!) : installed;
+      expect((await lstat(oldRoot)).ino).toBe(original.ino);
+      expect((await lstat(path.join(oldRoot, "Contents/_MASReceipt/receipt"))).ino).toBe(receipt.ino);
+      expect((await lstat(path.join(oldRoot, "Contents/_MASReceipt"))).mode & 0o777).toBe(0o500);
+      expect(await readFile(path.join(oldRoot, "Contents/_MASReceipt/receipt"), "utf8")).toBe("OS-owned receipt fixture");
+      expect(await readFile(path.join(paths.runtimeRoot, "recording"), "utf8")).toBe("keep me");
+      expect((await lstat(paths.runtimeRoot)).ino).toBe(runtimeIdentity.ino);
+      expect((await lstat(lock.lockPath)).ino).toBe(lockIdentity.ino);
+      if (scenario === "installed-signature") expect(entries.some((entry) => entry.startsWith(".Meetless-failed-"))).toBe(true);
+      if (scenario === "collision") expect(await readFile(path.join(packageParent, entries.find((entry) => entry.startsWith(".Meetless-previous-"))!, "collision"), "utf8")).toBe("do not overwrite");
+      if (scenario === "ambiguous") expect(await readFile(path.join(installed, "foreign"), "utf8")).toBe("do not move");
+      const backups = path.join(path.dirname(paths.proofRoot), "update-backups");
+      const [backup] = await readdir(backups);
+      expect(await readFile(path.join(backups, backup!, "runtime/recording"), "utf8")).toBe("keep me");
+    } finally {
+      await lock.release();
+      // Restore permissions only inside this owned fixture, never real app state.
+      const allowCleanup = async (directory: string): Promise<void> => {
+        await chmod(directory, 0o700);
+        for (const entry of await readdir(directory, { withFileTypes: true })) {
+          if (entry.isDirectory()) await allowCleanup(path.join(directory, entry.name));
+        }
+      };
+      await allowCleanup(root);
+    }
+  });
+
+  test("old recursive removal fails on a protected nested receipt directory", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-old-removal-"));
+    roots.push(root);
+    const app = path.join(root, "Meetless.app");
+    const protectedDirectory = path.join(app, "Contents/_MASReceipt");
+    await mkdir(protectedDirectory, { recursive: true });
+    await writeFile(path.join(protectedDirectory, "receipt"), "retain");
+    await chmod(protectedDirectory, 0o500);
+    try {
+      await expect(rm(app, { recursive: true, force: false })).rejects.toMatchObject({ code: "EACCES" });
+      expect(await readFile(path.join(protectedDirectory, "receipt"), "utf8")).toBe("retain");
+    } finally {
+      await chmod(protectedDirectory, 0o700);
+    }
+  });
+});
+
+
+test.each(["owner", "symlink"])("update rejects unsafe %s before copying or moving", async (failure) => {
+  const paths = resolveMasDevelopmentLoopPaths("/repo", "/Users/owner");
+  let released = false;
+  await expect(updateMasDevelopmentInstall(paths, {
+    assertParent: async () => {},
+    acquireLock: async () => ({ assertHeld: async () => {}, release: async () => { released = true; } }),
+    assertStopped: async () => {},
+    inspect: async () => ({ uid: failure === "owner" ? -1 : process.getuid!(), isDirectory: () => true, isSymbolicLink: () => failure === "symlink" }),
+    copyTree: async () => { throw new Error("must not copy unsafe source"); },
+    validateInstalled: async () => {},
+  })).rejects.toThrow("current-user-owned non-symlink directory");
+  expect(released).toBe(true);
 });

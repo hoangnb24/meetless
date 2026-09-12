@@ -24,12 +24,19 @@ The update holds the existing stable host lock through backup, replacement and
 any app rollback, then releases it before launch. Replacement uses the current
 user’s permissions after validating `/Applications` and app ownership; it never
 requests administrator privileges or falls back to elevation. Permission failures
-stop and retain the backup. An unlocked lock file is normal
+stop and retain the backup. The updater validates a staged sibling before moving
+the previous whole app to a unique retained `/Applications` sibling, then moves
+the candidate into place using no-replace renames. It never recursively deletes
+the installed app or changes receipt permissions. An unlocked lock file is normal
 and stays in place.
 
 Updates retain the previous app and runtime under
 `.artifacts/macos-mas-development/update-backups/backup-*`. A replacement or
-signature failure restores the previous app; runtime data is never reset or
+signature failure preserves the failed candidate and restores the previous whole
+app when directory identities and the held lock prove a safe rollback. Ambiguous
+state stops with all retained paths reported. The previous whole app remains at
+its reported `/Applications/.Meetless-previous-*.app` path after success.
+Runtime data is never reset or
 automatically restored. If launch/readiness fails, retain the reported backup
 and diagnose before another operation. Do not delete retained backups without
 separate authorization.
