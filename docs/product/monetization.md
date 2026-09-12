@@ -74,13 +74,11 @@ cap in V1; any later safety ceiling requires new owner authority.
 - Annual subscription: intended US price `$79.99`.
 - Introductory trial: seven days with five hours of managed transcription.
 
-Monthly and annual subscribers receive one backend-configured managed-
-transcription allowance in each subscription-anchored monthly quota period.
-The subscriber allowance amount is not finalized by this policy. Analyze costs
-and obtain the product owner’s decision before choosing that amount; no paid
-number is approved. Production
-must fail closed and remain undeployable unless an explicit subscriber
-allowance is configured. A non-production hosted canary may use an explicitly
+Monthly and annual subscribers receive **eight hours (28,800 seconds)** of
+managed transcription in each subscription-anchored monthly quota period,
+approved by the product owner for issue #11 on 2026-09-12. Production must fail
+closed and remain undeployable unless this subscriber allowance is explicitly
+configured. A non-production hosted canary may use an explicitly
 labeled test allowance; that test value is never product authority. Annual
 subscribers receive a new configured allowance each month rather than the full
 annual allowance at once. Unused allowance does not roll over. Changing
