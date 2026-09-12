@@ -27,6 +27,8 @@ vi.mock("../src/recording-provider.js", () => ({
 
 import { AppContent, loadCompanionRestoration, retainPremiumCatalog } from "../src/App.js";
 
+const TRANSCRIPTION_FAILURE_MESSAGE = "Transcription could not be completed. Your saved audio remains safe. Retry transcription when you are ready.";
+
 describe("transcript meeting selection ordering", () => {
   let renderer: ReactTestRenderer | null = null;
 
@@ -109,8 +111,9 @@ describe("transcript meeting selection ordering", () => {
       const getPremiumOperation = vi.fn(() => route === "direct" ? blockedPoll.promise : delayedResult.promise);
       if (route === "unknown") getPremiumOperation.mockResolvedValueOnce(null as never);
       const transcribeMeeting = vi.fn();
+      const grantTranscriptionConsent = vi.fn();
       connectMeetlessClient.mockResolvedValue({
-        client: { listMeetings: async () => [], getPremiumAccess, purchasePremium, restorePremium, getPremiumOperation, transcribeMeeting },
+        client: { listMeetings: async () => [], getPremiumAccess, purchasePremium, restorePremium, getPremiumOperation, transcribeMeeting, grantTranscriptionConsent },
         close: async () => undefined, serverInfo: null,
       });
       await act(async () => { renderer = create(<AppContent mode="desktop" />); });
@@ -136,6 +139,7 @@ describe("transcript meeting selection ordering", () => {
       expect(surface().props.premiumError).toBe(outcome === "failed" ? "Purchase could not complete. Try again." : null);
       expect(getPremiumAccess).toHaveBeenCalledOnce();
       expect(transcribeMeeting).not.toHaveBeenCalled();
+      expect(grantTranscriptionConsent).not.toHaveBeenCalled();
       const completions = info.mock.calls.map(([line]) => line).filter((line) => line.includes('"stage":"ui_completion"'));
       expect(completions).toHaveLength(1);
       expect(JSON.parse(completions[0].replace("[meetless-premium] ", ""))).toMatchObject({ stage: "ui_completion", outcome, operationId });
@@ -527,11 +531,16 @@ describe("transcript meeting selection ordering", () => {
     expect(surface().props.deleteError).not.toContain("filesystem");
   });
 
-  test("Retry transcription reuses the idempotent consent operation and refreshes the selected transcript", async () => {
+  test("Retry transcription reuses the idempotent managed route and applies its durable transcript", async () => {
     let transcriptCalls = 0;
-    const grantTranscriptionConsent = vi.fn(async () => ({
+    const ready = transcriptResponse("m-1", "segment-m-1", "retried transcript");
+    const grantTranscriptionConsent = vi.fn(async (meetingId: string) => ({
       consent: { status: "granted" as const, grantedAt: "2026-08-18T10:00:00.000Z" },
-      provider: { status: "configured" as const },
+      route: "managed" as const,
+      outcome: "completed" as const,
+      retryEligible: false, failureCategory: null,
+      transcript: ready.transcript,
+      message: null,
     }));
     const client = {
       listMeetings: async () => [meeting("m-1")],
@@ -539,7 +548,7 @@ describe("transcript meeting selection ordering", () => {
         transcriptCalls += 1;
         const result = transcriptResponse("m-1", "segment-m-1", "retried transcript");
         return transcriptCalls === 1
-          ? { ...result, transcript: { ...result.transcript, status: "failed" as const, failureReason: "provider failed" } }
+          ? { ...result, transcription: { outcome: "failed", retryEligible: true, failureCategory: "provider", message: TRANSCRIPTION_FAILURE_MESSAGE }, transcript: { ...result.transcript, status: "failed" as const, failureReason: "provider failed" } }
           : result;
       }),
       grantTranscriptionConsent,
@@ -552,12 +561,227 @@ describe("transcript meeting selection ordering", () => {
     const surface = () => renderer!.root.findByType("MeetingListSurface");
     await act(async () => { await surface().props.onOpenTranscript("m-1"); });
     expect(surface().props.transcript).toMatchObject({ status: "failed" });
+    expect(surface().props.transcriptionRouteMessage).toBe(TRANSCRIPTION_FAILURE_MESSAGE);
     expect(surface().props.onRetryTranscription).toEqual(expect.any(Function));
 
     await act(async () => { await surface().props.onRetryTranscription(); });
     expect(grantTranscriptionConsent).toHaveBeenCalledOnce();
-    expect(client.getMeetingTranscript).toHaveBeenCalledTimes(2);
+    expect(grantTranscriptionConsent).toHaveBeenCalledWith("m-1");
+    expect(client.getMeetingTranscript).toHaveBeenCalledTimes(1);
     expect(surface().props.transcript).toMatchObject({ status: "ready", meetingId: "m-1" });
+  });
+
+  test("polls a started managed route until the durable transcript is ready without native provider status", async () => {
+    const ready = transcriptResponse("m-1", "segment-m-1", "managed result");
+    const pending = {
+      ...ready,
+      transcript: { ...ready.transcript, status: "pending" as const },
+    };
+    const initial = {
+      ...ready,
+      transcript: null,
+      consent: { status: "unknown" as const },
+      provider: { status: "missing" as const },
+    };
+    const getMeetingTranscript = vi.fn()
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(ready);
+    const nativeProviderStatus = vi.fn();
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getPremiumAccess: async () => ({ entitlement: "premium" as const, status: "active" as const, packages: [], reason: null }),
+      getMeetingTranscript,
+      grantTranscriptionConsent: vi.fn(async () => ({
+        consent: { status: "granted" as const, grantedAt: "2026-08-18T10:00:00.000Z" },
+        route: "managed" as const,
+        outcome: "started" as const,
+        retryEligible: false, failureCategory: null,
+        transcript: pending.transcript,
+        message: null,
+      })),
+      getMeetingChat: async () => null,
+      listChatProviders: async () => ({ providers: [] }),
+      transcriptionProviderStatus: nativeProviderStatus,
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    await act(async () => { await surface().props.onGrantTranscriptionConsent(); });
+    await vi.waitFor(() => expect(surface().props.transcript).toMatchObject({ status: "ready", meetingId: "m-1" }));
+
+    expect(client.grantTranscriptionConsent).toHaveBeenCalledWith("m-1");
+    expect(getMeetingTranscript).toHaveBeenCalledTimes(2);
+    expect(nativeProviderStatus).not.toHaveBeenCalled();
+    expect(surface().props.transcriptionRouteOutcome).toBe("completed");
+  });
+
+  test("projects a terminal managed failure returned by polling with safe retry copy", async () => {
+    const ready = transcriptResponse("m-1", "segment-m-1", "managed result");
+    const pending = {
+      ...ready,
+      transcript: { ...ready.transcript, status: "pending" as const },
+    };
+    const failed = {
+      ...ready,
+      transcript: { ...ready.transcript, status: "failed" as const, failureReason: "provider failed" },
+      transcription: { outcome: "failed", retryEligible: true, failureCategory: "provider", message: TRANSCRIPTION_FAILURE_MESSAGE },
+    };
+    const getMeetingTranscript = vi.fn()
+      .mockResolvedValueOnce({
+        ...ready,
+        transcript: null,
+        consent: { status: "unknown" as const },
+        provider: { status: "missing" as const },
+      })
+      .mockResolvedValueOnce(failed);
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getMeetingTranscript,
+      grantTranscriptionConsent: vi.fn(async () => ({
+        consent: { status: "granted" as const, grantedAt: "2026-08-18T10:00:00.000Z" },
+        route: "managed" as const,
+        outcome: "started" as const,
+        retryEligible: false, failureCategory: null,
+        transcript: pending.transcript,
+        message: null,
+      })),
+      getMeetingChat: async () => null,
+      listChatProviders: async () => ({ providers: [] }),
+      transcriptionProviderStatus: vi.fn(),
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    await act(async () => { await surface().props.onGrantTranscriptionConsent(); });
+    await vi.waitFor(() => expect(surface().props.transcriptionRouteOutcome).toBe("failed"));
+
+    expect(surface().props.transcript).toMatchObject({ status: "failed" });
+    expect(surface().props.transcriptionRouteMessage).toBe(TRANSCRIPTION_FAILURE_MESSAGE);
+    expect(surface().props.onRetryTranscription).toEqual(expect.any(Function));
+  });
+
+  test("stops polling on a connection failure and Check status only reads the existing recording", async () => {
+    const ready = transcriptResponse("m-1", "segment-m-1", "recovered result");
+    const initial = { ...ready, transcript: null, transcription: { outcome: "not_started", retryEligible: true, failureCategory: null, message: null } };
+    const getMeetingTranscript = vi.fn().mockResolvedValueOnce(initial).mockRejectedValueOnce(new Error("private transport error")).mockResolvedValue(ready);
+    const grantTranscriptionConsent = vi.fn(async () => ({ consent: ready.consent, route: "managed", outcome: "started", retryEligible: false, failureCategory: null, message: null, transcript: { ...ready.transcript, status: "pending" } }));
+    connectMeetlessClient.mockResolvedValue({ client: { listMeetings: async () => [meeting("m-1")], getMeetingTranscript, grantTranscriptionConsent, getMeetingChat: async () => null, listChatProviders: async () => ({ providers: [] }) }, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    await act(async () => { await surface().props.onGrantTranscriptionConsent(); });
+    await vi.waitFor(() => expect(surface().props.transcriptionRouteOutcome).toBe("interrupted"));
+    expect(surface().props.transcriptionFailureCategory).toBe("connection");
+    expect(surface().props.transcriptionRouteMessage).not.toContain("private");
+    vi.useFakeTimers();
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+      expect(getMeetingTranscript).toHaveBeenCalledTimes(2);
+      await act(async () => { await surface().props.onCheckTranscriptionStatus(); });
+      expect(surface().props.transcript.status).toBe("ready");
+      expect(getMeetingTranscript).toHaveBeenCalledTimes(3);
+      expect(grantTranscriptionConsent).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+
+  test("old consent and a dormant pending transcript never dispatch or poll automatically", async () => {
+    const ready = transcriptResponse("m-1", "segment-m-1", "existing");
+    const getMeetingTranscript = vi.fn(async () => ({ ...ready, transcript: { ...ready.transcript, status: "pending" }, transcription: { outcome: "interrupted", retryEligible: true, failureCategory: null, message: "Choose Transcribe to continue existing work." } }));
+    const grantTranscriptionConsent = vi.fn();
+    connectMeetlessClient.mockResolvedValue({ client: { listMeetings: async () => [meeting("m-1")], getMeetingTranscript, grantTranscriptionConsent }, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    vi.useFakeTimers();
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+      expect(surface().props.transcriptionRouteOutcome).toBe("interrupted");
+      expect(getMeetingTranscript).toHaveBeenCalledOnce();
+      expect(grantTranscriptionConsent).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  test("refreshes the selected recording after Save without granting consent or submitting audio", async () => {
+    const ready = transcriptResponse("m-1", "segment-m-1", "unused");
+    const detail = (status: "recording" | "saved") => ({ ...ready, recording: { recordingId: "r-1", status }, transcript: null, transcription: { outcome: status === "saved" ? "not_started" : "not_saved", retryEligible: status === "saved", failureCategory: status === "saved" ? null : "not_saved", message: null } });
+    const getMeetingTranscript = vi.fn().mockResolvedValueOnce(detail("recording")).mockResolvedValue(detail("saved"));
+    const grantTranscriptionConsent = vi.fn();
+    recordingState.current = { enabled: true, status: { recordingId: "r-1", meetingId: "m-1", status: "recording" }, pending: false };
+    connectMeetlessClient.mockResolvedValue({ client: { listMeetings: async () => [meeting("m-1")], getMeetingTranscript, grantTranscriptionConsent }, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    expect(surface().props.selectedRecording.status).toBe("recording");
+    recordingState.current = { ...recordingState.current, status: { recordingId: "r-1", meetingId: "m-1", status: "saved" } };
+    await act(async () => { renderer!.update(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(surface().props.selectedRecording.status).toBe("saved"));
+    expect(surface().props.transcriptionRouteOutcome).toBe("not_started");
+    expect(getMeetingTranscript).toHaveBeenCalledTimes(2);
+    expect(grantTranscriptionConsent).not.toHaveBeenCalled();
+  });
+
+  test("a stale selected-meeting action cannot dispatch after switching to another recording", async () => {
+    const getMeetingTranscript = vi.fn(async (meetingId: string) => ({ ...transcriptResponse(meetingId, `segment-${meetingId}`, "existing"), transcript: null, transcription: { outcome: "not_started", retryEligible: true, failureCategory: null, message: null } }));
+    const grantTranscriptionConsent = vi.fn();
+    connectMeetlessClient.mockResolvedValue({ client: { listMeetings: async () => [meeting("m-1"), meeting("m-2")], getMeetingTranscript, grantTranscriptionConsent }, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    const staleAction = surface().props.onGrantTranscriptionConsent;
+    await act(async () => { await surface().props.onOpenTranscript("m-2"); });
+    await act(async () => { await staleAction(); });
+    expect(grantTranscriptionConsent).not.toHaveBeenCalled();
+    expect(surface().props.selectedMeetingId).toBe("m-2");
+  });
+
+  test("ignores a duplicate Allow click while the managed route request is pending", async () => {
+    const routeCompletion = deferred<{
+      consent: { status: "granted" };
+      route: "managed";
+      outcome: "completed";
+      transcript: ReturnType<typeof transcriptResponse>["transcript"];
+      message: null;
+    }>();
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getMeetingTranscript: async () => ({
+        ...transcriptResponse("m-1", "segment-m-1", "existing"),
+        transcript: null,
+        consent: { status: "unknown" as const },
+        provider: { status: "missing" as const },
+      }),
+      grantTranscriptionConsent: vi.fn(() => routeCompletion.promise),
+    };
+    connectMeetlessClient.mockResolvedValue({ client, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    await vi.waitFor(() => expect(connectMeetlessClient).toHaveBeenCalledOnce());
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+
+    let first!: Promise<void>;
+    await act(async () => {
+      first = surface().props.onGrantTranscriptionConsent();
+      await Promise.resolve();
+      await surface().props.onGrantTranscriptionConsent();
+    });
+    expect(surface().props.transcriptionConsentPending).toBe(true);
+    expect(client.grantTranscriptionConsent).toHaveBeenCalledOnce();
+    routeCompletion.resolve({
+      consent: { status: "granted" },
+      route: "managed",
+      outcome: "completed",
+      transcript: transcriptResponse("m-1", "segment-m-1", "complete").transcript,
+      message: null,
+    });
+    await act(async () => { await first; });
+    expect(surface().props.transcriptionConsentPending).toBe(false);
+    expect(surface().props.transcriptionRouteOutcome).toBe("completed");
   });
 
   test.each([
@@ -962,6 +1186,24 @@ describe("companion transactional restoration", () => {
     });
   });
 
+  test("preserves terminal transcription failure copy when restoring a selected meeting", async () => {
+    const client = {
+      listMeetings: async () => [meeting("m-1")],
+      getMeetingTranscript: async () => ({
+        meeting: meeting("m-1"),
+        transcript: { status: "failed" as const },
+        consent: { status: "granted" as const, grantedAt: "2026-08-18T10:00:00.000Z" },
+        provider: { status: "configured" as const },
+      }),
+      listChatProviders: async () => ({ providers: [] }),
+      getMeetingChat: async () => null,
+    } as unknown as MeetlessClient;
+
+    await expect(loadCompanionRestoration(client, "m-1")).resolves.toMatchObject({
+      detail: { transcript: { status: "failed" } },
+    });
+  });
+
   test("rejects the complete restoration when durable chat fails", async () => {
     const client = {
       listMeetings: async () => [meeting("m-1")],
@@ -1000,6 +1242,8 @@ function transcriptResponse(meetingId: string, segmentId: string, text: string) 
   const range = { ordinal: 0, startMs: 0, endMs: 1_000, segmentId };
   return {
     meeting: meeting(meetingId),
+    recording: { recordingId: `recording-${meetingId}`, status: "saved" as const },
+    transcription: { outcome: "completed" as const, retryEligible: false, failureCategory: null, message: null },
     transcript: {
       id: `transcript-${meetingId}`, meetingId, recordingId: `recording-${meetingId}`, status: "ready" as const,
       plannerVersion: "m3-range-v1" as const, audioDurationMs: 1_000, ranges: [range],

@@ -34,6 +34,11 @@ import {
   type PremiumAccessWire,
   type PremiumMutationResultWire,
   type ManagedDeviceWire,
+  type TranscriptionRouteOutcomeWire,
+  type SelectedRecordingWire,
+  type TranscriptionStatusWire,
+  type TranscriptionFailureCategoryWire,
+  type TranscriptionRouteWire,
   type TranscriptionProviderStatusWire,
   RecordingControlResponseSchema,
   RecordingStatusEventSchema,
@@ -297,6 +302,8 @@ export class MeetlessClient {
 
   async getMeetingTranscript(meetingId: string): Promise<{
     meeting: MeetingWire;
+    recording: SelectedRecordingWire | null;
+    transcription: TranscriptionStatusWire;
     transcript: TranscriptWire | null;
     consent: { status: "unknown" | "granted"; grantedAt?: string };
     provider: TranscriptionProviderStatusWire;
@@ -309,15 +316,20 @@ export class MeetlessClient {
     );
   }
 
-  async grantTranscriptionConsent(): Promise<{
+  async grantTranscriptionConsent(meetingId: string): Promise<{
     consent: { status: "unknown" | "granted"; grantedAt?: string };
-    provider: TranscriptionProviderStatusWire;
+    route: TranscriptionRouteWire;
+    outcome: TranscriptionRouteOutcomeWire;
+    retryEligible: boolean;
+    failureCategory: TranscriptionFailureCategoryWire | null;
+    transcript: TranscriptWire | null;
+    message: string | null;
   }> {
     this.requireReady();
     return callPluginRpc(
       MeetingTranscriptionConsentRpc,
       (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
-      { accepted: true },
+      { accepted: true, meetingId },
     );
   }
 

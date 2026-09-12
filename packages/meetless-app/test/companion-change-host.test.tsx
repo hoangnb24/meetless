@@ -10,6 +10,8 @@ const controls = vi.hoisted(() => ({
   rehydrate: null as null | ((client: Record<string, unknown>, context: { reconnect: boolean; epoch: number; isCurrent(): boolean }) => Promise<void>),
   getMeetingTranscript: vi.fn(async () => ({
     meeting: { id: "m-1", title: "m-1", status: "ready", createdAt: "2026-08-18T10:00:00.000Z", updatedAt: "2026-08-18T10:00:00.000Z" },
+    recording: { recordingId: "r-1", status: "saved" },
+    transcription: { outcome: "not_started", retryEligible: true, failureCategory: null, message: null },
     transcript: null,
     consent: { status: "granted", grantedAt: "2026-08-18T10:00:00.000Z" },
     provider: { status: "configured" },
@@ -74,6 +76,8 @@ vi.mock("../src/recording-provider.js", () => ({
 
 import { AppContent } from "../src/App.js";
 
+const TRANSCRIPTION_FAILURE_MESSAGE = "Transcription could not be completed. Your saved audio remains safe. Retry transcription when you are ready.";
+
 describe("companion host replacement", () => {
   let renderer: ReactTestRenderer | null = null;
 
@@ -100,6 +104,51 @@ describe("companion host replacement", () => {
     expect(controls.clearCompanionProfile).toHaveBeenCalledOnce();
     expect(controls.close).toHaveBeenCalled();
     expect(renderer!.root.findByType("CompanionPairing")).toBeTruthy();
+  });
+
+  test("disconnect keeps the already loaded ready transcript while marking the host offline", async () => {
+    const meeting = { id: "m-1", title: "m-1", status: "ready", createdAt: "2026-08-18T10:00:00.000Z", updatedAt: "2026-08-18T10:00:00.000Z" };
+    controls.listMeetings.mockResolvedValue([meeting]);
+    const readyDetail = { meeting, recording: { recordingId: "r-1", status: "saved" }, transcript: { status: "ready", segments: [{ text: "Durable local result" }] }, consent: { status: "granted" }, provider: { status: "configured" }, transcription: { outcome: "completed", retryEligible: false, failureCategory: null, message: null } };
+    await act(async () => { renderer = create(<AppContent mode="companion" />); });
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    controls.getMeetingTranscript.mockResolvedValueOnce(readyDetail);
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    await act(async () => { controls.emit?.({ status: "offline" }); });
+    expect(surface().props.transcript).toEqual(readyDetail.transcript);
+    expect(surface().props.hostConnectionStatus).toBe("offline");
+    expect(surface().props.transcriptionRouteOutcome).toBe("interrupted");
+  });
+
+  test("restored selected terminal transcription failure keeps the safe retry copy", async () => {
+    const meeting = { id: "m-1", title: "m-1", status: "ready", createdAt: "2026-08-18T10:00:00.000Z", updatedAt: "2026-08-18T10:00:00.000Z" };
+    controls.listMeetings.mockResolvedValue([meeting]);
+    const failedDetail = {
+      meeting: { id: "m-1", title: "m-1", status: "ready", createdAt: "2026-08-18T10:00:00.000Z", updatedAt: "2026-08-18T10:00:00.000Z" },
+      transcript: { status: "failed" },
+      recording: { recordingId: "r-1", status: "saved" },
+      transcription: { outcome: "failed", retryEligible: true, failureCategory: "provider", message: TRANSCRIPTION_FAILURE_MESSAGE },
+      consent: { status: "granted", grantedAt: "2026-08-18T10:00:00.000Z" },
+      provider: { status: "configured" },
+    };
+    await act(async () => { renderer = create(<AppContent mode="companion" />); });
+    await vi.waitFor(() => expect(renderer!.root.findAllByType("MeetingListSurface")).toHaveLength(1));
+    const surface = renderer!.root.findByType("MeetingListSurface");
+
+    await act(async () => { await surface.props.onOpenTranscript("m-1"); });
+    controls.getMeetingTranscript.mockResolvedValueOnce(failedDetail);
+    await act(async () => {
+      await controls.rehydrate?.({
+        listMeetings: controls.listMeetings,
+        getMeetingTranscript: controls.getMeetingTranscript,
+        resolveCitation: controls.resolveCitation,
+        deleteMeeting: controls.deleteMeeting,
+      }, { reconnect: true, epoch: 2, isCurrent: () => true });
+    });
+    expect(surface.props.transcript).toMatchObject({ status: "failed" });
+    expect(surface.props.transcriptionRouteOutcome).toBe("failed");
+    expect(surface.props.transcriptionRouteMessage).toBe(TRANSCRIPTION_FAILURE_MESSAGE);
+    expect(surface.props.onRetryTranscription).toEqual(expect.any(Function));
   });
 
   test("a list RPC from an invalidated connection epoch cannot commit stale UI state", async () => {

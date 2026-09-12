@@ -112,6 +112,8 @@ class FakeDaemon implements MeetlessDaemonPort {
     if (method === "meeting.list") return { meetings: [] };
     if (method === "meeting.transcript") return {
       meeting: { id: "m-1", title: "Sync", status: "ready", createdAt: "2026-08-21T00:00:00.000Z", updatedAt: "2026-08-21T00:00:00.000Z" },
+      recording: { recordingId: "r-1", status: "saved" },
+      transcription: { outcome: "not_started", retryEligible: true, failureCategory: null, message: null },
       transcript: null,
       consent: { status: "granted", grantedAt: "2026-08-21T00:00:00.000Z" },
       provider: { status: "configured" },

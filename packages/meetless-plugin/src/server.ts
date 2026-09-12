@@ -52,6 +52,7 @@ import {
   FileManagedConvexUploadJournal,
   type ManagedConvexCredential,
 } from "./managed-upload.js";
+import { TranscriptionRouteCoordinator } from "./transcription-route.js";
 
 let store: MeetingStore | null = null;
 let recordingService: RecordingService | null = null;
@@ -64,6 +65,7 @@ let chatService: MeetingChatService | null = null;
 let premiumService: PremiumService | null = null;
 let managedCredential: ManagedConvexCredential | null = null;
 let managedCredentialSource: ConvexManagedCredentialSource | null = null;
+let transcriptionRoute: TranscriptionRouteCoordinator | null = null;
 const meetingLifecycle = new MeetingLifecycleCoordinator();
 
 export async function deleteMeetingSafely(
@@ -335,6 +337,22 @@ export function getTranscriptionService(): TranscriptionService {
   return transcriptionService;
 }
 
+export function getTranscriptionRoute(): TranscriptionRouteCoordinator {
+  if (transcriptionRoute) return transcriptionRoute;
+  transcriptionRoute = new TranscriptionRouteCoordinator(
+    getMeetingStore(),
+    getPremiumService(),
+    {
+      resumeExisting: (recordingId) => resumeExistingManagedRecording(recordingId),
+      transcribe: (input) => transcribeManagedRecording({
+        recordingId: input.recordingId,
+        onDurableStart: input.onDurableStart,
+      }),
+    },
+  );
+  return transcriptionRoute;
+}
+
 export function getCitationPlaybackService(): CitationPlaybackService {
   if (citationPlaybackService) return citationPlaybackService;
   const storeRoot = requiredAbsolute("MEETLESS_STORE_ROOT");
@@ -359,8 +377,8 @@ export async function transcriptionProviderStatus(): Promise<"configured" | "mis
   return transcriptionService ? transcriptionService.providerStatus() : "missing";
 }
 
-export async function grantTranscriptionConsent(): Promise<{ status: "granted"; grantedAt: string }> {
-  return getTranscriptionService().grantConsent();
+export function grantTranscriptionConsent(meetingId: string) {
+  return getTranscriptionRoute().start(meetingId);
 }
 
 export function recordingRuntimeIdentity(): { instanceId: string; startedAt: string } {
@@ -410,16 +428,30 @@ function credentialNeedsRefresh(credential: ManagedConvexCredential): boolean {
     && credential.naturalExpiryAt <= Date.now();
 }
 
+async function resumeExistingManagedRecording(recordingId: string) {
+  const credential = await getManagedConvexCredentialSource().refresh().catch(() => { throw new Error("Managed device enrollment could not be verified"); });
+  const storeRoot = requiredAbsolute("MEETLESS_STORE_ROOT");
+  const managedUpload = new ConvexManagedUploadPort(new ConvexHttpManagedFunctionClient(requiredEnv("MEETLESS_CONVEX_URL")), {
+    journal: new FileManagedConvexUploadJournal(path.join(storeRoot, "managed-convex-upload-journal")),
+  });
+  return new ConvexManagedTranscriptionService(getMeetingStore(), {
+    lifecycle: meetingLifecycle,
+    timelineArtifacts: new ManagedTimelineArtifactStore(path.join(storeRoot, "managed-artifacts")),
+    managedUpload,
+  }).resumeExisting({ recordingId, credential });
+}
+
 export async function transcribeManagedRecording(input: {
   recordingId: string;
   appleVerification?: ManagedAppleVerificationMaterial;
   credential?: ManagedConvexCredential;
+  onDurableStart?: (transcript: import("@meetless/meeting-domain").TranscriptState) => void;
 }): Promise<ConvexManagedTranscriptionResult> {
   const source = getManagedConvexCredentialSource();
   const suppliedCredential = input.credential;
   const credential = suppliedCredential && !credentialNeedsRefresh(suppliedCredential)
     ? suppliedCredential
-    : (input.appleVerification ? await source.enroll(input.appleVerification) : await source.refresh());
+    : await (input.appleVerification ? source.enroll(input.appleVerification) : source.refresh()).catch(() => { throw new Error("Managed device enrollment could not be verified"); });
   const storeRoot = requiredAbsolute("MEETLESS_STORE_ROOT");
   const convexUrl = requiredEnv("MEETLESS_CONVEX_URL");
   const upload = new ConvexManagedUploadPort(new ConvexHttpManagedFunctionClient(convexUrl), {
@@ -429,7 +461,7 @@ export async function transcribeManagedRecording(input: {
     lifecycle: meetingLifecycle,
     timelineArtifacts: new ManagedTimelineArtifactStore(path.join(storeRoot, "managed-artifacts")),
     managedUpload: upload,
-  }).transcribe({ recordingId: input.recordingId, credential });
+  }).transcribe({ recordingId: input.recordingId, credential, onDurableStart: input.onDurableStart });
 }
 
 async function readControlledUiTestIdentity(): Promise<UiTestIdentity | null> {

@@ -24,6 +24,36 @@ import {
 } from "@meetless/meeting-contracts";
 import { RecordingRuntimeBootstrapRpc } from "./src/readiness-protocol.js";
 
+export interface MeetlessContributionOptions {
+  /** Test-only module seam; production uses the trusted server composition. */
+  loadServer?: () => Promise<typeof import("./src/server.js")>;
+}
+
+type ServerLoader = () => Promise<typeof import("./src/server.js")>;
+
+const testLoadServerByContext = new WeakMap<PluginContext, ServerLoader>();
+
+/** Test-only factory for injecting the server module; never use in production. */
+export function createTestContribution(options: MeetlessContributionOptions = {}) {
+  return (plugin: PluginContext) => {
+    if (!options.loadServer) return contribute(plugin);
+    testLoadServerByContext.set(plugin, options.loadServer);
+    try {
+      const cleanup = contribute(plugin);
+      return async () => {
+        try {
+          await cleanup();
+        } finally {
+          testLoadServerByContext.delete(plugin);
+        }
+      };
+    } catch (error) {
+      testLoadServerByContext.delete(plugin);
+      throw error;
+    }
+  };
+}
+
 export default function contribute(plugin: PluginContext) {
   let cleanup: (() => Promise<void>) | null = null;
   let chatCleanup: (() => Promise<void>) | null = null;
@@ -43,19 +73,29 @@ export default function contribute(plugin: PluginContext) {
     const server = await import("./src/server.js");
     const meeting = (await server.getMeetingStore().list()).find((candidate) => candidate.id === meetingId);
     if (!meeting) throw new Error(`Meeting not found: ${meetingId}`);
-    const transcript = await server.getMeetingStore().getTranscriptForMeeting(meetingId);
+    const status = await server.getTranscriptionRoute().status(meetingId);
     const consent = await server.getMeetingStore().transcriptionConsent();
     return {
       meeting,
-      transcript: transcript ? toTranscriptWire(transcript) : null,
+      recording: status.recording,
+      transcription: status.transcription,
+      transcript: status.transcript ? toTranscriptWire(status.transcript) : null,
       consent,
-      provider: { status: await server.transcriptionProviderStatus() },
+      provider: { status: "configured" as const },
     };
   });
-  plugin.handle(MeetingTranscriptionConsentRpc, async () => {
-    const server = await import("./src/server.js");
-    const consent = await server.grantTranscriptionConsent();
-    return { consent, provider: { status: await server.transcriptionProviderStatus() } };
+  plugin.handle(MeetingTranscriptionConsentRpc, async ({ meetingId }) => {
+    const server = await (testLoadServerByContext.get(plugin) ?? (() => import("./src/server.js")))();
+    const result = await server.grantTranscriptionConsent(meetingId);
+    return {
+      consent: result.consent,
+      route: result.route,
+      outcome: result.outcome,
+      retryEligible: result.retryEligible,
+      failureCategory: result.failureCategory,
+      transcript: result.transcript ? toTranscriptWire(result.transcript) : null,
+      message: result.message,
+    };
   });
   plugin.handle(MeetingCitationResolveRpc, async ({ meetingId, segmentId }) => {
     const server = await import("./src/server.js");

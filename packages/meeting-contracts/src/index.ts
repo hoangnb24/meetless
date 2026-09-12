@@ -100,11 +100,45 @@ export const TranscriptionProviderStatusWireSchema = z.object({
 
 export type TranscriptionProviderStatusWire = z.infer<typeof TranscriptionProviderStatusWireSchema>;
 
+export const TranscriptionRouteWireSchema = z.literal("managed");
+export type TranscriptionRouteWire = z.infer<typeof TranscriptionRouteWireSchema>;
+
+export const TranscriptionRouteOutcomeWireSchema = z.enum([
+  "started",
+  "completed",
+  "already_running",
+  "purchase_required",
+  "recovery_required",
+  "failed",
+  "not_saved",
+  "not_started",
+  "interrupted",
+]);
+export type TranscriptionRouteOutcomeWire = z.infer<typeof TranscriptionRouteOutcomeWireSchema>;
+
+export const RecordingLifecycleStatusWireSchema = z.enum(["idle", "recording", "interrupted", "recoverable", "finalizing", "saved", "failed"]);
+export const SelectedRecordingWireSchema = z.object({
+  recordingId: z.string().trim().min(1),
+  status: RecordingLifecycleStatusWireSchema,
+}).strict();
+export type SelectedRecordingWire = z.infer<typeof SelectedRecordingWireSchema>;
+export const TranscriptionFailureCategoryWireSchema = z.enum(["not_saved", "access", "enrollment", "upload", "provider", "publication", "quota", "connection", "retry_exhausted"]);
+export type TranscriptionFailureCategoryWire = z.infer<typeof TranscriptionFailureCategoryWireSchema>;
+export const TranscriptionStatusWireSchema = z.object({
+  outcome: TranscriptionRouteOutcomeWireSchema,
+  retryEligible: z.boolean(),
+  failureCategory: TranscriptionFailureCategoryWireSchema.nullable(),
+  message: z.string().trim().min(1).nullable(),
+}).strict();
+export type TranscriptionStatusWire = z.infer<typeof TranscriptionStatusWireSchema>;
+
 export const MeetingTranscriptRpc = defineRpc({
   name: "meeting.transcript",
   input: z.object({ meetingId: z.string().trim().min(1) }).strict(),
   output: z.object({
     meeting: MeetingWireSchema,
+    recording: SelectedRecordingWireSchema.nullable(),
+    transcription: TranscriptionStatusWireSchema,
     transcript: TranscriptWireSchema.nullable(),
     consent: TranscriptionConsentWireSchema,
     provider: TranscriptionProviderStatusWireSchema,
@@ -113,10 +147,15 @@ export const MeetingTranscriptRpc = defineRpc({
 
 export const MeetingTranscriptionConsentRpc = defineRpc({
   name: "meeting.transcription.consent",
-  input: z.object({ accepted: z.literal(true) }).strict(),
+  input: z.object({ accepted: z.literal(true), meetingId: z.string().trim().min(1) }).strict(),
   output: z.object({
     consent: TranscriptionConsentWireSchema,
-    provider: TranscriptionProviderStatusWireSchema,
+    route: TranscriptionRouteWireSchema,
+    outcome: TranscriptionRouteOutcomeWireSchema,
+    retryEligible: z.boolean(),
+    failureCategory: TranscriptionFailureCategoryWireSchema.nullable(),
+    transcript: TranscriptWireSchema.nullable(),
+    message: z.string().trim().min(1).nullable(),
   }).strict(),
 });
 
@@ -503,7 +542,7 @@ export const RecordingChunkWireSchema = z.object({
 }).strict();
 
 export const RecordingStatusWireSchema = z.object({
-  status: z.enum(["idle", "recording", "interrupted", "recoverable", "finalizing", "saved", "failed"]),
+  status: RecordingLifecycleStatusWireSchema,
   recordingId: z.string().trim().min(1).nullable(),
   meetingId: z.string().trim().min(1).nullable(),
   title: z.string().trim().min(1).nullable(),

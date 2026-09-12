@@ -37,6 +37,8 @@ import type {
 } from "./managed-upload.js";
 import { buildManagedLogicalTimelineManifest } from "./managed-upload.js";
 
+const MANAGED_PROVIDER_POLL_INTERVAL_MS = 250;
+
 export interface ManagedTranscriptionInput {
   readonly recordingId: string;
   readonly credential: ManagedDeviceCredential;
@@ -366,6 +368,8 @@ export class ManagedTranscriptionService {
 export interface ConvexManagedTranscriptionInput {
   readonly recordingId: string;
   readonly credential: ManagedConvexCredential;
+  /** Fires after the local transcript start state is durable and before upload. */
+  readonly onDurableStart?: (transcript: TranscriptState) => void;
 }
 
 export interface ConvexManagedTranscriptionServiceOptions {
@@ -401,6 +405,35 @@ export class ConvexManagedTranscriptionService {
       ?? new HandedOffTimelinePreparer(options.timelineArtifacts!);
   }
 
+  async resumeExisting(input: { recordingId: string; credential: ManagedConvexCredential }): Promise<TranscriptState | null> {
+    const recording = (await this.store.listRecordings()).find((entry) => entry.id === input.recordingId);
+    if (!recording || recording.status !== "saved" || !recording.savedOutput) return null;
+    const transcript = (await this.store.listTranscripts(recording.meetingId)).find((entry) => entry.recordingId === recording.id);
+    if (!transcript) return null;
+    const lease = this.options.lifecycle.tryAcquireWork(recording.meetingId, "transcription");
+    if (!lease) throw new Error("Meeting deletion is in progress");
+    try {
+      if (!sameIdentity(await fileIdentity(recording.savedOutput.destination), recording.savedOutput)) throw new Error("Saved audio identity changed");
+      let job = await this.options.managedUpload.jobStatusForRecording({ credential: input.credential, recordingId: recording.id });
+      if (job) logManagedTranscriptionStage("recovery_found", recording.id, transcript, job);
+      if (job?.status === "provider_completed") {
+        job = await this.options.managedUpload.settle({ credential: input.credential, jobId: job._id })
+          .catch((error: unknown) => { throw new Error("Managed transcription settlement failed", { cause: error }); });
+        logManagedTranscriptionStage("settlement_completed", recording.id, transcript, job);
+      }
+      if (!job || job.status !== "succeeded") return transcript;
+      const published = await publishConvexManagedResult(this.store, recording.meetingId, recording.id, transcript.audio.durationMs, job, transcript)
+        .catch((error: unknown) => { throw new Error("Managed transcription publication failed", { cause: error }); });
+      logManagedTranscriptionStage("publication_completed", recording.id, published, job);
+      await this.options.managedUpload.acknowledge({ credential: input.credential, jobId: job._id })
+        .catch((error: unknown) => { throw new Error("Managed transcription acknowledgement failed", { cause: error }); });
+      logManagedTranscriptionStage("acknowledged", recording.id, published, job);
+      return published;
+    } finally {
+      lease.release();
+    }
+  }
+
   async transcribe(input: ConvexManagedTranscriptionInput): Promise<ConvexManagedTranscriptionResult> {
     const recording = (await this.store.listRecordings()).find((candidate) => candidate.id === input.recordingId);
     if (!recording || recording.status !== "saved" || !recording.savedOutput) {
@@ -423,6 +456,11 @@ export class ConvexManagedTranscriptionService {
         if (!readyJob || readyJob.status !== "succeeded") {
           throw new Error("Managed MeetingStore publication is ready but its account-owned job is not recoverable");
         }
+        // A prior process may have published locally and died before the
+        // remote acknowledgement deleted its temporary parts. Repeating the
+        // explicit managed command must finish that cleanup without invoking
+        // provider work again.
+        await this.options.managedUpload.acknowledge({ credential: input.credential, jobId: readyJob._id });
         return { job: readyJob, transcript: readyTranscript };
       }
       const timeline = await this.timelinePreparer.prepare(recording);
@@ -436,36 +474,68 @@ export class ConvexManagedTranscriptionService {
         const durationMs = manifest.durationMs;
         // This is the local durable deletion barrier. It is persisted before
         // the first Convex mutation or generated upload URL is requested.
-        let transcript = await ensureManagedTranscriptState(this.store, recording, durationMs);
-        retainTimeline = true;
-        let remote = await this.options.managedUpload.uploadCanonicalTimelineFromPath({
-          credential: input.credential,
-          manifest,
-          sourcePath: timeline.path,
-        });
-        let job = remote.job;
-        if (job.status === "reserved" || job.status === "running") {
-          job = await this.options.managedUpload.runProvider({ credential: input.credential, jobId: job._id });
+        let transcript: TranscriptState | null = null;
+        let failureStage: "upload" | "provider" | "settlement" | "publication" = "publication";
+        try {
+          transcript = await ensureManagedTranscriptState(this.store, recording, durationMs);
+          retainTimeline = true;
+          logManagedTranscriptionStage("durable_start", recording.id, transcript);
+          input.onDurableStart?.(transcript);
+          failureStage = "upload";
+          logManagedTranscriptionStage("upload_requested", recording.id, transcript);
+          const remote = await this.options.managedUpload.uploadCanonicalTimelineFromPath({
+            credential: input.credential,
+            manifest,
+            sourcePath: timeline.path,
+          });
+          let job = remote.job;
+          logManagedTranscriptionStage("upload_ready", recording.id, transcript, job);
+          failureStage = "provider";
+          while (job.status === "reserved" || job.status === "running") {
+            if (job.status === "reserved") {
+              // One action owns one physical part. A running job already has
+              // an in-flight provider action, so only its status query may
+              // observe progress until that action has durably completed.
+              logManagedTranscriptionStage("provider_requested", recording.id, transcript, job);
+              job = await this.options.managedUpload.runProvider({ credential: input.credential, jobId: job._id });
+            } else {
+              await delayManagedProviderPoll();
+              job = await this.options.managedUpload.jobStatus({ credential: input.credential, jobId: job._id });
+            }
+          }
+          if (job.status === "provider_completed" || job.status === "succeeded") logManagedTranscriptionStage("provider_result", recording.id, transcript, job);
+          if (job.status === "provider_completed") {
+            failureStage = "settlement";
+            job = await this.options.managedUpload.settle({ credential: input.credential, jobId: job._id });
+            logManagedTranscriptionStage("settlement_completed", recording.id, transcript, job);
+          }
+          if (job.status !== "succeeded") {
+            throw new Error("Managed transcription could not be completed");
+          }
+          failureStage = "publication";
+          transcript = await publishConvexManagedResult(
+            this.store,
+            recording.meetingId,
+            recording.id,
+            durationMs,
+            job,
+            transcript,
+          );
+          if (transcript.status !== "ready") throw new Error("Managed transcript remains pending after provider result");
+          logManagedTranscriptionStage("publication_completed", recording.id, transcript, job);
+          await this.options.managedUpload.acknowledge({ credential: input.credential, jobId: job._id });
+          logManagedTranscriptionStage("acknowledged", recording.id, transcript, job);
+          await timeline.cleanup();
+          retainTimeline = false;
+          return { job, transcript };
+        } catch (error) {
+          const reason = redactManagedFailure(error, failureStage);
+          logManagedTranscriptionStage(`${failureStage}_failed`, recording.id, transcript);
+          if (transcript && (transcript.status === "pending" || transcript.status === "transcribing")) {
+            await this.store.failTranscript(transcript.id, reason).catch(() => undefined);
+          }
+          throw new Error(reason, { cause: error });
         }
-        if (job.status === "provider_completed") {
-          job = await this.options.managedUpload.settle({ credential: input.credential, jobId: job._id });
-        }
-        if (job.status !== "succeeded") {
-          throw new Error(`Managed Convex job ${job._id} is ${job.status}`);
-        }
-        transcript = await publishConvexManagedResult(
-          this.store,
-          recording.meetingId,
-          recording.id,
-          durationMs,
-          job,
-          transcript,
-        );
-        if (transcript.status !== "ready") throw new Error("Managed transcript remains pending after provider result");
-        await this.options.managedUpload.acknowledge({ credential: input.credential, jobId: job._id });
-        await timeline.cleanup();
-        retainTimeline = false;
-        return { job, transcript };
       } finally {
         if (!retainTimeline) await timeline.cleanup().catch(() => undefined);
       }
@@ -473,6 +543,27 @@ export class ConvexManagedTranscriptionService {
       executionLease.release();
     }
   }
+}
+
+/** Categorical lifecycle evidence; never serialize credentials, audio, provider text, or a full job. */
+function logManagedTranscriptionStage(stage: string, recordingId: string, transcript: TranscriptState | null, job?: ManagedConvexJob): void {
+  const counters: Record<string, number> = {};
+  for (const key of ["providerInvocationCount", "providerCompletedAt", "settledAt", "acknowledgedAt"] as const) {
+    const value = job?.[key];
+    if (typeof value === "number" && Number.isFinite(value)) counters[key] = value;
+  }
+  console.info(`[meetless-transcription] ${JSON.stringify({
+    stage,
+    recordingId,
+    ...(transcript ? { transcriptId: transcript.id, requestCount: transcript.requestCount } : {}),
+    ...(job ? { jobId: job._id, jobStatus: job.status } : {}),
+    ...counters,
+    timestampMs: Date.now(),
+  })}`);
+}
+
+async function delayManagedProviderPoll(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, MANAGED_PROVIDER_POLL_INTERVAL_MS));
 }
 
 async function ensureManagedTranscriptState(
@@ -491,6 +582,13 @@ async function ensureManagedTranscriptState(
     transcript = await store.retryTranscript(transcript.id);
   }
   return transcript;
+}
+
+function redactManagedFailure(error: unknown, stage: "upload" | "provider" | "settlement" | "publication"): string {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("quota") || message.includes("allowance")) return "Managed transcription quota is unavailable";
+  if (/credential|enrollment|unauthorized|authentication/.test(message)) return "Managed device enrollment could not be verified";
+  return `Managed transcription ${stage} failed`;
 }
 
 async function publishConvexManagedResult(

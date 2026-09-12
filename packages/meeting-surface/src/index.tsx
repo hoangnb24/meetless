@@ -29,6 +29,9 @@ import type {
   PremiumAccessWire,
   RecordingStatusWire,
   TranscriptWire,
+  TranscriptionRouteOutcomeWire,
+  SelectedRecordingWire,
+  TranscriptionFailureCategoryWire,
   TranscriptionProviderStatusWire,
 } from "@meetless/meeting-contracts";
 
@@ -524,6 +527,13 @@ export interface MeetingListSurfaceProps {
   transcriptError?: string | null;
   consentStatus?: "unknown" | "granted";
   providerStatus?: TranscriptionProviderStatusWire["status"];
+  selectedRecording?: SelectedRecordingWire | null;
+  transcriptionRetryEligible?: boolean;
+  transcriptionFailureCategory?: TranscriptionFailureCategoryWire | null;
+  onCheckTranscriptionStatus?: () => Promise<void>;
+  transcriptionRouteOutcome?: TranscriptionRouteOutcomeWire;
+  transcriptionRouteMessage?: string | null;
+  transcriptionConsentPending?: boolean;
   onOpenTranscript?(meetingId: string): Promise<void>;
   onBack?(): void;
   onGrantTranscriptionConsent?(): Promise<void>;
@@ -588,6 +598,13 @@ export function MeetingListSurface({
   transcriptError = null,
   consentStatus = "unknown",
   providerStatus,
+  selectedRecording,
+  transcriptionRetryEligible,
+  transcriptionFailureCategory,
+  onCheckTranscriptionStatus,
+  transcriptionRouteOutcome,
+  transcriptionRouteMessage = null,
+  transcriptionConsentPending = false,
   onOpenTranscript,
   onBack,
   onGrantTranscriptionConsent,
@@ -694,8 +711,10 @@ export function MeetingListSurface({
     />
   );
 
+  const transcriptionPremiumPanel = <PremiumPanel access={premiumAccess} pending={premiumPending} pendingAction={premiumPendingAction} error={premiumError} onRefresh={onRefreshPremium} onPurchase={onPurchasePremium} onRestore={onRestorePremium} devices={null} devicesPending={false} devicesError={null} />;
   const detail = (
     <MeetingDetail
+      transcriptionPremiumPanel={transcriptionPremiumPanel}
       currentRecording={currentRecording}
       layoutTier={tier}
       consentStatus={consentStatus}
@@ -713,6 +732,13 @@ export function MeetingListSurface({
       onRetryTranscription={onRetryTranscription}
       pending={pending}
       providerStatus={providerStatus}
+      selectedRecording={selectedRecording}
+      transcriptionRetryEligible={transcriptionRetryEligible}
+      transcriptionFailureCategory={transcriptionFailureCategory}
+      onCheckTranscriptionStatus={onCheckTranscriptionStatus}
+      transcriptionRouteOutcome={transcriptionRouteOutcome}
+      transcriptionRouteMessage={transcriptionRouteMessage}
+      transcriptionConsentPending={transcriptionConsentPending}
       selectedMeeting={selectedMeeting}
       selectedMeetingId={selectedMeetingId}
       transcript={transcript}
@@ -1235,6 +1261,7 @@ function PermissionGuidance({ source, label, onOpen, onRecheck }: {
 }
 
 interface MeetingDetailProps {
+  transcriptionPremiumPanel?: ReactNode;
   currentRecording?: RecordingStatusWire;
   layoutTier: LayoutTier;
   consentStatus: "unknown" | "granted";
@@ -1252,6 +1279,13 @@ interface MeetingDetailProps {
   onRetryTranscription?: () => Promise<void>;
   pending: boolean;
   providerStatus?: TranscriptionProviderStatusWire["status"];
+  selectedRecording?: SelectedRecordingWire | null;
+  transcriptionRetryEligible?: boolean;
+  transcriptionFailureCategory?: TranscriptionFailureCategoryWire | null;
+  onCheckTranscriptionStatus?: () => Promise<void>;
+  transcriptionRouteOutcome?: TranscriptionRouteOutcomeWire;
+  transcriptionRouteMessage: string | null;
+  transcriptionConsentPending: boolean;
   selectedMeeting: MeetingWire | null;
   selectedMeetingId: string | null;
   transcript: TranscriptWire | null;
@@ -1280,6 +1314,7 @@ interface MeetingDetailProps {
 
 function MeetingDetail(props: MeetingDetailProps) {
   const {
+    transcriptionPremiumPanel,
     currentRecording,
     layoutTier,
     consentStatus,
@@ -1297,6 +1332,13 @@ function MeetingDetail(props: MeetingDetailProps) {
     onRetryTranscription,
     pending,
     providerStatus,
+    selectedRecording,
+    transcriptionRetryEligible,
+    transcriptionFailureCategory,
+    onCheckTranscriptionStatus,
+    transcriptionRouteOutcome,
+    transcriptionRouteMessage,
+    transcriptionConsentPending,
     selectedMeeting,
     selectedMeetingId,
     transcript,
@@ -1386,7 +1428,8 @@ function MeetingDetail(props: MeetingDetailProps) {
       <View style={[styles.detailContent, layoutTier === "desktop" && styles.desktopDetailContent]}>
         {showTranscript ? (
           <TranscriptPane
-            audioNotSaved={meetingAudioNotSaved(selectedMeeting, currentRecording)}
+            transcriptionPremiumPanel={transcriptionPremiumPanel}
+            audioNotSaved={selectedRecording?.status !== "saved"}
             layoutTier={layoutTier}
             interactive={interactive}
             consentStatus={consentStatus}
@@ -1394,6 +1437,13 @@ function MeetingDetail(props: MeetingDetailProps) {
             onRetryTranscription={onRetryTranscription}
             pending={pending}
             providerStatus={providerStatus}
+            selectedRecording={selectedRecording}
+            transcriptionRetryEligible={transcriptionRetryEligible}
+            transcriptionFailureCategory={transcriptionFailureCategory}
+            onCheckTranscriptionStatus={onCheckTranscriptionStatus}
+            transcriptionRouteOutcome={transcriptionRouteOutcome}
+            transcriptionRouteMessage={transcriptionRouteMessage}
+            transcriptionConsentPending={transcriptionConsentPending}
             selectedMeeting={selectedMeeting}
             transcript={transcript}
             transcriptError={transcriptError}
@@ -1552,6 +1602,7 @@ function TaskSwitcher({ task, onTaskChange }: { task: MeetingTask; onTaskChange(
 }
 
 function TranscriptPane({
+  transcriptionPremiumPanel,
   audioNotSaved,
   layoutTier,
   interactive,
@@ -1560,6 +1611,13 @@ function TranscriptPane({
   onRetryTranscription,
   pending,
   providerStatus,
+  selectedRecording,
+  transcriptionRetryEligible,
+  transcriptionFailureCategory,
+  onCheckTranscriptionStatus,
+  transcriptionRouteOutcome,
+  transcriptionRouteMessage,
+  transcriptionConsentPending,
   selectedMeeting,
   transcript,
   transcriptError,
@@ -1568,6 +1626,7 @@ function TranscriptPane({
   citationEvidence,
   testID,
 }: {
+  transcriptionPremiumPanel?: ReactNode;
   audioNotSaved: boolean;
   layoutTier: LayoutTier;
   interactive: boolean;
@@ -1576,6 +1635,13 @@ function TranscriptPane({
   onRetryTranscription?: () => Promise<void>;
   pending: boolean;
   providerStatus?: TranscriptionProviderStatusWire["status"];
+  selectedRecording?: SelectedRecordingWire | null;
+  transcriptionRetryEligible?: boolean;
+  transcriptionFailureCategory?: TranscriptionFailureCategoryWire | null;
+  onCheckTranscriptionStatus?: () => Promise<void>;
+  transcriptionRouteOutcome?: TranscriptionRouteOutcomeWire;
+  transcriptionRouteMessage: string | null;
+  transcriptionConsentPending: boolean;
   selectedMeeting: MeetingWire | null;
   transcript: TranscriptWire | null;
   transcriptError: string | null;
@@ -1584,29 +1650,49 @@ function TranscriptPane({
   citationEvidence: CitationEvidenceState | null;
   testID: string;
 }) {
+  const [disclosureOpen, setDisclosureOpen] = useState(false);
+  const [premiumOpen, setPremiumOpen] = useState(false);
+  useEffect(() => { setDisclosureOpen(false); setPremiumOpen(false); }, [selectedMeeting?.id]);
+  const active = transcriptionRouteOutcome === "started" || transcriptionRouteOutcome === "already_running";
+  const needsAccess = transcriptionFailureCategory === "access" || transcriptionFailureCategory === "enrollment";
+  const canStart = !!onGrantTranscriptionConsent && !audioNotSaved && !transcriptLoading && !active && transcript?.status !== "ready" && (transcriptionRouteOutcome === "not_started" || !transcriptionRouteOutcome || transcriptionRetryEligible || needsAccess);
+  const retrying = transcriptionRetryEligible && (transcriptionRouteOutcome === "failed" || transcriptionRouteOutcome === "interrupted");
+  const startLabel = retrying ? "Retry transcription" : "Transcribe";
+  const start = () => {
+    if (consentStatus !== "granted") setDisclosureOpen(true);
+    else void (retrying ? onRetryTranscription ?? onGrantTranscriptionConsent : onGrantTranscriptionConsent)?.();
+  };
   return (
     <View style={[styles.pane, layoutTier === "desktop" && styles.transcriptPane]} testID={testID}>
       <View style={styles.paneHead}><Text style={styles.paneTitle}>Transcript</Text></View>
       <ScrollView style={styles.paneScroll} contentContainerStyle={styles.paneScrollContent} testID={layoutTier === "desktop" ? "transcript-pane-scroll" : "transcript-detail-scroll"}>
-        {audioNotSaved && !transcript ? (
+        {audioNotSaved && (selectedRecording || transcriptionRouteOutcome === "not_saved") && !transcript && !transcriptLoading && !transcriptError ? (
           <TranscriptStateMessage testID="transcript-audio-not-saved" title="Audio not saved yet" detail="Save the recording before starting transcription." />
         ) : <>
-        {consentStatus !== "granted" && onGrantTranscriptionConsent && !transcriptLoading ? (
+        {canStart && !disclosureOpen ? <FocusPressable accessibilityLabel={startLabel} accessibilityRole="button" disabled={transcriptionConsentPending || !interactive} onPress={start} style={styles.primaryButton} testID={retrying ? "transcription-retry" : "transcription-start"}><Text style={styles.buttonText}>{startLabel}</Text></FocusPressable> : null}
+        {disclosureOpen && !audioNotSaved ? (
           <View style={styles.disclosure} testID="transcription-disclosure">
             <Text style={styles.disclosureTitle}>Cloud transcription</Text>
-            <Text style={styles.disclosureText}>To create the transcript, the saved MP3 will be sent to OpenAI for one-time cloud transcription. Ask stays unavailable until the transcript is ready.</Text>
-            <FocusPressable accessibilityLabel="Allow cloud transcription" accessibilityRole="button" accessibilityState={{ disabled: pending || !interactive }} disabled={pending || !interactive} onPress={() => void onGrantTranscriptionConsent()} style={styles.primaryButton} testID="transcription-consent"><Text style={styles.buttonText}>Allow cloud transcription</Text></FocusPressable>
+            <Text style={styles.disclosureText}>The saved recording will be uploaded to Meetless Cloud and sent to OpenAI to create a transcript. Meetless deletes temporary cloud audio and provider output within 24 hours. The transcript is saved on your Mac. Choose Not now to keep the audio local.</Text>
+            <FocusPressable accessibilityLabel="Allow cloud transcription" accessibilityRole="button" disabled={transcriptionConsentPending || !interactive} onPress={() => { setDisclosureOpen(false); void onGrantTranscriptionConsent?.(); }} style={styles.primaryButton} testID="transcription-consent"><Text style={styles.buttonText}>Allow cloud transcription</Text></FocusPressable>
+            <FocusPressable accessibilityLabel="Not now" accessibilityRole="button" onPress={() => setDisclosureOpen(false)} style={styles.ghostButton} testID="transcription-not-now"><Text style={styles.ghostButtonText}>Not now</Text></FocusPressable>
           </View>
         ) : null}
+        {needsAccess ? <FocusPressable accessibilityLabel="Purchase or restore Premium" accessibilityRole="button" onPress={() => setPremiumOpen(true)} style={styles.ghostButton} testID="transcription-open-premium"><Text style={styles.ghostButtonText}>Purchase or restore Premium</Text></FocusPressable> : null}
+        {premiumOpen ? <View testID="transcription-premium-panel">{transcriptionPremiumPanel}<Text style={styles.disclosureText}>When Premium is active, close this panel and choose Transcribe again.</Text><FocusPressable accessibilityLabel="Close Premium" accessibilityRole="button" onPress={() => setPremiumOpen(false)} style={styles.ghostButton}><Text style={styles.ghostButtonText}>Close Premium</Text></FocusPressable></View> : null}
+        {transcriptionRouteOutcome === "interrupted" || transcriptionFailureCategory === "connection" || transcriptionFailureCategory === "publication" || transcriptError || (!selectedRecording && !transcriptLoading) || ((transcript?.status === "pending" || transcript?.status === "transcribing") && !active) ? <FocusPressable accessibilityLabel="Check transcription status" accessibilityRole="button" disabled={!interactive || transcriptLoading} onPress={() => void onCheckTranscriptionStatus?.()} style={styles.ghostButton} testID="transcription-check-status"><Text style={styles.ghostButtonText}>Check status</Text></FocusPressable> : null}
         <TranscriptState
           interactive={interactive}
           onCitation={interactive ? onCitation : undefined}
           selectedMeeting={selectedMeeting}
+          consentStatus={consentStatus}
           transcript={transcript}
           transcriptError={transcriptError}
           transcriptLoading={transcriptLoading}
           providerStatus={providerStatus}
-          onRetryTranscription={onRetryTranscription}
+          transcriptionRouteOutcome={transcriptionRouteOutcome}
+          transcriptionRouteMessage={transcriptionRouteMessage}
+          onRetryTranscription={undefined}
           highlightedSegmentId={citationEvidence?.segmentId ?? null}
         />
         </>}
@@ -2325,33 +2411,39 @@ function TranscriptState({
   onCitation,
   onRetryTranscription,
   selectedMeeting,
+  consentStatus,
   transcript,
   transcriptError,
   transcriptLoading,
   providerStatus,
+  transcriptionRouteOutcome,
+  transcriptionRouteMessage,
   highlightedSegmentId,
 }: {
   interactive: boolean;
   onCitation?: (citation: Pick<CitationWire, "meetingId" | "segmentId">) => void | Promise<void>;
   onRetryTranscription?: () => Promise<void>;
   selectedMeeting: MeetingWire | null;
+  consentStatus: "unknown" | "granted";
   transcript: TranscriptWire | null;
   transcriptError: string | null;
   transcriptLoading: boolean;
   providerStatus?: TranscriptionProviderStatusWire["status"];
+  transcriptionRouteOutcome?: TranscriptionRouteOutcomeWire;
+  transcriptionRouteMessage: string | null;
   highlightedSegmentId: string | null;
 }) {
-  if (transcriptLoading) return <TranscriptStateMessage testID="transcript-loading" title="Preparing transcript…" detail="Your saved recording is safe." />;
-  if (transcript?.status === "failed") return <TranscriptStateMessage detail="Your saved audio is safe. Retry transcription when you are ready." onRetry={interactive ? onRetryTranscription : undefined} testID="transcript-failed" title="Transcription needs attention" />;
-  if (!transcript && transcriptError) return <TranscriptStateMessage detail="Your saved audio is safe. Retry transcription when you are ready." onRetry={interactive ? onRetryTranscription : undefined} testID="transcript-failed" title="Transcription needs attention" />;
-  if (!transcript && providerStatus === "invalid") return <TranscriptStateMessage detail="Transcription is not available until its setup is repaired." testID="transcript-failed" title="Transcription needs attention" />;
-  if (!transcript && providerStatus === "missing") return <TranscriptStateMessage detail="Transcription is not configured yet. Your saved audio remains local." testID="transcript-empty" title="Transcript waiting" />;
+  const transcriptionFailureMessage = "Transcription could not be completed. Your saved audio remains safe. Retry transcription when you are ready.";
+  if (transcript?.status !== "ready" && transcriptLoading) return <TranscriptStateMessage testID="transcript-loading" title="Preparing transcript…" detail="Your saved recording is safe." />;
+  if (transcript?.status !== "ready" && (transcriptionRouteOutcome === "started" || transcriptionRouteOutcome === "already_running")) return <TranscriptStateMessage testID="transcript-processing" title="Transcribing" detail="Your saved audio is safe while the transcript is prepared." />;
+  if (transcript?.status !== "ready" && (transcriptionRouteOutcome === "purchase_required" || transcriptionRouteOutcome === "recovery_required")) return <TranscriptStateMessage detail={transcriptionRouteMessage ?? "Purchase or restore Premium, then select Transcribe again."} testID={transcriptionRouteOutcome === "recovery_required" ? "transcript-premium-recovery" : "transcript-premium-required"} title={transcriptionRouteOutcome === "recovery_required" ? "Premium access needs attention" : "Premium is required"} />;
+  if (transcript?.status !== "ready" && (transcriptionRouteOutcome === "failed" || transcriptionRouteOutcome === "interrupted" || (!transcript && transcriptError))) return <TranscriptStateMessage detail={transcriptionRouteMessage ?? "Could not read transcription status. Check status to continue."} testID="transcript-failed" title="Transcription needs attention" />;
+  if (transcript?.status === "failed") return <TranscriptStateMessage detail={transcriptionFailureMessage} testID="transcript-failed" title="Transcription could not be completed" />;
   if (!transcript) {
-    if (selectedMeeting?.status === "processing") return <TranscriptStateMessage testID="transcript-not-started" title="Transcript not started" detail="Transcription starts only when you choose Transcribe." />;
-    return <TranscriptStateMessage testID="transcript-empty" title="Transcript not available yet" detail="No transcript is available for this meeting yet." />;
+    return <TranscriptStateMessage testID="transcript-not-started" title="Transcript not started" detail="Transcription starts only when you choose Transcribe." />;
   }
   if (transcript.status === "pending" || transcript.status === "transcribing") {
-    return <TranscriptStateMessage detail="Your saved audio is safe while the transcript is prepared." testID="transcript-processing" title="Transcribing" />;
+    return <TranscriptStateMessage detail="Check status or choose Transcribe to continue." testID="transcript-interrupted" title="Transcription is not running" />;
   }
   return (
     <View style={styles.readyState} testID="transcript-ready">

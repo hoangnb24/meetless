@@ -125,7 +125,7 @@ describe("global recording strip", () => {
       systemCount: 1, inventoryDigest: "digest", retryEligible: status === "recoverable", outputPath: null, error: null };
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = TestRenderer.create(<MeetingListSurface hostLabel="this host" connectionLabel="Host online"
+      renderer = TestRenderer.create(<MeetingListSurface selectedRecording={{ recordingId: "r-1", status }} hostLabel="this host" connectionLabel="Host online"
         onRefresh={async () => undefined} selectedMeetingId="m-1" currentRecording={currentRecording}
         onGrantTranscriptionConsent={async () => undefined}
         meetings={[{ id: "m-1", title: "Sync", status: parentStatus, createdAt: "2026-09-12T10:00:00.000Z", updatedAt: "2026-09-12T10:00:00.000Z" }]} />);
@@ -135,7 +135,8 @@ describe("global recording strip", () => {
     expect(labels("meeting-detail-header")).toContain(expected);
     const unsaved = status !== "saved";
     expect(renderer!.root.findAllByProps({ testID: "transcript-audio-not-saved" }).length > 0).toBe(unsaved);
-    expect(renderer!.root.findAllByProps({ testID: "transcription-disclosure" })).toHaveLength(unsaved ? 0 : 1);
+    expect(renderer!.root.findAllByProps({ testID: "transcription-disclosure" })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ testID: "transcription-start" }).length > 0).toBe(!unsaved);
     if (unsaved) expect(labels("meeting-detail")).not.toContain("The saved recording remains safe.");
     if (status !== "recording" || meetingId !== "m-1") {
       expect(labels("meeting-m-1")).not.toContain("Recording");
@@ -213,7 +214,7 @@ describe("global recording strip", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canRecord
           layoutTier="desktop"
           connectionLabel="Host online"
@@ -249,7 +250,7 @@ describe("global recording strip", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canRecord
           layoutTier="desktop"
           connectionLabel="Host online"
@@ -292,7 +293,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           compact
           connectionLabel="Connected"
           hostLabel="isolated host"
@@ -337,7 +338,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           compact
           connectionLabel="Connected"
           hostLabel="isolated host"
@@ -382,7 +383,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           compact
           connectionLabel="Connected"
           hostLabel="isolated host"
@@ -413,7 +414,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           compact
           connectionLabel="Connected"
           hostLabel="isolated host"
@@ -440,7 +441,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           compact
           connectionLabel="Connected"
           hostLabel="isolated host"
@@ -492,7 +493,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           compact
           connectionLabel="Connected"
           hostLabel="isolated host"
@@ -522,7 +523,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           compact
           connectionLabel="Connected"
           hostLabel="isolated host"
@@ -547,7 +548,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false}
           compact
           connectionLabel="Connected"
@@ -573,7 +574,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false}
           layoutTier="desktop"
           compact
@@ -595,7 +596,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false}
           layoutTier="desktop"
           compact
@@ -618,7 +619,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false}
           layoutTier="desktop"
           compact
@@ -673,7 +674,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false}
           compact
           connectionLabel="Connected"
@@ -699,7 +700,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false}
           compact
           connectionLabel="Connected"
@@ -730,7 +731,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false} layoutTier="desktop" connectionLabel="Connected" hostLabel="isolated host"
           meetings={[meeting("m-1")]} onRefresh={async () => undefined}
           selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
@@ -770,7 +771,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false} layoutTier="desktop" connectionLabel="Connected" hostLabel="isolated host"
           meetings={[meeting("m-1")]} onRefresh={async () => undefined}
           selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
@@ -814,7 +815,7 @@ describe("companion meeting surface", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false} layoutTier="desktop" connectionLabel="Connected" hostLabel="isolated host"
           meetings={[meeting("m-1")]} onRefresh={async () => undefined}
           selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
@@ -873,7 +874,7 @@ describe("responsive meeting sidebar and transcript detail", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false}
           compact
           connectionLabel="Connected"
@@ -894,7 +895,7 @@ describe("responsive meeting sidebar and transcript detail", () => {
 
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false}
           compact={false}
           connectionLabel="Connected"
@@ -924,7 +925,7 @@ describe("responsive meeting sidebar and transcript detail", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false}
           compact
           connectionLabel="Connected"
@@ -947,16 +948,17 @@ describe("responsive meeting sidebar and transcript detail", () => {
 
   test.each([
     { name: "loading", props: { transcriptLoading: true }, state: "transcript-loading" },
-    { name: "empty", props: {}, state: "transcript-empty" },
-    { name: "processing", props: { transcript: transcript("transcribing") }, state: "transcript-processing" },
+    { name: "not started after managed consent", props: {}, state: "transcript-not-started" },
+    { name: "processing", props: { transcript: transcript("transcribing"), transcriptionRouteOutcome: "started" as const }, state: "transcript-processing" },
+    { name: "interrupted after relaunch", props: { transcript: transcript("pending") }, state: "transcript-interrupted" },
     { name: "failed", props: { transcript: transcript("failed") }, state: "transcript-failed" },
     { name: "fetch failure", props: { transcriptError: "transcript request failed" }, state: "transcript-failed" },
-    { name: "invalid provider", props: { providerStatus: "invalid" as const }, state: "transcript-failed" },
+    { name: "native provider does not block the managed route", props: { consentStatus: "unknown" as const, providerStatus: "invalid" as const }, state: "transcript-not-started" },
   ])("renders an explicit $name transcript state without segments", async ({ props, state }) => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false}
           compact
           connectionLabel="Connected"
@@ -975,6 +977,239 @@ describe("responsive meeting sidebar and transcript detail", () => {
     renderer!.unmount();
   });
 
+  test("offers an explicit Retry transcription action for an eligible provider failure", async () => {
+    const retry = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
+          canCreate={false}
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          meetings={[meeting("m-1")]}
+          onRefresh={async () => undefined}
+          onRetryTranscription={retry}
+          onGrantTranscriptionConsent={retry}
+          transcriptionRetryEligible
+          transcriptionRouteOutcome="failed"
+          transcriptionFailureCategory="provider"
+          transcriptionRouteMessage="The transcription service could not complete this recording. The saved audio remains local."
+          selectedMeetingId="m-1"
+          consentStatus="granted"
+          transcript={transcript("failed")}
+        />,
+      );
+    });
+
+    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === "Transcription needs attention")).toBe(true);
+    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === "The transcription service could not complete this recording. The saved audio remains local.")).toBe(true);
+    const retryButton = renderer!.root.findByProps({ testID: "transcription-retry" });
+    expect(retryButton.findByType("Text").props.children).toBe("Retry transcription");
+    await act(async () => { await retryButton.props.onPress(); });
+    expect(retry).toHaveBeenCalledOnce();
+    renderer!.unmount();
+  });
+
+  test.each([
+    ["transcript fetch", { transcriptError: "transcript request failed" }, "Could not read transcription status. Check status to continue."],
+    ["provider failure", { transcriptionRouteOutcome: "failed" as const, transcriptionRouteMessage: "The transcription service could not complete this recording. The saved audio remains local." }, "The transcription service could not complete this recording. The saved audio remains local."],
+  ] as const)("uses safe terminal copy for the %s fallback", async (_name, props, detail) => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
+          canCreate={false}
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          meetings={[meeting("m-1")]}
+          onRefresh={async () => undefined}
+          selectedMeetingId="m-1"
+          {...props}
+        />,
+      );
+    });
+    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === "Transcription needs attention")).toBe(true);
+    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === detail)).toBe(true);
+    renderer!.unmount();
+  });
+
+  test.each([
+    ["purchase_required", "transcript-premium-required", "Premium is required"],
+    ["recovery_required", "transcript-premium-recovery", "Premium access needs attention"],
+  ] as const)("renders the managed %s outcome instead of native provider status", async (outcome, state, title) => {
+    const retry = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
+          canCreate={false}
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          meetings={[meeting("m-1")]}
+          onRefresh={async () => undefined}
+          selectedMeetingId="m-1"
+          consentStatus="granted"
+          providerStatus="missing"
+          transcriptionFailureCategory="access"
+          transcriptionRouteOutcome={outcome}
+          transcriptionRouteMessage="Purchase or restore Premium to continue."
+          onRetryTranscription={retry}
+          premiumAccess={{ entitlement: "premium", status: outcome === "purchase_required" ? "inactive" : "unavailable", packages: [{ packageId: "monthly", productId: "com.meetless.app.premium.monthly", localizedPrice: "$9.99", trialEligible: false }], reason: outcome === "purchase_required" ? null : "store_unavailable" }}
+          onPurchasePremium={async () => undefined}
+          onRestorePremium={async () => undefined}
+        />,
+      );
+    });
+
+    expect(renderer!.root.findByProps({ testID: state })).toBeTruthy();
+    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === title)).toBe(true);
+    expect(renderer!.root.findAllByType("Text").some((node) => node.props.children === "Purchase or restore Premium to continue.")).toBe(true);
+    expect(renderer!.root.findAllByProps({ testID: "transcription-retry" })).toHaveLength(0);
+    await act(async () => { renderer!.root.findByProps({ testID: "transcription-open-premium" }).props.onPress(); });
+    expect(renderer!.root.findByProps({ testID: "transcription-premium-panel" }).findByProps({ testID: "premium-restore" })).toBeTruthy();
+    renderer!.unmount();
+  });
+
+  test("renders a managed started outcome even when a stale native provider status is missing", async () => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
+          canCreate={false}
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          meetings={[meeting("m-1")]}
+          onRefresh={async () => undefined}
+          selectedMeetingId="m-1"
+          consentStatus="granted"
+          providerStatus="missing"
+          transcriptionRouteOutcome="started"
+        />,
+      );
+    });
+
+    expect(renderer!.root.findByProps({ testID: "transcript-processing" })).toBeTruthy();
+    expect(renderer!.root.findAllByProps({ testID: "transcript-empty" })).toHaveLength(0);
+    renderer!.unmount();
+  });
+
+  test("keeps the selected meeting actionable after global consent when its transcript has not started", async () => {
+    const retry = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
+          canCreate={false}
+          compact
+          connectionLabel="Connected"
+          hostLabel="isolated host"
+          meetings={[meeting("m-1"), meeting("m-2")]}
+          onRefresh={async () => undefined}
+          selectedMeetingId="m-2"
+          consentStatus="granted"
+          providerStatus="missing"
+          onGrantTranscriptionConsent={retry}
+        />,
+      );
+    });
+
+    expect(renderer!.root.findByProps({ testID: "transcript-not-started" })).toBeTruthy();
+    expect(retry).not.toHaveBeenCalled();
+    const button = renderer!.root.findByProps({ testID: "transcription-start" });
+    expect(button.findByType("Text").props.children).toBe("Transcribe");
+    await act(async () => { await button.props.onPress(); });
+    expect(retry).toHaveBeenCalledOnce();
+    renderer!.unmount();
+  });
+
+  test("requires Transcribe before disclosure, keeps Not now local, and clears disclosure on selection change", async () => {
+    const dispatch = vi.fn(async () => undefined);
+    const props = { compact: true, canCreate: false, hostLabel: "this host", connectionLabel: "Connected", meetings: [meeting("m-1"), meeting("m-2")], onRefresh: async () => undefined, onGrantTranscriptionConsent: dispatch, selectedRecording: { recordingId: "r-1", status: "saved" as const } };
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<MeetingListSurface {...props} selectedMeetingId="m-1" />); });
+    expect(renderer!.root.findAllByProps({ testID: "transcription-disclosure" })).toHaveLength(0);
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { renderer!.root.findByProps({ testID: "transcription-start" }).props.onPress(); });
+    expect(renderer!.root.findByProps({ testID: "transcription-disclosure" })).toBeTruthy();
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { renderer!.root.findByProps({ testID: "transcription-not-now" }).props.onPress(); });
+    expect(renderer!.root.findAllByProps({ testID: "transcription-disclosure" })).toHaveLength(0);
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { renderer!.root.findByProps({ testID: "transcription-start" }).props.onPress(); });
+    await act(async () => { renderer!.update(<MeetingListSurface {...props} selectedMeetingId="m-2" selectedRecording={{ recordingId: "r-2", status: "saved" }} />); });
+    expect(renderer!.root.findAllByProps({ testID: "transcription-disclosure" })).toHaveLength(0);
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { renderer!.root.findByProps({ testID: "transcription-start" }).props.onPress(); });
+    await act(async () => { renderer!.root.findByProps({ testID: "transcription-consent" }).props.onPress(); });
+    expect(dispatch).toHaveBeenCalledOnce();
+    await act(async () => { renderer!.unmount(); });
+  });
+
+  test.each(["saved", "recoverable", null] as const)("uses the selected recording evidence (%s), independently of another live recording", async (status) => {
+    const dispatch = vi.fn(async () => undefined);
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<MeetingListSurface compact canCreate={false} hostLabel="this host" connectionLabel="Connected" meetings={[meeting("m-1")]} selectedMeetingId="m-1" selectedRecording={status ? { recordingId: "old-recording", status } : null} currentRecording={{ meetingId: "m-other", recordingId: "new-recording", status: "recoverable" } as RecordingStatusWire} onRefresh={async () => undefined} consentStatus="granted" onGrantTranscriptionConsent={dispatch} />); });
+    expect(renderer!.root.findAllByProps({ testID: "transcription-start" }).length > 0).toBe(status === "saved");
+    expect(dispatch).not.toHaveBeenCalled();
+    if (status === "saved") {
+      await act(async () => { renderer!.root.findByProps({ testID: "transcription-start" }).props.onPress(); });
+      expect(dispatch).toHaveBeenCalledOnce();
+    }
+    await act(async () => { renderer!.unmount(); });
+  });
+
+  test("keeps Premium purchase and dismissal in the selected meeting without automatically transcribing", async () => {
+    const purchase = vi.fn(async () => undefined);
+    const dispatch = vi.fn(async () => undefined);
+    const props = { compact: true, canCreate: false, hostLabel: "this host", connectionLabel: "Connected", meetings: [meeting("m-1")], selectedMeetingId: "m-1", selectedRecording: { recordingId: "r-1", status: "saved" as const }, onRefresh: async () => undefined, onGrantTranscriptionConsent: dispatch, consentStatus: "granted" as const, transcriptionRouteOutcome: "purchase_required" as const, transcriptionFailureCategory: "access" as const, onPurchasePremium: purchase, onRestorePremium: async () => undefined };
+    const inactive = { entitlement: "premium" as const, status: "inactive" as const, packages: [{ packageId: "monthly" as const, productId: "com.meetless.app.premium.monthly", localizedPrice: "$9.99", trialEligible: false }], reason: null };
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<MeetingListSurface {...props} premiumAccess={inactive} />); });
+    await act(async () => { renderer!.root.findByProps({ testID: "transcription-open-premium" }).props.onPress(); });
+    const panel = () => renderer!.root.findByProps({ testID: "transcription-premium-panel" });
+    await act(async () => { panel().findByProps({ testID: "premium-purchase-monthly" }).props.onPress(); });
+    expect(purchase).toHaveBeenCalledWith("monthly");
+    await act(async () => { renderer!.update(<MeetingListSurface {...props} premiumAccess={{ ...inactive, status: "active" }} />); });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(renderer!.root.findByProps({ testID: "meeting-detail-header" })).toBeTruthy();
+    await act(async () => { panel().findByProps({ accessibilityLabel: "Close Premium" }).props.onPress(); });
+    expect(renderer!.root.findAllByProps({ testID: "transcription-premium-panel" })).toHaveLength(0);
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { renderer!.root.findByProps({ testID: "transcription-start" }).props.onPress(); });
+    expect(dispatch).toHaveBeenCalledOnce();
+    await act(async () => { renderer!.unmount(); });
+  });
+
+  test("shows Check status after a poll failure and no Retry after exhaustion", async () => {
+    const check = vi.fn(async () => undefined);
+    const dispatch = vi.fn(async () => undefined);
+    const props = { compact: true, canCreate: false, hostLabel: "this host", connectionLabel: "Connected", meetings: [meeting("m-1")], selectedMeetingId: "m-1", selectedRecording: { recordingId: "r-1", status: "saved" as const }, onRefresh: async () => undefined, onGrantTranscriptionConsent: dispatch, onCheckTranscriptionStatus: check, consentStatus: "granted" as const };
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<MeetingListSurface {...props} transcriptionRouteOutcome="interrupted" transcriptionFailureCategory="connection" transcriptionRetryEligible={false} transcriptionRouteMessage="Could not check transcription progress." />); });
+    expect(renderer!.root.findAllByProps({ testID: "transcript-processing" })).toHaveLength(0);
+    await act(async () => { renderer!.root.findByProps({ testID: "transcription-check-status" }).props.onPress(); });
+    expect(check).toHaveBeenCalledOnce();
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { renderer!.update(<MeetingListSurface {...props} transcriptionRouteOutcome="failed" transcriptionFailureCategory="retry_exhausted" transcriptionRetryEligible={false} transcriptionRouteMessage="No further transcription retries are available for this recording." />); });
+    expect(renderer!.root.findAllByProps({ testID: "transcription-retry" })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ testID: "transcription-start" })).toHaveLength(0);
+    await act(async () => { renderer!.unmount(); });
+  });
+
+  test("keeps durable transcript content visible when the host disconnects with an interrupted route", async () => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<MeetingListSurface compact canCreate={false} hostLabel="this host" connectionLabel="Host offline" hostConnectionStatus="offline" meetings={[meeting("m-1")]} selectedMeetingId="m-1" selectedRecording={null} transcript={transcript("ready")} transcriptionRouteOutcome="interrupted" transcriptionRouteMessage="Reconnect to the host and check transcription status." onRefresh={async () => undefined} />); });
+    expect(renderer!.root.findByProps({ testID: "transcript-ready" })).toBeTruthy();
+    expect(renderer!.root.findByProps({ testID: "transcript-segments" })).toBeTruthy();
+    expect(renderer!.root.findAllByProps({ testID: "transcript-failed" })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ testID: "detail-host-offline" })).toBeTruthy();
+    await act(async () => { renderer!.unmount(); });
+  });
+
   test("renders every ready segment once and timestamp presses carry only stable identity", async () => {
     const onCitation = vi.fn(async () => undefined);
     const ready = transcript("ready");
@@ -987,7 +1222,7 @@ describe("responsive meeting sidebar and transcript detail", () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
-        <MeetingListSurface
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
           canCreate={false}
           compact
           connectionLabel="Connected"

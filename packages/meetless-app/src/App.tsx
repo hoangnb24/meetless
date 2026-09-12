@@ -20,7 +20,14 @@ import {
   type PremiumAccessWire,
   type PremiumMutationResultWire,
 } from "@meetless/meeting-contracts";
-import type { CitationWire, TranscriptWire, TranscriptionProviderStatusWire } from "@meetless/meeting-contracts";
+import type {
+  CitationWire,
+  TranscriptWire,
+  TranscriptionProviderStatusWire,
+  TranscriptionRouteOutcomeWire,
+  SelectedRecordingWire,
+  TranscriptionFailureCategoryWire,
+} from "@meetless/meeting-contracts";
 import { MeetingListSurface, RecordingStrip, type CitationEvidenceState, type LayoutTier } from "@meetless/meeting-surface";
 import { resolveAppMode, resolveDaemonUrl, supportsDesktopRecording } from "./runtime";
 import { RecordingProvider, useRecording } from "./recording-provider";
@@ -45,6 +52,7 @@ function logPremiumDiagnostic(stage: PremiumDiagnosticStage, outcome: PremiumDia
 
 export const PREMIUM_UI_PENDING_TIMEOUT_MS = 30_000;
 const PREMIUM_STATUS_POLL_INTERVAL_MS = 250;
+const TRANSCRIPTION_STATUS_POLL_INTERVAL_MS = 500;
 
 type PremiumRpcResult<T> = { timedOut: false; value: T } | { timedOut: true };
 
@@ -135,6 +143,12 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [consentStatus, setConsentStatus] = useState<"unknown" | "granted">("unknown");
   const [providerStatus, setProviderStatus] = useState<TranscriptionProviderStatusWire["status"] | undefined>();
+  const [transcriptionRouteOutcome, setTranscriptionRouteOutcome] = useState<TranscriptionRouteOutcomeWire | undefined>();
+  const [selectedRecording, setSelectedRecording] = useState<SelectedRecordingWire | null>(null);
+  const [transcriptionRetryEligible, setTranscriptionRetryEligible] = useState(false);
+  const [transcriptionFailureCategory, setTranscriptionFailureCategory] = useState<TranscriptionFailureCategoryWire | null>(null);
+  const [transcriptionRouteMessage, setTranscriptionRouteMessage] = useState<string | null>(null);
+  const [transcriptionConsentPending, setTranscriptionConsentPending] = useState(false);
   const [chatControls, setChatControls] = useState<ChatControlsWire | null>(null);
   const [chatSelection, setChatSelection] = useState<ChatSelectionWire | null>(null);
   const [chatFeatures, setChatFeatures] = useState<ChatFeatureDiscoveryWire | null>(null);
@@ -158,6 +172,8 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const chatSelectionRequest = useRef(0);
   const citationSequence = useRef(0);
   const selectedMeetingIdRef = useRef<string | null>(null);
+  const transcriptionConsentOperation = useRef(0);
+  const transcriptionConsentPendingRef = useRef(false);
   const premiumOperationSequence = useRef(0);
   const premiumOperation = useRef<{ token: number; action: PremiumPendingAction } | null>(null);
   const deletePendingRef = useRef(false);
@@ -194,6 +210,15 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setPremiumPending(false);
     setPremiumPendingAction(null);
     setPremiumError(null);
+    transcriptionConsentOperation.current += 1;
+    transcriptionConsentPendingRef.current = false;
+    setTranscriptionConsentPending(false);
+    setSelectedRecording(null);
+    setTranscriptionRetryEligible(false);
+    setTranscriptionFailureCategory(null);
+    setTranscriptLoading(false);
+    setTranscriptionRouteOutcome(selectedMeetingIdRef.current ? "interrupted" : undefined);
+    setTranscriptionRouteMessage(selectedMeetingIdRef.current ? "Reconnect to the host and check transcription status." : null);
     setManagedDevices(null);
     setManagedDevicesPending(false);
     setManagedDevicesError(null);
@@ -349,6 +374,40 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     }
   }, [isCurrentConnection]);
 
+  const loadTranscriptChat = useCallback(async (
+    active: ActiveConnection,
+    meetingId: string,
+    version: number,
+    controlsSelectionRequest: number,
+  ) => {
+    setChatLoading(true);
+    try {
+      const threadPromise = active.client.getMeetingChat(meetingId);
+      const controlsCapability = typeof active.client.getChatControls === "function";
+      const controlsPromise = controlsCapability
+        ? active.client.getChatControls()
+        : active.client.listChatProviders().then((providerResult) => legacyChatControls(providerResult.providers, null));
+      const [controls, thread] = await Promise.all([controlsPromise, threadPromise]);
+      if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+      setChatControls(controls);
+      if (chatSelectionRequest.current === controlsSelectionRequest) {
+        setChatSelection(controlsCapability
+          ? controls.lastSelection
+          : resolveLegacySelection(legacyProvidersFromControls(controls.catalog), thread?.selection ?? null));
+      }
+      setChatThread(thread);
+      setChatError(controlsCapability ? chatControlsErrorMessage(controls) : null);
+    } catch {
+      if (isCurrentConnection(active) && selectionVersion.current === version && selectedMeetingIdRef.current === meetingId) {
+        setChatError("Chat controls are unavailable. Update or repair the host.");
+      }
+    } finally {
+      if (isCurrentConnection(active) && selectionVersion.current === version && selectedMeetingIdRef.current === meetingId) {
+        setChatLoading(false);
+      }
+    }
+  }, [isCurrentConnection]);
+
   const openTranscript = useCallback(async (meetingId: string) => {
     if (deletePendingRef.current) return;
     const active = connection.current;
@@ -367,6 +426,13 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setTranscriptError(null);
     setConsentStatus("unknown");
     setProviderStatus(undefined);
+    setSelectedRecording(null);
+    setTranscriptionRetryEligible(false);
+    setTranscriptionFailureCategory(null);
+    setTranscriptionRouteOutcome(undefined);
+    setTranscriptionRouteMessage(null);
+    transcriptionConsentPendingRef.current = false;
+    setTranscriptionConsentPending(false);
     setChatControls(null);
     setChatThread(null);
     setChatLoading(false);
@@ -379,40 +445,23 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
       setTranscriptLoading(false);
       setConsentStatus(result.consent.status);
       setProviderStatus(result.provider.status);
+      setSelectedRecording(result.recording);
+      setTranscriptionRouteOutcome(result.transcription.outcome);
+      setTranscriptionRouteMessage(result.transcription.message);
+      setTranscriptionRetryEligible(result.transcription.retryEligible);
+      setTranscriptionFailureCategory(result.transcription.failureCategory);
       if (result.transcript?.status === "ready") {
-        setChatLoading(true);
-        try {
-          const threadPromise = active.client.getMeetingChat(meetingId);
-          const controlsCapability = typeof active.client.getChatControls === "function";
-          const controlsPromise = controlsCapability
-            ? active.client.getChatControls()
-            : active.client.listChatProviders().then((providerResult) => legacyChatControls(providerResult.providers, null));
-          const [controls, thread] = await Promise.all([controlsPromise, threadPromise]);
-          if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
-          setChatControls(controls);
-          if (chatSelectionRequest.current === controlsSelectionRequest) {
-            setChatSelection(controlsCapability
-              ? controls.lastSelection
-              : resolveLegacySelection(legacyProvidersFromControls(controls.catalog), thread?.selection ?? null));
-          }
-          setChatThread(thread);
-          setChatError(controlsCapability ? chatControlsErrorMessage(controls) : null);
-        } catch (chatReason) {
-          if (isCurrentConnection(active) && selectionVersion.current === version && selectedMeetingIdRef.current === meetingId) {
-            setChatError("Chat controls are unavailable. Update or repair the host.");
-          }
-        } finally {
-          if (isCurrentConnection(active) && selectionVersion.current === version && selectedMeetingIdRef.current === meetingId) {
-            setChatLoading(false);
-          }
-        }
+        setTranscriptionRouteOutcome("completed");
+        await loadTranscriptChat(active, meetingId, version, controlsSelectionRequest);
       }
     } catch (reason) {
       if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
       setTranscriptLoading(false);
-      setTranscriptError(reason instanceof Error ? reason.message : String(reason));
+      setTranscriptError("Could not read transcription status. Reconnect to the host and check status.");
+      setTranscriptionFailureCategory("connection");
+      setTranscriptionRouteOutcome("interrupted");
     }
-  }, [isCurrentConnection]);
+  }, [isCurrentConnection, loadTranscriptChat]);
 
   const closeTranscript = useCallback(() => {
     selectionVersion.current += 1;
@@ -427,6 +476,14 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setTranscriptError(null);
     setConsentStatus("unknown");
     setProviderStatus(undefined);
+    setSelectedRecording(null);
+    setTranscriptionRetryEligible(false);
+    setTranscriptionFailureCategory(null);
+    setTranscriptionRouteOutcome(undefined);
+    setTranscriptionRouteMessage(null);
+    transcriptionConsentOperation.current += 1;
+    transcriptionConsentPendingRef.current = false;
+    setTranscriptionConsentPending(false);
     setChatControls(null);
     setChatThread(null);
     setChatLoading(false);
@@ -599,24 +656,102 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     return () => clearInterval(timer);
   }, [chatThread?.status, isCurrentConnection, selectedMeetingId]);
 
+  useEffect(() => {
+    const meetingId = selectedMeetingId;
+    const routeIsRunning = transcriptionRouteOutcome === "started" || transcriptionRouteOutcome === "already_running";
+    if (!meetingId || transcriptLoading || transcriptionConsentPending || !routeIsRunning) return;
+    const active = connection.current;
+    if (!active || !isCurrentConnection(active)) return;
+    const version = selectionVersion.current;
+    let cancelled = false;
+    let requestInFlight = false;
+    const poll = async () => {
+      if (cancelled || requestInFlight || !isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+      requestInFlight = true;
+      try {
+        const result = await active.client.getMeetingTranscript(meetingId);
+        if (cancelled || !isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+        setMeetings((current) => current.map((meeting) => meeting.id === meetingId ? result.meeting : meeting));
+        setConsentStatus(result.consent.status);
+        // A granted consent response is already on the managed route. Keep the
+        // native provider status out of this poll, just as the RPC boundary does.
+        setProviderStatus(result.consent.status === "granted" ? "configured" : result.provider.status);
+        setTranscript(result.transcript);
+        setTranscriptLoading(false);
+        setSelectedRecording(result.recording);
+        setTranscriptionRouteOutcome(result.transcription.outcome);
+        setTranscriptionRouteMessage(result.transcription.message);
+        setTranscriptionRetryEligible(result.transcription.retryEligible);
+        setTranscriptionFailureCategory(result.transcription.failureCategory);
+        if (result.transcript?.status === "ready") {
+          await loadTranscriptChat(active, meetingId, version, chatSelectionRequest.current);
+        }
+      } catch {
+        if (!cancelled && isCurrentConnection(active) && selectionVersion.current === version && selectedMeetingIdRef.current === meetingId) {
+          setTranscriptionRouteOutcome("interrupted");
+          setTranscriptionFailureCategory("connection");
+          setTranscriptionRetryEligible(false);
+          setTranscriptionRouteMessage("Could not check transcription progress. Reconnect to the host and check status.");
+        }
+      } finally {
+        requestInFlight = false;
+      }
+    };
+    void poll();
+    const timer = setInterval(() => { void poll(); }, TRANSCRIPTION_STATUS_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isCurrentConnection, loadTranscriptChat, selectedMeetingId, transcript?.status, transcriptLoading, transcriptionConsentPending, transcriptionRouteOutcome]);
+
   const grantConsent = useCallback(async () => {
     const active = connection.current;
-    if (!active) throw new Error("Meetless host is not connected yet");
     const meetingId = selectedMeetingIdRef.current;
     const version = selectionVersion.current;
-    if (!meetingId) return;
+    if (!active || !meetingId || selectedMeetingId !== meetingId || selectedRecording?.status !== "saved" || transcriptionConsentPendingRef.current) return;
+    const operation = transcriptionConsentOperation.current + 1;
+    transcriptionConsentOperation.current = operation;
+    transcriptionConsentPendingRef.current = true;
+    setTranscriptionConsentPending(true);
+    setTranscriptLoading(true);
     setTranscriptError(null);
+    setTranscriptionRetryEligible(false);
+    setTranscriptionFailureCategory(null);
+    setTranscriptionRouteOutcome(undefined);
+    setTranscriptionRouteMessage(null);
     try {
-      const result = await active.client.grantTranscriptionConsent();
-      if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+      const result = await active.client.grantTranscriptionConsent(meetingId);
+      if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId || transcriptionConsentOperation.current !== operation) return;
       setConsentStatus(result.consent.status);
-      setProviderStatus(result.provider.status);
-      await openTranscript(meetingId);
+      // This result came from the managed route, so no native provider status
+      // read is needed to render it.
+      setProviderStatus("configured");
+      setTranscriptionRouteOutcome(result.outcome);
+      setTranscriptionRouteMessage(result.message);
+      setTranscriptionRetryEligible(result.retryEligible);
+      setTranscriptionFailureCategory(result.failureCategory);
+      setTranscript(result.transcript);
+      setTranscriptLoading(false);
+      if (result.transcript?.status === "ready") {
+        setTranscriptionRouteOutcome("completed");
+        await loadTranscriptChat(active, meetingId, version, chatSelectionRequest.current);
+      }
     } catch (reason) {
-      if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
-      setTranscriptError(reason instanceof Error ? reason.message : String(reason));
+      if (isCurrentConnection(active) && selectionVersion.current === version && selectedMeetingIdRef.current === meetingId && transcriptionConsentOperation.current === operation) {
+        setTranscriptLoading(false);
+        setTranscriptionRouteOutcome("failed");
+        setTranscriptionFailureCategory("connection");
+        setTranscriptionRouteMessage("Could not confirm transcription started. Check status before retrying.");
+        setTranscriptError(null);
+      }
+    } finally {
+      if (transcriptionConsentOperation.current === operation) {
+        transcriptionConsentPendingRef.current = false;
+        setTranscriptionConsentPending(false);
+      }
     }
-  }, [isCurrentConnection, openTranscript]);
+  }, [isCurrentConnection, loadTranscriptChat, selectedMeetingId, selectedRecording]);
 
   const playCitation = useCallback(async (visibleCitation: Pick<CitationWire, "meetingId" | "segmentId">) => {
     const active = connection.current;
@@ -816,6 +951,11 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         setTranscriptError(null);
         setConsentStatus(restored.detail.consent.status);
         setProviderStatus(restored.detail.provider.status);
+        setSelectedRecording(restored.detail.recording);
+        setTranscriptionRouteOutcome(restored.detail.transcription.outcome);
+        setTranscriptionRouteMessage(restored.detail.transcription.message);
+        setTranscriptionRetryEligible(restored.detail.transcription.retryEligible);
+        setTranscriptionFailureCategory(restored.detail.transcription.failureCategory);
         setChatFeatures(null);
         setChatThread(restored.chatThread ?? null);
         setChatLoading(false);
@@ -826,6 +966,11 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         setTranscriptError(null);
         setConsentStatus("unknown");
         setProviderStatus(undefined);
+        setSelectedRecording(null);
+        setTranscriptionRetryEligible(false);
+        setTranscriptionFailureCategory(null);
+        setTranscriptionRouteOutcome(undefined);
+        setTranscriptionRouteMessage(null);
         setChatFeatures(null);
         setChatThread(null);
         setChatLoading(false);
@@ -894,6 +1039,37 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     void refresh().catch(() => undefined);
   }, [hostConnectionStatus, mode, recordingMeetingId, recordingStatus, refresh]);
 
+  useEffect(() => {
+    if (mode !== "desktop" || hostConnectionStatus !== "online" || recordingStatus !== "saved" ||
+        !recordingMeetingId || recordingMeetingId !== selectedMeetingId || selectedRecording?.status === "saved" ||
+        transcriptLoading || transcriptionConsentPending) return;
+    const active = connection.current;
+    if (!active || !isCurrentConnection(active)) return;
+    const meetingId = recordingMeetingId;
+    const version = selectionVersion.current;
+    // Saving makes the selected detail eligible for a fresh read, never a cloud submission.
+    void active.client.getMeetingTranscript(meetingId).then(async (result) => {
+      if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+      setMeetings((current) => current.map((meeting) => meeting.id === meetingId ? result.meeting : meeting));
+      setSelectedRecording(result.recording);
+      setTranscript(result.transcript);
+      setTranscriptError(null);
+      setConsentStatus(result.consent.status);
+      setProviderStatus(result.provider.status);
+      setTranscriptionRouteOutcome(result.transcription.outcome);
+      setTranscriptionRouteMessage(result.transcription.message);
+      setTranscriptionRetryEligible(result.transcription.retryEligible);
+      setTranscriptionFailureCategory(result.transcription.failureCategory);
+      if (result.transcript?.status === "ready") await loadTranscriptChat(active, meetingId, version, chatSelectionRequest.current);
+    }).catch(() => {
+      if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+      setTranscriptError("Could not read the saved recording status. Check status to continue.");
+      setTranscriptionRouteOutcome("interrupted");
+      setTranscriptionFailureCategory("connection");
+      setTranscriptionRetryEligible(false);
+    });
+  }, [hostConnectionStatus, isCurrentConnection, loadTranscriptChat, mode, recordingMeetingId, recordingStatus, selectedMeetingId, selectedRecording?.status, transcriptLoading, transcriptionConsentPending]);
+
   if (mode === "companion" && profile === undefined) {
     return <SafeAreaView style={styles.safeArea}><StatusBar style="light" /></SafeAreaView>;
   }
@@ -960,6 +1136,13 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         transcriptError={transcriptError}
         consentStatus={consentStatus}
         providerStatus={providerStatus}
+        selectedRecording={selectedRecording}
+        transcriptionRetryEligible={transcriptionRetryEligible}
+        transcriptionFailureCategory={transcriptionFailureCategory}
+        onCheckTranscriptionStatus={selectedMeetingId ? () => openTranscript(selectedMeetingId) : undefined}
+        transcriptionRouteOutcome={transcriptionRouteOutcome}
+        transcriptionRouteMessage={transcriptionRouteMessage}
+        transcriptionConsentPending={transcriptionConsentPending}
         onGrantTranscriptionConsent={interactive ? grantConsent : undefined}
         onRetryTranscription={interactive && consentStatus === "granted" ? grantConsent : undefined}
         onCitation={interactive ? playCitation : undefined}

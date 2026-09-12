@@ -10,15 +10,19 @@ import {
   type ManagedTimelineEvidence,
 } from "@meetless/managed-transcription-foundation";
 import { MeetingStore } from "@meetless/meeting-store";
+import { canRetryTranscript, type TranscriptState } from "@meetless/meeting-domain";
 import { MeetingLifecycleCoordinator } from "../src/meeting-lifecycle-coordinator.js";
 import type { TranscriptionProvider } from "../src/transcription-provider.js";
 import {
   ManagedTimelineArtifactStore,
+  ConvexManagedTranscriptionService,
   ManagedTranscriptionService,
   type ManagedCanonicalTimeline,
   type ManagedTimelinePreparer,
 } from "../src/managed-transcription.js";
 import {
+  type ManagedConvexJob,
+  type ConvexManagedUploadPort,
   FileManagedUploadPort,
   type ManagedUploadCredential,
 } from "../src/managed-upload.js";
@@ -302,6 +306,174 @@ describe("managed transcription adapter", () => {
     await expect(artifacts.get(fixture.recordingId)).resolves.toBeNull();
   });
 
+  test.each(["provider_completed", "succeeded", "running", "missing"])("recovers only existing %s work without upload or provider dispatch", async (status) => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-read-resume-"));
+    roots.push(root);
+    const fixture = await savedStore(root);
+    const recording = (await fixture.store.listRecordings())[0]!;
+    const existing = await fixture.store.ensureTranscript({ meetingId: recording.meetingId, recordingId: recording.id, audio: { ...recording.savedOutput!, durationMs: 1500 }, rangeMs: 1500 });
+    const completed = { ...convexJob(recording.id, "succeeded"), providerResult: { text: "existing result", ranges: [{ startMs: 0, endMs: 1500, text: "existing result" }], detectedLanguages: ["en"] } };
+    const upload = {
+      jobStatusForRecording: vi.fn(async () => status === "missing" ? null : { ...completed, status }),
+      settle: vi.fn(async () => completed), acknowledge: vi.fn(async () => true),
+      uploadCanonicalTimelineFromPath: vi.fn(), runProvider: vi.fn(),
+    };
+    const prepare = vi.fn();
+    const service = new ConvexManagedTranscriptionService(fixture.store, { lifecycle: new MeetingLifecycleCoordinator(), timelinePreparer: { prepare }, managedUpload: upload as unknown as ConvexManagedUploadPort });
+    const result = await service.resumeExisting({ recordingId: recording.id, credential: { authToken: "existing-device" } });
+    const finished = status === "provider_completed" || status === "succeeded";
+    expect(result?.id).toBe(existing.id);
+    expect(result?.status).toBe(finished ? "ready" : "pending");
+    expect(upload.settle).toHaveBeenCalledTimes(status === "provider_completed" ? 1 : 0);
+    expect(upload.acknowledge).toHaveBeenCalledTimes(finished ? 1 : 0);
+    expect(upload.uploadCanonicalTimelineFromPath).not.toHaveBeenCalled();
+    expect(upload.runProvider).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(await fixture.store.listTranscripts(recording.meetingId)).toHaveLength(1);
+  });
+
+  test("retains local publication when acknowledgement fails and emits only categorical evidence", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-ack-evidence-"));
+    roots.push(root);
+    const fixture = await savedStore(root);
+    const recording = (await fixture.store.listRecordings())[0]!;
+    await fixture.store.ensureTranscript({ meetingId: recording.meetingId, recordingId: recording.id, audio: { ...recording.savedOutput!, durationMs: 1500 }, rangeMs: 1500 });
+    const job = { ...convexJob(recording.id, "succeeded"), accountId: "private-account", executionToken: "private-token", providerInvocationCount: 1, settledAt: 1000, providerResult: { text: "private-transcript", ranges: [{ startMs: 0, endMs: 1500, text: "private-transcript" }], detectedLanguages: ["en"] } };
+    const upload = { jobStatusForRecording: vi.fn(async () => job), acknowledge: vi.fn(async () => { throw new Error("private-error"); }), uploadCanonicalTimelineFromPath: vi.fn(), runProvider: vi.fn() };
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      const service = new ConvexManagedTranscriptionService(fixture.store, { lifecycle: new MeetingLifecycleCoordinator(), timelinePreparer: { prepare: vi.fn() }, managedUpload: upload as unknown as ConvexManagedUploadPort });
+      await expect(service.resumeExisting({ recordingId: recording.id, credential: { authToken: "private-credential" } })).rejects.toThrow("acknowledgement failed");
+      expect((await fixture.store.getTranscriptForMeeting(recording.meetingId))?.status).toBe("ready");
+      expect(upload.uploadCanonicalTimelineFromPath).not.toHaveBeenCalled();
+      expect(upload.runProvider).not.toHaveBeenCalled();
+      const lines = info.mock.calls.map(([line]) => String(line)).filter((line) => line.startsWith("[meetless-transcription] "));
+      expect(lines.join(" ")).not.toContain("private-");
+      const events = lines.map((line) => JSON.parse(line.slice("[meetless-transcription] ".length)));
+      expect(events.map((event) => event.stage)).toEqual(["recovery_found", "publication_completed"]);
+      const allowed = new Set(["stage", "recordingId", "transcriptId", "requestCount", "jobId", "jobStatus", "providerInvocationCount", "providerCompletedAt", "settledAt", "acknowledgedAt", "timestampMs"]);
+      for (const event of events) expect(Object.keys(event).every((key) => allowed.has(key))).toBe(true);
+      expect(events[1]).toMatchObject({ recordingId: recording.id, jobId: job._id, providerInvocationCount: 1, requestCount: 1 });
+    } finally { info.mockRestore(); }
+  });
+
+  test("continues resumable Convex provider work until every physical part is complete", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-convex-resume-"));
+    roots.push(root);
+    const fixture = await savedStore(root);
+    const lifecycle = new MeetingLifecycleCoordinator();
+    const firstPartJob = convexJob(fixture.recordingId, "reserved");
+    const fullText = "part one\npart two";
+    const providerCompletedJob: ManagedConvexJob = {
+      ...firstPartJob,
+      status: "provider_completed",
+      providerResult: {
+        text: fullText,
+        ranges: [{ startMs: 0, endMs: firstPartJob.durationMs, text: fullText }],
+        detectedLanguages: ["en"],
+      },
+    };
+    const succeededJob = { ...providerCompletedJob, status: "succeeded" };
+    const upload = {
+      uploadCanonicalTimelineFromPath: vi.fn(async () => ({ session: {}, job: firstPartJob, manifest: {} })),
+      runProvider: vi.fn()
+        .mockResolvedValueOnce(firstPartJob)
+        .mockResolvedValueOnce(providerCompletedJob),
+      settle: vi.fn(async () => succeededJob),
+      acknowledge: vi.fn(async () => true),
+    } as unknown as ConvexManagedUploadPort;
+    const service = new ConvexManagedTranscriptionService(fixture.store, {
+      lifecycle,
+      timelinePreparer: testTimelinePreparer(path.dirname(fixture.store.filePath)),
+      managedUpload: upload,
+    });
+
+    const result = await service.transcribe({
+      recordingId: fixture.recordingId,
+      credential: { authToken: "host-issued-resume-token" },
+    });
+
+    expect(upload.runProvider).toHaveBeenCalledTimes(2);
+    expect(upload.settle).toHaveBeenCalledOnce();
+    expect(upload.acknowledge).toHaveBeenCalledOnce();
+    expect(result.job.status).toBe("succeeded");
+    expect(result.transcript).toMatchObject({ status: "ready", recordingId: fixture.recordingId });
+    expect(result.transcript.checkpoints[0]?.text).toBe(fullText);
+    expect(result.transcript.ranges).toEqual([
+      expect.objectContaining({ startMs: 0, endMs: firstPartJob.durationMs }),
+    ]);
+  });
+
+  test("polls job status while a provider action is running instead of invoking it again", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-convex-poll-"));
+    roots.push(root);
+    const fixture = await savedStore(root);
+    const lifecycle = new MeetingLifecycleCoordinator();
+    const reservedJob = convexJob(fixture.recordingId, "reserved");
+    const runningJob = { ...reservedJob, status: "running" };
+    const providerCompletedJob: ManagedConvexJob = {
+      ...reservedJob,
+      status: "provider_completed",
+      providerResult: {
+        text: "polled provider result",
+        ranges: [{ startMs: 0, endMs: reservedJob.durationMs, text: "polled provider result" }],
+        detectedLanguages: ["en"],
+      },
+    };
+    const succeededJob = { ...providerCompletedJob, status: "succeeded" };
+    const upload = {
+      uploadCanonicalTimelineFromPath: vi.fn(async () => ({ session: {}, job: reservedJob, manifest: {} })),
+      runProvider: vi.fn(async () => runningJob),
+      jobStatus: vi.fn(async () => providerCompletedJob),
+      settle: vi.fn(async () => succeededJob),
+      acknowledge: vi.fn(async () => true),
+    } as unknown as ConvexManagedUploadPort;
+    const service = new ConvexManagedTranscriptionService(fixture.store, {
+      lifecycle,
+      timelinePreparer: testTimelinePreparer(path.dirname(fixture.store.filePath)),
+      managedUpload: upload,
+    });
+
+    const result = await service.transcribe({
+      recordingId: fixture.recordingId,
+      credential: { authToken: "host-issued-poll-token" },
+    });
+
+    expect(upload.runProvider).toHaveBeenCalledOnce();
+    expect(upload.jobStatus).toHaveBeenCalledOnce();
+    expect(upload.settle).toHaveBeenCalledOnce();
+    expect(result.job.status).toBe("succeeded");
+    expect(result.transcript).toMatchObject({ status: "ready", recordingId: fixture.recordingId });
+  });
+
+  test("surfaces a terminal Convex provider failure as the normal redacted local transcript failure", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-convex-terminal-failure-"));
+    roots.push(root);
+    const fixture = await savedStore(root);
+    const lifecycle = new MeetingLifecycleCoordinator();
+    const failedJob = convexJob(fixture.recordingId, "failed");
+    const upload = {
+      uploadCanonicalTimelineFromPath: vi.fn(async () => ({ session: {}, job: failedJob, manifest: {} })),
+      runProvider: vi.fn(),
+      jobStatus: vi.fn(),
+    } as unknown as ConvexManagedUploadPort;
+    const service = new ConvexManagedTranscriptionService(fixture.store, {
+      lifecycle,
+      timelinePreparer: testTimelinePreparer(path.dirname(fixture.store.filePath)),
+      managedUpload: upload,
+    });
+
+    await expect(service.transcribe({
+      recordingId: fixture.recordingId,
+      credential: { authToken: "host-issued-terminal-failure-token" },
+    })).rejects.toThrow("Managed transcription provider failed");
+    expect(upload.runProvider).not.toHaveBeenCalled();
+    expect(upload.jobStatus).not.toHaveBeenCalled();
+    const transcript = (await fixture.store.listTranscripts(fixture.meetingId))[0]!;
+    expect(transcript).toMatchObject({ status: "failed", failureReason: "Managed transcription provider failed" });
+    expect(transcript.failureReason).not.toContain("terminal-failure-token");
+  });
+
   test("releases the managed upload receipt when provider execution fails after upload", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-upload-failure-"));
     roots.push(root);
@@ -338,6 +510,50 @@ describe("managed transcription adapter", () => {
     expect(policy.accountSnapshot(device.credential).period).toMatchObject({ reservedSeconds: 0, usedSeconds: 0 });
     expect((await fixture.store.listTranscripts(fixture.meetingId))[0]).toMatchObject({ status: "failed" });
     expect(JSON.parse(await readFile(path.join(root, "upload-state", "sessions.json"), "utf8"))).toEqual({ version: 1, sessions: [] });
+  });
+
+  test.each([
+    ["upload", "Managed transcription upload failed", "Convex upload transport leaked secret"],
+    ["provider", "Managed transcription provider failed", "OpenAI provider secret leaked"],
+    ["settlement", "Managed transcription settlement failed", "Convex settlement secret leaked"],
+  ] as const)("durably fails and leaves retryable local state when managed %s fails", async (stage, failureReason, originalMessage) => {
+    const root = await mkdtemp(path.join(tmpdir(), `meetless-managed-convex-${stage}-failure-`));
+    roots.push(root);
+    const fixture = await savedStore(root);
+    const lifecycle = new MeetingLifecycleCoordinator();
+    const credential = { authToken: "managed-auth-token" };
+    const reservedJob = convexJob(fixture.recordingId, "reserved");
+    const providerCompletedJob = { ...reservedJob, status: "provider_completed" };
+    const upload = {
+      uploadCanonicalTimelineFromPath: vi.fn(async () => {
+        if (stage === "upload") throw new Error(originalMessage);
+        return { session: {}, job: stage === "settlement" ? providerCompletedJob : reservedJob, manifest: {} };
+      }),
+      runProvider: vi.fn(async () => {
+        if (stage === "provider") throw new Error(originalMessage);
+        return providerCompletedJob;
+      }),
+      settle: vi.fn(async () => { throw new Error(originalMessage); }),
+    } as unknown as ConvexManagedUploadPort;
+    const started: TranscriptState[] = [];
+    const service = new ConvexManagedTranscriptionService(fixture.store, {
+      lifecycle,
+      timelinePreparer: testTimelinePreparer(path.dirname(fixture.store.filePath)),
+      managedUpload: upload,
+    });
+
+    await expect(service.transcribe({
+      recordingId: fixture.recordingId,
+      credential,
+      onDurableStart: (transcript) => started.push(transcript),
+    })).rejects.toThrow(failureReason);
+
+    expect(started).toHaveLength(1);
+    expect(started[0]).toMatchObject({ status: "pending", recordingId: fixture.recordingId });
+    const persisted = (await fixture.store.listTranscripts(fixture.meetingId))[0]!;
+    expect(persisted).toMatchObject({ status: "failed", failureReason });
+    expect(canRetryTranscript(persisted)).toBe(true);
+    expect(persisted.failureReason).not.toContain("secret");
   });
 
   test("rejects a tampered durable MP3 before reserving managed quota", async () => {
@@ -513,6 +729,22 @@ function testTimelinePreparer(storeRoot: string, sampleCount = 24_000): ManagedT
         },
       };
     },
+  };
+}
+
+function convexJob(recordingId: string, status: string): ManagedConvexJob {
+  return {
+    _id: `job-${recordingId}`,
+    uploadId: `upload-${recordingId}`,
+    recordingId,
+    audioId: `recording:${recordingId}`,
+    admissionId: `admission-${recordingId}`,
+    admissionNumber: 1,
+    status,
+    durationMs: 1_500,
+    sampleCount: 24_000,
+    billableSeconds: 2,
+    providerResult: null,
   };
 }
 

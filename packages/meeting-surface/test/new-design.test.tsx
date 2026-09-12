@@ -274,8 +274,14 @@ describe("new-design composition", () => {
       transcript: { ...baseTranscript, status: "failed", failureReason: "provider failed" },
       consentStatus: "granted",
       onRetryTranscription: onRetry,
+      onGrantTranscriptionConsent: onRetry,
+      selectedRecording: { recordingId: "r-1", status: "saved" },
+      transcriptionRouteOutcome: "failed",
+      transcriptionFailureCategory: "provider",
+      transcriptionRetryEligible: true,
+      transcriptionRouteMessage: "The transcription service could not complete this recording. The saved audio remains local.",
     });
-    expect(renderer.root.findAllByType("Text").some((node) => node.props.children === "Your saved audio is safe. Retry transcription when you are ready.")).toBe(true);
+    expect(renderer.root.findAllByType("Text").some((node) => node.props.children === "The transcription service could not complete this recording. The saved audio remains local.")).toBe(true);
     await act(async () => { renderer.root.findByProps({ testID: "transcription-retry" }).props.onPress(); });
     expect(onRetry).toHaveBeenCalledOnce();
     renderer.unmount();

@@ -67,6 +67,31 @@ describe("Meetless capability gate", () => {
     expect(port.invokePluginRpc).not.toHaveBeenCalled();
   });
 
+  test("uses explicit selected-meeting transcription RPCs and requires saved-recording status evidence", async () => {
+    const detail = {
+      meeting: { id: "m-1", title: "Saved meeting", status: "processing", createdAt: "2026-09-12T00:00:00.000Z", updatedAt: "2026-09-12T00:00:00.000Z" },
+      recording: { recordingId: "r-1", status: "saved" },
+      transcription: { outcome: "not_started", retryEligible: true, failureCategory: null, message: null },
+      transcript: null, consent: { status: "unknown" }, provider: { status: "configured" },
+    };
+    const started = { consent: { status: "granted", grantedAt: "2026-09-12T00:00:00.000Z" }, route: "managed", outcome: "started", retryEligible: false, failureCategory: null, transcript: null, message: null };
+    const invokePluginRpc = vi.fn(async (_id: string, method: string) => method === "meeting.transcript" ? detail : started);
+    const client = new MeetlessClient(daemon({ invokePluginRpc }));
+    await client.initialize();
+    await expect(client.getMeetingTranscript("m-1")).resolves.toEqual(detail);
+    expect(invokePluginRpc).toHaveBeenCalledTimes(1);
+    await expect(client.grantTranscriptionConsent("m-1")).resolves.toEqual(started);
+    expect(invokePluginRpc).toHaveBeenLastCalledWith("meetless", "meeting.transcription.consent", { meetingId: "m-1", accepted: true });
+    const calls = invokePluginRpc.mock.calls.length;
+    await expect(client.grantTranscriptionConsent("")).rejects.toThrow();
+    expect(invokePluginRpc).toHaveBeenCalledTimes(calls);
+    const { recording: _recording, ...missingEvidence } = detail;
+    invokePluginRpc.mockResolvedValueOnce(missingEvidence as typeof detail);
+    await expect(client.getMeetingTranscript("m-1")).rejects.toThrow();
+    invokePluginRpc.mockResolvedValueOnce({ ...started, route: "byok" } as typeof detail);
+    await expect(client.grantTranscriptionConsent("m-1")).rejects.toThrow();
+  });
+
   test("routes strict chat discovery, durable get, ask, and retry RPCs", async () => {
     const thread = {
       meetingId: "m-1", status: "running" as const,
