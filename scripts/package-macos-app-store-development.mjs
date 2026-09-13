@@ -266,7 +266,6 @@ async function downloadMasElectron() {
     platform: electron.platform,
     arch: electron.arch,
     artifactName: "electron",
-    cacheRoot: path.join(options.proofRoot, "electron-cache"),
     tempDirectory: options.proofRoot,
   });
   if (path.basename(archivePath) !== electron.archiveName) {

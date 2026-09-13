@@ -76,6 +76,32 @@ enum MeetlessPackagedSignaturePolicy: Equatable {
   case appStoreDevelopment
 }
 
+enum MeetlessMasGateLocatorDisposition: Equatable {
+  case clean
+  case indexed
+}
+
+func meetlessMasGateLocatorDisposition(
+  indexPresent: Bool,
+  indexIntentPresent: Bool,
+  activePresent: Bool
+) throws -> MeetlessMasGateLocatorDisposition {
+  if indexPresent { return .indexed }
+  if activePresent {
+    throw hostPreflightError(
+      "the fixed active MAS transaction has no session index; preserve it and run the exact gate status/recovery command. " +
+      "Authority: docs/decisions/0005-mac-app-store-and-revenuecat.md"
+    )
+  }
+  if indexIntentPresent {
+    throw hostPreflightError(
+      "the fixed MAS session index intent exists without its index; preserve it and run the exact gate status/recovery command. " +
+      "Authority: docs/decisions/0005-mac-app-store-and-revenuecat.md"
+    )
+  }
+  return .clean
+}
+
 enum MeetlessInstallLocation {
   static func validate(lexicalPath: String, resolvedPath: String) throws {
     guard lexicalPath == meetlessInstallPath else {
@@ -1734,13 +1760,17 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     allowedQuarantinePath: String? = nil
   ) throws {
     // Direct-DMG/production startup has a different runtime contract and does
-    // not participate in the MAS locator protocol. The MAS app-container root
-    // is the only path for which an absent locator is a fail-closed state: an
-    // older dynamic construction cannot be safely discovered without scanning
-    // the opaque Application Support parent.
+    // not participate in the MAS locator protocol. For the MAS app-container,
+    // the fixed index is required only when fixed transaction evidence exists.
+    // A parent with no active slot, index intent, or index is the ordinary clean
+    // startup state authorized by ADR0005.
     guard meetlessAppStoreContainerSupportRoot(for: runtimeRoot) != nil else { return }
 
-    let locator = try readMasGateSessionLocator(parentPath: parentPath, runtimeRoot: runtimeRoot)
+    guard let locator = try readMasGateSessionLocator(
+      parentPath: parentPath,
+      runtimeRoot: runtimeRoot,
+      activePresent: activePresent
+    ) else { return }
     if let intent = locator.intent, intent.state == "pending" {
       throw hostPreflightError("the fixed MAS session index intent is pending; run the exact gate status/recovery command before host startup")
     }
@@ -1822,14 +1852,21 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
 
   private func readMasGateSessionLocator(
     parentPath: String,
-    runtimeRoot: String
-  ) throws -> (index: MasGateSessionIndex, intent: MasGateSessionIndexIntent?) {
+    runtimeRoot: String,
+    activePresent: Bool
+  ) throws -> (index: MasGateSessionIndex, intent: MasGateSessionIndexIntent?)? {
     let parentURL = URL(fileURLWithPath: parentPath).standardizedFileURL
     let activePath = parentURL.appendingPathComponent(meetlessMasGateActiveFilename).path
     let indexPath = parentURL.appendingPathComponent(meetlessMasGateIndexFilename).path
     let indexIntentPath = parentURL.appendingPathComponent(meetlessMasGateIndexIntentFilename).path
+    let disposition = try meetlessMasGateLocatorDisposition(
+      indexPresent: try lstatPath(indexPath, label: "MAS session index") != nil,
+      indexIntentPresent: try lstatPath(indexIntentPath, label: "MAS session index intent") != nil,
+      activePresent: activePresent
+    )
+    if disposition == .clean { return nil }
     guard let index = try readMasGateRecord(indexPath, label: "MAS session index", parentPath: parentPath) as MasGateSessionIndex? else {
-      throw hostPreflightError("the fixed MAS session index is missing; an unregistered legacy construction cannot be safely discovered without parent enumeration, so run manual reconciliation")
+      throw hostPreflightError("the fixed MAS session index disappeared during host startup; preserve transaction evidence and run the exact gate status/recovery command")
     }
     try assertMasGateSessionIndex(
       index,

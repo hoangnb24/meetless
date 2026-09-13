@@ -23,6 +23,7 @@ let package = Package(
         "MeetlessAppStoreChild.entitlements.plist",
         "host-entry",
         "mas-gate-mutation",
+        "MasRuntimeStartupTests.swift",
         "TranscriptionCapabilityTests.swift",
       ],
       sources: ["MeetlessHost.swift", "RevenueCatCapability.swift", "TranscriptionCapability.swift", "ManagedAuthCapability.swift"],
@@ -51,7 +52,7 @@ let package = Package(
         "Package.swift",
         "Package.resolved",
       ],
-      sources: ["TranscriptionCapabilityTests.swift"]
+      sources: ["TranscriptionCapabilityTests.swift", "MasRuntimeStartupTests.swift"]
     ),
     .executableTarget(
       name: "MeetlessMasGateMutation",

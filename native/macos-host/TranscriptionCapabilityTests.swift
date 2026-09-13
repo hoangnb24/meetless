@@ -4639,6 +4639,10 @@ private struct TranscriptionCapabilityTests {
     testCaptureSettingsFallbackPolicy()
     testProviderFailureNormalizationAndCancellation()
     testLegacyIdentityMigrationBoundary()
+    do { try testMasRuntimeStartupLocatorBoundary() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: MAS clean runtime startup boundary: \(error)\n".utf8))
+    }
 
     if failures > 0 { exit(1) }
     print("Meetless native transcription boundary tests passed")
