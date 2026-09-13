@@ -171,8 +171,8 @@ describe("managed transcription composition", () => {
       text: "Finalizer-owned managed transcript.",
     });
     expect(provider.transcribe).toHaveBeenCalledOnce();
-    await expect(artifacts.get(recordingId)).resolves.toBeNull();
-    await expect(access(handedOffPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(artifacts.get(recordingId)).resolves.not.toBeNull();
+    await expect(access(handedOffPath)).resolves.toBeUndefined();
     expect(JSON.parse(await readFile(path.join(root, "managed-upload", "sessions.json")))).toEqual({ version: 1, sessions: [] });
   }, 30_000);
 
@@ -337,8 +337,8 @@ describe("managed transcription composition", () => {
     expect(convexCalls.every(({ args }) => !containsAudioBytes(args))).toBe(true);
     expect(convexCalls.every(({ args }) => !containsValue(args, path.join(config.exportRoot, "")))).toBe(true);
     expect(session.state).toBe("cleaned");
-    await expect(artifacts.get(recordingId)).resolves.toBeNull();
-    expect(await readdir(path.join(config.storeRoot, "managed-artifacts"))).toEqual([]);
+    await expect(artifacts.get(recordingId)).resolves.not.toBeNull();
+    expect(await readdir(path.join(config.storeRoot, "managed-artifacts"))).toHaveLength(1);
 
     const callsBeforeFreshRetry = convexCalls.length;
     const freshManaged = new ConvexManagedTranscriptionService(recordingService.store, {
@@ -352,8 +352,11 @@ describe("managed transcription composition", () => {
     });
     expect(freshRetry.job).toMatchObject({ status: "succeeded", recordingId });
     expect(freshRetry.transcript).toMatchObject({ status: "ready", recordingId });
-    expect(convexCalls.slice(callsBeforeFreshRetry).every((call) => call.kind === "query" && call.name.endsWith(":jobStatusByRecording"))).toBe(true);
-    await expect(artifacts.get(recordingId)).resolves.toBeNull();
+    expect(convexCalls.slice(callsBeforeFreshRetry)).toEqual([
+      expect.objectContaining({ kind: "query", name: expect.stringMatching(/:jobStatusByRecording$/u) }),
+      expect.objectContaining({ kind: "action", name: expect.stringMatching(/:acknowledge$/u) }),
+    ]);
+    await expect(artifacts.get(recordingId)).resolves.not.toBeNull();
   }, 30_000);
 
   test.each([
@@ -429,7 +432,7 @@ describe("managed transcription composition", () => {
     });
     expect(result.transcript.status).toBe("ready");
     expect(provider.transcribe).toHaveBeenCalledOnce();
-    await expect(artifacts.get(recordingId)).resolves.toBeNull();
+    await expect(artifacts.get(recordingId)).resolves.not.toBeNull();
     expect((await readdir(config.exportRoot)).filter((name) => name.endsWith(".mp3"))).toHaveLength(1);
   }, 30_000);
 });

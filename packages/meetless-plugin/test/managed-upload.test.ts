@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -604,7 +604,7 @@ describe("pre-external managed upload seam", () => {
     expect(await restarted.cleanupExpired()).toBe(0);
   });
 
-  test("copies a meeting-owned private timeline with a 24-hour receipt and deletes it through MeetingStore", async () => {
+  test("copies a meeting-owned private timeline without expiry and deletes it through MeetingStore", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-artifact-owner-"));
     roots.push(root);
     let now = START;
@@ -630,7 +630,8 @@ describe("pre-external managed upload seam", () => {
     const metadata = JSON.parse(await readFile(path.join(privateDirectory, "metadata.json"), "utf8")) as {
       meetingId: string; createdAt: number; expiresAt: number;
     };
-    expect(metadata).toMatchObject({ meetingId: "meeting-owner", createdAt: START, expiresAt: START + MANAGED_TEMPORARY_DATA_TTL_MS });
+    expect(metadata).toMatchObject({ version: 3, meetingId: "meeting-owner", createdAt: START });
+    expect(metadata).not.toHaveProperty("expiresAt");
     await rm(sourcePath);
     const rehydrated = new ManagedTimelineArtifactStore(artifactRoot, { now: () => now });
     await expect(rehydrated.get(sourceArtifact.recordingId)).resolves.toMatchObject({
@@ -643,8 +644,10 @@ describe("pre-external managed upload seam", () => {
     await writeFile(path.join(orphanDirectory, "unexpected"), "orphan");
     expect(await rehydrated.sweep({ recordings: [{ id: sourceArtifact.recordingId, meetingId: "meeting-owner" }], meetingIds: ["meeting-owner"] })).toBe(1);
     now += MANAGED_TEMPORARY_DATA_TTL_MS + 1;
-    expect(await rehydrated.sweep({ recordings: [{ id: sourceArtifact.recordingId, meetingId: "meeting-owner" }], meetingIds: ["meeting-owner"] })).toBe(1);
-    await expect(rehydrated.get(sourceArtifact.recordingId)).resolves.toBeNull();
+    expect(await rehydrated.sweep({ recordings: [{ id: sourceArtifact.recordingId, meetingId: "meeting-owner" }], meetingIds: ["meeting-owner"] })).toBe(0);
+    const retained = await rehydrated.get(sourceArtifact.recordingId);
+    await retained!.cleanup();
+    expect(await readFile(retained!.path)).toEqual(bytes);
 
     const storeRoot = path.join(root, "delete-store");
     const exportRoot = path.join(root, "exports");
@@ -681,7 +684,7 @@ describe("pre-external managed upload seam", () => {
     expect(await new MeetingStore({ root: storeRoot }).list()).toEqual([]);
   });
 
-  test("running-runtime deletion owns and removes an expired meeting artifact without a sweep", async () => {
+  test.each(["valid", "missing", "corrupt", "symlink"])("running-runtime deletion handles %s retained artifact metadata without a sweep", async (receiptState) => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-artifact-expiry-delete-"));
     roots.push(root);
     let now = START;
@@ -749,10 +752,28 @@ describe("pre-external managed upload seam", () => {
       fixture: true,
       managedTimelineConsumer: owner,
     }, store);
+    const foreign = path.join(root, "foreign");
+    await mkdir(foreign);
+    await writeFile(path.join(foreign, "timeline.wav"), bytes);
+    const metadataPath = path.join(owner.artifactDirectory(recordingId), "metadata.json");
+    if (receiptState === "missing") await rm(metadataPath);
+    if (receiptState === "corrupt") await writeFile(metadataPath, "{broken");
+    if (receiptState === "symlink") {
+      await rm(owner.artifactDirectory(recordingId), { recursive: true });
+      await symlink(foreign, owner.artifactDirectory(recordingId));
+    }
     const owned = await runtime.ownedManagedArtifactPaths(meetingId);
     expect(owned).toEqual([{ recordingId, path: owner.artifactDirectory(recordingId) }]);
 
+    if (receiptState === "symlink") {
+      await expect(store.deleteMeeting(meetingId, { managedArtifactPaths: owned })).rejects.toThrow("symlink");
+      expect(await readFile(path.join(foreign, "timeline.wav"))).toEqual(bytes);
+      expect(await readFile(outputPath)).toEqual(output);
+      return;
+    }
     const deletion = await store.deleteMeeting(meetingId, { managedArtifactPaths: owned });
+    await expect(stat(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path.join(foreign, "timeline.wav"))).toEqual(bytes);
     expect(deletion).toMatchObject({ outcome: "deleted" });
     await expect(stat(owner.artifactDirectory(recordingId))).rejects.toMatchObject({ code: "ENOENT" });
     expect(await store.list()).toEqual([]);

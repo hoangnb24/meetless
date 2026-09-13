@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   ManagedTranscriptionPolicy,
@@ -48,7 +48,7 @@ export interface ManagedTranscriptionInput {
 }
 
 export interface ManagedCanonicalTimeline {
-  /** Temporary canonical 16 kHz mono PCM WAV; never the durable saved MP3. */
+  /** Canonical 16 kHz mono PCM WAV, separate from the saved MP3. */
   readonly path: string;
   readonly recordingId: string;
   readonly audioId: string;
@@ -60,7 +60,7 @@ export interface ManagedCanonicalTimeline {
 }
 
 export interface ManagedTimelineArtifactSource {
-  get(recordingId: string): Promise<ManagedTimelineArtifact | null>;
+  get(recordingId: string, expectedMeetingId?: string): Promise<ManagedTimelineArtifact | null>;
 }
 
 export interface ManagedTimelinePreparer {
@@ -645,7 +645,7 @@ function validateManagedConvexTimeline(
 ): void {
   if (timeline.recordingId !== recordingId) throw new Error("Managed canonical timeline is bound to a different recording");
   if (timeline.audioId !== `recording:${recordingId}`) throw new Error("Managed canonical timeline identity must be recording-bound");
-  if (path.resolve(timeline.path) === path.resolve(savedOutputPath)) throw new Error("Managed canonical timeline must be temporary; saved output remains MP3");
+  if (path.resolve(timeline.path) === path.resolve(savedOutputPath)) throw new Error("Managed canonical timeline must be separate from the saved MP3");
   if (timeline.startMs !== 0) throw new Error("Managed canonical timeline must start at zero");
 }
 
@@ -656,7 +656,7 @@ class HandedOffTimelinePreparer implements ManagedTimelinePreparer {
     if (recording.status !== "saved" || !recording.savedOutput) {
       throw new Error(`Managed timeline requires a saved recording: ${recording.id}`);
     }
-    const artifact = await this.source.get(recording.id);
+    const artifact = await this.source.get(recording.id, recording.meetingId);
     if (!artifact) {
       throw new Error(`Managed canonical timeline was not handed off before source cleanup: ${recording.id}`);
     }
@@ -671,7 +671,7 @@ class HandedOffTimelinePreparer implements ManagedTimelinePreparer {
 }
 
 /**
- * Private app-owned temporary artifact store. It copies the finalizer stage
+ * Private app-owned retained artifact store. It copies the finalizer stage
  * with bounded streaming before the recording source inventory is removed.
  * MeetingStore receives only the exact per-recording directory for deletion;
  * transcript and citation truth remains in MeetingStore.
@@ -691,29 +691,30 @@ export class ManagedTimelineArtifactStore implements ManagedTimelineArtifactSour
     const recordingDirectory = this.recordingDirectory(artifact.recordingId);
     const metadataPath = this.metadataPath(artifact.recordingId);
     const artifactPath = this.artifactPath(artifact.recordingId);
+    await this.assertOwnedPaths(artifact.recordingId);
     const current = await this.readMetadata(metadataPath);
     const meetingId = context.meetingId.trim();
     if (!meetingId) throw new Error("Managed artifact handoff requires its owning meeting");
     const now = this.now();
     const next = metadataFrom(artifact, meetingId, now);
-    const expired = current !== null && current.expiresAt <= now;
     if (current && !sameMetadataIdentity(current, next)) {
       throw new Error(`Managed artifact handoff changed for ${artifact.recordingId}`);
     }
     await mkdir(recordingDirectory, { recursive: true, mode: 0o700 });
     await this.ensureCopied(artifact.path, artifactPath, artifact.identity);
-    if (!current || expired) {
-      await writeMetadata(metadataPath, next);
+    if (!current || current.version === 2) {
+      await writeMetadata(metadataPath, { ...next, createdAt: current?.createdAt ?? next.createdAt });
     }
   }
 
-  async get(recordingId: string): Promise<ManagedTimelineArtifact | null> {
+  async get(recordingId: string, expectedMeetingId?: string): Promise<ManagedTimelineArtifact | null> {
+    await this.assertOwnedPaths(recordingId);
     const metadataPath = this.metadataPath(recordingId);
     const metadata = await this.readMetadata(metadataPath);
     if (!metadata) return null;
-    if (metadata.expiresAt <= this.now()) {
-      await this.remove(recordingId);
-      return null;
+    if (metadata.recordingId !== recordingId ||
+      (expectedMeetingId !== undefined && metadata.meetingId !== expectedMeetingId)) {
+      throw new Error(`Managed artifact owner changed for ${recordingId}`);
     }
     const artifactPath = this.artifactPath(recordingId);
     try {
@@ -725,7 +726,10 @@ export class ManagedTimelineArtifactStore implements ManagedTimelineArtifactSour
       if (isErrno(error, "ENOENT")) throw new Error(`Managed artifact bytes are missing for ${recordingId}`);
       throw error;
     }
-    let cleaned = false;
+    if (metadata.version === 2 && expectedMeetingId !== undefined) {
+      const { expiresAt: _legacyExpiry, ...retained } = metadata;
+      await writeMetadata(metadataPath, { ...retained, version: 3 });
+    }
     return {
       path: artifactPath,
       recordingId: metadata.recordingId,
@@ -733,30 +737,21 @@ export class ManagedTimelineArtifactStore implements ManagedTimelineArtifactSour
       identity: { byteLength: metadata.byteLength, sha256: metadata.sha256 },
       startMs: metadata.startMs,
       endMs: metadata.endMs,
-      cleanup: async () => {
-        if (cleaned) return;
-        cleaned = true;
-        await this.remove(recordingId);
-      },
+      // Borrowed retained audio is released without deleting its owner's files.
+      cleanup: async () => undefined,
     };
   }
 
   async ownedArtifactPaths(meetingId: string, recordingIds?: readonly string[]): Promise<Array<{ recordingId: string; path: string }>> {
-    const allowed = recordingIds ? new Set(recordingIds) : null;
-    let names: string[];
-    try {
-      names = await readdir(this.directory);
-    } catch (error) {
-      if (isErrno(error, "ENOENT")) return [];
-      throw error;
-    }
+    // The caller obtains these IDs from MeetingStore for the owning meeting.
+    // Missing or corrupt receipts must not block deterministic owned deletion.
+    if (recordingIds) return listManagedArtifactPaths(this.directory, recordingIds);
     const owned: Array<{ recordingId: string; path: string }> = [];
+    const names = await readdir(this.directory).catch((error: unknown) => isErrno(error, "ENOENT") ? [] : Promise.reject(error));
     for (const name of names) {
-      if (!/^[a-f0-9]{64}$/u.test(name) || (allowed && ![...allowed].some((id) => artifactKey(id) === name))) continue;
+      if (!/^[a-f0-9]{64}$/u.test(name)) continue;
       const metadata = await this.readMetadata(path.join(this.directory, name, "metadata.json"));
-      // Runtime deletion must own the path even after TTL. Expiry controls
-      // transcription eligibility and startup sweeping, not meeting ownership.
-      if (metadata?.meetingId === meetingId) {
+      if (metadata?.meetingId === meetingId && artifactKey(metadata.recordingId) === name) {
         owned.push({ recordingId: metadata.recordingId, path: path.join(this.directory, name) });
       }
     }
@@ -769,54 +764,35 @@ export class ManagedTimelineArtifactStore implements ManagedTimelineArtifactSour
     now?: number;
   }): Promise<number> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
-    const now = input.now ?? this.now();
-    const recordings = new Map(input.recordings.map((recording) => [recording.id, recording.meetingId]));
+    await this.assertPlainPath(this.directory);
     const meetings = new Set(input.meetingIds);
-    let names: string[];
-    try {
-      names = await readdir(this.directory);
-    } catch (error) {
-      if (isErrno(error, "ENOENT")) return 0;
-      throw error;
-    }
+    const retained = new Map(input.recordings.filter((recording) => meetings.has(recording.meetingId))
+      .map((recording) => [artifactKey(recording.id), recording]));
     let removed = 0;
-    for (const name of names) {
-      const candidate = path.join(this.directory, name);
-      const info = await stat(candidate).catch((error: unknown) => isErrno(error, "ENOENT") ? null : Promise.reject(error));
-      if (!info) continue;
-      if (!info.isDirectory() || !/^[a-f0-9]{64}$/u.test(name)) {
-        await rm(candidate, { recursive: info.isDirectory(), force: true });
-        removed += 1;
+    for (const name of await readdir(this.directory)) {
+      const recording = retained.get(name);
+      if (recording) {
+        // Keep recoverable stages and bytes even when their receipt is absent
+        // or corrupt. Only validated legacy receipts may be migrated.
+        await this.get(recording.id, recording.meetingId).catch(() => undefined);
         continue;
       }
-      let metadata: ManagedArtifactMetadata | null;
-      try {
-        metadata = await this.readMetadata(path.join(candidate, "metadata.json"));
-      } catch {
-        metadata = null;
-      }
-      const expectedMeeting = metadata ? recordings.get(metadata.recordingId) : undefined;
-      const shouldRemove = !metadata || metadata.expiresAt <= now || !expectedMeeting || !meetings.has(expectedMeeting) ||
-        expectedMeeting !== metadata.meetingId || artifactKey(metadata.recordingId) !== name;
-      if (shouldRemove) {
-        await rm(candidate, { recursive: true, force: true });
-        removed += 1;
-        continue;
-      }
-      if (!metadata) continue;
-      try {
-        const identity = await fileIdentity(this.artifactPath(metadata.recordingId));
-        if (!sameIdentity(identity, { byteLength: metadata.byteLength, sha256: metadata.sha256 })) {
-          await rm(candidate, { recursive: true, force: true });
-          removed += 1;
-        }
-      } catch {
-        await rm(candidate, { recursive: true, force: true });
-        removed += 1;
-      }
+      await rm(path.join(this.directory, name), { recursive: true, force: true });
+      removed += 1;
     }
     await syncDirectory(this.directory);
     return removed;
+  }
+
+  private async assertPlainPath(candidate: string): Promise<void> {
+    const info = await lstat(candidate).catch((error: unknown) => isErrno(error, "ENOENT") ? null : Promise.reject(error));
+    if (info?.isSymbolicLink()) throw new Error(`Managed artifact path cannot be a symlink: ${candidate}`);
+  }
+
+  private async assertOwnedPaths(recordingId: string): Promise<void> {
+    for (const candidate of [this.directory, this.recordingDirectory(recordingId), this.metadataPath(recordingId), this.artifactPath(recordingId)]) {
+      await this.assertPlainPath(candidate);
+    }
   }
 
   async remove(recordingId: string): Promise<void> {
@@ -891,7 +867,7 @@ export class ManagedTimelineArtifactStore implements ManagedTimelineArtifactSour
 }
 
 interface ManagedArtifactMetadata {
-  readonly version: 2;
+  readonly version: 2 | 3;
   readonly recordingId: string;
   readonly meetingId: string;
   readonly manifestSha256: string;
@@ -900,7 +876,7 @@ interface ManagedArtifactMetadata {
   readonly startMs: number;
   readonly endMs: number;
   readonly createdAt: number;
-  readonly expiresAt: number;
+  readonly expiresAt?: number;
 }
 
 export async function listManagedArtifactPaths(
@@ -908,21 +884,12 @@ export async function listManagedArtifactPaths(
   recordingIds: readonly string[],
 ): Promise<Array<{ recordingId: string; path: string }>> {
   const owner = new ManagedTimelineArtifactStore(directory);
-  const result: Array<{ recordingId: string; path: string }> = [];
-  for (const recordingId of recordingIds) {
-    const metadataPath = path.join(owner.artifactDirectory(recordingId), "metadata.json");
-    const contents = await readFile(metadataPath, "utf8").catch((error: unknown) => isErrno(error, "ENOENT") ? null : Promise.reject(error));
-    if (!contents) continue;
-    const metadata = checkedMetadata(JSON.parse(contents), metadataPath);
-    if (metadata.recordingId !== recordingId) throw new Error(`Managed artifact metadata owner changed: ${metadataPath}`);
-    result.push({ recordingId, path: owner.artifactDirectory(metadata.recordingId) });
-  }
-  return result;
+  return recordingIds.map((recordingId) => ({ recordingId, path: owner.artifactDirectory(recordingId) }));
 }
 
 function metadataFrom(artifact: ManagedTimelineArtifact, meetingId: string, createdAt: number): ManagedArtifactMetadata {
   return {
-    version: 2,
+    version: 3,
     recordingId: artifact.recordingId,
     meetingId,
     manifestSha256: artifact.manifestSha256,
@@ -931,7 +898,6 @@ function metadataFrom(artifact: ManagedTimelineArtifact, meetingId: string, crea
     startMs: artifact.startMs,
     endMs: artifact.endMs,
     createdAt,
-    expiresAt: createdAt + MANAGED_TEMPORARY_DATA_TTL_MS,
   };
 }
 
@@ -952,7 +918,7 @@ function checkedMetadata(value: unknown, metadataPath: string): ManagedArtifactM
   if (!value || typeof value !== "object") throw new Error(`invalid object at ${metadataPath}`);
   const candidate = value as Partial<ManagedArtifactMetadata>;
   if (
-    candidate.version !== 2 || typeof candidate.recordingId !== "string" || !candidate.recordingId ||
+    (candidate.version !== 2 && candidate.version !== 3) || typeof candidate.recordingId !== "string" || !candidate.recordingId ||
     typeof candidate.meetingId !== "string" || !candidate.meetingId ||
     typeof candidate.manifestSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(candidate.manifestSha256) ||
     typeof candidate.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(candidate.sha256) ||
@@ -960,8 +926,9 @@ function checkedMetadata(value: unknown, metadataPath: string): ManagedArtifactM
     typeof candidate.startMs !== "number" || !Number.isSafeInteger(candidate.startMs) || candidate.startMs < 0 ||
     typeof candidate.endMs !== "number" || !Number.isSafeInteger(candidate.endMs) || candidate.endMs <= candidate.startMs ||
     typeof candidate.createdAt !== "number" || !Number.isSafeInteger(candidate.createdAt) || candidate.createdAt < 0 ||
-    typeof candidate.expiresAt !== "number" || !Number.isSafeInteger(candidate.expiresAt) ||
-    candidate.expiresAt !== candidate.createdAt + MANAGED_TEMPORARY_DATA_TTL_MS
+    (candidate.version === 2 && (typeof candidate.expiresAt !== "number" || !Number.isSafeInteger(candidate.expiresAt) ||
+      candidate.expiresAt !== candidate.createdAt + MANAGED_TEMPORARY_DATA_TTL_MS)) ||
+    (candidate.version === 3 && "expiresAt" in candidate)
   ) throw new Error(`invalid fields at ${metadataPath}`);
   return candidate as ManagedArtifactMetadata;
 }

@@ -104,7 +104,7 @@ describe("managed transcription adapter", () => {
       audioId: "composition-audio",
     });
     expect(provider.transcribe).toHaveBeenCalledTimes(1);
-    await expect(artifacts.get(fixture.recordingId)).resolves.toBeNull();
+    await expect(artifacts.get(fixture.recordingId)).resolves.not.toBeNull();
     expect(requestedRange).toEqual({ startMs: 0, endMs: 31_000 });
     expect(result.job).toMatchObject({ status: "succeeded", providerResult: null, audio: { durationMs: 31_000, billableSeconds: 31 } });
     expect(result.transcript).toMatchObject({ status: "ready", audio: { destination: fixture.outputPath, durationMs: 31_000 } });
@@ -304,7 +304,7 @@ describe("managed transcription adapter", () => {
     expect(provider.transcribe).toHaveBeenCalledOnce();
     expect(result.transcript.status).toBe("ready");
     expect(JSON.parse(await readFile(path.join(root, "upload-state", "sessions.json"), "utf8"))).toEqual({ version: 1, sessions: [] });
-    await expect(artifacts.get(fixture.recordingId)).resolves.toBeNull();
+    await expect(artifacts.get(fixture.recordingId)).resolves.not.toBeNull();
   });
 
   test.each(["provider_completed", "succeeded"])("recovers %s work through a restarted store with a stale quota block", async (status) => {
@@ -512,7 +512,7 @@ describe("managed transcription adapter", () => {
     roots.push(root);
     const fixture = await savedStore(root);
     const lifecycle = new MeetingLifecycleCoordinator();
-    const artifacts = new ManagedTimelineArtifactStore(path.join(root, "managed-artifacts"));
+    const artifacts = new ManagedTimelineArtifactStore(path.join(root, "managed-artifacts"), { now: () => START });
     const recording = (await fixture.store.listRecordings())[0]!;
     const timeline = await testTimelinePreparer(path.dirname(fixture.store.filePath)).prepare(recording);
     await artifacts.accept(timeline, { meetingId: fixture.meetingId });
@@ -540,6 +540,9 @@ describe("managed transcription adapter", () => {
       credential: device.credential,
       chunkId: "upload-failure-chunk",
     })).rejects.toThrow("Managed transcription provider failed");
+    const retainedAfterFailure = await new ManagedTimelineArtifactStore(artifacts.directory, { now: () => START + 172_800_000 }).get(fixture.recordingId, fixture.meetingId);
+    expect(retainedAfterFailure).not.toBeNull();
+    expect(await readFile(retainedAfterFailure!.path)).toEqual(await readFile(timeline.path));
     expect(policy.accountSnapshot(device.credential).period).toMatchObject({ reservedSeconds: 0, usedSeconds: 0 });
     expect((await fixture.store.listTranscripts(fixture.meetingId))[0]).toMatchObject({ status: "failed" });
     expect(JSON.parse(await readFile(path.join(root, "upload-state", "sessions.json"), "utf8"))).toEqual({ version: 1, sessions: [] });
@@ -619,7 +622,11 @@ describe("managed transcription adapter", () => {
     const quotaFailure = { version: 1, kind: "managed_quota_insufficient", requiredSeconds: 23, remainingSeconds: 12, checkedAt: START, resetAt: START + 86_400_000 };
     const upload = { uploadCanonicalTimelineFromPath: vi.fn(async (_input: any) => { throw new ManagedQuotaExceededError(quotaFailure); }),
       jobStatusForRecording: vi.fn(async () => null), runProvider: vi.fn() };
-    const options = { lifecycle: new MeetingLifecycleCoordinator(), timelinePreparer: testTimelinePreparer(path.dirname(fixture.store.filePath)), managedUpload: upload as unknown as ConvexManagedUploadPort };
+    const artifacts = new ManagedTimelineArtifactStore(path.join(root, "managed-artifacts"), { now: () => START });
+    const timeline = await testTimelinePreparer(path.dirname(fixture.store.filePath)).prepare((await fixture.store.listRecordings())[0]!);
+    await artifacts.accept(timeline, { meetingId: fixture.meetingId });
+    const canonicalBytes = await readFile(timeline.path);
+    const options = { lifecycle: new MeetingLifecycleCoordinator(), timelineArtifacts: artifacts, managedUpload: upload as unknown as ConvexManagedUploadPort };
     const input = { recordingId: fixture.recordingId, credential: { authToken: "synthetic" } };
     await expect(new ConvexManagedTranscriptionService(fixture.store, options).transcribe(input)).rejects.toMatchObject({ quotaFailure });
     await fixture.store.reconcileTranscriptPublications();
@@ -639,6 +646,8 @@ describe("managed transcription adapter", () => {
     await expect(new ConvexManagedTranscriptionService(reopened, options).transcribe(input)).rejects.toThrow("upload");
     expect((await reopened.listTranscripts(fixture.meetingId))[0]?.quotaFailure).toBeUndefined();
     expect(await readFile(fixture.outputPath)).toEqual(savedBytes);
+    const retainedAfterQuota = await new ManagedTimelineArtifactStore(artifacts.directory, { now: () => START + 172_800_000 }).get(fixture.recordingId, fixture.meetingId);
+    expect(await readFile(retainedAfterQuota!.path)).toEqual(canonicalBytes);
   });
 
   test("rejects a tampered durable MP3 before reserving managed quota", async () => {
