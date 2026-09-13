@@ -1495,7 +1495,8 @@ async function* canonicalPartChunks(filePath: string, sampleOffset: number, samp
     while (remaining > 0) {
       const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, remaining), position);
       if (bytesRead === 0) throw new ManagedUploadConflictError("Managed canonical WAV became truncated while segmenting");
-      yield buffer.subarray(0, bytesRead);
+      // Stream consumers may retain a chunk while the next read reuses this buffer.
+      yield Buffer.from(buffer.subarray(0, bytesRead));
       position += bytesRead;
       remaining -= bytesRead;
     }

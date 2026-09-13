@@ -60,6 +60,59 @@ describe("pre-external managed upload seam", () => {
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(manifest.parts[0]!.sha256);
   });
 
+  test.each([32_769, 361_067])("uploads immutable PCM bytes across reused read buffers (%i samples)", async (sampleCount) => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-stream-bytes-"));
+    roots.push(root);
+    const sourcePath = path.join(root, "canonical.wav");
+    const expected = wavBytes(sampleCount);
+    await writeFile(sourcePath, expected);
+    const manifest = await buildManagedLogicalTimelineManifest({
+      recordingId: "recording-stream-bytes",
+      manifestSha256: sha256Text("stream-bytes-manifest"),
+      sourcePath,
+    });
+    const session: ManagedConvexUploadSession = {
+      sessionId: "upload-stream-bytes", accountId: "account-stream", deviceId: "device-stream",
+      state: "uploading", createdAt: START, expiresAt: START + MANAGED_TEMPORARY_DATA_TTL_MS,
+      receivedPartNumbers: [], completedAt: null, jobId: null,
+    };
+    let posted: Buffer | null = null;
+    const client: ManagedConvexFunctionClient = {
+      mutation: async (name) => {
+        if (name.endsWith(":beginUpload")) return session;
+        if (name.endsWith(":generateUploadUrl")) return "https://synthetic.invalid/upload";
+        if (name.endsWith(":registerPart")) return { outcome: "stored" };
+        throw new Error(`unexpected mutation ${name}`);
+      },
+      query: async () => session,
+      action: async (name) => {
+        if (!name.endsWith(":sealUpload")) throw new Error(`unexpected action ${name}`);
+        return {
+          _id: "job-stream-bytes", uploadId: session.sessionId,
+          recordingId: manifest.recordingId, audioId: manifest.audioId,
+          admissionId: "admission-stream", admissionNumber: 1, status: "reserved",
+          durationMs: manifest.durationMs, sampleCount, billableSeconds: Math.ceil(sampleCount / MANAGED_SAMPLE_RATE),
+          providerResult: null,
+        };
+      },
+    };
+    const port = new ConvexManagedUploadPort(client, {
+      journal: new FileManagedConvexUploadJournal(path.join(root, "journal")),
+      fetch: async (_url, init) => {
+        // Consume the actual Readable.toWeb upload body, whose queued chunks
+        // must remain unchanged while the producer reads subsequent PCM bytes.
+        posted = Buffer.from(await new Response(init?.body as BodyInit).arrayBuffer());
+        return new Response(JSON.stringify({ storageId: "storage-stream-bytes" }));
+      },
+    });
+    await port.uploadCanonicalTimelineFromPath({
+      credential: { authToken: "synthetic-not-sent" }, manifest, sourcePath,
+    });
+    expect(posted).not.toBeNull();
+    expect(identityOf(posted!)).toEqual({ byteLength: manifest.parts[0]!.byteLength, sha256: manifest.parts[0]!.sha256 });
+    expect(posted).toEqual(expected);
+  });
+
   test("segments a large canonical timeline through generated upload URLs and resumes an immutable logical job", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-convex-upload-"));
     roots.push(root);
