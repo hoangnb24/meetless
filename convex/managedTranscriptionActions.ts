@@ -218,7 +218,9 @@ export const cleanupUpload = internalAction({
   args: { uploadId: v.id("managedUploads") },
   returns: v.any(),
   handler: async (ctx, args) => {
-    await ctx.runMutation(anyApi.managedTranscription.reconcileManagedState, { limit: 100 });
+    const initial = await ctx.runQuery(anyApi.managedTranscription.readUploadForCleanup, { uploadId: args.uploadId });
+    if (!initial) return false;
+    await ctx.runMutation(anyApi.managedTranscription.reconcileManagedState, { accountId: initial.upload.accountId, limit: 100 });
     const data = await ctx.runQuery(anyApi.managedTranscription.readUploadForCleanup, { uploadId: args.uploadId });
     if (!data) return false;
     if (data.upload.state !== "cancelled" && data.upload.state !== "cleaned" && data.upload.expiresAt > Date.now()) return false;
