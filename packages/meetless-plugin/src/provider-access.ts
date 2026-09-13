@@ -18,7 +18,8 @@ export function providerAccess(socketPath: string, provider?: ProviderAccessId):
       if (result) resolve(result); else reject(new Error("Provider folder access is unavailable. Try again."));
     };
     socket.setEncoding("utf8");
-    socket.setTimeout(provider ? 300_000 : 5_000, () => finish());
+    // Folder selection is user-driven; an RPC deadline must not abandon a later grant.
+    socket.setTimeout(provider ? 0 : 5_000, () => finish());
     socket.once("error", () => finish());
     socket.once("end", () => finish());
     socket.on("data", (chunk: string) => {
@@ -34,4 +35,44 @@ export function providerAccess(socketPath: string, provider?: ProviderAccessId):
     });
     socket.once("connect", () => socket.end(`${JSON.stringify(request)}\n`));
   });
+}
+
+
+/** Keeps user-driven native work outside Paseo's 60-second request lifetime. */
+export class ProviderAccessService {
+  private result: ProviderAccessResult = {
+    providers: [{ id: "codex", status: "unavailable" }, { id: "claude", status: "unavailable" }, { id: "opencode", status: "unavailable" }],
+    outcome: "status",
+  };
+  private inFlight: Promise<void> | null = null;
+  private revision = 0;
+  private terminalUnread = false;
+
+  constructor(private readonly transport: (provider?: ProviderAccessId) => Promise<ProviderAccessResult>) {}
+
+  request(provider: ProviderAccessId): ProviderAccessResult {
+    if (this.inFlight) return this.result;
+    this.revision += 1;
+    this.terminalUnread = false;
+    this.result = { ...this.result, outcome: "pending" };
+    this.inFlight = Promise.resolve().then(() => this.transport(provider)).then(
+      (result) => { this.result = result; },
+      () => { this.result = { ...this.result, outcome: "failed" }; },
+    ).finally(() => { this.inFlight = null; this.terminalUnread = true; });
+    return this.result;
+  }
+
+  async status(): Promise<ProviderAccessResult> {
+    if (this.inFlight) return this.result;
+    if (this.terminalUnread) {
+      this.terminalUnread = false;
+      return this.result;
+    }
+    const revision = this.revision;
+    const current = await this.transport();
+    // A status read begun before a new chooser cannot erase its pending/final state.
+    if (revision !== this.revision) return this.result;
+    this.result = { providers: current.providers, outcome: this.result.outcome };
+    return this.result;
+  }
 }

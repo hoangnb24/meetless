@@ -39,6 +39,33 @@ describe("transcript meeting selection ordering", () => {
     vi.clearAllMocks();
   });
 
+  test("provider chooser polls beyond 60 seconds and a reconnected view recovers without resubmission", async () => {
+    vi.useFakeTimers();
+    try {
+      const initial = { outcome: "status", providers: [{ id: "codex", status: "needs_access" }, { id: "claude", status: "unavailable" }, { id: "opencode", status: "unavailable" }] };
+      let outcome = "status";
+      const getProviderAccess = vi.fn(async () => ({ ...initial, outcome }));
+      const requestProviderAccess = vi.fn(async () => { outcome = "pending"; return { ...initial, outcome }; });
+      connectMeetlessClient.mockResolvedValue({ client: { listMeetings: async () => [], getProviderAccess, requestProviderAccess }, close: async () => undefined, serverInfo: null });
+      await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+      const access = () => renderer!.root.findByType("MeetingListSurface").props.providerAccessNotice.props;
+      await act(async () => access().onRequest("codex"));
+      expect(access().pending).toBe(true);
+      expect(access().result.outcome).toBe("pending");
+      await act(async () => { await vi.advanceTimersByTimeAsync(61_000); });
+      expect(access().pending).toBe(true);
+      expect(requestProviderAccess).toHaveBeenCalledTimes(1);
+      await act(async () => renderer!.unmount());
+      await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+      expect(access().pending).toBe(true);
+      outcome = "cancelled";
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      expect(access().pending).toBe(false);
+      expect(access().result.outcome).toBe("cancelled");
+      expect(requestProviderAccess).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
   test.each([
     ["purchase_required", "inactive"],
     ["recovery_required", "unavailable"],

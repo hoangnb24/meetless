@@ -37,6 +37,18 @@ preserved, and accepted deltas integrated separately.
   Claude Keychain identity and separate config-file access remain under
   investigation; OpenCode is not installed on this machine. Those provider
   paths cannot be claimed working from a Codex-only result.
+  Source `2426c21` is committed/pushed after independent local review. Actual
+  preserving update passed on manifest `5fdb208a`; original recording,
+  transcript and audio data remained unchanged. Actual picker Cancel and
+  pre-acceptance rejection of Home passed; the exact Codex folder bookmark was
+  saved. Two integration failures prevent acceptance: the outer Paseo RPC
+  times out after 60 seconds while the chooser continues (false failure despite
+  saved grant), and relaunch rejects the generated `providers.codex` config.
+  The real consumer requires `agents.providers.codex`. No Ask retry occurred.
+  `provider_ui` owns a Meetless-only asynchronous chooser/status correction;
+  `provider_lookup` owns runtime producer correction and real persisted-config
+  consumer red/green proof. The installed app is stopped pending the corrected
+  preserving update. No vendor revision bump or credential copy is needed.
 
 - **#13 Ask-focused continuation — 2026-09-13:** owner reports recording,
   Apple actions and audio checks previously satisfactory and authorizes starting

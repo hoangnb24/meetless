@@ -995,7 +995,9 @@ export async function prepareRuntime(config: RuntimeConfig): Promise<void> {
   await assertExistingConfigReadable(config.paths.config);
   const daemonConfig = {
     version: 1,
-    providers: Object.fromEntries(Object.entries(providerEnvironment).map(([id, env]) => [id, { env }])),
+    agents: {
+      providers: Object.fromEntries(Object.entries(providerEnvironment).map(([id, env]) => [id, { env }])),
+    },
     daemon: {
       listen: config.listen,
       cors: { allowedOrigins: [config.rendererOrigin] },

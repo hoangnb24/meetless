@@ -151,6 +151,8 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [transcriptionFailureCategory, setTranscriptionFailureCategory] = useState<TranscriptionFailureCategoryWire | null>(null);
   const [transcriptionRouteMessage, setTranscriptionRouteMessage] = useState<string | null>(null);
   const [transcriptionConsentPending, setTranscriptionConsentPending] = useState(false);
+  const providerAccessEpoch = useRef(0);
+  const [providerAccessConnection, setProviderAccessConnection] = useState(0);
   const [providerAccess, setProviderAccess] = useState<ProviderAccessResult | null>(null);
   const [providerAccessPending, setProviderAccessPending] = useState(false);
   const [providerAccessError, setProviderAccessError] = useState<string | null>(null);
@@ -200,11 +202,22 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     const active = { client, epoch: connectionEpoch.current + 1, ...(close ? { close } : {}) };
     connectionEpoch.current = active.epoch;
     connection.current = active;
+    const accessEpoch = ++providerAccessEpoch.current;
+    setProviderAccessConnection(active.epoch);
     setProviderAccessPending(false);
     setProviderAccess(null);
     setProviderAccessError(null);
+    if (mode === "desktop" && typeof client.getProviderAccess === "function") {
+      void client.getProviderAccess().then((result) => {
+        if (connection.current !== active || providerAccessEpoch.current !== accessEpoch) return;
+        setProviderAccess(result);
+        setProviderAccessPending(result.outcome === "pending");
+      }).catch(() => {
+        if (connection.current === active && providerAccessEpoch.current === accessEpoch) setProviderAccessError("Folder access could not be checked. Reopen the meeting to try again.");
+      });
+    }
     return active;
-  }, [resetDeleteState]);
+  }, [resetDeleteState, mode]);
 
   const invalidateConnection = useCallback(() => {
     resetDeleteState();
@@ -213,6 +226,8 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     playback.current?.stop();
     playback.current = null;
     connection.current = null;
+    providerAccessEpoch.current += 1;
+    setProviderAccessConnection(connectionEpoch.current);
     setProviderAccessPending(false);
     setProviderAccess(null);
     setProviderAccessError(null);
@@ -394,8 +409,9 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setChatLoading(true);
     try {
       if (mode === "desktop" && typeof active.client.getProviderAccess === "function") {
+        const accessEpoch = providerAccessEpoch.current;
         void active.client.getProviderAccess().then((result) => {
-          if (isCurrentConnection(active)) { setProviderAccess(result); setProviderAccessError(null); }
+          if (isCurrentConnection(active) && providerAccessEpoch.current === accessEpoch) { setProviderAccess(result); setProviderAccessPending(result.outcome === "pending"); setProviderAccessError(null); }
         }).catch(() => { if (isCurrentConnection(active)) setProviderAccessError("Folder access could not be checked. Reopen the meeting to try again."); });
       }
       const threadPromise = active.client.getMeetingChat(meetingId);
@@ -573,18 +589,46 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     }
   }, [chatSelection, isCurrentConnection]);
 
+  useEffect(() => {
+    const active = connection.current;
+    if (!providerAccessPending || !active) return;
+    const epoch = providerAccessEpoch.current;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const result = await active.client.getProviderAccess();
+        if (cancelled || !isCurrentConnection(active) || epoch !== providerAccessEpoch.current) return;
+        setProviderAccess(result);
+        setProviderAccessError(null);
+        if (result.outcome !== "pending") { setProviderAccessPending(false); return; }
+      } catch {
+        if (cancelled || !isCurrentConnection(active) || epoch !== providerAccessEpoch.current) return;
+        setProviderAccessError("Waiting to confirm folder access. Keep Meetless open.");
+      }
+      timer = setTimeout(() => void poll(), 1_000);
+    };
+    timer = setTimeout(() => void poll(), 1_000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [providerAccessPending, providerAccessConnection, isCurrentConnection]);
+
   const requestProviderAccess = useCallback(async (provider: ProviderAccessId) => {
     const active = connection.current;
     if (!active || providerAccessPending) return;
+    const epoch = ++providerAccessEpoch.current;
     setProviderAccessPending(true);
+    setProviderAccess((current) => current ? { ...current, outcome: "pending" } : null);
     setProviderAccessError(null);
     try {
       const result = await active.client.requestProviderAccess(provider);
-      if (isCurrentConnection(active)) { setProviderAccess(result); setProviderAccessError(null); }
+      if (isCurrentConnection(active) && providerAccessEpoch.current === epoch) {
+        setProviderAccess(result);
+        setProviderAccessPending(result.outcome === "pending");
+        setProviderAccessError(null);
+      }
     } catch {
-      if (isCurrentConnection(active)) setProviderAccessError("Folder access could not be granted. Try again.");
-    } finally {
-      if (isCurrentConnection(active)) setProviderAccessPending(false);
+      // An uncertain response is recovered by status polling, never by starting another chooser.
+      if (isCurrentConnection(active) && providerAccessEpoch.current === epoch) setProviderAccessError("Waiting to confirm folder access. Keep Meetless open.");
     }
   }, [isCurrentConnection, providerAccessPending]);
 
@@ -1376,6 +1420,7 @@ export function ProviderFolderAccess({ result, provider, pending, error, onReque
 }) {
   const entries = result?.providers.filter((entry) => provider ? entry.id === provider : entry.status !== "unavailable") ?? [];
   return <View style={{ gap: 8 }} testID="provider-folder-access">
+    {pending ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>Choosing folder… Complete or cancel the folder selection window.</Text> : null}
     {error ? <Text style={{ color: "#aeb6c2", fontSize: 13 }} accessibilityRole="alert">{error}</Text> : null}
     {result?.outcome === "cancelled" ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>Folder selection was cancelled. You can grant access when ready.</Text> : null}
     {result?.outcome === "invalid_selection" ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>Choose the selected agent’s existing configuration folder.</Text> : null}

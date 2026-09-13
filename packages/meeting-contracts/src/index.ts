@@ -602,7 +602,7 @@ export const ProviderAccessResultSchema = z.object({
     id: ProviderAccessIdSchema,
     status: z.enum(["ready", "needs_access", "restart_required", "unavailable"]),
   }).strict()).length(3).refine((items) => new Set(items.map((item) => item.id)).size === 3, "Each provider must appear once"),
-  outcome: z.enum(["status", "granted", "cancelled", "invalid_selection", "failed"]),
+  outcome: z.enum(["status", "pending", "granted", "cancelled", "invalid_selection", "failed"]),
 }).strict();
 export type ProviderAccessResult = z.infer<typeof ProviderAccessResultSchema>;
 export type ProviderAccessId = z.infer<typeof ProviderAccessIdSchema>;
@@ -611,6 +611,7 @@ export const NativeProviderAccessRequestSchema = z.discriminatedUnion("operation
   z.object({ version: z.literal(1), requestId: z.string().min(1), operation: z.literal("providerAccessRequest"), provider: ProviderAccessIdSchema }).strict(),
 ]);
 export const NativeProviderAccessResponseSchema = ProviderAccessResultSchema.extend({
+  outcome: z.enum(["status", "granted", "cancelled", "invalid_selection", "failed"]),
   version: z.literal(1), requestId: z.string().min(1), ok: z.literal(true), type: z.literal("provider.access"),
 }).strict();
 export const MeetingProviderAccessStatusRpc = defineRpc({

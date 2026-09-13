@@ -512,7 +512,10 @@ function assertBootstrapDeadline(deadlineEpochMs: number): void {
   }
 }
 
+let providerAccessService: import("./provider-access.js").ProviderAccessService | null = null;
 export async function getProviderAccess(provider?: import("@meetless/meeting-contracts").ProviderAccessId) {
-  const { providerAccess } = await import("./provider-access.js");
-  return providerAccess(runtimeEndpoint(process.env, "transcription").bindArgument, provider);
+  const { providerAccess, ProviderAccessService } = await import("./provider-access.js");
+  providerAccessService ??= new ProviderAccessService((selected) =>
+    providerAccess(runtimeEndpoint(process.env, "transcription").bindArgument, selected));
+  return provider ? providerAccessService.request(provider) : providerAccessService.status();
 }

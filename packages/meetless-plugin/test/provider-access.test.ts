@@ -5,6 +5,7 @@ import { expect, test } from "vitest";
 import { providerAccess } from "../src/provider-access.js";
 
 test.each(["cancelled", "granted", "mismatch", "secret"])("native provider access transport: %s", async (scenario) => {
+  const timeoutSpy = vi.spyOn(net.Socket.prototype, "setTimeout");
   const root = await mkdtemp("/tmp/ml-pa-");
   const socketPath = path.join(root, "s");
   let received: unknown;
@@ -32,8 +33,52 @@ test.each(["cancelled", "granted", "mismatch", "secret"])("native provider acces
       expect(Object.keys(result).sort()).toEqual(["outcome", "providers"]);
     }
     expect(received).toMatchObject({ version: 1, operation: "providerAccessRequest", provider: "codex" });
+    expect(timeoutSpy).toHaveBeenCalledWith(0, expect.any(Function));
   } finally {
+    timeoutSpy.mockRestore();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(root, { recursive: true, force: true });
   }
+});
+
+import { ProviderAccessService } from "../src/provider-access.js";
+import { vi } from "vitest";
+import type { ProviderAccessResult } from "@meetless/meeting-contracts";
+const initial: ProviderAccessResult = { outcome: "status", providers: [{ id: "codex", status: "needs_access" }, { id: "claude", status: "unavailable" }, { id: "opencode", status: "unavailable" }] };
+
+test("chooser outlives five minutes while request/status stay immediate and reconnect never opens a duplicate", async () => {
+  vi.useFakeTimers();
+  try {
+    const granted: ProviderAccessResult = { ...initial, outcome: "granted", providers: initial.providers.map((entry) => entry.id === "codex" ? { ...entry, status: "restart_required" } : entry) };
+    const transport = vi.fn((provider?: string) => provider
+      ? new Promise<ProviderAccessResult>((resolve) => setTimeout(() => resolve(granted), 360_000))
+      : Promise.resolve(initial));
+    const service = new ProviderAccessService(transport);
+    expect(await service.status()).toEqual(initial);
+    expect(service.request("codex").outcome).toBe("pending");
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect((await service.status()).outcome).toBe("pending");
+    expect(service.request("codex").outcome).toBe("pending");
+    expect(transport.mock.calls.filter(([provider]) => provider)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(240_000);
+    expect((await service.status()).outcome).toBe("pending");
+    expect(transport.mock.calls.filter(([provider]) => provider)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(await service.status()).toEqual(granted);
+    // A new/reconnected client observes the same terminal outcome; current access is revalidated.
+    expect(await service.status()).toEqual({ ...initial, outcome: "granted" });
+  } finally { vi.useRealTimers(); }
+});
+
+test("cancelled/failed terminal is retained and a new request clears the previous outcome", async () => {
+  const transport = vi.fn(async (provider?: string) => provider ? { ...initial, outcome: "cancelled" as const } : initial);
+  const service = new ProviderAccessService(transport);
+  service.request("codex");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect((await service.status()).outcome).toBe("cancelled");
+  expect((await service.status()).outcome).toBe("cancelled");
+  transport.mockRejectedValueOnce(new Error("native unavailable"));
+  expect(service.request("codex").outcome).toBe("pending");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect((await service.status()).outcome).toBe("failed");
 });

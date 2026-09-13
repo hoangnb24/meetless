@@ -5,6 +5,7 @@ const response = { version: 1, requestId: "request", ok: true, type: "provider.a
 ] };
 test("provider access accepts status and strictly bounds chooser inputs and path-free outputs", () => {
   expect(NativeProviderAccessResponseSchema.parse(response)).toEqual(response);
+  expect(NativeProviderAccessResponseSchema.safeParse({ ...response, outcome: "pending" }).success).toBe(false);
   expect(NativeProviderAccessRequestSchema.safeParse({ version: 1, requestId: "request", operation: "providerAccessRequest", provider: "codex" }).success).toBe(true);
   for (const extra of [{ path: "/private/auth" }, { token: "secret" }, { provider: "other" }]) {
     expect(NativeProviderAccessRequestSchema.safeParse({ version: 1, requestId: "request", operation: "providerAccessRequest", provider: "codex", ...extra }).success).toBe(false);
