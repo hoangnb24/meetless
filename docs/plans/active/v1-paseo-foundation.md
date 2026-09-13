@@ -13,6 +13,41 @@ preserved, and accepted deltas integrated separately.
 
 ### Current execution
 
+- **#13 Ask-focused continuation — 2026-09-13:** owner reports recording,
+  Apple actions and audio checks previously satisfactory and authorizes starting
+  with Ask using the existing transcribed meeting named Test. Root owns actual
+  GUI execution/evidence; `ask_diagnosis` implemented the bounded source fix
+  and completed read-only authentication diagnosis.
+  Use the ready Test dated 2026-09-12 23:40 (the older Test is not ready).
+  Scope is Ask → cited answer → citation playback and durable chat checks using
+  the existing configured provider. No new recording/transcription/purchase is
+  needed. This supersedes the earlier preparation-only restriction for this
+  bounded Ask run, but does not claim the entire same-candidate journey passed.
+  Before correction, installed inputs matched prior accepted manifest `826f9b2e`;
+  33 local store/audio files were baselined in `.artifacts/issue13/ask-live/`.
+  Selecting Codex GPT-5.6-Luna failed before a question was submitted: the
+  provider feature check required the not-yet-created `chat-execution` directory
+  (actual daemon ENOENT). At that point no inference or transcription request
+  had been sent. Project #13 is now In Progress / Awaiting owner for the
+  authentication decision below, not blocked by the completed #9/#10 inputs.
+  Source `fa25aa5f` (SHA-256 prefix) is independently accepted; four fresh-root
+  regression cases failed before the fix, 25 chat-service tests and typecheck
+  passed after it. Full preserving update exited 0 on manifest `8bcfc899`;
+  installed source matches, all 33 existing store/audio files were unchanged.
+  Independent reviewer/Lead ACCEPTS actual model-selection fix only: selecting
+  Luna succeeds and persists. One authorized Ask then failed definitively with
+  HTTP 401 (missing authentication) after 18.366 seconds; no transcript segments
+  were retrieved and no answer is claimed. The failed question survived switching
+  meetings and returning to Test within the same app process, without appearing
+  in the other Test. This is not relaunch proof. Root has not retried.
+  Read-only auth diagnosis confirms a separate container Codex home without
+  auth/config files, while ordinary Codex has ChatGPT auth metadata. No verified
+  MAS provider-login/credential bridge exists in the relevant repository path;
+  do not copy tokens or assume an ordinary shell login fixes the app. Proposed
+  next work is dedicated provider sign-in for Meetless, pending owner product
+  decision. Source fix committed as `56e73b1`. [Validation record](../history/issue-13-ask-validation-2026-09-13.md)
+  records independent/Lead acceptance of selection only and the open Ask gate.
+
 - **#7 complete:** product decisions promoted in `678c527`, independently
   accepted, pushed, issue closed and Project Done.
 - **#9 complete:** source `8aadef0` plus corrections `6eaa779`; independent actual
