@@ -13,77 +13,36 @@ preserved, and accepted deltas integrated separately.
 
 ### Current execution
 
-- **#13 provider configuration decision — 2026-09-13:** owner corrects the
-  proposed separate-login direction: Meetless must reuse existing coding-agent
-  config/auth from the real user's home using the lookup paths and overrides
-  already supported by Paseo, including on first installation/new machines.
-  Accepted behavior is recorded in `docs/product/knowledge-and-citations.md`.
-  This supersedes the dedicated-login proposal below; it is not authority to
-  copy credentials, disable App Sandbox, or relocate Meetless/Paseo app state.
-  Read-only inspection finds actual MAS parent/child entitlements have no
-  external user-selected-file access and the native host has no bookmark/open
-  panel route. Paseo provider env overlays exist, but `prepareRuntime` currently
-  writes daemon config without a provider block. A path-only patch cannot prove
-  access and is not being shipped as a fix.
-  Owner approved the MAS interaction on 2026-09-13: when Ask needs an existing provider's
-  configuration outside the sandbox, explain the folder access needed, use the
-  system folder chooser, preserve the grant with a security-scoped bookmark,
-  and offer recovery when access is denied/revoked. Do not require a new provider
-  login solely because the container has no auth file. Scoped read/write and
-  app-bookmark entitlements are approved; whole-home access and credential
-  copying are not. Implementation now proceeds with native ownership assigned
-  to `ask_diagnosis`, runtime/bridge/UI to `provider_ui`, and independent review
-  to `ask_review`. The first actual proof uses installed Codex and ready Test.
-  Claude Keychain identity and separate config-file access remain under
-  investigation; OpenCode is not installed on this machine. Those provider
-  paths cannot be claimed working from a Codex-only result.
-  Source `2426c21` is committed/pushed after independent local review. Actual
-  preserving update passed on manifest `5fdb208a`; original recording,
-  transcript and audio data remained unchanged. Actual picker Cancel and
-  pre-acceptance rejection of Home passed; the exact Codex folder bookmark was
-  saved. Two integration failures prevent acceptance: the outer Paseo RPC
-  times out after 60 seconds while the chooser continues (false failure despite
-  saved grant), and relaunch rejects the generated `providers.codex` config.
-  The real consumer requires `agents.providers.codex`. No Ask retry occurred.
-  `provider_ui` owns a Meetless-only asynchronous chooser/status correction;
-  `provider_lookup` owns runtime producer correction and real persisted-config
-  consumer red/green proof. The installed app is stopped pending the corrected
-  preserving update. No vendor revision bump or credential copy is needed.
-
-- **#13 Ask-focused continuation — 2026-09-13:** owner reports recording,
-  Apple actions and audio checks previously satisfactory and authorizes starting
-  with Ask using the existing transcribed meeting named Test. Root owns actual
-  GUI execution/evidence; `ask_diagnosis` implemented the bounded source fix
-  and completed read-only authentication diagnosis.
-  Use the ready Test dated 2026-09-12 23:40 (the older Test is not ready).
-  Scope is Ask → cited answer → citation playback and durable chat checks using
-  the existing configured provider. No new recording/transcription/purchase is
-  needed. This supersedes the earlier preparation-only restriction for this
-  bounded Ask run, but does not claim the entire same-candidate journey passed.
-  Before correction, installed inputs matched prior accepted manifest `826f9b2e`;
-  33 local store/audio files were baselined in `.artifacts/issue13/ask-live/`.
-  Selecting Codex GPT-5.6-Luna failed before a question was submitted: the
-  provider feature check required the not-yet-created `chat-execution` directory
-  (actual daemon ENOENT). At that point no inference or transcription request
-  had been sent. Project #13 is now In Progress / Awaiting owner for the
-  authentication decision below, not blocked by the completed #9/#10 inputs.
-  Source `fa25aa5f` (SHA-256 prefix) is independently accepted; four fresh-root
-  regression cases failed before the fix, 25 chat-service tests and typecheck
-  passed after it. Full preserving update exited 0 on manifest `8bcfc899`;
-  installed source matches, all 33 existing store/audio files were unchanged.
-  Independent reviewer/Lead ACCEPTS actual model-selection fix only: selecting
-  Luna succeeds and persists. One authorized Ask then failed definitively with
-  HTTP 401 (missing authentication) after 18.366 seconds; no transcript segments
-  were retrieved and no answer is claimed. The failed question survived switching
-  meetings and returning to Test within the same app process, without appearing
-  in the other Test. This is not relaunch proof. Root has not retried.
-  Read-only auth diagnosis confirms a separate container Codex home without
-  auth/config files, while ordinary Codex has ChatGPT auth metadata. No verified
-  MAS provider-login/credential bridge exists in the relevant repository path;
-  do not copy tokens or assume an ordinary shell login fixes the app. Proposed
-  next work is dedicated provider sign-in for Meetless, pending owner product
-  decision. Source fix committed as `56e73b1`. [Validation record](../history/issue-13-ask-validation-2026-09-13.md)
-  records independent/Lead acceptance of selection only and the open Ask gate.
+- **#13 bounded Ask work — 2026-09-13:** owner authorized Ask using the
+  existing ready Test and approved macOS folder selection/bookmarks to reuse
+  existing coding-agent configuration. Codex reuse and Ask passed on actual MAS
+  manifest `848b22f6`; the final playback correction passed on `4936c9c2`.
+  Source sequence: `56e73b1` first-use selection, `2426c21` scoped folder access,
+  `c923184` asynchronous chooser/correct provider config, `f4568e1` audio-end
+  completion. Source is independently accepted and pushed.
+  Actual proof: Cancel recovery, native Home rejection on the first candidate,
+  correct grant after more than 92 seconds, normal relaunch with remembered
+  access, one manual Retry completing in 21.293 seconds with a valid citation,
+  chat isolation and relaunch persistence. Final artifact replays the stored
+  citation and reaches Evidence played. No further question was submitted on
+  that playback-only correction. Original data/audio remain unchanged; the
+  app is left open on the ready Test with its answer and played evidence.
+  Prior failures are retained: initial HTTP 401, false timeout feedback after
+  a long chooser, real consumer rejection of `providers.codex`, and the stuck
+  Playing label. Correct configuration is consumed through
+  `agents.providers.codex`; regression now uses the real Paseo config reader.
+  Meetless-only asynchronous status avoids the chooser RPC deadline; no vendor
+  revision change was needed. No login, credential copy, whole-home grant,
+  recording, purchase or Transcribe was performed.
+  Product/ADR0005 authority preserves App Sandbox and app-owned data; accepted
+  broad provider reuse policy remains. This implementation supports Codex only.
+  Claude Keychain/separate configuration access remains unresolved, and OpenCode
+  is not installed on the test machine; neither integration is claimed ready.
+  Independent reviewer and Lead accept the bounded actual Ask and final playback
+  results on their respective identified artifacts. #13 stays open because the
+  full same-candidate journey has not been repeated. See the
+  [current validation record](../history/issue-13-provider-access-validation-2026-09-13.md)
+  and [initial failure record](../history/issue-13-ask-validation-2026-09-13.md).
 
 - **#7 complete:** product decisions promoted in `678c527`, independently
   accepted, pushed, issue closed and Project Done.

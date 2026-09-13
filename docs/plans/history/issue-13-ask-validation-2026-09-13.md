@@ -2,6 +2,12 @@
 
 Date: 2026-09-13. Issue: https://github.com/hoangnb24/meetless/issues/13
 
+This record preserves the initial failure and selection-only acceptance. The
+owner subsequently approved reuse of existing provider configuration through
+scoped folder access; see the [follow-up validation](issue-13-provider-access-validation-2026-09-13.md)
+for the accepted Codex Ask result and later corrections. The separate-login
+proposal below is historical and superseded.
+
 ## Outcome and owner scope
 
 The owner requested starting #13 with Ask on the existing transcribed recording
