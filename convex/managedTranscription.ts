@@ -3,6 +3,7 @@ import { anyApi } from "convex/server";
 import { v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
+import { validateManagedQuotaFailure, type ManagedQuotaFailure } from "../packages/meeting-domain/src/managed-quota";
 import { requirePrincipal } from "./managedAuth";
 export { requirePrincipal } from "./managedAuth";
 import { assertNonProductionFixture, readManagedRuntimeConfig } from "./managedConfig";
@@ -103,28 +104,46 @@ export const beginUpload = mutation({
       .query("managedUploads")
       .withIndex("by_upload_key", (q) => q.eq("accountId", principal.accountId).eq("uploadKey", uploadKey))
       .collect());
-    if (existing) {
-      assertSameManifest(existing, manifest);
-      if (existing.expiresAt <= now) {
-        await ctx.scheduler.runAfter(0, anyApi.managedTranscriptionActions.cleanupUpload, { uploadId: existing._id });
-        throw new Error(`Managed upload exceeded its accepted 24-hour TTL (${AUTHORITY})`);
-      }
-      return uploadView(ctx, existing);
-    }
     const timelineKey = timelineKeyFor(principal.accountId, manifest);
     const existingUploadForTimeline = currentTransportUpload(await ctx.db
       .query("managedUploads")
       .withIndex("by_timeline", (q) => q.eq("accountId", principal.accountId).eq("recordingId", manifest.recordingId).eq("audioId", manifest.audioId))
       .collect());
     if (existingUploadForTimeline) assertSameManifest(existingUploadForTimeline, manifest);
-    const existingJob = await ctx.db
-      .query("managedJobs")
-      .withIndex("by_timeline", (q) => q.eq("accountId", principal.accountId).eq("timelineKey", timelineKey))
-      .unique();
+    if (existing) assertSameManifest(existing, manifest);
+    const existingJob = await ctx.db.query("managedJobs")
+      .withIndex("by_timeline", (q) => q.eq("accountId", principal.accountId).eq("timelineKey", timelineKey)).unique();
     if (existingJob && existingJob.fingerprint !== fingerprintFor(manifest)) {
       throw new Error(`Managed recording timeline is already bound to different immutable bytes (${AUTHORITY})`);
     }
-    assertCurrentEntitlement(principal, now);
+    let quotaPredecessor: Doc<"managedUploads"> | null = null;
+    if (existing && existing.expiresAt <= now) {
+      // A later explicit attempt may upload fresh bytes only after the old
+      // quota-deferred transport has completely finished its own TTL cleanup.
+      const parts = await ctx.db.query("managedUploadParts")
+        .withIndex("by_upload_part", (q) => q.eq("uploadId", existing._id)).collect();
+      if (existing.quotaDeferredAt === undefined || existing.state !== "cleaned" || parts.length !== 0 || existingJob || existing.jobId !== null) {
+        throw new Error(`Managed upload exceeded its accepted 24-hour TTL (${AUTHORITY})`);
+      }
+      assertDeviceOwner(existing, principal.deviceId);
+      quotaPredecessor = existing;
+    }
+    const needsReservation = !existingJob || ["failed", "expired", "cancelled", "stopped"].includes(existingJob.status);
+    if (needsReservation) {
+      assertCurrentEntitlement(principal, now);
+      if (existingJob && existingJob.expiresAt <= now) throw new Error(`Managed job exceeded its accepted 24-hour TTL (${AUTHORITY})`);
+      const period = await currentPeriod(ctx, account, now);
+      const denied = quotaFailureFor(period, billableSeconds(manifest.sampleCount), now);
+      if (denied) {
+        if (existing && !existingJob && existing.jobId === null && (existing.state === "uploading" || quotaPredecessor)) {
+          assertDeviceOwner(existing, principal.deviceId);
+          await ctx.db.patch(existing._id, { quotaDeferredAt: existing.quotaDeferredAt ?? now });
+        }
+        // Returning commits the deferral marker. Throwing would roll it back.
+        return denied;
+      }
+    }
+    if (existing && !quotaPredecessor) return uploadView(ctx, existing);
     const createdAt = now;
     const uploadId = await ctx.db.insert("managedUploads", {
       accountId: principal.accountId,
@@ -145,7 +164,9 @@ export const beginUpload = mutation({
       cancelGeneration: 0,
       jobId: existingJob?._id ?? null,
       acknowledgedAt: null,
+      ...(quotaPredecessor ? { quotaPredecessorId: quotaPredecessor._id } : {}),
     });
+    if (quotaPredecessor) await ctx.db.patch(quotaPredecessor._id, { quotaSuccessorId: uploadId });
     await ctx.scheduler.runAfter(TEMPORARY_TTL_MS, anyApi.managedTranscriptionActions.cleanupUpload, { uploadId });
     const upload = await ctx.db.get(uploadId);
     if (!upload) throw new Error(`Managed upload disappeared during creation (${AUTHORITY})`);
@@ -373,10 +394,13 @@ export const repairCorruptUpload = internalMutation({
     const now = Date.now();
     assertCurrentEntitlement(principal, now);
     // Bind duplicate requests to this predecessor's direct successor, even
-    // after cleanup. A successor is never repaired into another generation.
+    // after cleanup. Quota renewal does not replenish the one corruption repair.
+    const history = await ctx.db.query("managedUploads")
+      .withIndex("by_upload_key", (q) => q.eq("accountId", upload.accountId).eq("uploadKey", upload.uploadKey)).collect();
+    currentTransportUpload(history);
     const successor = await directTransportSuccessor(ctx, upload);
     if (successor) return uploadView(ctx, successor);
-    if (upload.transportPredecessorId) throw new Error("Managed transport successor cannot create another repair generation");
+    if (history.some((attempt) => attempt.transportPredecessorId || attempt.transportSuccessorId)) throw new Error("Managed transport successor cannot create another repair generation");
     await assertUnadmittedTransport(ctx, upload);
     if ((upload.cancelGeneration ?? 0) !== args.cancelGeneration) throw new Error("Managed transport repair lost its cancellation fence");
     const parts = await ctx.db.query("managedUploadParts")
@@ -466,7 +490,8 @@ export const admitSealedUpload = internalMutation({
         if (now >= existing.expiresAt) throw new Error(`Managed job exceeded its accepted 24-hour TTL (${AUTHORITY})`);
         const period = await currentPeriod(ctx, account, now);
         assertCurrentEntitlement(principal, now);
-        assertQuota(period.limitSeconds - period.usedSeconds - period.reservedSeconds, billableSeconds(manifest.sampleCount), period);
+        const denied = quotaFailureFor(period, billableSeconds(manifest.sampleCount), now);
+        if (denied) return denied;
         await ctx.db.patch(period._id, { reservedSeconds: period.reservedSeconds + billableSeconds(manifest.sampleCount) });
         const admissionId = crypto.randomUUID();
         await ctx.db.patch(existing._id, {
@@ -487,7 +512,7 @@ export const admitSealedUpload = internalMutation({
           acknowledgedAt: null,
         });
         await ensureJobPartCheckpoints(ctx, existing._id, currentUpload._id, principal.accountId, principal.deviceId, manifest, true);
-        const uploadExpiresAt = currentUpload.transportPredecessorId ? currentUpload.expiresAt : now + TEMPORARY_TTL_MS;
+        const uploadExpiresAt = currentUpload.transportPredecessorId || currentUpload.quotaPredecessorId ? currentUpload.expiresAt : now + TEMPORARY_TTL_MS;
         await ctx.db.patch(currentUpload._id, { state: "sealed", jobId: existing._id, expiresAt: uploadExpiresAt });
         await ctx.scheduler.runAfter(uploadExpiresAt - now, anyApi.managedTranscriptionActions.cleanupUpload, { uploadId: currentUpload._id });
         return publicJob((await ctx.db.get(existing._id))!);
@@ -499,7 +524,11 @@ export const admitSealedUpload = internalMutation({
     assertCurrentEntitlement(principal, now);
     const period = await currentPeriod(ctx, account, now);
     const seconds = billableSeconds(manifest.sampleCount);
-    assertQuota(period.limitSeconds - period.usedSeconds - period.reservedSeconds, seconds, period);
+    const denied = quotaFailureFor(period, seconds, now);
+    if (denied) {
+      await ctx.db.patch(currentUpload._id, { quotaDeferredAt: currentUpload.quotaDeferredAt ?? now });
+      return denied;
+    }
     await ctx.db.patch(period._id, { reservedSeconds: period.reservedSeconds + seconds });
     const jobId = await ctx.db.insert("managedJobs", {
       accountId: principal.accountId,
@@ -1251,9 +1280,18 @@ function billableSeconds(sampleCount: number): number {
   return Math.max(1, Math.ceil(sampleCount / SAMPLE_RATE));
 }
 
-function assertQuota(remaining: number, seconds: number, period: { limitSeconds: number; usedSeconds: number; reservedSeconds: number }): void {
-  if (remaining < seconds) throw new Error(`Managed quota exhausted: requested ${seconds}, remaining ${Math.max(0, remaining)} in the snapshotted period (${AUTHORITY})`);
-  if (period.limitSeconds < 0 || period.usedSeconds < 0 || period.reservedSeconds < 0) throw new Error(`Managed quota ledger is invalid (${AUTHORITY})`);
+function quotaFailureFor(period: { limitSeconds: number; usedSeconds: number; reservedSeconds: number; startAt: number; endAt: number }, seconds: number, now: number): ManagedQuotaFailure | null {
+  if (![period.limitSeconds, period.usedSeconds, period.reservedSeconds].every((value) => Number.isSafeInteger(value) && value >= 0)) {
+    throw new Error(`Managed quota ledger is invalid (${AUTHORITY})`);
+  }
+  if (!Number.isSafeInteger(period.startAt) || !Number.isSafeInteger(period.endAt) || period.startAt > now || period.endAt <= now) {
+    throw new Error(`Managed quota period requires authoritative refresh (${AUTHORITY})`);
+  }
+  const remaining = Math.max(0, period.limitSeconds - period.usedSeconds - period.reservedSeconds);
+  if (remaining >= seconds) return null;
+  return validateManagedQuotaFailure({ version: 1, kind: "managed_quota_insufficient", requiredSeconds: seconds,
+    remainingSeconds: remaining, checkedAt: now,
+    resetAt: Number.isSafeInteger(period.startAt) && Number.isSafeInteger(period.endAt) && period.startAt <= now && period.endAt > now ? period.endAt : null });
 }
 
 async function currentPeriod(ctx: MutationCtx, account: any, now: number) {
@@ -1261,6 +1299,7 @@ async function currentPeriod(ctx: MutationCtx, account: any, now: number) {
   if (now < account.currentPeriodEndAt) return period;
   const nextStart = account.currentPeriodEndAt;
   const nextEnd = nextStart + (account.currentPeriodEndAt - account.currentPeriodStartAt);
+  if (now >= nextEnd) throw new Error(`Managed quota period requires authoritative refresh (${AUTHORITY})`);
   const existing = await periodFor(ctx, account.accountId, nextStart, true);
   if (existing) {
     await ctx.db.patch(account._id, { currentPeriodStartAt: existing.startAt, currentPeriodEndAt: existing.endAt });
@@ -1562,17 +1601,25 @@ async function scheduleUploadCleanup(ctx: MutationCtx, uploadId: any): Promise<v
 /** Legacy rows form a one-node chain; repairs must form one unambiguous chain. */
 function currentTransportUpload(uploads: readonly Doc<"managedUploads">[]): Doc<"managedUploads"> | null {
   if (uploads.length === 0) return null;
-  const roots = uploads.filter((upload) => !upload.transportPredecessorId);
+  const roots = uploads.filter((upload) => !upload.transportPredecessorId && !upload.quotaPredecessorId);
   if (roots.length !== 1) throw new Error("Managed transport history has ambiguous roots");
   const visited = new Set<string>();
   let current = roots[0]!;
   while (current) {
     if (visited.has(current._id)) throw new Error("Managed transport history contains a cycle");
     visited.add(current._id);
-    if (!current.transportSuccessorId) break;
-    const next = uploads.find((upload) => upload._id === current.transportSuccessorId);
-    if (!next || next.transportPredecessorId !== current._id || next.uploadKey !== current.uploadKey ||
-      next.expiresAt !== current.expiresAt) throw new Error("Managed transport history is inconsistent");
+    if (current.transportSuccessorId && current.quotaSuccessorId) throw new Error("Managed transport history has ambiguous successor kinds");
+    const nextId = current.transportSuccessorId ?? current.quotaSuccessorId;
+    if (!nextId) break;
+    const next = uploads.find((upload) => upload._id === nextId);
+    const quotaEdge = current.quotaSuccessorId !== undefined;
+    if (!next || (next.transportPredecessorId && next.quotaPredecessorId) ||
+      (quotaEdge ? next.quotaPredecessorId !== current._id || next.transportPredecessorId !== undefined ||
+        current.quotaDeferredAt === undefined || current.state !== "cleaned" || next.createdAt < current.expiresAt || next.expiresAt !== next.createdAt + TEMPORARY_TTL_MS
+        : next.transportPredecessorId !== current._id || next.quotaPredecessorId !== undefined || next.expiresAt !== current.expiresAt) ||
+      next.accountId !== current.accountId || next.deviceId !== current.deviceId || next.uploadKey !== current.uploadKey) {
+      throw new Error("Managed transport history is inconsistent");
+    }
     assertSameManifest(next, uploadToManifest(current));
     current = next;
   }

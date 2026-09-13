@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { action, internalAction } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { validateManagedQuotaFailure } from "../packages/meeting-domain/src/managed-quota";
 import { anyApi } from "convex/server";
 import { v } from "convex/values";
 import {
@@ -59,7 +60,7 @@ export const sealUpload = action({
       sampleCount !== manifest.sampleCount || byteLength !== manifest.byteLength ||
       contentSha256 !== manifest.contentSha256 || partsManifestSha256 !== manifest.partsManifestSha256
     ) throw new Error(`Managed seal rejected stored WAV metadata, sample count, or digest against the immutable manifest (${AUTHORITY})`);
-    return await ctx.runMutation(anyApi.managedTranscription.admitSealedUpload, {
+    const admitted = await ctx.runMutation(anyApi.managedTranscription.admitSealedUpload, {
       sessionId: args.sessionId,
       tokenIdentifier,
       contentSha256,
@@ -69,6 +70,7 @@ export const sealUpload = action({
       partsManifestSha256,
       cancelGeneration: data.upload.cancelGeneration ?? 0,
     });
+    return admitted?.kind === "managed_quota_insufficient" ? validateManagedQuotaFailure(admitted) : admitted;
   },
 });
 

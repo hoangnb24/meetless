@@ -35,7 +35,7 @@ import type {
   ManagedUploadPort,
   ManagedUploadReceipt,
 } from "./managed-upload.js";
-import { buildManagedLogicalTimelineManifest } from "./managed-upload.js";
+import { buildManagedLogicalTimelineManifest, ManagedQuotaExceededError } from "./managed-upload.js";
 
 const MANAGED_PROVIDER_POLL_INTERVAL_MS = 250;
 
@@ -489,6 +489,9 @@ export class ConvexManagedTranscriptionService {
             manifest,
             sourcePath: timeline.path,
             repairCorruptUpload: retryFailedTranscript,
+            onQuotaAvailable: async () => {
+              if (transcript?.quotaFailure) transcript = await this.store.clearTranscriptQuotaFailure(transcript.id);
+            },
           });
           let job = remote.job;
           logManagedTranscriptionStage("upload_ready", recording.id, transcript, job);
@@ -531,11 +534,13 @@ export class ConvexManagedTranscriptionService {
           retainTimeline = false;
           return { job, transcript };
         } catch (error) {
-          const reason = redactManagedFailure(error, failureStage);
+          const quotaFailure = error instanceof ManagedQuotaExceededError ? error.quotaFailure : undefined;
+          const reason = quotaFailure ? "Managed transcription allowance is insufficient" : redactManagedFailure(error, failureStage);
           logManagedTranscriptionStage(`${failureStage}_failed`, recording.id, transcript);
           if (transcript && (transcript.status === "pending" || transcript.status === "transcribing")) {
-            await this.store.failTranscript(transcript.id, reason).catch(() => undefined);
+            await this.store.failTranscript(transcript.id, reason, quotaFailure).catch(() => undefined);
           }
+          if (quotaFailure) throw error;
           throw new Error(reason, { cause: error });
         }
       } finally {
@@ -616,6 +621,9 @@ async function publishConvexManagedResult(
     transcript = await store.retryTranscript(transcript.id);
   }
   if (transcript.status !== "pending") throw new Error("Managed transcript is not ready for publication");
+  // The existing completed result supersedes a stale admission denial. Persist
+  // that fact before local publication clears the ordinary failure reason.
+  if (transcript.quotaFailure) transcript = await store.clearTranscriptQuotaFailure(transcript.id);
   if (transcript.checkpoints.length === transcript.ranges.length) return store.publishTranscript(transcript.id);
   const next = await store.beginTranscriptRequest(transcript.id);
   if (!next) throw new Error("Managed transcript has no pending range");

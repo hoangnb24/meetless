@@ -28,6 +28,8 @@ import {
   checkpointTranscriptRange,
   createTranscript,
   failTranscript,
+  validateManagedQuotaFailure,
+  type ManagedQuotaFailure,
   failRecordingWithNoValidMedia,
   publishTranscript,
   reconcileTranscriptAfterRestart,
@@ -404,6 +406,10 @@ const TranscriptSchema = z.object({
   startedAt: z.string().datetime().nullable(),
   updatedAt: z.string().datetime(),
   failureReason: z.string().trim().min(1).nullable(),
+  quotaFailure: z.unknown().transform((value, context) => {
+    try { return validateManagedQuotaFailure(value); }
+    catch { context.addIssue({ code: "custom", message: "Invalid managed quota failure" }); return z.NEVER; }
+  }).optional(),
   publication: z.object({
     storageKey: z.string().trim().min(1),
     byteLength: z.number().int().positive(),
@@ -413,6 +419,9 @@ const TranscriptSchema = z.object({
 }).strict().superRefine((transcript, context) => {
   if (transcript.status === "ready" && transcript.publication === null) {
     context.addIssue({ code: "custom", path: ["publication"], message: "Ready transcript requires an immutable publication sidecar" });
+  }
+  if (transcript.quotaFailure && (transcript.status === "ready" || transcript.failureReason === null)) {
+    context.addIssue({ code: "custom", path: ["quotaFailure"], message: "Quota-blocked transcript requires a durable reason and cannot be ready" });
   }
   if (transcript.status === "failed" && transcript.failureReason === null) {
     context.addIssue({ code: "custom", path: ["failureReason"], message: "Failed transcript requires a redacted failure reason" });
@@ -890,8 +899,14 @@ export class MeetingStore {
     return this.changeTranscript(id, (transcript) => checkpointTranscriptRange(transcript, { ...input, now: this.now() }));
   }
 
-  failTranscript(id: string, reason: string): Promise<TranscriptState> {
-    return this.changeTranscript(id, (transcript) => failTranscript(transcript, reason, this.now()));
+  failTranscript(id: string, reason: string, quotaFailure?: ManagedQuotaFailure): Promise<TranscriptState> {
+    return this.changeTranscript(id, (transcript) => failTranscript(transcript, reason, this.now(), quotaFailure));
+  }
+
+  clearTranscriptQuotaFailure(id: string): Promise<TranscriptState> {
+    return this.changeTranscript(id, (transcript) => transcript.quotaFailure
+      ? { ...transcript, quotaFailure: undefined, failureReason: null }
+      : transcript);
   }
 
   retryTranscript(id: string): Promise<TranscriptState> {

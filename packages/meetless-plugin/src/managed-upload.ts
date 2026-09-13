@@ -12,7 +12,7 @@ import {
   validateManagedLogicalTimelineManifest,
   type ManagedLogicalTimelineManifest,
 } from "@meetless/managed-transcription-foundation";
-import type { OutputIdentity } from "@meetless/meeting-domain";
+import { validateManagedQuotaFailure, type ManagedQuotaFailure, type OutputIdentity } from "@meetless/meeting-domain";
 import { z } from "zod";
 
 /**
@@ -1126,9 +1126,11 @@ export class ConvexManagedUploadPort {
     sourcePath: string;
     /** Set only by an explicit Retry of a previously failed local transcript. */
     repairCorruptUpload?: boolean;
+    onQuotaAvailable?: () => Promise<void>;
   }): Promise<ManagedConvexUploadResult> {
     const manifest = validateManagedLogicalTimelineManifest(input.manifest);
     let session = await this.begin({ credential: input.credential, manifest });
+    await input.onQuotaAvailable?.();
     if (session.state === "cancelled") throw new ManagedUploadStateError("Managed Convex upload is cancelled");
     if (session.state === "cleaned") {
       await this.journal.clear(session.sessionId);
@@ -1319,7 +1321,20 @@ export class ConvexHttpManagedFunctionClient implements ManagedConvexFunctionCli
   }
 }
 
+export class ManagedQuotaExceededError extends ManagedUploadError {
+  readonly quotaFailure: ManagedQuotaFailure;
+  constructor(value: unknown) {
+    super("Managed transcription allowance is insufficient");
+    this.quotaFailure = validateManagedQuotaFailure(value);
+  }
+}
+
+function rejectQuotaDenial(value: unknown): void {
+  if (isRecord(value) && value.kind === "managed_quota_insufficient") throw new ManagedQuotaExceededError(value);
+}
+
 function parseConvexSession(value: unknown): ManagedConvexUploadSession {
+  rejectQuotaDenial(value);
   if (!isRecord(value) || typeof value.sessionId !== "string" || typeof value.accountId !== "string" || typeof value.deviceId !== "string" || typeof value.state !== "string" || typeof value.createdAt !== "number" || typeof value.expiresAt !== "number" || !Array.isArray(value.receivedPartNumbers) || !value.receivedPartNumbers.every((part) => typeof part === "number") || (value.completedAt !== null && typeof value.completedAt !== "number") || (value.jobId !== null && typeof value.jobId !== "string")) {
     throw new ManagedUploadError("Convex managed upload session response is invalid");
   }
@@ -1337,6 +1352,7 @@ function parseConvexSession(value: unknown): ManagedConvexUploadSession {
 }
 
 function parseConvexJob(value: unknown): ManagedConvexJob {
+  rejectQuotaDenial(value);
   if (!isRecord(value) || typeof value._id !== "string" || typeof value.uploadId !== "string" || typeof value.recordingId !== "string" || typeof value.audioId !== "string" || typeof value.admissionId !== "string" || typeof value.admissionNumber !== "number" || typeof value.status !== "string" || typeof value.durationMs !== "number" || typeof value.sampleCount !== "number" || typeof value.billableSeconds !== "number" || (value.providerResult !== null && !isRecord(value.providerResult))) {
     throw new ManagedUploadError("Convex managed job response is invalid");
   }

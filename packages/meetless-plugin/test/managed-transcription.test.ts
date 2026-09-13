@@ -1,3 +1,4 @@
+import { ManagedQuotaExceededError } from "../src/managed-upload.js";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -306,6 +307,38 @@ describe("managed transcription adapter", () => {
     await expect(artifacts.get(fixture.recordingId)).resolves.toBeNull();
   });
 
+  test.each(["provider_completed", "succeeded"])("recovers %s work through a restarted store with a stale quota block", async (status) => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-quota-completed-"));
+    roots.push(root);
+    const fixture = await savedStore(root);
+    const recording = (await fixture.store.listRecordings())[0]!;
+    const existing = await fixture.store.ensureTranscript({ meetingId: recording.meetingId, recordingId: recording.id, audio: { ...recording.savedOutput!, durationMs: 1500 }, rangeMs: 1500 });
+    const quotaFailure = { version: 1 as const, kind: "managed_quota_insufficient" as const, requiredSeconds: 2, remainingSeconds: 0, checkedAt: START, resetAt: null };
+    await fixture.store.failTranscript(existing.id, "Managed transcription allowance is insufficient", quotaFailure);
+    if (status === "succeeded") await fixture.store.retryTranscript(existing.id); // Crash after a prior local retry.
+    const reopened = new MeetingStore({ root: path.dirname(fixture.store.filePath), now: () => NOW });
+    const completed = { ...convexJob(recording.id, "succeeded"), providerResult: { text: "existing result", ranges: [{ startMs: 0, endMs: 1500, text: "existing result" }], detectedLanguages: ["en"] } };
+    let remoteStatus = status;
+    const upload = {
+      jobStatusForRecording: vi.fn(async () => ({ ...completed, status: remoteStatus })),
+      settle: vi.fn(async () => { remoteStatus = "succeeded"; return completed; }), acknowledge: vi.fn(async () => true),
+      uploadCanonicalTimelineFromPath: vi.fn(), runProvider: vi.fn(),
+    };
+    const prepare = vi.fn();
+    const service = new ConvexManagedTranscriptionService(reopened, { lifecycle: new MeetingLifecycleCoordinator(), timelinePreparer: { prepare }, managedUpload: upload as unknown as ConvexManagedUploadPort });
+    const input = { recordingId: recording.id, credential: { authToken: "existing-device" } };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const recovered = await service.resumeExisting(input);
+      expect(recovered).toMatchObject({ id: existing.id, status: "ready" });
+      expect(recovered?.quotaFailure).toBeUndefined();
+    }
+    expect(upload.settle).toHaveBeenCalledTimes(status === "provider_completed" ? 1 : 0);
+    expect(upload.uploadCanonicalTimelineFromPath).not.toHaveBeenCalled();
+    expect(upload.runProvider).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(await reopened.listTranscripts(recording.meetingId)).toHaveLength(1);
+  });
+
   test.each(["provider_completed", "succeeded", "running", "missing"])("recovers only existing %s work without upload or provider dispatch", async (status) => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-read-resume-"));
     roots.push(root);
@@ -576,6 +609,36 @@ describe("managed transcription adapter", () => {
     expect(upload.uploadCanonicalTimelineFromPath).toHaveBeenCalledTimes(1);
     await expect(service.transcribe(input)).rejects.toThrow("upload");
     expect(upload.uploadCanonicalTimelineFromPath).toHaveBeenLastCalledWith(expect.objectContaining({ repairCorruptUpload: true }));
+  });
+
+  test("keeps a quota block across restart and clears it only after an explicit successful preflight", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-quota-durable-"));
+    roots.push(root);
+    const fixture = await savedStore(root);
+    const savedBytes = await readFile(fixture.outputPath);
+    const quotaFailure = { version: 1, kind: "managed_quota_insufficient", requiredSeconds: 23, remainingSeconds: 12, checkedAt: START, resetAt: START + 86_400_000 };
+    const upload = { uploadCanonicalTimelineFromPath: vi.fn(async (_input: any) => { throw new ManagedQuotaExceededError(quotaFailure); }),
+      jobStatusForRecording: vi.fn(async () => null), runProvider: vi.fn() };
+    const options = { lifecycle: new MeetingLifecycleCoordinator(), timelinePreparer: testTimelinePreparer(path.dirname(fixture.store.filePath)), managedUpload: upload as unknown as ConvexManagedUploadPort };
+    const input = { recordingId: fixture.recordingId, credential: { authToken: "synthetic" } };
+    await expect(new ConvexManagedTranscriptionService(fixture.store, options).transcribe(input)).rejects.toMatchObject({ quotaFailure });
+    await fixture.store.reconcileTranscriptPublications();
+    const blocked = (await fixture.store.listTranscripts(fixture.meetingId))[0]!;
+    expect(blocked).toMatchObject({ status: "failed", quotaFailure, requestCount: 0, attemptsByOrdinal: {} });
+    // A new store consumer reads the persisted block rather than an in-memory exception.
+    const reopened = new MeetingStore({ root: path.dirname(fixture.store.filePath), now: () => NOW });
+    expect((await reopened.listTranscripts(fixture.meetingId))[0]).toMatchObject({ quotaFailure, status: "failed" });
+    await new ConvexManagedTranscriptionService(reopened, options).resumeExisting(input);
+    expect(upload.uploadCanonicalTimelineFromPath).toHaveBeenCalledTimes(1);
+    expect(upload.runProvider).not.toHaveBeenCalled();
+    upload.uploadCanonicalTimelineFromPath.mockImplementationOnce(async (request: any) => {
+      await request.onQuotaAvailable();
+      expect((await reopened.listTranscripts(fixture.meetingId))[0]?.quotaFailure).toBeUndefined();
+      throw new Error("subsequent upload connection failure");
+    });
+    await expect(new ConvexManagedTranscriptionService(reopened, options).transcribe(input)).rejects.toThrow("upload");
+    expect((await reopened.listTranscripts(fixture.meetingId))[0]?.quotaFailure).toBeUndefined();
+    expect(await readFile(fixture.outputPath)).toEqual(savedBytes);
   });
 
   test("rejects a tampered durable MP3 before reserving managed quota", async () => {

@@ -1,3 +1,6 @@
+import { validateManagedQuotaFailure, type ManagedQuotaFailure } from "./managed-quota.js";
+export { validateManagedQuotaFailure, type ManagedQuotaFailure } from "./managed-quota.js";
+
 export const MEETING_STATUSES = [
   "draft",
   "recording",
@@ -836,6 +839,7 @@ export interface TranscriptState {
   updatedAt: string;
   failureReason: string | null;
   publication: TranscriptPublication | null;
+  quotaFailure?: ManagedQuotaFailure;
 }
 
 export interface TranscriptCitation {
@@ -1091,14 +1095,14 @@ export function checkpointTranscriptRange(
   };
 }
 
-export function failTranscript(transcript: TranscriptState, reason: string, nowInput: string): TranscriptState {
+export function failTranscript(transcript: TranscriptState, reason: string, nowInput: string, quotaFailure?: ManagedQuotaFailure): TranscriptState {
   if (transcript.status !== "pending" && transcript.status !== "transcribing") {
     throw transcriptViolation("Only pending or in-flight transcript work can fail", "Inspect the existing terminal transcript state.");
   }
   const now = transcriptInstant(nowInput, "transcript failure timestamp");
   const normalized = reason.trim();
   if (!normalized) throw transcriptViolation("Transcript failure needs a reason", "Persist a redacted provider failure.");
-  return { ...transcript, status: "failed", updatedAt: now, failureReason: normalized };
+  return { ...transcript, status: "failed", updatedAt: now, failureReason: normalized, quotaFailure: quotaFailure ? validateManagedQuotaFailure(quotaFailure) : undefined };
 }
 
 export function retryTranscript(transcript: TranscriptState, nowInput: string): TranscriptState {
@@ -1111,7 +1115,7 @@ export function retryTranscript(transcript: TranscriptState, nowInput: string): 
   if (attempts >= transcript.maxAttempts) {
     throw transcriptViolation("Transcript retry bound has been reached", "Keep the saved MP3 and inspect provider configuration before a new acceptance run.");
   }
-  return { ...transcript, status: "pending", updatedAt: transcriptInstant(nowInput, "transcript retry timestamp"), failureReason: null };
+  return { ...transcript, status: "pending", updatedAt: transcriptInstant(nowInput, "transcript retry timestamp"), failureReason: transcript.quotaFailure ? transcript.failureReason : null };
 }
 
 export function canRetryTranscript(transcript: TranscriptState): boolean {
@@ -1122,6 +1126,7 @@ export function canRetryTranscript(transcript: TranscriptState): boolean {
 }
 
 export function reconcileTranscriptAfterRestart(transcript: TranscriptState, nowInput: string): TranscriptState {
+  if (transcript.quotaFailure && transcript.status !== "ready") return { ...transcript, status: "failed" };
   if (transcript.status !== "transcribing" && !canRetryTranscript(transcript)) return transcript;
   const next = transcript.ranges[transcript.checkpoints.length];
   if (
@@ -1162,6 +1167,7 @@ export function publishTranscript(
     status: "ready",
     updatedAt: now,
     failureReason: null,
+    quotaFailure: undefined,
     publication: {
       storageKey: input.publication.storageKey.trim(),
       byteLength: transcriptPositiveInteger(input.publication.byteLength, "transcript publication byte length"),

@@ -4,6 +4,7 @@ import {
   MANAGED_PREMIUM_RECOVERY_MESSAGE,
   MANAGED_PREMIUM_REQUIRED_MESSAGE,
   TranscriptionRouteCoordinator,
+  transcriptionFailure,
   type TranscriptionRouteStore,
 } from "../src/transcription-route.js";
 
@@ -14,6 +15,16 @@ afterEach(() => {
 });
 
 describe("trusted managed transcription route", () => {
+  test("shows only validated quota amounts and a verified reset timestamp", () => {
+    const quotaFailure = { version: 1, kind: "managed_quota_insufficient", requiredSeconds: 23, remainingSeconds: 12, checkedAt: 1_000, resetAt: 2_000 };
+    expect(transcriptionFailure({ quotaFailure })).toEqual({ category: "quota", message: expect.stringContaining("23 sec. 12 sec remained") });
+    expect(transcriptionFailure({ quotaFailure }).message).toContain(new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(2_000));
+    expect(transcriptionFailure({ quotaFailure: { ...quotaFailure, resetAt: null } }).message).not.toContain("reset time");
+    expect(transcriptionFailure({ quotaFailure: { ...quotaFailure, remainingSeconds: -1 } }).category).not.toBe("quota");
+    expect(transcriptionFailure({ quotaFailure: { ...quotaFailure, requiredSeconds: 3910, remainingSeconds: 310 } }).message).toContain("1 hr 5 min 10 sec. 5 min 10 sec remained");
+    expect(transcriptionFailure({ quotaFailure }).message).toContain("At that check, the reported reset time was");
+  });
+
   test("selects only the requested saved recording, exposes the durable start, and coalesces duplicate starts", async () => {
     const selected = savedRecording("m-selected", "r-selected");
     const unrelated = savedRecording("m-other", "r-other");

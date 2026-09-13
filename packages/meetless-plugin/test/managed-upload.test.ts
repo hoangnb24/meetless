@@ -15,6 +15,7 @@ import {
   FileManagedConvexUploadJournal,
   FileManagedUploadPort,
   ManagedUploadAuthenticationError,
+  ManagedQuotaExceededError,
   ManagedUploadConflictError,
   ManagedUploadStateError,
   type ManagedConvexFunctionClient,
@@ -162,6 +163,35 @@ describe("pre-external managed upload seam", () => {
     expect(order).toEqual(repairCorruptUpload
       ? ["register:original:old-corrupt-storage", "repair:original", "url:successor", "register:successor:new-correct-storage", "seal:successor"]
       : ["register:original:old-corrupt-storage", "seal:original"]);
+  });
+
+  test("stops a validated quota denial before audio POST, journal recovery, repair or provider work", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-quota-preflight-"));
+    roots.push(root);
+    const sourcePath = path.join(root, "canonical.wav");
+    const audio = wavBytes(361_067);
+    await writeFile(sourcePath, audio);
+    const manifest = await buildManagedLogicalTimelineManifest({ recordingId: "quota-preflight", manifestSha256: sha256Text("quota-preflight"), sourcePath });
+    const denied = { version: 1, kind: "managed_quota_insufficient", requiredSeconds: 23, remainingSeconds: 22, checkedAt: START, resetAt: START + 86_400_000 };
+    const mutation = vi.fn(async () => denied);
+    const query = vi.fn();
+    const action = vi.fn();
+    const post = vi.fn();
+    const journal = { pending: vi.fn(), record: vi.fn(), remove: vi.fn(), clear: vi.fn() };
+    const available = vi.fn();
+    const port = new ConvexManagedUploadPort({ mutation, query, action }, { journal, fetch: post });
+    await expect(port.uploadCanonicalTimelineFromPath({ credential: { authToken: "synthetic" }, manifest, sourcePath, repairCorruptUpload: true, onQuotaAvailable: available }))
+      .rejects.toMatchObject({ quotaFailure: denied });
+    expect(mutation).toHaveBeenCalledExactlyOnceWith("managedTranscription:beginUpload", { manifest });
+    expect(post).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+    expect(action).not.toHaveBeenCalled();
+    expect(journal.pending).not.toHaveBeenCalled();
+    expect(available).not.toHaveBeenCalled();
+    expect(await readFile(sourcePath)).toEqual(audio);
+    mutation.mockResolvedValueOnce({ ...denied, remainingSeconds: 23 });
+    await expect(port.begin({ credential: { authToken: "synthetic" }, manifest })).rejects.toThrow("invalid or inconsistent");
+    expect(post).not.toHaveBeenCalled();
   });
 
   test("segments a large canonical timeline through generated upload URLs and resumes an immutable logical job", async () => {

@@ -1,5 +1,5 @@
 import type { PremiumAccessWire, TranscriptionFailureCategoryWire, TranscriptionRouteOutcomeWire, TranscriptionStatusWire } from "@meetless/meeting-contracts";
-import { canRetryTranscript, type Meeting, type RecordingSession, type TranscriptState } from "@meetless/meeting-domain";
+import { validateManagedQuotaFailure, canRetryTranscript, type Meeting, type RecordingSession, type TranscriptState } from "@meetless/meeting-domain";
 
 export const MANAGED_PREMIUM_REQUIRED_MESSAGE = "Premium is required. Purchase or restore Premium, then select Transcribe again.";
 export const MANAGED_PREMIUM_RECOVERY_MESSAGE = "Premium access could not be verified. Restore purchases or check Premium access, then select Transcribe again.";
@@ -25,8 +25,16 @@ export interface TranscriptionRouteResult extends TranscriptionStatusWire {
 }
 
 export function transcriptionFailure(error: unknown): { category: TranscriptionFailureCategoryWire; message: string } {
+  if (error !== null && typeof error === "object" && "quotaFailure" in error) {
+    try {
+      const quota = validateManagedQuotaFailure(error.quotaFailure);
+      const checked = formatQuotaTime(quota.checkedAt);
+      const reset = quota.resetAt === null ? "" : ` At that check, the reported reset time was ${formatQuotaTime(quota.resetAt)}.`;
+      return { category: "quota", message: `This recording needs ${formatQuotaDuration(quota.requiredSeconds)}. ${formatQuotaDuration(quota.remainingSeconds)} remained when checked ${checked}.${reset} The saved audio remains local. Retry transcription to check allowance again.` };
+    } catch { /* Malformed data must never become numeric quota advice. */ }
+  }
   const text = error instanceof Error ? error.message.toLowerCase() : String(error ?? "").toLowerCase();
-  if (/quota|allowance/.test(text)) return { category: "quota", message: "The remaining allowance cannot cover this recording. Keep the audio for a later attempt." };
+  if (/quota|allowance/.test(text)) return { category: "quota", message: "Allowance could not be verified. The saved audio remains local. Retry transcription to check again." };
   if (/enroll|credential|device|auth|keychain/.test(text)) return { category: "enrollment", message: "This Mac could not verify managed access. Restore purchases, then select Transcribe again." };
   if (/publish|publication|settle|settlement|acknowledge/.test(text)) return { category: "publication", message: "The transcript could not be saved locally. Check status or retry to recover the existing result." };
   if (/provider|openai/.test(text)) return { category: "provider", message: "The transcription service could not complete this recording. The saved audio remains local." };
@@ -72,7 +80,7 @@ export class TranscriptionRouteCoordinator {
     }
     if (transcript?.status === "ready") return { recording: evidence, transcript, transcription: this.state("completed") };
     if (transcript?.status === "failed") {
-      const failure = transcriptionFailure(transcript.failureReason);
+      const failure = transcriptionFailure(transcript.quotaFailure ? { quotaFailure: transcript.quotaFailure } : transcript.failureReason);
       const retry = canRetryTranscript(transcript);
       return { recording: evidence, transcript, transcription: this.state("failed", retry, retry ? failure.category : "retry_exhausted", retry ? failure.message : "No further transcription retries are available for this recording. The saved audio remains local.") };
     }
@@ -151,4 +159,15 @@ export class TranscriptionRouteCoordinator {
   private state(outcome: TranscriptionRouteOutcomeWire, retryEligible = false, failureCategory: TranscriptionFailureCategoryWire | null = null, message: string | null = null): TranscriptionStatusWire {
     return { outcome, retryEligible, failureCategory, message };
   }
+}
+
+function formatQuotaDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return [hours ? `${hours} hr` : "", minutes ? `${minutes} min` : "", remainder || (!hours && !minutes) ? `${remainder} sec` : ""].filter(Boolean).join(" ");
+}
+
+function formatQuotaTime(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(timestamp);
 }

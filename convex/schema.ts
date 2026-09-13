@@ -159,6 +159,9 @@ export default defineSchema({
     createdAt: v.number(),
     expiresAt: v.number(),
     cancelGeneration: v.optional(v.number()),
+    quotaDeferredAt: v.optional(v.number()),
+    quotaPredecessorId: v.optional(v.id("managedUploads")),
+    quotaSuccessorId: v.optional(v.id("managedUploads")),
     transportPredecessorId: v.optional(v.id("managedUploads")),
     transportSuccessorId: v.optional(v.id("managedUploads")),
     // One server-observed mismatch proves the old attempt invalid. This

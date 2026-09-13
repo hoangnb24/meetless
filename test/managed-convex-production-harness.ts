@@ -104,6 +104,9 @@ export async function startManagedConvexHarness(): Promise<HarnessRuntime> {
   };
   await Promise.all(Object.values(paths).map((directory) => mkdir(directory, { recursive: true })));
   await cp(path.join(repositoryRoot, "convex"), path.join(paths.project, "convex"), { recursive: true, dereference: true });
+  const quotaContract = path.join("packages", "meeting-domain", "src", "managed-quota.ts");
+  await mkdir(path.dirname(path.join(paths.project, quotaContract)), { recursive: true });
+  await cp(path.join(repositoryRoot, quotaContract), path.join(paths.project, quotaContract), { dereference: true });
   await cp(path.join(repositoryRoot, "package.json"), path.join(paths.project, "package.json"), { dereference: true });
   await mkdir(path.join(paths.project, "node_modules"), { recursive: true });
   await copyPackageClosure(paths.project, ["convex", "jose", "@apple/app-store-server-library", "typescript"]);
