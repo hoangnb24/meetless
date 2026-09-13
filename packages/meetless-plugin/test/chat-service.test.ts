@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -31,6 +31,51 @@ afterEach(async () => {
 });
 
 describe("meeting chat service", () => {
+  test.each(["controls", "selection", "features", "providers"] as const)("prepares a fresh chat directory before %s discovery", async (operation) => {
+    const runtimeRoot = await mkdtemp(path.join(tmpdir(), "meetless-fresh-chat-"));
+    roots.push(runtimeRoot);
+    const executionRoot = path.join(runtimeRoot, "chat-execution");
+    await expect(stat(executionRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    const requireDirectory = async (cwd: string) => {
+      expect(cwd).toBe(executionRoot);
+      expect((await stat(cwd)).isDirectory()).toBe(true);
+    };
+    const listFeatures = vi.fn(async (draft: { cwd: string }) => {
+      await requireDirectory(draft.cwd);
+      return { features: [] };
+    });
+    const open = vi.fn();
+    const paseo = {
+      providers: {
+        waitForReady: async ({ cwd }: { cwd: string }) => {
+          await requireDirectory(cwd);
+          return { entries: [{ provider: "codex", enabled: true, status: "ready", modes: [], models: [
+            { id: "gpt-5", label: "GPT-5", isDefault: true },
+          ] }] };
+        },
+        listFeatures,
+      },
+      config: { get: async () => ({ config: { agentProfiles: [] } }) },
+      workspaces: { open },
+    };
+    const port = new PaseoMeetingChatAgentPort(paseo as never, executionRoot);
+    const selection = { provider: "codex", model: "gpt-5", modeId: null, thinkingOptionId: null, featureValues: {} };
+    if (operation === "selection") {
+      const store = fakeStore();
+      const service = new MeetingChatService(store.port, port);
+      await expect(service.select(selection)).resolves.toEqual({ version: 1, selection });
+      await expect(store.port.getChatSelection()).resolves.toEqual(selection);
+    } else if (operation === "features") {
+      await expect(port.discoverFeatures(selection)).resolves.toMatchObject({ status: "ready", features: [] });
+    } else if (operation === "controls") {
+      await expect(port.getControls(null)).resolves.toMatchObject({ catalogError: null, catalog: { providers: [{ id: "codex", status: "ready" }] } });
+    } else {
+      await expect(port.listProviders()).resolves.toMatchObject([{ id: "codex" }]);
+    }
+    expect((await stat(executionRoot)).mode & 0o777).toBe(0o700);
+    expect(open).not.toHaveBeenCalled();
+  });
+
   test("persists a supported answer only after same-run retrieval and leaks no Paseo identity", async () => {
     const store = fakeStore();
     const agent = fakeAgent(async (input) => {

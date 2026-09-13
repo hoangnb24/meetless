@@ -384,6 +384,7 @@ export class PaseoMeetingChatAgentPort implements MeetingChatAgentPort {
   private async controlsCatalog(): Promise<ChatControlsCatalogWire> {
     let snapshot: unknown;
     try {
+      await this.ensureExecutionRoot();
       snapshot = await this.paseo.providers.waitForReady({ cwd: this.executionRoot });
     } catch (error) {
       throw new ChatControlsError("unavailable", CHAT_CONTROLS_UNAVAILABLE);
@@ -589,7 +590,13 @@ export class PaseoMeetingChatAgentPort implements MeetingChatAgentPort {
     }
   }
 
+  private async ensureExecutionRoot(): Promise<void> {
+    // Provider discovery validates cwd before the first question can run.
+    await mkdir(this.executionRoot, { recursive: true, mode: 0o700 });
+  }
+
   async listProviders(): Promise<ChatProviderOption[]> {
+    await this.ensureExecutionRoot();
     const snapshot = await this.paseo.providers.waitForReady({ cwd: this.executionRoot });
     const entries = snapshot.entries ?? [];
     const available = entries.filter((entry) => entry.enabled && entry.status === "ready");
@@ -620,7 +627,7 @@ export class PaseoMeetingChatAgentPort implements MeetingChatAgentPort {
           thinkingOptionId: null,
           featureValues: {},
         };
-    await mkdir(this.executionRoot, { recursive: true, mode: 0o700 });
+    await this.ensureExecutionRoot();
     this.workspace ??= await this.paseo.workspaces.open(this.executionRoot);
     const resource = await startTranscriptMcp(input);
     this.resources.add(resource);
