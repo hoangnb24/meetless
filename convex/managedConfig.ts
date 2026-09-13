@@ -25,6 +25,7 @@ export const MANAGED_ENVIRONMENT_VARIABLES = {
   allowanceSeconds: "MEETLESS_MANAGED_ALLOWANCE_SECONDS",
   allowanceSource: "MEETLESS_MANAGED_ALLOWANCE_SOURCE",
   providerMode: "MEETLESS_MANAGED_PROVIDER_MODE",
+  openAiApiKey: "OPENAI_API_KEY",
   appleVerifierMode: "MEETLESS_APPLE_VERIFIER_MODE",
   authIssuer: "MEETLESS_AUTH_ISSUER",
   authAudience: "MEETLESS_AUTH_AUDIENCE",
@@ -79,6 +80,7 @@ export function readManagedRuntimeConfig(
   const allowanceSeconds = positiveInteger(source, MANAGED_ENVIRONMENT_VARIABLES.allowanceSeconds);
   const allowanceSource = required(source, MANAGED_ENVIRONMENT_VARIABLES.allowanceSource);
   const providerMode = required(source, MANAGED_ENVIRONMENT_VARIABLES.providerMode);
+  const openAiApiKey = optional(source, MANAGED_ENVIRONMENT_VARIABLES.openAiApiKey);
   const appleVerifierMode = required(source, MANAGED_ENVIRONMENT_VARIABLES.appleVerifierMode);
   const authIssuer = required(source, MANAGED_ENVIRONMENT_VARIABLES.authIssuer);
   const authAudience = required(source, MANAGED_ENVIRONMENT_VARIABLES.authAudience);
@@ -92,6 +94,11 @@ export function readManagedRuntimeConfig(
 
   if (providerMode !== "fake" && providerMode !== "real") {
     throw new ManagedConfigurationError(`${MANAGED_ENVIRONMENT_VARIABLES.providerMode} must be fake or real`);
+  }
+  if (providerMode === "real" && !openAiApiKey) {
+    throw new ManagedConfigurationError(
+      `${MANAGED_ENVIRONMENT_VARIABLES.openAiApiKey} is required for the real backend provider (docs/product/monetization.md)`,
+    );
   }
   if (appleVerifierMode !== "fixture" && appleVerifierMode !== "app-store-server-api") {
     throw new ManagedConfigurationError(`${MANAGED_ENVIRONMENT_VARIABLES.appleVerifierMode} is unsupported`);
@@ -129,8 +136,8 @@ export function readManagedRuntimeConfig(
     if (allowanceSource !== (mode === "hosted-development" ? "hosted-development-test" : "local-test")) {
       throw new ManagedConfigurationError(`${mode} must use its explicit non-production allowance source label`);
     }
-    if (providerMode !== "fake") {
-      throw new ManagedConfigurationError(`${mode} must keep the deterministic fake transcription provider`);
+    if (mode === "test" && providerMode !== "fake") {
+      throw new ManagedConfigurationError("test must keep the deterministic fake transcription provider");
     }
     if (revenueCatEnvironment !== "SANDBOX") {
       throw new ManagedConfigurationError(`${mode} must use the SANDBOX RevenueCat environment`);
@@ -157,6 +164,13 @@ export function readManagedRuntimeConfig(
     revenueCatSigningSecret,
     revenueCatEnvironment,
   };
+}
+
+/** Least-privilege secret read used only by the backend provider action. */
+export function readManagedOpenAICredential(
+  source: Record<string, string | undefined> = environment(),
+): string {
+  return required(source, MANAGED_ENVIRONMENT_VARIABLES.openAiApiKey);
 }
 
 export function assertNonProductionFixture(config: ManagedRuntimeConfig, operation: string): void {

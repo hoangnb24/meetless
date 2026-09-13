@@ -20,6 +20,7 @@ import type * as managedConfig from "../managedConfig.js";
 import type * as managedQuotaPolicy from "../managedQuotaPolicy.js";
 import type * as managedTranscription from "../managedTranscription.js";
 import type * as managedTranscriptionActions from "../managedTranscriptionActions.js";
+import type * as openAITranscription from "../openAITranscription.js";
 import type * as revenueCatWebhook from "../revenueCatWebhook.js";
 import type * as shared from "../shared.js";
 
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   managedQuotaPolicy: typeof managedQuotaPolicy;
   managedTranscription: typeof managedTranscription;
   managedTranscriptionActions: typeof managedTranscriptionActions;
+  openAITranscription: typeof openAITranscription;
   revenueCatWebhook: typeof revenueCatWebhook;
   shared: typeof shared;
 }>;

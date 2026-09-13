@@ -180,6 +180,31 @@ export default defineSchema({
     .index("by_upload_part", ["uploadId", "partNumber"])
     .index("by_storage", ["storageId"]),
 
+  /** Durable provider checkpoint for one immutable physical timeline part. */
+  managedJobParts: defineTable({
+    jobId: v.id("managedJobs"),
+    uploadId: v.id("managedUploads"),
+    accountId: v.string(),
+    deviceId: v.string(),
+    partNumber: v.number(),
+    sampleOffset: v.number(),
+    sampleCount: v.number(),
+    byteLength: v.number(),
+    sha256: v.string(),
+    storageId: v.id("_storage"),
+    status: v.union(v.literal("pending"), v.literal("running"), v.literal("completed"), v.literal("failed")),
+    executionToken: v.union(v.string(), v.null()),
+    leaseExpiresAt: v.number(),
+    attempt: v.number(),
+    requestId: v.string(),
+    providerText: v.union(v.string(), v.null()),
+    detectedLanguages: v.array(v.string()),
+    completedAt: v.union(v.number(), v.null()),
+    failureReason: v.union(v.string(), v.null()),
+  })
+    .index("by_job_part", ["jobId", "partNumber"])
+    .index("by_lease", ["leaseExpiresAt"]),
+
   managedJobs: defineTable({
     accountId: v.string(),
     deviceId: v.string(),

@@ -12,7 +12,8 @@ import {
   partsDigestPayload,
   type TimelineManifest,
 } from "./shared";
-import { readManagedRuntimeConfig } from "./managedConfig";
+import { readManagedOpenAICredential, readManagedRuntimeConfig } from "./managedConfig";
+import { transcribeManagedOpenAIPart } from "./openAITranscription";
 
 export const sealUpload = action({
   args: { sessionId: v.id("managedUploads") },
@@ -70,23 +71,21 @@ export const sealUpload = action({
   },
 });
 
-/** The provider action is deliberately a replaceable local fake in this frontier. */
+/** Provider execution stays behind the Convex action; provider credentials never reach a client. */
 export const runProvider = action({
   args: { jobId: v.id("managedJobs") },
   returns: v.any(),
   handler: async (ctx, args) => {
     const config = readManagedRuntimeConfig();
-    if (config.providerMode !== "fake") {
-      throw new Error("Managed provider mode is not the explicitly configured local fake; no provider call is permitted in this candidate");
-    }
     const tokenIdentifier = await requireActionIdentity(ctx);
-    const data = await ctx.runQuery(anyApi.managedTranscription.readJobForAction, {
+    const data = await ctx.runQuery(anyApi.managedTranscription.readJobForProvider, {
       jobId: args.jobId,
       tokenIdentifier,
     });
     if (data.job.status === "provider_completed" || data.job.status === "succeeded") return publicJob(data.job);
     let admissionId = data.job.admissionId;
     let executionToken: string | null = null;
+    let claimedPartNumber: number | null = null;
     try {
       const claimed = await ctx.runMutation(anyApi.managedTranscription.claimProvider, {
         jobId: args.jobId,
@@ -97,53 +96,54 @@ export const runProvider = action({
       if (!claimed.won) return publicJob(claimed.job);
       executionToken = claimed.job.executionToken;
       if (!executionToken) throw new Error(`Managed provider winner did not receive an execution token (${AUTHORITY})`);
-      await ctx.runMutation(anyApi.managedTranscription.recordProviderInvocation, {
-        jobId: args.jobId,
-        tokenIdentifier,
-        admissionId,
-        executionToken,
-      });
-      // Read each storage object in manifest order. This is the provider
-      // execution seam: a real backend action can replace this block without
-      // changing admission, quota, manifest, or local publication state.
-      const parts = [...data.parts].sort((left, right) => left.partNumber - right.partNumber);
-      let sampleOffset = 0;
-      for (const part of parts) {
-        const blob = await ctx.storage.get(part.storageId);
-        if (!blob) throw new Error(`Managed provider input disappeared before execution (${AUTHORITY})`);
-        if (blob.size > MAX_PART_BYTES) throw new Error(`Managed provider input Blob exceeds the accepted physical WAV part bound (${AUTHORITY})`);
-        const parsed = parseCanonicalPart(new Uint8Array(await blob.arrayBuffer()));
-        if (part.sampleOffset !== sampleOffset || parsed.sampleCount !== part.sampleCount) {
-          throw new Error(`Managed provider received non-contiguous physical chunks (${AUTHORITY})`);
-        }
-        sampleOffset += part.sampleCount;
+      const part = claimed.part;
+      if (!part) throw new Error(`Managed provider winner did not receive a durable part checkpoint (${AUTHORITY})`);
+      claimedPartNumber = part.partNumber;
+      const blob = await ctx.storage.get(part.storageId);
+      if (!blob) throw new Error(`Managed provider input disappeared before execution (${AUTHORITY})`);
+      if (blob.size > MAX_PART_BYTES) throw new Error(`Managed provider input Blob exceeds the accepted physical WAV part bound (${AUTHORITY})`);
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (bytes.byteLength !== part.byteLength || createHash("sha256").update(bytes).digest("hex") !== part.sha256) {
+        throw new Error(`Managed provider input changed after upload registration (${AUTHORITY})`);
       }
-      const text = `Managed local provider transcript for ${claimed.job.recordingId}`;
-      const result = {
-        text,
-        ranges: [{ startMs: 0, endMs: claimed.job.durationMs, text }],
-        detectedLanguages: [],
-      };
-      return await ctx.runMutation(anyApi.managedTranscription.completeProvider, {
+      const parsed = parseCanonicalPart(bytes);
+      if (parsed.sampleCount !== part.sampleCount) {
+        throw new Error(`Managed provider input sample count changed after upload registration (${AUTHORITY})`);
+      }
+      const result = config.providerMode === "real"
+        ? await transcribeManagedOpenAIPart({
+          partNumber: part.partNumber,
+          sampleOffset: part.sampleOffset,
+          sampleCount: part.sampleCount,
+          bytes,
+        }, { apiKey: readManagedOpenAICredential(), requestId: part.requestId })
+        : {
+          text: `Managed local provider transcript for ${claimed.job.recordingId}`,
+          detectedLanguages: [],
+        };
+      return await ctx.runMutation(anyApi.managedTranscription.completeProviderPart, {
         jobId: args.jobId,
         tokenIdentifier,
         admissionId: claimed.job.admissionId,
+        partNumber: part.partNumber,
         executionToken,
         result,
       });
     } catch (error) {
       // A failed action is not an exactly-once signal. Release the reservation
       // in a mutation when the admission is still current; a provider success
-      // already committed by completeProvider remains idempotently terminal.
+      // already committed by completeProviderPart remains idempotently terminal.
       // A rejected claim has no winner token and must not let a sibling clean
       // up the admitting device's reserved job.
       if (executionToken !== null) {
-        await ctx.runMutation(anyApi.managedTranscription.failProvider, {
+        if (claimedPartNumber === null) throw error;
+        await ctx.runMutation(anyApi.managedTranscription.failProviderPart, {
           jobId: args.jobId,
           tokenIdentifier,
           admissionId,
           executionToken,
-          reason: error instanceof Error ? error.message : "managed provider action failed",
+          partNumber: claimedPartNumber,
+          reason: "managed provider action failed",
         }).catch(() => undefined);
       }
       throw error;
