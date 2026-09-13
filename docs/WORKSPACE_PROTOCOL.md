@@ -16,6 +16,25 @@ evidence, and reopen conditions.
 
 While a Peer owns a moving scope, the Lead does not edit that scope.
 
+## Verification before implementation and test delegation
+
+The Lead investigates the observed failure and designs production-faithful
+verification before delegating implementation or test work. The design names
+the actual producer and path, real configuration and input boundary, actual
+consumer, invariant to prove, exact artifact or snapshot identity, and planned
+positive and negative evidence.
+
+A Peer may add only the smallest fixture coverage needed to support local logic
+or a regression already anchored to that design. Fixtures do not define or
+replace production reality. Test count, fixture completeness, and a green suite
+are neither product progress nor production acceptance.
+
+When a production observation conflicts with a fixture, return
+`REOPEN_REQUEST`: the Lead corrects the model or verification route before more
+tests are added. When a Human or Supervisor identifies fixture-first drift, the
+Lead stops expanding scope, rereads this protocol, states the violated rule,
+and adjusts the route before continuing.
+
 ## Events and handback
 
 The Lead waits for the relevant Paseo or collaboration event: finish, error,

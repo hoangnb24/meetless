@@ -1,5 +1,8 @@
 # Agent Instructions
 
+Read `~/.Workspace.md` (in the user's home directory) before starting work in this
+repository and follow its workflow guidance.
+
 <!-- HARNESS:BEGIN -->
 ## Harness
 

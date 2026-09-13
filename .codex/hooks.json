@@ -1,0 +1,18 @@
+{
+  "description": "Reload Meetless instructions after context compaction.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "^compact$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '%s\\n' 'Context was compacted. Before continuing work, read AGENTS.md at the repository root and follow its instructions.'",
+            "timeout": 5,
+            "statusMessage": "Requesting instruction reload after compaction"
+          }
+        ]
+      }
+    ]
+  }
+}
