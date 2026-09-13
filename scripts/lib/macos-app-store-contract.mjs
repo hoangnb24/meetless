@@ -9,6 +9,8 @@ export const MACOS_APP_STORE_ELECTRON_ARCHIVE_SHA256 = "e153b855ba023f1edfcad4a0
 export const MACOS_APP_STORE_PARENT_ENTITLEMENTS = Object.freeze([
   "com.apple.security.app-sandbox",
   MACOS_APP_STORE_APPLICATION_GROUP_KEY,
+  "com.apple.security.files.user-selected.read-write",
+  "com.apple.security.files.bookmarks.app-scope",
   "com.apple.security.device.audio-input",
   "com.apple.security.network.client",
   "com.apple.security.network.server",

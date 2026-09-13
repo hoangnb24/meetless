@@ -550,6 +550,7 @@ export interface MeetingListSurfaceProps {
   chatProviders?: ChatProviderWire[];
   chatThread?: MeetingChatThreadWire | null;
   chatLoading?: boolean;
+  providerAccessNotice?: ReactNode;
   chatError?: string | null;
   chatProvider?: string | null;
   chatModel?: string | null;
@@ -621,6 +622,7 @@ export function MeetingListSurface({
   chatProviders = [],
   chatThread = null,
   chatLoading = false,
+  providerAccessNotice,
   chatError = null,
   chatProvider = null,
   chatModel = null,
@@ -747,6 +749,7 @@ export function MeetingListSurface({
       chatProviders={chatProviders}
       chatThread={chatThread}
       chatLoading={chatLoading}
+      providerAccessNotice={providerAccessNotice}
       chatError={chatError}
       chatProvider={chatProvider}
       chatModel={chatModel}
@@ -1294,6 +1297,7 @@ interface MeetingDetailProps {
   chatProviders: ChatProviderWire[];
   chatThread: MeetingChatThreadWire | null;
   chatLoading: boolean;
+  providerAccessNotice?: ReactNode;
   chatError: string | null;
   chatProvider: string | null;
   chatModel: string | null;
@@ -1347,6 +1351,7 @@ function MeetingDetail(props: MeetingDetailProps) {
     chatProviders,
     chatThread,
     chatLoading,
+    providerAccessNotice,
     chatError,
     chatProvider,
     chatModel,
@@ -1468,6 +1473,7 @@ function MeetingDetail(props: MeetingDetailProps) {
             chatProviders={chatProviders}
             chatThread={chatThread}
             chatLoading={chatLoading}
+            providerAccessNotice={providerAccessNotice}
             chatError={chatError}
             chatProvider={chatProvider}
             chatModel={chatModel}
@@ -1715,6 +1721,7 @@ function AskPane({
   chatProviders,
   chatThread,
   chatLoading,
+  providerAccessNotice,
   chatError,
   chatProvider,
   chatModel,
@@ -1738,6 +1745,7 @@ function AskPane({
   chatProviders: ChatProviderWire[];
   chatThread: MeetingChatThreadWire | null;
   chatLoading: boolean;
+  providerAccessNotice?: ReactNode;
   chatError: string | null;
   chatProvider: string | null;
   chatModel: string | null;
@@ -1780,6 +1788,7 @@ function AskPane({
         providers={chatProviders}
         thread={chatThread}
         transcript={transcript}
+        providerAccessNotice={providerAccessNotice}
         error={chatError}
         citationEvidence={citationEvidence}
       />
@@ -2229,6 +2238,7 @@ function sameSurfaceSelection(left: ChatSelectionWire, right: ChatSelectionWire)
 }
 
 function MeetingChatPanel({
+  providerAccessNotice,
   error,
   loading,
   model,
@@ -2250,6 +2260,7 @@ function MeetingChatPanel({
   interactive,
   citationEvidence,
 }: {
+  providerAccessNotice?: ReactNode;
   error: string | null;
   loading: boolean;
   model: string | null;
@@ -2293,6 +2304,7 @@ function MeetingChatPanel({
   return (
     <View style={styles.chat} testID="meeting-chat">
       <ScrollView style={styles.chatScroll} contentContainerStyle={styles.chatContent} testID="ask-pane-scroll">
+        {providerAccessNotice}
         <Text style={styles.chatHint}>Answers use the open meeting transcript only.</Text>
         <View style={styles.chatMessages} testID="chat-messages">
           {(thread?.messages ?? []).map((message, index) => (

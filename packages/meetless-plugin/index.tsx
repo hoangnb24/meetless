@@ -1,5 +1,7 @@
 import type { PluginContext } from "@paseo/plugin";
 import {
+  MeetingProviderAccessStatusRpc,
+  MeetingProviderAccessRequestRpc,
   MeetingChatAskRpc,
   MeetingChatAskV1Rpc,
   MeetingChatControlsRpc,
@@ -55,6 +57,14 @@ export function createTestContribution(options: MeetlessContributionOptions = {}
 }
 
 export default function contribute(plugin: PluginContext) {
+  plugin.handle(MeetingProviderAccessStatusRpc, async () => {
+    const server = await import("./src/server.js");
+    return server.getProviderAccess();
+  });
+  plugin.handle(MeetingProviderAccessRequestRpc, async ({ provider }) => {
+    const server = await import("./src/server.js");
+    return server.getProviderAccess(provider);
+  });
   let cleanup: (() => Promise<void>) | null = null;
   let chatCleanup: (() => Promise<void>) | null = null;
   plugin.handle(MeetingCreateRpc, async ({ title }) => {

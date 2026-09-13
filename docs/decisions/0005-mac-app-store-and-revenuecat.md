@@ -211,6 +211,16 @@ container unless the user explicitly chooses an export destination through an
 App-Sandbox-compatible flow. The app must not assume unrestricted access to
 `~/Documents/meetings/` in the store build.
 
+Owner approval, 2026-09-13: the host may request read/write access to the
+selected coding agent's existing configuration/authentication resources through
+the macOS system chooser and persist security-scoped app bookmarks. The parent
+may carry `com.apple.security.files.user-selected.read-write` and
+`com.apple.security.files.bookmarks.app-scope`; runtime children retain sandbox
+inheritance. Restore granted scopes before launching those children. This does
+not authorize whole-home access, copying credentials, or moving Meetless's
+product state or isolated Paseo state. Folder access alone does not prove
+provider authentication, including access to macOS Keychain entries.
+
 Executable media tools are not writable product state. In the Mac App Store
 build, the runtime executes ffmpeg and ffprobe only from the host-verified,
 signed app-bundle media closure, with the inherited child App Sandbox

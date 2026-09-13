@@ -997,6 +997,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
   private var signalSources: [DispatchSourceSignal] = []
   private var configuration: HostConfiguration?
   private var transcriptionCapability: MeetlessTranscriptionCapability?
+  private var providerFolderAccess: MeetlessProviderFolderAccess?
   private var publishedHostIdentity: MeetlessHostIdentityAttestation?
   private var masGateHandoff: MasGateHostHandoff?
   private var masGateLockIdentity: MasGateLockIdentity?
@@ -1035,6 +1036,15 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
           }
           self.premiumDiagnosticSink = premiumSink
           let premium = MeetlessRevenueCatPurchaseAccess(diagnosticSink: premiumSink)
+          let providerAccess: MeetlessProviderAccess
+          if meetlessSignaturePolicy(forRuntimeRoot: configuration.runtimeRoot) == .appStoreDevelopment {
+            let folders = MeetlessProviderFolderAccess(runtimeRoot: configuration.runtimeRoot)
+            folders.restoreBeforeRuntime()
+            self.providerFolderAccess = folders
+            providerAccess = folders
+          } else {
+            providerAccess = MeetlessUnrestrictedProviderAccess()
+          }
           let capability: MeetlessTranscriptionCapability
           guard let hostIdentity = self.publishedHostIdentity else {
             throw hostPreflightError("host identity was not published before capability startup")
@@ -1080,6 +1090,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
               workingDirectory: configuration.runtimeRoot,
               stagingDirectory: configuration.transcriptionStaging,
               runtimeAuthorization: self.runtimeAuthorization,
+              providerAccess: providerAccess,
               premium: premium,
               processPolicy: processPolicy,
               hostIdentity: hostIdentity,
@@ -1090,6 +1101,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
               socketPath: configuration.transcriptionSocket,
               stagingDirectory: configuration.transcriptionStaging,
               runtimeAuthorization: self.runtimeAuthorization,
+              providerAccess: providerAccess,
               premium: premium,
               processPolicy: processPolicy,
               hostIdentity: hostIdentity,
@@ -1131,6 +1143,8 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     }
     if let runtime, runtime.isRunning { runtime.waitUntilExit() }
     removeOwnedRegistryIfReleased(registry)
+    providerFolderAccess?.close()
+    providerFolderAccess = nil
     runtimeAuthorization.setRegistrationDiagnosticSink(nil)
     registrationDiagnosticSink = nil
     premiumDiagnosticSink = nil
@@ -2412,7 +2426,11 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     process.currentDirectoryURL = URL(fileURLWithPath: configuration.endpointPolicy == nil
       ? configuration.repositoryRoot
       : configuration.runtimeRoot)
-    var environment = ProcessInfo.processInfo.environment
+    var environment = try meetlessProjectProviderEnvironment(
+      ProcessInfo.processInfo.environment,
+      runtimeRoot: configuration.runtimeRoot,
+      grants: providerFolderAccess?.providerEnvironment() ?? [:]
+    )
     environment.removeValue(forKey: "MEETLESS_CAPTURE_MODE")
     environment.removeValue(forKey: "MEETLESS_FIXTURE_EXPORT_STAMP")
     environment.removeValue(forKey: "MEETLESS_FIXTURE_FAIL_FINALIZATION_ONCE")

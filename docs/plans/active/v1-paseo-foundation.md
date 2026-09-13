@@ -25,13 +25,18 @@ preserved, and accepted deltas integrated separately.
   panel route. Paseo provider env overlays exist, but `prepareRuntime` currently
   writes daemon config without a provider block. A path-only patch cannot prove
   access and is not being shipped as a fix.
-  Concrete proposed MAS interaction: when Ask needs an existing provider's
+  Owner approved the MAS interaction on 2026-09-13: when Ask needs an existing provider's
   configuration outside the sandbox, explain the folder access needed, use the
   system folder chooser, preserve the grant with a security-scoped bookmark,
   and offer recovery when access is denied/revoked. Do not require a new provider
-  login solely because the container has no auth file. This permission UI and
-  its entitlements require the owner security/UX decision before implementation;
-  no new provider request, credential action or app update was performed.
+  login solely because the container has no auth file. Scoped read/write and
+  app-bookmark entitlements are approved; whole-home access and credential
+  copying are not. Implementation now proceeds with native ownership assigned
+  to `ask_diagnosis`, runtime/bridge/UI to `provider_ui`, and independent review
+  to `ask_review`. The first actual proof uses installed Codex and ready Test.
+  Claude Keychain identity and separate config-file access remain under
+  investigation; OpenCode is not installed on this machine. Those provider
+  paths cannot be claimed working from a Codex-only result.
 
 - **#13 Ask-focused continuation — 2026-09-13:** owner reports recording,
   Apple actions and audio checks previously satisfactory and authorizes starting

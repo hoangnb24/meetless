@@ -27,6 +27,8 @@ describe("Meetless plugin contribution", () => {
     const cleanup = contribute({ handle, addSurface, addSidebarItem } as unknown as PluginContext);
 
     expect(handle.mock.calls.map(([rpc]) => rpc.name)).toEqual([
+      "meeting.provider.access.status",
+      "meeting.provider.access.request",
       "meeting.create",
       "meeting.list",
       "meeting.delete",

@@ -58,6 +58,11 @@ describe("Mac App Store distribution contract", () => {
     ]));
     const child = Object.fromEntries(MACOS_APP_STORE_CHILD_ENTITLEMENTS.map((key) => [key, true]));
     expect(validateMacAppStoreEntitlementClosure(parent, child)).toEqual(applicationGroup);
+    for (const permission of ["com.apple.security.files.user-selected.read-write", "com.apple.security.files.bookmarks.app-scope"]) {
+      expect(parent[permission]).toBe(true);
+      expect(() => validateMacAppStoreEntitlementClosure({ ...parent, [permission]: undefined }, child)).toThrow();
+    }
+    expect(() => validateMacAppStoreEntitlementClosure({ ...parent, "com.apple.security.temporary-exception.files.home-relative-path.read-write": ["/"] }, child)).toThrow(/exactly/);
     expect(validateEntitlementKeys(parent, MACOS_APP_STORE_PARENT_ENTITLEMENTS, "parent app", applicationGroup)).toEqual(parent);
     expect(validateEntitlementKeys(child, MACOS_APP_STORE_CHILD_ENTITLEMENTS, "child")).toEqual(child);
     expect(() => validateMacAppStoreEntitlementClosure(

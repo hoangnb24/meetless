@@ -389,6 +389,8 @@ describe("Mac App Store development package boundary", () => {
       expectedEntitlementKeys: [
         "com.apple.security.app-sandbox",
         "com.apple.security.application-groups",
+        "com.apple.security.files.user-selected.read-write",
+        "com.apple.security.files.bookmarks.app-scope",
         "com.apple.security.device.audio-input",
         "com.apple.security.network.client",
         "com.apple.security.network.server",

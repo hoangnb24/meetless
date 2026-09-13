@@ -1,6 +1,9 @@
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { callPluginRpc } from "@paseo/plugin/host";
 import {
+  MeetingProviderAccessStatusRpc,
+  MeetingProviderAccessRequestRpc,
+  type ProviderAccessId,
   MeetingChatAskRpc,
   MeetingChatAskV1Rpc,
   MeetingChatControlsRpc,
@@ -403,6 +406,18 @@ export class MeetlessClient {
       (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload),
       { deviceId },
     );
+  }
+
+  async getProviderAccess() {
+    this.requireReady();
+    return callPluginRpc(MeetingProviderAccessStatusRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload), {});
+  }
+
+  async requestProviderAccess(provider: ProviderAccessId) {
+    this.requireReady();
+    return callPluginRpc(MeetingProviderAccessRequestRpc,
+      (method, payload) => this.daemon.invokePluginRpc(MEETLESS_PLUGIN_ID, method, payload), { provider });
   }
 
   async listChatProviders(): Promise<{

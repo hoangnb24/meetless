@@ -313,6 +313,7 @@ final class MeetlessTranscriptionCapability {
   private let managedAuth: MeetlessManagedAuthAccess
   private let transcribe: (Data, String, NativeRequestCancellation) throws -> OpenAIResult
   private let leaseIssued: (() -> Void)?
+  private let providerAccess: MeetlessProviderAccess
   private let capturePermissions: MeetlessCapturePermissionAccess
   private let premium: MeetlessPremiumPurchaseAccess
   private let processPolicy: MeetlessProcessRegistrationPolicy?
@@ -337,6 +338,7 @@ final class MeetlessTranscriptionCapability {
       try OpenAITranscriber(apiKey: apiKey).transcribe(audio: audio, cancellation: cancellation)
     },
     leaseIssued: (() -> Void)? = nil,
+    providerAccess: MeetlessProviderAccess = MeetlessUnavailableProviderAccess(),
     capturePermissions: MeetlessCapturePermissionAccess = MeetlessCapturePermissions(),
     premium: MeetlessPremiumPurchaseAccess = MeetlessRevenueCatPurchaseAccess(),
     managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability(),
@@ -352,6 +354,7 @@ final class MeetlessTranscriptionCapability {
     self.keychain = keychain
     self.transcribe = transcribe
     self.leaseIssued = leaseIssued
+    self.providerAccess = providerAccess
     self.capturePermissions = capturePermissions
     self.premium = premium
     self.managedAuth = managedAuth
@@ -374,6 +377,7 @@ final class MeetlessTranscriptionCapability {
       try OpenAITranscriber(apiKey: apiKey).transcribe(audio: audio, cancellation: cancellation)
     },
     leaseIssued: (() -> Void)? = nil,
+    providerAccess: MeetlessProviderAccess = MeetlessUnavailableProviderAccess(),
     capturePermissions: MeetlessCapturePermissionAccess = MeetlessCapturePermissions(),
     premium: MeetlessPremiumPurchaseAccess = MeetlessRevenueCatPurchaseAccess(),
     managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability(),
@@ -396,6 +400,7 @@ final class MeetlessTranscriptionCapability {
       keychain: keychain,
       transcribe: transcribe,
       leaseIssued: leaseIssued,
+      providerAccess: providerAccess,
       capturePermissions: capturePermissions,
       premium: premium,
       managedAuth: managedAuth,
@@ -415,6 +420,7 @@ final class MeetlessTranscriptionCapability {
       try OpenAITranscriber(apiKey: apiKey).transcribe(audio: audio, cancellation: cancellation)
     },
     leaseIssued: (() -> Void)? = nil,
+    providerAccess: MeetlessProviderAccess = MeetlessUnavailableProviderAccess(),
     capturePermissions: MeetlessCapturePermissionAccess = MeetlessCapturePermissions(),
     premium: MeetlessPremiumPurchaseAccess = MeetlessRevenueCatPurchaseAccess(),
     managedAuth: MeetlessManagedAuthAccess = MeetlessManagedAuthCapability(),
@@ -431,6 +437,7 @@ final class MeetlessTranscriptionCapability {
       keychain: keychain,
       transcribe: transcribe,
       leaseIssued: leaseIssued,
+      providerAccess: providerAccess,
       capturePermissions: capturePermissions,
       premium: premium,
       managedAuth: managedAuth,
@@ -848,6 +855,29 @@ final class MeetlessTranscriptionCapability {
     }
     guard runtimeAuthorization.withValidLease(lease, {}) != nil else {
       writeResponse(client, requestId: requestId, ok: false, status: "invalid", text: nil, languages: nil, usage: nil)
+      return
+    }
+
+    if operation == "providerAccessStatus" || operation == "providerAccessRequest" {
+      let expectedKeys: Set<String> = operation == "providerAccessStatus"
+        ? ["version", "requestId", "operation"] : ["version", "requestId", "operation", "provider"]
+      guard Set(request.keys) == expectedKeys,
+            let version = request["version"] as? NSNumber,
+            CFGetTypeID(version) != CFBooleanGetTypeID(), version.doubleValue == 1,
+            operation == "providerAccessStatus" || ["codex", "claude", "opencode"].contains(request["provider"] as? String ?? "") else {
+        writeHostProcessError(client, requestId: requestId, reason: "provider access request shape is unsupported")
+        return
+      }
+      guard let result = runtimeAuthorization.withValidLease(lease, {
+        operation == "providerAccessStatus" ? providerAccess.status() : providerAccess.request(provider: request["provider"] as! String, authorized: {
+          runtimeAuthorization.withValidLease(lease, { true }) == true
+        })
+      }) else {
+        writeHostProcessError(client, requestId: requestId, reason: "provider access authorization expired")
+        return
+      }
+      writeHostProcessObject(client, ["version": 1, "requestId": requestId, "ok": true,
+        "type": "provider.access", "outcome": result.outcome, "providers": result.providers])
       return
     }
 

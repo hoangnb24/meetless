@@ -3425,6 +3425,41 @@ private func openUnixListener(_ socketPath: String, bindPath: String? = nil) thr
   return descriptor
 }
 
+private final class FakeProviderFolderAccess: MeetlessProviderAccess {
+  var requests = 0
+  func status() -> MeetlessProviderAccessResult { MeetlessUnavailableProviderAccess().status() }
+  func request(provider: String, authorized: () -> Bool) -> MeetlessProviderAccessResult {
+    if authorized() { requests += 1 }
+    return status()
+  }
+}
+
+private func testProviderAccessSocketBoundary() {
+  let provider = FakeProviderFolderAccess()
+  let state = authorizedRuntimeState()
+  let capability = MeetlessTranscriptionCapability(socketPath: "/private/tmp/unused-provider.sock",
+    stagingDirectory: "/private/tmp/unused-provider-staging", runtimeAuthorization: state, providerAccess: provider)
+  func request(_ object: [String: Any]) -> [String: Any]? {
+    var descriptors: [Int32] = [0, 0]
+    check(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0, "provider socketpair must open")
+    let data = (try! JSONSerialization.data(withJSONObject: object)) + Data([10])
+    data.withUnsafeBytes { _ = Darwin.write(descriptors[0], $0.baseAddress, $0.count) }
+    capability.handle(descriptors[1])
+    let line = readBoundedLine(descriptors[0], maximumBytes: 4096)
+    close(descriptors[0])
+    return line.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+  }
+  let valid: [String: Any] = ["version": 1, "requestId": "provider-request", "operation": "providerAccessRequest", "provider": "codex"]
+  check(request(valid)?["type"] as? String == "provider.access", "provider request must use typed native reply")
+  check(provider.requests == 1, "authorized provider request must reach manager")
+  var invalid = valid; invalid["path"] = "/"
+  check(request(invalid)?["ok"] as? Bool == false, "renderer-supplied path must be rejected")
+  check(provider.requests == 1, "invalid request must not invoke chooser")
+  state.clear()
+  check(request(valid)?["ok"] as? Bool == false, "revoked native peer must be denied")
+  check(provider.requests == 1, "unauthorized native peer must not invoke chooser")
+}
+
 private func testPremiumSocketBoundary() {
   let premium = FakePremiumAccess()
   let capability = MeetlessTranscriptionCapability(
@@ -4594,6 +4629,7 @@ private struct TranscriptionCapabilityTests {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: Premium host log persistence: \(error)\n".utf8))
     }
+    testProviderAccessSocketBoundary()
     testPremiumSocketBoundary()
     testPremiumPurchaseOutcomePolicy()
     testPremiumOperationSlotBoundary()
@@ -4642,6 +4678,11 @@ private struct TranscriptionCapabilityTests {
     do { try testMasRuntimeStartupLocatorBoundary() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: MAS clean runtime startup boundary: \(error)\n".utf8))
+    }
+
+    do { try testProviderFolderAccessPersistence() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: provider folder access: \(error)\n".utf8))
     }
 
     if failures > 0 { exit(1) }

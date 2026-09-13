@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Platform, SafeAreaView, StyleSheet, useWindowDimensions } from "react-native";
+import { Platform, SafeAreaView, StyleSheet, useWindowDimensions, View, Text, Pressable } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import {
   connectMeetlessClient,
@@ -10,6 +10,8 @@ import {
 } from "@meetless/client";
 import {
   chatSelectionIdentity,
+  type ProviderAccessResult,
+  type ProviderAccessId,
   type ChatControlsWire,
   type ChatFeatureDiscoveryWire,
   type ChatProviderWire,
@@ -149,6 +151,9 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [transcriptionFailureCategory, setTranscriptionFailureCategory] = useState<TranscriptionFailureCategoryWire | null>(null);
   const [transcriptionRouteMessage, setTranscriptionRouteMessage] = useState<string | null>(null);
   const [transcriptionConsentPending, setTranscriptionConsentPending] = useState(false);
+  const [providerAccess, setProviderAccess] = useState<ProviderAccessResult | null>(null);
+  const [providerAccessPending, setProviderAccessPending] = useState(false);
+  const [providerAccessError, setProviderAccessError] = useState<string | null>(null);
   const [chatControls, setChatControls] = useState<ChatControlsWire | null>(null);
   const [chatSelection, setChatSelection] = useState<ChatSelectionWire | null>(null);
   const [chatFeatures, setChatFeatures] = useState<ChatFeatureDiscoveryWire | null>(null);
@@ -195,6 +200,9 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     const active = { client, epoch: connectionEpoch.current + 1, ...(close ? { close } : {}) };
     connectionEpoch.current = active.epoch;
     connection.current = active;
+    setProviderAccessPending(false);
+    setProviderAccess(null);
+    setProviderAccessError(null);
     return active;
   }, [resetDeleteState]);
 
@@ -205,6 +213,9 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     playback.current?.stop();
     playback.current = null;
     connection.current = null;
+    setProviderAccessPending(false);
+    setProviderAccess(null);
+    setProviderAccessError(null);
     setPremiumAccess(null);
     premiumOperation.current = null;
     setPremiumPending(false);
@@ -382,6 +393,11 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   ) => {
     setChatLoading(true);
     try {
+      if (mode === "desktop" && typeof active.client.getProviderAccess === "function") {
+        void active.client.getProviderAccess().then((result) => {
+          if (isCurrentConnection(active)) { setProviderAccess(result); setProviderAccessError(null); }
+        }).catch(() => { if (isCurrentConnection(active)) setProviderAccessError("Folder access could not be checked. Reopen the meeting to try again."); });
+      }
       const threadPromise = active.client.getMeetingChat(meetingId);
       const controlsCapability = typeof active.client.getChatControls === "function";
       const controlsPromise = controlsCapability
@@ -556,6 +572,21 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
       }
     }
   }, [chatSelection, isCurrentConnection]);
+
+  const requestProviderAccess = useCallback(async (provider: ProviderAccessId) => {
+    const active = connection.current;
+    if (!active || providerAccessPending) return;
+    setProviderAccessPending(true);
+    setProviderAccessError(null);
+    try {
+      const result = await active.client.requestProviderAccess(provider);
+      if (isCurrentConnection(active)) { setProviderAccess(result); setProviderAccessError(null); }
+    } catch {
+      if (isCurrentConnection(active)) setProviderAccessError("Folder access could not be granted. Try again.");
+    } finally {
+      if (isCurrentConnection(active)) setProviderAccessPending(false);
+    }
+  }, [isCurrentConnection, providerAccessPending]);
 
   const askQuestion = useCallback(async (question: string) => {
     const active = connection.current;
@@ -1169,6 +1200,9 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         chatModel={chatSelection?.model ?? null}
         chatThread={chatThread}
         chatLoading={chatLoading}
+        providerAccessNotice={mode === "desktop" ? <ProviderFolderAccess
+          result={providerAccess} provider={chatSelection?.provider ?? null} pending={providerAccessPending}
+          error={providerAccessError} onRequest={requestProviderAccess} /> : undefined}
         chatError={chatError}
         premiumAccess={premiumAccess}
         premiumPending={premiumPending}
@@ -1333,4 +1367,30 @@ function companionStateDisplay(status: Exclude<CompanionConnectionState["status"
     case "revalidating": return { label: "Checking host…", surfaceStatus: "revalidating" };
     case "offline": return { label: "Host offline", surfaceStatus: "offline" };
   }
+}
+
+
+export function ProviderFolderAccess({ result, provider, pending, error, onRequest }: {
+  result: ProviderAccessResult | null; provider: string | null; pending: boolean; error: string | null;
+  onRequest(provider: ProviderAccessId): Promise<void>;
+}) {
+  const entries = result?.providers.filter((entry) => provider ? entry.id === provider : entry.status !== "unavailable") ?? [];
+  return <View style={{ gap: 8 }} testID="provider-folder-access">
+    {error ? <Text style={{ color: "#aeb6c2", fontSize: 13 }} accessibilityRole="alert">{error}</Text> : null}
+    {result?.outcome === "cancelled" ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>Folder selection was cancelled. You can grant access when ready.</Text> : null}
+    {result?.outcome === "invalid_selection" ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>Choose the selected agent’s existing configuration folder.</Text> : null}
+    {result?.outcome === "failed" ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>Folder access could not be saved. Try again.</Text> : null}
+    {entries.filter((entry) => entry.status !== "ready").map((entry) => <View key={entry.id}>
+      <Text style={{ color: "#aeb6c2", fontSize: 13 }}>{entry.status === "restart_required"
+        ? `Access to ${entry.id} is saved. Quit Meetless and reopen it, then send your question again.`
+        : entry.status === "unavailable" ? `Folder access for ${entry.id} is not available in this build.`
+        : `Allow Meetless to use your existing ${entry.id} configuration and sign-in. If access was removed, choose the folder again.`}</Text>
+      {entry.status === "needs_access" ? <Pressable accessibilityRole="button"
+        accessibilityLabel={`Grant ${entry.id} folder access`} accessibilityState={{ disabled: pending }} disabled={pending}
+        style={{ alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6, backgroundColor: "#293849", marginTop: 8 }}
+        onPress={() => void onRequest(entry.id)} testID={`provider-access-${entry.id}`}>
+        <Text style={{ color: "#aeb6c2", fontSize: 13 }}>{pending ? "Choosing folder…" : `Grant ${entry.id} folder access`}</Text>
+      </Pressable> : null}
+    </View>)}
+  </View>;
 }

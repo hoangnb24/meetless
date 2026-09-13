@@ -26,7 +26,7 @@ let package = Package(
         "MasRuntimeStartupTests.swift",
         "TranscriptionCapabilityTests.swift",
       ],
-      sources: ["MeetlessHost.swift", "RevenueCatCapability.swift", "TranscriptionCapability.swift", "ManagedAuthCapability.swift"],
+      sources: ["MeetlessHost.swift", "RevenueCatCapability.swift", "TranscriptionCapability.swift", "ManagedAuthCapability.swift", "ProviderAccessCapability.swift"],
       swiftSettings: [.unsafeFlags(["-enable-testing"])]
     ),
     .executableTarget(
@@ -49,6 +49,7 @@ let package = Package(
         "RevenueCatCapability.swift",
         "TranscriptionCapability.swift",
         "ManagedAuthCapability.swift",
+        "ProviderAccessCapability.swift",
         "Package.swift",
         "Package.resolved",
       ],

@@ -511,3 +511,8 @@ function assertBootstrapDeadline(deadlineEpochMs: number): void {
     throw new Error("Meetless recording runtime bootstrap exceeded the launcher startup deadline");
   }
 }
+
+export async function getProviderAccess(provider?: import("@meetless/meeting-contracts").ProviderAccessId) {
+  const { providerAccess } = await import("./provider-access.js");
+  return providerAccess(runtimeEndpoint(process.env, "transcription").bindArgument, provider);
+}

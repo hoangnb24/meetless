@@ -29,8 +29,14 @@ state remain in their accepted app-owned locations. Reusing provider
 configuration does not relocate that product state. The MAS implementation must
 also establish actual access through an App-Sandbox-compatible mechanism:
 correctly naming a path alone is not proof that the provider can use it.
-The specific external-folder permission interaction is not yet accepted or
-implemented; it remains an implementation prerequisite in the active plan.
+Owner approval, 2026-09-13: explain the selected provider's required folder
+access in Ask, request it through the macOS system chooser, and preserve access
+with security-scoped bookmarks. Request only the provider-owned resources,
+not the user's entire home. Cancellation or revoked access must offer recovery.
+When a newly granted resource requires reopening the app, say so without
+automatically sending or retrying a question. This approval authorizes the
+scoped file entitlements; it does not establish that every provider's access or
+authentication has been implemented or verified.
 
 ## Meeting evidence and chat history
 

@@ -957,7 +957,25 @@ function isSameOrDescendant(candidate: string, parent: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+export function approvedProviderEnvironment(raw: string | undefined): { codex?: { CODEX_HOME: string } } {
+  if (!raw) return {};
+  const invalid = () => new Error("Invalid native provider environment: only an approved absolute Codex configuration directory is allowed");
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { throw invalid(); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => key !== "codex")) throw invalid();
+  if (!("codex" in record)) return {};
+  const codex = record.codex;
+  if (!codex || typeof codex !== "object" || Array.isArray(codex)) throw invalid();
+  const env = codex as Record<string, unknown>;
+  if (Object.keys(env).length !== 1 || typeof env.CODEX_HOME !== "string" || !path.isAbsolute(env.CODEX_HOME) || env.CODEX_HOME.includes("\0")) throw invalid();
+  return { codex: { CODEX_HOME: env.CODEX_HOME } };
+}
+
 export async function prepareRuntime(config: RuntimeConfig): Promise<void> {
+  const providerEnvironment = approvedProviderEnvironment(config.environment.MEETLESS_PROVIDER_ENV);
+  if (providerEnvironment.codex) config.environment.CODEX_HOME = providerEnvironment.codex.CODEX_HOME;
   if (config.packaged) assertPackagedPaseo(config);
   else assertPinnedPaseo(config.paths.plugin);
   await Promise.all(
@@ -977,6 +995,7 @@ export async function prepareRuntime(config: RuntimeConfig): Promise<void> {
   await assertExistingConfigReadable(config.paths.config);
   const daemonConfig = {
     version: 1,
+    providers: Object.fromEntries(Object.entries(providerEnvironment).map(([id, env]) => [id, { env }])),
     daemon: {
       listen: config.listen,
       cors: { allowedOrigins: [config.rendererOrigin] },
