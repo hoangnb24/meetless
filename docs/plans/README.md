@@ -30,9 +30,21 @@ decision into `docs/decisions/`; keep task-local choices in the plan.
 
 ## Active Plans
 
-- [Meetless V1 release readiness](active/v1-paseo-foundation.md)
-  — remaining recording/TCC, second-instance, managed-production, store, and
-  legal/release gates after the accepted MAS development UI handoff.
+- [Meetless V1](active/v1-paseo-foundation.md) — #12 closed by owner scope
+  decision; remaining real quota validation is deferred to #19 (P2 / Later).
+  #13 (P1) is next, after the current commit and workspace cleanup.
+
+## Historical Evidence — Read Only When Needed
+
+Current instructions live in the active plan and decision documents. Historical
+briefs, pending actions and command sequences below are not instructions to resume.
+
+- [Issue #8 save validation, 2026-09-12](history/issue-8-save-validation-2026-09-12.md)
+  — exact source/artifact results and the failed legacy recovery attempt.
+
+- [Meetless V1 through 2026-09-12](history/v1-paseo-foundation-through-2026-09-12.md)
+  — exact pre-cleanup active plan, including unfinished work; historical
+  evidence, not completion or current execution authority.
 
 ## Completed Harness Improvements
 

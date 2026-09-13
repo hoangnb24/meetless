@@ -211,6 +211,16 @@ container unless the user explicitly chooses an export destination through an
 App-Sandbox-compatible flow. The app must not assume unrestricted access to
 `~/Documents/meetings/` in the store build.
 
+Executable media tools are not writable product state. In the Mac App Store
+build, the runtime executes ffmpeg and ffprobe only from the host-verified,
+signed app-bundle media closure, with the inherited child App Sandbox
+entitlements. It validates the complete sibling `bin`/`lib` closure before use
+and must not execute a copied or updated binary from the writable app container.
+The direct-DMG media update snapshot remains owned by ADR0002 and is not changed
+by this MAS-specific rule. A previously created container snapshot may remain
+as preserved runtime data, but it is not an executable input and this decision
+does not authorize its cleanup.
+
 The trusted host owns the native RevenueCat/StoreKit adapter. The renderer sees
 only typed product, entitlement, purchase, restore, and error results through an
 authenticated host boundary. API keys, receipts, transaction details, and raw
@@ -239,9 +249,12 @@ Legacy session remnants block the simple route and require separately scoped
 disposition. This decision grants no deletion of recordings, retained evidence,
 Keychain, TCC, purchase state, or unrelated container state.
 
-The owner rejected the transaction-v3 proposal and automatic recovery design.
-Historical coordinator instructions and one-time reset permissions do not
-control this development route.
+The [historical execution snapshot](../plans/history/v1-paseo-foundation-through-2026-09-12.md#human-authorized-simplified-mas-development-flow-2026-09-10)
+retains the superseded coordinator/recovery work and its incident context.
+Its transaction-v3 proposal and automatic recovery design were explicitly
+rejected. Historical run instructions and one-time reset permissions are not
+current operating instructions. Active work and any unresolved session are
+recorded in [the active plan](../plans/active/v1-paseo-foundation.md).
 
 ### Release and security validation remains required
 

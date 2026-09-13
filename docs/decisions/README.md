@@ -1,5 +1,9 @@
 # Decisions
 
+For local MAS build/install/relaunch, start with the
+[current development guide](../macos-development.md). Historical coordinator
+and transaction instructions are not the ordinary development route.
+
 Lasting decisions future work must inherit:
 
 - [0001: Maintain Paseo separately and pin it in Meetless](0001-maintained-paseo-fork.md)

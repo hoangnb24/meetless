@@ -73,6 +73,7 @@ Check [the active plan](plans/active/v1-paseo-foundation.md) for any current
 blocker before operating the app. The completed issue #8 ad hoc disposition is
 historical evidence, not a reusable reset or recovery command.
 
-The owner accepted this simplified route on 2026-09-10 and rejected the
-transaction-v3 proposal. Historical coordinator run IDs and one-time reset
-permissions do not govern the normal loop; ADR0005 is the current authority.
+The [historical snapshot](plans/history/v1-paseo-foundation-through-2026-09-12.md#human-authorized-simplified-mas-development-flow-2026-09-10)
+explains the accepted simplification and explicitly rejected transaction-v3
+proposal. Read it only for historical diagnosis. Old run IDs, reset permissions
+and coordinator steps do not govern the normal loop.

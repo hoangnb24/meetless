@@ -6,6 +6,8 @@ Start with the smallest applicable surface.
 
 - [`product/`](product/README.md): sole authority for accepted consumer behavior
   and UX.
+- [`macos-development.md`](macos-development.md): current local MAS build/install/
+  relaunch route; read this before operating the development app.
 - [`WORKFLOW.md`](WORKFLOW.md): request shape, planning, judgment, operation,
   validation, and completion.
 - [`decisions/`](decisions/README.md): lasting technical, runtime, permission,

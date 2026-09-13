@@ -6,6 +6,6 @@ the plan to `../completed/` only after the result is verified.
 
 ## Current Plans
 
-- [Meetless V1 remaining release work](v1-paseo-foundation.md) — recording/TCC,
-  second-instance, managed-production, store, and legal/release gates after
-  the accepted MAS development UI handoff.
+- [Meetless V1](v1-paseo-foundation.md) — #12 closed by owner scope decision;
+  remaining real quota validation is deferred to #19 (P2 / Later). #13 (P1) is
+  next, after the current commit and workspace cleanup.
