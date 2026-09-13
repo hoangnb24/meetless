@@ -13,6 +13,26 @@ preserved, and accepted deltas integrated separately.
 
 ### Current execution
 
+- **#13 provider configuration decision — 2026-09-13:** owner corrects the
+  proposed separate-login direction: Meetless must reuse existing coding-agent
+  config/auth from the real user's home using the lookup paths and overrides
+  already supported by Paseo, including on first installation/new machines.
+  Accepted behavior is recorded in `docs/product/knowledge-and-citations.md`.
+  This supersedes the dedicated-login proposal below; it is not authority to
+  copy credentials, disable App Sandbox, or relocate Meetless/Paseo app state.
+  Read-only inspection finds actual MAS parent/child entitlements have no
+  external user-selected-file access and the native host has no bookmark/open
+  panel route. Paseo provider env overlays exist, but `prepareRuntime` currently
+  writes daemon config without a provider block. A path-only patch cannot prove
+  access and is not being shipped as a fix.
+  Concrete proposed MAS interaction: when Ask needs an existing provider's
+  configuration outside the sandbox, explain the folder access needed, use the
+  system folder chooser, preserve the grant with a security-scoped bookmark,
+  and offer recovery when access is denied/revoked. Do not require a new provider
+  login solely because the container has no auth file. This permission UI and
+  its entitlements require the owner security/UX decision before implementation;
+  no new provider request, credential action or app update was performed.
+
 - **#13 Ask-focused continuation — 2026-09-13:** owner reports recording,
   Apple actions and audio checks previously satisfactory and authorizes starting
   with Ask using the existing transcribed meeting named Test. Root owns actual
