@@ -39,6 +39,57 @@ describe("transcript meeting selection ordering", () => {
     vi.clearAllMocks();
   });
 
+  test.each([
+    ["purchase_required", "inactive"],
+    ["recovery_required", "unavailable"],
+  ] as const)("replaces stale active Premium after an authoritative %s gate without losing context", async (outcome, expectedStatus) => {
+    const access = { entitlement: "premium" as const, status: "active" as const, packages: [{ packageId: "monthly" as const, productId: "premium.monthly", localizedPrice: "$9.99", trialEligible: false }], reason: null };
+    const detail = { ...transcriptResponse("m-1", "segment-m-1", "unused"), transcript: null, transcription: { outcome: "not_started", retryEligible: true, failureCategory: null, message: null } };
+    const grantTranscriptionConsent = vi.fn(async () => ({ consent: detail.consent, route: "managed", outcome, retryEligible: false, failureCategory: "access", message: "Premium needs attention", transcript: null }));
+    const purchasePremium = vi.fn();
+    const restorePremium = vi.fn();
+    const getPremiumAccess = vi.fn(async () => access);
+    connectMeetlessClient.mockResolvedValue({ client: { listMeetings: async () => [meeting("m-1")], getMeetingTranscript: async () => detail, getPremiumAccess, grantTranscriptionConsent, purchasePremium, restorePremium }, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await vi.waitFor(() => expect(surface().props.premiumAccess.status).toBe("active"));
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    await act(async () => { await surface().props.onGrantTranscriptionConsent(); });
+    expect(surface().props.premiumAccess).toEqual({ ...access, status: expectedStatus });
+    expect(surface().props.selectedMeetingId).toBe("m-1");
+    expect(surface().props.selectedRecording.status).toBe("saved");
+    expect(surface().props.transcriptionRouteOutcome).toBe(outcome);
+    expect(grantTranscriptionConsent).toHaveBeenCalledOnce();
+    expect(getPremiumAccess).toHaveBeenCalledOnce();
+    expect(purchasePremium).not.toHaveBeenCalled();
+    expect(restorePremium).not.toHaveBeenCalled();
+  });
+
+  test.each(["before", "after"] as const)("preserves a newer Premium success when purchase starts %s the pending transcription gate", async (purchaseOrder) => {
+    const access = { entitlement: "premium" as const, status: "active" as const, packages: [], reason: null };
+    const detail = { ...transcriptResponse("m-1", "segment-m-1", "unused"), transcript: null, transcription: { outcome: "not_started", retryEligible: true, failureCategory: null, message: null } };
+    const gate = deferred<{ consent: typeof detail.consent; route: "managed"; outcome: "purchase_required"; retryEligible: false; failureCategory: "access"; message: string; transcript: null }>();
+    const purchase = deferred<{ outcome: "active"; access: typeof access }>();
+    const grantTranscriptionConsent = vi.fn(() => gate.promise);
+    const purchasePremium = vi.fn(() => purchase.promise);
+    connectMeetlessClient.mockResolvedValue({ client: { listMeetings: async () => [meeting("m-1")], getMeetingTranscript: async () => detail, getPremiumAccess: async () => access, grantTranscriptionConsent, purchasePremium }, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await vi.waitFor(() => expect(surface().props.premiumAccess.status).toBe("active"));
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    let purchaseRequest!: Promise<void>;
+    let gateRequest!: Promise<void>;
+    if (purchaseOrder === "before") await act(async () => { purchaseRequest = surface().props.onPurchasePremium("monthly"); });
+    await act(async () => { gateRequest = surface().props.onGrantTranscriptionConsent(); });
+    if (purchaseOrder === "after") await act(async () => { purchaseRequest = surface().props.onPurchasePremium("monthly"); });
+    await act(async () => { purchase.resolve({ outcome: "active", access }); await purchaseRequest; });
+    await act(async () => { gate.resolve({ consent: detail.consent, route: "managed", outcome: "purchase_required", retryEligible: false, failureCategory: "access", message: "Premium needs attention", transcript: null }); await gateRequest; });
+    expect(surface().props.premiumAccess).toEqual(access);
+    expect(surface().props.selectedMeetingId).toBe("m-1");
+    expect(purchasePremium).toHaveBeenCalledOnce();
+    expect(grantTranscriptionConsent).toHaveBeenCalledOnce();
+  });
+
   test("dispatches Premium purchase progress immediately and ignores repeated purchase or restore actions", async () => {
     const inactivePremium = {
       entitlement: "premium" as const,

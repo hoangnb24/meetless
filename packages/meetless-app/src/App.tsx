@@ -710,6 +710,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     const meetingId = selectedMeetingIdRef.current;
     const version = selectionVersion.current;
     if (!active || !meetingId || selectedMeetingId !== meetingId || selectedRecording?.status !== "saved" || transcriptionConsentPendingRef.current) return;
+    const premiumVersion = premiumOperation.current ? null : premiumOperationSequence.current;
     const operation = transcriptionConsentOperation.current + 1;
     transcriptionConsentOperation.current = operation;
     transcriptionConsentPendingRef.current = true;
@@ -723,6 +724,18 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     try {
       const result = await active.client.grantTranscriptionConsent(meetingId);
       if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId || transcriptionConsentOperation.current !== operation) return;
+      if (result.outcome === "purchase_required" || result.outcome === "recovery_required") {
+        setPremiumAccess((current) => {
+          // A purchase/restore/refresh begun during this request owns its newer result.
+          if (premiumVersion === null || premiumOperationSequence.current !== premiumVersion || premiumOperation.current) return current;
+          return {
+            entitlement: "premium",
+            status: result.outcome === "purchase_required" ? "inactive" : "unavailable",
+            packages: current?.packages ?? [],
+            reason: null,
+          };
+        });
+      }
       setConsentStatus(result.consent.status);
       // This result came from the managed route, so no native provider status
       // read is needed to render it.
