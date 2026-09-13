@@ -1219,6 +1219,20 @@ describe("transcript meeting selection ordering", () => {
     expect(surface().props.chatFeatures.selection).toEqual(secondSelection);
   });
 
+  test("a clip completed during startup is not overwritten with Playing", async () => {
+    const handle = { stop: vi.fn() };
+    playCitationAudio.mockImplementation(async (_citation, _factory, _native, options) => {
+      options.onComplete();
+      return handle;
+    });
+    await renderConnected(async ({ meetingId, segmentId }: { meetingId: string; segmentId: string }) => citationResponse(meetingId, segmentId));
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    await act(async () => { await surface().props.onCitation({ meetingId: "m-1", segmentId: "segment-short" }); });
+    expect(surface().props.citationEvidence.status).toBe("completed");
+    expect(handle.stop).toHaveBeenCalledOnce();
+  });
+
   test("late same-meeting citation success stops its stale handle and cannot replace the latest playback", async () => {
     const firstPlayback = deferred<{ stop(): void }>();
     const secondPlayback = deferred<{ stop(): void }>();

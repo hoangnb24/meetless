@@ -879,8 +879,10 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         status: "resolving",
         error: null,
       });
+      let playbackSettled = false;
       const handle = await playCitationAudio(citation, undefined, undefined, {
         onComplete: () => {
+          playbackSettled = true;
           if (
             isCurrentConnection(active) &&
             citationSequence.current === sequence &&
@@ -892,6 +894,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
           }
         },
         onError: () => {
+          playbackSettled = true;
           if (
             isCurrentConnection(active) &&
             citationSequence.current === sequence &&
@@ -916,6 +919,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         handle.stop();
         return;
       }
+      if (playbackSettled) { handle.stop(); return; }
       playback.current = handle;
       setCitationEvidence((current) => current ? { ...current, status: "playing" } : current);
     } catch (reason) {

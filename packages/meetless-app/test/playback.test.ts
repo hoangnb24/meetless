@@ -18,7 +18,7 @@ describe("citation playback", () => {
   });
   test("plays the bounded citation clip from zero without a renderer filesystem path", async () => {
     const audio = {
-      readyState: 1, currentTime: 0, onloadedmetadata: null, onerror: null,
+      readyState: 1, currentTime: 0, onloadedmetadata: null, onerror: null, onended: null,
       play: vi.fn(async () => undefined), pause: vi.fn(),
     };
     const source = vi.fn(() => audio);
@@ -32,9 +32,57 @@ describe("citation playback", () => {
     expect(citationDataUrl(citation)).not.toContain("file://");
   });
 
+  test("natural end before the nominal interval completes once and removes every playback callback", async () => {
+    vi.useFakeTimers();
+    const audio = { readyState: 1, currentTime: 0, onloadedmetadata: null, onerror: null, onended: null,
+      play: vi.fn(async () => undefined), pause: vi.fn() };
+    const onComplete = vi.fn();
+    const onError = vi.fn();
+    const handle = await playCitationAudio(citation, () => audio, undefined, { onComplete, onError });
+    audio.currentTime = 1.95; // Encoded clip naturally ends before the requested 2-second range.
+    const ended = audio.onended;
+    const error = audio.onerror;
+    ended?.();
+    ended?.();
+    error?.();
+    vi.advanceTimersByTime(72_000);
+    handle.stop();
+    expect(onComplete).toHaveBeenCalledOnce();
+    expect(onError).not.toHaveBeenCalled();
+    expect(audio.pause).toHaveBeenCalledOnce();
+    expect(audio.onended).toBeNull();
+    expect(audio.onerror).toBeNull();
+    expect(audio.onloadedmetadata).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("natural end during play startup is observed without installing a later interval", async () => {
+    vi.useFakeTimers();
+    const audio = { readyState: 1, currentTime: 0, onloadedmetadata: null, onerror: null, onended: null,
+      play: vi.fn(async () => { audio.onended?.(); }), pause: vi.fn() };
+    const onComplete = vi.fn();
+    const handle = await playCitationAudio(citation, () => audio, undefined, { onComplete });
+    expect(onComplete).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    handle.stop();
+    expect(audio.pause).toHaveBeenCalledOnce();
+  });
+
+  test("manual stop suppresses later natural-end events", async () => {
+    const audio = { readyState: 1, currentTime: 0, onloadedmetadata: null, onerror: null, onended: null,
+      play: vi.fn(async () => undefined), pause: vi.fn() };
+    const onComplete = vi.fn();
+    const handle = await playCitationAudio(citation, () => audio, undefined, { onComplete });
+    const ended = audio.onended;
+    handle.stop();
+    ended?.();
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(audio.pause).toHaveBeenCalledOnce();
+  });
+
   test("settles browser playback as failed when media errors after start", async () => {
     const audio = {
-      readyState: 1, currentTime: 0, onloadedmetadata: null, onerror: null,
+      readyState: 1, currentTime: 0, onloadedmetadata: null, onerror: null, onended: null,
       play: vi.fn(async () => undefined), pause: vi.fn(),
     };
     const onComplete = vi.fn();
@@ -51,7 +99,7 @@ describe("citation playback", () => {
 
   test("ignores a browser media error after the old selection is stopped", async () => {
     const audio = {
-      readyState: 1, currentTime: 0, onloadedmetadata: null, onerror: null,
+      readyState: 1, currentTime: 0, onloadedmetadata: null, onerror: null, onended: null,
       play: vi.fn(async () => undefined), pause: vi.fn(),
     };
     const onError = vi.fn();

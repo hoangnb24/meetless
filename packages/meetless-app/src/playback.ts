@@ -6,6 +6,7 @@ export interface CitationAudioElement {
   currentTime: number;
   onloadedmetadata: (() => void) | null;
   onerror: (() => void) | null;
+  onended: (() => void) | null;
   play(): Promise<void>;
   pause(): void;
 }
@@ -51,7 +52,6 @@ export async function playCitationAudio(
   const audio = factory(citationDataUrl(citation));
   await waitForMetadata(audio);
   audio.currentTime = 0;
-  await audio.play();
   let settled = false;
   let timer: ReturnType<typeof setInterval> | null = null;
   const durationSeconds = (citation.endMs - citation.startMs) / 1_000;
@@ -60,13 +60,24 @@ export async function playCitationAudio(
     settled = true;
     if (timer !== null) clearInterval(timer);
     audio.onerror = null;
+    audio.onended = null;
+    audio.onloadedmetadata = null;
     audio.pause();
     callback?.();
   };
+  audio.onended = () => settle(options.onComplete);
   audio.onerror = () => settle(() => options.onError?.(new Error("Cited audio playback stopped unexpectedly")));
-  timer = setInterval(() => {
-    if (audio.currentTime >= durationSeconds) settle(options.onComplete);
-  }, 40);
+  try {
+    await audio.play();
+  } catch (error) {
+    settle();
+    throw error;
+  }
+  if (!settled) {
+    timer = setInterval(() => {
+      if (audio.currentTime >= durationSeconds) settle(options.onComplete);
+    }, 40);
+  }
   return {
     stop: () => settle(),
   };
