@@ -49,6 +49,14 @@ not impose a cloud duration cap on that work. Cloud preparation and upload
 begin only after the user explicitly chooses Meetless-managed transcription for
 the recording. Completing or saving a recording never uploads it automatically.
 
+Both the saved local MP3 and canonical WAV remain with every retained recording,
+including after successful transcription. Quota exhaustion, errors,
+cancellation, and elapsed time do not delete either file; only the user's
+recording or meeting deletion does. This local source retention preserves data
+for explicit transcription or retry without changing the one-logical-job,
+no-double-charge, or no-automatic-transcription rules. It does not authorize
+transcript overwrite or a new paid re-transcription flow.
+
 Before upload, check that remaining managed allowance covers the whole
 recording. If it does not, explain the limit, do not process a partial recording,
 and preserve local audio for a later explicit attempt when allowance is
@@ -127,4 +135,5 @@ quota, and an enrolled Mac. Family Sharing is not supported for V1.
 Managed audio and provider output are temporary backend data. The app states
 that they are deleted within 24 hours; a result is deleted sooner after the app
 acknowledges durable local publication. The durable transcript, citations, and
-meeting evidence remain on the user's Mac.
+meeting evidence remain on the user's Mac. This backend 24-hour deletion rule
+does not apply to the retained local MP3 or canonical WAV.

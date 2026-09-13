@@ -1,6 +1,6 @@
 # 0005 Distribute Meetless Through The Mac App Store With RevenueCat
 
-Date: 2026-08-30; amended 2026-09-03
+Date: 2026-08-30; amended 2026-09-13
 
 ## Status
 
@@ -131,6 +131,15 @@ sample count; it rejects a conflicting client duration and does not trust
 provider-reported usage. Microphone and system audio contribute to one meeting
 timeline and are not charged as two overlapping durations.
 
+The owner decision of 2026-09-13 retains both the saved local MP3 and canonical
+WAV for every retained recording, including after successful transcription.
+Neither quota exhaustion, failure, cancellation, nor elapsed time deletes these
+local files; they are deleted only with the user's recording or meeting
+deletion. This supersedes any earlier 24-hour local-WAV retention rule. Keeping
+source audio available does not change the one-logical-job, idempotent billing,
+or explicit Transcribe rules, and does not authorize automatic reruns,
+transcript overwrite, or a new paid re-transcription flow.
+
 Recording and canonical timeline preparation may remain entirely local, with no
 cloud duration cap in V1. Cloud preparation and upload begin only after an
 explicit user action to transcribe with Meetless; recording completion or save
@@ -149,8 +158,9 @@ idempotent so the logical job cannot be charged twice. V1 managed
 transcription does not provide diarization and has no user-facing 60-minute
 job cap. Any later safety ceiling requires new owner authority.
 
-Managed audio chunks, orphan uploads, provider output, and transcripts in
-transit have a maximum 24-hour TTL. A job lease lasts at most six hours. Audio
+Backend-managed audio chunks, orphan uploads, provider output, and transcripts
+in transit have a maximum 24-hour TTL. This backend expiry does not apply to
+the retained local MP3 or canonical WAV. A job lease lasts at most six hours. Audio
 is deleted after provider completion once the temporary result is recoverable;
 the result is deleted when the Mac acknowledges durable local publication or at
 TTL, whichever comes first. Cancellation schedules immediate deletion, failed

@@ -22,6 +22,15 @@ is never overwritten. Source chunks remain available until the MP3 is readable
 and the saved recording state has been durably updated. Finalization can retry
 without recording the meeting again.
 
+Every retained recording keeps both its saved local MP3 and its canonical WAV.
+Keep both files after successful transcription and while transcription is
+unattempted, blocked by quota, failed, or cancelled. Neither file expires after
+24 hours or is deleted by transcription cleanup; delete them only when the user
+deletes the recording or its meeting. The canonical WAV remains available as
+source audio for later explicit transcription or retry under the existing job
+and billing rules. Retention does not authorize automatic reruns, overwriting
+an existing transcript, or a new paid re-transcription flow.
+
 ## Transcription
 
 Stop saves local audio only. A saved recording without a transcript is a normal
