@@ -2,6 +2,7 @@ import { internalMutation, internalQuery, mutation, query } from "./_generated/s
 import { anyApi } from "convex/server";
 import { v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
 import { requirePrincipal } from "./managedAuth";
 export { requirePrincipal } from "./managedAuth";
 import { assertNonProductionFixture, readManagedRuntimeConfig } from "./managedConfig";
@@ -98,10 +99,10 @@ export const beginUpload = mutation({
     const now = Date.now();
     await reconcileManagedStateForAccount(ctx, principal.accountId, now, 32);
     const uploadKey = uploadKeyFor(principal.accountId, manifest);
-    const existing = await ctx.db
+    const existing = currentTransportUpload(await ctx.db
       .query("managedUploads")
       .withIndex("by_upload_key", (q) => q.eq("accountId", principal.accountId).eq("uploadKey", uploadKey))
-      .unique();
+      .collect());
     if (existing) {
       assertSameManifest(existing, manifest);
       if (existing.expiresAt <= now) {
@@ -111,10 +112,10 @@ export const beginUpload = mutation({
       return uploadView(ctx, existing);
     }
     const timelineKey = timelineKeyFor(principal.accountId, manifest);
-    const existingUploadForTimeline = await ctx.db
+    const existingUploadForTimeline = currentTransportUpload(await ctx.db
       .query("managedUploads")
       .withIndex("by_timeline", (q) => q.eq("accountId", principal.accountId).eq("recordingId", manifest.recordingId).eq("audioId", manifest.audioId))
-      .unique();
+      .collect());
     if (existingUploadForTimeline) assertSameManifest(existingUploadForTimeline, manifest);
     const existingJob = await ctx.db
       .query("managedJobs")
@@ -331,6 +332,81 @@ export const readSealData = internalQuery({
   },
 });
 
+/** Read-only preparation; only the explicit Retry action invokes this seam. */
+export const readUploadForRepair = internalQuery({
+  args: { sessionId: v.id("managedUploads"), tokenIdentifier: v.string() },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const principal = await principalForToken(ctx, args.tokenIdentifier);
+    const upload = await ctx.db.get(args.sessionId);
+    assertUploadOwner(upload, principal.accountId);
+    assertDeviceOwner(upload, principal.deviceId);
+    assertCurrentEntitlement(principal, Date.now());
+    const successor = await directTransportSuccessor(ctx, upload);
+    if (successor) return { upload, parts: [], successor: await uploadView(ctx, successor) };
+    await assertUnadmittedTransport(ctx, upload);
+    const parts = await ctx.db.query("managedUploadParts")
+      .withIndex("by_upload_part", (q) => q.eq("uploadId", upload._id)).collect();
+    return { upload, parts, successor: null };
+  },
+});
+
+/** Atomically retire one proven-invalid, unadmitted transport attempt. */
+export const repairCorruptUpload = internalMutation({
+  args: {
+    sessionId: v.id("managedUploads"), tokenIdentifier: v.string(), cancelGeneration: v.number(),
+    parts: v.array(v.object({
+      partId: v.id("managedUploadParts"), partNumber: v.number(), sampleOffset: v.number(),
+      sampleCount: v.number(), byteLength: v.number(), sha256: v.string(), storageId: v.id("_storage"),
+    })),
+    mismatch: v.object({
+      partNumber: v.number(), storageId: v.id("_storage"), expectedSha256: v.string(),
+      observedSha256: v.string(), observedByteLength: v.number(),
+    }),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const principal = await principalForToken(ctx, args.tokenIdentifier);
+    const upload = await ctx.db.get(args.sessionId);
+    assertUploadOwner(upload, principal.accountId);
+    assertDeviceOwner(upload, principal.deviceId);
+    const now = Date.now();
+    assertCurrentEntitlement(principal, now);
+    // Bind duplicate requests to this predecessor's direct successor, even
+    // after cleanup. A successor is never repaired into another generation.
+    const successor = await directTransportSuccessor(ctx, upload);
+    if (successor) return uploadView(ctx, successor);
+    if (upload.transportPredecessorId) throw new Error("Managed transport successor cannot create another repair generation");
+    await assertUnadmittedTransport(ctx, upload);
+    if ((upload.cancelGeneration ?? 0) !== args.cancelGeneration) throw new Error("Managed transport repair lost its cancellation fence");
+    const parts = await ctx.db.query("managedUploadParts")
+      .withIndex("by_upload_part", (q) => q.eq("uploadId", upload._id)).collect();
+    if (parts.length !== args.parts.length || parts.some((part) => {
+      const checked = args.parts.find((candidate) => candidate.partId === part._id);
+      return !checked || part.partNumber !== checked.partNumber || part.storageId !== checked.storageId || !sameStoredPartDescriptor(part, checked);
+    })) throw new Error("Managed transport parts changed during integrity verification");
+    const invalid = parts.find((part) => part.partNumber === args.mismatch.partNumber);
+    if (!invalid || invalid.storageId !== args.mismatch.storageId || invalid.sha256 !== args.mismatch.expectedSha256 ||
+      !/^[a-f0-9]{64}$/u.test(args.mismatch.observedSha256) || args.mismatch.observedSha256 === invalid.sha256 ||
+      !Number.isSafeInteger(args.mismatch.observedByteLength) || args.mismatch.observedByteLength < 0) {
+      throw new Error("Managed transport repair requires a verified stored-byte digest mismatch");
+    }
+    const manifest = normalizeManifest(uploadToManifest(upload));
+    const successorId = await ctx.db.insert("managedUploads", {
+      accountId: upload.accountId, deviceId: upload.deviceId, uploadKey: upload.uploadKey,
+      ...manifest, parts: manifest.parts.map((part) => ({ ...part })), state: "uploading", createdAt: now, expiresAt: upload.expiresAt,
+      cancelGeneration: 0, jobId: null, acknowledgedAt: null, transportPredecessorId: upload._id,
+    });
+    await ctx.db.patch(upload._id, {
+      state: "cancelled", cancelGeneration: (upload.cancelGeneration ?? 0) + 1,
+      transportSuccessorId: successorId, transportRepairEvidence: { verifiedAt: now, ...args.mismatch },
+    });
+    await ctx.scheduler.runAfter(0, anyApi.managedTranscriptionActions.cleanupUpload, { uploadId: upload._id });
+    await ctx.scheduler.runAfter(upload.expiresAt - now, anyApi.managedTranscriptionActions.cleanupUpload, { uploadId: successorId });
+    return uploadView(ctx, (await ctx.db.get(successorId))!);
+  },
+});
+
 export const identityAccount = internalQuery({
   args: { tokenIdentifier: v.string() },
   returns: v.any(),
@@ -411,8 +487,9 @@ export const admitSealedUpload = internalMutation({
           acknowledgedAt: null,
         });
         await ensureJobPartCheckpoints(ctx, existing._id, currentUpload._id, principal.accountId, principal.deviceId, manifest, true);
-        await ctx.db.patch(currentUpload._id, { state: "sealed", jobId: existing._id, expiresAt: now + TEMPORARY_TTL_MS });
-        await ctx.scheduler.runAfter(TEMPORARY_TTL_MS, anyApi.managedTranscriptionActions.cleanupUpload, { uploadId: currentUpload._id });
+        const uploadExpiresAt = currentUpload.transportPredecessorId ? currentUpload.expiresAt : now + TEMPORARY_TTL_MS;
+        await ctx.db.patch(currentUpload._id, { state: "sealed", jobId: existing._id, expiresAt: uploadExpiresAt });
+        await ctx.scheduler.runAfter(uploadExpiresAt - now, anyApi.managedTranscriptionActions.cleanupUpload, { uploadId: currentUpload._id });
         return publicJob((await ctx.db.get(existing._id))!);
       }
       await ctx.db.patch(currentUpload._id, { state: "sealed", jobId: existing._id });
@@ -1480,6 +1557,49 @@ async function reconcileJob(ctx: MutationCtx, job: any, now: number, stopped: bo
 
 async function scheduleUploadCleanup(ctx: MutationCtx, uploadId: any): Promise<void> {
   await ctx.scheduler.runAfter(0, anyApi.managedTranscriptionActions.cleanupUpload, { uploadId });
+}
+
+/** Legacy rows form a one-node chain; repairs must form one unambiguous chain. */
+function currentTransportUpload(uploads: readonly Doc<"managedUploads">[]): Doc<"managedUploads"> | null {
+  if (uploads.length === 0) return null;
+  const roots = uploads.filter((upload) => !upload.transportPredecessorId);
+  if (roots.length !== 1) throw new Error("Managed transport history has ambiguous roots");
+  const visited = new Set<string>();
+  let current = roots[0]!;
+  while (current) {
+    if (visited.has(current._id)) throw new Error("Managed transport history contains a cycle");
+    visited.add(current._id);
+    if (!current.transportSuccessorId) break;
+    const next = uploads.find((upload) => upload._id === current.transportSuccessorId);
+    if (!next || next.transportPredecessorId !== current._id || next.uploadKey !== current.uploadKey ||
+      next.expiresAt !== current.expiresAt) throw new Error("Managed transport history is inconsistent");
+    assertSameManifest(next, uploadToManifest(current));
+    current = next;
+  }
+  if (visited.size !== uploads.length) throw new Error("Managed transport history has disconnected attempts");
+  return current;
+}
+
+async function directTransportSuccessor(ctx: QueryCtx | MutationCtx, upload: Doc<"managedUploads">) {
+  if (!upload.transportSuccessorId) return null;
+  const successor = await ctx.db.get(upload.transportSuccessorId);
+  if (!successor || successor.transportPredecessorId !== upload._id ||
+    successor.accountId !== upload.accountId || successor.deviceId !== upload.deviceId ||
+    successor.uploadKey !== upload.uploadKey || successor.expiresAt !== upload.expiresAt) {
+    throw new Error("Managed transport successor identity is inconsistent");
+  }
+  assertSameManifest(successor, uploadToManifest(upload));
+  return successor;
+}
+
+async function assertUnadmittedTransport(ctx: QueryCtx | MutationCtx, upload: Doc<"managedUploads">): Promise<void> {
+  if (upload.state !== "uploading" || upload.expiresAt <= Date.now() || upload.jobId !== null) {
+    throw new Error("Managed transport repair requires an unexpired, unadmitted uploading attempt");
+  }
+  const job = await ctx.db.query("managedJobs")
+    .withIndex("by_timeline", (q) => q.eq("accountId", upload.accountId).eq("timelineKey", timelineKeyFor(upload.accountId, uploadToManifest(upload))))
+    .unique();
+  if (job) throw new Error("Managed transport repair cannot reset admitted or uncertain provider work");
 }
 
 async function uploadView(ctx: QueryCtx | MutationCtx, upload: any, parts?: readonly any[]) {

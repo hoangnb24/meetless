@@ -113,6 +113,57 @@ describe("pre-external managed upload seam", () => {
     expect(posted).toEqual(expected);
   });
 
+  test.each([false, true])("recovers old POST receipts before explicit repair, without crossing session IDs (Retry=%s)", async (repairCorruptUpload) => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-repair-order-"));
+    roots.push(root);
+    const sourcePath = path.join(root, "canonical.wav");
+    await writeFile(sourcePath, wavBytes(32_769));
+    const manifest = await buildManagedLogicalTimelineManifest({ recordingId: "repair-order", manifestSha256: sha256Text("repair-order"), sourcePath });
+    const part = manifest.parts[0]!;
+    const original: ManagedConvexUploadSession = {
+      sessionId: "original", accountId: "account", deviceId: "device", state: "uploading",
+      createdAt: START, expiresAt: START + MANAGED_TEMPORARY_DATA_TTL_MS,
+      receivedPartNumbers: [], completedAt: null, jobId: null,
+    };
+    const successor = { ...original, sessionId: "successor", receivedPartNumbers: [] as number[] };
+    const order: string[] = [];
+    const journal = new FileManagedConvexUploadJournal(path.join(root, "journal"));
+    await journal.record({ ...part, sessionId: original.sessionId, storageId: "old-corrupt-storage" });
+    const port = new ConvexManagedUploadPort({
+      mutation: async (name, args) => {
+        if (name.endsWith(":beginUpload")) return original;
+        if (name.endsWith(":registerPart")) {
+          order.push(`register:${args.sessionId}:${args.storageId}`);
+          const target = args.sessionId === original.sessionId ? original : successor;
+          (target.receivedPartNumbers as number[]).push(args.partNumber as number);
+          return { outcome: "stored" };
+        }
+        if (name.endsWith(":generateUploadUrl")) { order.push(`url:${args.sessionId}`); return "https://synthetic.invalid/upload"; }
+        throw new Error(name);
+      },
+      query: async (_name, args) => args.sessionId === original.sessionId ? original : successor,
+      action: async (name, args) => {
+        if (name.endsWith(":repairUpload")) {
+          order.push(`repair:${args.sessionId}`);
+          expect(await journal.pending(original.sessionId)).toEqual([]);
+          return successor;
+        }
+        if (!name.endsWith(":sealUpload")) throw new Error(name);
+        order.push(`seal:${args.sessionId}`);
+        return { _id: "job", uploadId: args.sessionId, recordingId: manifest.recordingId, audioId: manifest.audioId,
+          admissionId: "admission", admissionNumber: 1, status: "reserved", durationMs: manifest.durationMs,
+          sampleCount: manifest.sampleCount, billableSeconds: 3, providerResult: null };
+      },
+    }, { journal, fetch: async (_url, init) => {
+      expect(sha256Bytes(new Uint8Array(await new Response(init?.body as BodyInit).arrayBuffer()))).toBe(part.sha256);
+      return new Response(JSON.stringify({ storageId: "new-correct-storage" }));
+    } });
+    await port.uploadCanonicalTimelineFromPath({ credential: { authToken: "synthetic" }, manifest, sourcePath, repairCorruptUpload });
+    expect(order).toEqual(repairCorruptUpload
+      ? ["register:original:old-corrupt-storage", "repair:original", "url:successor", "register:successor:new-correct-storage", "seal:successor"]
+      : ["register:original:old-corrupt-storage", "seal:original"]);
+  });
+
   test("segments a large canonical timeline through generated upload URLs and resumes an immutable logical job", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-convex-upload-"));
     roots.push(root);

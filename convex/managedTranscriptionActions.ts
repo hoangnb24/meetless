@@ -2,6 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { action, internalAction } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { anyApi } from "convex/server";
 import { v } from "convex/values";
 import {
@@ -67,6 +68,40 @@ export const sealUpload = action({
       durationMs: manifest.durationMs,
       partsManifestSha256,
       cancelGeneration: data.upload.cancelGeneration ?? 0,
+    });
+  },
+});
+
+/** Explicit Retry only: actual stored bytes must prove transport corruption. */
+export const repairUpload = action({
+  args: { sessionId: v.id("managedUploads") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const tokenIdentifier = await requireActionIdentity(ctx);
+    const data = await ctx.runQuery(anyApi.managedTranscription.readUploadForRepair, { ...args, tokenIdentifier });
+    if (data.successor) return data.successor;
+    let mismatch: { partNumber: number; storageId: Id<"_storage">; expectedSha256: string; observedSha256: string; observedByteLength: number } | null = null;
+    for (const part of data.parts) {
+      const expected = data.upload.parts[part.partNumber - 1];
+      if (!expected || !sameDescriptor(expected, part)) throw new Error("Managed repair part differs from its immutable manifest");
+      const blob = await ctx.storage.get(part.storageId);
+      if (!blob || blob.size > MAX_PART_BYTES) throw new Error("Managed repair could not verify bounded stored bytes");
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      const observedSha256 = createHash("sha256").update(bytes).digest("hex");
+      if (observedSha256 !== part.sha256 && mismatch === null) {
+        mismatch = { partNumber: part.partNumber, storageId: part.storageId, expectedSha256: part.sha256, observedSha256, observedByteLength: bytes.byteLength };
+      }
+    }
+    // Missing/unreadable storage is an error, never evidence of corruption.
+    // A healthy transport is also left untouched.
+    if (!mismatch) return await ctx.runQuery(anyApi.managedTranscription.status, { sessionId: args.sessionId });
+    return await ctx.runMutation(anyApi.managedTranscription.repairCorruptUpload, {
+      ...args, tokenIdentifier, cancelGeneration: data.upload.cancelGeneration ?? 0,
+      parts: data.parts.map((part: any) => ({
+        partId: part._id, partNumber: part.partNumber, sampleOffset: part.sampleOffset,
+        sampleCount: part.sampleCount, byteLength: part.byteLength, sha256: part.sha256, storageId: part.storageId,
+      })),
+      mismatch,
     });
   },
 });

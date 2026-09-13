@@ -556,6 +556,28 @@ describe("managed transcription adapter", () => {
     expect(persisted.failureReason).not.toContain("secret");
   });
 
+  test("classifies explicit failed Retry before resetting the local transcript to pending", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-explicit-retry-"));
+    roots.push(root);
+    const fixture = await savedStore(root);
+    const upload = {
+      uploadCanonicalTimelineFromPath: vi.fn(async () => { throw new Error("upload digest mismatch"); }),
+      jobStatusForRecording: vi.fn(async () => null),
+    };
+    const service = new ConvexManagedTranscriptionService(fixture.store, {
+      lifecycle: new MeetingLifecycleCoordinator(),
+      timelinePreparer: testTimelinePreparer(path.dirname(fixture.store.filePath)),
+      managedUpload: upload as unknown as ConvexManagedUploadPort,
+    });
+    const input = { recordingId: fixture.recordingId, credential: { authToken: "synthetic" } };
+    await expect(service.transcribe(input)).rejects.toThrow("upload");
+    expect(upload.uploadCanonicalTimelineFromPath).toHaveBeenLastCalledWith(expect.objectContaining({ repairCorruptUpload: false }));
+    await service.resumeExisting(input);
+    expect(upload.uploadCanonicalTimelineFromPath).toHaveBeenCalledTimes(1);
+    await expect(service.transcribe(input)).rejects.toThrow("upload");
+    expect(upload.uploadCanonicalTimelineFromPath).toHaveBeenLastCalledWith(expect.objectContaining({ repairCorruptUpload: true }));
+  });
+
   test("rejects a tampered durable MP3 before reserving managed quota", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "meetless-managed-tamper-"));
     roots.push(root);

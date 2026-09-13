@@ -159,6 +159,18 @@ export default defineSchema({
     createdAt: v.number(),
     expiresAt: v.number(),
     cancelGeneration: v.optional(v.number()),
+    transportPredecessorId: v.optional(v.id("managedUploads")),
+    transportSuccessorId: v.optional(v.id("managedUploads")),
+    // One server-observed mismatch proves the old attempt invalid. This
+    // evidence survives normal cleanup of its temporary storage and part rows.
+    transportRepairEvidence: v.optional(v.object({
+      verifiedAt: v.number(),
+      partNumber: v.number(),
+      storageId: v.id("_storage"),
+      expectedSha256: v.string(),
+      observedSha256: v.string(),
+      observedByteLength: v.number(),
+    })),
     jobId: v.union(v.id("managedJobs"), v.null()),
     acknowledgedAt: v.union(v.number(), v.null()),
   })

@@ -446,8 +446,9 @@ export class ConvexManagedTranscriptionService {
       const savedOutput = recording.savedOutput;
       const savedIdentity = await fileIdentity(savedOutput.destination);
       if (!sameIdentity(savedIdentity, savedOutput)) throw new Error("Managed durable saved MP3 identity does not match MeetingStore");
-      const readyTranscript = (await this.store.listTranscripts(recording.meetingId))
-        .find((candidate) => candidate.recordingId === recording.id && candidate.status === "ready");
+      const existingTranscripts = await this.store.listTranscripts(recording.meetingId);
+      const retryFailedTranscript = existingTranscripts.some((candidate) => candidate.recordingId === recording.id && candidate.status === "failed");
+      const readyTranscript = existingTranscripts.find((candidate) => candidate.recordingId === recording.id && candidate.status === "ready");
       if (readyTranscript) {
         const readyJob = await this.options.managedUpload.jobStatusForRecording({
           credential: input.credential,
@@ -487,6 +488,7 @@ export class ConvexManagedTranscriptionService {
             credential: input.credential,
             manifest,
             sourcePath: timeline.path,
+            repairCorruptUpload: retryFailedTranscript,
           });
           let job = remote.job;
           logManagedTranscriptionStage("upload_ready", recording.id, transcript, job);

@@ -30,7 +30,7 @@ export function transcriptionFailure(error: unknown): { category: TranscriptionF
   if (/enroll|credential|device|auth|keychain/.test(text)) return { category: "enrollment", message: "This Mac could not verify managed access. Restore purchases, then select Transcribe again." };
   if (/publish|publication|settle|settlement|acknowledge/.test(text)) return { category: "publication", message: "The transcript could not be saved locally. Check status or retry to recover the existing result." };
   if (/provider|openai/.test(text)) return { category: "provider", message: "The transcription service could not complete this recording. The saved audio remains local." };
-  if (/upload/.test(text)) return { category: "upload", message: "Audio upload did not finish. Check the connection, then retry transcription." };
+  if (/upload/.test(text)) return { category: "upload", message: "Audio upload did not finish. Your saved audio is safe. Retry transcription to try again." };
   return { category: "connection", message: "Transcription could not connect. Check the connection, then try again." };
 }
 

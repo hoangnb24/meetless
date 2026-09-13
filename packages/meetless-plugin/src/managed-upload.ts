@@ -1045,6 +1045,7 @@ export interface ManagedConvexUploadFunctionNames {
   readonly status: string;
   readonly cancel: string;
   readonly seal: string;
+  readonly repair: string;
   readonly runProvider: string;
   readonly settle: string;
   readonly jobStatus: string;
@@ -1059,6 +1060,7 @@ const DEFAULT_CONVEX_FUNCTIONS: ManagedConvexUploadFunctionNames = {
   status: "managedTranscription:status",
   cancel: "managedTranscription:cancelUpload",
   seal: "managedTranscriptionActions:sealUpload",
+  repair: "managedTranscriptionActions:repairUpload",
   runProvider: "managedTranscriptionActions:runProvider",
   settle: "managedTranscription:settleJob",
   jobStatus: "managedTranscription:jobStatus",
@@ -1122,6 +1124,8 @@ export class ConvexManagedUploadPort {
     credential: ManagedConvexCredential;
     manifest: ManagedLogicalTimelineManifest;
     sourcePath: string;
+    /** Set only by an explicit Retry of a previously failed local transcript. */
+    repairCorruptUpload?: boolean;
   }): Promise<ManagedConvexUploadResult> {
     const manifest = validateManagedLogicalTimelineManifest(input.manifest);
     let session = await this.begin({ credential: input.credential, manifest });
@@ -1138,6 +1142,15 @@ export class ConvexManagedUploadPort {
     if (session.state === "uploading") {
       await this.recoverPendingParts(input.credential, session, manifest);
       session = await this.status({ credential: input.credential, sessionId: session.sessionId });
+      if (input.repairCorruptUpload && session.receivedPartNumbers.length > 0) {
+        // POST receipts must first register against their original session.
+        // The server alone may prove corruption and return its fixed successor.
+        const predecessorId = session.sessionId;
+        this.authenticate(input.credential);
+        session = parseConvexSession(await this.client.action(this.functions.repair, { sessionId: predecessorId }));
+        if (session.sessionId !== predecessorId) await this.journal.clear(predecessorId);
+        session = await this.status({ credential: input.credential, sessionId: session.sessionId });
+      }
       const received = new Set(session.receivedPartNumbers);
       for (const part of manifest.parts) {
         if (received.has(part.partNumber)) continue;
