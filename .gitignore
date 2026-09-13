@@ -11,6 +11,7 @@ packages/meetless-app/ios/
 packages/meetless-app/android/
 coverage/
 .meetless-runtime/
+.artifacts/
 native/**/.build/
 *.tsbuildinfo
 
