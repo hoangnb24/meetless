@@ -277,6 +277,9 @@ describe("managed transcription composition", () => {
           return job;
         }
         if (name.endsWith(":runProvider")) {
+          if (!manifest || convexCalls.filter((call) => call.kind === "action" && call.name.endsWith(":runProvider")).length < manifest.parts.length) {
+            return { ...job, status: "reserved", providerResult: null };
+          }
           const text = "Convex local provider publication";
           job = {
             ...job,

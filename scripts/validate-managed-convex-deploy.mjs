@@ -5,6 +5,7 @@ const names = {
   allowanceSeconds: "MEETLESS_MANAGED_ALLOWANCE_SECONDS",
   allowanceSource: "MEETLESS_MANAGED_ALLOWANCE_SOURCE",
   providerMode: "MEETLESS_MANAGED_PROVIDER_MODE",
+  openAiApiKey: "OPENAI_API_KEY",
   appleVerifierMode: "MEETLESS_APPLE_VERIFIER_MODE",
   authIssuer: "MEETLESS_AUTH_ISSUER",
   authAudience: "MEETLESS_AUTH_AUDIENCE",
@@ -30,6 +31,7 @@ export function validateManagedConvexDeploymentEnvironment(env = process.env, op
   if (!/^[1-9][0-9]*$/u.test(allowanceText) || !Number.isSafeInteger(Number(allowanceText))) throw new Error(`${names.allowanceSeconds} must be a positive safe whole-second value`);
   const allowanceSource = required(names.allowanceSource);
   const providerMode = required(names.providerMode);
+  const openAiApiKey = String(env[names.openAiApiKey] ?? "").trim();
   const appleVerifierMode = required(names.appleVerifierMode);
   const issuer = required(names.authIssuer);
   const audience = required(names.authAudience);
@@ -41,6 +43,7 @@ export function validateManagedConvexDeploymentEnvironment(env = process.env, op
   const environment = required(names.revenueCatEnvironment);
   const signingSecret = String(env[names.revenueCatSigningSecret] ?? "").trim();
   if (providerMode !== "fake" && providerMode !== "real") throw new Error(`${names.providerMode} is unsupported`);
+  if (providerMode === "real" && !openAiApiKey) throw new Error(`${names.openAiApiKey} is required for the real backend provider (docs/product/monetization.md)`);
   if (appleVerifierMode !== "fixture" && appleVerifierMode !== "app-store-server-api") throw new Error(`${names.appleVerifierMode} is unsupported`);
   if (revenueCatAuthMode !== "hmac") throw new Error(`${names.revenueCatAuthMode} must be hmac; authorization headers are not accepted`);
   if (environment !== "SANDBOX" && environment !== "PRODUCTION") throw new Error(`${names.revenueCatEnvironment} is unsupported`);
@@ -62,7 +65,7 @@ export function validateManagedConvexDeploymentEnvironment(env = process.env, op
     }
   } else {
     if (allowanceSource !== (mode === "hosted-development" ? "hosted-development-test" : "local-test")) throw new Error("non-production allowance source label is invalid");
-    if (providerMode !== "fake") throw new Error("non-production deployment must select the fake transcription provider");
+    if (mode === "test" && providerMode !== "fake") throw new Error("test deployment must select the fake transcription provider");
     if (environment !== "SANDBOX") throw new Error("non-production RevenueCat environment must be SANDBOX");
   }
   return { mode, allowanceSeconds: Number(allowanceText), allowanceSource, providerMode, appleVerifierMode, issuer, audience, keyId };

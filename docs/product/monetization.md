@@ -68,6 +68,16 @@ be shorter. Recording-internal capture chunks, these upload/provider chunks,
 and the single logical billing timeline are distinct concepts. Physical
 segmentation does not create multiple billable timelines or managed jobs.
 
+Within one explicit transcription attempt, the backend sends each physical
+part to OpenAI at most once and awaits that part's response within the bounded
+provider action. If a part times out or otherwise cannot return successfully,
+the logical transcription fails, the saved local audio remains intact, and the
+app says that transcription cannot be completed. The backend must not
+automatically resubmit a provider call whose outcome is uncertain, and V1 does
+not add a separate per-part recovery product. This decision neither adds nor
+removes the existing user-initiated Retry control; any change to that control
+or its cost semantics requires new owner authority.
+
 The backend accepts an immutable manifest for that logical timeline and
 rejects missing, duplicate, or overlapping parts and non-contiguous sample
 offsets or counts. It derives duration from accepted 16 kHz mono PCM16 sample

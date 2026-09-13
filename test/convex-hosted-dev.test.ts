@@ -19,7 +19,7 @@ import {
   encodeBase64Url,
   verifyP256Signature,
 } from "../convex/deviceAuth";
-import { readManagedRuntimeConfig } from "../convex/managedConfig";
+import { readManagedOpenAICredential, readManagedRuntimeConfig } from "../convex/managedConfig";
 import { planManagedDeviceEnrollment, planManagedQuotaEnrollment } from "../convex/managedQuotaPolicy";
 import {
   parseRevenueCatWebhook,
@@ -258,6 +258,47 @@ describe("hosted-development Convex boundaries", () => {
     expect(readManagedRuntimeConfig(environment({
       MEETLESS_MANAGED_ALLOWANCE_SOURCE: "hosted-development-test",
     })).mode).toBe("hosted-development");
+    const hostedRealSource = environment({
+      MEETLESS_MANAGED_PROVIDER_MODE: "real",
+      OPENAI_API_KEY: "hosted-backend-secret-value",
+    });
+    expect(readManagedRuntimeConfig(hostedRealSource)).toMatchObject({
+      mode: "hosted-development",
+      providerMode: "real",
+    });
+    expect(readManagedRuntimeConfig(hostedRealSource)).not.toHaveProperty("openAiApiKey");
+    expect(JSON.stringify(readManagedRuntimeConfig(hostedRealSource))).not.toContain("hosted-backend-secret-value");
+    expect(() => readManagedRuntimeConfig(environment({
+      MEETLESS_DEPLOYMENT_MODE: "test",
+      MEETLESS_MANAGED_ALLOWANCE_SOURCE: "local-test",
+      MEETLESS_MANAGED_PROVIDER_MODE: "real",
+      OPENAI_API_KEY: "test-backend-secret-value",
+    }))).toThrow(/test must keep the deterministic fake/u);
+    expect(() => readManagedRuntimeConfig(environment({
+      MEETLESS_DEPLOYMENT_MODE: "production",
+      MEETLESS_MANAGED_ALLOWANCE_SOURCE: "production-config",
+      MEETLESS_MANAGED_PROVIDER_MODE: "real",
+      MEETLESS_APPLE_VERIFIER_MODE: "app-store-server-api",
+      MEETLESS_APPLE_ROOT_CERTIFICATES_BASE64: "fixture-root",
+      MEETLESS_REVENUECAT_ENVIRONMENT: "PRODUCTION",
+      MEETLESS_AUTH_ISSUER: "https://api.meetless.app",
+      MEETLESS_AUTH_KEY_ID: "managed-production-key",
+    }))).toThrow(/OPENAI_API_KEY/u);
+    const productionSource = environment({
+      MEETLESS_DEPLOYMENT_MODE: "production",
+      MEETLESS_MANAGED_ALLOWANCE_SOURCE: "production-config",
+      MEETLESS_MANAGED_PROVIDER_MODE: "real",
+      OPENAI_API_KEY: "backend-secret-value",
+      MEETLESS_APPLE_VERIFIER_MODE: "app-store-server-api",
+      MEETLESS_APPLE_ROOT_CERTIFICATES_BASE64: "fixture-root",
+      MEETLESS_REVENUECAT_ENVIRONMENT: "PRODUCTION",
+      MEETLESS_AUTH_ISSUER: "https://api.meetless.app",
+      MEETLESS_AUTH_KEY_ID: "managed-production-key",
+    });
+    const productionConfig = readManagedRuntimeConfig(productionSource);
+    expect(productionConfig).not.toHaveProperty("openAiApiKey");
+    expect(JSON.stringify(productionConfig)).not.toContain("backend-secret-value");
+    expect(readManagedOpenAICredential(productionSource)).toBe("backend-secret-value");
   });
 
   test("creates a bound one-use challenge and verifies a nonpersistent P-256 signature", async () => {
@@ -436,5 +477,38 @@ describe("hosted-development Convex boundaries", () => {
     expect(negative.status).not.toBe(0);
     expect(negative.stderr).toContain("production deployment preflight");
     expect(() => validateManagedConvexDeploymentEnvironment(environment({ MEETLESS_MANAGED_ALLOWANCE_SECONDS: "43" }))).not.toThrow();
+    expect(() => validateManagedConvexDeploymentEnvironment(environment({
+      MEETLESS_MANAGED_PROVIDER_MODE: "real",
+    }))).toThrow(/OPENAI_API_KEY/u);
+    const hostedReal = validateManagedConvexDeploymentEnvironment(environment({
+      MEETLESS_MANAGED_PROVIDER_MODE: "real",
+      OPENAI_API_KEY: "hosted-backend-secret-value",
+    }));
+    expect(hostedReal).toMatchObject({ mode: "hosted-development", providerMode: "real" });
+    expect(hostedReal).not.toHaveProperty("openAiApiKey");
+    expect(JSON.stringify(hostedReal)).not.toContain("hosted-backend-secret-value");
+    expect(() => validateManagedConvexDeploymentEnvironment(environment({
+      MEETLESS_DEPLOYMENT_MODE: "test",
+      MEETLESS_MANAGED_ALLOWANCE_SOURCE: "local-test",
+      MEETLESS_MANAGED_PROVIDER_MODE: "real",
+      OPENAI_API_KEY: "test-backend-secret-value",
+    }))).toThrow(/test deployment must select the fake/u);
+    const production = validateManagedConvexDeploymentEnvironment(environment({
+      MEETLESS_DEPLOYMENT_MODE: "production",
+      MEETLESS_MANAGED_ALLOWANCE_SOURCE: "production-config",
+      MEETLESS_MANAGED_PROVIDER_MODE: "real",
+      OPENAI_API_KEY: "backend-secret-value",
+      MEETLESS_APPLE_VERIFIER_MODE: "app-store-server-api",
+      MEETLESS_APPLE_ROOT_CERTIFICATES_BASE64: "fixture-root",
+      MEETLESS_REVENUECAT_ENVIRONMENT: "PRODUCTION",
+      MEETLESS_AUTH_ISSUER: "https://api.meetless.app",
+      MEETLESS_AUTH_KEY_ID: "managed-production-key",
+      MEETLESS_AUTH_PUBLIC_JWK: JSON.stringify({
+        kty: "EC", crv: "P-256", x: "x", y: "y", kid: "managed-production-key", alg: "ES256", use: "sig",
+      }),
+    }), { production: true });
+    expect(production).toMatchObject({ mode: "production", providerMode: "real" });
+    expect(production).not.toHaveProperty("openAiApiKey");
+    expect(JSON.stringify(production)).not.toContain("backend-secret-value");
   });
 });

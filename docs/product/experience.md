@@ -532,7 +532,10 @@ consent is needed. Saving alone does not enter this flow.
 
 **Required information**
 
-- The saved MP3 will be sent to OpenAI for transcription.
+- The saved MP3 will be sent to Meetless Cloud, which uses OpenAI to create the
+  transcript.
+- Meetless manages the transcription provider and credential; the user does not
+  need to choose a provider or enter a key for this route.
 - The local recording remains saved if the user does not allow transcription.
 - Ask is unavailable until a transcript is ready.
 
@@ -551,6 +554,10 @@ untranscribed.
 - Grant pending.
 - Grant failed with retry.
 - Granted and transcription starting.
+- Transcription could not be completed because one bounded cloud part did not
+  return successfully. Keep the saved audio available and show the normal
+  transcription failure; do not expose an internal per-part recovery flow or
+  silently resend the uncertain provider call.
 
 **Exit / transition**
 
