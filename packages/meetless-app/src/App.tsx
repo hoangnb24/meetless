@@ -1099,10 +1099,8 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const interactive = mode === "desktop" || hostConnectionStatus === "online";
   const recordingEntryAvailable = mode === "desktop" && hostConnectionStatus === "online" &&
     ["idle", "saved", "failed"].includes(recordingStatus ?? "");
-  const selectedMeetingStatus = meetings.find((meeting) => meeting.id === selectedMeetingId)?.status ?? null;
   const deleteDisabled = !interactive || deletePending || chatLoading || chatThread?.status === "running" ||
     transcriptLoading || transcript?.status === "pending" || transcript?.status === "transcribing" ||
-    selectedMeetingStatus === "processing" ||
     (recordingMeetingId === selectedMeetingId &&
       ["recording", "interrupted", "recoverable", "finalizing"].includes(recordingStatus ?? ""));
   return (

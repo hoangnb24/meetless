@@ -531,6 +531,52 @@ describe("transcript meeting selection ordering", () => {
     expect(surface().props.selectedMeetingId).toBeNull();
   });
 
+  test.each(["untranscribed", "quota-failed"])("deletes an idle saved %s meeting through confirmation", async (state) => {
+    const detail = transcriptResponse("m-1", "segment", "");
+    const saved = { ...meeting("m-1"), status: "processing" as const };
+    const transcript = state === "untranscribed" ? null : { ...detail.transcript, status: "failed", segments: [],
+      quotaFailure: { version: 1, kind: "managed_quota_insufficient", requiredSeconds: 30, remainingSeconds: 0, checkedAt: 1, resetAt: null } };
+    recordingState.current = { enabled: true, status: { meetingId: "m-1", status: "saved" }, displayElapsedMs: 1000 };
+    let deleted = false;
+    const deleteMeeting = vi.fn(async () => { deleted = true; return { meetingId: "m-1", outcome: "deleted", reason: null }; });
+    connectMeetlessClient.mockResolvedValue({ client: {
+      listMeetings: async () => deleted ? [] : [saved],
+      getMeetingTranscript: async () => ({ ...detail, meeting: saved, transcript,
+        transcription: { outcome: state === "untranscribed" ? "not_started" : "interrupted", retryEligible: true, failureCategory: null, message: null } }),
+      deleteMeeting,
+    }, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    expect(surface().props.deleteDisabled).toBe(false);
+    await act(async () => { surface().props.onRequestDeleteMeeting("m-1"); });
+    expect(surface().props.deleteConfirmationMeetingId).toBe("m-1");
+    expect(deleteMeeting).not.toHaveBeenCalled();
+    await act(async () => { await surface().props.onConfirmDeleteMeeting(); });
+    expect(deleteMeeting).toHaveBeenCalledExactlyOnceWith("m-1");
+    expect(surface().props.selectedMeetingId).toBeNull();
+    expect(surface().props.transcript).toBeNull();
+    expect(surface().props.meetings).toEqual([]);
+  });
+
+  test.each(["finalizing", "pending", "transcribing", "ask"])("keeps Delete disabled during %s work even without the broad meeting status guard", async (work) => {
+    const detail = transcriptResponse("m-1", "segment", "text");
+    recordingState.current = { enabled: true, status: { meetingId: "m-1", status: work === "finalizing" ? "finalizing" : "saved" }, displayElapsedMs: 1000 };
+    const deleteMeeting = vi.fn();
+    connectMeetlessClient.mockResolvedValue({ client: {
+      listMeetings: async () => [detail.meeting],
+      getMeetingTranscript: async () => ({ ...detail, transcript: { ...detail.transcript, status: work === "pending" || work === "transcribing" ? work : "ready" } }),
+      listChatProviders: async () => ({ providers: [] }),
+      getMeetingChat: async () => ({ ...chatResponse(), status: work === "ask" ? "running" : "ready" }),
+      deleteMeeting,
+    }, close: async () => undefined, serverInfo: null });
+    await act(async () => { renderer = create(<AppContent mode="desktop" />); });
+    const surface = () => renderer!.root.findByType("MeetingListSurface");
+    await act(async () => { await surface().props.onOpenTranscript("m-1"); });
+    expect(surface().props.deleteDisabled).toBe(true);
+    expect(deleteMeeting).not.toHaveBeenCalled();
+  });
+
   test("keeps delete disabled for a genuinely active recording", async () => {
     const active = { ...meeting("m-active"), status: "recording" as const };
     const deleteMeeting = vi.fn();
