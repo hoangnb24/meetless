@@ -13,7 +13,7 @@ preserved, and accepted deltas integrated separately.
 
 ### Current execution
 
-- **#13 bounded Ask work — 2026-09-13:** owner authorized Ask using the
+- **#13 complete by owner scope decision — 2026-09-13:** owner authorized Ask using the
   existing ready Test and approved macOS folder selection/bookmarks to reuse
   existing coding-agent configuration. Codex reuse and Ask passed on actual MAS
   manifest `848b22f6`; the final playback correction passed on `4936c9c2`.
@@ -39,8 +39,12 @@ preserved, and accepted deltas integrated separately.
   Claude Keychain/separate configuration access remains unresolved, and OpenCode
   is not installed on the test machine; neither integration is claimed ready.
   Independent reviewer and Lead accept the bounded actual Ask and final playback
-  results on their respective identified artifacts. #13 stays open because the
-  full same-candidate journey has not been repeated. See the
+  results on their respective identified artifacts. The owner subsequently
+  confirmed recording complete and personally verified new Ask messages survive
+  quit/relaunch, then explicitly directed closing #13. The new Youtube
+  transcription quota failure and outstanding quota validation remain in #19.
+  This owner scope decision removes the same-candidate rerun requirement for
+  closing #13; it does not claim the quota failure was fixed. See the
   [current validation record](../history/issue-13-provider-access-validation-2026-09-13.md)
   and [initial failure record](../history/issue-13-ask-validation-2026-09-13.md).
 
