@@ -10,6 +10,9 @@ function environment(overrides: Record<string, string | undefined> = {}) {
     MEETLESS_MANAGED_PROVIDER_MODE: "real",
     OPENAI_API_KEY: "fixture-key",
     MEETLESS_APPLE_VERIFIER_MODE: "app-store-server-api",
+    MEETLESS_APPLE_API_ISSUER_ID: "fixture-issuer",
+    MEETLESS_APPLE_API_KEY_ID: "fixture-key-id",
+    MEETLESS_APPLE_API_PRIVATE_KEY_PKCS8: "-----BEGIN PRIVATE KEY-----\nfixture\n-----END PRIVATE KEY-----",
     MEETLESS_APPLE_APP_ID: "123456789",
     MEETLESS_APPLE_ROOT_CERTIFICATES_BASE64: "fixture-root",
     MEETLESS_AUTH_ISSUER: "https://api.meetless.app",
@@ -50,5 +53,18 @@ describe("explicit store-testing allowance configuration", () => {
       expect(readManagedRuntimeConfig(environment(overrides)).allowanceSeconds).toBe(Number(overrides.MEETLESS_MANAGED_ALLOWANCE_SECONDS));
       expect(() => validateManagedConvexDeploymentEnvironment(environment(overrides))).not.toThrow();
     }
+  });
+});
+
+
+describe("Apple status credential deployment preflight", () => {
+  test.each(["MEETLESS_APPLE_API_ISSUER_ID", "MEETLESS_APPLE_API_KEY_ID", "MEETLESS_APPLE_API_PRIVATE_KEY_PKCS8"])("rejects missing %s for both store backends without leaking secrets", name => {
+    for (const overrides of [{}, { MEETLESS_DEPLOYMENT_MODE: "production", MEETLESS_REVENUECAT_ENVIRONMENT: "PRODUCTION", MEETLESS_MANAGED_ALLOWANCE_SOURCE: "production-config", MEETLESS_MANAGED_ALLOWANCE_SECONDS: "28800" }]) {
+      expect(() => validateManagedConvexDeploymentEnvironment(environment({ ...overrides, [name]: undefined }))).toThrow(name);
+    }
+  });
+  test("rejects malformed private key and omits credentials from success output", () => {
+    expect(() => validateManagedConvexDeploymentEnvironment(environment({ MEETLESS_APPLE_API_PRIVATE_KEY_PKCS8: "bad-key" }))).toThrow(/must contain a PKCS8/);
+    expect(JSON.stringify(validateManagedConvexDeploymentEnvironment(environment()))).not.toContain("BEGIN PRIVATE KEY");
   });
 });

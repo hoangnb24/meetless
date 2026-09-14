@@ -76,6 +76,13 @@ export function validateManagedConvexDeploymentEnvironment(env = process.env, op
     if (mode === "test" && providerMode !== "fake") throw new Error("test deployment must select the fake transcription provider");
     if (environment !== "SANDBOX") throw new Error("non-production RevenueCat environment must be SANDBOX");
   }
+  if (mode === "production" || allowanceSource === "store-testing-sandbox") {
+    // ADR 0005 requires Apple status verification before acknowledging webhooks.
+    for (const name of ["MEETLESS_APPLE_API_ISSUER_ID", "MEETLESS_APPLE_API_KEY_ID", "MEETLESS_APPLE_API_PRIVATE_KEY_PKCS8"]) {
+      if (!String(env[name] ?? "").trim()) throw new Error(`${name} is required for Apple webhook reconciliation (docs/decisions/0005-mac-app-store-and-revenuecat.md); configure the backend Apple API credential before deployment`);
+    }
+    if (!String(env.MEETLESS_APPLE_API_PRIVATE_KEY_PKCS8).includes("BEGIN PRIVATE KEY")) throw new Error("MEETLESS_APPLE_API_PRIVATE_KEY_PKCS8 must contain a PKCS8 private key");
+  }
   return { mode, allowanceSeconds: Number(allowanceText), allowanceSource, providerMode, appleVerifierMode, issuer, audience, keyId };
 }
 
