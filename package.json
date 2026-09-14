@@ -20,7 +20,7 @@
     "build:native": "node scripts/build-native.mjs",
     "build:meetless": "tsc -b tsconfig.build.json",
     "build:app": "npm run export --workspace=@meetless/app",
-    "build": "npm run build:native && npm run build:paseo && npm run build:meetless && npm run build:app",
+    "build": "npm run build:paseo && npm run build:meetless && npm run build:native && npm run build:app",
     "typecheck": "npm run build:paseo:types && tsc -b tsconfig.build.json --pretty false && npm run typecheck --workspace=@meetless/app",
     "pretest": "npm run build:native && npm run build:paseo:types && npm run build:meetless",
     "test": "vitest run --config vitest.config.ts",
