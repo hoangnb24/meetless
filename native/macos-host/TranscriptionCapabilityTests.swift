@@ -785,8 +785,36 @@ private func testMasGateArchivedRetainedRootDeviceAssurance() {
   }
 }
 
+private var stagedNativeProcessFixture: (root: URL, executable: String)?
+
 private func nativeProcessFixtureExecutable() throws -> String {
-  try inspectMeetlessProcessIdentity(getpid()).configuredPath
+  let sourceIdentity = try inspectMeetlessProcessIdentity(getpid())
+  let source = sourceIdentity.configuredPath
+  let foundationPath = URL(fileURLWithPath: source).resolvingSymlinksInPath().standardizedFileURL.path
+  guard foundationPath != source else { return source }
+  // Foundation Process substitutes /tmp for /private/tmp in argv[0]. Keep
+  // fixture producers on an unaliased path so exact production argv checks
+  // remain intact, including when the test host itself runs from /private/tmp.
+  if let stagedNativeProcessFixture { return stagedNativeProcessFixture.executable }
+  let root = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".meetless-native-process-fixture-\(UUID().uuidString)")
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+  let executable = root.appendingPathComponent("fixture-host").path
+  do {
+    try FileManager.default.copyItem(atPath: source, toPath: executable)
+    let copied = try executableRegularFileIdentity(atPath: executable)
+    guard copied.byteLength == sourceIdentity.byteLength, copied.sha256 == sourceIdentity.sha256 else {
+      throw NSError(domain: "MeetlessHostTests", code: 73, userInfo: [NSLocalizedDescriptionKey: "staged fixture must match the currently running test binary bytes"])
+    }
+    guard URL(fileURLWithPath: executable).resolvingSymlinksInPath().standardizedFileURL.path == executable else {
+      throw NSError(domain: "MeetlessHostTests", code: 72, userInfo: [NSLocalizedDescriptionKey: "fixture executable path must preserve exact argv identity"])
+    }
+  } catch {
+    try? FileManager.default.removeItem(at: root)
+    throw error
+  }
+  stagedNativeProcessFixture = (root, executable)
+  return executable
 }
 
 private func fixtureHostIdentity() throws -> MeetlessHostIdentityAttestation {
@@ -1006,6 +1034,28 @@ private func nativeProcessIsAlive(_ pid: pid_t) -> Bool {
   guard pid > 1 else { return false }
   if kill(pid, 0) == 0 { return true }
   return errno == EPERM
+}
+
+private func testPhysicalProcessIdentityInTemporaryDirectory() throws {
+  let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("meetless-physical-process-\(UUID().uuidString)")
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let executable = root.appendingPathComponent("fixture-host")
+  try FileManager.default.copyItem(atPath: inspectMeetlessProcessIdentity(getpid()).configuredPath, toPath: executable.path)
+  var environment = ProcessInfo.processInfo.environment
+  environment["MEETLESS_NATIVE_PROCESS_FIXTURE"] = "capture-helper"
+  let child = Process()
+  child.executableURL = executable
+  child.environment = environment
+  child.standardInput = FileHandle.nullDevice
+  child.standardOutput = FileHandle.nullDevice
+  child.standardError = FileHandle.nullDevice
+  try child.run()
+  defer { terminateNativeProcessFixture(child.processIdentifier) }
+  let identity = try inspectMeetlessProcessIdentity(child.processIdentifier)
+  check(identity.configuredPath == executable.path, "kernel process path must bind the physical temporary executable")
+  check(identity.realPath == executable.path, "physical process identity must not substitute the /tmp alias for /private/tmp")
+  check(identity.configuredPath == identity.realPath, "strict configured/real path identity must hold for a genuine temporary executable")
 }
 
 private func testNativeProcessProtocolTransport() throws {
@@ -4680,6 +4730,10 @@ private struct TranscriptionCapabilityTests {
       FileHandle.standardError.write(Data("FAIL: strict MAS host handoff decoding: \(error)\n".utf8))
     }
     testMasGateArchivedRetainedRootDeviceAssurance()
+    do { try testPhysicalProcessIdentityInTemporaryDirectory() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: physical temporary process identity: \(error)\n".utf8))
+    }
     do { try testNativeProcessProtocolTransport() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: native process protocol transport: \(error)\n".utf8))
@@ -4794,6 +4848,7 @@ private struct TranscriptionCapabilityTests {
       FileHandle.standardError.write(Data("FAIL: provider folder access: \(error)\n".utf8))
     }
 
+    if let stagedNativeProcessFixture { try? FileManager.default.removeItem(at: stagedNativeProcessFixture.root) }
     if failures > 0 { exit(1) }
     print("Meetless native transcription boundary tests passed")
   }

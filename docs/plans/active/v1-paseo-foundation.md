@@ -193,6 +193,33 @@ TestFlight upload has been accepted.
   actual producer uses a detached checkout at this exact commit, pinned Paseo
   source from the verified bundle and genuine npm workspace dependencies. No
   root `node_modules` symlink or development env copy is allowed.
+- Isolated checkout `/private/tmp/meetless-production-2f6248a` is detached at
+  `2f6248af5440b031fad0cb2eb72bec35f431a654`. Verified pinned Paseo source/bundle;
+  actual `npm ci` installed 1,277 packages, all 17 workspace links resolve inside
+  this checkout, source status is clean and no development env was copied.
+  Actual package-source snapshot:
+  `cee2ce498db470e558f31802c8ab0751118dad0d605ca237bf2f7bb76ed1c3e9`.
+  Actual isolated producer attempt
+  `.artifacts/macos-mas-distribution/20260914T151337692Z/` FAILED in native debug
+  attestation tests before app composition. Unlike the earlier missing-output
+  failure, compiled JavaScript and native outputs exist; source is unchanged.
+  Keychain locked/search list restored are confirmed in the retained result.
+  Native author owns diagnosis of this isolated-path failure; no checks are
+  weakened or skipped and no signed/uploadable package is accepted.
+
+
+- Native isolated-path correction accepted by independent reviewer and Lead:
+  process inspection now uses Darwin `realpath` rather than Foundation alias
+  normalization. The test producer stages an exact byte-verified fixture only
+  when Foundation would rewrite its argv path; strict argv/metadata/hash checks
+  remain intact. Direct `/private/tmp` identity regression is retained.
+  Full native suite executed from a real `/private/tmp` binary passed, including
+  real Node attestation and negative identity cases. Evidence:
+  `.artifacts/production-preparation/native-private-tmp-path-proof-YKveiD/result.json`.
+  Accepted source SHA-256: `ae78c9aa033c5df327a73249ec555cbec6484e9ca6888b2dcf80e134e849dac9`
+  (inspector), `2420bd3e2f4c02d55b42c1d73f92064ec4407348bbd03cb585a7d2ee28161591`
+  (tests). This accepts source and the path regression only; a fresh isolated
+  production producer and artifact review remain required.
 
 Next: complete package-validator review, build/sign the exact successor and
 validate its payload, then authenticate/upload. #22–#27 retain their original

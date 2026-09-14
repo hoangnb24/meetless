@@ -1402,7 +1402,16 @@ func inspectMeetlessProcessIdentity(_ pid: pid_t) throws -> MeetlessProcessIdent
     )
   }
   let executablePath = String(decoding: pathBuffer.prefix(Int(pathLength)), as: UTF8.self)
-  let realPath = URL(fileURLWithPath: executablePath).resolvingSymlinksInPath().standardizedFileURL.path
+  // Foundation standardization rewrites /private/tmp to its /tmp alias.
+  // Process identity needs the physical path reported by the kernel instead.
+  guard let resolvedPath = Darwin.realpath(executablePath, nil) else {
+    throw MeetlessProcessInspectionError.unavailable(
+      meetlessNormalizedOSCode(errno),
+      source: .processPath
+    )
+  }
+  let realPath = String(cString: resolvedPath)
+  free(resolvedPath)
   var information = stat()
   guard lstat(executablePath, &information) == 0 else {
     throw MeetlessProcessInspectionError.unavailable(
