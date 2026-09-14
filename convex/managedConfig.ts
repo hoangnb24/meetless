@@ -35,6 +35,9 @@ export const MANAGED_ENVIRONMENT_VARIABLES = {
   authPrivateKey: "MEETLESS_AUTH_PRIVATE_KEY_PKCS8",
   authPublicJwk: "MEETLESS_AUTH_PUBLIC_JWK",
   appleAppId: "MEETLESS_APPLE_APP_ID",
+  appleApiIssuerId: "MEETLESS_APPLE_API_ISSUER_ID",
+  appleApiKeyId: "MEETLESS_APPLE_API_KEY_ID",
+  appleApiPrivateKeyPkcs8: "MEETLESS_APPLE_API_PRIVATE_KEY_PKCS8",
   appleRootCertificates: "MEETLESS_APPLE_ROOT_CERTIFICATES_BASE64",
   revenueCatAuthMode: "MEETLESS_REVENUECAT_AUTH_MODE",
   revenueCatSigningSecret: "MEETLESS_REVENUECAT_WEBHOOK_SIGNING_SECRET",
@@ -60,6 +63,9 @@ export interface ManagedRuntimeConfig {
   readonly authPublicJwk: string;
   /** Numeric App Store Connect Apple ID; required for production verification. */
   readonly appleAppId: number | null;
+  readonly appleApiIssuerId: string | null;
+  readonly appleApiKeyId: string | null;
+  readonly appleApiPrivateKeyPkcs8: string | null;
   /** Comma-separated base64 DER Apple root certificates; absent for fixtures. */
   readonly appleRootCertificatesBase64: string | null;
   readonly revenueCatAuthMode: ManagedRevenueCatAuthMode;
@@ -181,6 +187,9 @@ export function readManagedRuntimeConfig(
     authPrivateKeyPkcs8,
     authPublicJwk,
     appleAppId,
+    appleApiIssuerId: optional(source, MANAGED_ENVIRONMENT_VARIABLES.appleApiIssuerId),
+    appleApiKeyId: optional(source, MANAGED_ENVIRONMENT_VARIABLES.appleApiKeyId),
+    appleApiPrivateKeyPkcs8: optional(source, MANAGED_ENVIRONMENT_VARIABLES.appleApiPrivateKeyPkcs8)?.replace(/\\n/gu, "\n") ?? null,
     appleRootCertificatesBase64,
     revenueCatAuthMode,
     revenueCatSigningSecret,

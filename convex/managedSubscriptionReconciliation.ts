@@ -17,6 +17,10 @@ export async function reconcileVerifiedSubscription(
     || verified.transactionPurchaseAtMs > now || verified.transactionSignedAtMs > verified.verifiedAtMs + 5 * 60 * 1_000) {
     throw new Error("Managed subscription evidence has invalid transaction dates");
   }
+  if (verified.renewalSignedAtMs !== undefined && (!Number.isSafeInteger(verified.renewalSignedAtMs) || verified.renewalSignedAtMs < 0 || verified.renewalSignedAtMs > verified.verifiedAtMs + 5 * 60 * 1_000)
+    || verified.gracePeriodExpiresAtMs !== undefined && (!Number.isSafeInteger(verified.gracePeriodExpiresAtMs) || verified.gracePeriodExpiresAtMs <= verified.expiresAtMs)) {
+    throw new Error("Managed subscription renewal or grace evidence is invalid");
+  }
   if (!Number.isSafeInteger(allowance.allowanceSeconds) || allowance.allowanceSeconds <= 0 || !allowance.allowanceSource.trim()) {
     throw new Error("Managed subscription allowance configuration is invalid");
   }
@@ -31,7 +35,7 @@ export async function reconcileVerifiedSubscription(
   if (previous && previous.accountId !== verified.accountId) throw new Error("Verified Apple lineage changed account identity");
   const record = lineageRecord(verified);
   let lineage: Lineage;
-  const order = previous ? evidenceOrder(previous, record) : "new";
+  const order = previous ? evidenceOrder(previous, record, now) : "new";
   if (previous && order === "old") lineage = previous;
   else {
     if (previous) {
@@ -58,7 +62,7 @@ export async function reconcileVerifiedSubscription(
     });
     account = (await ctx.db.get(id))!;
   } else {
-    if (order !== "old" && lineage.product !== "trial" && ["active", "grace"].includes(normalizedEntitlement(lineage.currentState, lineage.expiresAt, now))) {
+    if (order !== "old" && lineage.product !== "trial" && ["active", "grace"].includes(normalizedEntitlement(lineage.currentState, lineageEntitlementExpiry(lineage), now))) {
       const period = await ctx.db.query("managedPeriods").withIndex("by_account_start", q => q.eq("accountId", account!.accountId).eq("startAt", account!.currentPeriodStartAt)).unique();
       if (!period) throw new Error("Managed quota account has no current period; refuse reconciliation rather than resetting usage");
       const quotaSchedule = reconciledQuotaSchedule(account, period, previous, lineage, now);
@@ -75,7 +79,7 @@ export async function reconcileVerifiedSubscription(
   }
   await applySubscriptionProjection(ctx, lineage, now);
   await reconcileMatchingEvents(ctx, lineage, now);
-  return { account: (await ctx.db.get(account._id))!, lineage, entitlement: normalizedEntitlement(lineage.currentState, lineage.expiresAt, now) };
+  return { account: (await ctx.db.get(account._id))!, lineage, entitlement: normalizedEntitlement(lineage.currentState, lineageEntitlementExpiry(lineage), now) };
 }
 
 /** An annual allocation can advance within a verified term; time cannot invent a renewal. */
@@ -84,7 +88,7 @@ export async function advanceVerifiedQuotaPeriod(ctx: MutationCtx, account: Doc<
   if (!period) throw new Error("Managed quota account has no current period; refuse reconciliation rather than resetting usage");
   if (period.endAt !== account.currentPeriodEndAt) throw new Error("Managed quota account and period snapshot disagree");
   if (now < period.endAt) return period;
-  const entitlement = normalizedEntitlement(lineage.currentState, lineage.expiresAt, now);
+  const entitlement = normalizedEntitlement(lineage.currentState, lineageEntitlementExpiry(lineage), now);
   if (entitlement !== "active" && entitlement !== "grace") return period;
   if (!account.quotaSchedule) return period;
   const window = quotaPeriodForSchedule(account.quotaSchedule, now);
@@ -155,11 +159,12 @@ function lineageRecord(v: VerifiedAppleSubscriptionLineage) {
     lineageKey: v.lineageKey, accountId: v.accountId, appId: v.appId, bundleId: v.bundleId, productId: v.productId,
     product: v.product, environment: v.environment, periodType: v.periodType, startedAt: v.startedAtMs,
     transactionPurchaseAt: v.transactionPurchaseAtMs, transactionSignedAt: v.transactionSignedAtMs, transactionReason: v.transactionReason,
+    gracePeriodExpiresAt: v.gracePeriodExpiresAtMs, renewalSignedAt: v.renewalSignedAtMs,
     expiresAt: v.expiresAtMs, currentState: v.currentState, verifiedAt: v.verifiedAtMs, adapter: v.adapter,
   };
 }
 
-function evidenceOrder(previous: Lineage, next: ReturnType<typeof lineageRecord>): "new" | "old" {
+function evidenceOrder(previous: Lineage, next: ReturnType<typeof lineageRecord>, now: number): "new" | "old" {
   if (previous.environment !== next.environment || previous.bundleId !== next.bundleId || previous.appId !== next.appId || previous.startedAt !== next.startedAt) {
     throw new Error("Managed subscription evidence changed immutable lineage facts");
   }
@@ -171,17 +176,35 @@ function evidenceOrder(previous: Lineage, next: ReturnType<typeof lineageRecord>
     }
     return "new";
   }
-  if (next.transactionPurchaseAt < previous.transactionPurchaseAt || next.transactionSignedAt < previous.transactionSignedAt) return "old";
+  // A transaction signature cannot supersede renewal-authoritative grace for
+  // the same paid term. A newer signature may merely re-sign an expired term;
+  // only renewal evidence, a new term, or signed revocation changes that state.
+  const samePaidTerm = next.transactionPurchaseAt === previous.transactionPurchaseAt
+    && next.productId === previous.productId && next.expiresAt === previous.expiresAt;
+  if (samePaidTerm && previous.gracePeriodExpiresAt !== undefined && previous.renewalSignedAt !== undefined
+    && (next.renewalSignedAt === undefined || next.renewalSignedAt < previous.renewalSignedAt)
+    && next.currentState !== "refunded" && next.currentState !== "revoked") return "old";
+  const previousVersion = Math.max(previous.transactionSignedAt, previous.renewalSignedAt ?? 0);
+  const nextVersion = Math.max(next.transactionSignedAt, next.renewalSignedAt ?? 0);
+  if (next.transactionPurchaseAt < previous.transactionPurchaseAt || nextVersion < previousVersion) return "old";
   if (next.transactionPurchaseAt === previous.transactionPurchaseAt && (previous.currentState === "refunded" || previous.currentState === "revoked") && next.currentState !== previous.currentState) return "old";
-  if (next.transactionPurchaseAt === previous.transactionPurchaseAt && next.transactionSignedAt === previous.transactionSignedAt) {
+  if (next.transactionPurchaseAt === previous.transactionPurchaseAt && nextVersion === previousVersion) {
     // Verification time is not evidence of a newer subscription state.
-    const facts = ["productId", "product", "periodType", "expiresAt"] as const;
+    const facts = ["productId", "product", "periodType", "expiresAt", "gracePeriodExpiresAt"] as const;
     const naturalStates = new Set(["active", "expired"]);
-    const sameState = previous.currentState === next.currentState || naturalStates.has(previous.currentState) && naturalStates.has(next.currentState);
+    const naturallyExpiredGrace = previous.currentState === "grace" && next.currentState === "expired"
+      && previous.gracePeriodExpiresAt !== undefined && next.gracePeriodExpiresAt === previous.gracePeriodExpiresAt
+      && next.gracePeriodExpiresAt <= now;
+    const sameState = previous.currentState === next.currentState || naturalStates.has(previous.currentState) && naturalStates.has(next.currentState) || naturallyExpiredGrace;
     const conflictingReason = previous.transactionReason !== undefined && next.transactionReason !== undefined && previous.transactionReason !== next.transactionReason;
     if (!sameState || conflictingReason || facts.some(key => previous[key] !== next[key])) throw new Error("Managed subscription evidence conflicts at the same signed version");
   }
   return "new";
+}
+
+/** Grace affects access only; paid term expiry remains the quota cadence input. */
+export function lineageEntitlementExpiry(lineage: Pick<Lineage, "currentState" | "expiresAt" | "gracePeriodExpiresAt">): number {
+  return lineage.currentState === "grace" ? lineage.gracePeriodExpiresAt ?? lineage.expiresAt : lineage.expiresAt;
 }
 
 export function normalizedEntitlement(state: AppleSubscriptionState, expiry: number | null | undefined, now: number): AppleSubscriptionState {
@@ -189,9 +212,9 @@ export function normalizedEntitlement(state: AppleSubscriptionState, expiry: num
 }
 
 export async function applySubscriptionProjection(ctx: MutationCtx, lineage: Lineage, now: number) {
-  const entitlement = normalizedEntitlement(lineage.currentState, lineage.expiresAt, now);
+  const entitlement = normalizedEntitlement(lineage.currentState, lineageEntitlementExpiry(lineage), now);
   const principals = await ctx.db.query("managedPrincipals").withIndex("by_account_device", q => q.eq("accountId", lineage.accountId)).collect();
-  for (const principal of principals) if (principal.revokedAt === null) await ctx.db.patch(principal._id, { entitlement, naturalExpiryAt: lineage.expiresAt });
+  for (const principal of principals) if (principal.revokedAt === null) await ctx.db.patch(principal._id, { entitlement, naturalExpiryAt: lineageEntitlementExpiry(lineage) });
   if (entitlement !== "refunded" && entitlement !== "revoked") return;
   const jobs = await ctx.db.query("managedJobs").withIndex("by_timeline", q => q.eq("accountId", lineage.accountId)).collect();
   for (const job of jobs) {
@@ -211,7 +234,7 @@ async function reconcileMatchingEvents(ctx: MutationCtx, lineage: Lineage, now: 
     if (event.reconciliationStatus === "reconciled" || event.productId !== lineage.productId || event.environment !== lineage.environment || event.appId !== lineage.appId || event.eventTimestampMs > lineage.transactionSignedAt) continue;
     const purchase = (event.eventType === "INITIAL_PURCHASE" || event.eventType === "RENEWAL")
       && event.eventTimestampMs >= lineage.transactionPurchaseAt && lineage.currentState === "active";
-    const expiration = event.eventType === "EXPIRATION" && event.eventTimestampMs >= lineage.expiresAt && normalizedEntitlement(lineage.currentState, lineage.expiresAt, now) === "expired";
+    const expiration = event.eventType === "EXPIRATION" && event.eventTimestampMs >= lineage.expiresAt && normalizedEntitlement(lineage.currentState, lineageEntitlementExpiry(lineage), now) === "expired";
     if (purchase || expiration) await ctx.db.patch(event._id, { reconciliationStatus: "reconciled", processedAt: now });
   }
 }

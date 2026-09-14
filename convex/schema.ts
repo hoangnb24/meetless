@@ -86,6 +86,8 @@ export default defineSchema({
     transactionSignedAt: v.optional(v.number()),
     transactionReason: v.optional(v.union(v.literal("PURCHASE"), v.literal("RENEWAL"))),
     expiresAt: v.number(),
+    gracePeriodExpiresAt: v.optional(v.number()),
+    renewalSignedAt: v.optional(v.number()),
     currentState: v.union(
       v.literal("active"),
       v.literal("grace"),

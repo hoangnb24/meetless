@@ -53,6 +53,8 @@ export const verifiedAppleLineageValidatorForMutation = v.object({
     v.literal("refunded"),
     v.literal("revoked"),
   ),
+  renewalSignedAtMs: v.optional(v.number()),
+  gracePeriodExpiresAtMs: v.optional(v.number()),
   verifiedAtMs: v.number(),
 });
 

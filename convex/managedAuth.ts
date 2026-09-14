@@ -21,7 +21,7 @@ import {
 } from "./deviceAuth";
 import { revenueCatEventValidatorForMutation, verifiedAppleLineageValidatorForMutation } from "./managedAuthValidators";
 import { planManagedDeviceEnrollment } from "./managedQuotaPolicy";
-import { reconcileVerifiedSubscription, applySubscriptionProjection } from "./managedSubscriptionReconciliation";
+import { reconcileVerifiedSubscription, applySubscriptionProjection, lineageEntitlementExpiry } from "./managedSubscriptionReconciliation";
 import {
   assertHostedCanaryAccountOwnership,
   HOSTED_CANARY_DEVICE_PREFIX,
@@ -233,7 +233,7 @@ export const consumeEnrollment = internalMutation({
     const tokenIdentifier = tokenIdentifierFor(config.authIssuer, subject);
     const principal = await ctx.db.query("managedPrincipals").withIndex("by_account_device", (q) => q.eq("accountId", verified.accountId).eq("deviceId", args.deviceId)).unique();
     const entitlement = reconciled.entitlement;
-    const naturalExpiryAt = reconciled.lineage.expiresAt;
+    const naturalExpiryAt = lineageEntitlementExpiry(reconciled.lineage);
     if (principal) {
       await ctx.db.patch(principal._id, {
         tokenIdentifier,
@@ -347,8 +347,9 @@ export const reconcileFixtureLineage = internalMutation({
   },
 });
 
+/** Verified state and its safe receipt commit atomically; pending legacy receipts retry. */
 export const receiveRevenueCatEvent = internalMutation({
-  args: { event: revenueCatEventValidatorForMutation },
+  args: { event: revenueCatEventValidatorForMutation, apple: v.optional(verifiedAppleLineageValidatorForMutation) },
   returns: v.any(),
   handler: async (ctx, args) => {
     const config = readManagedRuntimeConfig();
@@ -358,17 +359,26 @@ export const receiveRevenueCatEvent = internalMutation({
     const existing = await ctx.db.query("managedRevenueCatEvents").withIndex("by_event", (q) => q.eq("eventId", args.event.eventId)).unique();
     if (existing) {
       if (existing.lineageKey !== args.event.lineageKey || existing.appId !== args.event.appId || existing.productId !== args.event.productId || existing.environment !== args.event.environment || existing.eventType !== args.event.eventType || existing.eventTimestampMs !== args.event.eventTimestampMs) throw new Error("RevenueCat event ID was rebound to different data");
-      if (existing.processedAt === null) await ctx.scheduler.runAfter(0, anyApi.managedAuthActions.processRevenueCatEvent, { eventId: existing.eventId });
-      return { outcome: "duplicate", eventId: existing.eventId };
+      if (existing.reconciliationStatus === "reconciled" && existing.processedAt !== null) return { outcome: "duplicate", eventId: existing.eventId };
     }
-    const event = await ctx.db.insert("managedRevenueCatEvents", {
-      ...args.event,
-      receivedAt: Date.now(),
-      processedAt: null,
-      reconciliationStatus: "pending",
-    });
-    await ctx.scheduler.runAfter(0, anyApi.managedAuthActions.processRevenueCatEvent, { eventId: args.event.eventId });
-    return { outcome: "received", eventId: args.event.eventId, receiptId: event };
+    const now = Date.now();
+    if (config.appleVerifierMode === "fixture") {
+      assertNonProductionFixture(config, "fixture webhook reconciliation");
+      const lineage = await ctx.db.query("managedLineages").withIndex("by_lineage", q => q.eq("lineageKey", args.event.lineageKey)).unique();
+      if (!lineage || lineage.adapter !== "fixture") throw new Error("Fixture webhook has no verified fixture lineage");
+      await applySubscriptionProjection(ctx, lineage, now);
+    } else {
+      const apple = args.apple;
+      if (!apple || apple.adapter !== "app-store-server-api" || apple.lineageKey !== args.event.lineageKey
+        || apple.appId !== args.event.appId || apple.environment !== args.event.environment
+        || apple.renewalSignedAtMs === undefined) throw new Error("Webhook requires verified Apple status for this lineage");
+      // Current Apple plan may differ from a delayed RevenueCat event's plan.
+      await reconcileVerifiedSubscription(ctx, apple, config, now);
+    }
+    const receipt = { processedAt: now, reconciliationStatus: "reconciled" as const };
+    if (existing) await ctx.db.patch(existing._id, receipt);
+    else await ctx.db.insert("managedRevenueCatEvents", { ...args.event, receivedAt: now, ...receipt });
+    return { outcome: "reconciled", eventId: args.event.eventId };
   },
 });
 

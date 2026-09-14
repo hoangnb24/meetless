@@ -60,6 +60,8 @@ export interface VerifiedAppleSubscriptionLineage {
   readonly transactionReason?: AppleTransactionReason;
   readonly expiresAtMs: number;
   readonly currentState: AppleSubscriptionState;
+  readonly renewalSignedAtMs?: number;
+  readonly gracePeriodExpiresAtMs?: number;
   readonly verifiedAtMs: number;
 }
 

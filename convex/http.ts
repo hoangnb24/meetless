@@ -56,9 +56,9 @@ http.route({
         config.revenueCatEnvironment,
       );
       const lineageKey = await lineageKeyForOriginalTransactionId(parsed.originalTransactionId);
-      // The original transaction identifier is used only to select the
-      // server-stored hashed lineage. It is not sent to the durable inbox.
-      const receipt = await ctx.runMutation(anyApi.managedAuth.receiveRevenueCatEvent, {
+      // Direct synchronous Node verification; only normalized data reaches storage.
+      const receipt = await ctx.runAction(anyApi.managedAuthActions.processRevenueCatEvent, {
+        originalTransactionId: parsed.originalTransactionId,
         event: {
           eventId: parsed.eventId,
           lineageKey,
@@ -69,6 +69,7 @@ http.route({
           eventTimestampMs: parsed.eventTimestampMs,
         },
       });
+      if (receipt.outcome === "retry") return safeResponse("webhook reconciliation unavailable", 503);
       return new Response(JSON.stringify({ accepted: true, outcome: receipt.outcome }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -76,7 +77,7 @@ http.route({
     } catch (error) {
       if (error instanceof RevenueCatWebhookError) return safeResponse("webhook rejected", 401);
       if (error instanceof Error && error.name === "ManagedConfigurationError") return safeResponse("webhook unavailable", 503);
-      return safeResponse("webhook invalid", 400);
+      return safeResponse("webhook unavailable", 503);
     }
   }),
 });

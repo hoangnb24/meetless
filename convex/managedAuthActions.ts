@@ -8,7 +8,9 @@ import { DEVICE_JWT_TTL_SECONDS } from "./deviceAuth";
 import { readManagedRuntimeConfig } from "./managedConfig";
 import { verifyAppleMaterial } from "./appleSubscription";
 import { verifySignedAppleTransaction } from "./appleSubscriptionNode";
-import { appleMaterialValidatorForAction } from "./managedAuthValidators";
+import { verifyCurrentAppleSubscription } from "./appleSubscriptionStatusNode";
+import { lineageKeyForOriginalTransactionId } from "./appleSubscription";
+import { appleMaterialValidatorForAction, revenueCatEventValidatorForMutation } from "./managedAuthValidators";
 
 export const enrollDevice = action({
   args: {
@@ -70,28 +72,23 @@ export const refreshDevice = action({
   },
 });
 
+/** Direct HTTP action call only: raw lookup data never enters a scheduler or mutation. */
 export const processRevenueCatEvent = internalAction({
-  args: { eventId: v.string() },
+  args: { event: revenueCatEventValidatorForMutation, originalTransactionId: v.string() },
   returns: v.any(),
   handler: async (ctx, args) => {
-    const event = await ctx.runQuery(anyApi.managedAuth.readRevenueCatEvent, args);
-    if (!event || event.processedAt !== null) return true;
-    const config = readManagedRuntimeConfig();
-    if (config.appleVerifierMode === "fixture") {
-      await ctx.runMutation(anyApi.managedAuth.reconcileFixtureLineage, { lineageKey: event.lineageKey });
-      await ctx.runMutation(anyApi.managedAuth.markRevenueCatEventProcessed, {
-        eventId: args.eventId,
-        reconciliationStatus: "reconciled",
+    try {
+      if (await lineageKeyForOriginalTransactionId(args.originalTransactionId) !== args.event.lineageKey) throw new Error("Webhook lineage mismatch");
+      const config = readManagedRuntimeConfig();
+      const apple = config.appleVerifierMode === "fixture" ? undefined
+        : await verifyCurrentAppleSubscription(args.originalTransactionId, config);
+      return await ctx.runMutation(anyApi.managedAuth.receiveRevenueCatEvent, {
+        event: args.event, ...(apple ? { apple } : {}),
       });
-      return true;
+    } catch {
+      // Catch before the action boundary so SDK errors cannot expose raw data.
+      return { outcome: "retry" };
     }
-    // RevenueCat is a lifecycle signal only. Without an Apple-signed payload
-    // in this event, it cannot authorize an entitlement change or revoke one.
-    await ctx.runMutation(anyApi.managedAuth.markRevenueCatEventProcessed, {
-      eventId: args.eventId,
-      reconciliationStatus: "awaiting-apple-verification",
-    });
-    return true;
   },
 });
 
