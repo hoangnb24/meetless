@@ -106,7 +106,7 @@ mode 0700; independently reviewed `/keys/` ignore covers nested and hidden
 files, and no entries under it are tracked. Signing/API credential input remains
 missing; this does not change the production acceptance status.
 
-### New credential creation authorized — 2026-09-14
+### Historical credential creation checkpoint — 2026-09-14
 
 Owner explicitly requested sub-agents create new Apple API/signing keys through
 the in-app browser or Computer Use and save under ignored `keys/`. Separate
@@ -139,7 +139,7 @@ and completed creation through Apple UI without revoking existing credentials.
   working browser. Do not create replacements or revoke any certificate.
   API credential has not been configured on Convex or live-request verified.
 
-### Chrome certificate retrieval checkpoint — 2026-09-14
+### Historical Chrome certificate retrieval checkpoint — 2026-09-14
 
 Owner authorized Chrome and completed Apple Developer login. Retrieved the
 issued Distribution certificate into `keys/apple-distribution-2026-09-14.cer`.
@@ -154,6 +154,28 @@ Installer Download still produced no local certificate. Chrome downloads-page
 inspection was explicitly rejected by Browser URL policy; no workaround was
 attempted. Existing Installer certificate `5C93WPF4YD` page retained for user
 manual download. No new certificate issuance, import, revocation or deployment.
+
+### Apple credential files completed — 2026-09-14
+
+Owner supplied `keys/mac_installer.cer`; it matches the retained Installer
+private key and CSR. Completed encrypted
+`keys/mac-installer-distribution-2026-09-14.p12` and matching `.password.txt`.
+Original certificate retained; all credential files mode 0600, directory 0700,
+ignored by `/keys/` and untracked. Local `keys/README.txt` identifies API and
+both signing bundles/password files without embedding secret values.
+
+Installer certificate is Apple-issued `3rd Party Mac Developer Installer:
+Long Le (63M98WD275)`, expires 2027-09-14 12:45:30Z. Certificate SHA256
+`ecf25d31ac60a2e320ddd5f10ac4c495ce792051881cd17f0e0397980e87cf79`;
+P12 SHA256 `19245998e0ee05e2a9562a1256687c01ed48329a1ea32ef281899821d05e0a45`.
+Worker verified certificate/private-key/CSR and P12 round-trip matching, and
+wrong-password rejection. Independent reviewer and Lead ACCEPTS the exact
+Installer bundle, including Apple Installer extension, matching DER certificates,
+all public keys, file permissions and ignored/untracked status. API `.p8` and Distribution
+`.p12` were independently accepted at prior checkpoints. Credential-file
+collection is complete; Keychain import, matching distribution provisioning,
+actual packaged build signing, and live Apple API authentication remain separate
+production work. No revocation, cloud configuration or deployment occurred.
 
 ### Frozen source
 
