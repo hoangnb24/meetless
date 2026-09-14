@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import Darwin
 import Foundation
+import Security
 
 private let meetlessInstallPath = "/Applications/Meetless.app"
 private let meetlessBundleIdentifier = "com.meetless.app"
@@ -10,6 +11,7 @@ private let meetlessDeveloperIDRequirement = "identifier \"com.meetless.app\" an
 private let meetlessAppStoreDevelopmentIdentity = "Apple Development: Long Le (335C7MY4H4)"
 private let meetlessAppStoreDevelopmentRequirement = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[subject.CN] = \"Apple Development: Long Le (335C7MY4H4)\" and certificate leaf[subject.OU] = \"63M98WD275\""
 private let meetlessAppStoreDistributionRequirement = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[subject.OU] = \"63M98WD275\" and certificate leaf[field.1.2.840.113635.100.6.1.7] exists and certificate leaf[field.1.2.840.113635.100.6.1.4] exists"
+private let meetlessAppleDeliveredRequirement = "identifier \"com.meetless.app\" and anchor apple generic and (certificate leaf[field.1.2.840.113635.100.6.1.9] exists or certificate leaf[field.1.2.840.113635.100.6.1.25.1] exists)"
 private let meetlessHostConfigSchema = "MEETLESS_MACOS_HOST_CONFIG v2"
 private let meetlessInstallationContractSchema = "MEETLESS_INSTALLATION_CONTRACT v1"
 private let meetlessPackageSchema = "MEETLESS_MACOS_PACKAGE v2"
@@ -942,7 +944,7 @@ func meetlessPackagedSignatureRequirement(for policy: MeetlessPackagedSignatureP
   case .appStoreDevelopment:
     return meetlessAppStoreDevelopmentRequirement
   case .appStoreDistribution:
-    return meetlessAppStoreDistributionRequirement
+    return "(\(meetlessAppStoreDistributionRequirement)) or (\(meetlessAppleDeliveredRequirement))"
   }
 }
 
@@ -958,6 +960,68 @@ func meetlessMayMigrateLegacyIdentity(
   ) != nil
 }
 
+// Observed with codesign -d -r- on the owner-approved Apple Distribution
+// signing smoke artifact (20260914T132202Z); only its bundle identifier changes
+// from com.meetless.signing-smoke to the accepted production app identifier.
+private let meetlessObservedSubmissionDesignatedRequirement = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[subject.CN] = \"Apple Distribution: Long Le (63M98WD275)\" and certificate 1[field.1.2.840.113635.100.6.2.1] exists"
+
+private func canonicalSigningRequirement(_ source: String) -> String? {
+  guard !source.isEmpty, source.utf8.count <= 65_536 else { return nil }
+  var requirement: SecRequirement?
+  guard SecRequirementCreateWithString(source as CFString, [], &requirement) == errSecSuccess, let requirement else { return nil }
+  var canonical: CFString?
+  guard SecRequirementCopyString(requirement, [], &canonical) == errSecSuccess else { return nil }
+  return canonical as String?
+}
+
+/// Recognizes only retained submission identities observed in this release.
+/// The caller must additionally preserve app/path/runtime ownership and verify
+/// the current bundle against the actual distribution runtime signature gate.
+func meetlessMayMigrateSubmissionIdentity(
+  previousRequirement: String,
+  currentRequirement: String,
+  packagedSignaturePolicy: MeetlessPackagedSignaturePolicy?
+) -> Bool {
+  guard packagedSignaturePolicy == .appStoreDistribution,
+        previousRequirement != currentRequirement,
+        canonicalSigningRequirement(currentRequirement) != nil,
+        let previous = canonicalSigningRequirement(previousRequirement) else { return false }
+  return [meetlessObservedSubmissionDesignatedRequirement, meetlessAppStoreDistributionRequirement]
+    .compactMap(canonicalSigningRequirement).contains(previous)
+}
+
+/// Called only after code signature validation. Apple re-signs Store builds,
+/// so developer certificate OU is not a delivered-app identity field (TN3127).
+func meetlessValidateDeliveredSigningIdentity(teamIdentifier: String?, entitlements: [String: Any]) throws {
+  if let teamIdentifier, teamIdentifier != meetlessDeveloperIDTeam {
+    throw hostPreflightError("Apple-delivered app has an unexpected signed Team ID")
+  }
+  if let value = entitlements["com.apple.developer.team-identifier"], value as? String != meetlessDeveloperIDTeam {
+    throw hostPreflightError("Apple-delivered app has an unexpected signed team entitlement")
+  }
+  for key in ["com.apple.application-identifier", "application-identifier"] {
+    if let value = entitlements[key], value as? String != "\(meetlessDeveloperIDTeam).\(meetlessBundleIdentifier)" {
+      throw hostPreflightError("Apple-delivered app has an unexpected signed application identifier")
+    }
+  }
+}
+
+private func assertDeliveredSigningIdentity(_ bundlePath: String) throws {
+  var code: SecStaticCode?
+  guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: bundlePath) as CFURL, [], &code) == errSecSuccess, let code else {
+    throw hostPreflightError("cannot inspect Apple-delivered code identity")
+  }
+  var information: CFDictionary?
+  guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+        let information = information as? [String: Any] else {
+    throw hostPreflightError("cannot inspect Apple-delivered signing information")
+  }
+  try meetlessValidateDeliveredSigningIdentity(
+    teamIdentifier: information[kSecCodeInfoTeamIdentifier as String] as? String,
+    entitlements: information[kSecCodeInfoEntitlementsDict as String] as? [String: Any] ?? [:]
+  )
+}
+
 private func assertApprovedPackagedSignature(
   _ bundlePath: String,
   policy: MeetlessPackagedSignaturePolicy
@@ -971,6 +1035,13 @@ private func assertApprovedPackagedSignature(
     "-R=\(meetlessPackagedSignatureRequirement(for: policy))",
     bundlePath,
   ], label: "\(identity) signature for team \(meetlessDeveloperIDTeam)")
+  if policy == .appStoreDistribution {
+    // Submission certificates bind the developer team in the strict branch.
+    // Delivered builds bind their Store identifier through Apple's signature;
+    // validate additional signed team/application fields whenever supplied.
+    let submission = try? inspectCodesign(["--verify", "--strict", "-R=\(meetlessAppStoreDistributionRequirement)", bundlePath], label: "submission signer")
+    if submission == nil { try assertDeliveredSigningIdentity(bundlePath) }
+  }
 }
 
 private func writeIdentityAtomically(_ data: Data, to identityPath: String, runtimeRoot: String) throws {
@@ -1478,11 +1549,17 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
           previous.bundleRealPath == meetlessInstallPath &&
           identity.bundlePath == meetlessInstallPath &&
           identity.bundleRealPath == meetlessInstallPath
-        let trustedMigration = sameOwner && meetlessMayMigrateLegacyIdentity(
+        let legacyMigration = meetlessMayMigrateLegacyIdentity(
           previousRequirement: previous.designatedRequirement,
           currentRequirement: identity.designatedRequirement,
           packagedSignaturePolicy: packagedSignaturePolicy
         )
+        let submissionMigration = previous.configuration.runtimeRoot == configuration.runtimeRoot && meetlessMayMigrateSubmissionIdentity(
+          previousRequirement: previous.designatedRequirement,
+          currentRequirement: identity.designatedRequirement,
+          packagedSignaturePolicy: packagedSignaturePolicy
+        )
+        let trustedMigration = sameOwner && (legacyMigration || submissionMigration)
         if trustedMigration, let packagedSignaturePolicy {
           try assertApprovedPackagedSignature(bundlePath, policy: packagedSignaturePolicy)
         } else {

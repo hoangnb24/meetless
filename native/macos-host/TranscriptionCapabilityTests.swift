@@ -4422,6 +4422,64 @@ private func testPackagedConvexEnvironmentBinding() {
   expectThrow("non-string packaged Convex URL must fail closed", { _ = try meetlessValidatedPackagedConvexURL(info: ["MeetlessConvexURL": 7]) })
 }
 
+private func testSubmissionIdentityTransition() {
+  let submission = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[subject.CN] = \"Apple Distribution: Long Le (63M98WD275)\" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */"
+  let store = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] exists"
+  check(meetlessMayMigrateSubmissionIdentity(previousRequirement: submission, currentRequirement: store, packagedSignaturePolicy: .appStoreDistribution), "observed submission identity may advance only through distribution signature validation")
+  check(meetlessMayMigrateSubmissionIdentity(previousRequirement: submission.replacingOccurrences(of: " and ", with: "  and  "), currentRequirement: store, packagedSignaturePolicy: .appStoreDistribution), "Security canonicalization must preserve harmless formatting differences")
+  for previous in [
+    submission + " or true",
+    submission.replacingOccurrences(of: "63M98WD275", with: "OTHERTEAM"),
+    submission.replacingOccurrences(of: "com.meetless.app", with: "com.other.app"),
+    submission.replacingOccurrences(of: "Apple Distribution", with: "Apple Development"),
+    "identifier \"com.meetless.app\" and anchor apple generic",
+    "not a valid requirement",
+    store,
+  ] {
+    check(!meetlessMayMigrateSubmissionIdentity(previousRequirement: previous, currentRequirement: "identifier \"com.meetless.app\"", packagedSignaturePolicy: .appStoreDistribution), "unknown or broadened retained identity must not migrate")
+  }
+  check(!meetlessMayMigrateSubmissionIdentity(previousRequirement: submission, currentRequirement: store, packagedSignaturePolicy: .appStoreDevelopment), "development target must not migrate submission identity")
+  check(!meetlessMayMigrateSubmissionIdentity(previousRequirement: submission, currentRequirement: store, packagedSignaturePolicy: nil), "unpackaged target must not migrate submission identity")
+}
+
+private func testDeliveredStoreSigningIdentity() {
+  do {
+    try meetlessValidateDeliveredSigningIdentity(teamIdentifier: "63M98WD275", entitlements: ["com.apple.developer.team-identifier": "63M98WD275", "com.apple.application-identifier": "63M98WD275.com.meetless.app"])
+    try meetlessValidateDeliveredSigningIdentity(teamIdentifier: nil, entitlements: [:])
+  } catch { check(false, "valid optional Apple-delivered signing fields must pass") }
+  expectThrow("unexpected cryptographically bound team must fail", { try meetlessValidateDeliveredSigningIdentity(teamIdentifier: "OTHERTEAM", entitlements: [:]) })
+  for entitlements: [String: Any] in [
+    ["com.apple.developer.team-identifier": "OTHERTEAM"],
+    ["com.apple.application-identifier": "63M98WD275.other.app"],
+    ["application-identifier": "OTHERTEAM.com.meetless.app"],
+    ["com.apple.application-identifier": 7],
+  ] {
+    expectThrow("unexpected signed application/team identity must fail", { try meetlessValidateDeliveredSigningIdentity(teamIdentifier: nil, entitlements: entitlements) })
+  }
+  let requirement = meetlessPackagedSignatureRequirement(for: .appStoreDistribution)
+  check(requirement.contains("100.6.1.9") && requirement.contains("100.6.1.25.1") && !requirement.contains("100.6.1.25.2"), "runtime must accept Store and public TestFlight signers without accepting internal QA-only signer")
+  let compiler = Process()
+  compiler.executableURL = URL(fileURLWithPath: "/usr/bin/csreq")
+  compiler.arguments = ["-r", "=\(requirement)", "-t"]
+  compiler.standardOutput = Pipe()
+  compiler.standardError = Pipe()
+  do {
+    try compiler.run()
+    compiler.waitUntilExit()
+    check(compiler.terminationStatus == 0, "Apple requirement compiler must accept the runtime signer predicate")
+  } catch { check(false, "Apple requirement compiler must execute") }
+  let unrelated = Process()
+  unrelated.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+  unrelated.arguments = ["--verify", "--strict", "-R=\(requirement)", "/usr/bin/true"]
+  unrelated.standardOutput = Pipe()
+  unrelated.standardError = Pipe()
+  do {
+    try unrelated.run()
+    unrelated.waitUntilExit()
+    check(unrelated.terminationStatus != 0, "an unrelated Apple-signed executable must not satisfy the Meetless distribution requirement")
+  } catch { check(false, "negative signer check must execute") }
+}
+
 private func testStoreBackendProjection() {
   let runtime = "/Users/fixture/Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless"
   let info: [String: Any] = ["MeetlessStoreBackendRouting": true, "MeetlessConvexSandboxURL": "https://sandbox.example.test", "MeetlessConvexProductionURL": "https://production.example.test"]
@@ -4721,6 +4779,8 @@ private struct TranscriptionCapabilityTests {
     testHostEnvironmentFiltering()
     testPackagedConvexEnvironmentBinding()
     testStoreBackendProjection()
+    testDeliveredStoreSigningIdentity()
+    testSubmissionIdentityTransition()
     testCaptureSettingsFallbackPolicy()
     testProviderFailureNormalizationAndCancellation()
     testLegacyIdentityMigrationBoundary()
