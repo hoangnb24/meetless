@@ -10,7 +10,7 @@ production. Freeze the current source before beginning this work.
 
 GitHub execution breakdown: [Epic #21](https://github.com/hoangnb24/meetless/issues/21), new sub-issues #22–#27 and retained #14–#17/#20. Native dependencies own the execution order; #22/#23 are the first inputs. This link does not change the frozen source.
 
-### Execution checkpoint — 2026-09-14
+### Historical execution checkpoint — 2026-09-14
 
 Owner authorized implementation of Epic #21 and selected US East and separate
 Sandbox/Production backends. Root owns account/configuration discovery,
@@ -35,7 +35,7 @@ appAppleId; current source omits it. This is being corrected as a reviewed
 successor, not relabeled as the frozen source. Sandbox/TestFlight routing and
 background Apple reconciliation remain separate work before production acceptance.
 
-### Accepted preparation checkpoint — 2026-09-14
+### Earlier accepted preparation checkpoint — 2026-09-14
 
 - Lead ACCEPTS source correction `4a293b5321ec9d2ba5a18fcdbedf54419048ba9a`
   after independent `production_verifier_review` acceptance of the exact five
@@ -61,24 +61,37 @@ background Apple reconciliation remain separate work before production acceptanc
 - RevenueCat IAB dashboard also showed login; current integration remains
   unverified. HMAC protocol matches current official RevenueCat documentation.
 
-Pending owner decisions (questions already sent; no assumed answers):
+Owner approved both remaining decisions on 2026-09-14:
 
-1. Store-testing sandbox allowance: proposed 30 minutes per allocation, including
+1. Store-testing Sandbox: 30 minutes (1,800 seconds) per allocation including
    trial, with accelerated test clocks; production remains 8 hours/month and
-   trial 5 hours. This proposal is NOT accepted policy or applied configuration.
-2. Background Apple reconciliation: proposed bounded synchronous lookup when a
-   verified RevenueCat webhook arrives, acknowledge only after normalized
-   reconciliation; transient Apple failure uses RevenueCat retries. Raw lookup
-   ID/JWS stay in memory, never scheduled/persisted. Retry exhaustion would need
-   manual recovery; indefinite automatic recovery needs further design/authority.
+   trial 5 hours. Promote to product/monetization.md; no live config applied yet.
+2. Background Apple reconciliation: verify Apple during authenticated RevenueCat
+   delivery before successful acknowledgement; use provider retries for transient
+   errors and manual recovery after retries are exhausted. Raw IDs/JWS remain
+   transient. Promote to ADR0005; implementation/live evidence still pending.
+
+Owner reports Apple App Store Connect and RevenueCat are now logged in in the
+ChatGPT browser. Reinspect live access before claiming account configuration.
 
 Next independent/blocked work: #24 native transaction paths currently accept
 only sandbox; use verified app/store context to select fixed signed endpoint,
 then independently verify environment at the server. Scope credential, token,
 quota and upload/resume context to that backend; no cross-backend fallback or
-replay. #26 must package both approved endpoints. Exact sandbox target and
-allowance, live Apple/RevenueCat configuration and signing inputs remain open.
+replay. #26 must package both approved endpoints. Exact sandbox target, live Apple/RevenueCat configuration and signing inputs
+remain open; sandbox allowance is now approved.
 Do not start production deployment or claim #22/#23/#24 done from this checkpoint.
+
+## Owner decisions accepted and live account inspection — 2026-09-14
+
+- Owner approved store-testing Sandbox 1,800 seconds per allocation including trial; accelerated clocks retained, production 28,800 monthly/18,000 trial unchanged. No retroactive reset of existing periods. Source `6d9a2f6` independently accepted with 83/83 local tests and Convex typecheck; no cloud configuration applied.
+- Owner approved authenticated RevenueCat delivery -> synchronous Apple verification -> normalized reconciliation before success acknowledgement, provider retry for transient failures and manual recovery after retry exhaustion. Raw IDs/JWS stay transient, never scheduler/database/log material. Source `81fc2b6` independently reviewed and accepted by Lead: SDK status lookup verifies transaction and renewal JWS; HTTP waits for atomic normalized reconciliation/receipt before ACK; transient errors return 503 for redelivery. Same-term grace survives transaction-only refresh and expires naturally. Combined 110/110 local tests and Convex TypeScript pass. Positive signature decoding uses controlled fixtures; actual SDK rejects invalid JWS. No live Apple/RevenueCat acceptance. Direct action arguments are transient at application level; hosted tracing retention is unverified. The 20-second deadline bounds response but cannot cancel SDK transport.
+- Logged-in ASC UI confirms app 6807070739, bundle com.meetless.app, SKU meetless-macos-v1, macOS version 1.0 Prepare for Submission, TestFlight No Builds. Use version 1.0/build 1 for the first candidate subject to recheck immediately before upload.
+- Logged-in RevenueCat UI confirms project0d7b4465/app appe0ef526253 and correct bundle. Existing IAP and ASC API credential configurations both show Valid credentials. Default offering maps `$rc_monthly` to `com.meetless.app.premium.monthly` and `$rc_annual` to `com.meetless.app.premium.annual`; `premium` entitlement lists two products. Existing active webhook targets development only, Sandbox only, HMAC enabled. These observations do not prove production billing/Apple lookup or production webhook delivery.
+- Apple Developer shows existing Distribution and Mac Installer Distribution certificates expiring 2027-08-25. Imported only the existing public Distribution certificate embedded in the profile into login keychain; valid signing identities still contain Apple Development only. No new certificate created, no revocation and no trust override. Need matching privatekey (.p12) for signing and local Apple API .p8 for backend; asked owner for file locations without secret contents.
+- No remote mutation, production deploy, provider call, upload or App Review/public release in this account-inspection checkpoint. #22/#23/#24 stay open.
+
+- Deploy preflight successor `d909ca1` requires the Apple API issuer, key ID and PKCS8 private key for production/store-testing Sandbox. Independent review accepted; 47/47 focused local tests passed. This is presence/basic-shape validation, not proof the credentials work. Local validation/deploy entrypoints invoke the guard; no `.github` CI workflow exists, hook/branch-protection enforcement unverified.
 
 ### Frozen source
 
