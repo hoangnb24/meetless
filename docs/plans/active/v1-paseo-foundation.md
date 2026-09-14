@@ -85,8 +85,8 @@ TestFlight upload has been accepted.
   local signing usability only, based on independent review of exact evidence
   `.artifacts/production-preparation/signing-smoke-20260914T132202Z/`.
   Search list/default keychain were restored and release keychain locked.
-  New provisioning record selects the new Distribution certificate, but browser
-  download is blocked. Owner was asked to download into `keys/`; old profile
+  Owner subsequently downloaded the new matching provisioning profile into
+  `keys/`; its actual bytes are accepted in the checkpoint below. The old profile
   does not match the new certificate and must not substitute for the new one.
 - Lead ACCEPTS source-only routing preparation in `63b3768` after independent
   review: verified StoreKit context selects fixed signed endpoints with isolated
@@ -169,6 +169,30 @@ TestFlight upload has been accepted.
   fails and 41/41 focused tests pass. Public fixtures retain the observed output
   and public certificate only. This is validator acceptance, not a completed
   production package. #23 is closed/Done; #26 continues to actual packaging.
+- Actual distribution producer started at
+  `8b3cc723e9dcd5e801ea134aba44e2d19e1a332f`, package-source snapshot
+  `b3edf85d23afa1a67d23480fec827ddb4d88ba5ab9eafff70ed524e9f5da19c4`.
+  Original disposable proof root:
+  `/private/tmp/meetless-mas-distribution-20260914T145923938Z`; durable attempt
+  record `.artifacts/macos-mas-distribution/20260914T145923938Z/`.
+  Inputs are accepted profile, explicit release keychain, version 1.0/build 1,
+  verified public SDK key and the two approved signed endpoints. No installation
+  or app launch is part of this producer. This first attempt used the main
+  checkout, so it cannot satisfy #26's isolated-checkout criterion. It passed
+  mandatory build/composition but stalled at codesign after the keychain had
+  been unlocked about eight minutes earlier. The keychain creator confirms its
+  unchanged default is lock-on-sleep with a 300-second timeout. Computer Use
+  explicitly refused access to macOS SecurityAgent; no UI bypass was attempted.
+  Root authorized cancellation of only this run's waiting codesign and diagnostic
+  processes, retaining partial artifacts and allowing cleanup to restore the
+  search list and lock the keychain. Cleanup completed; the failed result records
+  keychain locked, search list restored and source unchanged. Independent reviewer
+  and Lead ACCEPTS `2f6248a`: unlock at preflight and immediately before app and
+  installer signing, with no ACL/timeout change. Synthetic credential failure
+  through the actual extracted helper proves errors are sanitized. The next
+  actual producer uses a detached checkout at this exact commit, pinned Paseo
+  source from the verified bundle and genuine npm workspace dependencies. No
+  root `node_modules` symlink or development env copy is allowed.
 
 Next: complete package-validator review, build/sign the exact successor and
 validate its payload, then authenticate/upload. #22–#27 retain their original
@@ -358,9 +382,9 @@ production work. No revocation, cloud configuration or deployment occurred.
 - [x] Owner chose US East for Convex production on 2026-09-14.
 - [x] Verify actual production deployment identity and service configuration;
   both exact targets deployed and public availability checked (billing separate).
-- [ ] Obtain/verify Apple Distribution and Mac Installer Distribution signing
+- [x] Obtain/verify Apple Distribution and Mac Installer Distribution signing
   identities plus a matching Mac App Store provisioning profile. New identities
-  passed local signing; newly issued matching profile download remains pending.
+  passed local signing; newly downloaded matching profile passed independent review.
 - [x] Prepare and independently review the distribution packaging route;
   actual package production/signing validation remains below.
 - [x] Verify RevenueCat's existing Apple app/catalog/credentials and actual
