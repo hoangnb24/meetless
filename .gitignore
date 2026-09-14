@@ -16,3 +16,6 @@ native/**/.build/
 *.tsbuildinfo
 
 .env.local
+
+# Local Apple API and signing credentials
+/keys/

@@ -93,6 +93,19 @@ Do not start production deployment or claim #22/#23/#24 done from this checkpoin
 
 - Deploy preflight successor `d909ca1` requires the Apple API issuer, key ID and PKCS8 private key for production/store-testing Sandbox. Independent review accepted; 47/47 focused local tests passed. This is presence/basic-shape validation, not proof the credentials work. Local validation/deploy entrypoints invoke the guard; no `.github` CI workflow exists, hook/branch-protection enforcement unverified.
 
+### Local credential search — 2026-09-14
+
+Owner requested parallel discovery of existing Apple keys and collection under
+`keys/` with Git exclusion. Separate read-only agents found no `.p8` in the
+home-directory scan outside Library or Spotlight, and no `.p12`/`.pfx` in
+Downloads, Documents, Desktop, projects, CloudStorage or Mobile Documents.
+The separate `.p8` cloud-directory scan timed out; that scope is incomplete.
+Keychain still reports only Apple Development as a valid identity. No private
+key was exported, downloaded, created or copied. `keys/` exists empty with
+mode 0700; independently reviewed `/keys/` ignore covers nested and hidden
+files, and no entries under it are tracked. Signing/API credential input remains
+missing; this does not change the production acceptance status.
+
 ### Frozen source
 
 - Source commit: `6b051116af4dbf8a22337f51b995e120454b79d0`.
