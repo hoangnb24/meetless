@@ -106,6 +106,39 @@ mode 0700; independently reviewed `/keys/` ignore covers nested and hidden
 files, and no entries under it are tracked. Signing/API credential input remains
 missing; this does not change the production acceptance status.
 
+### New credential creation authorized — 2026-09-14
+
+Owner explicitly requested sub-agents create new Apple API/signing keys through
+the in-app browser or Computer Use and save under ignored `keys/`. Separate
+owners prepare the backend In-App Purchase API key and Apple Distribution/Mac
+Installer Distribution signing identities. Preserve existing RevenueCat keys
+and certificates. Creation is in progress; no new credential usability or
+production deployment acceptance is claimed until actual returned files and
+Apple-issued certificates are verified. Secret contents/passwords stay local. Two local RSA-2048 private-key/CSR pairs are prepared
+for Distribution and Installer under `keys/` (mode 0600, ignored; CSR signatures
+and public-key matching checked). API form `Meetless Backend 2026-09-14` and
+both certificate issuance forms are ready in separate agent browser sessions.
+User supplied the required action-time confirmation. Agent browser sessions
+became unavailable before mutation; root recovered the existing task browser
+and completed creation through Apple UI without revoking existing credentials.
+
+- New IAP API key `U48V6LU6X3`, name `Meetless Backend 2026-09-14`, issuer
+  `69a6de8c-6878-47e3-e053-5b8c7c11a4d1`; downloaded to
+  `keys/SubscriptionKey_U48V6LU6X3.p8`, mode 0600, local OpenSSL private-key
+  validation passed. Independent review accepts the actual P-256 key structure,
+  file/directory permissions, ignored/untracked status and matching metadata;
+  this does not prove live Apple authentication. Public configuration metadata is local in
+  `keys/apple-api-metadata.json`. Original downloaded file retained.
+- Apple-issued Distribution certificate `98649LLZ7X` and Mac Installer
+  Distribution `5C93WPF4YD`, team `63M98WD275`, expire 2027-09-14.
+  Browser Download clicks did not yield local certificate files; navigating
+  the observed Apple download link returns `net::ERR_BLOCKED_BY_CLIENT`.
+  No matching public certificate was auto-imported into login keychain.
+- Therefore `.p12` packaging remains incomplete: existing local keys/CSRs are
+  ready, but the two issued public certificates must be downloaded through a
+  working browser. Do not create replacements or revoke any certificate.
+  API credential has not been configured on Convex or live-request verified.
+
 ### Frozen source
 
 - Source commit: `6b051116af4dbf8a22337f51b995e120454b79d0`.
