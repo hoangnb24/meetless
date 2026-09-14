@@ -351,6 +351,9 @@ async function signMasBundle(provisioningProfilePath) {
     parentEntitlementsPath,
     childEntitlementsPath,
   });
+  // A clean build can outlast the keychain's existing idle timeout.
+  // Refresh access at the signing boundary without changing timeout or ACLs.
+  if (distribution) await unlockDistributionKeychain();
   await signAsync({
     app: bundlePath,
     platform: "mas",
@@ -717,18 +720,22 @@ function developmentError(reason) {
   return new Error(`${reason}. Authority: ${authority}. Next action: stop before using the artifact until the ${contract} contract is restored.`);
 }
 
-async function withDistributionKeychain(action) {
+async function unlockDistributionKeychain() {
   await requireRegularFile(options.keychainPasswordFile, "keychain password file");
   const permissions = await lstat(options.keychainPasswordFile);
   if ((permissions.mode & 0o077) !== 0) throw new Error("Keychain password file must be owner-only");
+  const password = (await readFile(options.keychainPasswordFile, "utf8")).trimEnd();
+  if (!password) throw new Error("Keychain password file is empty");
+  try { await run("security", ["unlock-keychain", "-p", password, options.keychain]); }
+  catch { throw new Error("Could not unlock the explicit distribution keychain; credential details withheld"); }
+}
+
+async function withDistributionKeychain(action) {
   const prior = (await run("security", ["list-keychains", "-d", "user"])).stdout;
   const keychains = [...prior.matchAll(/^\s*"([^"\n]+)"\s*$/gmu)].map((match) => match[1]);
   if (!keychains.length) throw new Error("Cannot preserve existing user keychain search list");
-  const password = (await readFile(options.keychainPasswordFile, "utf8")).trimEnd();
-  if (!password) throw new Error("Keychain password file is empty");
   try {
-    try { await run("security", ["unlock-keychain", "-p", password, options.keychain]); }
-    catch { throw new Error("Could not unlock the explicit distribution keychain; credential details withheld"); }
+    await unlockDistributionKeychain();
     await run("security", ["list-keychains", "-d", "user", "-s", ...new Set([...keychains, options.keychain])]);
     return await action();
   } finally {
@@ -752,6 +759,7 @@ async function rebuildReviewedDistributionSource() {
 async function createDistributionInstaller() {
   const pkgPath = path.join(packagePaths.releaseRoot, `Meetless-${options.version}-${options.buildNumber}.pkg`);
   if (await pathExists(pkgPath)) throw new Error("Distribution installer output already exists");
+  await unlockDistributionKeychain();
   await run("productbuild", ["--component", bundlePath, "/Applications", "--sign", options.installerIdentity, "--keychain", options.keychain, pkgPath]);
   const result = await run("pkgutil", ["--check-signature", pkgPath]);
   const certificate = await run("security", ["find-certificate", "-c", options.installerIdentity, "-p", options.keychain]);
