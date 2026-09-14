@@ -28,7 +28,7 @@ export async function verifySignedAppleTransaction(
   }
   const roots = decodeRootCertificates(config.appleRootCertificatesBase64);
   const environment = config.revenueCatEnvironment === "PRODUCTION" ? Environment.PRODUCTION : Environment.SANDBOX;
-  const verifier = new SignedDataVerifier(roots, true, environment, MANAGED_APPLE_BUNDLE_ID);
+  const verifier = new SignedDataVerifier(roots, true, environment, MANAGED_APPLE_BUNDLE_ID, config.appleAppId ?? undefined);
   let decoded;
   try {
     decoded = await verifier.verifyAndDecodeTransaction(signedTransaction);

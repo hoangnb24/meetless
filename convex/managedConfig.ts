@@ -32,6 +32,7 @@ export const MANAGED_ENVIRONMENT_VARIABLES = {
   authKeyId: "MEETLESS_AUTH_KEY_ID",
   authPrivateKey: "MEETLESS_AUTH_PRIVATE_KEY_PKCS8",
   authPublicJwk: "MEETLESS_AUTH_PUBLIC_JWK",
+  appleAppId: "MEETLESS_APPLE_APP_ID",
   appleRootCertificates: "MEETLESS_APPLE_ROOT_CERTIFICATES_BASE64",
   revenueCatAuthMode: "MEETLESS_REVENUECAT_AUTH_MODE",
   revenueCatSigningSecret: "MEETLESS_REVENUECAT_WEBHOOK_SIGNING_SECRET",
@@ -55,6 +56,8 @@ export interface ManagedRuntimeConfig {
   readonly authKeyId: string;
   readonly authPrivateKeyPkcs8: string;
   readonly authPublicJwk: string;
+  /** Numeric App Store Connect Apple ID; required for production verification. */
+  readonly appleAppId: number | null;
   /** Comma-separated base64 DER Apple root certificates; absent for fixtures. */
   readonly appleRootCertificatesBase64: string | null;
   readonly revenueCatAuthMode: ManagedRevenueCatAuthMode;
@@ -116,6 +119,15 @@ export function readManagedRuntimeConfig(
     throw new ManagedConfigurationError(`${MANAGED_ENVIRONMENT_VARIABLES.appleRootCertificates} is required for Apple signed transaction verification`);
   }
 
+  const appleAppIdText = optional(source, MANAGED_ENVIRONMENT_VARIABLES.appleAppId);
+  let appleAppId: number | null = null;
+  if (appleAppIdText !== null) {
+    if (!/^[1-9][0-9]*$/u.test(appleAppIdText) || !Number.isSafeInteger(Number(appleAppIdText))) {
+      throw new ManagedConfigurationError(`${MANAGED_ENVIRONMENT_VARIABLES.appleAppId} must be a positive safe integer from App Store Connect`);
+    }
+    appleAppId = Number(appleAppIdText);
+  }
+
   if (mode === "production") {
     if (allowanceSource !== "production-config") {
       throw new ManagedConfigurationError("production allowance must use the production-config source label");
@@ -125,6 +137,9 @@ export function readManagedRuntimeConfig(
     }
     if (appleVerifierMode !== "app-store-server-api") {
       throw new ManagedConfigurationError("production must select the App Store Server API verifier");
+    }
+    if (appleAppId === null) {
+      throw new ManagedConfigurationError(`${MANAGED_ENVIRONMENT_VARIABLES.appleAppId} is required for production Apple verification; copy the numeric Apple ID from App Store Connect`);
     }
     if (revenueCatEnvironment !== "PRODUCTION") {
       throw new ManagedConfigurationError("production must select the PRODUCTION RevenueCat environment");
@@ -159,6 +174,7 @@ export function readManagedRuntimeConfig(
     authKeyId,
     authPrivateKeyPkcs8,
     authPublicJwk,
+    appleAppId,
     appleRootCertificatesBase64,
     revenueCatAuthMode,
     revenueCatSigningSecret,

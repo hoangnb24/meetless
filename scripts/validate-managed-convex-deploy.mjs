@@ -12,6 +12,7 @@ const names = {
   authKeyId: "MEETLESS_AUTH_KEY_ID",
   authPrivateKey: "MEETLESS_AUTH_PRIVATE_KEY_PKCS8",
   authPublicJwk: "MEETLESS_AUTH_PUBLIC_JWK",
+  appleAppId: "MEETLESS_APPLE_APP_ID",
   appleRootCertificates: "MEETLESS_APPLE_ROOT_CERTIFICATES_BASE64",
   revenueCatAuthMode: "MEETLESS_REVENUECAT_AUTH_MODE",
   revenueCatSigningSecret: "MEETLESS_REVENUECAT_WEBHOOK_SIGNING_SECRET",
@@ -55,7 +56,12 @@ export function validateManagedConvexDeploymentEnvironment(env = process.env, op
   if (!publicJwk || publicJwk.kty !== "EC" || publicJwk.crv !== "P-256" || typeof publicJwk.x !== "string" || typeof publicJwk.y !== "string" || publicJwk.alg !== "ES256" || publicJwk.use !== "sig" || publicJwk.kid !== keyId || Object.hasOwn(publicJwk, "d")) {
     throw new Error(`${names.authPublicJwk} must contain only the configured ES256 public key`);
   }
+  const appleAppIdText = String(env[names.appleAppId] ?? "").trim();
+  if (appleAppIdText && (!/^[1-9][0-9]*$/u.test(appleAppIdText) || !Number.isSafeInteger(Number(appleAppIdText)))) {
+    throw new Error(`${names.appleAppId} must be a positive safe integer from App Store Connect`);
+  }
   if (mode === "production") {
+    if (!appleAppIdText) throw new Error(`${names.appleAppId} is required for production Apple verification; copy the numeric Apple ID from App Store Connect`);
     if (allowanceSource !== "production-config") throw new Error("production allowance source must be production-config");
     if (providerMode !== "real") throw new Error("production provider mode must be real");
     if (appleVerifierMode !== "app-store-server-api") throw new Error("production Apple verifier must be app-store-server-api");
