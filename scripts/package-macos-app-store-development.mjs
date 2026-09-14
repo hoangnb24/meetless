@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmod, cp, lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -66,11 +66,16 @@ import {
   validateRevenueCatPublicSdkKey,
 } from "./lib/macos-app-store-development.mjs";
 
+import { DISTRIBUTION_AUTHORITY, parseMacAppStoreDistributionArguments, validateDistributionProfile, validateDistributionSignature, validateDistributionSource, prepareDistributionInfo, validateDistributionInfo, distributionConfiguration, validateInstallerSignature, validateDistributionProfileCertificate, rebuildDistributionSource } from "./lib/macos-app-store-distribution.mjs";
+
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const options = parseMacAppStoreDevelopmentArguments(process.argv.slice(2));
-const publicSdkKey = readBuildScopedPublicSdkKey();
-const convexUrl = readBuildScopedConvexUrl();
+export async function packageMacAppStore({ distribution = false, arguments_ = process.argv.slice(2) } = {}) {
+const options = distribution ? parseMacAppStoreDistributionArguments(arguments_) : parseMacAppStoreDevelopmentArguments(arguments_);
+const validateProfile = distribution ? validateDistributionProfile : validateR5DevelopmentProfile;
+const validateSignature = distribution ? (output, label, settings) => validateDistributionSignature(output, options.signingIdentity, label, settings) : validateR5DevelopmentSignature;
+const publicSdkKey = distribution ? options.publicSdkKey : readBuildScopedPublicSdkKey();
+const convexUrl = distribution ? options.productionUrl : readBuildScopedConvexUrl();
 const packagePaths = resolveMacOSDmgPaths(repositoryRoot, { proofRoot: options.proofRoot });
 const bundlePath = packagePaths.sourceAppPath;
 const contentsPath = path.join(bundlePath, "Contents");
@@ -80,23 +85,31 @@ const nestedElectronAppPath = path.join(bundlePath, MACOS_APP_STORE_ELECTRON_BIN
 const nestedElectronExecutablePath = path.join(nestedElectronAppPath, "Contents", "MacOS", "Electron");
 const nestedElectronRelativePath = path.relative(bundlePath, nestedElectronExecutablePath).split(path.sep).join("/");
 const directManifestPath = path.join(packagePaths.releaseRoot, "composition-manifest.direct.json");
-const masManifestPath = path.join(packagePaths.releaseRoot, "app-store-development-manifest.json");
+const masManifestPath = path.join(packagePaths.releaseRoot, distribution ? "app-store-distribution-manifest.json" : "app-store-development-manifest.json");
 const installationContractPath = path.join(packageRoot, "installation-contract.json");
 const packageMarkerPath = path.join(packageRoot, "meetless-package.json");
 const hostConfigPath = path.join(contentsPath, "Resources", "host-config.json");
 const parentEntitlementsPath = path.join(repositoryRoot, "native", "macos-host", "MeetlessAppStore.entitlements.plist");
 const childEntitlementsPath = path.join(repositoryRoot, "native", "macos-host", "MeetlessAppStoreChild.entitlements.plist");
 
-await main();
+if (distribution) await withDistributionKeychain(main);
+else await main();
 
 async function main() {
   assertDarwinArm64();
-  await mkdir(options.proofRoot, { recursive: true, mode: 0o700 });
+  if (distribution) await mkdir(options.proofRoot, { mode: 0o700 });
+  else await mkdir(options.proofRoot, { recursive: true, mode: 0o700 });
   const profileSnapshot = await snapshotProvisioningProfile(options.provisioningProfile);
-  validateR5DevelopmentProfile(profileSnapshot.profile);
+  validateProfile(profileSnapshot.profile);
+  if (distribution) await assertReviewedSource();
   await readSourceEntitlements();
   await requireExactDevelopmentIdentity(options.signingIdentity);
+  if (distribution) {
+    const cert = await run("security", ["find-certificate", "-c", options.signingIdentity, "-p", options.keychain]);
+    validateDistributionProfileCertificate(profileSnapshot.profile, cert.stdout);
+  }
 
+  const buildProvenance = distribution ? await rebuildReviewedDistributionSource() : null;
   await runComposer();
   const directComposition = await retainDirectCompositionManifest();
   await applyMacAppStorePackageContract();
@@ -127,6 +140,13 @@ async function main() {
     packageEvidence,
     embeddedProfile,
   });
+  if (distribution) {
+    await assertReviewedSource();
+    evidence.installer = await createDistributionInstaller();
+    evidence.build = buildProvenance;
+    evidence.configuration = distributionConfiguration(options);
+    evidence.source = { commit: options.sourceCommit, snapshotSha256: options.sourceSnapshotSha256 };
+  }
   await writeFile(masManifestPath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
   process.stdout.write(`${JSON.stringify({
     status: "candidate",
@@ -168,7 +188,7 @@ function assertDarwinArm64() {
 
 async function snapshotProvisioningProfile(profilePath) {
   await requireRegularFile(profilePath, "provisioning profile");
-  if (path.basename(profilePath) !== R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME) {
+  if (!distribution && path.basename(profilePath) !== R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME) {
     throw developmentError(`provisioning profile filename ${path.basename(profilePath)} is not the accepted R5 profile`);
   }
   const bytes = await readFile(profilePath);
@@ -196,7 +216,7 @@ async function readSourceEntitlements() {
 }
 
 async function requireExactDevelopmentIdentity(identity) {
-  const { stdout } = await run("security", ["find-identity", "-v", "-p", "codesigning"]);
+  const { stdout } = await run("security", ["find-identity", "-v", "-p", "codesigning", ...(distribution ? [options.keychain] : [])]);
   const exact = [...stdout.matchAll(new RegExp(`"${escapeRegExp(identity)}"`, "gu"))];
   if (exact.length !== 1) {
     throw developmentError(`keychain must expose exactly one ${identity} signing identity`);
@@ -226,6 +246,7 @@ async function retainDirectCompositionManifest() {
   ) {
     throw developmentError("the MAS candidate did not receive the expected disposable local composition");
   }
+  if (distribution) validateDistributionSource(manifest.candidateSnapshot, options);
   await rm(directManifestPath, { force: true });
   await rename(packagePaths.manifestPath, directManifestPath);
   return createMacOSAppStoreDirectCompositionSource({
@@ -320,7 +341,7 @@ async function pathExists(candidate) {
 async function injectBuildInputs() {
   const infoPath = path.join(contentsPath, "Info.plist");
   const info = parsePlistDocument(await readFile(infoPath, "utf8"), "outer Info.plist");
-  const prepared = prepareMacAppStoreDevelopmentInfo(info, publicSdkKey, convexUrl);
+  const prepared = distribution ? prepareDistributionInfo(info, options) : prepareMacAppStoreDevelopmentInfo(info, publicSdkKey, convexUrl);
   await writeFile(infoPath, plist.build(prepared), { mode: 0o644 });
 }
 
@@ -333,8 +354,9 @@ async function signMasBundle(provisioningProfilePath) {
   await signAsync({
     app: bundlePath,
     platform: "mas",
-    type: "development",
-    identity: R5_APP_STORE_DEVELOPMENT_IDENTITY,
+    type: distribution ? "distribution" : "development",
+    identity: options.signingIdentity,
+    ...(distribution ? { keychain: options.keychain } : {}),
     identityValidation: false,
     provisioningProfile: provisioningProfilePath,
     preAutoEntitlements: false,
@@ -353,12 +375,13 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
   const packagedContract = await readPackagedContractFiles();
   await assertProfileSnapshotUnchanged(profileSnapshot);
   await run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundlePath]);
-  const outerSignature = validateR5DevelopmentSignature(
+  const outerSignature = validateSignature(
     await readCodesignDisplay(bundlePath),
     "Meetless.app",
   );
   const outerInfo = parsePlistDocument(await readFile(path.join(contentsPath, "Info.plist"), "utf8"), "signed outer Info.plist");
-  validateMacAppStoreDevelopmentInfo(outerInfo, { publicSdkKey, convexUrl });
+  if (distribution) validateDistributionInfo(outerInfo, options);
+  else validateMacAppStoreDevelopmentInfo(outerInfo, { publicSdkKey, convexUrl });
   const actualParent = await readCodesignEntitlements(
     bundlePath,
     MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.PARENT,
@@ -379,7 +402,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
   if (!embeddedProfileBytes.equals(profileBytes)) {
     throw developmentError("embedded development provisioning profile bytes differ from the immutable selected-profile snapshot");
   }
-  const parsedEmbeddedProfile = validateR5DevelopmentProfile(
+  const parsedEmbeddedProfile = validateProfile(
     parsePlistDocument((await run("security", ["cms", "-D", "-i", profilePath])).stdout, "embedded development provisioning profile"),
   );
   if (parsedEmbeddedProfile.UUID !== profile.UUID || parsedEmbeddedProfile.Name !== profile.Name) {
@@ -396,7 +419,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
   validateMachOEntry(outerMachOEntry, "outer MeetlessHost");
   const outerMachOAbsolutePath = path.join(bundlePath, outerMachOPath);
   await run("codesign", ["--verify", "--strict", "--verbose=2", outerMachOAbsolutePath]);
-  validateR5DevelopmentSignature(
+  validateSignature(
     await readCodesignDisplay(outerMachOAbsolutePath),
     "outer MeetlessHost",
     { expectedBundleIdentifier: null },
@@ -420,7 +443,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
     ),
     { requireElectronTeamId: true, requireBundleIdentifier: true },
   );
-  validateR5DevelopmentSignature(
+  validateSignature(
     await readCodesignDisplay(nestedElectronExecutablePath),
     "signed MAS Electron",
     { expectedBundleIdentifier: R5_APP_STORE_BUNDLE_ID },
@@ -431,7 +454,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
     const absolute = path.join(bundlePath, entry.path);
     const machOPolicy = classifyMacAppStoreDevelopmentMachO(entry, { outerMachOPath });
     await run("codesign", ["--verify", "--strict", "--verbose=2", absolute]);
-    const signature = validateR5DevelopmentSignature(
+    const signature = validateSignature(
       await readCodesignDisplay(absolute),
       entry.path,
       { expectedBundleIdentifier: null },
@@ -477,13 +500,13 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
   }
 
   return {
-    schema: "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1",
-    authority: MACOS_APP_STORE_DEVELOPMENT_AUTHORITY,
+    schema: distribution ? "MEETLESS_MAC_APP_STORE_DISTRIBUTION v1" : "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1",
+    authority: distribution ? DISTRIBUTION_AUTHORITY : MACOS_APP_STORE_DEVELOPMENT_AUTHORITY,
     target: MACOS_APP_STORE_CONTRACT.target,
     bundlePath: path.relative(options.proofRoot, bundlePath).split(path.sep).join("/"),
     bundleIdentifier: R5_APP_STORE_BUNDLE_ID,
     teamId: R5_APP_STORE_TEAM_ID,
-    signingIdentity: R5_APP_STORE_DEVELOPMENT_IDENTITY,
+    signingIdentity: options.signingIdentity,
     revenueCatPublicSdkKeyEmbedded: true,
     convexUrlEmbedded: true,
     convexUrlSha256: sha256(Buffer.from(convexUrl)),
@@ -491,7 +514,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
       name: profile.Name,
       uuid: profile.UUID,
       sha256: profileSnapshot.sha256,
-      provisionedDevices: [profile.ProvisionedDevices[0]],
+      provisionedDevices: distribution ? [] : [profile.ProvisionedDevices[0]],
       expirationDate: profile.ExpirationDate instanceof Date
         ? profile.ExpirationDate.toISOString()
         : new Date(profile.ExpirationDate).toISOString(),
@@ -689,5 +712,69 @@ function escapeRegExp(value) {
 }
 
 function developmentError(reason) {
-  return new Error(`${reason}. Authority: ${MACOS_APP_STORE_DEVELOPMENT_AUTHORITY}. Next action: stop before using the artifact until the exact R5 development contract is restored.`);
+  const authority = distribution ? DISTRIBUTION_AUTHORITY : MACOS_APP_STORE_DEVELOPMENT_AUTHORITY;
+  const contract = distribution ? "reviewed distribution" : "exact R5 development";
+  return new Error(`${reason}. Authority: ${authority}. Next action: stop before using the artifact until the ${contract} contract is restored.`);
 }
+
+async function withDistributionKeychain(action) {
+  await requireRegularFile(options.keychainPasswordFile, "keychain password file");
+  const permissions = await lstat(options.keychainPasswordFile);
+  if ((permissions.mode & 0o077) !== 0) throw new Error("Keychain password file must be owner-only");
+  const prior = (await run("security", ["list-keychains", "-d", "user"])).stdout;
+  const keychains = [...prior.matchAll(/^\s*"([^"\n]+)"\s*$/gmu)].map((match) => match[1]);
+  if (!keychains.length) throw new Error("Cannot preserve existing user keychain search list");
+  const password = (await readFile(options.keychainPasswordFile, "utf8")).trimEnd();
+  if (!password) throw new Error("Keychain password file is empty");
+  try {
+    try { await run("security", ["unlock-keychain", "-p", password, options.keychain]); }
+    catch { throw new Error("Could not unlock the explicit distribution keychain; credential details withheld"); }
+    await run("security", ["list-keychains", "-d", "user", "-s", ...new Set([...keychains, options.keychain])]);
+    return await action();
+  } finally {
+    await run("security", ["list-keychains", "-d", "user", "-s", ...keychains]);
+  }
+}
+
+async function readReviewedSource() {
+  const { stdout } = await run(process.execPath, [path.join(repositoryRoot, "scripts", "candidate-snapshot.mjs"), "--mode=package-source"]);
+  return JSON.parse(stdout);
+}
+
+async function assertReviewedSource() {
+  validateDistributionSource(await readReviewedSource(), options);
+}
+
+async function rebuildReviewedDistributionSource() {
+  return rebuildDistributionSource({ repositoryRoot, options, run, readSnapshot: readReviewedSource });
+}
+
+async function createDistributionInstaller() {
+  const pkgPath = path.join(packagePaths.releaseRoot, `Meetless-${options.version}-${options.buildNumber}.pkg`);
+  if (await pathExists(pkgPath)) throw new Error("Distribution installer output already exists");
+  await run("productbuild", ["--component", bundlePath, "/Applications", "--sign", options.installerIdentity, "--keychain", options.keychain, pkgPath]);
+  const result = await run("pkgutil", ["--check-signature", pkgPath]);
+  const signature = validateInstallerSignature(`${result.stdout}${result.stderr}`, options.installerIdentity);
+  const expanded = path.join(options.proofRoot, "installer-expanded");
+  await run("pkgutil", ["--expand-full", pkgPath, expanded]);
+  const payloadApps = [];
+  async function findPayloadApps(directory) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const target = path.join(directory, entry.name);
+      if (entry.name.endsWith(".app")) payloadApps.push(target);
+      else await findPayloadApps(target);
+    }
+  }
+  await findPayloadApps(expanded);
+  if (payloadApps.length !== 1 || path.basename(payloadApps[0]) !== "Meetless.app") throw new Error("Installer payload must contain exactly the signed Meetless.app");
+  const originalEntries = await enumeratePackageEntries(bundlePath);
+  const payloadEntries = await enumeratePackageEntries(payloadApps[0]);
+  if (JSON.stringify(originalEntries) !== JSON.stringify(payloadEntries)) throw new Error("Installer payload differs from validated signed app closure");
+  await run("codesign", ["--verify", "--deep", "--strict", payloadApps[0]]);
+  validateSignature(await readCodesignDisplay(payloadApps[0]), "installer payload");
+  return { ...signature, path: path.relative(options.proofRoot, pkgPath), sha256: sha256(await readFile(pkgPath)), appArtifactPath: path.relative(options.proofRoot, bundlePath), payloadMatchesApp: true, payloadArtifactSha256: sha256(JSON.stringify(payloadEntries)) };
+}
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await packageMacAppStore();
