@@ -10,6 +10,142 @@ production. Freeze the current source before beginning this work.
 
 GitHub execution breakdown: [Epic #21](https://github.com/hoangnb24/meetless/issues/21), new sub-issues #22–#27 and retained #14–#17/#20. Native dependencies own the execution order; #22/#23 are the first inputs. This link does not change the frozen source.
 
+### Current execution checkpoint — 2026-09-14, after cloud deployment
+
+This checkpoint supersedes the historical missing-login/key/empty-production
+observations below. Epic #21 remains in progress; no distribution artifact or
+TestFlight upload has been accepted.
+
+| Public release input | Verified value |
+| --- | --- |
+| Frozen baseline | `production-baseline-2026-09-14`, `6b051116af4dbf8a22337f51b995e120454b79d0`; never move |
+| Deployed successor source | `63b3768ed334c68cb79dcfc87545b523349ed353`, isolated `/tmp/meetless-production-63b3768` |
+| Apple app / bundle / team | `6807070739` / `com.meetless.app` / `63M98WD275` |
+| Candidate version / build | `1.0` / `1`; ASC recheck shows Prepare for Submission and TestFlight No Builds; recheck before upload |
+| RevenueCat project / app | `0d7b4465` / `appe0ef526253`; existing monthly/annual, premium/default catalog retained |
+| Convex project / region | `2906735`, `hoang-bang:meetless`, `aws-us-east-1` |
+| Production | `content-bulldog-967`, `https://content-bulldog-967.convex.cloud` |
+| Store-testing Sandbox | named reference `store-testing`, `posh-mink-212`, `https://posh-mink-212.convex.cloud` |
+| Production webhook | `whintgr3085ebc4c2`, `https://content-bulldog-967.convex.site/webhooks/revenuecat`, Production only |
+| Store-testing webhook | `whintgrb51603f89e`, `https://posh-mink-212.convex.site/webhooks/revenuecat`, Sandbox only |
+| Current Apple API key ID / issuer | `WZ7MKM8T9D` / `69a6de8c-6878-47e3-e053-5b8c7c11a4d1`; replaced and revoked `U48V6LU6X3` |
+| New provisioning portal record | `8CS67VVGJM`, Meetless Mac App Store Production 2026-09-14; downloaded bytes still pending |
+
+- Both new webhooks are active, app-filtered to Meetless, HMAC enabled with
+  distinct secrets, and subscribe to Initial purchase, Renewal, Product change,
+  Cancellation, Billing issue, Uncancellation and Expiration. No Events observed;
+  real provider delivery and Apple transaction verification remain #15 evidence.
+  Existing development webhook `whintgr572df9a8f6` remains unchanged.
+- Production configuration uses 28,800 seconds/month, trial 18,000 seconds over
+  seven days, `production-config` and Apple PRODUCTION verification. Store-testing
+  uses 1,800 seconds per allocation including trial, accelerated periods and
+  Apple SANDBOX verification. Infra deployment type is production for both;
+  runtime store-testing mode is `hosted-development`/`store-testing-sandbox`.
+  Prices and purchase terms come from the Store catalog; no price or term was
+  changed here. No existing periods, usage or reservations were reset.
+- The distribution producer binds version `1.0` and build `1` into signed
+  `CFBundleShortVersionString` and `CFBundleVersion`, and records both in its
+  configuration and release manifest alongside source commit/snapshot and
+  configuration digest. These describe the reviewed producer contract; actual
+  artifact binding is verified only once the package has been produced.
+- Separate JWT key pairs/audiences/issuers and HMAC secrets were applied through
+  protected local files. The existing backend OpenAI credential was reused for
+  the same Meetless provider purpose; it remains backend-only. Public Apple
+  certificate roots were reused; development JWT/HMAC credentials were not.
+  Secret source files, deployment tokens, signing keys and passwords are under
+  ignored `keys/` (directory 0700, files 0600), never in the app or Git. Signed
+  app configuration contains only public SDK key, endpoints, identity/version
+  and source/config provenance. Provider/Apple private keys and auth-signing
+  keys are backend-only; installer/app private keys remain in the local keychain.
+- Both actual deployment preflights passed and 65 functions deployed per target
+  from the isolated reviewed source. Public `/managed-auth/jwks.json` returned 200 and matched the
+  intended key; unsigned webhook returned 401; unauthenticated device query
+  returned an error whose internal cause Convex conceals. Public deployment
+  evidence is retained locally at `keys/convex-deployment-evidence-2026-09-14.json`.
+  Independent public checks confirmed those HTTP results; Lead ACCEPTS deployment
+  availability only. `/.well-known/jwks.json` is not an implemented route (404).
+  No purchase, transcription/provider request or live Apple status lookup was
+  made. Availability does not establish billing or production acceptance.
+- Default production selection remains `content-bulldog-967`; `.env.local`
+  SHA256 remains `0326adef4a05a85502b2af08a375f8d92afa8a7819615a24f9e73de166585227`.
+  Development `frugal-mandrill-646`, installed app and recordings were preserved.
+  Recovery: retain exact source/config inputs; redeploy the reviewed source to
+  the explicitly selected target using its scoped deployment token. Do not
+  point sandbox at production or replay transactions into development. Before
+  any rollback with data/schema impact, inspect the live state and compatible
+  prior source; no data rollback or deletion is authorized by this checkpoint.
+- A reviewer assertion accidentally exposed the newly created Apple API private
+  key `U48V6LU6X3` in tool output before deployment. Root informed the owner,
+  created the same-scope replacement `WZ7MKM8T9D`, verified the old key appears
+  under Apple's Revoked keys, and updated both configurations before deployment.
+  Only that key was exposed; existing RevenueCat credentials were not changed.
+  Subsequent secret checks emit generic boolean failures, never compared values.
+- Isolated release keychain imports and actual synthetic app/installer signing
+  passed, including tampered-app and unsigned-package rejection. Lead ACCEPTS
+  local signing usability only, based on independent review of exact evidence
+  `.artifacts/production-preparation/signing-smoke-20260914T132202Z/`.
+  Search list/default keychain were restored and release keychain locked.
+  New provisioning record selects the new Distribution certificate, but browser
+  download is blocked. Owner was asked to download into `keys/`; old profile
+  does not match the new certificate and must not substitute for the new one.
+- Lead ACCEPTS source-only routing preparation in `63b3768` after independent
+  review: verified StoreKit context selects fixed signed endpoints with isolated
+  credentials/upload state; focused plugin tests, TypeScript and native boundary
+  proof passed. Review then identified an Apple-delivered signature launch gate
+  and retained-identity transition issue, subsequently corrected by the Swift author.
+  Lead subsequently ACCEPTS the exact two-file correction in `c6a1a2b` after
+  independent review: strict submission signature or documented Apple Store
+  `.1.9`/public TestFlight `.1.25.1`, exact bundle and Apple trust, authenticated
+  optional team/app fields, and only canonical known-submission identity
+  transitions. Development and unknown delivered identity transitions remain
+  rejected. Swift build and full native debug tests passed; no delivered-app
+  acceptance is implied.
+- Lead ACCEPTS source/local packaging preparation in `3a815f5` after independent
+  review of the exact five files. Production producer mandates clean build with
+  source snapshot checks before/after, removes the desktop TypeScript cache
+  outside `dist`, signs app and installer and verifies extracted payload equality.
+  Reviewer ran 41/41 focused tests including actual TypeScript stale-cache
+  reproduction and corrected regeneration. Actual complete producer, provisioning
+  bytes, distribution artifact and Apple delivery remain untested.
+- Actual clean-build attempt at `3a815f5` failed before JavaScript compilation:
+  native integration tests need `packages/runtime/dist/cli.js`, but the top-level
+  build ordered native before its JavaScript prerequisites. Clean removal exposed
+  a dependency previously masked by retained outputs. Evidence retained at
+  `.artifacts/production-preparation/distribution-clean-build-20260914T134649969Z/`.
+  No test was skipped or weakened. Independent reviewer and Lead ACCEPTS the
+  one-line build ordering correction in `579dc55`: Paseo and Meetless TypeScript
+  compile before native integration tests, then the app export runs. The actual
+  clean rerun is recorded separately under
+  `.artifacts/production-preparation/distribution-clean-build-20260914T135119280Z/`;
+  it PASSED at `579dc55f62dc26c108ab984369ea0a977be00f9b`, including native
+  debug/release boundary tests and Expo export. Source snapshots before/after
+  are identical `0117e9c6a203bb13705ccb84588314c2d36473a3c5e0b894894b5fa0e80c1b5f`;
+  result manifest SHA256 is
+  `1bdcfa00a85ecfd02d2addf9e9a43fcb66a980ad6e90801f1a1b53aa73e77a2d`.
+  This exercised the actual clean-build helper, not the full signed package
+  producer. Independent reviewer checked the retained logs/result/snapshots;
+  Lead ACCEPTS actual clean-build evidence only. Profile, app/package signing
+  and upload remain pending.
+- RevenueCat Apps UI public SDK key for `appe0ef526253` was copied and compared
+  to the existing local build input: exact match. Protected staging copy is
+  `keys/revenuecat-public-sdk-key.txt`; this is a public app key, not a backend
+  secret. Test Store key was not selected.
+- Independent reviewer and Lead ACCEPTS this public configuration handoff for
+  #22: exact identities, preserved baseline, region/targets, Store price/term
+  authority, version/build binding contract, public/secret boundary and recovery
+  are recorded. Lead ACCEPTS #24 configuration readiness from the observed
+  catalog/valid-credential state, exact SDK binding and persisted per-environment
+  HMAC integrations. Lead ACCEPTS #25 deployment readiness from actual scoped
+  deployment/configuration evidence and independently checked availability.
+  These input gates do not accept real Apple authentication, successful webhook
+  delivery, billing, transcription, a packaged artifact or release.
+  GitHub #22, #24 and #25 are closed/Done after this acceptance. Epic #21 stays
+  open; #23/#26 remain In Progress and #27 stays blocked by the artifact gate.
+
+Next: validate the
+downloaded provisioning bytes, build the reviewed successor with exact provenance,
+then validate/upload. #22–#27 retain their original acceptance dependencies.
+
 ### Historical execution checkpoint — 2026-09-14
 
 Owner authorized implementation of Epic #21 and selected US East and separate
@@ -192,17 +328,19 @@ production work. No revocation, cloud configuration or deployment occurred.
 - [x] Verify clean source and remote SHA; publish source-baseline tag.
 - [x] Inspect MAS packaging, deployment guard and available signing identities.
 - [x] Owner chose US East for Convex production on 2026-09-14.
-- [ ] Verify actual production deployment identity and service configuration.
+- [x] Verify actual production deployment identity and service configuration;
+  both exact targets deployed and public availability checked (billing separate).
 - [ ] Obtain/verify Apple Distribution and Mac Installer Distribution signing
-  identities plus a matching Mac App Store provisioning profile. The current
-  keychain inspection found only one valid Apple Development identity.
-- [ ] Prepare the distribution packaging route. The existing MAS entry point
-  is development-specific; the generic release route is Developer ID, not MAS.
-- [ ] Verify RevenueCat's existing Apple app/catalog/credentials and actual
-  webhook transport compatibility; use real production event handling.
-- [ ] Configure production allowance at 28,800 seconds per subscriber month,
+  identities plus a matching Mac App Store provisioning profile. New identities
+  passed local signing; newly issued matching profile download remains pending.
+- [x] Prepare and independently review the distribution packaging route;
+  actual package production/signing validation remains below.
+- [x] Verify RevenueCat's existing Apple app/catalog/credentials and actual
+  HMAC configuration compatibility; register separate environment webhooks.
+  Actual authenticated provider delivery and Apple verification remain untried.
+- [x] Configure production allowance at 28,800 seconds per subscriber month,
   backend-only provider credentials, production Apple verification and auth.
-- [ ] Build from an isolated frozen source checkout with recorded configuration,
+- [ ] Build the reviewed successor of the frozen source with recorded configuration,
   validate exact bundle/package/signing provenance, then upload to App Store
   Connect and verify processing. Record build version/number before upload.
 - [ ] Retain #15/#16/#20 billing, quota and recovery evidence obligations; #14
