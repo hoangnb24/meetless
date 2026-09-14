@@ -945,37 +945,38 @@ final class MeetlessTranscriptionCapability {
         outcome: recovered.outcome,
         access: recovered.access,
         appleSignedTransaction: recovered.appleSignedTransaction,
+        appleEnvironment: recovered.appleEnvironment,
         operationId: recovered.operationId
       )
       return
     }
     if operation == "premiumTransaction" {
-      let result = runtimeAuthorization.withValidLease(lease) { premium.readSignedTransaction() }
+      let result = runtimeAuthorization.withValidLease(lease) { premium.readVerifiedTransaction() }
       guard let signedTransaction = result else {
         writePremiumResponse(client, requestId: requestId, ok: false, outcome: "failed", access: .unavailable("store_unavailable"))
         return
       }
-      writePremiumResponse(client, requestId: requestId, ok: true, outcome: "status", access: .unavailable("store_unavailable"), appleSignedTransaction: signedTransaction)
+      writePremiumResponse(client, requestId: requestId, ok: true, outcome: "status", access: .unavailable("store_unavailable"), appleSignedTransaction: signedTransaction?.signedTransaction, appleEnvironment: signedTransaction?.environment)
       return
     }
     if operation == "premiumStatus" || operation == "premiumPurchase" || operation == "premiumRestore" {
-      let result = runtimeAuthorization.withValidLease(lease) { () -> (String, MeetlessPremiumAccessResult, String?, String?) in
-        if operation == "premiumStatus" { return ("status", premium.status(), nil, nil) }
+      let result = runtimeAuthorization.withValidLease(lease) { () -> (String, MeetlessPremiumAccessResult, String?, String?, String?) in
+        if operation == "premiumStatus" { return ("status", premium.status(), nil, nil, nil) }
         if operation == "premiumRestore" {
           let restored = premium.restore(operationId: (request["operationId"] as? String).flatMap { UUID(uuidString: $0) == nil ? nil : $0 } ?? UUID().uuidString)
-          return (restored.outcome, restored.access, restored.appleSignedTransaction, restored.operationId)
+          return (restored.outcome, restored.access, restored.appleSignedTransaction, restored.operationId, restored.appleEnvironment)
         }
         guard let packageId = request["packageId"] as? String, packageId == "monthly" || packageId == "annual" else {
-          return ("failed", .unavailable("store_unavailable"), nil, nil)
+          return ("failed", .unavailable("store_unavailable"), nil, nil, nil)
         }
         let purchased = premium.purchase(packageId: packageId, operationId: (request["operationId"] as? String).flatMap { UUID(uuidString: $0) == nil ? nil : $0 } ?? UUID().uuidString)
-        return (purchased.outcome, purchased.access, purchased.appleSignedTransaction, purchased.operationId)
+        return (purchased.outcome, purchased.access, purchased.appleSignedTransaction, purchased.operationId, purchased.appleEnvironment)
       }
       guard let result else {
         writePremiumResponse(client, requestId: requestId, ok: false, outcome: "failed", access: .unavailable("store_unavailable"))
         return
       }
-      writePremiumResponse(client, requestId: requestId, ok: true, outcome: result.0, access: result.1, appleSignedTransaction: result.2, operationId: result.3)
+      writePremiumResponse(client, requestId: requestId, ok: true, outcome: result.0, access: result.1, appleSignedTransaction: result.2, appleEnvironment: result.4, operationId: result.3)
       return
     }
     guard operation == "transcribe",
@@ -1206,6 +1207,7 @@ final class MeetlessTranscriptionCapability {
     outcome: String,
     access: MeetlessPremiumAccessResult,
     appleSignedTransaction: String? = nil,
+    appleEnvironment: String? = nil,
     operationId: String? = nil
   ) {
     let packages: [[String: Any]] = access.packages.map { package in
@@ -1230,6 +1232,7 @@ final class MeetlessTranscriptionCapability {
       ],
     ]
     if let appleSignedTransaction { response["appleSignedTransaction"] = appleSignedTransaction }
+    if let appleEnvironment { response["appleEnvironment"] = appleEnvironment }
     if let operationId { response["operationId"] = operationId }
     guard let data = try? JSONSerialization.data(withJSONObject: response) else { return }
     writeAll(descriptor, data: data + Data([10]))

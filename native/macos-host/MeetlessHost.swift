@@ -9,6 +9,7 @@ private let meetlessDeveloperIDTeam = "63M98WD275"
 private let meetlessDeveloperIDRequirement = "identifier \"com.meetless.app\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"63M98WD275\""
 private let meetlessAppStoreDevelopmentIdentity = "Apple Development: Long Le (335C7MY4H4)"
 private let meetlessAppStoreDevelopmentRequirement = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[subject.CN] = \"Apple Development: Long Le (335C7MY4H4)\" and certificate leaf[subject.OU] = \"63M98WD275\""
+private let meetlessAppStoreDistributionRequirement = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[subject.OU] = \"63M98WD275\" and certificate leaf[field.1.2.840.113635.100.6.1.7] exists and certificate leaf[field.1.2.840.113635.100.6.1.4] exists"
 private let meetlessHostConfigSchema = "MEETLESS_MACOS_HOST_CONFIG v2"
 private let meetlessInstallationContractSchema = "MEETLESS_INSTALLATION_CONTRACT v1"
 private let meetlessPackageSchema = "MEETLESS_MACOS_PACKAGE v2"
@@ -74,6 +75,9 @@ struct MeetlessLaunchCoordinator<Configuration> {
 enum MeetlessPackagedSignaturePolicy: Equatable {
   case directDeveloperID
   case appStoreDevelopment
+  case appStoreDistribution
+
+  var isAppStore: Bool { self == .appStoreDevelopment || self == .appStoreDistribution }
 }
 
 enum MeetlessMasGateLocatorDisposition: Equatable {
@@ -751,12 +755,24 @@ func meetlessProjectManagedConvexEnvironment(
   runtimeRoot: String,
   bundleInfo: [String: Any]?
 ) throws -> [String: String] {
-  guard meetlessSignaturePolicy(forRuntimeRoot: runtimeRoot) == .appStoreDevelopment else {
-    return environment
-  }
   var projected = environment
-  projected.removeValue(forKey: meetlessConvexEnvironmentKey)
-  projected[meetlessConvexEnvironmentKey] = try meetlessValidatedPackagedConvexURL(info: bundleInfo)
+  for key in ["MEETLESS_STORE_BACKEND_ROUTING", "MEETLESS_CONVEX_SANDBOX_URL", "MEETLESS_CONVEX_PRODUCTION_URL"] {
+    projected.removeValue(forKey: key)
+  }
+  if bundleInfo?["MeetlessStoreBackendRouting"] as? Bool == true {
+    let sandbox = try meetlessValidatedConvexURL(bundleInfo?["MeetlessConvexSandboxURL"] as? String)
+    let production = try meetlessValidatedConvexURL(bundleInfo?["MeetlessConvexProductionURL"] as? String)
+    guard sandbox.trimmingCharacters(in: CharacterSet(charactersIn: "/")) != production.trimmingCharacters(in: CharacterSet(charactersIn: "/")) else {
+      throw hostPreflightError("Store Sandbox and Production endpoints must be distinct")
+    }
+    projected.removeValue(forKey: meetlessConvexEnvironmentKey)
+    projected["MEETLESS_STORE_BACKEND_ROUTING"] = "1"
+    projected["MEETLESS_CONVEX_SANDBOX_URL"] = sandbox
+    projected["MEETLESS_CONVEX_PRODUCTION_URL"] = production
+  } else if meetlessSignaturePolicy(forRuntimeRoot: runtimeRoot) == .appStoreDevelopment {
+    projected.removeValue(forKey: meetlessConvexEnvironmentKey)
+    projected[meetlessConvexEnvironmentKey] = try meetlessValidatedPackagedConvexURL(info: bundleInfo)
+  }
   return projected
 }
 
@@ -767,10 +783,7 @@ func meetlessRunRuntimeProcess(
   runtimeRoot: String,
   bundleInfo: [String: Any]?
 ) throws -> Process {
-  process.environment = environment
-  if meetlessSignaturePolicy(forRuntimeRoot: runtimeRoot) == .appStoreDevelopment {
-    process.environment?[meetlessConvexEnvironmentKey] = try meetlessValidatedPackagedConvexURL(info: bundleInfo)
-  }
+  process.environment = try meetlessProjectManagedConvexEnvironment(environment, runtimeRoot: runtimeRoot, bundleInfo: bundleInfo)
   try process.run()
   return process
 }
@@ -855,20 +868,20 @@ func meetlessAppStoreContainerSupportRoot(for runtimeRoot: String) -> String? {
   return URL(fileURLWithPath: runtimeRoot).deletingLastPathComponent().standardizedFileURL.path
 }
 
-func meetlessSignaturePolicy(forRuntimeRootRelativePath relative: String) -> MeetlessPackagedSignaturePolicy? {
+func meetlessSignaturePolicy(forRuntimeRootRelativePath relative: String, bundleInfo: [String: Any]? = Bundle.main.infoDictionary) -> MeetlessPackagedSignaturePolicy? {
   switch relative {
   case meetlessDirectRuntimeRootRelativePath:
     return .directDeveloperID
   case meetlessAppStoreRuntimeRootRelativePath:
-    return .appStoreDevelopment
+    return bundleInfo?["MeetlessStoreBackendRouting"] as? Bool == true ? .appStoreDistribution : .appStoreDevelopment
   default:
     return nil
   }
 }
 
-func meetlessSignaturePolicy(forRuntimeRoot runtimeRoot: String) -> MeetlessPackagedSignaturePolicy? {
+func meetlessSignaturePolicy(forRuntimeRoot runtimeRoot: String, bundleInfo: [String: Any]? = Bundle.main.infoDictionary) -> MeetlessPackagedSignaturePolicy? {
   if runtimeRoot.hasSuffix("/\(meetlessAppStoreRuntimeRootRelativePath)") {
-    return .appStoreDevelopment
+    return bundleInfo?["MeetlessStoreBackendRouting"] as? Bool == true ? .appStoreDistribution : .appStoreDevelopment
   }
   if runtimeRoot.hasSuffix("/\(meetlessDirectRuntimeRootRelativePath)") {
     return .directDeveloperID
@@ -928,6 +941,8 @@ func meetlessPackagedSignatureRequirement(for policy: MeetlessPackagedSignatureP
     return meetlessDeveloperIDRequirement
   case .appStoreDevelopment:
     return meetlessAppStoreDevelopmentRequirement
+  case .appStoreDistribution:
+    return meetlessAppStoreDistributionRequirement
   }
 }
 
@@ -947,7 +962,7 @@ private func assertApprovedPackagedSignature(
   _ bundlePath: String,
   policy: MeetlessPackagedSignaturePolicy
 ) throws {
-  let identity = policy == .appStoreDevelopment ? meetlessAppStoreDevelopmentIdentity : "Developer ID"
+  let identity = policy == .appStoreDistribution ? "Apple Distribution" : (policy == .appStoreDevelopment ? meetlessAppStoreDevelopmentIdentity : "Developer ID")
   _ = try inspectCodesign([
     "--verify",
     "--deep",
@@ -1037,7 +1052,7 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
           self.premiumDiagnosticSink = premiumSink
           let premium = MeetlessRevenueCatPurchaseAccess(diagnosticSink: premiumSink)
           let providerAccess: MeetlessProviderAccess
-          if meetlessSignaturePolicy(forRuntimeRoot: configuration.runtimeRoot) == .appStoreDevelopment {
+          if meetlessSignaturePolicy(forRuntimeRoot: configuration.runtimeRoot)?.isAppStore == true {
             let folders = MeetlessProviderFolderAccess(runtimeRoot: configuration.runtimeRoot)
             folders.restoreBeforeRuntime()
             self.providerFolderAccess = folders
@@ -1324,8 +1339,8 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
     guard configuration.repositoryRoot.hasPrefix(Bundle.main.bundlePath + "/") else {
       return
     }
-    if meetlessSignaturePolicy(forRuntimeRoot: configuration.runtimeRoot) == .appStoreDevelopment {
-      _ = try meetlessValidatedPackagedConvexURL(info: Bundle.main.infoDictionary)
+    if meetlessSignaturePolicy(forRuntimeRoot: configuration.runtimeRoot)?.isAppStore == true {
+      _ = try meetlessProjectManagedConvexEnvironment([:], runtimeRoot: configuration.runtimeRoot, bundleInfo: Bundle.main.infoDictionary)
     }
     let packageRoot = configuration.repositoryRoot
     let markerPath = try containedPath(packageRoot, "meetless-package.json", label: "package marker")

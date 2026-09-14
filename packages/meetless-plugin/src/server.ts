@@ -1,3 +1,4 @@
+import { ManagedBackendRouter, type AppleEnvironment, type ManagedBackendOperation } from "./managed-backend.js";
 import { randomUUID } from "node:crypto";
 import { access, lstat, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -63,7 +64,7 @@ let recordingStart: Promise<void> | null = null;
 let runtimeIdentity: { instanceId: string; startedAt: string; uiTest: UiTestIdentity | null } | null = null;
 let chatService: MeetingChatService | null = null;
 let premiumService: PremiumService | null = null;
-let managedCredential: ManagedConvexCredential | null = null;
+let managedBackendRouter: ManagedBackendRouter | null = null;
 let managedCredentialSource: ConvexManagedCredentialSource | null = null;
 let transcriptionRoute: TranscriptionRouteCoordinator | null = null;
 const meetingLifecycle = new MeetingLifecycleCoordinator();
@@ -181,13 +182,12 @@ export function getPremiumService(): PremiumService {
 }
 
 /** Consumes the opaque host JWS before the public Premium RPC resolves. */
-export async function enrollManagedAppleTransaction(signedTransaction: string): Promise<ManagedConvexCredential> {
+export async function enrollManagedAppleTransaction(signedTransaction: string, environment?: AppleEnvironment): Promise<ManagedConvexCredential> {
   if (!signedTransaction.trim()) throw new Error("Apple signed transaction is empty");
-  managedCredential = await getManagedConvexCredentialSource().enroll({
-    adapter: "app-store-server-api",
-    signedTransaction,
-  });
-  return managedCredential;
+  const router = getManagedBackendRouter();
+  if (router.routed && !environment) throw new Error("Verified Store environment is missing");
+  const operation = await router.select(environment ? { signedTransaction, environment } : undefined, { adapter: "app-store-server-api", signedTransaction });
+  return router.authorize(operation, { enroll: true });
 }
 
 export async function listManagedDevices(): Promise<ManagedDeviceWire[]> {
@@ -406,38 +406,41 @@ export function getManagedConvexCredentialSource(): ConvexManagedCredentialSourc
   return managedCredentialSource;
 }
 
+function getManagedBackendRouter(): ManagedBackendRouter {
+  if (managedBackendRouter) return managedBackendRouter;
+  const socket = runtimeEndpoint(process.env, "transcription").bindArgument;
+  const routed = process.env.MEETLESS_STORE_BACKEND_ROUTING === "1";
+  managedBackendRouter = new ManagedBackendRouter(
+    routed ? { SANDBOX: requiredEnv("MEETLESS_CONVEX_SANDBOX_URL"), PRODUCTION: requiredEnv("MEETLESS_CONVEX_PRODUCTION_URL") } : { development: requiredEnv("MEETLESS_CONVEX_URL") },
+    (endpoint) => routed ? new ConvexManagedCredentialSource(new ConvexHttpManagedFunctionClient(endpoint), new UnixSocketManagedAuthTransport(socket)) : getManagedConvexCredentialSource(),
+    () => new NativePremiumAccessPort(socket).readVerifiedTransaction(),
+  );
+  return managedBackendRouter;
+}
+
 async function managedClientWithCredential(): Promise<ConvexHttpManagedFunctionClient> {
-  const cachedCredential = managedCredential && !credentialNeedsRefresh(managedCredential) ? managedCredential : null;
-  const credential: ManagedConvexCredential = cachedCredential
-    ?? await getManagedConvexCredentialSource().refresh();
-  managedCredential = credential;
-  const client = new ConvexHttpManagedFunctionClient(requiredEnv("MEETLESS_CONVEX_URL"), { authToken: credential.authToken });
-  return client;
+  const router = getManagedBackendRouter();
+  const operation = await router.select();
+  const credential = await router.authorize(operation);
+  return new ConvexHttpManagedFunctionClient(operation.context.endpoint, { authToken: credential.authToken });
 }
 
 async function refreshManagedAuthorization(): Promise<ManagedConvexCredential> {
-  const credential = await getManagedConvexCredentialSource().refresh();
-  managedCredential = credential;
-  return credential;
+  const router = getManagedBackendRouter();
+  return router.authorize(await router.select(), { refresh: true });
 }
 
-function credentialExpired(credential: ManagedConvexCredential): boolean {
-  return credential.expiresAt !== undefined && credential.expiresAt <= Date.now();
-}
-
-function credentialNeedsRefresh(credential: ManagedConvexCredential): boolean {
-  if (credentialExpired(credential)) return true;
-  return (credential.state === "active" || credential.state === "grace")
-    && credential.naturalExpiryAt !== undefined
-    && credential.naturalExpiryAt !== null
-    && credential.naturalExpiryAt <= Date.now();
+function managedJournalRoot(storeRoot: string, operation: ManagedBackendOperation): string {
+  return path.join(storeRoot, "managed-convex-upload-journal", operation.context.namespace);
 }
 
 async function resumeExistingManagedRecording(recordingId: string) {
-  const credential = await getManagedConvexCredentialSource().refresh().catch(() => { throw new Error("Managed device enrollment could not be verified"); });
+  const router = getManagedBackendRouter();
+  const operation = await router.select();
+  const credential = await router.authorize(operation, { refresh: true }).catch(() => { throw new Error("Managed device enrollment could not be verified"); });
   const storeRoot = requiredAbsolute("MEETLESS_STORE_ROOT");
-  const managedUpload = new ConvexManagedUploadPort(new ConvexHttpManagedFunctionClient(requiredEnv("MEETLESS_CONVEX_URL")), {
-    journal: new FileManagedConvexUploadJournal(path.join(storeRoot, "managed-convex-upload-journal")),
+  const managedUpload = new ConvexManagedUploadPort(new ConvexHttpManagedFunctionClient(operation.context.endpoint), {
+    journal: new FileManagedConvexUploadJournal(managedJournalRoot(storeRoot, operation)),
   });
   return new ConvexManagedTranscriptionService(getMeetingStore(), {
     lifecycle: meetingLifecycle,
@@ -452,15 +455,12 @@ export async function transcribeManagedRecording(input: {
   credential?: ManagedConvexCredential;
   onDurableStart?: (transcript: import("@meetless/meeting-domain").TranscriptState) => void;
 }): Promise<ConvexManagedTranscriptionResult> {
-  const source = getManagedConvexCredentialSource();
-  const suppliedCredential = input.credential;
-  const credential = suppliedCredential && !credentialNeedsRefresh(suppliedCredential)
-    ? suppliedCredential
-    : await (input.appleVerification ? source.enroll(input.appleVerification) : source.refresh()).catch(() => { throw new Error("Managed device enrollment could not be verified"); });
+  const router = getManagedBackendRouter();
+  const operation = await router.select(undefined, input.appleVerification);
+  const credential = await router.authorize(operation, { enroll: !!input.appleVerification, credential: input.credential }).catch(() => { throw new Error("Managed device enrollment could not be verified"); });
   const storeRoot = requiredAbsolute("MEETLESS_STORE_ROOT");
-  const convexUrl = requiredEnv("MEETLESS_CONVEX_URL");
-  const upload = new ConvexManagedUploadPort(new ConvexHttpManagedFunctionClient(convexUrl), {
-    journal: new FileManagedConvexUploadJournal(path.join(storeRoot, "managed-convex-upload-journal")),
+  const upload = new ConvexManagedUploadPort(new ConvexHttpManagedFunctionClient(operation.context.endpoint), {
+    journal: new FileManagedConvexUploadJournal(managedJournalRoot(storeRoot, operation)),
   });
   return new ConvexManagedTranscriptionService(getMeetingStore(), {
     lifecycle: meetingLifecycle,

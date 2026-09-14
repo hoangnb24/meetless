@@ -519,8 +519,10 @@ private func testManagedAuthUsesOnlyPublicIdentityAndNonpersistentTestKeys() thr
 
 private final class FakePremiumAccess: MeetlessPremiumPurchaseAccess {
   var purchasedPackage: String?
+  var appleEnvironment = "SANDBOX"
   var signedTransaction: String? = "eyJhbGciOiJFUzI1NiJ9.synthetic.signature"
   func readSignedTransaction() -> String? { signedTransaction }
+  func readVerifiedTransaction() -> MeetlessVerifiedAppleTransaction? { signedTransaction.map { MeetlessVerifiedAppleTransaction(signedTransaction: $0, environment: appleEnvironment) } }
   var restoreCount = 0
   var retainedTerminal: MeetlessPremiumMutationResult?
   let inactive = MeetlessPremiumAccessResult(
@@ -538,19 +540,19 @@ private final class FakePremiumAccess: MeetlessPremiumPurchaseAccess {
   func status() -> MeetlessPremiumAccessResult { inactive }
   func purchase(packageId: String) -> MeetlessPremiumMutationResult {
     purchasedPackage = packageId
-    return MeetlessPremiumMutationResult(outcome: "active", access: active, appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.synthetic.signature")
+    return MeetlessPremiumMutationResult(outcome: "active", access: active, appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.synthetic.signature", appleEnvironment: appleEnvironment)
   }
   func restore() -> MeetlessPremiumMutationResult {
     restoreCount += 1
-    return MeetlessPremiumMutationResult(outcome: "active", access: active, appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.synthetic.signature")
+    return MeetlessPremiumMutationResult(outcome: "active", access: active, appleSignedTransaction: "eyJhbGciOiJFUzI1NiJ9.synthetic.signature", appleEnvironment: appleEnvironment)
   }
   func purchase(packageId: String, operationId: String) -> MeetlessPremiumMutationResult {
     let result = purchase(packageId: packageId)
-    return MeetlessPremiumMutationResult(outcome: result.outcome, access: result.access, appleSignedTransaction: result.appleSignedTransaction, operationId: operationId)
+    return MeetlessPremiumMutationResult(outcome: result.outcome, access: result.access, appleSignedTransaction: result.appleSignedTransaction, appleEnvironment: result.appleEnvironment, operationId: operationId)
   }
   func restore(operationId: String) -> MeetlessPremiumMutationResult {
     let result = restore()
-    return MeetlessPremiumMutationResult(outcome: result.outcome, access: result.access, appleSignedTransaction: result.appleSignedTransaction, operationId: operationId)
+    return MeetlessPremiumMutationResult(outcome: result.outcome, access: result.access, appleSignedTransaction: result.appleSignedTransaction, appleEnvironment: result.appleEnvironment, operationId: operationId)
   }
   func recover() -> MeetlessPremiumMutationResult? {
     defer { retainedTerminal = nil }
@@ -3497,6 +3499,10 @@ private func testPremiumSocketBoundary() {
   let evidence = request("{\"version\":1,\"requestId\":\"premium-evidence\",\"operation\":\"premiumTransaction\"}")
   check(evidence?["appleSignedTransaction"] as? String == "eyJhbGciOiJFUzI1NiJ9.synthetic.signature", "read-only evidence must reach trusted plugin")
   check(premium.purchasedPackage == nil && premium.restoreCount == 0, "evidence read must never purchase or restore")
+  check(evidence?["appleEnvironment"] as? String == "SANDBOX", "verified sandbox environment must accompany its evidence")
+  premium.appleEnvironment = "PRODUCTION"
+  let productionEvidence = request("{\"version\":1,\"requestId\":\"production-evidence\",\"operation\":\"premiumTransaction\"}")
+  check(productionEvidence?["appleEnvironment"] as? String == "PRODUCTION", "verified production environment must accompany its evidence")
   premium.signedTransaction = nil
   let absentEvidence = request("{\"version\":1,\"requestId\":\"premium-absent\",\"operation\":\"premiumTransaction\"}")
   check(absentEvidence?["ok"] as? Bool == true, "authorized nil evidence must remain a successful read")
@@ -3507,6 +3513,7 @@ private func testPremiumSocketBoundary() {
   let purchase = request("{\"version\":1,\"requestId\":\"premium-purchase\",\"operation\":\"premiumPurchase\",\"packageId\":\"monthly\",\"operationId\":\"12345678-1234-4123-8123-123456789abc\"}")
   check(purchase?["operationId"] as? String == "12345678-1234-4123-8123-123456789abc", "socket purchase must preserve the original operation UUID independently from requestId")
   check(premium.purchasedPackage == "monthly", "Premium purchase must forward only an allowed package identifier")
+  check(purchase?["appleEnvironment"] as? String == "PRODUCTION", "purchase environment must reach plugin")
   check(purchase?["outcome"] as? String == "active", "Premium purchase must return the normalized mutation outcome")
   let purchaseAccess = purchase?["access"] as? [String: Any]
   check(purchaseAccess?["status"] as? String == "active", "Premium purchase must return active entitlement state")
@@ -3514,6 +3521,7 @@ private func testPremiumSocketBoundary() {
 
   let restore = request("{\"version\":1,\"requestId\":\"premium-restore\",\"operation\":\"premiumRestore\"}")
   check(premium.restoreCount == 1, "Premium restore must run only after the explicit restore request")
+  check(restore?["appleEnvironment"] as? String == "PRODUCTION", "restore environment must reach plugin")
   check(restore?["outcome"] as? String == "active", "Premium restore must return the normalized mutation outcome")
   check(restore?["appleSignedTransaction"] as? String == "eyJhbGciOiJFUzI1NiJ9.synthetic.signature", "Premium restore must carry opaque transaction material only to the trusted plugin boundary")
 
@@ -4414,6 +4422,28 @@ private func testPackagedConvexEnvironmentBinding() {
   expectThrow("non-string packaged Convex URL must fail closed", { _ = try meetlessValidatedPackagedConvexURL(info: ["MeetlessConvexURL": 7]) })
 }
 
+private func testStoreBackendProjection() {
+  let runtime = "/Users/fixture/Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless"
+  let info: [String: Any] = ["MeetlessStoreBackendRouting": true, "MeetlessConvexSandboxURL": "https://sandbox.example.test", "MeetlessConvexProductionURL": "https://production.example.test"]
+  do {
+    let projected = try meetlessProjectManagedConvexEnvironment(["MEETLESS_CONVEX_URL": "https://wrong.example.test", "MEETLESS_CONVEX_SANDBOX_URL": "https://wrong.example.test", "MEETLESS_STORE_BACKEND_ROUTING": "0"], runtimeRoot: runtime, bundleInfo: info)
+    check(projected["MEETLESS_CONVEX_URL"] == nil, "distribution must remove inherited single endpoint")
+    check(projected["MEETLESS_CONVEX_SANDBOX_URL"] == "https://sandbox.example.test", "sandbox endpoint must come from signed bundle")
+    check(projected["MEETLESS_CONVEX_PRODUCTION_URL"] == "https://production.example.test", "production endpoint must come from signed bundle")
+    check(projected["MEETLESS_STORE_BACKEND_ROUTING"] == "1", "ambient routing flag cannot disable signed routing")
+    check(meetlessSignaturePolicy(forRuntimeRoot: runtime, bundleInfo: info) == .appStoreDistribution, "signed routing distribution must select distribution signature requirement")
+    let requirement = meetlessPackagedSignatureRequirement(for: .appStoreDistribution)
+    check(requirement.contains("identifier \"com.meetless.app\"") && requirement.contains("anchor apple generic") && requirement.contains("63M98WD275") && requirement.contains("100.6.1.7") && requirement.contains("100.6.1.4") && !requirement.contains("Apple Development"), "distribution requires exact app, Apple anchor, team and distribution certificate extensions")
+  } catch { check(false, "valid isolated Store backend projection must succeed") }
+  for malformed: [String: Any] in [
+    ["MeetlessStoreBackendRouting": true],
+    ["MeetlessStoreBackendRouting": true, "MeetlessConvexSandboxURL": "https://same.example.test", "MeetlessConvexProductionURL": "https://same.example.test/"],
+    ["MeetlessStoreBackendRouting": true, "MeetlessConvexSandboxURL": "http://sandbox.example.test", "MeetlessConvexProductionURL": "https://production.example.test"],
+  ] {
+    expectThrow("incomplete or invalid distribution endpoint map must fail closed", { _ = try meetlessProjectManagedConvexEnvironment([:], runtimeRoot: runtime, bundleInfo: malformed) })
+  }
+}
+
 private func testProductionRuntimeLaunchConvexBinding() {
   let masRuntimeRoot = "/Users/fixture/Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless"
   let directRuntimeRoot = "/Users/fixture/Library/Application Support/Meetless"
@@ -4690,6 +4720,7 @@ private struct TranscriptionCapabilityTests {
     testMultipartFields()
     testHostEnvironmentFiltering()
     testPackagedConvexEnvironmentBinding()
+    testStoreBackendProjection()
     testCaptureSettingsFallbackPolicy()
     testProviderFailureNormalizationAndCancellation()
     testLegacyIdentityMigrationBoundary()

@@ -556,6 +556,47 @@ function deferred<T>() {
 }
 
 
+describe("private Store environment transport", () => {
+  test.each(["SANDBOX", "PRODUCTION"] as const)("passes %s enrollment context internally and strips it from renderer", async (environment) => {
+    const onAppleSignedTransaction = vi.fn(async () => activeAuthorization());
+    const access: PremiumAccessPort = {
+      status: async () => activeAccess,
+      purchase: async () => ({ outcome: "active", access: activeAccess, appleSignedTransaction: "opaque-proof", appleEnvironment: environment }),
+      restore: async () => ({ outcome: "active", access: activeAccess, appleSignedTransaction: "opaque-restore", appleEnvironment: environment }),
+      recover: async () => null,
+    };
+    const service = new PremiumService(access, { requireAppleSignedTransaction: true, onAppleSignedTransaction });
+    const result = await service.purchase("monthly");
+    expect(onAppleSignedTransaction).toHaveBeenCalledWith("opaque-proof", environment);
+    expect(result).not.toHaveProperty("appleSignedTransaction");
+    expect(result).not.toHaveProperty("appleEnvironment");
+  });
+
+  test.each(["SANDBOX", "PRODUCTION", undefined, "XCODE"])("requires matched environment on read-only proof (%s)", async (environment) => {
+    const directory = await mkdtemp("/private/tmp/meetless-environment-rpc-");
+    const socketPath = `${directory}/p.sock`;
+    const server = net.createServer((socket) => {
+      let buffer = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk) => {
+        buffer += chunk;
+        if (!buffer.includes("\n")) return;
+        const request = JSON.parse(buffer.trim());
+        socket.end(JSON.stringify({ version: 1, requestId: request.requestId, type: "premium.access", ok: true, outcome: "status", access: activeAccess, appleSignedTransaction: "opaque-proof", ...(environment ? { appleEnvironment: environment } : {}) }) + "\n");
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    try {
+      const result = new NativePremiumAccessPort(socketPath).readVerifiedTransaction();
+      if (environment === "SANDBOX" || environment === "PRODUCTION") await expect(result).resolves.toEqual({ signedTransaction: "opaque-proof", environment });
+      else await expect(result).rejects.toThrow();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("private read-only Apple evidence transport", () => {
   test.each(["opaque-signed-proof", undefined])("returns optional evidence only to trusted caller (%s)", async (proof) => {
     const directory = await mkdtemp("/private/tmp/meetless-proof-rpc-");

@@ -94,22 +94,30 @@ struct MeetlessPremiumAccessResult {
   }
 }
 
+struct MeetlessVerifiedAppleTransaction {
+  let signedTransaction: String
+  let environment: String
+}
+
 struct MeetlessPremiumMutationResult {
   let outcome: String
   let access: MeetlessPremiumAccessResult
   let appleSignedTransaction: String?
+  let appleEnvironment: String?
   let operationId: String?
 
-  init(outcome: String, access: MeetlessPremiumAccessResult, appleSignedTransaction: String? = nil, operationId: String? = nil) {
+  init(outcome: String, access: MeetlessPremiumAccessResult, appleSignedTransaction: String? = nil, appleEnvironment: String? = nil, operationId: String? = nil) {
     self.outcome = outcome
     self.access = access
     self.appleSignedTransaction = appleSignedTransaction
+    self.appleEnvironment = appleEnvironment
     self.operationId = operationId
   }
 }
 
 protocol MeetlessPremiumPurchaseAccess {
   func readSignedTransaction() -> String?
+  func readVerifiedTransaction() -> MeetlessVerifiedAppleTransaction?
   func status() -> MeetlessPremiumAccessResult
   func purchase(packageId: String) -> MeetlessPremiumMutationResult
   func restore() -> MeetlessPremiumMutationResult
@@ -120,6 +128,7 @@ protocol MeetlessPremiumPurchaseAccess {
 
 extension MeetlessPremiumPurchaseAccess {
   func readSignedTransaction() -> String? { nil }
+  func readVerifiedTransaction() -> MeetlessVerifiedAppleTransaction? { nil }
   func purchase(packageId: String, operationId: String) -> MeetlessPremiumMutationResult { purchase(packageId: packageId) }
   func restore(operationId: String) -> MeetlessPremiumMutationResult { restore() }
 }
@@ -483,7 +492,7 @@ final class MeetlessPremiumOperationSlot {
     lock.lock()
     defer { lock.unlock() }
     guard entry?.lease.id == lease.id, entry?.terminal == nil else { return false }
-    entry?.terminal = MeetlessPremiumMutationResult(outcome: result.outcome, access: result.access, appleSignedTransaction: result.appleSignedTransaction, operationId: lease.id)
+    entry?.terminal = MeetlessPremiumMutationResult(outcome: result.outcome, access: result.access, appleSignedTransaction: result.appleSignedTransaction, appleEnvironment: result.appleEnvironment, operationId: lease.id)
     return true
   }
 }
@@ -729,7 +738,8 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
       self.finish(lease: lease, result: MeetlessPremiumMutationResult(
         outcome: meetlessPremiumVerifiedPurchaseOutcome(succeeded: true, userCancelled: false, hasSignedTransaction: true),
         access: access,
-        appleSignedTransaction: signedTransaction
+        appleSignedTransaction: signedTransaction.signedTransaction,
+        appleEnvironment: signedTransaction.environment
       ))
     }
   }
@@ -755,7 +765,8 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
       self.finish(lease: lease, result: MeetlessPremiumMutationResult(
         outcome: "pending",
         access: MeetlessPremiumAccessResult(status: "active", packages: [], reason: nil),
-        appleSignedTransaction: signedTransaction
+        appleSignedTransaction: signedTransaction.signedTransaction,
+        appleEnvironment: signedTransaction.environment
       ))
     }
   }
@@ -883,7 +894,9 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
   #if canImport(StoreKit)
   /// Read StoreKit's latest verified evidence, including expiry/revocation.
   /// This never purchases, restores, syncs the App Store, or changes UI state.
-  func readSignedTransaction() -> String? {
+  func readSignedTransaction() -> String? { readVerifiedTransaction()?.signedTransaction }
+
+  func readVerifiedTransaction() -> MeetlessVerifiedAppleTransaction? {
     guard !Thread.isMainThread else { return nil }
     return wait(timeout: 8) { completion in
       Task {
@@ -893,7 +906,7 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
                 case .verified(let transaction) = result,
                 transaction.productID == productId,
                 transaction.appBundleID == meetlessPremiumAppBundle,
-                transaction.environment == .sandbox,
+                (transaction.environment == .sandbox || transaction.environment == .production),
                 result.jwsRepresentation.utf8.count <= 65_536 else { continue }
           candidates.append((transaction, result.jwsRepresentation))
         }
@@ -903,40 +916,42 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
           if left.0.purchaseDate != right.0.purchaseDate { return left.0.purchaseDate < right.0.purchaseDate }
           return left.0.id < right.0.id
         }
-        completion(latest?.1)
+        completion(latest.map { MeetlessVerifiedAppleTransaction(signedTransaction: $0.1, environment: $0.0.environment == .sandbox ? "SANDBOX" : "PRODUCTION") })
       }
     }
   }
 
-  private func signedTransactionFor(productId: String) async -> String? {
+  private func signedTransactionFor(productId: String) async -> MeetlessVerifiedAppleTransaction? {
     guard productId == meetlessPremiumMonthlyProduct || productId == meetlessPremiumAnnualProduct else { return nil }
     guard let result = await StoreKit.Transaction.latest(for: productId) else { return nil }
     switch result {
     case .verified(let transaction):
       guard transaction.productID == productId,
             transaction.appBundleID == meetlessPremiumAppBundle,
-            transaction.environment == .sandbox else { return nil }
-      return result.jwsRepresentation
+            (transaction.environment == .sandbox || transaction.environment == .production),
+            result.jwsRepresentation.utf8.count <= 65_536 else { return nil }
+      return MeetlessVerifiedAppleTransaction(signedTransaction: result.jwsRepresentation, environment: transaction.environment == .sandbox ? "SANDBOX" : "PRODUCTION")
     case .unverified:
       return nil
     }
   }
 
-  private func signedTransactionForActiveManagedProduct() async -> String? {
+  private func signedTransactionForActiveManagedProduct() async -> MeetlessVerifiedAppleTransaction? {
     for await result in StoreKit.Transaction.currentEntitlements {
       guard case .verified(let transaction) = result,
             transaction.productID == meetlessPremiumMonthlyProduct || transaction.productID == meetlessPremiumAnnualProduct,
             transaction.appBundleID == meetlessPremiumAppBundle,
-            transaction.environment == .sandbox,
+            (transaction.environment == .sandbox || transaction.environment == .production),
+            result.jwsRepresentation.utf8.count <= 65_536,
             transaction.revocationDate == nil,
             transaction.expirationDate.map({ $0 > Date() }) ?? true else { continue }
-      return result.jwsRepresentation
+      return MeetlessVerifiedAppleTransaction(signedTransaction: result.jwsRepresentation, environment: transaction.environment == .sandbox ? "SANDBOX" : "PRODUCTION")
     }
     return nil
   }
   #else
-  private func signedTransactionFor(productId: String) async -> String? { nil }
-  private func signedTransactionForActiveManagedProduct() async -> String? { nil }
+  private func signedTransactionFor(productId: String) async -> MeetlessVerifiedAppleTransaction? { nil }
+  private func signedTransactionForActiveManagedProduct() async -> MeetlessVerifiedAppleTransaction? { nil }
   #endif
 
   private func wait<Value>(timeout: TimeInterval, start: (@escaping (Value?) -> Void) -> Void) -> Value? {

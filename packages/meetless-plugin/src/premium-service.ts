@@ -40,6 +40,7 @@ const NativePremiumResponseSchema = z.object({
   outcome: z.enum(["status", "active", "cancelled", "pending", "failed"]),
   access: PremiumAccessWireSchema,
   /** Trusted host/plugin field; PremiumService strips it before RPC return. */
+  appleEnvironment: z.enum(["SANDBOX", "PRODUCTION"]).optional(),
   appleSignedTransaction: z.string().trim().min(1).max(65_536).optional(),
   operationId: z.uuid().optional(),
 }).strict();
@@ -49,6 +50,7 @@ type NativePremiumOperation = "premiumStatus" | "premiumPurchase" | "premiumRest
 export interface PremiumMutationResultInternal extends PremiumMutationResultWire {
   /** Opaque JWS retained inside the trusted plugin path only. */
   readonly appleSignedTransaction?: string;
+  readonly appleEnvironment?: "SANDBOX" | "PRODUCTION";
   readonly operationId?: string;
 }
 
@@ -101,6 +103,12 @@ export class NativePremiumAccessPort implements PremiumAccessPort {
    * Unsupported operations, EOF, malformed replies and authorization failures
    * remain errors; none may silently suppress subscription evidence.
    */
+  async readVerifiedTransaction(): Promise<{ signedTransaction: string; environment: "SANDBOX" | "PRODUCTION" } | null> {
+    const response = await this.request("premiumTransaction");
+    if (!response.ok || (response.appleSignedTransaction && !response.appleEnvironment)) throw new Error("Premium transaction verification is unavailable");
+    return response.appleSignedTransaction && response.appleEnvironment ? { signedTransaction: response.appleSignedTransaction, environment: response.appleEnvironment } : null;
+  }
+
   async readSignedTransaction(): Promise<string | null> {
     const response = await this.request("premiumTransaction");
     if (!response.ok) throw new Error("Premium transaction verification is unavailable");
@@ -114,18 +122,18 @@ export class NativePremiumAccessPort implements PremiumAccessPort {
 
   async purchase(packageId: "monthly" | "annual", operationId?: string): Promise<PremiumMutationResultInternal> {
     const response = await this.request("premiumPurchase", packageId, operationId);
-    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction, operationId: response.operationId };
+    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction, appleEnvironment: response.appleEnvironment, operationId: response.operationId };
   }
 
   async restore(operationId?: string): Promise<PremiumMutationResultInternal> {
     const response = await this.request("premiumRestore", undefined, operationId);
-    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction, operationId: response.operationId };
+    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction, appleEnvironment: response.appleEnvironment, operationId: response.operationId };
   }
 
   async recover(): Promise<PremiumMutationResultInternal | null> {
     const response = await this.request("premiumRecover");
     if (!response.ok) return null;
-    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction, operationId: response.operationId };
+    return { ...PremiumMutationResultWireSchema.parse({ outcome: response.outcome, access: response.access }), appleSignedTransaction: response.appleSignedTransaction, appleEnvironment: response.appleEnvironment, operationId: response.operationId };
   }
 
   private request(operation: NativePremiumOperation, packageId?: "monthly" | "annual", operationId?: string) {
@@ -229,7 +237,7 @@ export class PremiumService {
   constructor(
     private readonly access: PremiumAccessPort,
     private readonly options: {
-      readonly onAppleSignedTransaction?: (signedTransaction: string) => Promise<unknown>;
+      readonly onAppleSignedTransaction?: (signedTransaction: string, environment?: "SANDBOX" | "PRODUCTION") => Promise<unknown>;
       readonly requireAppleSignedTransaction?: boolean;
       /** Device-key refresh is the source of truth after a daemon relaunch. */
       readonly readAuthorization?: () => Promise<PremiumAuthorizationSnapshot>;
@@ -446,7 +454,7 @@ export class PremiumService {
     if (parsed.outcome === "pending") {
       if (!signedTransaction) return { outcome: "pending", access: pendingPremiumAccess(parsed.access) };
       if (!this.options.onAppleSignedTransaction) return failedPremiumResult();
-      const pendingAccess = this.beginAppleEnrollment(parsed.access, signedTransaction, token);
+      const pendingAccess = this.beginAppleEnrollment(parsed.access, signedTransaction, token, result.appleEnvironment);
       return pendingAccess
         ? { outcome: "pending", access: pendingAccess }
         : failedPremiumResult();
@@ -458,7 +466,7 @@ export class PremiumService {
     if (!signedTransaction) return parsed;
     if (!this.options.onAppleSignedTransaction) return failedPremiumResult();
     try {
-      const enrollment = this.startEnrollment(parsed.access, signedTransaction, token, false);
+      const enrollment = this.startEnrollment(parsed.access, signedTransaction, token, false, result.appleEnvironment);
       if (!enrollment) return failedPremiumResult();
       const enrolled = await enrollment.promise;
       if (!enrolled.ok || !enrolled.authorization || !authorizationAllowsPremium(enrolled.authorization)) return failedPremiumResult();
@@ -474,9 +482,10 @@ export class PremiumService {
     access: PremiumAccessWire,
     signedTransaction: string,
     token: number,
+    environment?: "SANDBOX" | "PRODUCTION",
   ): PremiumAccessWire | null {
     if (!this.options.onAppleSignedTransaction) return null;
-    const enrollment = this.startEnrollment(access, signedTransaction, token, true);
+    const enrollment = this.startEnrollment(access, signedTransaction, token, true, environment);
     return enrollment?.access ?? null;
   }
 
@@ -485,12 +494,13 @@ export class PremiumService {
     signedTransaction: string,
     token: number,
     reportCompletion: boolean,
+    environment?: "SANDBOX" | "PRODUCTION",
   ): {
     readonly access: PremiumAccessWire;
     readonly digest: string;
     readonly promise: Promise<PremiumEnrollmentResult>;
   } | null {
-    const digest = transactionDigest(signedTransaction);
+    const digest = transactionDigest(`${environment ?? "development"}:${signedTransaction}`);
     if (this.enrollment) {
       return this.enrollment.digest === digest
         ? this.enrollment
@@ -512,7 +522,7 @@ export class PremiumService {
     }
     const callback = this.options.onAppleSignedTransaction;
     if (!callback) return null;
-    const promise = Promise.resolve().then(() => callback(signedTransaction)).then(
+    const promise = Promise.resolve().then(() => (environment ? callback(signedTransaction, environment) : callback(signedTransaction))).then(
       (value) => {
         try {
           return { ok: true, authorization: parseEnrollmentAuthorization(value) };
