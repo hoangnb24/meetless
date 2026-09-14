@@ -40,11 +40,11 @@ const NativePremiumResponseSchema = z.object({
   outcome: z.enum(["status", "active", "cancelled", "pending", "failed"]),
   access: PremiumAccessWireSchema,
   /** Trusted host/plugin field; PremiumService strips it before RPC return. */
-  appleSignedTransaction: z.string().trim().min(1).optional(),
+  appleSignedTransaction: z.string().trim().min(1).max(65_536).optional(),
   operationId: z.uuid().optional(),
 }).strict();
 
-type NativePremiumOperation = "premiumStatus" | "premiumPurchase" | "premiumRestore" | "premiumRecover";
+type NativePremiumOperation = "premiumStatus" | "premiumPurchase" | "premiumRestore" | "premiumRecover" | "premiumTransaction";
 
 export interface PremiumMutationResultInternal extends PremiumMutationResultWire {
   /** Opaque JWS retained inside the trusted plugin path only. */
@@ -96,6 +96,17 @@ class NativePremiumRequestError extends Error {
 export class NativePremiumAccessPort implements PremiumAccessPort {
   constructor(private readonly socketPath: string) {}
 
+  /** Trusted plugin only; host and plugin are shipped as one matched artifact.
+   * Only an authorized successful response without proof means no evidence.
+   * Unsupported operations, EOF, malformed replies and authorization failures
+   * remain errors; none may silently suppress subscription evidence.
+   */
+  async readSignedTransaction(): Promise<string | null> {
+    const response = await this.request("premiumTransaction");
+    if (!response.ok) throw new Error("Premium transaction verification is unavailable");
+    return response.appleSignedTransaction ?? null;
+  }
+
   async status(): Promise<PremiumAccessWire> {
     const response = await this.request("premiumStatus");
     return response.access;
@@ -134,11 +145,18 @@ export class NativePremiumAccessPort implements PremiumAccessPort {
         socket.destroy();
         callback();
       };
+      if (operation === "premiumTransaction") {
+        socket.setTimeout(12_000, () => finish(() => reject(new NativePremiumRequestError(dispatched))));
+      }
       socket.setEncoding("utf8");
       socket.once("error", () => finish(() => reject(new NativePremiumRequestError(dispatched))));
       socket.once("close", () => finish(() => reject(new NativePremiumRequestError(dispatched))));
       socket.on("data", (chunk: string) => {
         buffer += chunk;
+        if (Buffer.byteLength(buffer, "utf8") > 131_072) {
+          finish(() => reject(new NativePremiumRequestError(dispatched)));
+          return;
+        }
         const newline = buffer.indexOf("\n");
         if (newline < 0) return;
         try {

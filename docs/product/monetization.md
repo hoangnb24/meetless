@@ -104,6 +104,26 @@ products or restoring a purchase does not reset the current quota period. A
 configured allowance change applies only to the next period; an already-
 started period keeps its snapshotted limit.
 
+Quota scheduling decisions approved by the owner for issue #19 on 2026-09-13:
+
+- An active monthly/annual plan change preserves both the remaining allowance
+  and the existing monthly quota renewal schedule. For example, switching to
+  annual on September 25 keeps a September 10–October 10 quota period intact;
+  subsequent allocations still renew on the 10th. A plan change must not create
+  a short extra period with a full allowance.
+- When both the subscription and quota period have ended, a verified repurchase
+  starts a new quota schedule at that purchase date. Replaying that purchase or
+  restoring it cannot grant the same allocation again.
+- Sandbox quota follows accelerated subscription timing: a verified monthly
+  term represents one quota period; a new annual schedule divides its verified
+  term into twelve equal test periods. An active plan change retains the
+  established sandbox quota cadence and next reset, just as it retains the
+  calendar schedule outside sandbox. These are test clocks, not production
+  allowance amounts or production billing periods.
+- Entitlement expiry and quota scheduling are distinct. A quota period does
+  not authorize work after subscription access expires. Verified subscription
+  evidence is required before a new allocation becomes usable.
+
 Managed usage is charged in whole seconds from server-verified audio duration.
 Retries of the same audio do not charge twice. A failed or cancelled job is not
 charged unless the transcription provider already completed the work; a

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
+import { appleFixtureProof, type AppleFixtureVerificationMaterial } from "../convex/appleSubscription";
 
 const repositoryRoot = path.resolve(new URL("..", import.meta.url).pathname);
 const sampleRate = 16_000;
@@ -66,6 +67,8 @@ export interface ManagedConvexCheckpoint {
 
 export interface ManagedConvexHarness {
   readonly device: ManagedConvexDevice;
+  readonly apple: AppleFixtureVerificationMaterial;
+  refreshApple(overrides?: Partial<AppleFixtureVerificationMaterial>): Promise<{ authToken: string; state: string }>;
   invoke<T = any>(kind: InvocationKind, name: string, args: FunctionArgs, token?: string): Promise<T>;
   uploadAndRegister(fixture: ManagedConvexManifestFixture): Promise<{ sessionId: string }>;
   checkpoints(jobId: string): Promise<ManagedConvexCheckpoint[]>;
@@ -83,7 +86,7 @@ interface HarnessRuntime extends ManagedConvexHarness {
  * The production functions are invoked over Convex HTTP; no handler is
  * reimplemented in this support module.
  */
-export async function startManagedConvexHarness(): Promise<HarnessRuntime> {
+export async function startManagedConvexHarness(options: { initialSubscriptionDurationMs?: number } = {}): Promise<HarnessRuntime> {
   // The local Node executor uses a Unix-domain socket under TMPDIR. Keep this
   // root short enough for macOS's sockaddr_un path limit; the state remains
   // isolated because every test-owned directory is still below this root.
@@ -209,9 +212,12 @@ export async function startManagedConvexHarness(): Promise<HarnessRuntime> {
       return await client.action(reference, args) as T;
     };
 
-    const device = await enrollDevice(invoke, runtimeEnvironment.MEETLESS_AUTH_ISSUER);
+    const enrollment = await enrollDevice(invoke, runtimeEnvironment.MEETLESS_AUTH_ISSUER, options.initialSubscriptionDurationMs);
+    const { device } = enrollment;
     const harness: HarnessRuntime = {
       device,
+      apple: enrollment.apple,
+      refreshApple: enrollment.refreshApple,
       invoke,
       async uploadAndRegister(fixture) {
         const session = await invoke<{ sessionId: string }>("mutation", "managedTranscription:beginUpload", { manifest: fixture.manifest }, device.token);
@@ -335,7 +341,8 @@ export function twoPartManifest(recordingId: string, counts: readonly [number, n
 async function enrollDevice(
   invoke: <T = any>(kind: InvocationKind, name: string, args: FunctionArgs, token?: string) => Promise<T>,
   issuer: string,
-): Promise<ManagedConvexDevice> {
+  initialSubscriptionDurationMs = dayMs,
+): Promise<{ device: ManagedConvexDevice; apple: AppleFixtureVerificationMaterial; refreshApple: ManagedConvexHarness["refreshApple"] }> {
   const keyPair = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const jwk = keyPair.publicKey.export({ format: "jwk" }) as { x: string; y: string };
   const rawPublicKey = Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x, "base64url"), Buffer.from(jwk.y, "base64url")]);
@@ -358,7 +365,7 @@ async function enrollDevice(
     originalTransactionId,
     periodType: "normal" as const,
     startedAtMs: Date.now() - 1_000,
-    expiresAtMs: Date.now() + dayMs,
+    expiresAtMs: Date.now() + initialSubscriptionDurationMs,
     currentState: "active" as const,
   };
   const enrolled = await invoke<{ authToken: string }>("action", "managedAuthActions:enrollDevice", {
@@ -367,17 +374,34 @@ async function enrollDevice(
     keyId,
     publicKey,
     signature,
-    apple: { ...apple, fixtureProof: sha256(JSON.stringify({ version: 1, ...apple })) },
+    apple: { ...apple, fixtureProof: await appleFixtureProof(apple) },
   });
   const tokenIdentifier = `${issuer}|managed-device:${deviceId}`;
   const account = await invoke<{ accountId: string }>("query", "managedTranscription:identityAccount", { tokenIdentifier });
-  return {
+  const device = {
     deviceId,
     keyId,
     publicKey,
     token: enrolled.authToken,
     tokenIdentifier,
     accountId: account.accountId,
+  };
+  return {
+    device,
+    apple,
+    async refreshApple(overrides = {}) {
+      const material = { ...apple, ...overrides };
+      const challenge = await invoke<{ challengeId: string; signingPayload: string }>("mutation", "managedAuth:createDeviceChallenge", {
+        purpose: "refresh", deviceId, keyId, publicKey,
+      });
+      const signature = sign("sha256", Buffer.from(challenge.signingPayload, "base64url"), {
+        key: keyPair.privateKey, dsaEncoding: "ieee-p1363",
+      }).toString("base64url");
+      return invoke("action", "managedAuthActions:refreshDevice", {
+        challengeId: challenge.challengeId, deviceId, keyId, publicKey, signature,
+        apple: { ...material, fixtureProof: await appleFixtureProof(material) },
+      });
+    },
   };
 }
 

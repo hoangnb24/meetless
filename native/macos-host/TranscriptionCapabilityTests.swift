@@ -519,6 +519,8 @@ private func testManagedAuthUsesOnlyPublicIdentityAndNonpersistentTestKeys() thr
 
 private final class FakePremiumAccess: MeetlessPremiumPurchaseAccess {
   var purchasedPackage: String?
+  var signedTransaction: String? = "eyJhbGciOiJFUzI1NiJ9.synthetic.signature"
+  func readSignedTransaction() -> String? { signedTransaction }
   var restoreCount = 0
   var retainedTerminal: MeetlessPremiumMutationResult?
   let inactive = MeetlessPremiumAccessResult(
@@ -3462,10 +3464,11 @@ private func testProviderAccessSocketBoundary() {
 
 private func testPremiumSocketBoundary() {
   let premium = FakePremiumAccess()
+  let authorization = authorizedRuntimeState()
   let capability = MeetlessTranscriptionCapability(
     socketPath: "/private/tmp/unused-meetless-premium.sock",
     stagingDirectory: "/private/tmp/unused-meetless-premium-staging",
-    runtimeAuthorization: authorizedRuntimeState(),
+    runtimeAuthorization: authorization,
     keychain: FakeKeychain(),
     premium: premium
   )
@@ -3490,6 +3493,16 @@ private func testPremiumSocketBoundary() {
   check(statusAccess?["status"] as? String == "inactive", "Premium status must preserve inactive access")
   let statusPackages = statusAccess?["packages"] as? [[String: Any]]
   check(statusPackages?.first?["localizedPrice"] as? String == "799.000 ₫", "Premium status must preserve only store-localized price text")
+
+  let evidence = request("{\"version\":1,\"requestId\":\"premium-evidence\",\"operation\":\"premiumTransaction\"}")
+  check(evidence?["appleSignedTransaction"] as? String == "eyJhbGciOiJFUzI1NiJ9.synthetic.signature", "read-only evidence must reach trusted plugin")
+  check(premium.purchasedPackage == nil && premium.restoreCount == 0, "evidence read must never purchase or restore")
+  premium.signedTransaction = nil
+  let absentEvidence = request("{\"version\":1,\"requestId\":\"premium-absent\",\"operation\":\"premiumTransaction\"}")
+  check(absentEvidence?["ok"] as? Bool == true, "authorized nil evidence must remain a successful read")
+  check(absentEvidence?["appleSignedTransaction"] == nil, "nil evidence must omit signed material for credential-only refresh")
+  let invalidEvidence = request("{\"version\":1,\"requestId\":\"premium-evidence\",\"operation\":\"premiumTransaction\",\"productId\":\"untrusted\"}")
+  check(invalidEvidence?["ok"] as? Bool == false && invalidEvidence?["appleSignedTransaction"] == nil, "evidence read must reject caller-selected product claims")
 
   let purchase = request("{\"version\":1,\"requestId\":\"premium-purchase\",\"operation\":\"premiumPurchase\",\"packageId\":\"monthly\",\"operationId\":\"12345678-1234-4123-8123-123456789abc\"}")
   check(purchase?["operationId"] as? String == "12345678-1234-4123-8123-123456789abc", "socket purchase must preserve the original operation UUID independently from requestId")
@@ -3525,6 +3538,11 @@ private func testPremiumSocketBoundary() {
   let recoveredAgain = request("{\"version\":1,\"requestId\":\"premium-recover-again\",\"operation\":\"premiumRecover\"}")
   check(recoveredAgain?["ok"] as? Bool == false, "Premium recovery must consume a retained terminal exactly once")
   check(recoveredAgain?["appleSignedTransaction"] == nil, "a consumed Premium terminal must not be exposed again")
+  authorization.clear()
+  let unauthorizedEvidence = request("{\"version\":1,\"requestId\":\"premium-denied\",\"operation\":\"premiumTransaction\"}")
+  check(unauthorizedEvidence?["ok"] as? Bool == false, "revoked authorization must not become a successful absent-evidence read")
+  check(unauthorizedEvidence?["appleSignedTransaction"] == nil, "unauthorized evidence read must not expose signed material")
+
 }
 
 private func testPremiumHostLogSurvivesUnavailableStandardError() throws {

@@ -138,6 +138,7 @@ export class ConvexManagedCredentialSource {
     private readonly client: ManagedConvexFunctionClient,
     private readonly signer: ManagedDeviceSigner,
     functions: Partial<ManagedAuthFunctionNames> = {},
+    private readonly readAppleTransaction?: () => Promise<ManagedAppleSignedTransactionMaterial | null>,
   ) {
     this.functions = { ...DEFAULT_FUNCTIONS, ...functions };
   }
@@ -158,8 +159,9 @@ export class ConvexManagedCredentialSource {
     });
   }
 
-  /** Refresh proves the enrolled private key and never changes entitlement. */
-  async refresh(): Promise<ManagedConvexCredential> {
+  /** Refresh only the enrolled device, optionally reconciling fresh Apple proof. */
+  async refresh(apple?: ManagedAppleSignedTransactionMaterial): Promise<ManagedConvexCredential> {
+    const evidence = apple ?? await this.readAppleTransaction?.();
     const identity = await this.signer.identity();
     const challenge = await this.createChallenge(identity, "refresh");
     const signed = await this.signer.signChallenge(decodeBase64Url(challenge.signingPayload));
@@ -170,6 +172,7 @@ export class ConvexManagedCredentialSource {
       keyId: signed.keyId,
       publicKey: signed.publicKey,
       signature: signed.signature,
+      ...(evidence ? { apple: evidence } : {}),
     });
   }
 

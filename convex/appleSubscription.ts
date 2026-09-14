@@ -17,6 +17,7 @@ export {
 export type AppleSubscriptionState = "active" | "grace" | "expired" | "refunded" | "revoked";
 export type AppleSubscriptionEnvironment = "SANDBOX" | "PRODUCTION";
 export type AppleSubscriptionPeriodType = "normal" | "trial";
+export type AppleTransactionReason = "PURCHASE" | "RENEWAL";
 
 /** Historical R4 fixture input. */
 export interface AppleFixtureVerificationMaterial {
@@ -27,6 +28,9 @@ export interface AppleFixtureVerificationMaterial {
   readonly originalTransactionId: string;
   readonly periodType: AppleSubscriptionPeriodType;
   readonly startedAtMs: number;
+  readonly transactionPurchaseAtMs?: number;
+  readonly transactionSignedAtMs?: number;
+  readonly transactionReason?: AppleTransactionReason;
   readonly expiresAtMs: number;
   readonly currentState: AppleSubscriptionState;
   readonly fixtureProof?: string;
@@ -51,6 +55,9 @@ export interface VerifiedAppleSubscriptionLineage {
   readonly environment: AppleSubscriptionEnvironment;
   readonly periodType: AppleSubscriptionPeriodType;
   readonly startedAtMs: number;
+  readonly transactionPurchaseAtMs: number;
+  readonly transactionSignedAtMs: number;
+  readonly transactionReason?: AppleTransactionReason;
   readonly expiresAtMs: number;
   readonly currentState: AppleSubscriptionState;
   readonly verifiedAtMs: number;
@@ -114,6 +121,9 @@ export async function verifyAppleMaterial(
     productId: material.productId,
     periodType: material.periodType,
     startedAtMs: material.startedAtMs,
+    transactionPurchaseAtMs: material.transactionPurchaseAtMs ?? material.startedAtMs,
+    transactionSignedAtMs: material.transactionSignedAtMs ?? material.startedAtMs,
+    transactionReason: material.transactionReason,
     expiresAtMs: material.expiresAtMs,
     currentState: material.currentState,
     verifiedAtMs: nowMs,
@@ -130,6 +140,7 @@ export interface AppleVerifiedTransactionPayload {
   readonly originalPurchaseDate?: number;
   readonly expiresDate?: number;
   readonly signedDate?: number;
+  readonly transactionReason?: string;
   readonly type?: string;
   readonly appAccountToken?: string;
   readonly revocationDate?: number;
@@ -156,13 +167,19 @@ export async function normalizeVerifiedAppleTransaction(
   if (payload.appAccountToken) throw new AppleVerificationError("appAccountToken is not accepted by the V1 identity contract");
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new AppleVerificationError("verification clock is invalid");
   const startedAtMs = payload.originalPurchaseDate ?? payload.purchaseDate;
+  const transactionPurchaseAtMs = payload.purchaseDate;
+  const transactionSignedAtMs = payload.signedDate;
   const expiresAtMs = payload.expiresDate;
   if (typeof startedAtMs !== "number" || !Number.isSafeInteger(startedAtMs) || startedAtMs < 0 || typeof expiresAtMs !== "number" || !Number.isSafeInteger(expiresAtMs) || expiresAtMs <= startedAtMs) {
     throw new AppleVerificationError("Apple transaction period bounds are invalid");
   }
-  if (payload.signedDate !== undefined && (!Number.isSafeInteger(payload.signedDate) || payload.signedDate < 0 || payload.signedDate > nowMs + 5 * 60 * 1_000)) {
+  if (typeof transactionPurchaseAtMs !== "number" || !Number.isSafeInteger(transactionPurchaseAtMs) || transactionPurchaseAtMs < startedAtMs || transactionPurchaseAtMs >= expiresAtMs || transactionPurchaseAtMs > nowMs + 5 * 60 * 1_000) {
+    throw new AppleVerificationError("Apple transaction purchase date is invalid or from the future");
+  }
+  if (typeof transactionSignedAtMs !== "number" || !Number.isSafeInteger(transactionSignedAtMs) || transactionSignedAtMs < 0 || transactionSignedAtMs > nowMs + 5 * 60 * 1_000) {
     throw new AppleVerificationError("Apple transaction signed date is invalid or from the future");
   }
+  const transactionReason = validateTransactionReason(payload.transactionReason);
   const periodType: AppleSubscriptionPeriodType = payload.offerDiscountType === "FREE_TRIAL" ? "trial" : "normal";
   const currentState: AppleSubscriptionState = payload.revocationDate !== undefined
     ? "refunded"
@@ -179,6 +196,9 @@ export async function normalizeVerifiedAppleTransaction(
     productId: payload.productId,
     periodType,
     startedAtMs,
+    transactionPurchaseAtMs,
+    transactionSignedAtMs,
+    transactionReason,
     expiresAtMs,
     currentState,
     verifiedAtMs: nowMs,
@@ -198,6 +218,9 @@ export async function appleFixtureProof(material: AppleFixtureVerificationMateri
     startedAtMs: material.startedAtMs,
     expiresAtMs: material.expiresAtMs,
     currentState: material.currentState,
+    transactionPurchaseAtMs: material.transactionPurchaseAtMs,
+    transactionSignedAtMs: material.transactionSignedAtMs,
+    transactionReason: material.transactionReason,
   });
   return hex(await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload)));
 }
@@ -225,6 +248,12 @@ function validateFixtureMaterial(material: AppleFixtureVerificationMaterial): vo
   if (!Number.isSafeInteger(material.startedAtMs) || !Number.isSafeInteger(material.expiresAtMs) || material.startedAtMs < 0 || material.expiresAtMs <= material.startedAtMs) {
     throw new AppleVerificationError("subscription period bounds are invalid");
   }
+  validateTransactionReason(material.transactionReason);
+  const purchaseAtMs = material.transactionPurchaseAtMs ?? material.startedAtMs;
+  const signedAtMs = material.transactionSignedAtMs ?? material.startedAtMs;
+  if (!Number.isSafeInteger(purchaseAtMs) || purchaseAtMs < material.startedAtMs || purchaseAtMs >= material.expiresAtMs || !Number.isSafeInteger(signedAtMs) || signedAtMs < 0) {
+    throw new AppleVerificationError("fixture transaction dates are invalid");
+  }
 }
 
 function lineageFromFields(fields: {
@@ -235,6 +264,9 @@ function lineageFromFields(fields: {
   productId: string;
   periodType: AppleSubscriptionPeriodType;
   startedAtMs: number;
+  transactionPurchaseAtMs: number;
+  transactionSignedAtMs: number;
+  transactionReason?: AppleTransactionReason;
   expiresAtMs: number;
   currentState: AppleSubscriptionState;
   verifiedAtMs: number;
@@ -250,10 +282,18 @@ function lineageFromFields(fields: {
     environment: fields.environment,
     periodType: fields.periodType,
     startedAtMs: fields.startedAtMs,
+    transactionPurchaseAtMs: fields.transactionPurchaseAtMs,
+    transactionSignedAtMs: fields.transactionSignedAtMs,
+    ...(fields.transactionReason === undefined ? {} : { transactionReason: fields.transactionReason }),
     expiresAtMs: fields.expiresAtMs,
     currentState: fields.currentState,
     verifiedAtMs: fields.verifiedAtMs,
   };
+}
+
+function validateTransactionReason(value: unknown): AppleTransactionReason | undefined {
+  if (value === undefined || value === "PURCHASE" || value === "RENEWAL") return value;
+  throw new AppleVerificationError("Apple transaction reason is invalid");
 }
 
 function hex(value: ArrayBuffer): string {

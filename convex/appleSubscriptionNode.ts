@@ -44,6 +44,7 @@ export async function verifySignedAppleTransaction(
     originalPurchaseDate: decoded.originalPurchaseDate,
     expiresDate: decoded.expiresDate,
     signedDate: decoded.signedDate,
+    transactionReason: decoded.transactionReason,
     type: decoded.type,
     appAccountToken: decoded.appAccountToken,
     revocationDate: decoded.revocationDate,

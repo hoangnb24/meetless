@@ -20,7 +20,8 @@ import {
   verifyP256Signature,
 } from "./deviceAuth";
 import { revenueCatEventValidatorForMutation, verifiedAppleLineageValidatorForMutation } from "./managedAuthValidators";
-import { planManagedDeviceEnrollment, planManagedQuotaEnrollment } from "./managedQuotaPolicy";
+import { planManagedDeviceEnrollment } from "./managedQuotaPolicy";
+import { reconcileVerifiedSubscription, applySubscriptionProjection } from "./managedSubscriptionReconciliation";
 import {
   assertHostedCanaryAccountOwnership,
   HOSTED_CANARY_DEVICE_PREFIX,
@@ -205,38 +206,8 @@ export const consumeEnrollment = internalMutation({
     }
     const verified = args.apple;
     const now = Date.now();
-    const existingLineage = await ctx.db.query("managedLineages").withIndex("by_lineage", (q) => q.eq("lineageKey", verified.lineageKey)).unique();
-    if (existingLineage && existingLineage.accountId !== verified.accountId) throw new Error("Verified Apple lineage changed account identity");
-    if (!existingLineage) {
-      await ctx.db.insert("managedLineages", lineageRecord(verified));
-    } else {
-      await ctx.db.patch(existingLineage._id, lineageRecord(verified));
-    }
-    let account = await ctx.db.query("managedAccounts").withIndex("by_account", (q) => q.eq("accountId", verified.accountId)).unique();
-    const existingAccount = account;
-    const existingPeriod = existingAccount
-      ? await ctx.db.query("managedPeriods")
-        .withIndex("by_account_start", (q) => q.eq("accountId", verified.accountId).eq("startAt", existingAccount.currentPeriodStartAt))
-        .unique()
-      : null;
-    if (account && !existingPeriod) throw new Error("Managed quota account has no current period; refuse enrollment rather than resetting usage");
-    const quotaPlan = planManagedQuotaEnrollment(
-      existingAccount && existingPeriod ? { account: existingAccount, period: existingPeriod } : null,
-      verified,
-      config.allowanceSeconds,
-      config.allowanceSource,
-      now,
-    );
-    if (quotaPlan.kind === "create") {
-      await ctx.db.insert("managedAccounts", {
-        ...quotaPlan.projection.account,
-      });
-      await ctx.db.insert("managedPeriods", {
-        ...quotaPlan.projection.period,
-      });
-      account = await ctx.db.query("managedAccounts").withIndex("by_account", (q) => q.eq("accountId", verified.accountId)).unique();
-    }
-    if (!account) throw new Error("Managed quota account disappeared during enrollment");
+    const reconciled = await reconcileVerifiedSubscription(ctx, verified, config, now);
+    const account = reconciled.account;
     const accountDevices = await ctx.db.query("managedDevices").withIndex("by_account", (q) => q.eq("accountId", verified.accountId)).collect();
     const currentDevice = accountDevices.find((device) => device.deviceId === args.deviceId);
     if (currentDevice && (currentDevice.keyId !== args.keyId || currentDevice.publicKey !== args.publicKey)) {
@@ -261,8 +232,8 @@ export const consumeEnrollment = internalMutation({
     const subject = stableDeviceSubject(args.deviceId);
     const tokenIdentifier = tokenIdentifierFor(config.authIssuer, subject);
     const principal = await ctx.db.query("managedPrincipals").withIndex("by_account_device", (q) => q.eq("accountId", verified.accountId).eq("deviceId", args.deviceId)).unique();
-    const entitlement = normalizeEntitlementState(verified.currentState, verified.expiresAtMs, now);
-    const naturalExpiryAt = verified.expiresAtMs;
+    const entitlement = reconciled.entitlement;
+    const naturalExpiryAt = reconciled.lineage.expiresAt;
     if (principal) {
       await ctx.db.patch(principal._id, {
         tokenIdentifier,
@@ -308,6 +279,7 @@ export const consumeRefresh = internalMutation({
     keyId: v.string(),
     publicKey: v.string(),
     signature: v.string(),
+    apple: v.optional(verifiedAppleLineageValidatorForMutation),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -319,9 +291,13 @@ export const consumeRefresh = internalMutation({
     const devices = await ctx.db.query("managedDevices").withIndex("by_device_key", (q) => q.eq("deviceId", args.deviceId).eq("keyId", args.keyId)).collect();
     const device = devices.length === 1 ? devices[0] : null;
     if (!device || device.revokedAt !== null || device.publicKey !== args.publicKey) throw new Error("Managed refresh device is revoked or unknown");
-    const principal = await ctx.db.query("managedPrincipals").withIndex("by_account_device", (q) => q.eq("accountId", device.accountId).eq("deviceId", device.deviceId)).unique();
+    let principal = await ctx.db.query("managedPrincipals").withIndex("by_account_device", (q) => q.eq("accountId", device.accountId).eq("deviceId", device.deviceId)).unique();
     if (!principal || principal.revokedAt !== null || !principal.lineageVerified) throw new Error("Managed refresh principal is revoked or not verified");
     const now = Date.now();
+    if (args.apple) {
+      await reconcileVerifiedSubscription(ctx, args.apple, config, now, device.accountId);
+      principal = (await ctx.db.get(principal._id))!;
+    }
     const entitlement = normalizeEntitlementState(principal.entitlement, principal.naturalExpiryAt, now);
     if (entitlement !== principal.entitlement) {
       await ctx.db.patch(principal._id, { entitlement });
@@ -366,7 +342,7 @@ export const reconcileFixtureLineage = internalMutation({
     const lineage = await ctx.db.query("managedLineages").withIndex("by_lineage", (q) => q.eq("lineageKey", args.lineageKey)).unique();
     if (!lineage) return { outcome: "unknown-lineage" };
     if (lineage.adapter !== "fixture") return { outcome: "awaiting-apple-verification", lineageKey: lineage.lineageKey };
-    await applyLineageProjection(ctx, lineage);
+    await applySubscriptionProjection(ctx, lineage, Date.now());
     return { outcome: "reconciled", lineageKey: lineage.lineageKey, currentState: lineage.currentState };
   },
 });
@@ -660,38 +636,6 @@ async function challengeForConsume(
   return challenge;
 }
 
-function lineageRecord(lineage: {
-  adapter: "fixture" | "app-store-server-api";
-  lineageKey: string;
-  accountId: string;
-  appId: string;
-  bundleId: string;
-  productId: string;
-  product: "monthly" | "annual" | "trial";
-  environment: "SANDBOX" | "PRODUCTION";
-  periodType: "normal" | "trial";
-  startedAtMs: number;
-  expiresAtMs: number;
-  currentState: AppleSubscriptionState;
-  verifiedAtMs: number;
-}) {
-  return {
-    lineageKey: lineage.lineageKey,
-    accountId: lineage.accountId,
-    appId: lineage.appId,
-    bundleId: lineage.bundleId,
-    productId: lineage.productId,
-    product: lineage.product,
-    environment: lineage.environment,
-    periodType: lineage.periodType,
-    startedAt: lineage.startedAtMs,
-    expiresAt: lineage.expiresAtMs,
-    currentState: lineage.currentState,
-    verifiedAt: lineage.verifiedAtMs,
-    adapter: lineage.adapter,
-  };
-}
-
 async function deleteFixtureAccount(ctx: MutationCtx, accountId: string, lineageKey: string) {
   const uploads = await ctx.db.query("managedUploads").withIndex("by_account", (q) => q.eq("accountId", accountId)).collect();
   let storageObjects = 0;
@@ -787,23 +731,6 @@ function emptyCleanupTotals(): CleanupTotals {
 
 function addCleanupTotals(target: CleanupTotals, result: CleanupTotals): void {
   for (const key of Object.keys(target) as Array<keyof CleanupTotals>) target[key] += result[key];
-}
-
-async function applyLineageProjection(ctx: MutationCtx, lineage: any): Promise<void> {
-  const principals = await ctx.db.query("managedPrincipals").withIndex("by_account_device", (q) => q.eq("accountId", lineage.accountId)).collect();
-  const entitlement = normalizeEntitlementState(lineage.currentState, lineage.expiresAt, Date.now());
-  for (const principal of principals) {
-    await ctx.db.patch(principal._id, { entitlement, naturalExpiryAt: lineage.expiresAt });
-  }
-  if (entitlement !== "refunded" && entitlement !== "revoked") return;
-  const jobs = await ctx.db.query("managedJobs").withIndex("by_timeline", (q) => q.eq("accountId", lineage.accountId)).collect();
-  for (const job of jobs) {
-    if (job.status !== "reserved" && job.status !== "running") continue;
-    const period = await ctx.db.query("managedPeriods").withIndex("by_account_start", (q) => q.eq("accountId", job.accountId).eq("startAt", job.periodStartAt)).unique();
-    if (!period || period.reservedSeconds < job.billableSeconds) throw new Error("Managed refund/revoke found an inconsistent reservation");
-    await ctx.db.patch(period._id, { reservedSeconds: period.reservedSeconds - job.billableSeconds });
-    await ctx.db.patch(job._id, { status: "stopped", executionToken: null, failureReason: lineage.currentState });
-  }
 }
 
 function normalizeEntitlementState(

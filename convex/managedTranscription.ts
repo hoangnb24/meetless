@@ -5,6 +5,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { validateManagedQuotaFailure, type ManagedQuotaFailure } from "../packages/meeting-domain/src/managed-quota";
 import { requirePrincipal } from "./managedAuth";
+import { advanceVerifiedQuotaPeriod, stopManagedJobParts as stopJobParts } from "./managedSubscriptionReconciliation";
 export { requirePrincipal } from "./managedAuth";
 import { assertNonProductionFixture, readManagedRuntimeConfig } from "./managedConfig";
 import {
@@ -132,8 +133,8 @@ export const beginUpload = mutation({
     if (needsReservation) {
       assertCurrentEntitlement(principal, now);
       if (existingJob && existingJob.expiresAt <= now) throw new Error(`Managed job exceeded its accepted 24-hour TTL (${AUTHORITY})`);
-      const period = await currentPeriod(ctx, account, now);
-      const denied = quotaFailureFor(period, billableSeconds(manifest.sampleCount), now);
+      const period = await currentPeriod(ctx, account, now, "begin_upload");
+      const denied = quotaFailureFor(period, billableSeconds(manifest.sampleCount), now, "begin_upload");
       if (denied) {
         if (existing && !existingJob && existing.jobId === null && (existing.state === "uploading" || quotaPredecessor)) {
           assertDeviceOwner(existing, principal.deviceId);
@@ -488,9 +489,9 @@ export const admitSealedUpload = internalMutation({
       if (existing.fingerprint !== fingerprint) throw new Error(`Managed timeline identity was rebound to different bytes or parts (${AUTHORITY})`);
       if (existing.status === "expired" || existing.status === "failed" || existing.status === "cancelled" || existing.status === "stopped") {
         if (now >= existing.expiresAt) throw new Error(`Managed job exceeded its accepted 24-hour TTL (${AUTHORITY})`);
-        const period = await currentPeriod(ctx, account, now);
+        const period = await currentPeriod(ctx, account, now, "retry_admission");
         assertCurrentEntitlement(principal, now);
-        const denied = quotaFailureFor(period, billableSeconds(manifest.sampleCount), now);
+        const denied = quotaFailureFor(period, billableSeconds(manifest.sampleCount), now, "retry_admission");
         if (denied) return denied;
         await ctx.db.patch(period._id, { reservedSeconds: period.reservedSeconds + billableSeconds(manifest.sampleCount) });
         const admissionId = crypto.randomUUID();
@@ -522,9 +523,9 @@ export const admitSealedUpload = internalMutation({
       return publicJob(existing);
     }
     assertCurrentEntitlement(principal, now);
-    const period = await currentPeriod(ctx, account, now);
+    const period = await currentPeriod(ctx, account, now, "new_admission");
     const seconds = billableSeconds(manifest.sampleCount);
-    const denied = quotaFailureFor(period, seconds, now);
+    const denied = quotaFailureFor(period, seconds, now, "new_admission");
     if (denied) {
       await ctx.db.patch(currentUpload._id, { quotaDeferredAt: currentUpload.quotaDeferredAt ?? now });
       return denied;
@@ -1280,44 +1281,60 @@ function billableSeconds(sampleCount: number): number {
   return Math.max(1, Math.ceil(sampleCount / SAMPLE_RATE));
 }
 
-function quotaFailureFor(period: { limitSeconds: number; usedSeconds: number; reservedSeconds: number; startAt: number; endAt: number }, seconds: number, now: number): ManagedQuotaFailure | null {
+type QuotaDiagnosticStage = "begin_upload" | "new_admission" | "retry_admission";
+
+// Convex supplies function/request correlation. Only allowlisted numeric state
+// enters these logs; never serialize a document, identity, manifest, or error.
+function quotaDiagnostic(stage: QuotaDiagnosticStage, outcome: string, values: Record<string, unknown>) {
+  const numeric = Object.fromEntries(Object.entries(values).map(([key, value]) =>
+    [key, typeof value === "number" && Number.isFinite(value) ? value : null]));
+  console.info("managed_quota_check", { stage, outcome, ...numeric });
+}
+
+function quotaFailureFor(period: { limitSeconds: number; usedSeconds: number; reservedSeconds: number; startAt: number; endAt: number }, seconds: number, now: number, stage: QuotaDiagnosticStage): ManagedQuotaFailure | null {
+  const details = { checkedAt: now, requiredSeconds: seconds, periodStartAt: period.startAt, periodEndAt: period.endAt,
+    limitSeconds: period.limitSeconds, usedSeconds: period.usedSeconds, reservedSeconds: period.reservedSeconds };
   if (![period.limitSeconds, period.usedSeconds, period.reservedSeconds].every((value) => Number.isSafeInteger(value) && value >= 0)) {
+    quotaDiagnostic(stage, "invalid_ledger", details);
     throw new Error(`Managed quota ledger is invalid (${AUTHORITY})`);
   }
   if (!Number.isSafeInteger(period.startAt) || !Number.isSafeInteger(period.endAt) || period.startAt > now || period.endAt <= now) {
+    quotaDiagnostic(stage, "invalid_or_expired_period", details);
     throw new Error(`Managed quota period requires authoritative refresh (${AUTHORITY})`);
   }
   const remaining = Math.max(0, period.limitSeconds - period.usedSeconds - period.reservedSeconds);
+  quotaDiagnostic(stage, remaining >= seconds ? "allowed" : "insufficient", { ...details, remainingSeconds: remaining });
   if (remaining >= seconds) return null;
   return validateManagedQuotaFailure({ version: 1, kind: "managed_quota_insufficient", requiredSeconds: seconds,
     remainingSeconds: remaining, checkedAt: now,
     resetAt: Number.isSafeInteger(period.startAt) && Number.isSafeInteger(period.endAt) && period.startAt <= now && period.endAt > now ? period.endAt : null });
 }
 
-async function currentPeriod(ctx: MutationCtx, account: any, now: number) {
-  let period = await periodFor(ctx, account.accountId, account.currentPeriodStartAt);
-  if (now < account.currentPeriodEndAt) return period;
-  const nextStart = account.currentPeriodEndAt;
-  const nextEnd = nextStart + (account.currentPeriodEndAt - account.currentPeriodStartAt);
-  if (now >= nextEnd) throw new Error(`Managed quota period requires authoritative refresh (${AUTHORITY})`);
-  const existing = await periodFor(ctx, account.accountId, nextStart, true);
-  if (existing) {
-    await ctx.db.patch(account._id, { currentPeriodStartAt: existing.startAt, currentPeriodEndAt: existing.endAt });
-    return existing;
+async function currentPeriod(ctx: MutationCtx, account: any, now: number, stage: QuotaDiagnosticStage) {
+  const details = { checkedAt: now, accountPeriodStartAt: account.currentPeriodStartAt, accountPeriodEndAt: account.currentPeriodEndAt };
+  quotaDiagnostic(stage, "resolving_period", details);
+  try {
+    return await resolveCurrentPeriod(ctx, account, now);
+  } catch (error) {
+    const reasons: Record<string, string> = {
+      [`Managed quota period is missing (${AUTHORITY})`]: "missing_period",
+      [`Managed quota period requires authoritative refresh (${AUTHORITY})`]: "stale_account_period",
+      [`Managed quota period disappeared during rollover (${AUTHORITY})`]: "rollover_period_missing",
+    };
+    const reason = error instanceof Error ? reasons[error.message] : undefined;
+    quotaDiagnostic(stage, reason ?? "period_resolution_failed", details);
+    throw error;
   }
-  const nextId = await ctx.db.insert("managedPeriods", {
-    accountId: account.accountId,
-    product: period.product,
-    startAt: nextStart,
-    endAt: nextEnd,
-    limitSeconds: account.nextPeriodLimitSeconds,
-    usedSeconds: 0,
-    reservedSeconds: 0,
-  });
-  await ctx.db.patch(account._id, { currentPeriodStartAt: nextStart, currentPeriodEndAt: nextEnd });
-  period = await ctx.db.get(nextId);
-  if (!period) throw new Error(`Managed quota period disappeared during rollover (${AUTHORITY})`);
-  return period;
+}
+
+async function resolveCurrentPeriod(ctx: MutationCtx, account: Doc<"managedAccounts">, now: number) {
+  const period = await periodFor(ctx, account.accountId, account.currentPeriodStartAt);
+  if (now < account.currentPeriodEndAt) return period;
+  const lineages = await ctx.db.query("managedLineages").withIndex("by_account", q => q.eq("accountId", account.accountId)).collect();
+  if (lineages.length !== 1 || lineages[0].transactionPurchaseAt === undefined || lineages[0].transactionSignedAt === undefined || lineages[0].expiresAt <= now) {
+    throw new Error(`Managed quota period requires authoritative refresh (${AUTHORITY})`);
+  }
+  return await advanceVerifiedQuotaPeriod(ctx, account, lineages[0], now);
 }
 
 async function periodFor(ctx: PrincipalContext, accountId: string, startAt: number, optional = false): Promise<any> {
@@ -1457,19 +1474,6 @@ export function aggregateManagedProviderParts(
     ranges: [{ startMs: 0, endMs: job.durationMs, text }],
     detectedLanguages: [...new Set(parts.flatMap((part) => part.detectedLanguages.filter((language) => language.trim().length > 0)))],
   };
-}
-
-async function stopJobParts(ctx: MutationCtx, jobId: any, reason: string): Promise<void> {
-  const parts = await jobPartCheckpoints(ctx, jobId);
-  for (const part of parts) {
-    if (part.status === "completed") continue;
-    await ctx.db.patch(part._id, {
-      status: "failed",
-      executionToken: null,
-      leaseExpiresAt: 0,
-      failureReason: reason,
-    });
-  }
 }
 
 async function failExpiredProviderPart(ctx: MutationCtx, job: any, part: any, now: number): Promise<boolean> {

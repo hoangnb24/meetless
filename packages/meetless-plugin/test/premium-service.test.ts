@@ -554,3 +554,66 @@ function deferred<T>() {
   const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; });
   return { promise, resolve, reject };
 }
+
+
+describe("private read-only Apple evidence transport", () => {
+  test.each(["opaque-signed-proof", undefined])("returns optional evidence only to trusted caller (%s)", async (proof) => {
+    const directory = await mkdtemp("/private/tmp/meetless-proof-rpc-");
+    const socketPath = `${directory}/p.sock`;
+    const operations: string[] = [];
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const server = net.createServer((socket) => {
+      socket.setEncoding("utf8");
+      let buffer = "";
+      socket.on("data", (chunk) => {
+        buffer += chunk;
+        if (!buffer.includes("\n")) return;
+        const request = JSON.parse(buffer.trim());
+        operations.push(request.operation);
+        socket.end(JSON.stringify({ version: 1, requestId: request.requestId, type: "premium.access",
+          ok: true, outcome: "status", access: activeAccess,
+          ...(proof ? { appleSignedTransaction: proof } : {}),
+        }) + "\n");
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    try {
+      await expect(new NativePremiumAccessPort(socketPath).readSignedTransaction()).resolves.toBe(proof ?? null);
+      expect(operations).toEqual(["premiumTransaction"]);
+      expect(info).not.toHaveBeenCalled();
+    } finally {
+      info.mockRestore();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+  test.each(["eof", "legacy-unsupported", "denied", "malformed"])("fails closed on %s rather than treating it as missing evidence", async (mode) => {
+    const directory = await mkdtemp("/private/tmp/meetless-proof-denied-");
+    const socketPath = `${directory}/p.sock`;
+    const server = net.createServer((socket) => {
+      socket.setEncoding("utf8");
+      let buffer = "";
+      socket.on("data", (chunk) => {
+        buffer += chunk;
+        if (!buffer.includes("\n")) return;
+        const request = JSON.parse(buffer.trim());
+        if (mode === "eof") { socket.destroy(); return; }
+        const response = mode === "legacy-unsupported"
+          ? { version: 1, requestId: request.requestId, ok: false, status: "invalid", error: "transcription unavailable" }
+          : { version: 1, requestId: request.requestId, type: "premium.access", ok: mode !== "denied",
+              outcome: "status", access: activeAccess, ...(mode === "malformed" ? { appleSignedTransaction: { private: "secret-proof" } } : {}) };
+        socket.end(JSON.stringify(response) + "\n");
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    try {
+      const result = new NativePremiumAccessPort(socketPath).readSignedTransaction();
+      await expect(result).rejects.toThrow(/Premium .* unavailable/);
+      await expect(result).rejects.not.toThrow("secret-proof");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+});

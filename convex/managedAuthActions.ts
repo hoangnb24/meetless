@@ -50,10 +50,16 @@ export const refreshDevice = action({
     keyId: v.string(),
     publicKey: v.string(),
     signature: v.string(),
+    apple: v.optional(appleMaterialValidatorForAction),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
-    const refreshed = await ctx.runMutation(anyApi.managedAuth.consumeRefresh, args);
+    const config = readManagedRuntimeConfig();
+    const apple = args.apple === undefined ? undefined : args.apple.adapter === "fixture"
+      ? await verifyAppleMaterial(args.apple, config.appleVerifierMode, Date.now())
+      : await verifySignedAppleTransaction(args.apple.signedTransaction, config, Date.now());
+    const { apple: _material, ...possession } = args;
+    const refreshed = await ctx.runMutation(anyApi.managedAuth.consumeRefresh, { ...possession, ...(apple ? { apple } : {}) });
     return issueDeviceToken(
       refreshed.subject,
       refreshed.deviceId,

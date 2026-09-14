@@ -397,6 +397,11 @@ export function getManagedConvexCredentialSource(): ConvexManagedCredentialSourc
   managedCredentialSource ??= new ConvexManagedCredentialSource(
     new ConvexHttpManagedFunctionClient(convexUrl),
     new UnixSocketManagedAuthTransport(socket),
+    {},
+    async () => {
+      const signedTransaction = await new NativePremiumAccessPort(socket).readSignedTransaction();
+      return signedTransaction ? { adapter: "app-store-server-api", signedTransaction } : null;
+    },
   );
   return managedCredentialSource;
 }

@@ -8,6 +8,9 @@ const appleFixtureMaterialValidator = v.object({
   originalTransactionId: v.string(),
   periodType: v.union(v.literal("normal"), v.literal("trial")),
   startedAtMs: v.number(),
+  transactionPurchaseAtMs: v.optional(v.number()),
+  transactionSignedAtMs: v.optional(v.number()),
+  transactionReason: v.optional(v.union(v.literal("PURCHASE"), v.literal("RENEWAL"))),
   expiresAtMs: v.number(),
   currentState: v.union(
     v.literal("active"),
@@ -39,6 +42,9 @@ export const verifiedAppleLineageValidatorForMutation = v.object({
   environment: v.union(v.literal("SANDBOX"), v.literal("PRODUCTION")),
   periodType: v.union(v.literal("normal"), v.literal("trial")),
   startedAtMs: v.number(),
+  transactionPurchaseAtMs: v.number(),
+  transactionSignedAtMs: v.number(),
+  transactionReason: v.optional(v.union(v.literal("PURCHASE"), v.literal("RENEWAL"))),
   expiresAtMs: v.number(),
   currentState: v.union(
     v.literal("active"),

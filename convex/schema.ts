@@ -65,6 +65,10 @@ export default defineSchema({
     nextPeriodLimitSeconds: v.number(),
     allowanceSource: v.string(),
     maxDevices: v.number(),
+    quotaSchedule: v.optional(v.union(
+      v.object({ kind: v.literal("calendar_month"), anchorAt: v.number() }),
+      v.object({ kind: v.literal("sandbox"), anchorAt: v.number(), termDurationMs: v.number(), periodsPerTerm: v.union(v.literal(1), v.literal(12)) }),
+    )),
   }).index("by_account", ["accountId"]),
 
   /** Apple/App Store Server API is the authority for this normalized lineage projection. */
@@ -78,6 +82,9 @@ export default defineSchema({
     environment: v.union(v.literal("SANDBOX"), v.literal("PRODUCTION")),
     periodType: v.union(v.literal("normal"), v.literal("trial")),
     startedAt: v.number(),
+    transactionPurchaseAt: v.optional(v.number()),
+    transactionSignedAt: v.optional(v.number()),
+    transactionReason: v.optional(v.union(v.literal("PURCHASE"), v.literal("RENEWAL"))),
     expiresAt: v.number(),
     currentState: v.union(
       v.literal("active"),

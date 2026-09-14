@@ -109,6 +109,7 @@ struct MeetlessPremiumMutationResult {
 }
 
 protocol MeetlessPremiumPurchaseAccess {
+  func readSignedTransaction() -> String?
   func status() -> MeetlessPremiumAccessResult
   func purchase(packageId: String) -> MeetlessPremiumMutationResult
   func restore() -> MeetlessPremiumMutationResult
@@ -118,6 +119,7 @@ protocol MeetlessPremiumPurchaseAccess {
 }
 
 extension MeetlessPremiumPurchaseAccess {
+  func readSignedTransaction() -> String? { nil }
   func purchase(packageId: String, operationId: String) -> MeetlessPremiumMutationResult { purchase(packageId: packageId) }
   func restore(operationId: String) -> MeetlessPremiumMutationResult { restore() }
 }
@@ -879,6 +881,33 @@ final class MeetlessRevenueCatPurchaseAccess: MeetlessPremiumPurchaseAccess {
   }
 
   #if canImport(StoreKit)
+  /// Read StoreKit's latest verified evidence, including expiry/revocation.
+  /// This never purchases, restores, syncs the App Store, or changes UI state.
+  func readSignedTransaction() -> String? {
+    guard !Thread.isMainThread else { return nil }
+    return wait(timeout: 8) { completion in
+      Task {
+        var candidates: [(StoreKit.Transaction, String)] = []
+        for productId in [meetlessPremiumMonthlyProduct, meetlessPremiumAnnualProduct] {
+          guard let result = await StoreKit.Transaction.latest(for: productId),
+                case .verified(let transaction) = result,
+                transaction.productID == productId,
+                transaction.appBundleID == meetlessPremiumAppBundle,
+                transaction.environment == .sandbox,
+                result.jwsRepresentation.utf8.count <= 65_536 else { continue }
+          candidates.append((transaction, result.jwsRepresentation))
+        }
+        // Purchase order selects the current product across plan changes. A
+        // deterministic ID tie-break makes StoreKit enumeration order irrelevant.
+        let latest = candidates.max { left, right in
+          if left.0.purchaseDate != right.0.purchaseDate { return left.0.purchaseDate < right.0.purchaseDate }
+          return left.0.id < right.0.id
+        }
+        completion(latest?.1)
+      }
+    }
+  }
+
   private func signedTransactionFor(productId: String) async -> String? {
     guard productId == meetlessPremiumMonthlyProduct || productId == meetlessPremiumAnnualProduct else { return nil }
     guard let result = await StoreKit.Transaction.latest(for: productId) else { return nil }

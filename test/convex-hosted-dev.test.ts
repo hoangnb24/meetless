@@ -20,7 +20,7 @@ import {
   verifyP256Signature,
 } from "../convex/deviceAuth";
 import { readManagedOpenAICredential, readManagedRuntimeConfig } from "../convex/managedConfig";
-import { planManagedDeviceEnrollment, planManagedQuotaEnrollment } from "../convex/managedQuotaPolicy";
+import { planManagedDeviceEnrollment, verifiedQuotaPeriod } from "../convex/managedQuotaPolicy";
 import {
   parseRevenueCatWebhook,
   revenueCatHmacHeader,
@@ -338,6 +338,63 @@ describe("hosted-development Convex boundaries", () => {
     await expect(verifyAppleMaterial({ ...checked, adapter: "app-store-server-api" }, "app-store-server-api", 2_000)).rejects.toThrow(/Node|signed transaction/);
   });
 
+  test("keeps original subscription anchor separate from verified renewal and signed revision", async () => {
+    const base = {
+      bundleId: MANAGED_APPLE_BUNDLE_ID,
+      environment: "Sandbox",
+      productId: MANAGED_MONTHLY_PRODUCT_ID,
+      originalTransactionId: "synthetic-renewal-test-only",
+      originalPurchaseDate: 1_000,
+      purchaseDate: 5_000,
+      expiresDate: 10_000,
+      signedDate: 6_000,
+      type: "Auto-Renewable Subscription",
+    };
+    const first = await normalizeVerifiedAppleTransaction(base, 7_000);
+    expect(first).not.toHaveProperty("transactionReason");
+    for (const transactionReason of ["PURCHASE", "RENEWAL"] as const) {
+      expect(await normalizeVerifiedAppleTransaction({ ...base, transactionReason }, 7_000)).toMatchObject({ transactionReason });
+    }
+    await expect(normalizeVerifiedAppleTransaction({ ...base, transactionReason: "OTHER" }, 7_000)).rejects.toThrow(/transaction reason/);
+    expect(first).toMatchObject({ startedAtMs: 1_000, transactionPurchaseAtMs: 5_000, transactionSignedAtMs: 6_000, verifiedAtMs: 7_000 });
+    const revision = await normalizeVerifiedAppleTransaction({ ...base, signedDate: 8_000 }, 9_000);
+    expect(revision).toMatchObject({ lineageKey: first.lineageKey, startedAtMs: 1_000, transactionPurchaseAtMs: 5_000, transactionSignedAtMs: 8_000 });
+    for (const purchaseDate of [undefined, NaN, Infinity, -1, 1.5, 999, 10_000, Number.MAX_SAFE_INTEGER + 1]) {
+      await expect(normalizeVerifiedAppleTransaction({ ...base, purchaseDate }, 7_000)).rejects.toThrow(/purchase date/);
+    }
+    await expect(normalizeVerifiedAppleTransaction({ ...base, purchaseDate: 400_000, expiresDate: 500_000 }, 7_000)).rejects.toThrow(/purchase date/);
+    for (const signedDate of [undefined, NaN, Infinity, -1, 1.5, 400_000, Number.MAX_SAFE_INTEGER + 1]) {
+      await expect(normalizeVerifiedAppleTransaction({ ...base, signedDate }, 7_000)).rejects.toThrow(/signed date/);
+    }
+  });
+
+  test("fixture renewal evidence is deterministic and covered by the fixture proof", async () => {
+    const material = {
+      adapter: "fixture" as const,
+      bundleId: MANAGED_APPLE_BUNDLE_ID,
+      environment: "SANDBOX" as const,
+      productId: MANAGED_MONTHLY_PRODUCT_ID,
+      originalTransactionId: "fixture-renewal-evidence",
+      periodType: "normal" as const,
+      startedAtMs: 1_000,
+      expiresAtMs: 10_000,
+      currentState: "active" as const,
+    };
+    const legacy = { ...material, fixtureProof: await appleFixtureProof(material) };
+    expect(await verifyAppleMaterial(legacy, "fixture", 9_000)).toMatchObject({ transactionPurchaseAtMs: 1_000, transactionSignedAtMs: 1_000 });
+    expect(await verifyAppleMaterial(legacy, "fixture", 9_000)).not.toHaveProperty("transactionReason");
+    for (const transactionReason of ["PURCHASE", "RENEWAL"] as const) {
+      const explicit = { ...material, transactionReason };
+      expect(await verifyAppleMaterial({ ...explicit, fixtureProof: await appleFixtureProof(explicit) }, "fixture", 9_000)).toMatchObject({ transactionReason });
+    }
+    const renewal = { ...material, transactionPurchaseAtMs: 5_000, transactionSignedAtMs: 6_000, transactionReason: "RENEWAL" as const };
+    const checked = { ...renewal, fixtureProof: await appleFixtureProof(renewal) };
+    expect(await verifyAppleMaterial(checked, "fixture", 9_000)).toMatchObject({ startedAtMs: 1_000, transactionPurchaseAtMs: 5_000, transactionSignedAtMs: 6_000 });
+    await expect(verifyAppleMaterial({ ...checked, transactionReason: "PURCHASE" }, "fixture", 9_000)).rejects.toThrow(/fixture proof/);
+    await expect(verifyAppleMaterial({ ...checked, transactionSignedAtMs: 7_000 }, "fixture", 9_000)).rejects.toThrow(/fixture proof/);
+    await expect(verifyAppleMaterial({ ...checked, transactionPurchaseAtMs: 500 }, "fixture", 9_000)).rejects.toThrow(/transaction dates/);
+  });
+
   test("rejects real-path Apple invariant violations after the cryptographic adapter boundary", async () => {
     const base = {
       bundleId: MANAGED_APPLE_BUNDLE_ID,
@@ -382,58 +439,10 @@ describe("hosted-development Convex boundaries", () => {
     expect(planManagedDeviceEnrollment(activeDevices, "mac-a", 3)).toMatchObject({ restored: true, reactivating: false, activeDeviceCount: 3 });
   });
 
-  test.each([
-    ["monthly" as const, 42, 42],
-    ["trial" as const, 42, 18_000],
-  ])("anchors the %s quota period to verified Apple dates and preserves replay usage", (product, allowanceSeconds, expectedLimit) => {
-    const verified = {
-      accountId: `account-${product}`,
-      product,
-      startedAtMs: 1_000,
-      expiresAtMs: product === "trial" ? 8_000 : 31_000,
-    };
-    const delayedEnrollment = planManagedQuotaEnrollment(
-      null,
-      verified,
-      allowanceSeconds,
-      "hosted-development-test",
-      500_000,
-    );
-    expect(delayedEnrollment).toMatchObject({
-      kind: "create",
-      projection: {
-        account: {
-          currentPeriodStartAt: verified.startedAtMs,
-          currentPeriodEndAt: verified.expiresAtMs,
-        },
-        period: {
-          startAt: verified.startedAtMs,
-          endAt: verified.expiresAtMs,
-          limitSeconds: expectedLimit,
-          usedSeconds: 0,
-          reservedSeconds: 0,
-        },
-      },
-    });
-
-    const existing = {
-      account: delayedEnrollment.projection.account,
-      period: { ...delayedEnrollment.projection.period, usedSeconds: 17, reservedSeconds: 3 },
-    };
-    const replay = planManagedQuotaEnrollment(
-      existing,
-      { ...verified, expiresAtMs: verified.expiresAtMs + 10_000 },
-      allowanceSeconds,
-      "hosted-development-test",
-      900_000,
-    );
-    expect(replay).toEqual({ kind: "preserve", projection: existing });
-    expect(replay.projection.period).toMatchObject({
-      startAt: verified.startedAtMs,
-      endAt: verified.expiresAtMs,
-      usedSeconds: 17,
-      reservedSeconds: 3,
-    });
+  test.each(["monthly", "trial"] as const)("anchors the %s allocation to the current verified purchase rather than original subscription start", (product) => {
+    expect(verifiedQuotaPeriod({ product, environment: "SANDBOX", startedAt: 1_000,
+      transactionPurchaseAt: 31_000, transactionSignedAt: 31_000, expiresAt: 61_000 }, 32_000))
+      .toEqual({ startAt: 31_000, endAt: 61_000 });
   });
 
   test("authenticates the current RevenueCat raw-body mechanism and filters exact catalog/environment", async () => {

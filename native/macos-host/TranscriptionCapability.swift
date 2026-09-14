@@ -698,7 +698,7 @@ final class MeetlessTranscriptionCapability {
       writeResponse(client, requestId: "invalid", ok: false, status: "invalid", text: nil, languages: nil, usage: nil)
       return
     }
-    if operation == "premiumRecover" && !hasExactPremiumRecoverRequestKeys(request) {
+    if (operation == "premiumRecover" || operation == "premiumTransaction") && !hasExactPremiumReadRequestKeys(request) {
       writePremiumResponse(
         client,
         requestId: requestId,
@@ -949,6 +949,15 @@ final class MeetlessTranscriptionCapability {
       )
       return
     }
+    if operation == "premiumTransaction" {
+      let result = runtimeAuthorization.withValidLease(lease) { premium.readSignedTransaction() }
+      guard let signedTransaction = result else {
+        writePremiumResponse(client, requestId: requestId, ok: false, outcome: "failed", access: .unavailable("store_unavailable"))
+        return
+      }
+      writePremiumResponse(client, requestId: requestId, ok: true, outcome: "status", access: .unavailable("store_unavailable"), appleSignedTransaction: signedTransaction)
+      return
+    }
     if operation == "premiumStatus" || operation == "premiumPurchase" || operation == "premiumRestore" {
       let result = runtimeAuthorization.withValidLease(lease) { () -> (String, MeetlessPremiumAccessResult, String?, String?) in
         if operation == "premiumStatus" { return ("status", premium.status(), nil, nil) }
@@ -1175,7 +1184,7 @@ final class MeetlessTranscriptionCapability {
     writeAll(descriptor, data: data + Data([10]))
   }
 
-  private func hasExactPremiumRecoverRequestKeys(_ request: [String: Any]) -> Bool {
+  private func hasExactPremiumReadRequestKeys(_ request: [String: Any]) -> Bool {
     guard Set(request.keys) == Set(["version", "requestId", "operation"]),
           let version = request["version"] as? NSNumber,
           CFGetTypeID(version) != CFBooleanGetTypeID(),
@@ -1184,7 +1193,7 @@ final class MeetlessTranscriptionCapability {
           let requestId = request["requestId"] as? String,
           !requestId.isEmpty,
           requestId == requestId.trimmingCharacters(in: .whitespacesAndNewlines),
-          request["operation"] as? String == "premiumRecover" else {
+          ["premiumRecover", "premiumTransaction"].contains(request["operation"] as? String ?? "") else {
       return false
     }
     return true
