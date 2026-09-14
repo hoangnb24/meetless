@@ -29,7 +29,7 @@ TestFlight upload has been accepted.
 | Production webhook | `whintgr3085ebc4c2`, `https://content-bulldog-967.convex.site/webhooks/revenuecat`, Production only |
 | Store-testing webhook | `whintgrb51603f89e`, `https://posh-mink-212.convex.site/webhooks/revenuecat`, Sandbox only |
 | Current Apple API key ID / issuer | `WZ7MKM8T9D` / `69a6de8c-6878-47e3-e053-5b8c7c11a4d1`; replaced and revoked `U48V6LU6X3` |
-| New provisioning portal record | `8CS67VVGJM`, Meetless Mac App Store Production 2026-09-14; downloaded bytes still pending |
+| Production provisioning | Portal `8CS67VVGJM`, UUID `1db987ef-8549-4c4f-afdd-4b0ee82d135d`, Meetless Mac App Store Production 2026-09-14; downloaded bytes accepted |
 
 - Both new webhooks are active, app-filtered to Meetless, HMAC enabled with
   distinct secrets, and subscribe to Initial purchase, Renewal, Product change,
@@ -142,9 +142,37 @@ TestFlight upload has been accepted.
   GitHub #22, #24 and #25 are closed/Done after this acceptance. Epic #21 stays
   open; #23/#26 remain In Progress and #27 stays blocked by the artifact gate.
 
-Next: validate the
-downloaded provisioning bytes, build the reviewed successor with exact provenance,
-then validate/upload. #22–#27 retain their original acceptance dependencies.
+### Provisioning received and package execution — 2026-09-14
+
+- Owner supplied `keys/Meetless_Mac_App_Store_Production_20260914.provisionprofile`.
+  Independent reviewer and Lead ACCEPTS the actual profile for #23: macOS,
+  correct team/app, no development devices/debug entitlement, matching selected
+  Apple Distribution certificate, expires `2027-09-14T12:44:40Z`. SHA256:
+  `903f031904f19a31f2e5dac52ed75e5bd174d62e139500dfbeab09dd97181659`.
+  Wrong certificate/team and expired-profile controls reject. File mode 0600,
+  ignored by Git. Evidence:
+  `.artifacts/production-preparation/profile-20260914T145253Z/validation.json`.
+  Apple portal review confirms In-App Purchase enabled. App Sandbox is in the
+  signing contract; team-prefixed macOS App Group does not require a profile
+  entitlement ([Apple documentation](https://developer.apple.com/documentation/xcode/accessing-app-group-containers)).
+  Final signed entitlements and actual StoreKit behavior remain separate proof.
+- ASC recheck still shows version 1.0 and TestFlight No Builds. Local Xcode
+  supplies `altool` for validation/upload. Available local Apple key is an
+  In-App Purchase key, not an App Store Connect upload key. Root prepared the
+  unsubmitted `Meetless Upload 2026-09-14` Team API key form with Developer role.
+  Creation is pending owner confirmation because this is a new access scope;
+  Apple applies team keys to all apps. No existing RevenueCat/Expo key is changed.
+- Actual Installer smoke output exposed a status wording mismatch in the new
+  package validator. Independent reviewer and Lead ACCEPTS correction `2af425e`
+  tied to the selected certificate, its installer purpose, fingerprint and Apple
+  trust. Actual smoke package and OS certificate trust pass; unsigned package
+  fails and 41/41 focused tests pass. Public fixtures retain the observed output
+  and public certificate only. This is validator acceptance, not a completed
+  production package. #23 is closed/Done; #26 continues to actual packaging.
+
+Next: complete package-validator review, build/sign the exact successor and
+validate its payload, then authenticate/upload. #22–#27 retain their original
+acceptance dependencies. Public release/App Review remain separate.
 
 ### Historical execution checkpoint — 2026-09-14
 
