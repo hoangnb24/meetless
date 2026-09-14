@@ -221,8 +221,34 @@ TestFlight upload has been accepted.
   (tests). This accepts source and the path regression only; a fresh isolated
   production producer and artifact review remain required.
 
-Next: complete package-validator review, build/sign the exact successor and
-validate its payload, then authenticate/upload. #22–#27 retain their original
+- Fresh isolated producer started from `174d23974a973f613d77cf0f34adf40b8b9a1244`
+  in `/private/tmp/meetless-production-174d239`, with all 17 workspace links
+  resolving inside that checkout and no development env copied. Input snapshot:
+  `33a0637e41ef951473c750d8f2b62009d222c7c637d022f4bce4b827f897b57b`.
+  Attempt evidence: `.artifacts/macos-mas-distribution/20260914T152926594Z/`;
+  original proof: `/private/tmp/meetless-mas-distribution-isolated-20260914T152926594Z`.
+  FAILED before composition: debug native checks completed, but the Release
+  `MeetlessHostTests` process exited with SIGPIPE. Prior path assertions did not
+  recur. Source unchanged, keychain locked and search list restored are recorded
+  in `result.json`. The native author and independent reviewer are investigating
+  the actual Release failure; no package is accepted and no check is skipped.
+
+
+- Independent reviewer and Lead ACCEPTS the bounded closed-peer socket fix.
+  A deterministic Release fixture calling actual capability handling died with
+  SIGPIPE before the fix. Per-socket `SO_NOSIGPIPE` now leaves disconnection as a
+  bounded write failure; setup failure closes the socket. No process-wide signal
+  policy or authentication/identity/argv rule changed. Healthy requests still
+  return success after a closed peer. The exact site of the earlier intermittent
+  producer SIGPIPE remains unknown; this does not retroactively prove its cause.
+  Regression and full native Release suite from `/private/tmp` pass with no
+  signal; evidence `.artifacts/production-preparation/native-release-closed-peer-proof-k3QdV0/`.
+  Accepted source hashes: `e928c6ba63aeef911fc3f6c5b7d861bd89a34a63fb340daab00ed97fda4a84e6`
+  (inspector/socket handling), `77b9e66f46b921e0573fa93f7cc9ee218922b8a2d676aaf5f505a1afdefa6546`
+  (tests). Actual fresh isolated packaging still required.
+
+Next: finish the actual isolated producer, independently validate the exact
+signed package and its payload, then authenticate/upload. #22–#27 retain their original
 acceptance dependencies. Public release/App Review remain separate.
 
 ### Historical execution checkpoint — 2026-09-14

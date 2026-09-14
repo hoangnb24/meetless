@@ -665,6 +665,7 @@ final class MeetlessTranscriptionCapability {
 
   func handle(_ client: Int32) {
     defer { shutdown(client, SHUT_RDWR); close(client) }
+    guard meetlessConfigureSocketWrites(client) else { return }
     let peerPID: pid_t
     if let socketPID = socketPeerPID(client), socketPID > 1 {
       peerPID = socketPID
@@ -2021,6 +2022,13 @@ private func createPrivateDirectory(_ path: String) throws {
     throw capabilityError("private transcription directory must not use symlinks")
   }
   guard chmod(path, 0o700) == 0 else { throw capabilityError("cannot restrict private transcription directory") }
+}
+
+/// A disconnected peer is a write error on this socket, never a process-wide
+/// SIGPIPE that could terminate the host and its unrelated recording work.
+func meetlessConfigureSocketWrites(_ descriptor: Int32) -> Bool {
+  var enabled: Int32 = 1
+  return setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size)) == 0
 }
 
 private func writeAll(_ descriptor: Int32, data: Data) {

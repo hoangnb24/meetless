@@ -847,6 +847,7 @@ private func requestNativeHostProcessProtocol(
     shutdown(descriptor, SHUT_RDWR)
     close(descriptor)
   }
+  guard meetlessConfigureSocketWrites(descriptor) else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
   var address = sockaddr_un()
   address.sun_family = sa_family_t(AF_UNIX)
   let pathBytes = Array(socketPath.utf8) + [0]
@@ -1653,6 +1654,7 @@ private func acceptCaptureProtocolClient(_ listener: Int32, timeoutMilliseconds:
 }
 
 private func writeCaptureProtocolResponse(_ descriptor: Int32, object: [String: Any]) throws {
+  guard meetlessConfigureSocketWrites(descriptor) else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
   guard let data = try? JSONSerialization.data(withJSONObject: object),
         data.count < meetlessMaximumRequestLineBytes else {
     throw NSError(domain: "MeetlessHostTests", code: 41, userInfo: [NSLocalizedDescriptionKey: "capture helper test response exceeds the bounded frame"])
@@ -3488,6 +3490,50 @@ private final class FakeProviderFolderAccess: MeetlessProviderAccess {
   }
 }
 
+private func exerciseClosedPeerResponse() throws {
+  let capability = MeetlessTranscriptionCapability(
+    socketPath: "/private/tmp/unused-closed-peer.sock",
+    stagingDirectory: "/private/tmp/unused-closed-peer-staging",
+    runtimeAuthorization: authorizedRuntimeState(),
+    keychain: FakeKeychain()
+  )
+  let request = Data("{\"version\":1,\"requestId\":\"closed-peer\",\"operation\":\"status\"}\n".utf8)
+  var abandoned: [Int32] = [0, 0]
+  guard socketpair(AF_UNIX, SOCK_STREAM, 0, &abandoned) == 0 else { throw POSIXError(.EIO) }
+  request.withUnsafeBytes { _ = Darwin.write(abandoned[0], $0.baseAddress, $0.count) }
+  close(abandoned[0])
+  capability.handle(abandoned[1])
+
+  var healthy: [Int32] = [0, 0]
+  guard socketpair(AF_UNIX, SOCK_STREAM, 0, &healthy) == 0 else { throw POSIXError(.EIO) }
+  defer { close(healthy[0]) }
+  request.withUnsafeBytes { _ = Darwin.write(healthy[0], $0.baseAddress, $0.count) }
+  capability.handle(healthy[1])
+  guard let response = readBoundedLine(healthy[0], maximumBytes: 4096),
+        let data = response.data(using: .utf8),
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        object["version"] as? Int == 1,
+        object["requestId"] as? String == "closed-peer",
+        object["ok"] as? Bool == true,
+        object["status"] as? String == "configured" else {
+    throw NSError(domain: "MeetlessHostTests", code: 74, userInfo: [NSLocalizedDescriptionKey: "healthy request must succeed after an abandoned response"])
+  }
+}
+
+private func testClosedPeerResponseDoesNotTerminateHost() throws {
+  let child = Process()
+  child.executableURL = URL(fileURLWithPath: try nativeProcessFixtureExecutable())
+  var environment = ProcessInfo.processInfo.environment
+  environment["MEETLESS_NATIVE_PROCESS_FIXTURE"] = "closed-peer-response"
+  child.environment = environment
+  child.standardInput = FileHandle.nullDevice
+  child.standardOutput = FileHandle.nullDevice
+  child.standardError = FileHandle.nullDevice
+  try child.run()
+  child.waitUntilExit()
+  check(child.terminationReason == .exit && child.terminationStatus == 0, "closed client must yield a bounded write failure, not SIGPIPE termination of the host")
+}
+
 private func testProviderAccessSocketBoundary() {
   let provider = FakeProviderFolderAccess()
   let state = authorizedRuntimeState()
@@ -4054,6 +4100,7 @@ private func statusRequest(socketPath: String, requestId: String) -> Bool {
   let client = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
   guard client >= 0 else { return false }
   defer { close(client) }
+  guard meetlessConfigureSocketWrites(client) else { return false }
   var timeout = timeval(tv_sec: 1, tv_usec: 0)
   _ = setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
   var address = sockaddr_un()
@@ -4703,6 +4750,10 @@ private func testLegacyIdentityMigrationBoundary() {
 private struct TranscriptionCapabilityTests {
   static func main() {
     if let fixtureRole = ProcessInfo.processInfo.environment["MEETLESS_NATIVE_PROCESS_FIXTURE"] {
+      if fixtureRole == "closed-peer-response" {
+        do { try exerciseClosedPeerResponse() } catch { exit(1) }
+        return
+      }
       runNativeProcessFixture(fixtureRole)
       return
     }
@@ -4788,6 +4839,10 @@ private struct TranscriptionCapabilityTests {
     do { try testPremiumHostLogSurvivesUnavailableStandardError() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: Premium host log persistence: \(error)\n".utf8))
+    }
+    do { try testClosedPeerResponseDoesNotTerminateHost() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: closed-peer response: \(error)\n".utf8))
     }
     testProviderAccessSocketBoundary()
     testPremiumSocketBoundary()
