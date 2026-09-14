@@ -1,6 +1,132 @@
 # Execution Plan: Meetless V1
 
-Updated: 2026-09-13
+Updated: 2026-09-14
+
+## Production preparation — owner decision 2026-09-14
+
+The owner selected production preparation as the next work: upload a Mac App
+Store build, configure RevenueCat for real App Store purchases, and use Convex
+production. Freeze the current source before beginning this work.
+
+GitHub execution breakdown: [Epic #21](https://github.com/hoangnb24/meetless/issues/21), new sub-issues #22–#27 and retained #14–#17/#20. Native dependencies own the execution order; #22/#23 are the first inputs. This link does not change the frozen source.
+
+### Execution checkpoint — 2026-09-14
+
+Owner authorized implementation of Epic #21 and selected US East and separate
+Sandbox/Production backends. Root owns account/configuration discovery,
+authority promotion, plan and integration. `production_contract_audit` completed
+read-only code/official-provider contract audit. `apple_production_verifier`
+owns the bounded missing Apple appAppleId correction/config/tests; a different
+reviewer must accept its exact diff before integration. No source tag moves.
+
+Read-only Convex discovery: existing default production `content-bulldog-967`,
+project ID 2906735, region `aws-us-east-1`; no environment variables configured.
+No deployment or environment mutation performed. The CLI-source import metadata
+probe failed locally on missing @sentry/node; a GET through the documented
+installed CLI platform route succeeded without installing dependencies.
+
+Apple Developer sign-in is absent in inspected IAB/Chrome pages; checking
+App Store Connect in IAB after owner reported using ChatGPT browser earlier.
+That page also showed login. Owner deferred login because away from the machine;
+Apple/RevenueCat account operations remain pending, not rejected or failed.
+RevenueCat HMAC matches current official docs; actual integration config still
+needs verification. Confirmed Apple SDK production constructor requires numeric
+appAppleId; current source omits it. This is being corrected as a reviewed
+successor, not relabeled as the frozen source. Sandbox/TestFlight routing and
+background Apple reconciliation remain separate work before production acceptance.
+
+### Accepted preparation checkpoint — 2026-09-14
+
+- Lead ACCEPTS source correction `4a293b5321ec9d2ba5a18fcdbedf54419048ba9a`
+  after independent `production_verifier_review` acceptance of the exact five
+  file hashes. Production config and deploy preflight require a positive safe
+  integer `MEETLESS_APPLE_APP_ID`; native Apple SDK verifier receives it as the
+  fifth argument. Sandbox remains compatible without that field. No fake or
+  historical Apple ID was applied to a deployment.
+- Worker and independent reviewer each ran the focused two-file suite: 33/33
+  passed. Convex TypeScript check passed for the implementation. Actual installed
+  Apple SDK reproduces the old production constructor failure and the corrected
+  path reaches cryptographic rejection of a deliberately invalid JWS. This is
+  local/unit confidence only; not real Apple transaction or production acceptance.
+- Frozen baseline tag remains at `6b051116af4dbf8a22337f51b995e120454b79d0`.
+  The source correction is an explicit successor; no artifact has been built or
+  relabeled as the original frozen SHA.
+- Existing production function spec is empty and no environment variables are
+  configured. No cloud mutation, provider call or deployment occurred.
+- Local profile `51bc0400-219e-405a-8d37-e300afd72c53` embeds Apple Distribution
+  for team `63M98WD275`, bundle `com.meetless.app`, expires 2027-08-25, with no
+  device list. Its existence does not prove usable signing private keys; only
+  Apple Development is currently a valid keychain signing identity. MAS
+  Distribution/Installer identities and current ASC catalog/version need login.
+- RevenueCat IAB dashboard also showed login; current integration remains
+  unverified. HMAC protocol matches current official RevenueCat documentation.
+
+Pending owner decisions (questions already sent; no assumed answers):
+
+1. Store-testing sandbox allowance: proposed 30 minutes per allocation, including
+   trial, with accelerated test clocks; production remains 8 hours/month and
+   trial 5 hours. This proposal is NOT accepted policy or applied configuration.
+2. Background Apple reconciliation: proposed bounded synchronous lookup when a
+   verified RevenueCat webhook arrives, acknowledge only after normalized
+   reconciliation; transient Apple failure uses RevenueCat retries. Raw lookup
+   ID/JWS stay in memory, never scheduled/persisted. Retry exhaustion would need
+   manual recovery; indefinite automatic recovery needs further design/authority.
+
+Next independent/blocked work: #24 native transaction paths currently accept
+only sandbox; use verified app/store context to select fixed signed endpoint,
+then independently verify environment at the server. Scope credential, token,
+quota and upload/resume context to that backend; no cross-backend fallback or
+replay. #26 must package both approved endpoints. Exact sandbox target and
+allowance, live Apple/RevenueCat configuration and signing inputs remain open.
+Do not start production deployment or claim #22/#23/#24 done from this checkpoint.
+
+### Frozen source
+
+- Source commit: `6b051116af4dbf8a22337f51b995e120454b79d0`.
+- Annotated tag: `production-baseline-2026-09-14`, pushed to origin.
+- The working tree was clean when frozen; origin/main matched this exact SHA.
+- This tag identifies the application/backend source baseline, not a released
+  artifact or completed production acceptance. Never move or overwrite the tag.
+  Any required source change must have its own reviewed successor candidate and
+  explicit provenance; do not silently claim it was built from the frozen SHA.
+
+### Preparation and remaining inputs
+
+- [x] Verify clean source and remote SHA; publish source-baseline tag.
+- [x] Inspect MAS packaging, deployment guard and available signing identities.
+- [x] Owner chose US East for Convex production on 2026-09-14.
+- [ ] Verify actual production deployment identity and service configuration.
+- [ ] Obtain/verify Apple Distribution and Mac Installer Distribution signing
+  identities plus a matching Mac App Store provisioning profile. The current
+  keychain inspection found only one valid Apple Development identity.
+- [ ] Prepare the distribution packaging route. The existing MAS entry point
+  is development-specific; the generic release route is Developer ID, not MAS.
+- [ ] Verify RevenueCat's existing Apple app/catalog/credentials and actual
+  webhook transport compatibility; use real production event handling.
+- [ ] Configure production allowance at 28,800 seconds per subscriber month,
+  backend-only provider credentials, production Apple verification and auth.
+- [ ] Build from an isolated frozen source checkout with recorded configuration,
+  validate exact bundle/package/signing provenance, then upload to App Store
+  Connect and verify processing. Record build version/number before upload.
+- [ ] Retain #15/#16/#20 billing, quota and recovery evidence obligations; #14
+  and #17 retain their independent release obligations. Do not mark untried
+  cases passed. Public release/App Review are separate from build upload.
+
+RevenueCat automatically distinguishes Apple sandbox and production receipts;
+the same Apple-app SDK key can serve both environments. Production readiness
+requires actual configuration and event verification, not an SDK key toggle.
+Reference: https://www.revenuecat.com/docs/guides/environment-strategies
+Apple package/upload references:
+https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution
+https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds
+
+Preserve the installed development app, local recordings, existing development
+backend and credentials. Record production configuration separately without
+secrets in git or ordinary logs. Before deploying, inspect the target's existing
+state and recovery path; never repoint or reset development implicitly.
+Build artifacts, production deployment, upload, and store publication have not
+been performed in this preparation checkpoint. Follow ADR0005, product
+monetization policy and docs/patterns/production-evidence.md for their proof.
 
 ## Current Work
 

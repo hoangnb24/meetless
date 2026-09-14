@@ -183,9 +183,15 @@ The local-first Convex implementation is region-neutral and may proceed
 against a local deployment. Bounded audio chunks use Convex-generated upload
 URLs and the resulting storage IDs; audio bytes do not travel through HTTP
 action bodies. Provider execution remains replaceable, and this boundary does
-not change the free Ask or user-supplied/BYOK paths. US East versus EU West is
-deferred until before cloud production deployment. Production region,
-deployment, credentials, and provider calls remain owner/external gates.
+not change the free Ask or user-supplied/BYOK paths. On 2026-09-14 the owner
+selected US East (`aws-us-east-1`) for cloud production.
+The owner also selected separate hosted backends for Apple Sandbox
+(TestFlight/App Review) and Production, with isolated billing/quota data. The
+server must verify the Apple environment before granting access; client
+environment hints alone are never authorization. Endpoint routing and webhook
+dispatch must preserve this separation. The existing development deployment
+and its data remain intact. The exact sandbox target is still to be recorded.
+Deployment, credentials, and provider calls remain owner/external gates.
 
 The V1 **Transcribe** route is Meetless-managed
 transcription. The app sends the saved recording to the Meetless Convex
