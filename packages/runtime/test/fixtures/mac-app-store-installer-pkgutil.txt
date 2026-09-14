@@ -1,0 +1,21 @@
+Package "signed-smoke.pkg":
+   Status: signed by a developer certificate issued by Apple (Development)
+   Certificate Chain:
+    1. 3rd Party Mac Developer Installer: Long Le (63M98WD275)
+       Expires: 2027-09-14 12:45:30 +0000
+       SHA256 Fingerprint:
+           EC F2 5D 31 AC 60 A2 E3 20 DD D5 F1 0A C4 C4 95 CE 79 20 51 88 1C 
+           D1 7F 0E 03 97 98 0E 87 CF 79
+       ------------------------------------------------------------------------
+    2. Apple Worldwide Developer Relations Certification Authority
+       Expires: 2030-02-20 00:00:00 +0000
+       SHA256 Fingerprint:
+           DC F2 18 78 C7 7F 41 98 E4 B4 61 4F 03 D6 96 D8 9C 66 C6 60 08 D4 
+           24 4E 1B 99 16 1A AC 91 60 1F
+       ------------------------------------------------------------------------
+    3. Apple Root CA
+       Expires: 2035-02-09 21:40:36 +0000
+       SHA256 Fingerprint:
+           B0 B1 73 0E CB C7 FF 45 05 14 2C 49 F1 29 5E 6E DA 6B CA ED 7E 2C 
+           68 C5 BE 91 B5 A1 10 01 F0 24
+

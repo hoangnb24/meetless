@@ -754,7 +754,14 @@ async function createDistributionInstaller() {
   if (await pathExists(pkgPath)) throw new Error("Distribution installer output already exists");
   await run("productbuild", ["--component", bundlePath, "/Applications", "--sign", options.installerIdentity, "--keychain", options.keychain, pkgPath]);
   const result = await run("pkgutil", ["--check-signature", pkgPath]);
-  const signature = validateInstallerSignature(`${result.stdout}${result.stderr}`, options.installerIdentity);
+  const certificate = await run("security", ["find-certificate", "-c", options.installerIdentity, "-p", options.keychain]);
+  const certificatePath = path.join(options.proofRoot, "installer-public-certificate.pem");
+  await writeFile(certificatePath, certificate.stdout, { mode: 0o600 });
+  // pkgutil verifies the archive signature; Security validates the selected
+  // certificate against OS trust. The shared validator binds both by SHA-256
+  // and checks the Mac App Store Installer EKU (not Developer ID Installer).
+  await run("security", ["verify-cert", "-c", certificatePath, "-p", "basic", "-L"]);
+  const signature = validateInstallerSignature(`${result.stdout}${result.stderr}`, options.installerIdentity, { certificatePem: certificate.stdout });
   const expanded = path.join(options.proofRoot, "installer-expanded");
   await run("pkgutil", ["--expand-full", pkgPath, expanded]);
   const payloadApps = [];

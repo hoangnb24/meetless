@@ -58,11 +58,15 @@ describe("store signing eligibility", () => {
     expect(validateDistributionSignature(output, appIdentity).identity).toBe(appIdentity);
     for (const altered of [output.replace("com.meetless.app", "other"), output.replace("Authority=Apple Distribution", "Authority=Apple Development"), output.replace("TeamIdentifier=63M98WD275", "TeamIdentifier=OTHER"), output + "Signature=adhoc\n"]) expect(() => validateDistributionSignature(altered, appIdentity)).toThrow(/signature mismatch/);
   });
-  it("requires trusted Installer signature from selected identity", () => {
-    const output = `Status: signed by a certificate trusted by Mac OS X\nCertificate Chain:\n 1. ${installerIdentity}\n`;
-    expect(validateInstallerSignature(output, installerIdentity).verified).toBe(true);
-    expect(() => validateInstallerSignature(output.replace("trusted", "untrusted"), installerIdentity)).toThrow();
-    expect(() => validateInstallerSignature(output.replace("Example", "Someone else"), installerIdentity)).toThrow();
+  it("binds observed Apple installer status to the selected certificate purpose, fingerprint and chain", async () => {
+    const output = await readFile(new URL("./fixtures/mac-app-store-installer-pkgutil.txt", import.meta.url), "utf8");
+    const certificatePem = await readFile(new URL("./fixtures/mac-app-store-installer-public-cert.pem", import.meta.url));
+    const identity = "3rd Party Mac Developer Installer: Long Le (63M98WD275)";
+    expect(validateInstallerSignature(output, identity, { certificatePem }).verified).toBe(true);
+    expect(validateInstallerSignature(output.replace("signed by a developer certificate issued by Apple (Development)", "signed by a certificate trusted by macOS"), identity, { certificatePem }).verified).toBe(true);
+    for (const altered of [output.replace("signed by a developer certificate issued by Apple (Development)", "no signature"), output.replace("Long Le", "Someone else"), output.replace("EC F2 5D", "00 00 00"), output.replace("Apple Root CA", "Untrusted Root"), output.replace("Apple Worldwide Developer Relations Certification Authority", "Untrusted Intermediate")]) expect(() => validateInstallerSignature(altered, identity, { certificatePem })).toThrow();
+    expect(() => validateInstallerSignature(output, identity)).toThrow(/public certificate/);
+    expect(() => validateInstallerSignature(output, installerIdentity, { certificatePem })).toThrow(/purpose or identity/);
   });
 });
 

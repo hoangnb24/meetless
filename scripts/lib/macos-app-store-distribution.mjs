@@ -79,10 +79,17 @@ export function validateDistributionSignature(output, identity, label = "app", {
   if (!identifier || (expectedBundleIdentifier !== null && identifier !== expectedBundleIdentifier) || teamId !== TEAM || field("Authority") !== identity || field("Signature") === "adhoc" || !/^[a-f0-9]{40}$/u.test(cdHash ?? "")) fail(`${label} distribution signature mismatch`);
   return { identifier, cdHash, teamId, identity, signature: "cms" };
 }
-export function validateInstallerSignature(output, identity) {
+export function validateInstallerSignature(output, identity, { certificatePem } = {}) {
   validateDistributionIdentity(identity, "installer");
-  if (!/Status: signed by a certificate trusted by (?:Mac OS X|macOS)/u.test(output) || !output.includes(`1. ${identity}\n`)) fail("Installer signature is not the selected trusted distribution identity");
-  return { identity, verified: true };
+  if (!certificatePem) fail("Installer validation requires the selected public certificate");
+  const cert = new X509Certificate(certificatePem);
+  if (!cert.subject.split("\n").includes(`CN=${identity}`) || !cert.subject.split("\n").includes(`OU=${TEAM}`) || !cert.keyUsage?.includes("1.2.840.113635.100.4.9")) fail("Selected certificate lacks the Mac App Store Installer purpose or identity");
+  const statuses = [...output.matchAll(/^\s*Status: (.+)$/gmu)].map((match) => match[1]);
+  const accepted = ["signed by a certificate trusted by Mac OS X", "signed by a certificate trusted by macOS", "signed by a developer certificate issued by Apple (Development)"];
+  const chain = [...output.matchAll(/^\s+(\d+)\. (.+)\n([\s\S]*?)(?=^\s+\d+\. |$(?![\s\S]))/gmu)];
+  const leafFingerprint = chain[0]?.[3].match(/SHA256 Fingerprint:\s*([A-F0-9 \n]+?)(?=\s*-|$)/u)?.[1]?.replace(/\s/gu, "");
+  if (statuses.length !== 1 || !accepted.includes(statuses[0]) || chain.length !== 3 || chain[0][1] !== "1" || chain[0][2] !== identity || chain[1][1] !== "2" || chain[1][2] !== "Apple Worldwide Developer Relations Certification Authority" || chain[2][1] !== "3" || chain[2][2] !== "Apple Root CA" || leafFingerprint !== cert.fingerprint256.replace(/:/gu, "")) fail("Installer signature is not the selected Apple-anchored distribution identity");
+  return { identity, verified: true, certificateSha256: cert.fingerprint256.replace(/:/gu, "").toLowerCase(), certificatePurpose: "1.2.840.113635.100.4.9" };
 }
 
 export function validateDistributionProfileCertificate(profile, pem) {
