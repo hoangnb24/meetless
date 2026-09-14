@@ -247,8 +247,38 @@ TestFlight upload has been accepted.
   (inspector/socket handling), `77b9e66f46b921e0573fa93f7cc9ee218922b8a2d676aaf5f505a1afdefa6546`
   (tests). Actual fresh isolated packaging still required.
 
-Next: finish the actual isolated producer, independently validate the exact
-signed package and its payload, then authenticate/upload. #22–#27 retain their original
+
+- Fresh producer retry uses detached `a329304df4d72fe572085ab78c81a6b5c06a63ab`
+  at `/private/tmp/meetless-production-a329304`; all 17 workspace links verified
+  inside checkout. Source snapshot:
+  `14dd6bf057af48f28a18707254a75d8ef3624d96029ca173a154b6d8c0f7821d`.
+  Evidence `.artifacts/macos-mas-distribution/20260914T153929124Z/`, original
+  proof `/private/tmp/meetless-mas-distribution-isolated-20260914T153929124Z`.
+  Actual producer PASSED full clean build (including native debug/Release),
+  composition, app/42 nested Mach-O signing and strict validation, Installer
+  trust/purpose/signature checks and expanded payload/app inventory equality.
+  Source unchanged, release keychain locked, search list restored. Durable exact
+  `Meetless-1.0-1.pkg` SHA-256:
+  `5e6c1636ef2340603d676078acba0ff1f1617d9ac498b39c934c65f8af0ec1d4`
+  (319,830,262 bytes). Manifest SHA-256:
+  `439c1c3498f420056e23ec2ec0eeb0675797ddadb99c8e4cc95f18f0ca6ceb7a`.
+  Signed routing/version/endpoints/public SDK input checks pass; no legacy
+  endpoint or credential file names found in the bounded bundle check. This is
+  not a universal secret scan. Independent reviewer and Lead ACCEPTS #26 for
+  these exact package/manifest bytes and the actual isolated producer. Reviewer
+  independently verified OS trust/pkgutil, strict app/payload signatures, all 42
+  Mach-O signer/CDHash/arm64 identities, sandbox/app group entitlements, signed
+  config/profile/source provenance and identical payload inventory digest
+  `bb3b6bad35e8f339ea9520c2e8d43f69dca822b89e32b8a8266ea90f729d6526`.
+  Accepted targeted negative proof (tampered resources/unsigned package) remains
+  retained. Lead rechecked durable hashes and clean exact isolated checkout.
+  This acceptance is packaging/signing/provenance only.
+  Prior failed proofs remain retained. No install, launch or upload performed.
+
+Next: #26 is accepted; #27 awaits owner confirmation for the separate Developer
+App Store Connect upload key prepared above. After confirmation, create/store
+that key securely, recheck app/version/build, validate/upload the exact accepted
+package and observe Apple's processing result. #22–#27 retain their original
 acceptance dependencies. Public release/App Review remain separate.
 
 ### Historical execution checkpoint — 2026-09-14
