@@ -104,6 +104,14 @@ products or restoring a purchase does not reset the current quota period. A
 configured allowance change applies only to the next period; an already-
 started period keeps its snapshotted limit.
 
+Store-testing Sandbox allowance approved by the owner on 2026-09-14:
+TestFlight/App Review Sandbox receives **30 minutes (1,800 seconds) per
+allocation**, including the trial allocation. Keep the accelerated Sandbox
+subscription clocks below and isolate Sandbox billing/quota from Production.
+This does not change the production eight-hour monthly allowance or five-hour
+trial. Existing periods retain their snapshotted limits; do not reset usage or
+rewrite an existing development period to apply this decision.
+
 Quota scheduling decisions approved by the owner for issue #19 on 2026-09-13:
 
 - An active monthly/annual plan change preserves both the remaining allowance

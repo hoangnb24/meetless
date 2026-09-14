@@ -70,7 +70,9 @@ export function validateManagedConvexDeploymentEnvironment(env = process.env, op
       throw new Error("production JWT issuer and key identifier must not be development identifiers");
     }
   } else {
-    if (allowanceSource !== (mode === "hosted-development" ? "hosted-development-test" : "local-test")) throw new Error("non-production allowance source label is invalid");
+    const storeTesting = mode === "hosted-development" && allowanceSource === "store-testing-sandbox";
+    if (storeTesting && (Number(allowanceText) !== 1800 || providerMode !== "real" || appleVerifierMode !== "app-store-server-api")) throw new Error("store-testing-sandbox requires an explicit 1800-second allowance, real provider, and App Store Server API verifier (docs/product/monetization.md)");
+    if (!storeTesting && allowanceSource !== (mode === "hosted-development" ? "hosted-development-test" : "local-test")) throw new Error("non-production allowance source label is invalid");
     if (mode === "test" && providerMode !== "fake") throw new Error("test deployment must select the fake transcription provider");
     if (environment !== "SANDBOX") throw new Error("non-production RevenueCat environment must be SANDBOX");
   }

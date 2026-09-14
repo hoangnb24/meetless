@@ -1,7 +1,7 @@
 import type { MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { VerifiedAppleSubscriptionLineage, AppleSubscriptionState } from "./appleSubscription";
-import { MANAGED_MAX_DEVICES, MANAGED_TRIAL_SECONDS } from "./managedConfig";
+import { MANAGED_MAX_DEVICES, MANAGED_TRIAL_SECONDS, MANAGED_STORE_TESTING_ALLOWANCE_SOURCE, MANAGED_STORE_TESTING_ALLOWANCE_SECONDS } from "./managedConfig";
 import { anchoredCalendarMonth, quotaPeriodForSchedule, quotaScheduleForTerm, verifiedQuotaPeriod, type ManagedQuotaSchedule } from "./managedQuotaPolicy";
 
 type Allowance = { allowanceSeconds: number; allowanceSource: string };
@@ -19,6 +19,10 @@ export async function reconcileVerifiedSubscription(
   }
   if (!Number.isSafeInteger(allowance.allowanceSeconds) || allowance.allowanceSeconds <= 0 || !allowance.allowanceSource.trim()) {
     throw new Error("Managed subscription allowance configuration is invalid");
+  }
+  if (allowance.allowanceSource === MANAGED_STORE_TESTING_ALLOWANCE_SOURCE
+    && (allowance.allowanceSeconds !== MANAGED_STORE_TESTING_ALLOWANCE_SECONDS || verified.environment !== "SANDBOX")) {
+    throw new Error("Store-testing allowance requires verified SANDBOX evidence and exactly 1800 seconds");
   }
   if (requiredAccountId !== undefined && requiredAccountId !== verified.accountId) {
     throw new Error("Managed subscription proof does not match the enrolled account");
@@ -49,7 +53,7 @@ export async function reconcileVerifiedSubscription(
     });
     await ctx.db.insert("managedPeriods", {
       accountId: lineage.accountId, product: lineage.product, ...window,
-      limitSeconds: lineage.product === "trial" ? MANAGED_TRIAL_SECONDS : allowance.allowanceSeconds,
+      limitSeconds: lineage.product === "trial" ? trialAllowanceSeconds(allowance.allowanceSource) : allowance.allowanceSeconds,
       usedSeconds: 0, reservedSeconds: 0,
     });
     account = (await ctx.db.get(id))!;
@@ -92,7 +96,7 @@ export async function advanceVerifiedQuotaPeriod(ctx: MutationCtx, account: Doc<
   if (!next) {
     const id = await ctx.db.insert("managedPeriods", {
       accountId: account.accountId, product: lineage.product, startAt, endAt: window.endAt,
-      limitSeconds: lineage.product === "trial" ? MANAGED_TRIAL_SECONDS : account.nextPeriodLimitSeconds,
+      limitSeconds: lineage.product === "trial" ? trialAllowanceSeconds(account.allowanceSource) : account.nextPeriodLimitSeconds,
       usedSeconds: 0, reservedSeconds: 0,
     });
     next = (await ctx.db.get(id))!;
@@ -219,4 +223,9 @@ export async function stopManagedJobParts(ctx: MutationCtx, jobId: Id<"managedJo
     if (part.status === "completed") continue;
     await ctx.db.patch(part._id, { status: "failed", executionToken: null, leaseExpiresAt: 0, failureReason: reason });
   }
+}
+
+/** Store-testing is an explicit deployment source, never inferred from Sandbox alone. */
+function trialAllowanceSeconds(allowanceSource: string): number {
+  return allowanceSource === MANAGED_STORE_TESTING_ALLOWANCE_SOURCE ? MANAGED_STORE_TESTING_ALLOWANCE_SECONDS : MANAGED_TRIAL_SECONDS;
 }

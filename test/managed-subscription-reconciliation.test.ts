@@ -380,3 +380,37 @@ test("explicit paid repurchase after an ended trial uses the approved lapse anch
   expect(f.tables.managedAccounts[0]!.quotaSchedule.anchorAt).toBe(purchase);
   expect(f.tables.managedPeriods[1]!.startAt).toBe(purchase);
 });
+
+describe("store-testing allocation snapshots (local DB adapter)", () => {
+  const storeAllowance = { allowanceSeconds: 1800, allowanceSource: "store-testing-sandbox" };
+  test.each(["trial", "monthly", "annual"] as const)("allocates 1800 for %s on the accelerated Sandbox clock", async product => {
+    const f = database();
+    const term = proof({ product, productId: product, periodType: product === "trial" ? "trial" : "normal", environment: "SANDBOX", expiresAtMs: JAN + 120_000 });
+    await reconcileVerifiedSubscription(f.ctx, term, storeAllowance, JAN);
+    expect(f.tables.managedPeriods[0]).toMatchObject({ limitSeconds: 1800, startAt: JAN, endAt: JAN + (product === "annual" ? 10_000 : 120_000) });
+    if (product === "annual") {
+      await advanceVerifiedQuotaPeriod(f.ctx, f.tables.managedAccounts[0], f.tables.managedLineages[0], JAN + 10_000);
+      expect(f.tables.managedPeriods[1]).toMatchObject({ limitSeconds: 1800, startAt: JAN + 10_000, endAt: JAN + 20_000 });
+    }
+  });
+  test("keeps an existing development trial snapshot and applies 1800 only to the next paid allocation", async () => {
+    const f = database();
+    const trial = proof({ product: "trial", periodType: "trial", environment: "SANDBOX", expiresAtMs: JAN + 120_000 });
+    await reconcileVerifiedSubscription(f.ctx, trial, { allowanceSeconds: 42, allowanceSource: "hosted-development-test" }, JAN);
+    const old = f.tables.managedPeriods[0]!;
+    old.usedSeconds = 71; old.reservedSeconds = 9;
+    await reconcileVerifiedSubscription(f.ctx, trial, storeAllowance, JAN + 1);
+    expect(old).toMatchObject({ limitSeconds: 18_000, usedSeconds: 71, reservedSeconds: 9, endAt: JAN + 120_000 });
+    const paid = proof({ environment: "SANDBOX", transactionPurchaseAtMs: JAN + 120_000, transactionSignedAtMs: JAN + 120_000, expiresAtMs: JAN + 240_000, verifiedAtMs: JAN + 120_000 });
+    await reconcileVerifiedSubscription(f.ctx, paid, storeAllowance, JAN + 120_000);
+    expect(f.tables.managedPeriods[1]).toMatchObject({ limitSeconds: 1800, startAt: JAN + 120_000, endAt: JAN + 240_000 });
+    expect(old).toMatchObject({ limitSeconds: 18_000, usedSeconds: 71, reservedSeconds: 9 });
+  });
+  test("refuses store-testing allowance for production evidence before writing quota", async () => {
+    const f = database();
+    await expect(reconcileVerifiedSubscription(f.ctx, proof(), storeAllowance, JAN)).rejects.toThrow(/verified SANDBOX/);
+    expect(f.tables.managedPeriods).toHaveLength(0);
+    await expect(reconcileVerifiedSubscription(f.ctx, proof({ environment: "SANDBOX" }), { ...storeAllowance, allowanceSeconds: 28800 }, JAN)).rejects.toThrow(/exactly 1800/);
+    expect(f.tables.managedPeriods).toHaveLength(0);
+  });
+});

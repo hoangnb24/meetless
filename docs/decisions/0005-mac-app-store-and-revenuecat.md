@@ -322,6 +322,26 @@ signals only, and Apple verification remains entitlement authority. Signed
 transactions, receipts, secrets, and raw original transaction identifiers are
 never logged or durably persisted.
 
+### Production preparation decisions — 2026-09-14
+
+The owner approved 1,800 seconds for each store-testing Sandbox allocation,
+including trial; production remains 28,800 seconds per monthly allocation and
+18,000 seconds for the trial. Accelerated Sandbox clocks and snapshotted
+period limits remain unchanged. This supersedes historical unfinalized paid
+allowance wording above; product/monetization.md holds the current offer.
+
+For background subscription reconciliation, use authenticated RevenueCat
+webhook delivery as the trigger and verify current subscription/renewal status
+with Apple before acknowledging successful reconciliation. Use any raw Apple
+lookup identifier and signed material only transiently in memory. Persist only
+normalized verified state and privacy-safe idempotency records; never pass raw
+transaction IDs or JWS to a durable scheduler. Temporary Apple failures return
+a retryable non-success response so RevenueCat can redeliver. The owner accepts
+manual recovery after the provider's delivery retries are exhausted; indefinite
+automatic recovery is not required for this V1 path. RevenueCat remains a
+signal, and Apple remains entitlement authority. This decision authorizes the
+implementation, not a claim that real webhook/Apple verification already passed.
+
 ## Consequences
 
 - Existing direct-DMG signing, notarization, Gatekeeper, install-path, and DMG

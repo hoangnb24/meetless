@@ -8,6 +8,8 @@
  */
 
 export const MANAGED_TRIAL_SECONDS = 18_000;
+export const MANAGED_STORE_TESTING_ALLOWANCE_SOURCE = "store-testing-sandbox";
+export const MANAGED_STORE_TESTING_ALLOWANCE_SECONDS = 1_800;
 export const MANAGED_MAX_DEVICES = 3;
 export const MANAGED_LEASE_MS = 6 * 60 * 60 * 1_000;
 export const MANAGED_TEMPORARY_TTL_MS = 24 * 60 * 60 * 1_000;
@@ -148,7 +150,11 @@ export function readManagedRuntimeConfig(
       throw new ManagedConfigurationError("production issuer and key identifier must be production HTTPS identifiers");
     }
   } else {
-    if (allowanceSource !== (mode === "hosted-development" ? "hosted-development-test" : "local-test")) {
+    const storeTesting = mode === "hosted-development" && allowanceSource === MANAGED_STORE_TESTING_ALLOWANCE_SOURCE;
+    if (storeTesting && (allowanceSeconds !== MANAGED_STORE_TESTING_ALLOWANCE_SECONDS || providerMode !== "real" || appleVerifierMode !== "app-store-server-api")) {
+      throw new ManagedConfigurationError("store-testing-sandbox requires an explicit 1800-second allowance, real provider, and App Store Server API verifier (docs/product/monetization.md)");
+    }
+    if (!storeTesting && allowanceSource !== (mode === "hosted-development" ? "hosted-development-test" : "local-test")) {
       throw new ManagedConfigurationError(`${mode} must use its explicit non-production allowance source label`);
     }
     if (mode === "test" && providerMode !== "fake") {
