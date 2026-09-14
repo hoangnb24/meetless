@@ -139,6 +139,22 @@ and completed creation through Apple UI without revoking existing credentials.
   working browser. Do not create replacements or revoke any certificate.
   API credential has not been configured on Convex or live-request verified.
 
+### Chrome certificate retrieval checkpoint — 2026-09-14
+
+Owner authorized Chrome and completed Apple Developer login. Retrieved the
+issued Distribution certificate into `keys/apple-distribution-2026-09-14.cer`.
+Worker packaged encrypted `apple-distribution-2026-09-14.p12` and local
+`.password.txt` (all 0600, ignored); certificate/private-key matching and P12
+round-trip passed, wrong password rejected. Independent review and Lead accept
+this Distribution bundle: Code Signing usage, issuer/team/validity, all matching
+public keys and exact certificate bytes verified. Actual build signing/trust-chain
+acceptance remains untested. Certificate SHA256:
+`51AF1D05DE5E934BEDC1C04BD4E494A515789C231C7EB0CC966486B3E91E96B2`.
+Installer Download still produced no local certificate. Chrome downloads-page
+inspection was explicitly rejected by Browser URL policy; no workaround was
+attempted. Existing Installer certificate `5C93WPF4YD` page retained for user
+manual download. No new certificate issuance, import, revocation or deployment.
+
 ### Frozen source
 
 - Source commit: `6b051116af4dbf8a22337f51b995e120454b79d0`.
