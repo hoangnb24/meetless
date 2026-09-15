@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "meetless-website",
+  "account_id": "6031f1f85e189c44fb3bcd150ca65920",
   "compatibility_date": "2026-09-15",
   "assets": {
     "directory": "./dist",

@@ -13,13 +13,17 @@ existing A/CNAME for `meetless.2m0r.com`; recheck before any future DNS mutation
 
 ## Deployed version
 
-Initial public deployment: https://meetless-website.frosty-base-76ce.workers.dev
-from source `dc91fe53b7d26db875da3b5b65dccdb89cde4c86`, Cloudflare version
-`80acd7a1-3b17-462b-bb12-6ce12a5fb954` (2026-09-15). Public HTTPS checks returned
-200 with exact reviewed bytes for the three pages and assets; an unknown route
-returned the exact custom 404 with HTTP 404. Final custom-domain setup and
-verification remain pending; follow step 6 below. This initial version is the
-rollback reference for later updates, not evidence of App Store publication.
+Deployment target is pinned in `wrangler.jsonc` to account
+`6031f1f85e189c44fb3bcd150ca65920`, verified by the authenticated Cloudflare
+zone lookup for `2m0r.com` (active zone `c4a00099227adaee669d3a51666798dc`).
+The owner reauthenticated before this correction. The account holding the zone
+is the target, rather than whichever account a login may select by default.
+
+The earlier deployment at https://meetless-website.frosty-base-76ce.workers.dev
+(version `80acd7a1-3b17-462b-bb12-6ce12a5fb954`, source `dc91fe5`) is in the
+previous account and does not satisfy the final-domain account requirement.
+Its public checks remain valid only for that endpoint. It has not been deleted;
+new-account deployment and final-domain setup are recorded in the active plan.
 
 ## Local preview and validation
 

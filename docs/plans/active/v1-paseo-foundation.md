@@ -490,6 +490,20 @@ Review or public release is inferred from this processing result.
   No DNS change was made. Final-domain HTTPS verification remains open in #28,
   then URLs can be entered in #17; no App Review/public app submission occurred.
 
+- Cloudflare account correction: the owner could not find the Worker in the
+  domain account. Earlier deployment used the preexisting login's account
+  `fb07a240a78ae90c2749829f40a2c484`; no domain-account match had been proved.
+  That endpoint's HTTP acceptance remains bounded to its actual location, and
+  is not acceptance of the requested final-domain hosting account.
+  Owner reauthenticated Wrangler. Authenticated GET `/zones?name=2m0r.com`
+  returned HTTP 200, active zone `c4a00099227adaee669d3a51666798dc`, account
+  `6031f1f85e189c44fb3bcd150ca65920`. Evidence:
+  `.artifacts/website-preparation/corrected-account-zone.json`.
+  Pin this verified account in `website/wrangler.jsonc`; public asset bytes are
+  unchanged. Target Worker lookup returned 10007 (absent), so this is a new
+  deployment, not an overwrite. Release check and Wrangler dry-run passed.
+  Old-account Worker is retained; no DNS mutation or app/backend change.
+
 Next: the owner can accept the internal TestFlight invitation. Preserve the
 installed development app/data before testing, then continue #15/#16/#20 live evidence and
 #14/#17 release readiness. TestFlight and
