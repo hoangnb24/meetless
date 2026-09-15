@@ -973,13 +973,48 @@ Review or public release is inferred from this processing result.
   one TestFlight Open, idle CPU and recording preservation checks are now running
   under the existing owner approval. No runtime acceptance is implied yet.
 
-Next: produce, validate and distribute build3, then verify TestFlight Open, idle
-CPU and data preservation to resolve #29. Resume screenshots and #15/#16/#20
-evidence after the updated app is healthy. TestFlight
+- Actual TestFlight automatically updated the canonical app to build3. One Open
+  succeeded: Meetless UI reports Host online, local audio and the meeting library;
+  no recording/transcription/Ask task was active. Actual Apple TestFlight CDHash
+  is `f75cc657eca82af3a7bed72eafac8bedc7dfde96`; strict signature, source and
+  snapshot match the accepted candidate; receipt presence only was checked.
+  Native host PID 59424 accumulated 0.01 CPU seconds across 30.039 seconds idle,
+  approximately **0.0333% CPU**, compared with build2's sustained 97.8–100.6%.
+  This measurement covers native host only. Canonical 10 recordings (2,118,330
+  bytes) retain aggregate digest
+  `1f39b53ce22a8b1fede847caea39fb130ab6e5946a68ccebd16efb667c07c1a3`;
+  secure identity remains 0600 and matches the actual build3 executable.
+  `build3-runtime-acceptance.json` and `cpu-build3-idle.json` retain evidence under
+  the build3 upload/runtime directory. Independent review is in progress; a
+  separate bounded second-Open/focus and graceful quit/relaunch check follows.
+  Reboot, recording/transcription, billing and public release remain unproved.
+
+- Bounded lifecycle check on the same actual Apple build3 also completed:
+  a second TestFlight Open kept host PID 59424, one window and one listener;
+  graceful UI quit/Command-Q stopped the owned host/runtime/Electron/listener.
+  One relaunch reached Host online with new host PID 63935 and one runtime.
+  A fresh 30.039-second idle interval again measured approximately 0.0333% native
+  CPU. Canonical recordings and secure identity stayed unchanged. Evidence is
+  `lifecycle-14.json` plus `cpu-build3-relaunch-idle.json`. Focus proof is partial
+  because the operator did not establish an explicit OS foreground state;
+  reboot was not performed. Consequently #14 remains open despite successful
+  same-instance and quit/relaunch observations. App remains idle on build3.
+
+- Independent runtime reviewer and Lead ACCEPT actual build3 Open, same-instance
+  second Open, graceful quit/relaunch, native-host idle CPU improvement and
+  canonical recording/identity preservation. Reviewer independently verified
+  installed Apple signatures/source/config, secure identity, and recomputed the
+  canonical recording digest; both CPU intervals and evidence hashes match.
+  Exact scope and four durable evidence hashes are bound by the runtime
+  `lead-acceptance.json`. This resolves #29's CPU regression; it does not close
+  #14's partial foreground/reboot gates or the remaining release dependencies.
+
+Next: resume screenshots and #15/#16/#20 evidence on the accepted build3 runtime.
+Keep #14 open for explicit foreground and owner-scheduled reboot proof. TestFlight
 and App Review purchases use the isolated Apple Sandbox route; only verified
 Apple PRODUCTION transactions can establish production billing evidence.
-Owner-authorized app replacement may proceed after accepted backup and fresh
-stopped-state checks. Website #28 final-domain HTTPS and all three ASC URLs
+Future app replacements retain the same accepted backup and fresh stopped-state
+checks. Website #28 final-domain HTTPS and all three ASC URLs
 are accepted; App Privacy correction/remaining metadata gates stay separate.
 App Review/public release require a separate owner decision.
 

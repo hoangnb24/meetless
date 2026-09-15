@@ -22,24 +22,25 @@ quyết định hoặc tài liệu thật sự còn thiếu, không điền bằ
 | Primary language | English (U.S.) | ASC readback |
 | Baseline đóng băng | `production-baseline-2026-09-14` → `6b051116af4dbf8a22337f51b995e120454b79d0` | Tag lịch sử, không tự là release artifact |
 | Candidate đã đóng gói | `Meetless-1.0-3.pkg`, SHA-256 `b6de8f6a5a04854155e40fc9b2701b56ee22c96d54fd55f2baceed1288066934` | `.artifacts/macos-mas-distribution/20260915T072301Z-build3/` |
-| Trạng thái candidate | Upload COMPLETE, binary VALID, IN_BETA_TESTING | Source `7e958c3d7586029fa77347e987e0e380b980f563`; đang kiểm thử runtime build 3 |
+| Trạng thái candidate | Upload COMPLETE, binary VALID, IN_BETA_TESTING; Open/relaunch và native idle CPU đã đạt | Source `7e958c3d7586029fa77347e987e0e380b980f563`; acceptance giới hạn trong active plan |
 
-Build 2 đã qua review gói ký/payload và Apple validation; delivery/build
-`732201fb-0450-4939-a761-ff060d8e16d5` đã xử lý xong. Khai báo mã hóa giữ
+Build 3 đã qua review độc lập gói ký/payload và Apple validation; delivery/build
+`401bf672-c396-4ae0-8bb7-1ca1632e037d` đã xử lý xong. Khai báo mã hóa giữ
 nguyên câu trả lời owner đã duyệt: thuật toán chuẩn ngoài/cùng macOS và
-không phân phối tại Pháp. Nhóm Meetless Internal có cả build 1 và 2, đúng
-một tester hiện có; không gửi thử bên ngoài hoặc App Review.
+không phân phối tại Pháp. Nhóm Meetless Internal có build 1/2/3, đúng một
+tester hiện có; không gửi thử bên ngoài hoặc App Review.
 
-Một lần Open thực tế từ TestFlight đã mở được build 2, hiển thị Host online
-và bảo toàn 10 file ghi âm cũ. Review và Lead chỉ chấp nhận startup/identity/
-preservation. Tiến trình native dùng gần 100% CPU khi nghỉ; **#29 chặn phát
-hành**. Bản sửa build 3 đã đóng gói, được review độc lập và vượt qua Apple
-validation; upload thành công lúc `2026-09-15T07:44:37Z`, delivery
-`401bf672-c396-4ae0-8bb7-1ca1632e037d`. Apple xử lý xong; khai báo đã lưu
-theo cùng quyết định owner và nhóm nội bộ có build 1/2/3 cùng một tester.
-Chưa có kết quả Open/CPU từ build 3. App build 2 đã được thoát sạch sau kiểm thử.
-Lịch sử build 1, lỗi startup và các lần producer thất bại vẫn được giữ trong
-active plan; hồ sơ version 1.0 chưa được đổi sang build 2.
+Actual TestFlight Open build 3 thành công, giao diện Host online; Open lần hai
+giữ cùng runtime, thoát bằng UI dừng sạch và mở lại thành công. Cả hai khoảng
+đo idle 30 giây cho native MeetlessHost khoảng **0,0333% CPU**, giảm từ gần
+100% của build 2. Cả 10 file ghi âm (2.118.330 bytes) và secure identity được
+kiểm chứng bảo toàn. Review độc lập và Lead ACCEPT đúng phạm vi này; **#29
+đã được giải quyết**. Phép đo không bao gồm toàn bộ Electron/child processes.
+
+#14 vẫn còn foreground proof ở mức partial và reboot chưa thực hiện; recording,
+transcription, Ask, billing và phát hành chưa được suy ra từ lần thử Open.
+App đang idle trên build 3. Lịch sử lỗi startup/build 2 và producer thất bại
+được giữ trong active plan; hồ sơ App Review version 1.0 vẫn gắn build 1.
 
 ## Copy en-US
 
@@ -211,7 +212,7 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
 - **[OWNER INPUT] Wording đồng ý ghi âm và xử lý cloud:** duyệt hướng dẫn phù
   hợp pháp lý cho việc ghi microphone/system audio và gửi recording sau thao tác
   Transcribe. Product contract không thay cho tư vấn pháp lý theo từng vùng.
-- **Export compliance đã hoàn tất cho build 1.0 (1):** owner duyệt đúng hai câu
+- **Export compliance đã hoàn tất cho builds 1.0 (1–3):** owner duyệt đúng hai câu
   trả lời về thuật toán chuẩn và France No; server đã ghi nhận. Trước khi gửi
   App Review, đối chiếu storefront thực tế theo quyết định chưa mở Pháp.
 - **[OWNER INPUT] Custom EULA nếu muốn dùng:** xác nhận Apple standard license
@@ -226,17 +227,18 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
   đã được sửa. Actual Apple validation đạt, không lỗi/cảnh báo. Profile,
   entitlement, icon, quyền đọc, chữ ký và signed routing đều được kiểm tra
   trên exact artifact nêu trên.
-- ASC đã xác nhận version `1.0` / build `2`, upload COMPLETE, binary VALID
-  và IN_BETA_TESTING trong đúng nhóm nội bộ. Một lần Open và bảo toàn dữ liệu
-  đã được kiểm chứng; lỗi idle CPU #29 vẫn chặn chấp nhận runtime/phát hành.
-  Kết quả này không chứng minh App Review hoặc billing đã đạt.
+- ASC đã xác nhận version `1.0` / build `3`, upload COMPLETE, binary VALID
+  và IN_BETA_TESTING trong đúng nhóm nội bộ. Open, same-instance, quit/relaunch,
+  native idle CPU và bảo toàn dữ liệu đã được nghiệm thu trong phạm vi nêu trên.
+  Kết quả này không chứng minh App Review, recording/transcription hay billing đã đạt.
 - Exact build 1.0 (1) đã gắn vào hồ sơ version 1.0; API readback xác nhận build
   VALID và PREPARE_FOR_SUBMISSION. Sign-in required đã tắt vì Meetless không có
   tài khoản đăng nhập riêng; cấu hình provider cho Ask vẫn phải kiểm thử riêng.
 - Recheck StoreKit sandbox purchase/restore, routing Sandbox riêng, backend
   review window và Ask path trên exact candidate. Không gọi đó là bằng chứng
   production billing nếu chưa có live evidence.
-- Hoàn tất dependency release còn lại của Epic: #14, #15, #16, **#20** và **#29**.
+- Hoàn tất dependency release còn lại của Epic: #14, #15, #16 và **#20**.
+  #29 đã giải quyết trên actual TestFlight build 3.
   Cấu hình đã accepted và package local không tự chứng minh reboot/focus, live
   billing, webhook delivery hay public publication.
 

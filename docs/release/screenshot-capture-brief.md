@@ -7,9 +7,11 @@ purchase/transcription success or use the design prototype as the product.
 
 ## Candidate and output
 
-- Capture candidate: pending actual TestFlight build 3 acceptance for Open and
-  idle CPU (#29). Record its Apple build ID and source hash after distribution.
-  Build 2 opens successfully but its idle CPU defect blocks capture acceptance.
+- Capture candidate: actual TestFlight macOS 1.0 (3), source
+  `7e958c3d7586029fa77347e987e0e380b980f563`, Apple build
+  `401bf672-c396-4ae0-8bb7-1ca1632e037d`. Open/relaunch, native idle CPU and
+  recording preservation have scoped independent/Lead acceptance. This opens
+  capture preparation; no screenshots or broader feature flows are accepted yet.
 - Five images, following the shot list in `app-store-submission.md`.
 - Capture the real UI with fictional meeting content. Record the candidate,
   capture method, output dimensions, and hashes with each accepted asset.
@@ -82,5 +84,5 @@ Do not change bundle identity/signature to bypass the accepted launch contract.
 
 Existing repository screenshots are historical or fixture outputs at different
 candidate identities and unsupported store dimensions. They are not accepted
-as screenshots of the next accepted candidate. Images 01–05 remain pending
-until the updated TestFlight app is healthy and the capture environment is ready.
+as screenshots of build 3. Images 01–05 remain pending until the controlled
+fictional-content capture and image review are completed.
