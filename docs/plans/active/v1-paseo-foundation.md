@@ -10,7 +10,34 @@ production. Freeze the current source before beginning this work.
 
 GitHub execution breakdown: [Epic #21](https://github.com/hoangnb24/meetless/issues/21), new sub-issues #22–#28 and retained #14–#17/#20. Native dependencies own the execution order; #22/#23 are the first inputs. Website #28 supplies final URLs to #17 and can proceed alongside app testing. This link does not change the frozen source.
 
-### Current execution checkpoint — 2026-09-15, build 4 distributed internally and awaiting owner testing
+### Current execution — build 5 provider repair, owner authorized 2026-09-15
+
+Owner tested TestFlight 1.0 (4): recording permissions now work, Monthly was
+purchased, and transcription completed. Read-only UI confirmed Premium active
+and the new meeting Ready. Ask showed Model unavailable / Provider unavailable;
+the saved Codex bookmark remains but runtime `agents.providers` is empty.
+Source diagnosis: provider environment projection only accepts
+`.appStoreDevelopment`, dropping restored grants for `.appStoreDistribution`.
+Both builds 3 and 4 use Store backend routing; this is a development-to-Store
+coverage gap, not a newly introduced build-4-only change.
+
+Owner explicitly requested fixing this provider defect and distributing a new
+TestFlight build. Next candidate is 1.0 (5), subject to fresh Apple build-number
+verification. Keep bookmark-only provider access, inherited-environment
+scrubbing, existing Store routing, signing and data preservation. The previous
+native-suite deferral was limited to build 4; build 5 uses the normal required
+checks. No new provider support, Keychain changes, backend deployment, App Review
+submission or public release is part of this repair. Implementation, independent
+review, exact package and Apple delivery remain pending.
+
+The six Transcribe security prompts were separately diagnosed from securityd:
+two managed-device Keychain items retained the old Apple Development access
+requirement; repeated Allow operations preceded Always Allow for both items.
+This explains that observed migration prompt sequence and is not Ask's cause.
+Do not delete identities or reset Keychain/TCC to mask the provider defect.
+
+### Historical checkpoint — 2026-09-15, build 4 distributed internally
+
 
 Final source `ca90c14a34c1d1b89ee26b37d6e706d9e61d8bf1` is pushed; source snapshot is `f6dee8cfeb800f04d2b454a47e04f1d7c28d91948166bfe1c013bcd73716af5d`. The actual producer passed from `.artifacts/macos-mas-distribution/20260915T120659Z-build4-ca90c14`; independent reviewer and Lead ACCEPT the exact package: SHA-256 `916cd4c954a601df8fe251de69b4e2e25c90f7004ad7da864e5f079b4a6d7e62`, `320018167` bytes. Separate source checks passed `274` focused integration tests with `1` skipped; build-route/config checks passed `33`.
 
