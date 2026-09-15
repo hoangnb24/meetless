@@ -10,7 +10,15 @@ production. Freeze the current source before beginning this work.
 
 GitHub execution breakdown: [Epic #21](https://github.com/hoangnb24/meetless/issues/21), new sub-issues #22–#28 and retained #14–#17/#20. Native dependencies own the execution order; #22/#23 are the first inputs. Website #28 supplies final URLs to #17 and can proceed alongside app testing. This link does not change the frozen source.
 
-### Current execution checkpoint — 2026-09-15, Apple processing complete
+### Current execution checkpoint — 2026-09-15, build 4 distributed internally and awaiting owner testing
+
+Final source `ca90c14a34c1d1b89ee26b37d6e706d9e61d8bf1` is pushed; source snapshot is `f6dee8cfeb800f04d2b454a47e04f1d7c28d91948166bfe1c013bcd73716af5d`. The actual producer passed from `.artifacts/macos-mas-distribution/20260915T120659Z-build4-ca90c14`; independent reviewer and Lead ACCEPT the exact package: SHA-256 `916cd4c954a601df8fe251de69b4e2e25c90f7004ad7da864e5f079b4a6d7e62`, `320018167` bytes. Separate source checks passed `274` focused integration tests with `1` skipped; build-route/config checks passed `33`.
+
+Apple validation and upload both exited 0. Delivery UUID is `a7be5b59-c819-4888-a1e5-fec144c04406`; upload finished at `12:26:31 UTC`. Final API evidence at `12:44:09 UTC` reports upload COMPLETE, binary VALID and internal state `IN_BETA_TESTING`. Assignment to the existing `Meetless Internal` group (`5c7491b1-1c64-4077-abd1-2bd3e28c075b`) returned POST 204 at `12:43:58 UTC`, matched the one intended tester, and preserved builds 1–3; no external/public build was assigned. An earlier pre-eligibility group assignment returned 422 and is retained as historical evidence, not a current blocker.
+
+The previous native integration failure remains unresolved; the owner explicitly deferred native-suite execution for build 4 internal-beta testing only. INTERNAL BETA is now available for the owner-authorized test. Owner testing and actual TestFlight feedback are pending. This checkpoint makes no App Review or public release claim; Epic #21 and child issues #30/#31 remain open.
+
+### Historical execution checkpoint — 2026-09-15, Apple processing complete
 
 This checkpoint supersedes historical missing-login/key/empty-production and
 failed-artifact observations below. #22–#26 are accepted, including the corrected
