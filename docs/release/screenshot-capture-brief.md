@@ -7,8 +7,9 @@ purchase/transcription success or use the design prototype as the product.
 
 ## Candidate and output
 
-- Candidate: macOS 1.0 (1), source `41cfc34382f95dcf3b08fca74347cccb673b15be`.
-- Apple build: `0816cc3b-8b69-4357-bf0d-32537ec34b8b`.
+- Capture candidate: pending actual TestFlight build 3 acceptance for Open and
+  idle CPU (#29). Record its Apple build ID and source hash after distribution.
+  Build 2 opens successfully but its idle CPU defect blocks capture acceptance.
 - Five images, following the shot list in `app-store-submission.md`.
 - Capture the real UI with fictional meeting content. Record the candidate,
   capture method, output dimensions, and hashes with each accepted asset.
@@ -81,5 +82,5 @@ Do not change bundle identity/signature to bypass the accepted launch contract.
 
 Existing repository screenshots are historical or fixture outputs at different
 candidate identities and unsupported store dimensions. They are not accepted
-as screenshots of production 1.0 (1). Images 01–05 remain pending until the
-capture environment is ready.
+as screenshots of the next accepted candidate. Images 01–05 remain pending
+until the updated TestFlight app is healthy and the capture environment is ready.

@@ -924,6 +924,15 @@ Review or public release is inferred from this processing result.
   This accepts the bounded test repair and a new build3 producer attempt only;
   actual package, Apple distribution and idle CPU acceptance remain pending.
 
+- Build3 retry source is frozen at
+  `7e958c3d7586029fa77347e987e0e380b980f563`, with package-source snapshot
+  `8f06259872b6919401231b7b9a530a502294260c635f28f6c2bc4e5b869f4158`.
+  Fresh detached checkout `/private/tmp/meetless-production-7e958c3d-20260915T072301Z-build3`
+  has all 17 workspace links inside its own root, the pinned Paseo revision and
+  required ignored app dependencies. Actual producer evidence is retained in
+  `.artifacts/macos-mas-distribution/20260915T072301Z-build3/`; the earlier failed
+  producer attempt remains intact. This is a new attempt, not package acceptance.
+
 Next: produce, validate and distribute build3, then verify TestFlight Open, idle
 CPU and data preservation to resolve #29. Resume screenshots and #15/#16/#20
 evidence after the updated app is healthy. TestFlight
