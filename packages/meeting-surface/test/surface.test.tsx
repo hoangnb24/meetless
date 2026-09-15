@@ -809,6 +809,47 @@ describe("companion meeting surface", () => {
     renderer!.unmount();
   });
 
+  test("keeps Ask disabled while the selected provider is unavailable", async () => {
+    const onAsk = vi.fn(async () => undefined);
+    const onRetry = vi.fn(async () => undefined);
+    const selection = {
+      provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high", featureValues: {},
+    } as const;
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MeetingListSurface selectedRecording={{ recordingId: "r-selected", status: "saved" }}
+          canCreate={false} layoutTier="desktop" connectionLabel="Connected" hostLabel="isolated host"
+          meetings={[meeting("m-1")]} onRefresh={async () => undefined}
+          selectedMeetingId="m-1" transcript={transcript("ready")} consentStatus="granted"
+          chatCatalog={{ providers: [{
+            id: "codex", label: "Codex", status: "unavailable", models: [{
+              id: "gpt-5", label: "GPT-5", isDefault: true,
+              thinkingOptions: [{ id: "high", label: "High" }], defaultThinkingOptionId: "high",
+            }], modes: [{ id: "worker", label: "Worker" }], defaultModeId: "worker", error: "Provider is unavailable on this host.",
+          }] }}
+          chatSelection={selection}
+          chatProvider="codex" chatModel="gpt-5" onAskQuestion={onAsk} onRetryQuestion={onRetry}
+          chatThread={{
+            meetingId: "m-1", status: "failed", messages: [],
+            selection: { provider: "codex", model: "gpt-5" },
+            failure: { message: "provider unavailable", retryable: true },
+          }}
+        />,
+      );
+    });
+    const input = renderer!.root.findByProps({ testID: "chat-question-input" });
+    const ask = renderer!.root.findByProps({ testID: "chat-ask" });
+    expect(input.props.editable).toBe(false);
+    expect(ask.props.disabled).toBe(true);
+    expect(renderer!.root.findByProps({ testID: "chat-retry" }).props.disabled).toBe(true);
+    await act(async () => { input.props.onChangeText("Should not send"); });
+    await act(async () => { ask.props.onPress(); });
+    expect(onAsk).not.toHaveBeenCalled();
+    expect(onRetry).not.toHaveBeenCalled();
+    renderer!.unmount();
+  });
+
   test.each([
     ["inactive", { entitlement: "premium", status: "inactive", packages: [], reason: null }],
     ["unavailable", { entitlement: "premium", status: "unavailable", packages: [], reason: "store_unavailable" }],

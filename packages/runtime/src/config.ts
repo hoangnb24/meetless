@@ -487,7 +487,9 @@ export function resolveRuntimeConfig(input: {
   };
   assertIsolated(paths, listen, userHome);
   const inheritedEnvironment = copyEnvironmentWithoutUiTestControls(
-    copyEnvironmentWithoutDirectPasswordSecrets(copyEnvironmentWithoutOpenAiSecrets(sourceEnvironment)),
+    copyEnvironmentWithoutDirectPasswordSecrets(
+      copyEnvironmentWithoutCodexExecutable(copyEnvironmentWithoutOpenAiSecrets(sourceEnvironment)),
+    ),
   );
   return {
     packaged,
@@ -541,6 +543,11 @@ export function copyEnvironmentWithoutOpenAiSecrets(environment: NodeJS.ProcessE
   return Object.fromEntries(
     Object.entries(environment).filter(([key, value]) => !isOpenAiSecretEnvironmentEntry(key, value)),
   );
+}
+
+/** The selected Codex executable is a provider command override, never a global child env override. */
+export function copyEnvironmentWithoutCodexExecutable(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(environment).filter(([key]) => key !== "CODEX_EXECUTABLE"));
 }
 
 export function copyEnvironmentWithoutUiTestControls(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -866,7 +873,7 @@ function resolveHostTool(
   }
   const resolved = execFileSync("which", [executable], {
     encoding: "utf8",
-    env: copyEnvironmentWithoutOpenAiSecrets(environment),
+    env: copyEnvironmentWithoutCodexExecutable(copyEnvironmentWithoutOpenAiSecrets(environment)),
   }).trim();
   if (!path.isAbsolute(resolved)) throw new Error(`Could not resolve an absolute ${executable} path`);
   return resolved;
@@ -957,9 +964,9 @@ function isSameOrDescendant(candidate: string, parent: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-export function approvedProviderEnvironment(raw: string | undefined): { codex?: { CODEX_HOME: string } } {
+export function approvedProviderEnvironment(raw: string | undefined): { codex?: { CODEX_HOME: string; CODEX_EXECUTABLE?: string } } {
   if (!raw) return {};
-  const invalid = () => new Error("Invalid native provider environment: only an approved absolute Codex configuration directory is allowed");
+  const invalid = () => new Error("Invalid native provider environment: only an approved absolute Codex configuration directory and optional executable are allowed");
   let value: unknown;
   try { value = JSON.parse(raw); } catch { throw invalid(); }
   if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
@@ -969,11 +976,36 @@ export function approvedProviderEnvironment(raw: string | undefined): { codex?: 
   const codex = record.codex;
   if (!codex || typeof codex !== "object" || Array.isArray(codex)) throw invalid();
   const env = codex as Record<string, unknown>;
-  if (Object.keys(env).length !== 1 || typeof env.CODEX_HOME !== "string" || !path.isAbsolute(env.CODEX_HOME) || env.CODEX_HOME.includes("\0")) throw invalid();
-  return { codex: { CODEX_HOME: env.CODEX_HOME } };
+  const keys = Object.keys(env);
+  if (
+    !keys.includes("CODEX_HOME") ||
+    keys.some((key) => key !== "CODEX_HOME" && key !== "CODEX_EXECUTABLE") ||
+    typeof env.CODEX_HOME !== "string" ||
+    !path.isAbsolute(env.CODEX_HOME) ||
+    env.CODEX_HOME.length === 0 ||
+    env.CODEX_HOME.includes("\0")
+  ) throw invalid();
+  let executable: string | undefined;
+  if ("CODEX_EXECUTABLE" in env) {
+    const candidate = env.CODEX_EXECUTABLE;
+    if (
+      typeof candidate !== "string" ||
+      candidate.length === 0 ||
+      !path.isAbsolute(candidate) ||
+      candidate.includes("\0")
+    ) throw invalid();
+    executable = candidate;
+  }
+  return {
+    codex: {
+      CODEX_HOME: env.CODEX_HOME,
+      ...(executable === undefined ? {} : { CODEX_EXECUTABLE: executable }),
+    },
+  };
 }
 
 export async function prepareRuntime(config: RuntimeConfig): Promise<void> {
+  delete config.environment.CODEX_EXECUTABLE;
   const providerEnvironment = approvedProviderEnvironment(config.environment.MEETLESS_PROVIDER_ENV);
   if (providerEnvironment.codex) config.environment.CODEX_HOME = providerEnvironment.codex.CODEX_HOME;
   if (config.packaged) assertPackagedPaseo(config);
@@ -996,7 +1028,10 @@ export async function prepareRuntime(config: RuntimeConfig): Promise<void> {
   const daemonConfig = {
     version: 1,
     agents: {
-      providers: Object.fromEntries(Object.entries(providerEnvironment).map(([id, env]) => [id, { env }])),
+      providers: Object.fromEntries(Object.entries(providerEnvironment).map(([id, env]) => [id, {
+        env: { CODEX_HOME: env.CODEX_HOME },
+        ...(env.CODEX_EXECUTABLE === undefined ? {} : { command: [env.CODEX_EXECUTABLE] }),
+      }])),
     },
     daemon: {
       listen: config.listen,
@@ -1943,7 +1978,7 @@ function assertPinnedPaseo(pluginPath: string): void {
   const actual = execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: paseoRoot,
     encoding: "utf8",
-    env: copyEnvironmentWithoutOpenAiSecrets(process.env),
+    env: copyEnvironmentWithoutCodexExecutable(copyEnvironmentWithoutOpenAiSecrets(process.env)),
   }).trim();
   if (actual !== PINNED_PASEO_COMMIT) {
     throw new Error(

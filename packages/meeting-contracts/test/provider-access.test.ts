@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { NativeProviderAccessRequestSchema, NativeProviderAccessResponseSchema } from "../src/index.js";
 const response = { version: 1, requestId: "request", ok: true, type: "provider.access", outcome: "status", providers: [
-  { id: "codex", status: "needs_access" }, { id: "claude", status: "unavailable" }, { id: "opencode", status: "unavailable" },
+  { id: "codex", status: "needs_executable", executableSelection: "available" }, { id: "claude", status: "unavailable" }, { id: "opencode", status: "unavailable" },
 ] };
 test("provider access accepts status and strictly bounds chooser inputs and path-free outputs", () => {
   expect(NativeProviderAccessResponseSchema.parse(response)).toEqual(response);
@@ -13,4 +13,5 @@ test("provider access accepts status and strictly bounds chooser inputs and path
   expect(NativeProviderAccessResponseSchema.safeParse({ ...response, path: "/private/auth" }).success).toBe(false);
   expect(NativeProviderAccessResponseSchema.safeParse({ ...response, providers: [response.providers[0], response.providers[0], response.providers[2]] }).success).toBe(false);
   expect(NativeProviderAccessResponseSchema.safeParse({ ...response, providers: [{ id: "codex", status: "ready", token: "secret" }, ...response.providers.slice(1)] }).success).toBe(false);
+  expect(NativeProviderAccessResponseSchema.safeParse({ ...response, providers: [response.providers[0], { id: "claude", status: "ready", executableSelection: "available" }, response.providers[2]] }).success).toBe(false);
 });

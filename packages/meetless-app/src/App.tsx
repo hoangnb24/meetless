@@ -213,7 +213,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         setProviderAccess(result);
         setProviderAccessPending(result.outcome === "pending");
       }).catch(() => {
-        if (connection.current === active && providerAccessEpoch.current === accessEpoch) setProviderAccessError("Folder access could not be checked. Reopen the meeting to try again.");
+        if (connection.current === active && providerAccessEpoch.current === accessEpoch) setProviderAccessError("Provider access could not be checked. Reopen the meeting to try again.");
       });
     }
     return active;
@@ -412,7 +412,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         const accessEpoch = providerAccessEpoch.current;
         void active.client.getProviderAccess().then((result) => {
           if (isCurrentConnection(active) && providerAccessEpoch.current === accessEpoch) { setProviderAccess(result); setProviderAccessPending(result.outcome === "pending"); setProviderAccessError(null); }
-        }).catch(() => { if (isCurrentConnection(active)) setProviderAccessError("Folder access could not be checked. Reopen the meeting to try again."); });
+        }).catch(() => { if (isCurrentConnection(active)) setProviderAccessError("Provider access could not be checked. Reopen the meeting to try again."); });
       }
       const threadPromise = active.client.getMeetingChat(meetingId);
       const controlsCapability = typeof active.client.getChatControls === "function";
@@ -424,7 +424,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
       setChatControls(controls);
       if (chatSelectionRequest.current === controlsSelectionRequest) {
         setChatSelection(controlsCapability
-          ? controls.lastSelection
+          ? selectionForChatControls(controls)
           : resolveLegacySelection(legacyProvidersFromControls(controls.catalog), thread?.selection ?? null));
       }
       setChatThread(thread);
@@ -604,7 +604,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         if (result.outcome !== "pending") { setProviderAccessPending(false); return; }
       } catch {
         if (cancelled || !isCurrentConnection(active) || epoch !== providerAccessEpoch.current) return;
-        setProviderAccessError("Waiting to confirm folder access. Keep Meetless open.");
+        setProviderAccessError("Waiting to confirm provider access. Keep Meetless open.");
       }
       timer = setTimeout(() => void poll(), 1_000);
     };
@@ -628,7 +628,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
       }
     } catch {
       // An uncertain response is recovered by status polling, never by starting another chooser.
-      if (isCurrentConnection(active) && providerAccessEpoch.current === epoch) setProviderAccessError("Waiting to confirm folder access. Keep Meetless open.");
+      if (isCurrentConnection(active) && providerAccessEpoch.current === epoch) setProviderAccessError("Waiting to confirm provider access. Keep Meetless open.");
     }
   }, [isCurrentConnection, providerAccessPending]);
 
@@ -970,7 +970,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
               && selectionVersion.current === controlsSelectionEpoch
               && chatSelectionRequest.current === controlsSelectionRequest
             ) {
-              setChatSelection(controls.lastSelection);
+              setChatSelection(selectionForChatControls(controls));
               setChatError(chatControlsErrorMessage(controls));
             }
           } catch {
@@ -1250,7 +1250,8 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         chatLoading={chatLoading}
         providerAccessNotice={mode === "desktop" ? <ProviderFolderAccess
           result={providerAccess} provider={chatSelection?.provider ?? null} pending={providerAccessPending}
-          error={providerAccessError} onRequest={requestProviderAccess} /> : undefined}
+          error={providerAccessError} onRequest={requestProviderAccess}
+          runtimeProviderUnavailable={(chatControls?.catalogError === null && chatControls.catalog.providers.some((entry) => entry.id === "codex" && entry.status === "unavailable")) ?? false} /> : undefined}
         chatError={chatError}
         premiumAccess={premiumAccess}
         premiumPending={premiumPending}
@@ -1285,14 +1286,14 @@ export async function loadCompanionRestoration(client: MeetlessClient, selectedM
   if (typeof client.getChatControls === "function") {
     const controls = await client.getChatControls();
     if (!selectedMeetingId) {
-      return { meetings, detail: null, chatControls: controls, chatSelection: controls.lastSelection };
+      return { meetings, detail: null, chatControls: controls, chatSelection: selectionForChatControls(controls) };
     }
     const detail = await client.getMeetingTranscript(selectedMeetingId);
     if (detail.transcript?.status !== "ready") {
-      return { meetings, detail, chatControls: controls, chatSelection: controls.lastSelection };
+      return { meetings, detail, chatControls: controls, chatSelection: selectionForChatControls(controls) };
     }
     const chatThread = await client.getMeetingChat(selectedMeetingId);
-    return { meetings, detail, chatControls: controls, chatSelection: controls.lastSelection, chatThread };
+    return { meetings, detail, chatControls: controls, chatSelection: selectionForChatControls(controls), chatThread };
   }
   if (!selectedMeetingId) {
     return {
@@ -1402,6 +1403,11 @@ function chatControlsErrorMessage(controls: ChatControlsWire): string | null {
   return null;
 }
 
+/** A stale host selection must never keep Ask enabled after its provider/model becomes unavailable. */
+export function selectionForChatControls(controls: ChatControlsWire): ChatSelectionWire | null {
+  return controls.lastSelectionState === "available" ? controls.lastSelection : null;
+}
+
 const styles = StyleSheet.create({ safeArea: { backgroundColor: "#111316", flex: 1 } });
 
 function companionStateDisplay(status: Exclude<CompanionConnectionState["status"], "disposed" | "unpaired">): {
@@ -1418,28 +1424,68 @@ function companionStateDisplay(status: Exclude<CompanionConnectionState["status"
 }
 
 
-export function ProviderFolderAccess({ result, provider, pending, error, onRequest }: {
+export function ProviderFolderAccess({ result, provider, pending, error, onRequest, runtimeProviderUnavailable = false }: {
   result: ProviderAccessResult | null; provider: string | null; pending: boolean; error: string | null;
   onRequest(provider: ProviderAccessId): Promise<void>;
+  runtimeProviderUnavailable?: boolean;
 }) {
-  const entries = result?.providers.filter((entry) => provider ? entry.id === provider : entry.status !== "unavailable") ?? [];
+  const codexExecutableSelectionAvailable = result?.providers.some((entry) =>
+    entry.id === "codex" && entry.executableSelection === "available"
+  ) ?? false;
+  const entries = result?.providers.filter((entry) => {
+    if (
+      entry.id === "codex" && (provider === null || provider === "codex") &&
+      runtimeProviderUnavailable && codexExecutableSelectionAvailable && entry.status !== "unavailable"
+    ) return true;
+    return provider ? entry.id === provider : entry.status !== "unavailable";
+  }) ?? [];
+  const actionableEntries = entries.filter((entry) => entry.status !== "ready" || (
+    entry.id === "codex" && runtimeProviderUnavailable && codexExecutableSelectionAvailable
+  ));
+  const executableSelection = actionableEntries.some((entry) => entry.id === "codex" && (
+    entry.status === "needs_executable" || (
+      entry.status === "ready" && runtimeProviderUnavailable && codexExecutableSelectionAvailable
+    )
+  ));
   return <View style={{ gap: 8 }} testID="provider-folder-access">
-    {pending ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>Choosing folder… Complete or cancel the folder selection window.</Text> : null}
+    {pending ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>{executableSelection
+      ? "Choosing Codex… Complete or cancel the file selection window."
+      : "Choosing folder… Complete or cancel the folder selection window."}</Text> : null}
     {error ? <Text style={{ color: "#aeb6c2", fontSize: 13 }} accessibilityRole="alert">{error}</Text> : null}
-    {result?.outcome === "cancelled" ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>Folder selection was cancelled. You can grant access when ready.</Text> : null}
-    {result?.outcome === "invalid_selection" ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>Choose the selected agent’s existing configuration folder.</Text> : null}
-    {result?.outcome === "failed" ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>Folder access could not be saved. Try again.</Text> : null}
-    {entries.filter((entry) => entry.status !== "ready").map((entry) => <View key={entry.id}>
+    {result?.outcome === "cancelled" ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>{executableSelection
+      ? "Codex selection was cancelled. You can choose Codex when ready."
+      : "Folder selection was cancelled. You can grant access when ready."}</Text> : null}
+    {result?.outcome === "invalid_selection" ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>{executableSelection
+      ? "Select the installed Codex program on this Mac."
+      : "Choose the selected agent’s existing configuration folder."}</Text> : null}
+    {result?.outcome === "failed" ? <Text style={{ color: "#aeb6c2", fontSize: 13 }}>{executableSelection
+      ? "Codex access could not be saved. Try again."
+      : "Folder access could not be saved. Try again."}</Text> : null}
+    {actionableEntries.map((entry) => {
+      const executableEntry = entry.id === "codex" && (
+        entry.status === "needs_executable" || (
+          entry.status === "ready" && runtimeProviderUnavailable && codexExecutableSelectionAvailable
+        )
+      );
+      return <View key={entry.id}>
       <Text style={{ color: "#aeb6c2", fontSize: 13 }}>{entry.status === "restart_required"
         ? `Access to ${entry.id} is saved. Quit Meetless and reopen it, then send your question again.`
         : entry.status === "unavailable" ? `Folder access for ${entry.id} is not available in this build.`
+        : executableEntry && entry.status === "ready"
+          ? "Codex access is saved, but Codex is unavailable here. Choose the installed Codex program again."
+        : executableEntry
+          ? "Choose the installed Codex program so Meetless can use Codex in this build. If it moved or access was removed, choose Codex again."
         : `Allow Meetless to use your existing ${entry.id} configuration and sign-in. If access was removed, choose the folder again.`}</Text>
-      {entry.status === "needs_access" ? <Pressable accessibilityRole="button"
-        accessibilityLabel={`Grant ${entry.id} folder access`} accessibilityState={{ disabled: pending }} disabled={pending}
+      {(entry.status === "needs_access" || executableEntry) ? <Pressable accessibilityRole="button"
+        accessibilityLabel={executableEntry ? "Choose Codex" : `Grant ${entry.id} folder access`}
+        accessibilityState={{ disabled: pending }} disabled={pending}
         style={{ alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6, backgroundColor: "#293849", marginTop: 8 }}
         onPress={() => void onRequest(entry.id)} testID={`provider-access-${entry.id}`}>
-        <Text style={{ color: "#aeb6c2", fontSize: 13 }}>{pending ? "Choosing folder…" : `Grant ${entry.id} folder access`}</Text>
+        <Text style={{ color: "#aeb6c2", fontSize: 13 }}>{pending
+          ? executableEntry ? "Choosing Codex…" : "Choosing folder…"
+          : executableEntry ? "Choose Codex" : `Grant ${entry.id} folder access`}</Text>
       </Pressable> : null}
-    </View>)}
+    </View>;
+    })}
   </View>;
 }

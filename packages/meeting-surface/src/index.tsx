@@ -2289,13 +2289,22 @@ function MeetingChatPanel({
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const running = thread?.status === "running" || loading;
   const hasTranscript = transcript?.status === "ready";
+  const selectionReady = !chatCatalog
+    ? Boolean(provider) && Boolean(model)
+    : !chatCatalogError && Boolean(chatSelection) && (
+      chatCatalog.providers.length === 0 || (() => {
+        const selectedProvider = chatCatalog.providers.find((candidate) => candidate.id === chatSelection?.provider);
+        return selectedProvider?.status === "ready" && selectedProvider.models.some((candidate) => candidate.id === chatSelection?.model);
+      })()
+    );
+  const canAsk = interactive && !running && Boolean(onAsk) && hasTranscript && selectionReady;
   const hasPendingMessage = pendingQuestion !== null && (thread?.messages.some((message) => message.role === "user" && message.text === pendingQuestion) ?? false);
   useEffect(() => {
     if (hasPendingMessage) setPendingQuestion(null);
   }, [hasPendingMessage]);
   const submit = async () => {
     const normalized = question.trim();
-    if (!normalized || !onAsk) return;
+    if (!normalized || !canAsk || !onAsk) return;
     setPendingQuestion(normalized);
     try {
       await onAsk(normalized);
@@ -2323,8 +2332,8 @@ function MeetingChatPanel({
             <FocusPressable
               accessibilityLabel="Retry question"
               accessibilityRole="button"
-              accessibilityState={{ disabled: !interactive || running || (!chatCatalog ? !provider || !model : !chatSelection) || !onRetry }}
-              disabled={!interactive || running || (!chatCatalog ? !provider || !model : !chatSelection) || !onRetry}
+              accessibilityState={{ disabled: !interactive || running || !selectionReady || !onRetry }}
+              disabled={!interactive || running || !selectionReady || !onRetry}
               onPress={() => void onRetry?.()}
               style={styles.secondaryButtonSmall}
               testID="chat-retry"
@@ -2351,7 +2360,7 @@ function MeetingChatPanel({
         <View style={styles.chatComposerRow}>
           <FocusTextInput
             accessibilityLabel="Ask this meeting"
-            editable={interactive && !running && Boolean(onAsk) && hasTranscript && (chatCatalog ? Boolean(chatSelection) : Boolean(provider) && Boolean(model))}
+            editable={canAsk}
             onChangeText={setQuestion}
             placeholder="Ask about this meeting…"
             placeholderTextColor={colors.muted}
@@ -2362,8 +2371,8 @@ function MeetingChatPanel({
           <FocusPressable
             accessibilityLabel="Ask this meeting"
             accessibilityRole="button"
-            accessibilityState={{ disabled: !interactive || running || !question.trim() || (!chatCatalog ? !provider || !model : !chatSelection) || !onAsk || !hasTranscript }}
-            disabled={!interactive || running || !question.trim() || (!chatCatalog ? !provider || !model : !chatSelection) || !onAsk || !hasTranscript}
+            accessibilityState={{ disabled: !canAsk || !question.trim() }}
+            disabled={!canAsk || !question.trim()}
             onPress={() => void submit()}
             style={[styles.primaryButton, layoutTier === "phone" && styles.chatPhonePrimaryButton]}
             testID="chat-ask"

@@ -25,9 +25,24 @@ vi.mock("../src/recording-provider.js", () => ({
   useRecording: () => recordingState.current,
 }));
 
-import { AppContent, loadCompanionRestoration, retainPremiumCatalog } from "../src/App.js";
+import { AppContent, loadCompanionRestoration, retainPremiumCatalog, selectionForChatControls } from "../src/App.js";
 
 const TRANSCRIPTION_FAILURE_MESSAGE = "Transcription could not be completed. Your saved audio remains safe. Retry transcription when you are ready.";
+
+test("does not expose a stale Ask selection after host controls report it unavailable", () => {
+  const selection = {
+    provider: "codex", model: "gpt-5", modeId: "worker", thinkingOptionId: "high", featureValues: {},
+  } as const;
+  const controls = {
+    version: 1 as const,
+    catalog: { providers: [] }, profiles: [], catalogError: null,
+    lastSelection: selection, lastSelectionState: "unavailable" as const,
+    lastSelectionError: { kind: "unavailable" as const, message: "Provider unavailable" },
+  };
+  expect(selectionForChatControls(controls)).toBeNull();
+  expect(selectionForChatControls({ ...controls, lastSelectionState: "repair_required", lastSelectionError: { kind: "update_required", message: "Repair required" } })).toBeNull();
+  expect(selectionForChatControls({ ...controls, lastSelectionState: "available", lastSelectionError: null })).toEqual(selection);
+});
 
 describe("transcript meeting selection ordering", () => {
   let renderer: ReactTestRenderer | null = null;

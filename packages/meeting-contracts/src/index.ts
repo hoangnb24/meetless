@@ -597,11 +597,14 @@ export type RecordingStatusEvent = z.infer<typeof RecordingStatusEventSchema>;
 
 
 export const ProviderAccessIdSchema = z.enum(["codex", "claude", "opencode"]);
+const ProviderAccessEntrySchema = z.object({
+  id: ProviderAccessIdSchema,
+  status: z.enum(["ready", "needs_access", "needs_executable", "restart_required", "unavailable"]),
+  executableSelection: z.literal("available").optional(),
+}).strict().refine((entry) => entry.id === "codex" || entry.executableSelection === undefined, "Only Codex may expose executable selection");
+
 export const ProviderAccessResultSchema = z.object({
-  providers: z.array(z.object({
-    id: ProviderAccessIdSchema,
-    status: z.enum(["ready", "needs_access", "restart_required", "unavailable"]),
-  }).strict()).length(3).refine((items) => new Set(items.map((item) => item.id)).size === 3, "Each provider must appear once"),
+  providers: z.array(ProviderAccessEntrySchema).length(3).refine((items) => new Set(items.map((item) => item.id)).size === 3, "Each provider must appear once"),
   outcome: z.enum(["status", "pending", "granted", "cancelled", "invalid_selection", "failed"]),
 }).strict();
 export type ProviderAccessResult = z.infer<typeof ProviderAccessResultSchema>;
