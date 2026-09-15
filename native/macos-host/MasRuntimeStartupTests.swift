@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 @testable import MeetlessHostCore
 
 func testMasRuntimeStartupLocatorBoundary() throws {
@@ -63,7 +64,8 @@ func testProviderFolderAccessPersistence() throws {
   try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true)
   let executableTarget = codex.appendingPathComponent("bin/codex")
   try FileManager.default.createDirectory(at: executableTarget.deletingLastPathComponent(), withIntermediateDirectories: true)
-  guard FileManager.default.createFile(atPath: executableTarget.path, contents: Data("#!/bin/sh\n".utf8)) else {
+  let originalContents = Data("#!/bin/sh\n".utf8)
+  guard FileManager.default.createFile(atPath: executableTarget.path, contents: originalContents) else {
     throw NSError(domain: "ProviderFolderTests", code: 3, userInfo: [NSLocalizedDescriptionKey: "could not create executable fixture"])
   }
   try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executableTarget.path)
@@ -227,12 +229,25 @@ func testProviderFolderAccessPersistence() throws {
   unauthorizedBeforeChooser.restoreBeforeRuntime()
   try require(unauthorizedBeforeChooser.request(provider: "codex", authorized: { authorizedBeforeChooser }).outcome == "failed", "revoked lease before executable chooser must fail closed")
   unauthorizedBeforeChooser.close()
-  try FileManager.default.removeItem(at: executableTarget)
-  guard FileManager.default.createFile(atPath: executableTarget.path, contents: Data("#!/bin/zsh\n".utf8)) else {
-    throw NSError(domain: "ProviderFolderTests", code: 7, userInfo: [NSLocalizedDescriptionKey: "could not create replacement executable fixture"])
+  var originalIdentity = stat()
+  guard lstat(executableTarget.path, &originalIdentity) == 0 else {
+    throw NSError(domain: "ProviderFolderTests", code: 7, userInfo: [NSLocalizedDescriptionKey: "could not inspect original executable fixture"])
   }
+  let replacementContents = Data("#!/bin/xx\n".utf8)
+  try require(replacementContents.count == originalContents.count, "replacement fixture must keep the original byte length")
+  let replacementFile = try FileHandle(forWritingTo: executableTarget)
+  try replacementFile.seek(toOffset: 0)
+  try replacementFile.truncate(atOffset: 0)
+  try replacementFile.write(contentsOf: replacementContents)
+  try replacementFile.close()
   try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executableTarget.path)
   try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 4_000_000_000)], ofItemAtPath: executableTarget.path)
+  var replacementIdentity = stat()
+  guard lstat(executableTarget.path, &replacementIdentity) == 0 else {
+    throw NSError(domain: "ProviderFolderTests", code: 8, userInfo: [NSLocalizedDescriptionKey: "could not inspect replacement executable fixture"])
+  }
+  try require(originalIdentity.st_ino == replacementIdentity.st_ino, "replacement fixture must preserve the original inode")
+  try require(originalIdentity.st_mtimespec.tv_sec != replacementIdentity.st_mtimespec.tv_sec || originalIdentity.st_mtimespec.tv_nsec != replacementIdentity.st_mtimespec.tv_nsec, "replacement fixture must change the modification time")
   try require(fourth.status().providers[0]["status"] == "needs_executable", "replaced executable target must recover to needs_executable")
   try require(fourth.providerEnvironment() == ["codex": ["CODEX_HOME": codex.path]], "replaced executable target must not be projected")
   fourth.close()
