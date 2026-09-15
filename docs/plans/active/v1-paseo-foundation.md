@@ -401,6 +401,13 @@ Review or public release is inferred from this processing result.
   purchase or review submission occurred. This sets the server declaration;
   the signed artifact and Info.plist are unchanged. Before public submission,
   #17 must align actual storefront availability with the non-France decision.
+  Subsequent read-only ASC UI inspection found no internal testing groups,
+  Testers (0), and exact-build Groups (0)/Individual Testers (0). The header
+  displays the Meetless icon; binary metadata is Validated and non-exempt
+  encryption No. Eligibility is therefore established but owner installation
+  access has not been arranged. Request the owner's intended Apple Account
+  email before configuring its tester access or sending an invitation; the
+  logged-in display name alone is insufficient. No invitation was sent.
 - Website #28 was explicitly authorized as a separate Epic sub-issue, hosted on
   the owner's Cloudflare account. The owner has a domain and will configure the
   subdomain and provide the support email. Root owns `website/`, using authored
@@ -426,6 +433,9 @@ Review or public release is inferred from this processing result.
   Lead ACCEPTS this exact local source/content draft only. #28 remains open
   until contact/privacy inputs, actual Cloudflare deployment and final-domain
   HTTPS/route evidence are complete.
+  Read-only Cloudflare deployment lookup returned code 10007 for
+  `meetless-website` (Worker does not exist); first deployment will create a
+  new Worker, rather than update an existing application.
 
 Next: arrange the owner's internal TestFlight access and preserve the installed
 development app/data before testing, then continue #15/#16/#20 live evidence and
