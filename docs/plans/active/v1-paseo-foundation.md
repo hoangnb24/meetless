@@ -868,6 +868,18 @@ Review or public release is inferred from this processing result.
   purchase and broad app-group/IPC capability acceptance remain unproven.
   Full runtime/release acceptance is REJECTED because of #29 idle CPU.
 
+- #29 exact three-file source correction is independently reviewed and Lead
+  ACCEPTS for fresh candidate preparation at diff SHA-256
+  `49982b0335ee0b4bd55495d2ec6b57397cfd63a6e27a8b9f833de6d82b43cfd7`.
+  Maintenance uses only ESRCH-definite liveness on a serial utility queue;
+  unknown/EPERM remain, and full request identity/lease paths are unchanged.
+  Exact final debug/release native boundary suites passed under Node parent.
+  Tests cover live drift rejected by full requests, recursive dead chains/runtime,
+  stale snapshot/reset, events/revision and serial scheduling. An inspection race
+  hook is not a hash counter; a misleading test assertion was removed before
+  final reruns. Static call graph plus drift regression support source confidence,
+  while actual TestFlight3 idle CPU remains the required performance proof.
+
 Next: resolve and verify the actual Apple-distributed launch path, then resume
 screenshots and #15/#16/#20 evidence with preserved recording data. TestFlight
 and App Review purchases use the isolated Apple Sandbox route; only verified

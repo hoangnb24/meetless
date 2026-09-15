@@ -2099,6 +2099,183 @@ private func testCommittedRegistrationIdentityAndInspectionDiagnostics() throws 
   }
 }
 
+private func testLivenessMaintenanceBoundary() throws {
+  do {
+    let fixture = try NativeRegistrationDiagnosticFixture.make()
+    check(fixture.state.maintainDeadRegistrations(), "liveness maintenance must complete for a live registration chain")
+    check(
+      fixture.state.processRegistrationSnapshotForTesting().count == 3,
+      "liveness maintenance must preserve an unchanged live registration chain"
+    )
+  }
+
+  do {
+    let fixture = try NativeRegistrationDiagnosticFixture.make()
+    let replacement = fixture.root.appendingPathComponent("fixture-host-replacement")
+    try FileManager.default.copyItem(at: fixture.executable, to: replacement)
+    try FileManager.default.removeItem(at: fixture.executable)
+    try FileManager.default.moveItem(at: replacement, to: fixture.executable)
+    check(
+      fixture.state.maintainDeadRegistrations(),
+      "liveness maintenance must complete when a live executable identity drifts"
+    )
+    check(
+      fixture.state.processRegistrationSnapshotForTesting().count == 3,
+      "liveness maintenance must not treat a live-but-replaced executable as authorized or dead"
+    )
+    check(
+      fixture.state.issueLease(
+        peerPID: fixture.pluginPID,
+        authorizer: RuntimePeerAuthorizer(),
+        requireRegistered: true
+      ) == nil,
+      "full packaged lease inspection must reject the live executable identity drift"
+    )
+    check(
+      fixture.state.registrationStatus(
+        peerPID: fixture.desktop.processIdentifier,
+        requestId: "liveness-drift-full-status",
+        generation: fixture.desktopAttestation.generation,
+        ownerToken: fixture.desktopAttestation.ownerToken
+      ) == nil,
+      "full registration status must fail closed after liveness-only maintenance"
+    )
+    check(
+      fixture.state.processRegistrationSnapshotForTesting().isEmpty,
+      "full request inspection must remove the drifted registration chain"
+    )
+  }
+
+  do {
+    let fixture = try NativeRegistrationDiagnosticFixture.make()
+    let sink = RecordingRegistrationDiagnosticSink()
+    fixture.state.setRegistrationDiagnosticSink(sink)
+    terminateNativeProcessFixture(fixture.workerPID)
+    waitForNativeProcessFixtureExit(fixture.workerPID)
+    check(fixture.state.maintainDeadRegistrations(), "dead intermediate maintenance must complete")
+    let remaining = fixture.state.processRegistrationSnapshotForTesting()
+    check(
+      remaining.count == 1 && remaining[0].pid == fixture.daemonPID,
+      "dead intermediate maintenance must recursively remove plugin and helper descendants"
+    )
+    let events = sink.snapshot().filter { $0.action == .prune }
+    check(
+      events.contains { $0.pid == fixture.pluginPID && $0.check == .processGone } &&
+        events.contains { $0.pid == fixture.helperPID && $0.check == .processGone },
+      "dead intermediate maintenance must retain bounded process-gone removal events"
+    )
+  }
+
+  do {
+    let fixture = try NativeRegistrationDiagnosticFixture.make()
+    terminateNativeProcessFixture(fixture.daemonPID)
+    waitForNativeProcessFixtureExit(fixture.daemonPID)
+    check(fixture.state.maintainDeadRegistrations(), "dead owner maintenance must complete")
+    check(
+      fixture.state.processRegistrationSnapshotForTesting().isEmpty,
+      "dead owner maintenance must recursively remove its registered descendants"
+    )
+  }
+
+  do {
+    let fixture = try NativeRegistrationDiagnosticFixture.make()
+    let sink = RecordingRegistrationDiagnosticSink()
+    fixture.state.setRegistrationDiagnosticSink(sink)
+    terminateNativeProcessFixture(fixture.desktop.processIdentifier)
+    waitForNativeProcessFixtureExit(fixture.desktop.processIdentifier)
+    check(fixture.state.maintainDeadRegistrations(), "dead runtime maintenance must complete")
+    check(fixture.state.snapshot() == nil, "dead runtime maintenance must clear the runtime generation")
+    check(
+      sink.snapshot().contains { $0.action == .reset && $0.check == .processGone },
+      "dead runtime maintenance must retain its process-gone reset event"
+    )
+  }
+
+  do {
+    let fixture = try NativeRegistrationDiagnosticFixture.make()
+    let sink = RecordingRegistrationDiagnosticSink()
+    fixture.state.setRegistrationDiagnosticSink(sink)
+    fixture.state.setPruneInspectionHook {
+      fixture.state.clear(expected: fixture.desktop.processIdentifier)
+    }
+    check(fixture.state.maintainDeadRegistrations(), "stale liveness maintenance must converge after a state reset")
+    check(
+      !sink.snapshot().contains(where: { $0.action == .prune }),
+      "stale liveness maintenance must not commit a removal from an obsolete snapshot"
+    )
+    check(
+      sink.snapshot().contains(where: { $0.action == .reset && $0.check == .stateReset }),
+      "a concurrent liveness-maintenance reset must retain its distinct lifecycle event"
+    )
+  }
+}
+
+private func testScheduledMaintenanceIsSerial() throws {
+  let fixture = try NativeRegistrationDiagnosticFixture.make()
+  let root = URL(fileURLWithPath: "/tmp").appendingPathComponent("mlm-\(UUID().uuidString.prefix(8))")
+  let capability = MeetlessTranscriptionCapability(
+    socketPath: root.appendingPathComponent("transcription.sock").path,
+    stagingDirectory: root.appendingPathComponent("meeting-store/transcription-ranges").path,
+    runtimeAuthorization: fixture.state
+  )
+  let lock = NSLock()
+  let firstEntered = DispatchSemaphore(value: 0)
+  let secondEntered = DispatchSemaphore(value: 0)
+  let release = DispatchSemaphore(value: 0)
+  var active = 0
+  var maximumActive = 0
+  var callbacks = 0
+  var arm: (() -> Void)!
+  arm = {
+    fixture.state.setPruneInspectionHook {
+      lock.lock()
+      callbacks += 1
+      let callback = callbacks
+      active += 1
+      maximumActive = max(maximumActive, active)
+      lock.unlock()
+      if callback == 1 {
+        arm()
+        firstEntered.signal()
+      } else {
+        secondEntered.signal()
+      }
+      _ = release.wait(timeout: .now() + .seconds(3))
+      lock.lock()
+      active -= 1
+      lock.unlock()
+    }
+  }
+  arm()
+  try capability.start()
+  defer {
+    release.signal()
+    release.signal()
+    capability.stop()
+  }
+  check(
+    firstEntered.wait(timeout: .now() + .seconds(3)) == .success,
+    "scheduled maintenance must invoke its liveness pass"
+  )
+  usleep(700_000)
+  lock.lock()
+  let observedMaximum = maximumActive
+  lock.unlock()
+  check(observedMaximum == 1, "scheduled maintenance must not overlap liveness passes")
+  release.signal()
+  release.signal()
+  check(
+    secondEntered.wait(timeout: .now() + .seconds(3)) == .success,
+    "scheduled maintenance must continue after a prior liveness pass completes"
+  )
+  usleep(100_000)
+  lock.lock()
+  let observedCallbacks = callbacks
+  let observedActive = active
+  lock.unlock()
+  check(observedCallbacks >= 2 && observedActive == 0, "serial maintenance callbacks must drain cleanly")
+}
+
 private func testStalePruneDoesNotEmitUncommittedRemoval() throws {
   let fixture = try NativeRegistrationDiagnosticFixture.make()
   let sink = RecordingRegistrationDiagnosticSink()
@@ -4935,6 +5112,14 @@ private struct TranscriptionCapabilityTests {
     do { try testCommittedRegistrationIdentityAndInspectionDiagnostics() } catch {
       failures += 1
       FileHandle.standardError.write(Data("FAIL: committed registration identity and inspection diagnostics: \(error)\n".utf8))
+    }
+    do { try testLivenessMaintenanceBoundary() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: liveness maintenance boundary: \(error)\n".utf8))
+    }
+    do { try testScheduledMaintenanceIsSerial() } catch {
+      failures += 1
+      FileHandle.standardError.write(Data("FAIL: scheduled maintenance serialization: \(error)\n".utf8))
     }
     do { try testStalePruneDoesNotEmitUncommittedRemoval() } catch {
       failures += 1

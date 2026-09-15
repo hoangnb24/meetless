@@ -3614,6 +3614,93 @@ final class RuntimeAuthorizationState {
     return false
   }
 
+  /// Removes only registrations whose recorded process chain is definitely
+  /// gone. This is maintenance, not an authorization result: every request
+  /// path continues to call `pruneDeadRegistrations()` and perform the full
+  /// current identity and parent-chain inspection before it grants access.
+  @discardableResult
+  func maintainDeadRegistrations() -> Bool {
+    for _ in 0..<3 {
+      lock.lock()
+      if let runtimePID, isProcessDefinitelyGone(runtimePID) {
+        let removedRegistrations = registrations
+        let previousGeneration = generation
+        self.runtimePID = nil
+        desktopOwnerToken = nil
+        desktopAttested = false
+        desktopIdentity = nil
+        hostProcessIdentity = nil
+        registrations.removeAll()
+        usedRegistrationTokens.removeAll()
+        generation &+= 1
+        revision &+= 1
+        let events = makeRemovalEvents(
+          action: .reset,
+          removedPIDs: Set(removedRegistrations.keys),
+          registrations: removedRegistrations,
+          failures: [:],
+          generation: previousGeneration,
+          revision: revision,
+          fallbackStage: .lifecycle,
+          fallbackCheck: .processGone
+        )
+        let sink = registrationDiagnosticSink
+        lock.unlock()
+        recordRemovalEvents(events, using: sink)
+        return true
+      }
+      guard let snapshot = authorizationSnapshotLocked() else {
+        lock.unlock()
+        return true
+      }
+      lock.unlock()
+
+      // Liveness is the only fact this periodic maintenance pass may use.
+      // In particular, do not call inspectMeetlessProcessIdentity here: its
+      // whole-executable SHA-256 is reserved for authorization boundaries.
+      var deadPIDs = Set<pid_t>()
+      for registration in snapshot.registrations.values {
+        if isProcessDefinitelyGone(registration.pid) {
+          deadPIDs.insert(registration.pid)
+        }
+        if isProcessDefinitelyGone(registration.owner.pid) {
+          deadPIDs.insert(registration.owner.pid)
+        }
+        if isProcessDefinitelyGone(registration.owner.parentPID) {
+          deadPIDs.insert(registration.owner.parentPID)
+        }
+      }
+      notifyPruneInspectionHook()
+
+      lock.lock()
+      guard isCurrentStateLocked(snapshot) else {
+        lock.unlock()
+        continue
+      }
+      if deadPIDs.isEmpty {
+        lock.unlock()
+        return true
+      }
+      let removedPIDs = removeRegistrationAndDescendantsLocked(pids: deadPIDs)
+      revision &+= 1
+      let events = makeRemovalEvents(
+        action: .prune,
+        removedPIDs: removedPIDs,
+        registrations: snapshot.registrations,
+        failures: [:],
+        generation: snapshot.generation,
+        revision: revision,
+        fallbackStage: .inspection,
+        fallbackCheck: .processGone
+      )
+      let sink = registrationDiagnosticSink
+      lock.unlock()
+      recordRemovalEvents(events, using: sink)
+      return true
+    }
+    return false
+  }
+
   func withValidLease<T>(_ lease: RuntimeAuthorizationLease, _ action: () -> T) -> T? {
     guard isCurrentLeaseForUse(lease) else { return nil }
 
@@ -4432,6 +4519,12 @@ private func isProcessAlive(_ pid: pid_t) -> Bool {
   guard pid > 1 else { return false }
   if kill(pid, 0) == 0 { return true }
   return errno == EPERM
+}
+
+private func isProcessDefinitelyGone(_ pid: pid_t) -> Bool {
+  guard pid > 1 else { return false }
+  guard kill(pid, 0) != 0 else { return false }
+  return errno == ESRCH
 }
 
 struct RuntimeAuthorizationLease {

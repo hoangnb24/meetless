@@ -320,6 +320,7 @@ final class MeetlessTranscriptionCapability {
   private var registrationReaper: DispatchSourceTimer?
   private let acceptQueue = DispatchQueue(label: "com.meetless.transcription-capability.accept", qos: .userInitiated)
   private let requestQueue = DispatchQueue(label: "com.meetless.transcription-capability.request", qos: .userInitiated, attributes: .concurrent)
+  private let maintenanceQueue = DispatchQueue(label: "com.meetless.transcription-capability.maintenance", qos: .utility)
   private let lifecycleLock = NSLock()
   private var listener: Int32 = -1
   private var stopped = true
@@ -503,9 +504,9 @@ final class MeetlessTranscriptionCapability {
       stopped = false
       listener = descriptor
       lifecycleLock.unlock()
-      let reaper = DispatchSource.makeTimerSource(queue: requestQueue)
+      let reaper = DispatchSource.makeTimerSource(queue: maintenanceQueue)
       reaper.schedule(deadline: .now() + .milliseconds(250), repeating: .milliseconds(250))
-      reaper.setEventHandler { [weak self] in self?.runtimeAuthorization.pruneDeadRegistrations() }
+      reaper.setEventHandler { [weak self] in self?.runtimeAuthorization.maintainDeadRegistrations() }
       reaper.resume()
       registrationReaper = reaper
       acceptQueue.async { [weak self] in self?.acceptLoop() }
