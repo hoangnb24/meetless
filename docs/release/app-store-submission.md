@@ -21,8 +21,8 @@ quyết định hoặc tài liệu thật sự còn thiếu, không điền bằ
 | Primary category | Productivity | ASC đã lưu; exact binary đã được kiểm tra khớp category |
 | Primary language | English (U.S.) | ASC readback |
 | Baseline đóng băng | `production-baseline-2026-09-14` → `6b051116af4dbf8a22337f51b995e120454b79d0` | Tag lịch sử, không tự là release artifact |
-| Candidate đã đóng gói | `Meetless-1.0-2.pkg`, SHA-256 `79b68f62687ccf515a95c91c4ca25091ca7da2f5aec09a3979dbc2977e3177ab` | `.artifacts/macos-mas-distribution/20260915T052951Z-build2/` |
-| Trạng thái candidate | Upload COMPLETE, binary VALID, IN_BETA_TESTING; chưa chấp nhận phát hành vì CPU cao (#29) | Source `c53e4407bd80a6ba11a7977ff1a3a2dad8e4f533`; runtime evidence trong active plan |
+| Candidate đã đóng gói | `Meetless-1.0-3.pkg`, SHA-256 `b6de8f6a5a04854155e40fc9b2701b56ee22c96d54fd55f2baceed1288066934` | `.artifacts/macos-mas-distribution/20260915T072301Z-build3/` |
+| Trạng thái candidate | Review gói và Apple validation đạt; upload thành công, Apple đang xử lý | Source `7e958c3d7586029fa77347e987e0e380b980f563`; chưa có runtime evidence build 3 |
 
 Build 2 đã qua review gói ký/payload và Apple validation; delivery/build
 `732201fb-0450-4939-a761-ff060d8e16d5` đã xử lý xong. Khai báo mã hóa giữ
@@ -33,7 +33,10 @@ một tester hiện có; không gửi thử bên ngoài hoặc App Review.
 Một lần Open thực tế từ TestFlight đã mở được build 2, hiển thị Host online
 và bảo toàn 10 file ghi âm cũ. Review và Lead chỉ chấp nhận startup/identity/
 preservation. Tiến trình native dùng gần 100% CPU khi nghỉ; **#29 chặn phát
-hành** và bản sửa đang được chuẩn bị. App đã được thoát sạch sau kiểm thử.
+hành**. Bản sửa build 3 đã đóng gói, được review độc lập và vượt qua Apple
+validation; upload thành công lúc `2026-09-15T07:44:37Z`, delivery
+`401bf672-c396-4ae0-8bb7-1ca1632e037d`. Apple đang xử lý; chưa có kết quả
+Open/CPU từ build 3. App build 2 đã được thoát sạch sau kiểm thử.
 Lịch sử build 1, lỗi startup và các lần producer thất bại vẫn được giữ trong
 active plan; hồ sơ version 1.0 chưa được đổi sang build 2.
 
