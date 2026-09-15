@@ -1040,6 +1040,48 @@ checks. Website #28 final-domain HTTPS and all three ASC URLs
 are accepted; App Privacy correction/remaining metadata gates stay separate.
 App Review/public release require a separate owner decision.
 
+### #30/#31 combined source checkpoint — 2026-09-15
+
+The two user-owned tasks handed back independently accepted bounded source
+repairs. They are cherry-picked in isolated worktree
+`/private/tmp/meetless-testflight-review-polish`, branch
+`codex/testflight-review-polish`, at
+`ef956aa707a8411c4fdf97d51bdee847b43c24c9`. Main has not integrated that stack.
+All seven patch IDs match their accepted originals. The pinned Paseo fork is
+`249539c7446f16c7ed2f07abb89be2065b732bed` with its verified offline bundle.
+
+Combined typecheck, rebuilt Paseo and 16 focused Vitest files pass
+(274 tests passed, one existing skip). An initial missing nested dependency
+installation caused a Chalk mismatch; an isolated, exact-lock offline `npm ci`
+resolved it without source changes. Failed and repaired logs are retained.
+
+The required native suite remains **failed** at actual packaged Node desktop
+registration/attestation; Release tests are not reached. A controlled rerun of
+the same source after ordinary quit of idle installed build 3, with both ports
+free, failed identically. The earlier occupied-port hypothesis is therefore
+ruled out as the cause. Test-only diagnostic capture has not established the
+underlying cause. Do not treat focused tests or prior source reviews as full
+integration/producer acceptance. No merge, signing, upload or build 4
+acceptance has occurred. Preserve diagnostic logs and restore temporary test
+instrumentation before resuming the candidate.
+
+Evidence lives under ignored
+`.artifacts/testflight-source-integration/20260915T102753Z/`.
+Next investigation must explain the real Node child registration failure and
+pass the native gate before final source freeze, independent review and Lead
+integration. Keep #30, #31, #17 and Epic #21 open.
+
+The shared Mac was returned to unchanged TestFlight build 3 after the bounded
+quit window: Host online, ten saved recordings, three ready transcripts and
+two ready chat threads. No capture, TCC change or install was performed.
+Task #30 retains the pending owner decision for Meetless-only permission
+regrant. A separately reviewed app-only build 3 snapshot is retained at
+`backup-EgNIyA/testflight-build3-snapshot` under the existing ignored update
+backup root; manifest SHA-256
+`23c2cbe9aa47315db2d2e4d1054e7f4b5db753e470245ff7aba57aa3d980edb2`.
+Lead ACCEPTS only its receipt-excluding app integrity and secure identity
+preservation, not quiescence, runtime backup or restore rehearsal.
+
 ### Historical execution checkpoint — 2026-09-14
 
 Owner authorized implementation of Epic #21 and selected US East and separate
