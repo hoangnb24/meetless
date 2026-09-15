@@ -787,6 +787,15 @@ Review or public release is inferred from this processing result.
   uploaded build. Lead started the authorized exact-package upload after this
   validation and artifact acceptance. No build2 TestFlight/runtime proof yet.
 
+- Exact accepted build2 upload succeeded at 2026-09-15T05:47:53Z with no
+  errors; 319,878,287 bytes transferred. Delivery UUID
+  `732201fb-0450-4939-a761-ff060d8e16d5`. Fresh ASC API at 05:50:06Z maps that
+  delivery to macOS 1.0/build2, state PROCESSING, empty errors/warnings; build2
+  is not yet in the VALID build list. Evidence `upload.*` and
+  `api-builds-processing-02.json` in the build2 upload evidence directory.
+  Current Chrome ASC session/internal group access verified, with only build1
+  assigned; no export/group changes before build2 processing completes.
+
 Next: resolve and verify the actual Apple-distributed launch path, then resume
 screenshots and #15/#16/#20 evidence with preserved recording data. TestFlight
 and App Review purchases use the isolated Apple Sandbox route; only verified
