@@ -631,17 +631,55 @@ Review or public release is inferred from this processing result.
   still identifies the staged content (subsequent source status text updated).
   Named-provider evidence review remains before final Publish readiness.
 
-Next: the owner can accept the internal TestFlight invitation. Preserve the
-installed development app/data before testing, then continue #15/#16/#20 live evidence and
-#14/#17 release readiness. TestFlight and
-App Review purchases use the isolated Apple Sandbox route; only verified Apple
-PRODUCTION transactions can establish production billing evidence. Do not
-reset or delete existing recording data. Owner-authorized app replacement may
-proceed after the accepted backup and TestFlight invitation gate; retain backup
-and recheck stopped state before installation.
-Website #28 final-domain HTTPS is accepted and URLs handed to #17. Complete
-remaining metadata/screenshots/App Privacy gates; the three ASC URL fields
-are already saved and independently verified.
+- Provider review found a material omission in the preceding privacy draft:
+  RevenueCat requires Purchase History to include Analytics for its dashboard
+  features as well as App Functionality for receipt/entitlement processing.
+  Official provider guidance was independently opened by Lead. The preceding
+  App Functionality-only acceptance is superseded for this row; seven data
+  types and Linked Yes / Tracking No remain unchanged. Source correction hash
+  `f79fe931c8440a303d76db8fc5ca615001b669cf3ea340a01a34ae42066722a4`; ASC operator
+  saved and reloaded Purchase History with both purposes, all other rows
+  unchanged. Final reviewer reopened the actual Purchase History wizard and
+  initially found linkage No despite summary Linked Yes. Lead rejected the
+  speculative SDK-manifest explanation; operator explicitly corrected to Yes,
+  saved/reloaded/reopened. Independent reviewer then confirmed both purposes,
+  linkage Yes, Tracking No and preview only Linked Purchases. Lead ACCEPTS
+  corrected source and actual persisted wizard/preview, not Publish.
+  No Publish or App Review occurred. Evidence and provider authority are in
+  `app-privacy-purpose-correction.json` under ignored upload artifacts.
+  Read-only Convex Settings/Integrations inspection reached both accepted
+  US East deployments but showed only the provider catalog, with no explicit
+  enabled/configured destination state. This does not prove integrations are
+  absent; actual integration settings remain unverified. No logs or secrets
+  were read and no backend setting changed.
+
+- Owner subsequently installed/opened the TestFlight app and reported Electron
+  quitting unexpectedly. Installed inspection found the Apple-distributed
+  1.0 (1) candidate at `/Applications/Meetless 2.app` (TestFlight Beta
+  Distribution, CDHash `49fd58dc3f482b550dbc6eb152fa72aad2361d39`, receipt present,
+  deep strict signature PASS); `/Applications/Meetless.app` still holds the
+  original development 0.1.0 (1), matching the original backup CDHash.
+  Three captured .ips reports refer to OLD installed nested Electron, not the
+  TestFlight path, and trap in `_libsecinit_appsandbox` before main, parent
+  launchd. Do not attribute those reports to the Apple-distributed candidate.
+  Read-only NSWorkspace bundle-ID lookup resolves old nested Electron instead
+  of MeetlessHost; root and nested Electron duplicate `com.meetless.app` in both
+  installed versions. Evidence: `testflight-launch-crash/` under ignored
+  upload artifacts. #14 now tracks this observed launch ambiguity.
+  `testflight_capture` owns preserving the old app and exact TestFlight app,
+  checking accepted backup/quiescence, putting the Apple-distributed app at
+  the required canonical path, then testing explicit-path LaunchServices
+  startup without recording/upload/billing. No data reset, re-signing or
+  destructive cleanup. `screenshot_route` owns source diagnosis; root owns
+  correction/review coordination. The invitation is no longer the blocker.
+
+Next: resolve and verify the actual Apple-distributed launch path, then resume
+screenshots and #15/#16/#20 evidence with preserved recording data. TestFlight
+and App Review purchases use the isolated Apple Sandbox route; only verified
+Apple PRODUCTION transactions can establish production billing evidence.
+Owner-authorized app replacement may proceed after accepted backup and fresh
+stopped-state checks. Website #28 final-domain HTTPS and all three ASC URLs
+are accepted; App Privacy correction/remaining metadata gates stay separate.
 App Review/public release require a separate owner decision.
 
 ### Historical execution checkpoint — 2026-09-14

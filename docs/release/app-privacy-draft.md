@@ -27,7 +27,7 @@ Các mục đề xuất trong App Store Connect:
 | Other User Content | Yes | Yes | No | App Functionality | Cao |
 | User ID | Yes | Yes | No | App Functionality | Cao |
 | Device ID | Yes | Yes | No | App Functionality | Cao |
-| Purchase History | Yes | Yes | No | App Functionality | Cao về collection; cao về linked |
+| Purchase History | Yes | Yes | No | App Functionality; Analytics | Cao về collection; cao về linked |
 | Other Usage Data | Yes | Yes | No | App Functionality | Cao về collection; vừa về category |
 | Other Diagnostic Data | Yes | Yes | No | App Functionality | Cao về collection; vừa về linked |
 
@@ -40,15 +40,18 @@ rằng mã đã hash. RevenueCat manifest có thể khai báo dữ liệu do ri�
 lý là Linked false, nhưng câu trả lời của Meetless phải tính cả projection ở
 backend.
 
-Các câu trả lời trên là đề xuất kỹ thuật cụ thể cho candidate này. Owner/legal
-chỉ cần rà soát trách nhiệm và tính chính xác chung trước khi gửi, không có
-quyết định phân loại còn bỏ ngỏ trong bảng.
+Các câu trả lời trên là đề xuất kỹ thuật cụ thể cho candidate này. Purchase
+History có thêm **Analytics** vì RevenueCat hướng dẫn khai báo purpose này cho
+dashboard Customer History/Charts/Experiments; đây là analytics về purchase
+history phục vụ vận hành RevenueCat, không phải Apple tracking hay quảng cáo.
+Các mục còn lại chỉ dùng cho **App Functionality**. Owner/legal chỉ cần rà soát
+trách nhiệm và tính chính xác chung trước khi gửi, không có quyết định phân loại
+còn bỏ ngỏ trong bảng.
 
-Tất cả mục trên chỉ dùng cho **App Functionality**. Không chọn Third-Party
-Advertising, Developer’s Advertising or Marketing, Analytics, Product
-Personalization hoặc Other Purposes. Meetless không dùng dữ liệu để quảng cáo,
-đo lường quảng cáo, lập hồ sơ, bán dữ liệu hay nối dữ liệu với app/website của
-doanh nghiệp khác.
+Không chọn Third-Party Advertising, Developer’s Advertising or Marketing,
+Product Personalization hoặc Other Purposes. Meetless không dùng dữ liệu để
+quảng cáo, đo lường quảng cáo, lập hồ sơ, bán dữ liệu hay nối dữ liệu với
+app/website của doanh nghiệp khác.
 
 ## Vì sao chọn từng mục
 
@@ -125,7 +128,7 @@ Evidence: native/macos-host/ManagedAuthCapability.swift:1-20,56-112,
 convex/schema.ts:24-59,104-118, convex/managedAuth.ts:24-66,211-314,
 docs/release/privacy-data-inventory.md:35.
 
-### Purchase History — Yes / Linked Yes / Tracking No / App Functionality
+### Purchase History — Yes / Linked Yes / Tracking No / App Functionality + Analytics
 
 Meetless dùng StoreKit/RevenueCat để đọc offerings, entitlement, purchase và
 restore; backend chỉ giữ projection đã chuẩn hóa của product, environment,
@@ -138,11 +141,14 @@ cấp payment details cho app, nên không chọn Payment Info.
 
 RevenueCat 5.87.1 bundled privacy manifest trong candidate khai báo Purchase
 History với App Functionality, Linked false và Tracking false cho dữ liệu do
-SDK quản lý. Ở cấp Meetless, backend còn tạo projection gắn với
+SDK quản lý. RevenueCat cũng hướng dẫn các app tích hợp SDK chọn thêm Analytics
+cho Purchase History để bao phủ dashboard Customer History, Charts và
+Experiments. Ở cấp Meetless, backend còn tạo projection gắn với
 `accountId`/`deviceId` và lineage hash để nối các giao dịch; do đó câu trả lời
 app-level vẫn là Linked Yes. SDK manifest không thay thế việc khai báo luồng
-backend của ứng dụng. Purchase History vẫn phải được khai báo vì SDK đã nêu rõ
-collection.
+backend của ứng dụng, và Analytics ở đây không phải Tracking.
+
+Evidence provider: [RevenueCat Apple App Privacy](https://www.revenuecat.com/docs/platform-resources/apple-platform-resources/apple-app-privacy).
 
 Evidence: native/macos-host/Package.swift:12-18,
 native/macos-host/RevenueCatCapability.swift:500-690,806-839,
@@ -163,8 +169,9 @@ của người dùng trong app, và các counters này được lưu ngoài thi�
 managed job/account records. Đây là phân loại có độ chắc chắn thấp hơn do
 Apple không có mục riêng cho quota/processing counters, nhưng đường dữ liệu và
 purpose đã rõ; không coi việc dữ liệu phục vụ billing/quota là lý do để bỏ qua
-collection. Không chọn Product Interaction hoặc Analytics vì không có event
-stream app launches, clicks, scrolling hay audience measurement.
+collection. Không chọn Product Interaction hoặc purpose Analytics cho mục này:
+không có event stream app launches, clicks, scrolling hay audience measurement;
+Analytics trong bảng chỉ áp dụng cho Purchase History theo hướng dẫn RevenueCat.
 
 Evidence: convex/schema.ts:140-151,232-283,
 convex/managedTranscription.ts:1280-1307,
@@ -202,7 +209,7 @@ docs/release/privacy-data-inventory.md:41-44,
 | Health, Fitness, Sensitive Info | Recording/chat là free-form user content. Audio Data/Other User Content đại diện cho dữ liệu người dùng có thể tự nói/nhập; không có feature hỏi riêng nhóm này. |
 | Precise Location, Coarse Location, Contacts, Photos or Videos, Browsing History, Search History | Không có code hoặc product feature thu các nhóm này trong candidate. |
 | Emails or Text Messages | Chat hỏi đáp meeting không phải SMS hoặc private messaging giữa người dùng. |
-| Product Interaction, Advertising Data | Không có analytics, ad network, attribution hoặc advertising feature trong app. |
+| Product Interaction, Advertising Data | Không có app-event analytics, ad network, attribution hoặc advertising feature. Analytics của RevenueCat được khai báo riêng dưới Purchase History và không phải Product Interaction hay tracking. |
 | Crash Data | Không thấy crash reporter hoặc crash upload path trong source/package list của candidate; không suy diễn log quota/lifecycle thành crash data. |
 | Performance Data | Không thấy performance analytics hoặc performance upload path trong source/package list; các timing/counters vận hành đã được map vào Other Diagnostic Data. |
 | Other Data Types | Không cần mục catch-all khi payload đã map được vào Audio Data, Other User Content, Identifiers, Purchase History, Usage Data và Other Diagnostic Data. |
@@ -231,10 +238,22 @@ provider credential vẫn thuộc provider và repo chưa quy định retention,
 subprocessor hoặc logging của provider đó. Bản draft đã khai báo Other User
 Content cho transcript/chat path này. Đây là giới hạn bằng chứng cần rà soát
 theo provider được bật trong bản phát hành; không suy diễn thành Analytics,
-Advertising hoặc Tracking khi chưa có hành vi tương ứng. Với managed path,
-contract của candidate ghi nhận Convex lưu tạm tối đa 24 giờ và action gọi
-OpenAI transcription, nhưng retention/logging phía dịch vụ ngoài app chưa được
-ghi rõ trong repo.
+Advertising hoặc Tracking khi chưa có hành vi tương ứng.
+
+Với managed path, candidate gọi `https://api.openai.com/v1/audio/transcriptions`
+với model `gpt-transcribe`. Tài liệu OpenAI hiện hành ghi endpoint này không
+dùng dữ liệu để train, không giữ abuse-monitoring logs hoặc application state,
+và đủ điều kiện Zero Data Retention; điều đó không thay thế retention của các
+object/log do Convex lưu. [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data)
+và [GPT-Transcribe](https://developers.openai.com/api/docs/models/gpt-transcribe).
+
+Convex hiện ghi nhận `console` logs và function execution/error logs trong
+dashboard; production không gửi chúng về client nhưng chỉ giữ history giới
+hạn, còn log streams có thể đẩy sang Axiom, Datadog, PostHog hoặc webhook. Repo
+không chứa trạng thái Integrations của deployment production, nên đây là cài
+đặt duy nhất cần kiểm tra nếu muốn xác nhận không có đích diagnostic bên thứ
+ba. [Convex debugging](https://docs.convex.dev/functions/debugging) và
+[Convex log streams](https://docs.convex.dev/production/integrations/log-streams).
 
 ## Cổng rà soát trước Publish
 
@@ -242,15 +261,18 @@ ghi rõ trong repo.
    có thẩm quyền nhập form. Linked Yes cho các projection gắn với
    `accountId`/`deviceId` và Other Usage Data là câu trả lời đã được xác định
    từ candidate, không phải lựa chọn kinh doanh.
-2. **Named provider evidence:** đối chiếu retention/logging hiện hành của
-   Convex, OpenAI managed transcription và provider Ask thực sự được bật trong
-   release. Repo chưa chứa cam kết phía dịch vụ ngoài app; nếu evidence đó cho
-   thấy thêm collection hoặc purpose, cập nhật bảng trước Publish.
+2. **Named provider evidence:** kiểm tra Integrations của Convex production
+   (log stream/exception reporting) và provider Ask thực sự được bật trong
+   release. OpenAI managed transcription đã có endpoint-level evidence ở trên;
+   retention của provider Ask và các cài đặt Convex ngoài repo vẫn chưa được
+   xác minh. Nếu các cài đặt thực tế thêm đích xử lý hoặc purpose, cập nhật bảng
+   trước Publish.
 3. **Final artifact check:** candidate manifest liệt kê `electron-log`,
-   `electron-updater`, `@opentelemetry/api` và không cho thấy SDK analytics,
-   crash hoặc tracking code. Hosted diagnostic logs đã được map riêng ở trên;
-   nếu release artifact thay đổi thì rà lại cả bốn nhóm này. Không chọn “No, we
-   do not collect data” vì sẽ bỏ sót
+   `electron-updater`, `@opentelemetry/api` và không cho thấy thêm app-event
+   analytics, crash hoặc tracking SDK ngoài RevenueCat. RevenueCat là nguồn
+   của purpose Analytics đã khai báo riêng cho Purchase History. Hosted
+   diagnostic logs đã được map riêng ở trên; nếu release artifact thay đổi thì
+   rà lại cả bốn nhóm này. Không chọn “No, we do not collect data” vì sẽ bỏ sót
    managed audio, temporary transcript/provider output, enrollment identifiers
    purchase history và hosted diagnostic data.
 
