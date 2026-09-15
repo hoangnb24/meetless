@@ -4,7 +4,7 @@ Date: 2026-09-15
 
 ## Status
 
-Active. Source repair and independent review in progress; Apple runtime recovery
+Active. Source repair independently accepted; Apple runtime recovery
 and next-candidate acceptance remain separate gates. Epic #21 remains open.
 
 ## Outcome and authority
@@ -84,7 +84,9 @@ Fresh-state acceptance still needs an explicitly authorized clean environment.
 - [x] After the sequencing repair, all 15 recording-provider tests and typecheck
   passed. The targeted regression fails against the prior source and passes
   with the fix (`ordered-response-before-fix.log`, `ordered-response-tests.log`).
-- [ ] Independent review of exact source commit.
+- [x] Independent reviewer `/root/review_issue30` **ACCEPTS source-level
+  `9658d99`**, stacked on `0aa3070`, after P2 sequencing repair. No remaining
+  finding in the delta. This decision does not accept Apple runtime behavior.
 - [ ] Owner-authorized installed recovery and fictional recording proof.
 - [ ] Combined #30/#31 candidate, signed/TestFlight runtime proof and Lead acceptance.
 
@@ -97,3 +99,15 @@ responses; recording-service cases use synthetic local media. These are local
 confidence only. No CI run or branch-protection enforcement was verified.
 No installed app replacement, TCC mutation, new real recording,
 cloud upload, force quit, or backup changes have been performed.
+
+## Handoff
+
+Source commits: `0aa3070b52858af1c2e0dad520c6cbf517b43fac` and
+`9658d994725e07eb3fbe8b8fe7ba6ff8434aacf5` on
+`codex/issue-30-capture-permission-recovery`. The review record is a documentation
+follow-up only. Owner confirmation for the bounded Settings regrant proposal
+was requested in task #30 and remains unanswered; no permission change is
+authorized by elapsed time. Continue that question, do not duplicate it in the
+intake task. Coordinate this accepted source stack with #31 before any shared
+candidate build, replacement or upload. Keep #30/#17 and Epic #21 open until
+their remaining acceptance criteria are met; #29's separate acceptance stands.
