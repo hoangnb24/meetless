@@ -17,19 +17,25 @@ quyết định hoặc tài liệu thật sự còn thiếu, không điền bằ
 | Bundle ID | `com.meetless.app` | Distribution manifest |
 | App Apple ID | `6807070739` | App Store Connect readback trong execution plan |
 | SKU | `meetless-macos-v1` | App Store Connect readback trong execution plan |
-| Version / build | `1.0` / `1` | ASC API xác nhận đúng MAC_OS build ngày 2026-09-15 |
+| Version / build TestFlight hiện tại | `1.0` / `2` | ASC API 2026-09-15T06:09:19Z; hồ sơ App Review nháp vẫn gắn build 1 |
 | Primary category | Productivity | ASC đã lưu; exact binary đã được kiểm tra khớp category |
 | Primary language | English (U.S.) | ASC readback |
 | Baseline đóng băng | `production-baseline-2026-09-14` → `6b051116af4dbf8a22337f51b995e120454b79d0` | Tag lịch sử, không tự là release artifact |
-| Candidate đã đóng gói | `Meetless-1.0-1.pkg`, SHA-256 `b6f0fde5bf1e80c5254a80e3c0151be4f05f167d7b04bc699700bff7c50b5da7` | `.artifacts/macos-mas-distribution/20260915T003311276Z/` |
-| Trạng thái candidate | Upload COMPLETE, binary VALID; TestFlight nội bộ sẵn sàng | API 2026-09-15T02:24:21.516Z; source `41cfc34382f95dcf3b08fca74347cccb673b15be` |
+| Candidate đã đóng gói | `Meetless-1.0-2.pkg`, SHA-256 `79b68f62687ccf515a95c91c4ca25091ca7da2f5aec09a3979dbc2977e3177ab` | `.artifacts/macos-mas-distribution/20260915T052951Z-build2/` |
+| Trạng thái candidate | Upload COMPLETE, binary VALID, IN_BETA_TESTING; chưa chấp nhận phát hành vì CPU cao (#29) | Source `c53e4407bd80a6ba11a7977ff1a3a2dad8e4f533`; runtime evidence trong active plan |
 
-Candidate mới đã qua kiểm tra ký/payload độc lập và Apple validation. Lần
-Apple từ chối candidate cũ được giữ trong lịch sử. Upload mới đã thành công
-với delivery/build `0816cc3b-8b69-4357-bf0d-32537ec34b8b`; Apple processing đã
-hoàn tất. Owner đã duyệt và agent đã lưu khai báo mã hóa chuẩn ngoài macOS,
-không phân phối tại Pháp. API xác nhận TestFlight nội bộ READY_FOR_BETA_TESTING;
-thử bên ngoài mới ở READY_FOR_BETA_SUBMISSION. Chưa gửi App Review.
+Build 2 đã qua review gói ký/payload và Apple validation; delivery/build
+`732201fb-0450-4939-a761-ff060d8e16d5` đã xử lý xong. Khai báo mã hóa giữ
+nguyên câu trả lời owner đã duyệt: thuật toán chuẩn ngoài/cùng macOS và
+không phân phối tại Pháp. Nhóm Meetless Internal có cả build 1 và 2, đúng
+một tester hiện có; không gửi thử bên ngoài hoặc App Review.
+
+Một lần Open thực tế từ TestFlight đã mở được build 2, hiển thị Host online
+và bảo toàn 10 file ghi âm cũ. Review và Lead chỉ chấp nhận startup/identity/
+preservation. Tiến trình native dùng gần 100% CPU khi nghỉ; **#29 chặn phát
+hành** và bản sửa đang được chuẩn bị. App đã được thoát sạch sau kiểm thử.
+Lịch sử build 1, lỗi startup và các lần producer thất bại vẫn được giữ trong
+active plan; hồ sơ version 1.0 chưa được đổi sang build 2.
 
 ## Copy en-US
 
@@ -216,16 +222,17 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
   đã được sửa. Actual Apple validation đạt, không lỗi/cảnh báo. Profile,
   entitlement, icon, quyền đọc, chữ ký và signed routing đều được kiểm tra
   trên exact artifact nêu trên.
-- ASC đã xác nhận version `1.0` / build `1`, upload COMPLETE và binary VALID.
-  Khai báo mã hóa đã mở TestFlight nội bộ. Nhóm Meetless Internal đã có đúng
-  build này và một tester được mời theo owner duyệt; còn đường thử bảo toàn dữ liệu. Kết quả này không chứng minh App Review hay billing đã đạt.
+- ASC đã xác nhận version `1.0` / build `2`, upload COMPLETE, binary VALID
+  và IN_BETA_TESTING trong đúng nhóm nội bộ. Một lần Open và bảo toàn dữ liệu
+  đã được kiểm chứng; lỗi idle CPU #29 vẫn chặn chấp nhận runtime/phát hành.
+  Kết quả này không chứng minh App Review hoặc billing đã đạt.
 - Exact build 1.0 (1) đã gắn vào hồ sơ version 1.0; API readback xác nhận build
   VALID và PREPARE_FOR_SUBMISSION. Sign-in required đã tắt vì Meetless không có
   tài khoản đăng nhập riêng; cấu hình provider cho Ask vẫn phải kiểm thử riêng.
 - Recheck StoreKit sandbox purchase/restore, routing Sandbox riêng, backend
   review window và Ask path trên exact candidate. Không gọi đó là bằng chứng
   production billing nếu chưa có live evidence.
-- Hoàn tất dependency release còn lại của Epic: #14, #15, #16 và **#20**.
+- Hoàn tất dependency release còn lại của Epic: #14, #15, #16, **#20** và **#29**.
   Cấu hình đã accepted và package local không tự chứng minh reboot/focus, live
   billing, webhook delivery hay public publication.
 

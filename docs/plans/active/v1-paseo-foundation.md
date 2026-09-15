@@ -823,6 +823,51 @@ Review or public release is inferred from this processing result.
   verify actual Apple identity/receipt before TestFlight Open. All snapshots and
   recording/runtime data must remain preserved; launch/IPC proof is pending.
 
+- Actual Apple TestFlight build2 was installed at `/Applications/Meetless.app`
+  and opened once through TestFlight. Producer observed Host online, Audio saved
+  locally and meeting library; native/node/Electron tree and listener16777 live.
+  Actual TestFlight CDHash `5a9a40030ff18b5c1579bc94c6ce371d1db0a1f8`,
+  strict signature/receipt presence, distinct nested identity and c53e440 source
+  provenance checked. Canonical recordings match accepted backup: 10 files,
+  2,118,330 bytes, aggregate SHA-256
+  `1f39b53ce22a8b1fede847caea39fb130ab6e5946a68ccebd16efb667c07c1a3`.
+  Evidence: build2 upload `runtime-acceptance/testflight-build2-open-evidence.json`.
+  Independent scoped startup/preservation review is pending, not full release
+  acceptance. No recording, transcription, Ask or purchase action was exercised.
+- Actual idle MeetlessHost consumed 97.8–100.6% CPU; Electron near0%. Read-only
+  sample identifies concurrent registration-reaper workers repeatedly hashing
+  executable bytes every250ms in `pruneDeadRegistrations`. Main runloop idle;
+  this is sustained native background work, not an Electron startup crash.
+  Private stack evidence in build2 upload `native-cpu/`. P1 bug #29 tracks
+  remediation and blocks release #17/Epic #21. Fix design must preserve accepted
+  request/identity authorization; no source change chosen yet.
+  Capture operator verified idle/no product task, gracefully quit via Command-Q,
+  and confirmed owned host/node/Electron/listener all stopped without force-kill
+  or runtime/data reset. Keep successful Open and CPU failure as separate facts.
+
+- #29 implementation is assigned to `testflight_host_exit` in the three
+  native host/capability/test files. Lead chooses timer-only cheap liveness
+  cleanup on a serial maintenance queue; full request-time identity pruning and
+  registration/attestation/status/release/lease validation remain unchanged.
+  Authority: ADR0003/0005 and accepted MAS UI history lines2835–2840 plus
+  2863–2868, which explicitly forbids using periodic reaper results as lease
+  authorization. No accepted rule requires periodic full hashing at250ms.
+  No identity cache may authorize requests. Dead known owner/intermediate chains
+  must still clean recursively with existing revision/race handling; live drift
+  must fail the unchanged full request/lease checks. Independent design review
+  and positive/negative native regression proof are required before candidate3.
+
+- Independent review and Lead ACCEPTS only observed TestFlight2 Open, actual
+  Apple identity and canonical recording preservation at final runtime evidence
+  SHA-256 `943b913eecd31bc85a76ae8fb4a3ce612fa3b30df09e8f90bcac86c5b970dcd9`.
+  Current secure identity matches actual Apple codesign/executable at mode0600,
+  SHA-256 `41757aaed5ee403d15dd53e541995c74c05240d92c76b4c9ee99689689e3202e`;
+  source/runtime/path stable across approved migration. This is state-backed
+  proof, not a dedicated migration event log. Nested Electron UI was observed;
+  native top-level accessibility timed out. Functional recording/transcription/
+  purchase and broad app-group/IPC capability acceptance remain unproven.
+  Full runtime/release acceptance is REJECTED because of #29 idle CPU.
+
 Next: resolve and verify the actual Apple-distributed launch path, then resume
 screenshots and #15/#16/#20 evidence with preserved recording data. TestFlight
 and App Review purchases use the isolated Apple Sandbox route; only verified
