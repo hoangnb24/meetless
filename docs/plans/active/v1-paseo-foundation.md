@@ -1159,6 +1159,7 @@ tile with its owning process. Do not clear machine-wide caches as a product fix.
 Keep #31, #17 and Epic #21 open until their own acceptance gates pass; #29's
 bounded CPU/startup acceptance is unchanged and #14 remains open.
 
+<a id="owner-directed-build4-internal-beta-deferral"></a>
 ### Owner-directed TestFlight build 4 — 2026-09-15
 
 After being told that the source repairs passed focused review/tests but the
