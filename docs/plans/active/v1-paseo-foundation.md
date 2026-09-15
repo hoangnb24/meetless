@@ -608,6 +608,20 @@ Review or public release is inferred from this processing result.
   (61.37 seconds) was rendered locally to an ignored file for later system-audio
   capture; it has not been played or uploaded. Screenshot data remains pending.
 
+- Independent backup reviewer ACCEPTS exact backup manifest above. Native
+  `scripts/lib/macos-package-transaction.mjs:fingerprintPath` confirmed each
+  source/backup pair equal; its digest encoding differs from the producer's
+  richer tree digest, so the two digest sets are not compared directly.
+  Strict deep backup signature and stopped-state helper pass. Lead ACCEPTS
+  this bounded backup gate; no restore rehearsal or app replacement yet.
+  Separate evidence `backup-EgNIyA/independent-acceptance.json` retains the native
+  digest set and constraints. Keep backups and preserve any subsequent state
+  before recovery; do not use dev:mas reset.
+  Official Apple TestFlight client is now installed and opens, but Meetless
+  is not listed. Root ASC API still shows the intended tester INVITED; owner
+  was asked to accept the original email invitation on this Mac. This is the
+  current blocker to Apple-distributed installation/capture, not backup readiness.
+
 Next: the owner can accept the internal TestFlight invitation. Preserve the
 installed development app/data before testing, then continue #15/#16/#20 live evidence and
 #14/#17 release readiness. TestFlight and
