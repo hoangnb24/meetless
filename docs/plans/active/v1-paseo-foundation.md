@@ -880,8 +880,32 @@ Review or public release is inferred from this processing result.
   final reruns. Static call graph plus drift regression support source confidence,
   while actual TestFlight3 idle CPU remains the required performance proof.
 
-Next: resolve and verify the actual Apple-distributed launch path, then resume
-screenshots and #15/#16/#20 evidence with preserved recording data. TestFlight
+- #29 correction committed and pushed as `e6b52ac8a192ac3833416f22a6b20372ac171475`.
+  Actual build3 producer assigned to the prior builder from a fresh detached
+  checkout, unchanged production/Sandbox/profile/group and fixed version1.0/build3.
+  Current TestFlight2 app/secure identity snapshot is assigned separately before
+  any update; full existing app/runtime backups must remain. No build3 artifact,
+  Apple validation/upload or actual idle CPU result exists yet.
+
+- Pre-build3 TestFlight2 snapshot independently reviewed and Lead ACCEPTS
+  non-receipt app integrity, opaque APFS clone and secure derived identity only.
+  Snapshot manifest SHA-256 `5ad42143db22f497dff01d44fd7990b97c87520a1f72c70bccc70745f62d30a2`.
+  App fingerprint explicitly excludes opaque Apple receipt: 16,176 files,
+  999,381,012 bytes, hash `9bd3aafb0241ef41aa08595f99c4fcef0ec1028056c73cc0c1f4423bbc233f55`.
+  Strict signatures/source and copied secure identity match; receipt presence
+  only. No receipt byte-equivalence, restore rehearsal or new migration claim.
+  Earlier snapshots/full runtime backups remain intact.
+- Actual build3 attempt under `20260915T065049Z-build3` failed in the native
+  release protocol transport test with Broken pipe (NSPOSIXErrorDomain32).
+  Retain this producer failure and the earlier wrapper keychain-filename typo;
+  no app/pkg was composed or signed. Clean source remains e6b52ac, snapshot
+  `0ec579edc55cb056c612ae186542257f6e4932802c1d1076f952cd1d304465a5`.
+  Builder pauses retries while native author diagnoses the actual test child
+  and producer environment. No test bypass, source relaxation or runtime reset.
+
+Next: produce, validate and distribute build3, then verify TestFlight Open, idle
+CPU and data preservation to resolve #29. Resume screenshots and #15/#16/#20
+evidence after the updated app is healthy. TestFlight
 and App Review purchases use the isolated Apple Sandbox route; only verified
 Apple PRODUCTION transactions can establish production billing evidence.
 Owner-authorized app replacement may proceed after accepted backup and fresh
