@@ -32,6 +32,14 @@ decision before further implementation. Read-only diagnosis/recommendation is
 in progress. Evidence is in build-6 `runtime-acceptance/`, including the actual
 alert image, installed identity, cancellation state and saved Apple reference.
 Internal delivery is independently/Lead accepted; Epic remains open.
+Independent architecture review confirms the external-executable route is
+unsupported. Owner decision requested: prefer bundling signed Codex for a
+standalone App Store app (distribution rights, full helper/resource closure,
+signing and real TestFlight execution must first be proven), or use a separately
+installed/run local provider daemon (changes ADR0003 topology and requires
+lifecycle/pairing/compatibility/recovery design). Existing provider account and
+free Ask intent stay unchanged; neither option authorizes credential copies.
+No answer or architecture implementation is recorded yet.
 
 Owner reported at 21:59 local time that TestFlight build 5 still cannot Ask.
 Installed plist confirms 1.0 (5). Unlike build 4, actual runtime config now
