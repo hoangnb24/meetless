@@ -1,7 +1,8 @@
 # Packet chuẩn bị đưa Meetless lên Mac App Store
 
-**Trạng thái:** Dự thảo để owner duyệt nội dung. File này không tự mở quyền
-ghi metadata, gửi App Review hay phát hành công khai.
+**Trạng thái:** Owner đã cho phép tiếp tục chuẩn bị và lưu metadata nháp.
+Trạng thái từng trường được xác minh riêng trong active plan. App Review và
+phát hành công khai vẫn là quyết định riêng.
 
 Copy để dán vào localization chính của App Store Connect dùng en-US; phần
 giải thích và checklist dùng tiếng Việt. Các mục có nhãn **[OWNER INPUT]** là
@@ -31,6 +32,10 @@ không phân phối tại Pháp. API xác nhận TestFlight nội bộ READY_FOR
 thử bên ngoài mới ở READY_FOR_BETA_SUBMISSION. Chưa gửi App Review.
 
 ## Copy en-US
+
+Đã lưu trên ASC macOS 1.0 / English (U.S.): subtitle, promotional text,
+description và keywords. Root API readback xác nhận khớp từng byte với các
+block bên dưới; reviewer độc lập và Lead đã nghiệm thu phần copy.
 
 Giới hạn dưới đây lấy từ tài liệu App Store Connect hiện tại: name/subtitle
 30 ký tự, promotional text 170 ký tự, description 4.000 ký tự, keywords 100
@@ -138,7 +143,9 @@ khoản Apple, mật khẩu hay credential provider vào repo hoặc review note
 
 ## Shot list cho screenshot và app preview
 
-Chưa có asset store nào được packet này nghiệm thu. Engineering/design capture
+Kịch bản gốc và quy trình 5 ảnh đã chuẩn bị, review độc lập tại
+[screenshot capture brief](screenshot-capture-brief.md). Chưa có ảnh store nào
+được chụp/nghiệm thu từ brief. Engineering/design capture
 trên fresh signed candidate bằng dữ liệu hư cấu; không để lộ recording thật,
 tên người thật, receipt, API key, host URL hay provider credential.
 
@@ -175,8 +182,9 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
   Public contact `hoang@2m0r.com`, cá nhân chịu trách nhiệm `Hoang Nguyen Bang`.
   Cả ba URL đã lưu trên ASC; root API readback HTTP 200 xác nhận en-US, macOS
   version 1.0 và App Info ngày 2026-09-15. Chưa gửi App Review.
-- **[OWNER INPUT] App Review contact:** tên, email, phone và người xử lý thư
-  trao đổi với App Review.
+- **App Review contact đã lưu:** tên/email và số điện thoại owner cung cấp
+  đã được lưu, root API xác minh khớp. Số điện thoại chỉ dùng trong ASC và
+  evidence riêng tư, không ghi vào repository hay website.
 - **[OWNER INPUT] Availability, age rating, content rights và DSA/trader
   information nếu áp dụng:** đây là khai báo business/legal của account owner.
 - **[OWNER INPUT] App pricing, tax category, Paid Applications Agreement và
@@ -207,6 +215,9 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
 - ASC đã xác nhận version `1.0` / build `1`, upload COMPLETE và binary VALID.
   Khai báo mã hóa đã mở TestFlight nội bộ. Nhóm Meetless Internal đã có đúng
   build này và một tester được mời theo owner duyệt; còn đường thử bảo toàn dữ liệu. Kết quả này không chứng minh App Review hay billing đã đạt.
+- Exact build 1.0 (1) đã gắn vào hồ sơ version 1.0; API readback xác nhận build
+  VALID và PREPARE_FOR_SUBMISSION. Sign-in required đã tắt vì Meetless không có
+  tài khoản đăng nhập riêng; cấu hình provider cho Ask vẫn phải kiểm thử riêng.
 - Recheck StoreKit sandbox purchase/restore, routing Sandbox riêng, backend
   review window và Ask path trên exact candidate. Không gọi đó là bằng chứng
   production billing nếu chưa có live evidence.

@@ -548,6 +548,47 @@ Review or public release is inferred from this processing result.
   submission changed. Website #28 closed and Project status Done; #17 remains
   open for other store/legal/runtime obligations.
 
+- Owner explicitly authorized continuing store preparation after website/URL
+  completion. Work ownership: `apple_export_form` owns factual en-US draft
+  metadata save/readback; `apple_package_review` independently checks copy;
+  `privacy_submission_draft` owns a review-ready App Privacy recommendation
+  based on actual inventory and current Apple definitions, without submission;
+  `screenshot_route` identifies a supported authentic-candidate screenshot route
+  without touching the installed app/recordings. Root owns integration, owner
+  questions, and subsequent evidence. No new App Review/publication permission
+  is inferred; routine draft metadata preparation is authorized by this turn.
+  Independent copy reviewer ACCEPTS exact subtitle/promotional/description/
+  keywords against product contracts and Apple field limits. Root prepared
+  `docs/release/screenshot-capture-brief.md` with original fictional meeting
+  script and the five accepted UI states; independent reviewer and Lead ACCEPT
+  this capture input only. No screenshot has yet been captured or accepted.
+  Owner supplied the private App Review phone; it is kept only in ignored
+  owner inputs and passed to the ASC operator for that destination.
+  Source explorer found the exact MAS route requires LaunchServices at
+  `/Applications/Meetless.app` with the canonical per-user container; copied
+  bundles are rejected and no packaged runtime-root override is supported.
+  Historical/fixture screenshots are not acceptable current store assets.
+  A second macOS user alone does not preserve the shared installed app path.
+  Owner explicitly chose this Mac and approved backing up first, then replacing
+  the installed app. `testflight_capture` owns consistent backup/recovery and
+  TestFlight readiness first; independent backup acceptance is required before
+  installation. No reset or destructive cleanup authorized. Authentic screenshots
+  remain pending actual Apple-distributed app launch and fictional-data capture.
+  En-US copy was saved by `apple_export_form`; independent root API readback
+  confirms subtitle/promotional/description/keywords exactly match reviewed
+  blocks, and previously accepted URLs remain correct. Lead ACCEPTS these
+  draft metadata fields. Evidence: `.artifacts/app-store-upload/20260915-build1/store-copy-acceptance.json`.
+  Private App Review contact saved; root independent API readback confirms
+  first/last name, email and phone match owner-provided inputs. Lead ACCEPTS
+  these saved contact fields. Evidence `api-contact-build-preparation.json`
+  contains booleans only. Operator subsequently associated exact accepted build
+  `0816cc3b-8b69-4357-bf0d-32537ec34b8b` and set demoAccountRequired false because
+  Meetless has no app-account sign-in (provider configuration for Ask remains
+  separate). Root API `api-contact-build-post-preparation.json` verifies exact
+  build VALID, contact matches, demoAccountRequired false and version state
+  PREPARE_FOR_SUBMISSION. Lead ACCEPTS this draft association and factual flag;
+  no App Review submission or verified Ask reviewer-flow claim.
+
 Next: the owner can accept the internal TestFlight invitation. Preserve the
 installed development app/data before testing, then continue #15/#16/#20 live evidence and
 #14/#17 release readiness. TestFlight and
