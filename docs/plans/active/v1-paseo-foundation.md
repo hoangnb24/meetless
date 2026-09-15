@@ -537,6 +537,17 @@ Review or public release is inferred from this processing result.
   dry-run pass. An initial wrong-root invocation failed with missing script /
   workspace-root detection before deployment; this is not counted as a pass.
 
+- ASC draft URL handoff completed by `apple_export_form`: Support/Marketing
+  saved on macOS 1.0/en-US; Privacy Policy URL saved on App Privacy. Independent
+  root read-only App Store Connect API checks returned HTTP 200 for version
+  localizations and app-info localizations, confirming exact persisted values:
+  `https://meetless.2m0r.com/support/`, `https://meetless.2m0r.com/`, and
+  `https://meetless.2m0r.com/privacy/`. Lead ACCEPTS these three saved URL fields.
+  Evidence: `.artifacts/app-store-upload/20260915-build1/api-website-urls-final-domain.json`.
+  No App Privacy answers, pricing, availability, agreements or App Review/public
+  submission changed. Website #28 closed and Project status Done; #17 remains
+  open for other store/legal/runtime obligations.
+
 Next: the owner can accept the internal TestFlight invitation. Preserve the
 installed development app/data before testing, then continue #15/#16/#20 live evidence and
 #14/#17 release readiness. TestFlight and
@@ -544,7 +555,8 @@ App Review purchases use the isolated Apple Sandbox route; only verified Apple
 PRODUCTION transactions can establish production billing evidence. Do not
 replace the installed development app or its data to run a store candidate.
 Website #28 final-domain HTTPS is accepted and URLs handed to #17. Complete
-ASC draft URL readback and remaining metadata/screenshots/App Privacy gates.
+remaining metadata/screenshots/App Privacy gates; the three ASC URL fields
+are already saved and independently verified.
 App Review/public release require a separate owner decision.
 
 ### Historical execution checkpoint — 2026-09-14

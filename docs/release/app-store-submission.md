@@ -173,8 +173,8 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
   HTTP 200 với bytes đúng source được review; unknown route trả custom 404.
   Browser review độc lập đạt điều hướng và nội dung trên domain cuối.
   Public contact `hoang@2m0r.com`, cá nhân chịu trách nhiệm `Hoang Nguyen Bang`.
-  Trạng thái lưu các URL vào ASC được ghi riêng trong active plan; website live
-  không tự chứng minh metadata đã được lưu hay App Review đã gửi.
+  Cả ba URL đã lưu trên ASC; root API readback HTTP 200 xác nhận en-US, macOS
+  version 1.0 và App Info ngày 2026-09-15. Chưa gửi App Review.
 - **[OWNER INPUT] App Review contact:** tên, email, phone và người xử lý thư
   trao đổi với App Review.
 - **[OWNER INPUT] Availability, age rating, content rights và DSA/trader
