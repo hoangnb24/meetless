@@ -378,6 +378,18 @@ Review or public release is inferred from this processing result.
   backend audio cleanup timing. This is a source inventory, not a legal
   classification or measured production retention acceptance. The content,
   support/privacy URLs and actual App Privacy declarations remain #17 work.
+- Export-compliance factual review found third-party encryption in the exact
+  payload: `@getpaseo/relay`, `@getpaseo/client` and `tweetnacl`; relay
+  `vendor/paseo/packages/relay/src/crypto.ts` implements Curve25519 plus
+  XSalsa20-Poly1305, and the client relay transport uses it. Therefore the
+  candidate cannot be described as using only Apple OS encryption. This is
+  an inventory finding, not an exemption ruling. Apple's current documentation
+  matrix distinguishes standard third-party encryption and requires the French
+  declaration for that category only when distributing in France:
+  https://developer.apple.com/help/app-store-connect/reference/app-information/export-compliance-documentation-for-encryption
+  Owner decision still needed on France distribution before completing the
+  corresponding questionnaire. No export flag, declaration, storefront or
+  availability setting has been changed.
 
 Next: finish the export-compliance declaration before TestFlight testing, then
 continue #15/#16/#20 live evidence and #14/#17 release readiness. TestFlight and
