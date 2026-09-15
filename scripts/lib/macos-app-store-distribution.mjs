@@ -2,12 +2,17 @@ import { createHash, X509Certificate } from "node:crypto";
 import path from "node:path";
 import { MACOS_APP_STORE_PARENT_ENTITLEMENTS, validateEntitlementKeys } from "./macos-app-store-contract.mjs";
 import { rm, lstat, readdir } from "node:fs/promises";
+import {
+  NATIVE_TEST_POLICY_REQUIRED,
+  nativeTestEvidence,
+  validateNativeTestPolicy,
+} from "./native-test-policy.mjs";
 import { R5_APP_STORE_TEAM_ID as TEAM, R5_APP_STORE_BUNDLE_ID as BUNDLE, validateBuildScopedConvexUrl, validateRevenueCatPublicSdkKey } from "./macos-app-store-development.mjs";
 
 export const DISTRIBUTION_AUTHORITY = "docs/decisions/0005-mac-app-store-and-revenuecat.md";
 const fail = (message) => { throw new Error(`${message}. Authority: ${DISTRIBUTION_AUTHORITY}. Restore the explicit reviewed distribution inputs before packaging.`); };
 export function parseMacAppStoreDistributionArguments(args) {
-  const names = { "proof-root": "proofRoot", "provisioning-profile": "provisioningProfile", "signing-identity": "signingIdentity", "installer-identity": "installerIdentity", keychain: "keychain", "keychain-password-file": "keychainPasswordFile", version: "version", "build-number": "buildNumber", "sandbox-url": "sandboxUrl", "production-url": "productionUrl", "public-sdk-key": "publicSdkKey", "source-commit": "sourceCommit", "source-snapshot-sha256": "sourceSnapshotSha256" };
+  const names = { "proof-root": "proofRoot", "provisioning-profile": "provisioningProfile", "signing-identity": "signingIdentity", "installer-identity": "installerIdentity", keychain: "keychain", "keychain-password-file": "keychainPasswordFile", version: "version", "build-number": "buildNumber", "sandbox-url": "sandboxUrl", "production-url": "productionUrl", "public-sdk-key": "publicSdkKey", "source-commit": "sourceCommit", "source-snapshot-sha256": "sourceSnapshotSha256", "native-test-policy": "nativeTestPolicy" };
   const result = {};
   for (let i = 0; i < args.length; i++) {
     const match = /^--([^=]+)(?:=(.*))?$/u.exec(args[i]);
@@ -18,10 +23,11 @@ export function parseMacAppStoreDistributionArguments(args) {
     if (!value || value.startsWith("--")) fail(`Missing value for --${match[1]}`);
     result[key] = value;
   }
-  for (const [name, key] of Object.entries(names)) if (!result[key]) fail(`Missing --${name}`);
+  for (const [name, key] of Object.entries(names)) if (name !== "native-test-policy" && !result[key]) fail(`Missing --${name}`);
   for (const key of ["proofRoot", "provisioningProfile", "keychain", "keychainPasswordFile"]) if (!path.isAbsolute(result[key])) fail(`${key} must be absolute`);
   if (!/^\d+\.\d+(?:\.\d+)?$/u.test(result.version)) fail("Version must be an explicit numeric marketing version");
   if (!/^[1-9][0-9]*$/u.test(result.buildNumber)) fail("Build number must be a positive integer");
+  result.nativeTestPolicy = validateDistributionNativeTestPolicy(result);
   if (!/^[a-f0-9]{40}$/u.test(result.sourceCommit) || !/^[a-f0-9]{64}$/u.test(result.sourceSnapshotSha256)) fail("Source provenance must include exact commit and snapshot SHA-256");
   validateDistributionIdentity(result.signingIdentity, "app");
   validateDistributionIdentity(result.installerIdentity, "installer");
@@ -33,6 +39,13 @@ export function validateDistributionIdentity(identity, kind) {
   const prefix = kind === "app" ? "Apple Distribution: " : "3rd Party Mac Developer Installer: ";
   if (typeof identity !== "string" || !identity.startsWith(prefix) || !identity.endsWith(` (${TEAM})`) || identity.includes("\n")) fail(`Expected ${kind} distribution identity for team ${TEAM}`);
   return identity;
+}
+function validateDistributionNativeTestPolicy(options) {
+  const policy = validateNativeTestPolicy(options.nativeTestPolicy ?? NATIVE_TEST_POLICY_REQUIRED);
+  if (policy !== NATIVE_TEST_POLICY_REQUIRED && !(options.version === "1.0" && options.buildNumber === "4")) {
+    fail("The owner-deferred internal beta native test policy is restricted to version 1.0 build 4");
+  }
+  return policy;
 }
 export function validateDistributionRouting(sandboxUrl, productionUrl) {
   for (const value of [sandboxUrl, productionUrl]) {
@@ -106,11 +119,20 @@ export function validateDistributionProfileCertificate(profile, pem) {
 // The producer must rebuild, even when outputs already exist. These callbacks
 // are injected only to exercise failure ordering without signing a fixture.
 export async function buildReviewedDistributionSource({ options, readSnapshot, clean, build }) {
+  const nativeTestPolicy = validateDistributionNativeTestPolicy(options);
   validateDistributionSource(await readSnapshot(), options);
   await clean();
   await build();
   validateDistributionSource(await readSnapshot(), options);
-  return { command: "npm run build", clean: true, sourceCommit: options.sourceCommit, sourceSnapshotSha256: options.sourceSnapshotSha256 };
+  const nativeTests = nativeTestEvidence(nativeTestPolicy);
+  return {
+    command: "npm run build",
+    ...(nativeTestPolicy === NATIVE_TEST_POLICY_REQUIRED ? {} : { arguments: [`--native-test-policy=${nativeTestPolicy}`] }),
+    clean: true,
+    sourceCommit: options.sourceCommit,
+    sourceSnapshotSha256: options.sourceSnapshotSha256,
+    nativeTests,
+  };
 }
 
 export async function rebuildDistributionSource({ repositoryRoot, options, run, readSnapshot }) {
@@ -129,7 +151,12 @@ export async function rebuildDistributionSource({ repositoryRoot, options, run, 
       await rm(path.join(repositoryRoot, "vendor/paseo/packages/desktop/tsconfig.tsbuildinfo"), { force: true });
       for (const nativePackage of ["native/macos-host", "native/macos-capture"]) await run("swift", ["package", "--package-path", nativePackage, "clean"], { cwd: repositoryRoot });
     },
-    build: () => run("npm", ["run", "build"], { cwd: repositoryRoot }),
+    build: () => {
+      const arguments_ = ["run", "build"];
+      const nativeTestPolicy = options.nativeTestPolicy ?? NATIVE_TEST_POLICY_REQUIRED;
+      if (nativeTestPolicy !== NATIVE_TEST_POLICY_REQUIRED) arguments_.push("--", `--native-test-policy=${nativeTestPolicy}`);
+      return run("npm", arguments_, { cwd: repositoryRoot });
+    },
   });
 }
 

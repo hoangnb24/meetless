@@ -9,12 +9,19 @@ import { describe, expect, it } from "vitest";
 import { parseMacAppStoreDistributionArguments, prepareDistributionInfo, validateDistributionInfo, validateDistributionProfile, validateDistributionSignature, validateDistributionSource, validateInstallerSignature, buildReviewedDistributionSource, rebuildDistributionSource, prepareDistributionEntitlements, validateDistributionEntitlements, validateDistributionIcon, validateDistributionReadableClosure } from "../../../scripts/lib/macos-app-store-distribution.mjs";
 import { buildMacOSPackageInputSpecs, MACOS_PACKAGE_ELECTRON_LAYOUT_MAS } from "../../../scripts/lib/macos-package-inputs.mjs";
 import { MACOS_APP_STORE_CONTRACT } from "../../../scripts/lib/macos-app-store-contract.mjs";
+import { NATIVE_TEST_POLICY_OWNER_DEFERRED_INTERNAL_BETA, NATIVE_TEST_POLICY_REQUIRED, OWNER_BETA_DECISION_AUTHORITY, OWNER_BETA_DECISION_POINTER, nativeTestEvidence, parseNativeTestPolicyArguments } from "../../../scripts/lib/native-test-policy.mjs";
 const appIdentity = "Apple Distribution: Example (63M98WD275)";
 const installerIdentity = "3rd Party Mac Developer Installer: Example (63M98WD275)";
 const inputs = { "proof-root": "/tmp/distribution", "provisioning-profile": "/tmp/store.provisionprofile", "signing-identity": appIdentity, "installer-identity": installerIdentity, keychain: "/tmp/release.keychain-db", "keychain-password-file": "/tmp/password", version: "1.0", "build-number": "1", "sandbox-url": "https://sandbox-test.convex.cloud", "production-url": "https://production-test.convex.cloud", "public-sdk-key": "appl_test12345678", "source-commit": "a".repeat(40), "source-snapshot-sha256": "b".repeat(64) };
 const parse = (overrides = {}) => parseMacAppStoreDistributionArguments(Object.entries({ ...inputs, ...overrides }).map(([key, value]) => `--${key}=${value}`));
 const profile = () => ({ Name: "Store", UUID: "uuid", Platform: ["OSX"], TeamIdentifier: ["63M98WD275"], ApplicationIdentifierPrefix: ["63M98WD275"], Entitlements: { "com.apple.application-identifier": "63M98WD275.com.meetless.app", "com.apple.developer.team-identifier": "63M98WD275" }, DeveloperCertificates: [Buffer.from("fixture")], ExpirationDate: new Date("2099-01-01") });
 describe("explicit MAS distribution inputs", () => {
+  it("defaults native tests to the required policy and accepts the explicit internal beta policy", () => {
+    expect(parse().nativeTestPolicy).toBe(NATIVE_TEST_POLICY_REQUIRED);
+    expect(parse({ "native-test-policy": NATIVE_TEST_POLICY_OWNER_DEFERRED_INTERNAL_BETA, "build-number": "4" }).nativeTestPolicy).toBe(NATIVE_TEST_POLICY_OWNER_DEFERRED_INTERNAL_BETA);
+    expect(() => parse({ "native-test-policy": NATIVE_TEST_POLICY_OWNER_DEFERRED_INTERNAL_BETA, "build-number": "5" })).toThrow(/restricted to version 1.0 build 4/);
+    for (const value of ["skip", "owner-deferred", "required,owner-deferred-internal-beta"]) expect(() => parse({ "native-test-policy": value })).toThrow(/native test policy/);
+  });
   it("binds version, routing, public SDK key and reviewed source in signed plist", () => {
     const options = parse();
     const info = prepareDistributionInfo({ CFBundleIdentifier: "com.meetless.app", MeetlessConvexURL: "https://old.convex.cloud" }, options);
@@ -85,15 +92,58 @@ describe("distribution producer build freshness", () => {
     expect(artifact).toBe("");
     expect(built).toBe(true);
   });
+  it("rejects an invalid native policy before cleaning or building", async () => {
+    const options = { ...parse(), nativeTestPolicy: "invalid" };
+    let cleaned = false;
+    let built = false;
+    const snapshot = { mode: "package-source", head: options.sourceCommit, digest: options.sourceSnapshotSha256 };
+    await expect(buildReviewedDistributionSource({ options, readSnapshot: async () => snapshot, clean: async () => { cleaned = true; }, build: async () => { built = true; } })).rejects.toThrow(/Unsupported native test policy/);
+    expect(cleaned).toBe(false);
+    expect(built).toBe(false);
+  });
+  it("rejects the deferred policy for a build other than the owner-directed build 4", async () => {
+    const options = { ...parse({ "native-test-policy": NATIVE_TEST_POLICY_OWNER_DEFERRED_INTERNAL_BETA, "build-number": "4" }), buildNumber: "5" };
+    let cleaned = false;
+    const snapshot = { mode: "package-source", head: options.sourceCommit, digest: options.sourceSnapshotSha256 };
+    await expect(buildReviewedDistributionSource({ options, readSnapshot: async () => snapshot, clean: async () => { cleaned = true; }, build: async () => {} })).rejects.toThrow(/restricted to version 1.0 build 4/);
+    expect(cleaned).toBe(false);
+  });
   it("always cleans and rebuilds between source checks and rejects changes during compilation", async () => {
     const options = parse();
     const snapshot = { mode: "package-source", head: options.sourceCommit, digest: options.sourceSnapshotSha256 };
     const calls: string[] = [];
     let current = snapshot;
     const run = () => buildReviewedDistributionSource({ options, readSnapshot: async () => { calls.push("snapshot"); return current; }, clean: async () => { calls.push("clean"); }, build: async () => { calls.push("build"); } });
-    expect((await run()).clean).toBe(true);
+    const result = await run();
+    expect(result.clean).toBe(true);
+    expect(result.nativeTests).toEqual({ policy: NATIVE_TEST_POLICY_REQUIRED, status: "PASSED" });
     expect(calls).toEqual(["snapshot", "clean", "build", "snapshot"]);
     await expect(buildReviewedDistributionSource({ options, readSnapshot: async () => current, clean: async () => {}, build: async () => { current = { ...snapshot, digest: "c".repeat(64) }; } })).rejects.toThrow(/reviewed/);
+  });
+
+  it("records an owner decision when the internal beta policy defers native executable runs", async () => {
+    const options = parse({ "native-test-policy": NATIVE_TEST_POLICY_OWNER_DEFERRED_INTERNAL_BETA, "build-number": "4" });
+    const snapshot = { mode: "package-source", head: options.sourceCommit, digest: options.sourceSnapshotSha256 };
+    const result = await buildReviewedDistributionSource({ options, readSnapshot: async () => snapshot, clean: async () => {}, build: async () => {} });
+    expect(result.arguments).toEqual([`--native-test-policy=${NATIVE_TEST_POLICY_OWNER_DEFERRED_INTERNAL_BETA}`]);
+    expect(result.nativeTests).toEqual({
+      policy: NATIVE_TEST_POLICY_OWNER_DEFERRED_INTERNAL_BETA,
+      status: "DEFERRED",
+      ownerDecision: { pointer: OWNER_BETA_DECISION_POINTER, authority: OWNER_BETA_DECISION_AUTHORITY },
+    });
+    expect(result.nativeTests.status).not.toBe("PASSED");
+  });
+});
+
+describe("native test policy parsing", () => {
+  it("strictly parses the required and owner-deferred policies", () => {
+    expect(parseNativeTestPolicyArguments([])).toBe(NATIVE_TEST_POLICY_REQUIRED);
+    expect(parseNativeTestPolicyArguments(["--native-test-policy", NATIVE_TEST_POLICY_OWNER_DEFERRED_INTERNAL_BETA])).toBe(NATIVE_TEST_POLICY_OWNER_DEFERRED_INTERNAL_BETA);
+    expect(parseNativeTestPolicyArguments([`--native-test-policy=${NATIVE_TEST_POLICY_REQUIRED}`])).toBe(NATIVE_TEST_POLICY_REQUIRED);
+    expect(nativeTestEvidence(NATIVE_TEST_POLICY_REQUIRED)).toEqual({ policy: NATIVE_TEST_POLICY_REQUIRED, status: "PASSED" });
+    expect(nativeTestEvidence(NATIVE_TEST_POLICY_OWNER_DEFERRED_INTERNAL_BETA).status).toBe("DEFERRED");
+    for (const args of [["--native-test-policy=skip"], ["--native-test-policy"], ["--unknown"]]) expect(() => parseNativeTestPolicyArguments(args)).toThrow();
+    expect(() => parseNativeTestPolicyArguments(["--native-test-policy=required", "--native-test-policy=required"])).toThrow(/Duplicate/);
   });
 });
 

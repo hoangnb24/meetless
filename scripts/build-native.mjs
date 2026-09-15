@@ -3,6 +3,12 @@ import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import {
+  NATIVE_TEST_POLICY_REQUIRED,
+  nativeTestEvidence,
+  parseNativeTestPolicyArguments,
+  validateNativeTestPolicy,
+} from "./lib/native-test-policy.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -16,27 +22,37 @@ const nativeTestEnvironment = {
   MEETLESS_TEST_PACKAGE_NODE_SOURCE: process.execPath,
 };
 
-await mkdir(path.join(repositoryRoot, "packages/runtime/dist"), { recursive: true });
-await run("swift", ["build", "-c", "release", "--package-path", "native/macos-capture"]);
-await run("swift", ["build", "-c", "release", "--package-path", "native/macos-host", "--product", "MeetlessHost"]);
-const hostArtifact = path.join(repositoryRoot, "native/macos-host/.build/release/MeetlessHost");
-await assertRevenueCatLinkedHost(hostArtifact);
-process.stdout.write(`RevenueCat-linked MeetlessHost artifact: ${hostArtifact}\n`);
-await run("swift", ["build", "-c", "release", "--package-path", "native/macos-host", "--product", "MeetlessMasGateMutation"]);
-const mutationArtifact = path.join(repositoryRoot, "native/macos-host/.build/release/MeetlessMasGateMutation");
-await assertArm64MachO(mutationArtifact, "MAS mutation helper");
-process.stdout.write(`Native MAS mutation helper artifact: ${mutationArtifact}\n`);
-await run("xcrun", [
-  "swiftc",
-  "-O",
-  "packages/runtime/native/process-argv.swift",
-  "-o",
-  "packages/runtime/dist/meetless-process-argv",
-]);
-await run("swift", ["build", "-c", "debug", "--package-path", "native/macos-host", "--product", "MeetlessHostTests"]);
-await run(path.join(repositoryRoot, "native/macos-host/.build/debug/MeetlessHostTests"), [], nativeTestEnvironment);
-await run("swift", ["build", "-c", "release", "--package-path", "native/macos-host", "--product", "MeetlessHostTests"]);
-await run(path.join(repositoryRoot, "native/macos-host/.build/release/MeetlessHostTests"), [], nativeTestEnvironment);
+export async function buildNative({ nativeTestPolicy = NATIVE_TEST_POLICY_REQUIRED, runCommand = run } = {}) {
+  validateNativeTestPolicy(nativeTestPolicy);
+  await mkdir(path.join(repositoryRoot, "packages/runtime/dist"), { recursive: true });
+  await runCommand("swift", ["build", "-c", "release", "--package-path", "native/macos-capture"]);
+  await runCommand("swift", ["build", "-c", "release", "--package-path", "native/macos-host", "--product", "MeetlessHost"]);
+  const hostArtifact = path.join(repositoryRoot, "native/macos-host/.build/release/MeetlessHost");
+  await assertRevenueCatLinkedHost(hostArtifact);
+  process.stdout.write(`RevenueCat-linked MeetlessHost artifact: ${hostArtifact}\n`);
+  await runCommand("swift", ["build", "-c", "release", "--package-path", "native/macos-host", "--product", "MeetlessMasGateMutation"]);
+  const mutationArtifact = path.join(repositoryRoot, "native/macos-host/.build/release/MeetlessMasGateMutation");
+  await assertArm64MachO(mutationArtifact, "MAS mutation helper");
+  process.stdout.write(`Native MAS mutation helper artifact: ${mutationArtifact}\n`);
+  await runCommand("xcrun", [
+    "swiftc",
+    "-O",
+    "packages/runtime/native/process-argv.swift",
+    "-o",
+    "packages/runtime/dist/meetless-process-argv",
+  ]);
+  await runCommand("swift", ["build", "-c", "debug", "--package-path", "native/macos-host", "--product", "MeetlessHostTests"]);
+  await runCommand("swift", ["build", "-c", "release", "--package-path", "native/macos-host", "--product", "MeetlessHostTests"]);
+
+  const evidence = nativeTestEvidence(nativeTestPolicy);
+  if (nativeTestPolicy === NATIVE_TEST_POLICY_REQUIRED) {
+    await runCommand(path.join(repositoryRoot, "native/macos-host/.build/debug/MeetlessHostTests"), [], nativeTestEnvironment);
+    await runCommand(path.join(repositoryRoot, "native/macos-host/.build/release/MeetlessHostTests"), [], nativeTestEnvironment);
+  } else {
+    process.stdout.write(`Native test executables ${evidence.status}: ${evidence.ownerDecision.pointer}\n`);
+  }
+  return evidence;
+}
 
 async function assertRevenueCatLinkedHost(candidate) {
   const inspected = await stat(candidate).catch(() => null);
@@ -78,4 +94,9 @@ function run(command, arguments_, childEnvironment = environment) {
       else reject(new Error(`${command} failed with ${signal ?? `exit ${code ?? "unknown"}`}`));
     });
   });
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const nativeTestPolicy = parseNativeTestPolicyArguments(process.argv.slice(2));
+  await buildNative({ nativeTestPolicy });
 }

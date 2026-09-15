@@ -1046,7 +1046,7 @@ The two user-owned tasks handed back independently accepted bounded source
 repairs. They are cherry-picked in isolated worktree
 `/private/tmp/meetless-testflight-review-polish`, branch
 `codex/testflight-review-polish`, at
-`ef956aa707a8411c4fdf97d51bdee847b43c24c9`. Main has not integrated that stack.
+`ef956aa707a8411c4fdf97d51bdee847b43c24c9`. At that time, main had not integrated that stack.
 All seven patch IDs match their accepted originals. The pinned Paseo fork is
 `249539c7446f16c7ed2f07abb89be2065b732bed` with its verified offline bundle.
 
@@ -1061,8 +1061,8 @@ the same source after ordinary quit of idle installed build 3, with both ports
 free, failed identically. The earlier occupied-port hypothesis is therefore
 ruled out as the cause. Test-only diagnostic capture has not established the
 underlying cause. Do not treat focused tests or prior source reviews as full
-integration/producer acceptance. No merge, signing, upload or build 4
-acceptance has occurred. Preserve diagnostic logs and restore temporary test
+integration/producer acceptance. At that time, no merge, signing, upload or build 4
+acceptance had occurred. Preserve diagnostic logs and restore temporary test
 instrumentation before resuming the candidate.
 
 Evidence lives under ignored
@@ -1177,7 +1177,15 @@ production baseline tag stays unchanged.
 Build 4 must compile actual production outputs from the merged source and run
 the existing distribution producer with the approved production/sandbox
 configuration. Preserve the failed native evidence separately; do not alter
-checks or label the full native suite as passed. Exact artifact provenance,
+checks or label the full native suite as passed. The owner-directed producer
+route is explicitly `--native-test-policy=owner-deferred-internal-beta`: it
+still cleans and rebuilds all source and production native outputs, compiles
+the debug/release native test executables, and records native test execution as
+`DEFERRED` with decision pointer
+`.artifacts/app-store-upload/20260915-build4/owner-beta-source-acceptance.json`.
+The default `required` policy continues to run both native test executables;
+the deferred route is limited to this internal beta and cannot establish App
+Review or public-release readiness. Exact artifact provenance,
 package contents, signing/entitlements, installer integrity and Apple upload
 validation remain required. An independent reviewer and Lead must inspect the
 actual package before upload. The owner will test the Apple-distributed build;
