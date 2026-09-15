@@ -48,6 +48,11 @@ This task owns permission recovery; #31 owns branding in a separate worktree.
   earlier-install access and conditional OS-requested quit/reopen.
 - Recheck when the desktop window regains focus as well as AppState activation;
   React Native Web visibility can remain active while Settings is foreground.
+- Independent review found overlapping reads could let an older response
+  overwrite a newer grant or revocation. A controlled reversed-response test
+  failed against `0aa3070` (older denied replaced newer authorized). Sequence
+  ownership now allows only the latest initiated read to update displayed
+  status/errors. Tests cover older denied, authorized and transport failure.
 - Preserve host ownership, renderer intent validation, capture gates, local
   media, bundle identifiers, signing policy and entitlements.
 - This patch cannot rewrite a stale OS grant. Actual recovery must be measured
@@ -76,6 +81,9 @@ Fresh-state acceptance still needs an explicitly authorized clean environment.
 - [x] `npm run typecheck` passed. Three recording-service permission/gating
   cases passed (26 unrelated cases skipped): no premature session/helper,
   zero-media rollback, permission denial then successful fixture retry.
+- [x] After the sequencing repair, all 15 recording-provider tests and typecheck
+  passed. The targeted regression fails against the prior source and passes
+  with the fix (`ordered-response-before-fix.log`, `ordered-response-tests.log`).
 - [ ] Independent review of exact source commit.
 - [ ] Owner-authorized installed recovery and fictional recording proof.
 - [ ] Combined #30/#31 candidate, signed/TestFlight runtime proof and Lead acceptance.
