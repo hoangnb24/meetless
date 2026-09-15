@@ -6,6 +6,11 @@ Cloudflare Workers Static Assets is the user-selected deployment route, using
 the pinned Wrangler version and lockfile. No Sites-hosted project was registered:
 the owner selected their own Cloudflare account and domain.
 
+Confirmed owner inputs: final origin `https://meetless.2m0r.com`, public
+support/privacy email `hoang@2m0r.com`, responsible individual `Hoang Nguyen Bang`.
+On 2026-09-15, public DNS showed Cloudflare nameservers for `2m0r.com` and no
+existing A/CNAME for `meetless.2m0r.com`; recheck before any future DNS mutation.
+
 ## Local preview and validation
 
 From `website/`: `npm ci`, then `npm run dev`. Open the URL printed by Wrangler.
@@ -14,32 +19,39 @@ It reports unresolved owner inputs while allowing a local preview.
 
 The site reuses the repository logo and design tokens, using system font
 fallbacks without external font requests. No analytics, cookies, form, login,
-or speculative App Store download link is implemented. The privacy text is a
-draft based on `docs/release/privacy-data-inventory.md`, not approved legal copy.
+or speculative App Store download link is implemented. The privacy notice is
+based on `docs/release/privacy-data-inventory.md` and the owner-provided contact
+and identity. It describes current retention behavior without inventing a new
+automatic deletion schedule or third-party retention promise; it does not fill
+in the separate Apple App Privacy questionnaire.
 
 ## Before publishing
 
-1. Owner supplies final subdomain, public support email, responsible entity and
-   privacy contact. Confirm effective date and approve the privacy wording,
-   including persistent backend/provider/hosting retention and deletion requests.
-2. Replace the visible draft notices and `data-release-pending` markers only
-   after resolving their inputs. Add the real contact link on support and privacy.
-   Review `noindex` metadata when the final site is ready for search engines.
+1. Confirm the owner-provided domain/contact/identity above. Review the exact
+   policy against current code and provider documentation, including persistent
+   backend records and deletion-request wording. A future product change that
+   adds retention promises needs its own implementation and policy decision.
+2. Ensure there are no unresolved `data-release-pending` markers. Support and
+   privacy must contain the real contact. Root/support/privacy canonical URLs
+   are fixed to the owner-selected origin; the 404 page remains noindex.
 3. Confirm the Cloudflare account with `npx wrangler whoami`. Do not copy token
    stores or credentials into the repo. If `meetless-website` already exists,
    inspect ownership/version before deployment; never overwrite an unrelated Worker.
 4. Run `npm run check:release`, then `npx wrangler deploy --dry-run`.
 5. Deploy via `npm run deploy` only after exact-content review. Record the output
    version ID and workers.dev URL in the active plan and issue #28.
-6. Owner configures the chosen subdomain through the Cloudflare Worker’s custom
-   domains flow. Inspect existing DNS first; do not delete or replace unrelated
-   records. Verify HTTPS and all three routes on the final hostname.
+6. Owner configures `meetless.2m0r.com` through the Worker’s Settings → Domains &
+   Routes → Add → Custom Domain. Cloudflare’s custom-domain flow creates the DNS
+   record and certificate; do not invent a CNAME target. Inspect existing DNS
+   first; do not delete or replace unrelated records. Verify HTTPS and all three
+   routes on the final hostname. This domain must be in the deployment account;
+   public nameservers alone do not establish account ownership.
 7. Hand the final root, support and privacy URLs to #17. App Review submission
    remains a separate decision.
 
-`npm run deploy` refuses the current incomplete privacy/support draft. This is
-a local release check, not remote enforcement or CI. A direct Wrangler command
-can bypass it and must not be used to publish unresolved owner inputs.
+`npm run deploy` refuses unresolved content markers. This is a local release
+check, not remote enforcement or CI. A direct Wrangler command can bypass it
+and must not be used to publish unresolved owner inputs.
 
 ## Recovery and evidence
 

@@ -436,16 +436,48 @@ Review or public release is inferred from this processing result.
   Read-only Cloudflare deployment lookup returned code 10007 for
   `meetless-website` (Worker does not exist); first deployment will create a
   new Worker, rather than update an existing application.
+- Owner supplied the website origin `https://meetless.2m0r.com`, public support
+  email `hoang@2m0r.com`, and the intended private Apple Account address in
+  response to the TestFlight invitation question. The website
+  root/support/privacy canonical URLs and contact links were updated; the
+  tester email is not placed in public website assets. The owner subsequently
+  supplied `Hoang Nguyen Bang` as the responsible individual. Public DNS shows Cloudflare
+  nameservers for `2m0r.com` and no existing A/CNAME for the Meetless subdomain.
+  No DNS mutation occurred. The recipient already has a Developer role but
+  initially lacked Meetless app access. The owner explicitly approved adding
+  only Meetless to that existing app scope, preserving the role and other
+  apps, then sending the requested internal TestFlight invitation. The Apple
+  operator owns this bounded change; no broader permissions are authorized.
+  The website notice now names the individual and contact, describes current
+  normalized-record retention without an automatic expiry promise, and gives
+  a contact for deletion requests without inventing an automatic backend path
+  or response-time commitment. No backend retention behavior was changed.
 
-Next: arrange the owner's internal TestFlight access and preserve the installed
-development app/data before testing, then continue #15/#16/#20 live evidence and
+- Owner-approved ASC access and internal invitation completed: only Meetless was
+  added to the existing Developer user's app access; prior role/apps retained.
+  Group `Meetless Internal` (`5c7491b1-1c64-4077-abd1-2bd3e28c075b`) contains
+  only build `0816cc3b-8b69-4357-bf0d-32537ec34b8b`; manual build distribution.
+  Independent root API GETs all returned 200, exact build VALID, one intended
+  tester matched privately, state INVITED/type EMAIL. UI shows Ready to Test.
+  Lead ACCEPTS this access/invitation result; inbox delivery and installation
+  are unverified. Evidence: `.artifacts/app-store-upload/20260915-build1/api-internal-group-invitation-verification.json`.
+- Final website content review ACCEPT by `website_content_review`; rendered UI
+  review ACCEPT by `apple_package_review` at desktop 2560×1178 and mobile 390×844.
+  Three routes/navigation/anchors and all seven FAQ keyboard toggles passed;
+  no horizontal overflow. Final release check passes seven files with no pending
+  owner inputs; Wrangler 4.131.2 dry-run exits 0. Lead ACCEPTS the exact source
+  identified in `.artifacts/website-preparation/final-source-evidence.json`
+  for initial Cloudflare deployment. This does not yet prove public hosting.
+
+Next: the owner can accept the internal TestFlight invitation. Preserve the
+installed development app/data before testing, then continue #15/#16/#20 live evidence and
 #14/#17 release readiness. TestFlight and
 App Review purchases use the isolated Apple Sandbox route; only verified Apple
 PRODUCTION transactions can establish production billing evidence. Do not
 replace the installed development app or its data to run a store candidate.
-The owner was asked for the final subdomain and public support email; those
-values remain pending while website #28 proceeds. App Review/public release
-require a separate owner decision.
+Website domain/contact/responsible individual are now supplied. Complete Cloudflare deployment and owner DNS handoff for #28; source/content
+and local rendered UI review are accepted.
+App Review/public release require a separate owner decision.
 
 ### Historical execution checkpoint — 2026-09-14
 
