@@ -10,7 +10,28 @@ production. Freeze the current source before beginning this work.
 
 GitHub execution breakdown: [Epic #21](https://github.com/hoangnb24/meetless/issues/21), new sub-issues #22–#28 and retained #14–#17/#20. Native dependencies own the execution order; #22/#23 are the first inputs. Website #28 supplies final URLs to #17 and can proceed alongside app testing. This link does not change the frozen source.
 
-### Current execution — build 5 owner Ask test failed, executable discovery repair
+### Current execution — build 6 distributed; actual Ask blocked by App Sandbox
+
+**Latest actual-consumer result:** TestFlight updated `/Applications/Meetless.app`
+to 1.0 (6); receipt presence and strict/deep signature verification passed.
+The host came online and the existing ready Test Meetless meeting opened.
+The native chooser disabled the existing Codex symlink; choosing its canonical
+regular executable (mode 0755) instead produced “Choose an existing executable
+Codex program.” Root cancelled the chooser. No executable grant/relaunch/model
+or Ask-response success is claimed. Lead **REJECTS actual Ask acceptance**.
+
+Apple’s [App Sandbox file-access documentation](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox)
+explicitly excludes execution of programs outside app-bundle/container/app-group
+locations from user-selected file access. The chooser/bookmark approach cannot
+by itself supply the required execution permission. The earlier owner-approved
+approach and successful unit/producer checks did not establish this prerequisite;
+its actual-consumer failure is retained. No validator bypass, entitlement
+broadening, executable copy, credential copy or replacement build is authorized
+by this finding. A supported provider execution architecture needs a new owner
+decision before further implementation. Read-only diagnosis/recommendation is
+in progress. Evidence is in build-6 `runtime-acceptance/`, including the actual
+alert image, installed identity, cancellation state and saved Apple reference.
+Internal delivery is independently/Lead accepted; Epic remains open.
 
 Owner reported at 21:59 local time that TestFlight build 5 still cannot Ask.
 Installed plist confirms 1.0 (5). Unlike build 4, actual runtime config now
@@ -36,6 +57,88 @@ whole-home grant, shell/PATH change or credential copy is authorized.
 Evidence: `.artifacts/testflight-build5-provider-failure/` (private), including
 actual daemon diagnostic and owner intake. No app restart or permission change
 was performed during this diagnosis.
+
+Build-6 preparation: clean producer checkout `/private/tmp/meetless-testflight-build6`
+now combines main authority `6e3c607` and the native/TypeScript changes at
+`de5ea797ace59601f9eebfb109dc9f59f9992135`; main source integration completed
+after the required producer gates and retained fixture failures were resolved.
+Paseo remains `249539c...`, hydrated from the verified content-addressed bundle.
+Dependencies were APFS-cloned from the build-5 checkout with identical lockfiles;
+all workspace-local dependency directories are included and 401 symlinks resolve
+inside the candidate, none broken. Native tests remain
+required. Apple baseline readback at 15:10 UTC shows build 6 unused. Prepared
+producer/upload/group helpers are under `.artifacts/app-store-upload/20260915-build6/`;
+Attempt 1 producer stopped before native checks because the TypeScript author
+restored three temporary shared dependency links to incorrect package directories.
+The failure and author confirmation are retained; root corrected the links and
+verified all 401 inside the candidate. Attempt 2 ran through the unchanged
+normal producer at `.artifacts/macos-mas-distribution/20260915T155252Z-build6`,
+with separate logs under `producer-attempt2/`. It completed successfully at
+16:00:48 UTC with native tests required/PASSED, unchanged source snapshot, and
+keychain locked/search list restored. Exact installer `Meetless-1.0-6.pkg` is
+320,037,915 bytes, SHA-256 `4617bc0884dba83175f8acc9e4f933f3a5e682779b2cddf38042784697f662e7`;
+manifest SHA-256 `e862e6ce6b4dd9f716c548d096d595fd2447b732dad88ab71a39db58a6571aa6`.
+Lead preflight checks match signatures/source/build/config. Independent artifact review and Lead acceptance completed. Apple validation
+passed at 16:15:20 UTC; upload completed successfully at 16:29:29 UTC.
+Delivery UUID `597ffb97-f95b-47c1-8ee5-ae877cac8094` is bound to the accepted
+installer. Apple API at 16:50:06 UTC reports COMPLETE, VALID and
+IN_BETA_TESTING. Group readback at 16:49:41 UTC confirms build 6 assigned to
+Meetless Internal with the intended single tester and builds 1–5 preserved.
+The assignment helper timed out after an uncertain request; subsequent readback
+resolved the outcome without a duplicate mutation. Transient status API timeouts
+and logged-out browser sessions are retained as history. TestFlight UI shows
+1.0 (6) Update; root started the authorized update after fresh build-5/process
+absence proof. Actual Ask proof remains pending.
+
+Integrated candidate type preparation and app typecheck pass; five focused suites
+pass all 131 tests. The first focused attempt on the fresh checkout failed import
+resolution before generated TypeScript outputs existed; that failed run is retained
+and was resolved by the normal build prerequisites, without changing source.
+Native source at author `01078e1` and TypeScript source at author `4f68822` have
+independent source acceptance. Lead accepted exact integrated `de5ea797` snapshot
+`fd1270fd...` for running the required producer, with focused proof;
+full Debug/Release native gates subsequently passed in the actual producer.
+Early integration checks ran while author dependency links could point to the
+author checkout (same reviewed patches), so final isolated-candidate evidence
+uses the repaired links. Full `test:focused` after native build passed 1,298 tests
+with 36 failures across three files: two package suites lacked their expected
+`release/macos` direct artifact; one contribution consent test returned
+`purchase_required` despite a Premium fixture. Root produced a separate actual
+direct artifact and APFS-cloned it to the existing test input path; package
+retests passed 140 cases with two stale-fixture failures. Independent diagnosis
+identified a missing mocked Apple transaction (consent), a skipped duplicate-ID
+mutation, and an outdated retained-stage diagnostic expectation. Test-only
+commits `cdaf717` and `da4e1ed` were independently accepted; explicit corrected
+fixtures passed 6 consent cases, 6 MAS identity cases and 1 retained-stage case
+against unchanged production code. Original test bytes were restored and the
+frozen `de5ea797` snapshot was rechecked before upload. No fixture proof is
+embedded as production evidence. Main now contains app source plus separate
+test-only commits `9083aa6`/`9a232ff`, pushed. The Apple artifact remains bound
+to immutable app source `de5ea797`; production files are identical.
+Apple-distributed Ask proof remains pending. All failed runs are retained.
+
+The installed build-5 app snapshot in `testflight-build5-snapshot/` under
+`backup-EgNIyA` is independently and Lead accepted for app integrity only.
+Manifest SHA-256 `690344f2ee289c0f603fd084ff86aa2e4d6bfac776de2886ac5e30e4f6f184da`;
+non-receipt fingerprint `ba1e3f46561267375c55d118df81d70e9fa029b273bf8336310af48190c389a4`.
+No runtime/recording copy, receipt-byte read or restore rehearsal is claimed.
+Root removed only obsolete reproducible Swift `.build` caches from seven prior
+production/build-3/build-4 worktrees to make room; exact paths and free-space
+readings are retained in `storage-preparation*.json`. All distribution artifacts, failure
+logs, backups and user data remain retained.
+
+Shared implementation boundary: native optional `CODEX_EXECUTABLE` accompanies
+restored `CODEX_HOME` only in the approved grant envelope; runtime strips that
+field from environment and emits Paseo `command: [absolutePath]`. Native access
+response remains path-free and adds `needs_executable` plus optional per-provider
+`executableSelection: "available"` only for the scoped Codex manager (never
+unrestricted/direct access); the existing request
+chooses folder first when absent, otherwise executable/replacement. Actual
+provider/model availability governs Ask readiness, since a missing explicit
+bookmark does not prove default PATH discovery failed. Native author works in
+`/private/tmp/meetless-provider-testflight-fix`; TypeScript author works in
+`/private/tmp/meetless-provider-cli-runtime-ui`. Root owns docs, integration,
+packaging/delivery; independent reviewers accept exact final source/artifacts.
 
 ### Historical delivery — build 5 provider repair distributed, before owner feedback
 
