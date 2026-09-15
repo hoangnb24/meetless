@@ -950,6 +950,15 @@ Review or public release is inferred from this processing result.
   evidence directory. Apple validation has started; its outcome, upload, actual
   TestFlight Open and idle CPU remain pending. No release acceptance is inferred.
 
+- Apple validation of the accepted build3 package succeeded without errors at
+  `2026-09-15T07:40:18Z`; upload succeeded at `2026-09-15T07:44:37Z`, delivery
+  UUID `401bf672-c396-4ae0-8bb7-1ca1632e037d`, 319,885,600 bytes transferred.
+  Logs and exit codes are retained under
+  `.artifacts/app-store-upload/20260915-build3/`. Apple processing and internal
+  distribution remain pending. Same-Mac preflight sees TestFlight build2 with
+  Open, the installed app stopped with no host/listener, and its accepted
+  snapshot/identity intact; no update or new launch occurred in that preflight.
+
 Next: produce, validate and distribute build3, then verify TestFlight Open, idle
 CPU and data preservation to resolve #29. Resume screenshots and #15/#16/#20
 evidence after the updated app is healthy. TestFlight
