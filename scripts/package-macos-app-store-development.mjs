@@ -401,6 +401,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
   const outerInfo = parsePlistDocument(await readFile(path.join(contentsPath, "Info.plist"), "utf8"), "signed outer Info.plist");
   if (distribution) validateDistributionInfo(outerInfo, options);
   else validateMacAppStoreDevelopmentInfo(outerInfo, { publicSdkKey, convexUrl });
+  validateMacOSBrandingInfo(outerInfo);
   const actualParent = await readCodesignEntitlements(
     bundlePath,
     MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.PARENT,

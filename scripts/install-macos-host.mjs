@@ -138,6 +138,7 @@ try {
     mkdir(resources, { recursive: true, mode: 0o755 }),
   ]);
   await cp(path.join(repositoryRoot, "native/macos-host/Info.plist"), path.join(contents, "Info.plist"));
+  await cp(path.join(repositoryRoot, "native/macos-host/Meetless.icns"), path.join(resources, "Meetless.icns"));
   await writeFile(path.join(resources, "host-config.json"), `${JSON.stringify({
     schema: "MEETLESS_MACOS_HOST_CONFIG v2",
     mode: "development",
@@ -209,6 +210,7 @@ try {
 async function hostSourceHash() {
   const files = [
     "native/macos-host/Info.plist",
+    "native/macos-host/Meetless.icns",
     "native/macos-host/Package.swift",
     "native/macos-host/Package.resolved",
     "native/macos-host/MeetlessHost.swift",
