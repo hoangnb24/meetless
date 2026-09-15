@@ -8,5 +8,14 @@
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
   },
+  "routes": [
+    {
+      "pattern": "meetless.2m0r.com",
+      "custom_domain": true,
+      "zone_id": "c4a00099227adaee669d3a51666798dc",
+      "enabled": true,
+      "previews_enabled": false
+    }
+  ],
   "workers_dev": true
 }

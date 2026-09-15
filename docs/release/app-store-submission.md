@@ -167,13 +167,14 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
 
 - **[OWNER INPUT] Seller/developer display name và copyright line:** tên pháp
   lý hiển thị cho khách hàng và năm/nội dung copyright.
-- **Website #28 đã deploy; chờ gắn domain:** owner đã cung cấp
-  `meetless.2m0r.com`, liên hệ `hoang@2m0r.com`, cá nhân chịu trách nhiệm
-  `Hoang Nguyen Bang`. URLs dự kiến: `https://meetless.2m0r.com/privacy/`,
-  `https://meetless.2m0r.com/support/`, `https://meetless.2m0r.com/`.
-  Bản Cloudflare công khai đã kiểm tra tại
-  `https://meetless-website.longmaba.workers.dev`; chưa điền final URLs
-  vào ASC trước khi domain thật có HTTPS và được kiểm tra.
+- **Website #28 đã xác minh domain cuối:** Marketing URL
+  `https://meetless.2m0r.com/`, Support URL `https://meetless.2m0r.com/support/`,
+  Privacy Policy URL `https://meetless.2m0r.com/privacy/`. Ba trang và assets trả
+  HTTP 200 với bytes đúng source được review; unknown route trả custom 404.
+  Browser review độc lập đạt điều hướng và nội dung trên domain cuối.
+  Public contact `hoang@2m0r.com`, cá nhân chịu trách nhiệm `Hoang Nguyen Bang`.
+  Trạng thái lưu các URL vào ASC được ghi riêng trong active plan; website live
+  không tự chứng minh metadata đã được lưu hay App Review đã gửi.
 - **[OWNER INPUT] App Review contact:** tên, email, phone và người xử lý thư
   trao đổi với App Review.
 - **[OWNER INPUT] Availability, age rating, content rights và DSA/trader

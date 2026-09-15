@@ -8,8 +8,9 @@ the owner selected their own Cloudflare account and domain.
 
 Confirmed owner inputs: final origin `https://meetless.2m0r.com`, public
 support/privacy email `hoang@2m0r.com`, responsible individual `Hoang Nguyen Bang`.
-On 2026-09-15, public DNS showed Cloudflare nameservers for `2m0r.com` and no
-existing A/CNAME for `meetless.2m0r.com`; recheck before any future DNS mutation.
+The owner attached the custom domain on 2026-09-15. Authenticated Cloudflare
+readback confirms it is enabled on `meetless-website` in the verified zone.
+The same domain/zone settings are recorded in `wrangler.jsonc`.
 
 ## Deployed version
 
@@ -19,13 +20,16 @@ zone lookup for `2m0r.com` (active zone `c4a00099227adaee669d3a51666798dc`).
 The owner reauthenticated before this correction. The account holding the zone
 is the target, rather than whichever account a login may select by default.
 
-Current deployment: https://meetless-website.longmaba.workers.dev
+Public website: https://meetless.2m0r.com
+
+Alternate deployment URL: https://meetless-website.longmaba.workers.dev
 from source `b7477ebb0558f94a4781db2253736b9444bc97fa`, version
 `38ac4662-b0c8-4d95-8a78-27fc326a5418`. All three routes and assets return
 HTTP 200 with the reviewed source bytes; unknown route returns the custom 404.
 Select **Longmaba@gmail.com's Account** in the dashboard, then Workers & Pages →
 **meetless-website** for domain setup. The login email may differ from the
-account name. Final `meetless.2m0r.com` attachment remains the owner handoff.
+account name. Final-domain HTTPS, exact source bytes on three routes/assets,
+and unknown-route 404 were verified. Final URLs are handed to issue #17.
 
 The earlier deployment at https://meetless-website.frosty-base-76ce.workers.dev
 (version `80acd7a1-3b17-462b-bb12-6ce12a5fb954`, source `dc91fe5`) is in the
@@ -62,12 +66,10 @@ in the separate Apple App Privacy questionnaire.
 4. Run `npm run check:release`, then `npx wrangler deploy --dry-run`.
 5. Deploy via `npm run deploy` only after exact-content review. Record the output
    version ID and workers.dev URL in the active plan and issue #28.
-6. Owner configures `meetless.2m0r.com` through the Worker’s Settings → Domains &
-   Routes → Add → Custom Domain. Cloudflare’s custom-domain flow creates the DNS
-   record and certificate; do not invent a CNAME target. Inspect existing DNS
-   first; do not delete or replace unrelated records. Verify HTTPS and all three
-   routes on the final hostname. This domain must be in the deployment account;
-   public nameservers alone do not establish account ownership.
+6. Preserve the existing custom-domain route in `wrangler.jsonc`. Owner setup
+   is complete; no new DNS record is needed. After future deployment, verify
+   HTTPS and all three routes on `meetless.2m0r.com`. Inspect current bindings
+   before any domain change and do not replace unrelated records.
 7. Hand the final root, support and privacy URLs to #17. App Review submission
    remains a separate decision.
 

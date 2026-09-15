@@ -521,14 +521,30 @@ Review or public release is inferred from this processing result.
   meetless.2m0r.com. Final-domain HTTPS remains pending; previous-account copy
   has not been deleted. #28/#17/Epic URLs and release packet are corrected.
 
+- Owner completed custom-domain attachment. Root authenticated API readback
+  confirms `meetless.2m0r.com` enabled on `meetless-website` / production in the
+  accepted account/zone, previews disabled. Final HTTPS checks pass all three
+  pages/assets with exact reviewed bytes and custom missing-route HTTP 404.
+  Independent `apple_package_review` ACCEPTS actual final-domain browser
+  navigation homepage → Support → Privacy → Overview, identity/contact, and
+  absence of access interstitials. Lead ACCEPTS final-domain website #28.
+  Evidence: `.artifacts/website-preparation/final-domain-verification.json` and
+  `final-domain-binding.json`. Final URLs are handed to release packet/#17;
+  storing those URLs in ASC is a distinct operation. Existing remote domain
+  settings are mirrored in Wrangler config for later deploys; independent reviewer
+  and Lead ACCEPT the exact config against native API readback. No new remote
+  deployment/DNS mutation. Correct website release check and Wrangler4.131.2
+  dry-run pass. An initial wrong-root invocation failed with missing script /
+  workspace-root detection before deployment; this is not counted as a pass.
+
 Next: the owner can accept the internal TestFlight invitation. Preserve the
 installed development app/data before testing, then continue #15/#16/#20 live evidence and
 #14/#17 release readiness. TestFlight and
 App Review purchases use the isolated Apple Sandbox route; only verified Apple
 PRODUCTION transactions can establish production billing evidence. Do not
 replace the installed development app or its data to run a store candidate.
-Website domain/contact/responsible individual are now supplied. Cloudflare deployment and DNS instructions are handed off. Await owner custom-domain
-setup, then verify final HTTPS for #28 and hand final URLs to #17.
+Website #28 final-domain HTTPS is accepted and URLs handed to #17. Complete
+ASC draft URL readback and remaining metadata/screenshots/App Privacy gates.
 App Review/public release require a separate owner decision.
 
 ### Historical execution checkpoint — 2026-09-14
