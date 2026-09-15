@@ -719,6 +719,19 @@ Review or public release is inferred from this processing result.
   identity publication. Lead ACCEPTS this source correction and unit/native
   proof only; the currently installed Apple build does not contain the fix.
 
+- Duplicate Electron identity source/gate fix and ADR0006 amendment were
+  independently accepted at eight-file diff SHA-256
+  `1cbcfae245256733d8dcf9d84c84ff8723f1f00ded4ea7952363822e76ac991e`.
+  Producer/contract tests passed 24/24, focused signed-gate positive and duplicate
+  identifier negative checks passed. The complete coordinator fixture test was
+  stopped at an external 60-second deadline during inventory of a 925 MB/13,772
+  file fixture, before coordinator assertions; it declares a 300-second test
+  timeout. This is incomplete, not a failed identity assertion or a full-suite
+  pass. Owned test processes were stopped. Lead ACCEPTS source/gate correction
+  for candidate preparation only. Electron's changed internal BaseBundleID and
+  unchanged parent group require actual Apple-delivered runtime proof; no new
+  group/profile privilege is authorized by this correction.
+
 Next: resolve and verify the actual Apple-distributed launch path, then resume
 screenshots and #15/#16/#20 evidence with preserved recording data. TestFlight
 and App Review purchases use the isolated Apple Sandbox route; only verified

@@ -43,6 +43,7 @@ import {
   MACOS_APP_STORE_DEVELOPMENT_AUTHORITY,
   MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES,
   R5_APP_STORE_BUNDLE_ID,
+  R5_APP_STORE_ELECTRON_BUNDLE_ID,
   R5_APP_STORE_DEVELOPMENT_IDENTITY,
   R5_APP_STORE_DEVELOPMENT_PROFILE_NAME,
   R5_APP_STORE_DEVELOPMENT_PROFILE_UUID,
@@ -976,10 +977,10 @@ export async function validateMasDevelopmentInstalledSignatures({
     const mainElectronNestedSignature = parsed.signature.nestedMachO.find(
       (entry) => entry?.path === MACOS_APP_STORE_ELECTRON_BINARY_PATH,
     );
-    if (mainElectronNestedSignature?.identifier !== R5_APP_STORE_BUNDLE_ID) {
+    if (mainElectronNestedSignature?.identifier !== R5_APP_STORE_ELECTRON_BUNDLE_ID) {
       throw new Error(
         `installed MAS signature proof main Electron identifier is ${String(mainElectronNestedSignature?.identifier)}; ` +
-        `expected ${R5_APP_STORE_BUNDLE_ID} under docs/decisions/0006-mas-development-desktop-integration.md; ` +
+        `expected ${R5_APP_STORE_ELECTRON_BUNDLE_ID} under docs/decisions/0006-mas-development-desktop-integration.md; ` +
         "regenerate the signed MAS artifact with the fixed main Electron identity",
       );
     }
@@ -1025,7 +1026,7 @@ export async function validateMasDevelopmentInstalledSignatures({
     validateR5DevelopmentSignature(
       await readCodesignDisplay(path.join(bundle, MACOS_APP_STORE_ELECTRON_BINARY_PATH), runOwnerCommand),
       MACOS_APP_STORE_ELECTRON_BINARY_PATH,
-      { expectedBundleIdentifier: R5_APP_STORE_BUNDLE_ID },
+      { expectedBundleIdentifier: R5_APP_STORE_ELECTRON_BUNDLE_ID },
     );
     return {
       status: "passed",
@@ -1245,7 +1246,7 @@ async function validateMasDevelopmentArtifact({
     const signature = validateR5DevelopmentSignature(
       await readCodesignDisplay(absolute, runOwnerCommand),
       entry.path,
-      { expectedBundleIdentifier: entry.path === MACOS_APP_STORE_ELECTRON_BINARY_PATH ? R5_APP_STORE_BUNDLE_ID : null },
+      { expectedBundleIdentifier: entry.path === MACOS_APP_STORE_ELECTRON_BINARY_PATH ? R5_APP_STORE_ELECTRON_BUNDLE_ID : null },
     );
     const entitlements = await readCodesignEntitlementsForGate(absolute, policy.entitlementPolicy, entry.path, absolute, runOwnerCommand);
     validateMachOEntitlementsForGate(entitlements, policy, entry.path);

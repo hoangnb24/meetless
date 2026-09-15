@@ -19,14 +19,33 @@ separate.
 
 ### MAS Electron identity
 
-After archive composition and replacement, the nested Electron main bundle must
-carry the exact Meetless main bundle identifier `com.meetless.app` together with
-the accepted build-scoped `ElectronTeamID`, before signing. Final artifact
-validation checks both the nested plist bundle identifier and the signed main
-Electron identifier. Their Team ID plus main bundle ID must remain aligned with
-the parent application-group namespace already authorized by the MAS package.
-No new application group, entitlement, profile, or signing allowance is
-introduced; helper identities remain unchanged.
+The native host retains `com.meetless.app`. After archive composition and
+replacement, the nested Electron main bundle uses the distinct identifier
+`com.meetless.app.electron` together with the accepted build-scoped
+`ElectronTeamID`, before signing. Producer, signed artifact and gate checks must
+reject a nested identifier equal to the native host identifier. Electron's
+renderer/GPU/plugin helper identities remain unchanged.
+
+This corrects the original shared-identifier choice on 2026-09-15 after the
+owner's TestFlight Open failure. Actual LaunchServices lookup selected embedded
+Electron instead of MeetlessHost, causing the inherited-sandbox child to launch
+without its sandboxed parent. The owner requested this startup failure fixed;
+removing sandbox inheritance or clearing existing recording data is not a fix.
+Exact old/new app identities and crash/lookup evidence are retained in the active
+release plan.
+
+The existing parent application group `63M98WD275.com.meetless.app`, provisioning
+profile and child sandbox/inherit entitlements remain the authorized boundary.
+No additional group or privilege is granted by this identity correction.
+Electron 41.2.0 derives its internal BaseBundleID from `ElectronTeamID` plus the
+inner bundle identifier ([bundle override source](https://github.com/electron/electron/blob/v41.2.0/shell/app/electron_main_delegate_mac.mm),
+[bundle resolution source](https://github.com/electron/electron/blob/v41.2.0/shell/common/mac/main_application_bundle.mm)).
+The new internal namespace therefore differs from the inherited parent group.
+Source/gate acceptance does not prove IPC/app-group compatibility: a candidate
+must be exercised through the actual Apple-distributed launch path with the
+existing group/profile before runtime acceptance. If that fails, preserve the
+failure and resolve the namespace explicitly; do not silently add entitlements
+or treat inheritance alone as compatibility proof.
 
 ### MAS Electron bundle layout
 
@@ -79,8 +98,10 @@ Supervisor role, and remains governed by the runtime ownership decisions.
 
 ## Consequences and limits
 
-The namespace and private-temp choices preserve the existing app-group policy,
-Paseo pin, user data location, singleton routing, and sandbox boundary. Source
+The private-temp choices preserve the existing app-group policy, Paseo pin,
+user data location, singleton routing, and sandbox boundary. The 2026-09-15
+identifier correction keeps those privilege/data constraints, but its changed
+Electron internal namespace still requires actual candidate compatibility proof. Source
 and focused composition proof plus the owner-observed visible/interactable UI
 support this development integration. They do not replace live proof of
 recording/TCC, second-instance handoff, purchase/restore, managed production,

@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 export const MACOS_APP_STORE_CONTRACT_SCHEMA = "MEETLESS_MAC_APP_STORE_CONTRACT v1";
 export const MACOS_APP_STORE_APPLICATION_GROUP_KEY = "com.apple.security.application-groups";
 export const MACOS_APP_STORE_DEFAULT_TEAM_ID = "63M98WD275";
+export const MACOS_APP_STORE_BUNDLE_ID = "com.meetless.app";
+export const MACOS_APP_STORE_ELECTRON_BUNDLE_ID = "com.meetless.app.electron";
 export const MACOS_APP_STORE_ELECTRON_ARCHIVE_NAME = "electron-v41.2.0-mas-arm64.zip";
 export const MACOS_APP_STORE_ELECTRON_ARCHIVE_SHA256 = "e153b855ba023f1edfcad4a07b22c30b4d48af57530c04808cffc6c75e17bc7d";
 export const MACOS_APP_STORE_PARENT_ENTITLEMENTS = Object.freeze([
@@ -35,7 +37,13 @@ export function validateMacAppStoreContract(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail("expected an object");
   if (value.schema !== MACOS_APP_STORE_CONTRACT_SCHEMA) fail("schema must be v1");
   if (value.target !== "macos-app-store-arm64") fail("target must remain the arm64 Mac App Store target");
-  if (value.bundleIdentifier !== "com.meetless.app") fail("bundle identifier drifted");
+  if (value.bundleIdentifier !== MACOS_APP_STORE_BUNDLE_ID) fail("bundle identifier drifted");
+  if (value.electron?.bundleIdentifier === value.bundleIdentifier) {
+    fail("nested Electron bundle identifier must differ from the parent bundle identifier to keep LaunchServices targeting the host");
+  }
+  if (value.electron?.bundleIdentifier !== MACOS_APP_STORE_ELECTRON_BUNDLE_ID) {
+    fail(`nested Electron bundle identifier must be ${MACOS_APP_STORE_ELECTRON_BUNDLE_ID}`);
+  }
   if (value.distribution !== "mac-app-store") fail("distribution must be Mac App Store");
   if (value.electron?.version !== "41.2.0" || value.electron?.platform !== "mas" || value.electron?.arch !== "arm64") {
     fail("Electron must use the pinned 41.2.0 mas arm64 artifact");

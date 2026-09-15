@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
+  MACOS_APP_STORE_ELECTRON_BUNDLE_ID,
   MACOS_APP_STORE_CHILD_ENTITLEMENTS,
   MACOS_APP_STORE_PARENT_ENTITLEMENTS,
 } from "./macos-app-store-contract.mjs";
@@ -19,6 +20,7 @@ export const R5_APP_STORE_DEVELOPMENT_DEVICE_UDID = "00006041-000861C60EFA401C";
 export const R5_APP_STORE_DEVELOPMENT_IDENTITY = "Apple Development: Long Le (335C7MY4H4)";
 export const R5_APP_STORE_TEAM_ID = "63M98WD275";
 export const R5_APP_STORE_BUNDLE_ID = "com.meetless.app";
+export const R5_APP_STORE_ELECTRON_BUNDLE_ID = MACOS_APP_STORE_ELECTRON_BUNDLE_ID;
 export const R5_REVENUECAT_INFO_PLIST_KEY = "MeetlessRevenueCatAPIKey";
 export const R5_CONVEX_INFO_PLIST_KEY = "MeetlessConvexURL";
 export const R5_APP_STORE_DEVELOPMENT_CONVEX_URL = HOSTED_DEV_TARGET.cloudUrl;
@@ -358,7 +360,7 @@ export function prepareR5DevelopmentElectronInfo(info) {
   validateR5DevelopmentElectronInfo(info);
   const prepared = {
     ...info,
-    CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
+    CFBundleIdentifier: R5_APP_STORE_ELECTRON_BUNDLE_ID,
     ElectronTeamID: R5_APP_STORE_TEAM_ID,
   };
   validateR5DevelopmentElectronInfo(prepared, {
@@ -384,8 +386,8 @@ export function validateR5DevelopmentElectronInfo(
   if (requireElectronTeamId && info.ElectronTeamID !== R5_APP_STORE_TEAM_ID) {
     throw developmentError("signed Electron MAS Info.plist ElectronTeamID does not match the accepted Apple Team ID");
   }
-  if (requireBundleIdentifier && info.CFBundleIdentifier !== R5_APP_STORE_BUNDLE_ID) {
-    throw developmentError("signed Electron MAS Info.plist bundle identifier does not match com.meetless.app");
+  if (requireBundleIdentifier && info.CFBundleIdentifier !== R5_APP_STORE_ELECTRON_BUNDLE_ID) {
+    throw developmentError(`signed Electron MAS Info.plist bundle identifier does not match ${R5_APP_STORE_ELECTRON_BUNDLE_ID}`);
   }
   return info;
 }

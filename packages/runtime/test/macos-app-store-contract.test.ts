@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   MACOS_APP_STORE_CHILD_ENTITLEMENTS,
   MACOS_APP_STORE_CONTRACT,
+  MACOS_APP_STORE_ELECTRON_BUNDLE_ID,
   MACOS_APP_STORE_PARENT_ENTITLEMENTS,
   resolveMacAppStoreApplicationGroup,
   validateEntitlementKeys,
@@ -20,6 +21,7 @@ describe("Mac App Store distribution contract", () => {
         version: "41.2.0",
         platform: "mas",
         arch: "arm64",
+        bundleIdentifier: MACOS_APP_STORE_ELECTRON_BUNDLE_ID,
         archiveName: "electron-v41.2.0-mas-arm64.zip",
         sha256: "e153b855ba023f1edfcad4a07b22c30b4d48af57530c04808cffc6c75e17bc7d",
       },
@@ -48,6 +50,19 @@ describe("Mac App Store distribution contract", () => {
       ...MACOS_APP_STORE_CONTRACT,
       state: { ...MACOS_APP_STORE_CONTRACT.state, owner: "user-home" },
     })).toThrow(/app-container owned/);
+  });
+
+  test("keeps the nested Electron identity distinct from the App Store host", () => {
+    expect(MACOS_APP_STORE_CONTRACT.electron.bundleIdentifier).toBe(MACOS_APP_STORE_ELECTRON_BUNDLE_ID);
+    expect(validateMacAppStoreContract(MACOS_APP_STORE_CONTRACT)).toBe(MACOS_APP_STORE_CONTRACT);
+    expect(() => validateMacAppStoreContract({
+      ...MACOS_APP_STORE_CONTRACT,
+      electron: { ...MACOS_APP_STORE_CONTRACT.electron, bundleIdentifier: MACOS_APP_STORE_CONTRACT.bundleIdentifier },
+    })).toThrow(/must differ from the parent bundle identifier/);
+    expect(() => validateMacAppStoreContract({
+      ...MACOS_APP_STORE_CONTRACT,
+      electron: { ...MACOS_APP_STORE_CONTRACT.electron, bundleIdentifier: "com.github.Electron" },
+    })).toThrow(/nested Electron bundle identifier must be/);
   });
 
   test("requires the exact parent and inherited-child sandbox closure", () => {

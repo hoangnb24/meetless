@@ -44,6 +44,7 @@ import {
   MACOS_APP_STORE_DEVELOPMENT_AUTHORITY,
   MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES,
   R5_APP_STORE_BUNDLE_ID,
+  R5_APP_STORE_ELECTRON_BUNDLE_ID,
   R5_APP_STORE_DEVELOPMENT_IDENTITY,
   R5_APP_STORE_DEVELOPMENT_PROFILE_FILENAME,
   R5_APP_STORE_TEAM_ID,
@@ -466,7 +467,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
   validateSignature(
     await readCodesignDisplay(nestedElectronExecutablePath),
     "signed MAS Electron",
-    { expectedBundleIdentifier: R5_APP_STORE_BUNDLE_ID },
+    { expectedBundleIdentifier: R5_APP_STORE_ELECTRON_BUNDLE_ID },
   );
 
   const nestedSignatures = [];

@@ -114,6 +114,7 @@ import {
   R5_APP_STORE_DEVELOPMENT_PROFILE_NAME,
   R5_APP_STORE_DEVELOPMENT_PROFILE_UUID,
   R5_APP_STORE_BUNDLE_ID,
+  R5_APP_STORE_ELECTRON_BUNDLE_ID,
   R5_APP_STORE_TEAM_ID,
   R5_CONVEX_INFO_PLIST_KEY,
   R5_REVENUECAT_INFO_PLIST_KEY,
@@ -335,7 +336,7 @@ async function makeMasValidationFixture() {
   const nestedElectronRelativePath = path.relative(bundle, nestedElectronExecutablePath).split(path.sep).join("/");
   const normalElectronHelperIdentifier = "com.github.Electron.helper";
   const nestedSignatureIdentifier = (relativePath: string) => relativePath === nestedElectronRelativePath
-    ? R5_APP_STORE_BUNDLE_ID
+    ? R5_APP_STORE_ELECTRON_BUNDLE_ID
     : relativePath.endsWith("Electron Helper.app/Contents/MacOS/Electron Helper")
       ? normalElectronHelperIdentifier
       : "com.github.Electron.nested";
@@ -360,7 +361,7 @@ async function makeMasValidationFixture() {
   const electronInfo = Buffer.from(plist.build({
     CFBundleExecutable: "Electron",
     CFBundleVersion: "41.2.0",
-    CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
+    CFBundleIdentifier: R5_APP_STORE_ELECTRON_BUNDLE_ID,
     ElectronTeamID: R5_APP_STORE_TEAM_ID,
   }));
   const signature = {
@@ -560,8 +561,8 @@ async function makeMasValidationFixture() {
 
 async function makeInstalledSignatureFixture({
   mutatePlist,
-  manifestIdentifier = R5_APP_STORE_BUNDLE_ID,
-  signedIdentifier = R5_APP_STORE_BUNDLE_ID,
+  manifestIdentifier = R5_APP_STORE_ELECTRON_BUNDLE_ID,
+  signedIdentifier = R5_APP_STORE_ELECTRON_BUNDLE_ID,
   convexUrl = "https://meetless-installed-fixture.convex.cloud/",
 }: {
   mutatePlist?: (info: Record<string, unknown>) => void;
@@ -591,7 +592,7 @@ async function makeInstalledSignatureFixture({
   const electronInfo: Record<string, unknown> = {
     CFBundleExecutable: "Electron",
     CFBundleVersion: "41.2.0",
-    CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
+    CFBundleIdentifier: R5_APP_STORE_ELECTRON_BUNDLE_ID,
     ElectronTeamID: R5_APP_STORE_TEAM_ID,
   };
   mutatePlist?.(electronInfo);
@@ -1123,7 +1124,7 @@ describe("MAS development gate coordinator", () => {
     await writeFile(electronInfoPath, plist.build({
       CFBundleExecutable: "Electron",
       CFBundleVersion: "41.2.0",
-      CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
+      CFBundleIdentifier: R5_APP_STORE_ELECTRON_BUNDLE_ID,
       ElectronTeamID: R5_APP_STORE_TEAM_ID,
     }), { mode: 0o600 });
 
@@ -1133,7 +1134,7 @@ describe("MAS development gate coordinator", () => {
       convexUrlEmbedded: true,
       convexUrlSha256: createHash("sha256").update(convexUrl).digest("hex"),
       electron: { executable: electronRelativePath },
-      signature: { nestedMachO: [{ path: electronRelativePath, identifier: R5_APP_STORE_BUNDLE_ID }] },
+      signature: { nestedMachO: [{ path: electronRelativePath, identifier: R5_APP_STORE_ELECTRON_BUNDLE_ID }] },
     };
     const manifestBytes = Buffer.from(`${JSON.stringify(manifest)}\n`);
     await writeFile(manifestPath, manifestBytes, { mode: 0o600 });
@@ -1154,7 +1155,7 @@ describe("MAS development gate coordinator", () => {
     });
     const commands: Array<{ command: string; arguments_: string[] }> = [];
     const electronSignatureText = [
-      `Identifier=${R5_APP_STORE_BUNDLE_ID}`,
+      `Identifier=${R5_APP_STORE_ELECTRON_BUNDLE_ID}`,
       `TeamIdentifier=${R5_APP_STORE_TEAM_ID}`,
       `Authority=${R5_APP_STORE_DEVELOPMENT_IDENTITY}`,
       "Signature=CMS",
@@ -1217,12 +1218,15 @@ describe("MAS development gate coordinator", () => {
   });
 
   it.each<[string, Parameters<typeof makeInstalledSignatureFixture>[0], RegExp]>([
-    ["missing plist CFBundleIdentifier", { mutatePlist: (info) => { delete info.CFBundleIdentifier; } }, /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app/],
-    ["wrong plist CFBundleIdentifier", { mutatePlist: (info) => { info.CFBundleIdentifier = "com.github.Electron"; } }, /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app/],
+    ["missing plist CFBundleIdentifier", { mutatePlist: (info) => { delete info.CFBundleIdentifier; } }, /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app\.electron/],
+    ["duplicate parent plist CFBundleIdentifier", { mutatePlist: (info) => { info.CFBundleIdentifier = R5_APP_STORE_BUNDLE_ID; } }, /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app\.electron/],
+    ["wrong plist CFBundleIdentifier", { mutatePlist: (info) => { info.CFBundleIdentifier = "com.github.Electron"; } }, /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app\.electron/],
     ["missing ElectronTeamID", { mutatePlist: (info) => { delete info.ElectronTeamID; } }, /signed Electron MAS Info\.plist ElectronTeamID does not match the accepted Apple Team ID/],
     ["wrong ElectronTeamID", { mutatePlist: (info) => { info.ElectronTeamID = "WRONGTEAMID"; } }, /signed Electron MAS Info\.plist ElectronTeamID does not match the accepted Apple Team ID/],
-    ["wrong immutable manifest main Electron identifier", { manifestIdentifier: "com.github.Electron" }, /main Electron identifier is com\.github\.Electron; expected com\.meetless\.app/],
-    ["wrong actual codesign main Electron identifier", { signedIdentifier: "com.github.Electron" }, /signature identifier is com\.github\.Electron, expected com\.meetless\.app/],
+    ["wrong immutable manifest main Electron identifier", { manifestIdentifier: "com.github.Electron" }, /main Electron identifier is com\.github\.Electron; expected com\.meetless\.app\.electron/],
+    ["duplicate parent immutable manifest main Electron identifier", { manifestIdentifier: R5_APP_STORE_BUNDLE_ID }, /main Electron identifier is com\.meetless\.app; expected com\.meetless\.app\.electron/],
+    ["wrong actual codesign main Electron identifier", { signedIdentifier: "com.github.Electron" }, /signature identifier is com\.github\.Electron, expected com\.meetless\.app\.electron/],
+    ["duplicate parent actual codesign main Electron identifier", { signedIdentifier: R5_APP_STORE_BUNDLE_ID }, /signature identifier is com\.meetless\.app, expected com\.meetless\.app\.electron/],
   ])("rejects %s during launch signature recheck without reading receipt bytes", async (_label, options, expectedDiagnostic) => {
     const fixture = await makeInstalledSignatureFixture(options);
     await mkdir(path.dirname(fixture.receiptPath), { recursive: true, mode: 0o755 });
@@ -1247,11 +1251,12 @@ describe("MAS development gate coordinator", () => {
   });
 
   it.each([
-    ["missing plist CFBundleIdentifier", "missing-plist-bundle-id", /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app/],
-    ["wrong plist CFBundleIdentifier", "wrong-plist-bundle-id", /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app/],
+    ["missing plist CFBundleIdentifier", "missing-plist-bundle-id", /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app\.electron/],
+    ["duplicate parent plist CFBundleIdentifier", "duplicate-parent-plist-bundle-id", /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app\.electron/],
+    ["wrong plist CFBundleIdentifier", "wrong-plist-bundle-id", /signed Electron MAS Info\.plist bundle identifier does not match com\.meetless\.app\.electron/],
     ["missing ElectronTeamID", "missing-plist-team-id", /signed Electron MAS Info\.plist ElectronTeamID does not match the accepted Apple Team ID/],
     ["wrong ElectronTeamID", "wrong-plist-team-id", /signed Electron MAS Info\.plist ElectronTeamID does not match the accepted Apple Team ID/],
-    ["wrong signed main Electron identifier", "wrong-signed-main-id", /Contents\/Helpers\/Electron\.app\/Contents\/MacOS\/Electron signature identifier is com\.github\.Electron, expected com\.meetless\.app/],
+    ["wrong signed main Electron identifier", "wrong-signed-main-id", /Contents\/Helpers\/Electron\.app\/Contents\/MacOS\/Electron signature identifier is com\.github\.Electron, expected com\.meetless\.app\.electron/],
   ] as const)("rejects %s before install/runtime mutation", { timeout: 300_000 }, async (_label, mutation, expectedDiagnostic) => {
     const base = await realpath(await mkdtemp(path.join(tmpdir(), "meetless-mas-electron-identity-negative-test-")));
     roots.push(base);
@@ -1281,6 +1286,7 @@ describe("MAS development gate coordinator", () => {
         }
         const info = plist.parse(bytes.toString("utf8")) as Record<string, unknown>;
         if (mutation === "missing-plist-bundle-id") delete info.CFBundleIdentifier;
+        if (mutation === "duplicate-parent-plist-bundle-id") info.CFBundleIdentifier = R5_APP_STORE_BUNDLE_ID;
         if (mutation === "wrong-plist-bundle-id") info.CFBundleIdentifier = "com.github.Electron";
         if (mutation === "missing-plist-team-id") delete info.ElectronTeamID;
         if (mutation === "wrong-plist-team-id") info.ElectronTeamID = "WRONGTEAMID";
@@ -1294,7 +1300,7 @@ describe("MAS development gate coordinator", () => {
         }
         return {
           ...result,
-          stdout: result.stdout.replace("Identifier=com.meetless.app", "Identifier=com.github.Electron"),
+          stdout: result.stdout.replace(`Identifier=${R5_APP_STORE_ELECTRON_BUNDLE_ID}`, "Identifier=com.github.Electron"),
         };
       },
     };
@@ -1878,7 +1884,7 @@ describe("MAS development gate coordinator", () => {
     await writeFile(path.join(packageSource, "Contents", "Helpers", "Electron.app", "Contents", "Info.plist"), plist.build({
       CFBundleExecutable: "Electron",
       CFBundleVersion: "41.2.0",
-      CFBundleIdentifier: R5_APP_STORE_BUNDLE_ID,
+      CFBundleIdentifier: R5_APP_STORE_ELECTRON_BUNDLE_ID,
       ElectronTeamID: R5_APP_STORE_TEAM_ID,
     }), { mode: 0o600 });
     const manifestPath = path.join(base, "app-store-development-manifest.json");
@@ -1890,7 +1896,7 @@ describe("MAS development gate coordinator", () => {
       signature: {
         nestedMachO: [{
           path: "Contents/Helpers/Electron.app/Contents/MacOS/Electron",
-          identifier: R5_APP_STORE_BUNDLE_ID,
+          identifier: R5_APP_STORE_ELECTRON_BUNDLE_ID,
         }],
       },
     };
@@ -2008,7 +2014,7 @@ describe("MAS development gate coordinator", () => {
         }
       },
     };
-    let launchElectronIdentifier = R5_APP_STORE_BUNDLE_ID;
+    let launchElectronIdentifier = R5_APP_STORE_ELECTRON_BUNDLE_ID;
     const launchElectronSignatureText = () => [
       `Identifier=${launchElectronIdentifier}`,
       `TeamIdentifier=${R5_APP_STORE_TEAM_ID}`,
@@ -2070,10 +2076,10 @@ describe("MAS development gate coordinator", () => {
     } catch (error) {
       launchIdentityFailure = error;
     } finally {
-      launchElectronIdentifier = R5_APP_STORE_BUNDLE_ID;
+      launchElectronIdentifier = R5_APP_STORE_ELECTRON_BUNDLE_ID;
     }
     expect(launchIdentityFailure).toMatchObject({ cause: expect.any(Error) });
-    expect(String(launchIdentityFailure?.cause?.message)).toMatch(/signature identifier is com\.github\.Electron, expected com\.meetless\.app/);
+    expect(String(launchIdentityFailure?.cause?.message)).toMatch(/signature identifier is com\.github\.Electron, expected com\.meetless\.app\.electron/);
     expect(identityFailureLaunchCalled).toBe(false);
     expect(identityFailureHandoffWaited).toBe(false);
     await expect(lstat(handoffPath)).rejects.toMatchObject({ code: "ENOENT" });
@@ -2611,7 +2617,7 @@ describe("MAS development gate coordinator", () => {
     const { bundlePath: bundle, manifestPath } = fixture;
     const fixtureManifest = JSON.parse((await fixture.adapters.readSecureFile(manifestPath, "fixture manifest")).toString("utf8"));
     expect(fixtureManifest.signature.nestedMachO.find((entry: { path: string }) => entry.path === "Contents/Helpers/Electron.app/Contents/MacOS/Electron")).toMatchObject({
-      identifier: R5_APP_STORE_BUNDLE_ID,
+      identifier: R5_APP_STORE_ELECTRON_BUNDLE_ID,
     });
     expect(fixtureManifest.signature.nestedMachO.find((entry: { path: string }) => entry.path.endsWith("Electron Helper.app/Contents/MacOS/Electron Helper"))).toMatchObject({
       identifier: "com.github.Electron.helper",
