@@ -796,6 +796,33 @@ Review or public release is inferred from this processing result.
   Current Chrome ASC session/internal group access verified, with only build1
   assigned; no export/group changes before build2 processing completes.
 
+- Apple API now exposes exact build2 as VALID (same macOS 1.0 pre-release),
+  but upload and beta/internal state remain PROCESSING at 06:00:54Z; Chrome UI
+  still withholds build details/export/group controls. A documented official
+  build PATCH attempted the same owner-approved effective encryption exemption
+  as build1, after verifying app/version/VALID and current null value. Apple
+  returned 403: the current API key does not allow this mutation. Fresh GET
+  confirmed null unchanged. Preserve `approved-export-result.json`; no key
+  privilege change or API retry is authorized/needed. Existing authenticated
+  Chrome UI remains the intended route after Apple exposes controls.
+
+- At 2026-09-15T06:04:05.820Z Apple upload state became COMPLETE, exact
+  build2 remains VALID, no errors/warnings; both beta states are now
+  MISSING_EXPORT_COMPLIANCE. Lead ACCEPTS upload/binary processing for this
+  exact candidate only. Existing authorized Chrome operator is applying the
+  unchanged approved encryption answers and existing internal-group assignment.
+  Neither settings save nor TestFlight availability/launch is inferred yet.
+
+- Chrome operator saved the same owner-approved export answers for exact
+  build2 (standard encryption outside/alongside OS, France No) and assigned it
+  to existing Meetless Internal. Independent API at 06:09:17–19Z confirms
+  usesNonExemptEncryption false, IN_BETA_TESTING, upload COMPLETE/binary VALID,
+  internal group with both builds and exactly the same intended installed tester.
+  Lead ACCEPTS this distribution handoff only; `testflight_capture` is authorized
+  to perform the already-approved same-Mac update after fresh quiescence and
+  verify actual Apple identity/receipt before TestFlight Open. All snapshots and
+  recording/runtime data must remain preserved; launch/IPC proof is pending.
+
 Next: resolve and verify the actual Apple-distributed launch path, then resume
 screenshots and #15/#16/#20 evidence with preserved recording data. TestFlight
 and App Review purchases use the isolated Apple Sandbox route; only verified
