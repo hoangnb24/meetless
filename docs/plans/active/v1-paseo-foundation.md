@@ -622,12 +622,23 @@ Review or public release is inferred from this processing result.
   was asked to accept the original email invitation on this Mac. This is the
   current blocker to Apple-distributed installation/capture, not backup readiness.
 
+- ASC App Privacy operator saved all seven reviewed data types. Independent
+  reviewer inspected a separate Chrome tab: seven persisted cards, each App
+  Functionality / Linked Yes, no tracking section, zero remaining Set Up,
+  correct final Privacy URL. Publish enabled but untouched. Lead ACCEPTS
+  persisted draft fields only. Evidence: `app-privacy-staging-readback.json`
+  under the ignored upload evidence directory; reviewed proposal hash above
+  still identifies the staged content (subsequent source status text updated).
+  Named-provider evidence review remains before final Publish readiness.
+
 Next: the owner can accept the internal TestFlight invitation. Preserve the
 installed development app/data before testing, then continue #15/#16/#20 live evidence and
 #14/#17 release readiness. TestFlight and
 App Review purchases use the isolated Apple Sandbox route; only verified Apple
 PRODUCTION transactions can establish production billing evidence. Do not
-replace the installed development app or its data to run a store candidate.
+reset or delete existing recording data. Owner-authorized app replacement may
+proceed after the accepted backup and TestFlight invitation gate; retain backup
+and recheck stopped state before installation.
 Website #28 final-domain HTTPS is accepted and URLs handed to #17. Complete
 remaining metadata/screenshots/App Privacy gates; the three ASC URL fields
 are already saved and independently verified.

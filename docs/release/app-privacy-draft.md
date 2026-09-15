@@ -1,7 +1,8 @@
 # Meetless App Privacy — bản nháp đề xuất
 
-**Trạng thái:** bản nháp để rà soát và điền App Store Connect; chưa gửi hoặc
-Publish khai báo cho Apple.
+**Trạng thái:** đã lưu đủ 7 loại dữ liệu trong bản nháp App Store Connect;
+reviewer độc lập xác nhận các trường đã lưu. Chưa bấm Publish. Việc đối chiếu
+điều khoản provider và rà soát trước Publish vẫn còn riêng bên dưới.
 
 **Đối tượng rà soát:** macOS Meetless 1.0 (1), packaged candidate từ source
 commit 41cfc34382f95dcf3b08fca74347cccb673b15be. Bản nháp này dùng inventory

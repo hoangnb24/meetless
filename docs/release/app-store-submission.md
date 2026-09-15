@@ -190,10 +190,11 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
 - **[OWNER INPUT] App pricing, tax category, Paid Applications Agreement và
   tax/banking status:** xác nhận app miễn phí kèm Premium hay có giá tải riêng,
   rồi hoàn tất các mục business tương ứng.
-- **[OWNER INPUT] App Privacy questionnaire:** legal/product owner phân loại
-  dữ liệu, mục đích, linkage, tracking, retention và deletion cho audio,
-  transcript/chat/citations, cloud transcription, subscription state, device
-  enrollment/authentication và diagnostics theo đúng binary cuối.
+- **App Privacy đã lưu bản nháp:** 7 loại dữ liệu tại
+  [bảng khai đã rà soát](app-privacy-draft.md), đều App Functionality, Linked Yes,
+  Tracking No. Reviewer độc lập xác nhận đủ 7 mục trên ASC, không còn Set Up
+  và Privacy URL đúng. Chưa Publish; tiếp tục đối chiếu provider trước khi
+  trình owner xác nhận khai báo cuối.
 - **[OWNER INPUT] Wording đồng ý ghi âm và xử lý cloud:** duyệt hướng dẫn phù
   hợp pháp lý cho việc ghi microphone/system audio và gửi recording sau thao tác
   Transcribe. Product contract không thay cho tư vấn pháp lý theo từng vùng.
