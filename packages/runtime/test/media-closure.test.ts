@@ -98,7 +98,7 @@ async function preparedMediaFixture(layout: "mas" | "direct") {
   const contract = layout === "mas" ? macAppStoreInstallationContract() : MACOS_INSTALLATION_CONTRACT;
   const contractBytes = layout === "mas" ? macAppStoreInstallationContractBytes() : installationContractBytes();
   const marker = (layout === "mas" ? macAppStorePackagedMarker : packagedMarker)({
-    paseoCommit: "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc",
+    paseoCommit: "249539c7446f16c7ed2f07abb89be2065b732bed",
   });
   await mkdir(packageRoot, { recursive: true });
   await writeFile(path.join(packageRoot, "installation-contract.json"), contractBytes);
@@ -504,7 +504,7 @@ async function packagedResourceFixture(): Promise<{ root: string; packageRoot: s
     schema: "MEETLESS_MACOS_PACKAGE v2",
     target: "macos-arm64",
     bundleIdentifier: "com.meetless.app",
-    paseoCommit: "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc",
+    paseoCommit: "249539c7446f16c7ed2f07abb89be2065b732bed",
     listen: "127.0.0.1:16777",
     rendererOrigin: "http://127.0.0.1:18082",
     installationContract: "installation-contract.json",

@@ -322,6 +322,66 @@ describe("production recording UI status delivery", () => {
     }));
   });
 
+  test("desktop focus refreshes a Settings grant and revocation without requesting or starting capture", async () => {
+    let allowed = false;
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({
+      microphone: "authorized", systemAudio: allowed ? "authorized" : "denied",
+    }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    const events = new EventTarget();
+    const remove = vi.fn(events.removeEventListener.bind(events));
+    const invoke = vi.fn(async (command: string, _args?: Record<string, unknown>) => command === "open_local_daemon_transport" ? "focus-session" : undefined);
+    vi.stubGlobal("window", {
+      location: { href: rendererHref }, addEventListener: events.addEventListener.bind(events), removeEventListener: remove,
+      paseoDesktop: { platform: "darwin", invoke, events: { on: async () => () => undefined } },
+    });
+    await act(async () => { renderer = create(<RecordingProvider enabled><ConnectedPermissionProbe /></RecordingProvider>); });
+    expect(renderer!.root.findByType(ProbeView).props.state.permissions.systemAudio).toBe("denied");
+    allowed = true;
+    await act(async () => { events.dispatchEvent(new Event("focus")); });
+    expect(renderer!.root.findByType(ProbeView).props.state.permissions.systemAudio).toBe("authorized");
+    allowed = false;
+    await act(async () => { events.dispatchEvent(new Event("focus")); });
+    expect(renderer!.root.findByType(ProbeView).props.state.permissions.systemAudio).toBe("denied");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const call of fetchMock.mock.calls) expect(call).toEqual(["/__meetless/capture-permissions", { method: "GET", cache: "no-store" }]);
+    const commands = invoke.mock.calls.filter(([command]) => command === "send_local_daemon_transport_message")
+      .map(([, args]) => JSON.parse(String(args?.text)).command);
+    expect(commands).toEqual(["status"]);
+    await act(async () => { renderer!.unmount(); });
+    renderer = null;
+    expect(remove).toHaveBeenCalledWith("focus", expect.any(Function));
+  });
+
+  test("older permission responses and failures cannot overwrite a newer focus recheck", async () => {
+    const responses: Array<{ resolve(value: unknown): void; reject(reason: Error): void }> = [];
+    vi.stubGlobal("fetch", vi.fn(() => new Promise((resolve, reject) => responses.push({ resolve, reject }))));
+    const events = new EventTarget();
+    vi.stubGlobal("window", {
+      location: { href: rendererHref }, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events),
+      paseoDesktop: { platform: "darwin", invoke: async (command: string) => command === "open_local_daemon_transport" ? "ordered-session" : undefined, events: { on: async () => () => undefined } },
+    });
+    const reply = (systemAudio: string) => ({ ok: true, json: async () => ({ microphone: "authorized", systemAudio }) });
+    await act(async () => { renderer = create(<RecordingProvider enabled><ConnectedPermissionProbe /></RecordingProvider>); });
+    await act(async () => { responses[0]!.resolve(reply("denied")); });
+    const state = () => renderer!.root.findByType(ProbeView).props.state.permissions;
+    await act(async () => { events.dispatchEvent(new Event("focus")); });
+    await act(async () => { events.dispatchEvent(new Event("focus")); });
+    await act(async () => { responses[2]!.resolve(reply("authorized")); });
+    await act(async () => { responses[1]!.resolve(reply("denied")); });
+    expect(state()).toMatchObject({ systemAudio: "authorized", checking: false, error: null });
+    await act(async () => { events.dispatchEvent(new Event("focus")); });
+    await act(async () => { events.dispatchEvent(new Event("focus")); });
+    await act(async () => { responses[4]!.resolve(reply("denied")); });
+    await act(async () => { responses[3]!.resolve(reply("authorized")); });
+    expect(state()).toMatchObject({ systemAudio: "denied", checking: false, error: null });
+    await act(async () => { events.dispatchEvent(new Event("focus")); });
+    await act(async () => { events.dispatchEvent(new Event("focus")); });
+    await act(async () => { responses[6]!.resolve(reply("authorized")); });
+    await act(async () => { responses[5]!.reject(new Error("older transport failure")); });
+    expect(state()).toMatchObject({ systemAudio: "authorized", checking: false, error: null });
+  });
+
   test("turns initial status transport failure into actionable recheck and recovers", async () => {
     let statusCalls = 0;
     const fetchMock = vi.fn(async (input: string) => {

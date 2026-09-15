@@ -51,8 +51,10 @@ export function RecordingProvider({ enabled, children }: { enabled: boolean; chi
     checking: true,
     error: null,
   });
+  const permissionReadSequence = useRef(0);
 
   const loadPermissions = useCallback(async (operation: "status" | "request" = "status") => {
+    const sequence = ++permissionReadSequence.current;
     setPermissions((current) => ({ ...current, checking: true, error: null }));
     try {
       const response = operation === "request"
@@ -68,11 +70,15 @@ export function RecordingProvider({ enabled, children }: { enabled: boolean; chi
         checking: false,
         error: null,
       };
-      setPermissions(next);
+      // Focus, AppState and manual rechecks can overlap. Only the most recently
+      // initiated read owns the displayed status, including failures.
+      if (sequence === permissionReadSequence.current) setPermissions(next);
       return next;
     } catch (reason) {
       const message = `Capture permission status is unavailable. Recheck to try again. (${describe(reason)})`;
-      setPermissions((current) => ({ ...current, checking: false, error: message }));
+      if (sequence === permissionReadSequence.current) {
+        setPermissions((current) => ({ ...current, checking: false, error: message }));
+      }
       throw new Error(message, { cause: reason });
     }
   }, []);
@@ -100,6 +106,15 @@ export function RecordingProvider({ enabled, children }: { enabled: boolean; chi
       if (state === "active") void loadPermissions().catch(() => undefined);
     });
     return () => subscription.remove();
+  }, [enabled, loadPermissions]);
+
+  useEffect(() => {
+    if (!enabled || typeof window === "undefined" || !window.addEventListener) return;
+    // On desktop, switching to System Settings need not hide the web document,
+    // so React Native Web's visibility-based AppState may stay active.
+    const recheck = () => { void loadPermissions().catch(() => undefined); };
+    window.addEventListener("focus", recheck);
+    return () => window.removeEventListener("focus", recheck);
   }, [enabled, loadPermissions]);
 
   useEffect(() => {

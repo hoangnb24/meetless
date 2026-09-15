@@ -19,7 +19,7 @@ import {
 } from "../../../scripts/lib/macos-app-store-package-contract.mjs";
 
 const FIXTURE_HOME = "/Users/config-fixture";
-const FIXTURE_PASEO_COMMIT = "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc";
+const FIXTURE_PASEO_COMMIT = "249539c7446f16c7ed2f07abb89be2065b732bed";
 const fixtureRoots: string[] = [];
 
 afterEach(async () => {

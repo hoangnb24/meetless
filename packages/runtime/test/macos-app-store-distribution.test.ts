@@ -139,7 +139,7 @@ it("rebuilds real incremental TypeScript output after removing its cache outside
 }, 15000);
 
 describe("actual Apple submission requirements", () => {
-  it("binds the icon only for distribution package inputs, preserving the development MAS shape", () => {
+  it("binds approved branding for both development and distribution package inputs", () => {
     const electronArchiveSource = {
       schema: "MEETLESS_MAS_ELECTRON_ARCHIVE_SOURCE v1",
       archiveName: MACOS_APP_STORE_CONTRACT.electron.archiveName,
@@ -150,7 +150,7 @@ describe("actual Apple submission requirements", () => {
     const distribution = buildMacOSPackageInputSpecs({ electronLayout: MACOS_PACKAGE_ELECTRON_LAYOUT_MAS, distribution: true, electronArchiveSource });
     const developmentNative = development.find(({ id }) => id === "meetless-native-sources");
     const distributionNative = distribution.find(({ id }) => id === "meetless-native-sources");
-    expect(developmentNative?.artifactPathPrefixes).not.toContain("Contents/Resources/Meetless.icns");
+    expect(developmentNative?.artifactPathPrefixes).toContain("Contents/Resources/Meetless.icns");
     expect(distributionNative?.artifactPathPrefixes).toContain("Contents/Resources/Meetless.icns");
   });
   it("embeds Productivity category and a named ICNS icon in distribution metadata", () => {

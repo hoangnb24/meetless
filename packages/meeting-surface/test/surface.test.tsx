@@ -237,6 +237,9 @@ describe("global recording strip", () => {
     await act(async () => { renderer!.root.findByProps({ testID: "record-meeting-entry" }).props.onPress(); });
     expect(renderer!.root.findByProps({ testID: "permission-guidance-microphone" })).toBeTruthy();
     expect(renderer!.root.findByProps({ testID: "permission-guidance-systemAudio" })).toBeTruthy();
+    const recovery = renderer!.root.findAllByProps({ testID: "permission-systemAudio-recovery" })[0];
+    expect(recovery.props.children).toContain("earlier installed version");
+    expect(recovery.props.children).toContain("If macOS asks you to quit and reopen");
     expect(renderer!.root.findByProps({ testID: "permission-settings-microphone" })).toBeTruthy();
     expect(renderer!.root.findByProps({ testID: "permission-recheck-systemAudio" })).toBeTruthy();
     const start = renderer!.root.findByProps({ testID: "recording-start" });
