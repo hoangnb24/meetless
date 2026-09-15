@@ -211,6 +211,7 @@ describe("Meetless plugin contribution", () => {
       const premiumAccess = { entitlement: "premium", status: "active", packages: [], reason: null } as const;
       const premiumRecover = vi.spyOn(NativePremiumAccessPort.prototype, "recover").mockResolvedValue(null);
       const premiumStatus = vi.spyOn(NativePremiumAccessPort.prototype, "status").mockResolvedValue(premiumAccess);
+      const premiumTransaction = vi.spyOn(NativePremiumAccessPort.prototype, "readSignedTransaction").mockResolvedValue("opaque-apple-proof");
       const identity = vi.spyOn(UnixSocketManagedAuthTransport.prototype, "identity").mockResolvedValue({
         deviceId: "default-managed-device",
         keyId: "default-managed-key",
@@ -259,6 +260,7 @@ describe("Meetless plugin contribution", () => {
       expect(convexCalls.every((call) => !call.body.includes("OPENAI_API_KEY"))).toBe(true);
       expect(premiumRecover).toHaveBeenCalled();
       expect(premiumStatus).toHaveBeenCalled();
+      expect(premiumTransaction).toHaveBeenCalled();
       expect(identity).toHaveBeenCalled();
       expect(signChallenge).toHaveBeenCalled();
       await cleanup();
