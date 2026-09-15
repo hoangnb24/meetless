@@ -965,6 +965,11 @@ func meetlessMayMigrateLegacyIdentity(
 // from com.meetless.signing-smoke to the accepted production app identifier.
 private let meetlessObservedSubmissionDesignatedRequirement = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[subject.CN] = \"Apple Distribution: Long Le (63M98WD275)\" and certificate 1[field.1.2.840.113635.100.6.2.1] exists"
 
+// Observed with codesign -d -r- on the independently verified owner-approved
+// MAS development app retained before the TestFlight replacement. This exact
+// certificate-1 form is distinct from the current packaging-policy form below.
+private let meetlessObservedDevelopmentDesignatedRequirement = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[subject.CN] = \"Apple Development: Long Le (335C7MY4H4)\" and certificate 1[field.1.2.840.113635.100.6.2.1] exists"
+
 private func canonicalSigningRequirement(_ source: String) -> String? {
   guard !source.isEmpty, source.utf8.count <= 65_536 else { return nil }
   var requirement: SecRequirement?
@@ -988,6 +993,44 @@ func meetlessMayMigrateSubmissionIdentity(
         let previous = canonicalSigningRequirement(previousRequirement) else { return false }
   return [meetlessObservedSubmissionDesignatedRequirement, meetlessAppStoreDistributionRequirement]
     .compactMap(canonicalSigningRequirement).contains(previous)
+}
+
+struct MeetlessHostIdentityMigrationContext: Equatable {
+  let bundleIdentifier: String
+  let bundlePath: String
+  let bundleRealPath: String
+  let runtimeRoot: String
+}
+
+/// Allows the preserved MAS runtime to advance from the exact approved local
+/// App Store development signer to an Apple-delivered signer. The caller still
+/// rechecks the current bundle's complete signature before publishing identity.
+/// Authority: docs/decisions/0003-meetless-runtime-isolation-and-host-ownership.md,
+/// docs/decisions/0005-mac-app-store-and-revenuecat.md, and the owner-approved
+/// preserved TestFlight replacement recorded in the active release plan.
+func meetlessMayMigrateApprovedDevelopmentIdentity(
+  previous: MeetlessHostIdentityMigrationContext,
+  current: MeetlessHostIdentityMigrationContext,
+  previousRequirement: String,
+  currentRequirement: String,
+  packagedSignaturePolicy: MeetlessPackagedSignaturePolicy?
+) -> Bool {
+  guard packagedSignaturePolicy == .appStoreDistribution,
+        previous.bundleIdentifier == meetlessBundleIdentifier,
+        current.bundleIdentifier == meetlessBundleIdentifier,
+        previous.bundlePath == meetlessInstallPath,
+        previous.bundleRealPath == meetlessInstallPath,
+        current.bundlePath == meetlessInstallPath,
+        current.bundleRealPath == meetlessInstallPath,
+        URL(fileURLWithPath: previous.runtimeRoot).standardizedFileURL.path ==
+          URL(fileURLWithPath: current.runtimeRoot).standardizedFileURL.path,
+        previousRequirement != currentRequirement,
+        let previousCanonical = canonicalSigningRequirement(previousRequirement),
+        canonicalSigningRequirement(currentRequirement) != nil else {
+    return false
+  }
+  return [meetlessAppStoreDevelopmentRequirement, meetlessObservedDevelopmentDesignatedRequirement]
+    .compactMap(canonicalSigningRequirement).contains(previousCanonical)
 }
 
 /// Called only after code signature validation. Apple re-signs Store builds,
@@ -1559,7 +1602,24 @@ final class HostDelegate: NSObject, NSApplicationDelegate {
           currentRequirement: identity.designatedRequirement,
           packagedSignaturePolicy: packagedSignaturePolicy
         )
-        let trustedMigration = sameOwner && (legacyMigration || submissionMigration)
+        let developmentMigration = meetlessMayMigrateApprovedDevelopmentIdentity(
+          previous: MeetlessHostIdentityMigrationContext(
+            bundleIdentifier: previous.bundleIdentifier,
+            bundlePath: previous.bundlePath,
+            bundleRealPath: previous.bundleRealPath,
+            runtimeRoot: previous.configuration.runtimeRoot
+          ),
+          current: MeetlessHostIdentityMigrationContext(
+            bundleIdentifier: identity.bundleIdentifier,
+            bundlePath: identity.bundlePath,
+            bundleRealPath: identity.bundleRealPath,
+            runtimeRoot: configuration.runtimeRoot
+          ),
+          previousRequirement: previous.designatedRequirement,
+          currentRequirement: identity.designatedRequirement,
+          packagedSignaturePolicy: packagedSignaturePolicy
+        )
+        let trustedMigration = sameOwner && (legacyMigration || submissionMigration || developmentMigration)
         if trustedMigration, let packagedSignaturePolicy {
           try assertApprovedPackagedSignature(bundlePath, policy: packagedSignaturePolicy)
         } else {

@@ -673,6 +673,52 @@ Review or public release is inferred from this processing result.
   destructive cleanup. `screenshot_route` owns source diagnosis; root owns
   correction/review coordination. The invitation is no longer the blocker.
 
+- Authorized app-path repair completed: original installed app retained at
+  `backup-EgNIyA/original-installed-Meetless.app`, exact Apple-distributed app
+  renamed to `/Applications/Meetless.app`, same TestFlight CDHash and strict
+  signature verified, no runtime move/reset or re-signing. Explicit-path launch
+  at 2026-09-15T04:49:44Z started MeetlessHost PID 45718, then exited normally
+  at 04:49:48Z without runtime readiness or a new .ips. This is a second startup
+  failure, distinct from the earlier old-Electron crash. System logs include
+  an application-groups entitlement diagnostic; causality is not yet proven.
+  Evidence: backup `path-repair-manifest.json` and ignored upload evidence
+  `testflight-launch-crash/explicit-path-startup-exit.json`.
+  Native startup-guard source diagnosis is assigned to `testflight_host_exit`;
+  independent app-preservation/identity check to `backup_acceptance`. Packaging
+  duplicate-ID correction is assigned to `screenshot_route`, including focused
+  regression validation, without altering sandbox inheritance. Independent
+  reviewer matched retained original to accepted backup using native fingerprint,
+  checked both strict signatures and exact TestFlight identity/receipt presence.
+  Lead ACCEPTS path preservation only; startup remains failed. Manifest hash
+  `24eab2d4f4f95dfe0336a9ac123917f2a153c1551cf9bb7ee65d0b5989e25da`.
+
+- One hypothesis-directed explicit-path LaunchServices retry with separate
+  stdout/stderr capture confirmed the native preflight error: recorded host
+  identity drifted in designated requirement. The secure existing identity
+  records the approved Apple Development signer; current app is Apple
+  TestFlight-signed. Existing migration allowlist omits this transition.
+  Evidence: `backup-EgNIyA/path-launch-diagnostic-20260915T045500Z/open.stderr`.
+  No identity or recording data was deleted/reset. A narrow trusted-update
+  correction must preserve canonical path, runtime ownership and actual
+  signature checks; deleting the guard/state is not an accepted workaround.
+  Reviewer caught that the abstract development validation requirement uses
+  leaf OU, while both the actual preserved approved binary and recorded identity
+  use the exact known development leaf CN plus WWDR certificate extension.
+  Lead re-read the preserved original codesign requirement and requires keeping
+  that real positive input. The narrow accepted migration includes this exact
+  legacy designated requirement, not arbitrary development prefixes or signers;
+  current full signature/Team/app verification remains mandatory. Evidence:
+  `testflight-launch-crash/approved-development-identity.json`.
+
+- Native identity correction is reviewed at two-file diff SHA-256
+  `ac0851cd7ee91fde72a92d41569766aec5c9b23f9ece2814200fdea9b8f46571`.
+  Debug and release native boundary suites passed, as did release test-binary
+  compilation and diff checks. Independent reviewer verified both exact
+  approved development requirement forms, path/runtime/policy negatives, and
+  the unchanged deep signature/Team/app verification before secure atomic
+  identity publication. Lead ACCEPTS this source correction and unit/native
+  proof only; the currently installed Apple build does not contain the fix.
+
 Next: resolve and verify the actual Apple-distributed launch path, then resume
 screenshots and #15/#16/#20 evidence with preserved recording data. TestFlight
 and App Review purchases use the isolated Apple Sandbox route; only verified

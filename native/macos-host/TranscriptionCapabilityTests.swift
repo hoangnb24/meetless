@@ -4537,6 +4537,141 @@ private func testSubmissionIdentityTransition() {
   }
   check(!meetlessMayMigrateSubmissionIdentity(previousRequirement: submission, currentRequirement: store, packagedSignaturePolicy: .appStoreDevelopment), "development target must not migrate submission identity")
   check(!meetlessMayMigrateSubmissionIdentity(previousRequirement: submission, currentRequirement: store, packagedSignaturePolicy: nil), "unpackaged target must not migrate submission identity")
+
+  let approvedDevelopment = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[subject.CN] = \"Apple Development: Long Le (335C7MY4H4)\" and certificate leaf[subject.OU] = \"63M98WD275\""
+  let observedDevelopment = "identifier \"com.meetless.app\" and anchor apple generic and certificate leaf[subject.CN] = \"Apple Development: Long Le (335C7MY4H4)\" and certificate 1[field.1.2.840.113635.100.6.2.1] exists"
+  let testFlight = "anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.25.1] exists and identifier \"com.meetless.app\""
+  let runtimeRoot = "/Users/fixture/Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless"
+  let sameOwner = MeetlessHostIdentityMigrationContext(
+    bundleIdentifier: "com.meetless.app",
+    bundlePath: "/Applications/Meetless.app",
+    bundleRealPath: "/Applications/Meetless.app",
+    runtimeRoot: runtimeRoot
+  )
+  for developmentRequirement in [approvedDevelopment, observedDevelopment] {
+    check(
+      meetlessMayMigrateApprovedDevelopmentIdentity(
+        previous: sameOwner,
+        current: sameOwner,
+        previousRequirement: developmentRequirement,
+        currentRequirement: testFlight,
+        packagedSignaturePolicy: .appStoreDistribution
+      ),
+      "the exact approved App Store development identity may advance to the observed Apple TestFlight requirement"
+    )
+  }
+  check(
+    meetlessMayMigrateApprovedDevelopmentIdentity(
+      previous: sameOwner,
+      current: sameOwner,
+      previousRequirement: observedDevelopment.replacingOccurrences(of: " and ", with: "  and  "),
+      currentRequirement: testFlight,
+      packagedSignaturePolicy: .appStoreDistribution
+    ),
+    "development identity migration must preserve requirement canonicalization"
+  )
+  for previous in [
+    approvedDevelopment.replacingOccurrences(of: "63M98WD275", with: "OTHERTEAM"),
+    observedDevelopment.replacingOccurrences(of: "Long Le (335C7MY4H4)", with: "Other Dev (OTHERTEAM)"),
+    observedDevelopment.replacingOccurrences(of: "com.meetless.app", with: "com.other.app"),
+    observedDevelopment + " or true",
+    "not a valid requirement",
+  ] {
+    check(
+      !meetlessMayMigrateApprovedDevelopmentIdentity(
+        previous: sameOwner,
+        current: sameOwner,
+        previousRequirement: previous,
+        currentRequirement: testFlight,
+        packagedSignaturePolicy: .appStoreDistribution
+      ),
+      "only the exact approved development signer may migrate to Apple-delivered identity"
+    )
+  }
+  let differentRuntime = MeetlessHostIdentityMigrationContext(
+    bundleIdentifier: sameOwner.bundleIdentifier,
+    bundlePath: sameOwner.bundlePath,
+    bundleRealPath: sameOwner.bundleRealPath,
+    runtimeRoot: runtimeRoot + "-other"
+  )
+  check(
+    !meetlessMayMigrateApprovedDevelopmentIdentity(
+      previous: sameOwner,
+      current: differentRuntime,
+      previousRequirement: observedDevelopment,
+      currentRequirement: testFlight,
+      packagedSignaturePolicy: .appStoreDistribution
+    ),
+    "development identity migration must not cross runtime roots"
+  )
+  let differentPreviousPath = MeetlessHostIdentityMigrationContext(
+    bundleIdentifier: sameOwner.bundleIdentifier,
+    bundlePath: "/Users/fixture/Meetless.app",
+    bundleRealPath: "/Users/fixture/Meetless.app",
+    runtimeRoot: runtimeRoot
+  )
+  check(
+    !meetlessMayMigrateApprovedDevelopmentIdentity(
+      previous: differentPreviousPath,
+      current: sameOwner,
+      previousRequirement: observedDevelopment,
+      currentRequirement: testFlight,
+      packagedSignaturePolicy: .appStoreDistribution
+    ),
+    "development identity migration must not cross the canonical installed path"
+  )
+  let differentCurrentPath = MeetlessHostIdentityMigrationContext(
+    bundleIdentifier: sameOwner.bundleIdentifier,
+    bundlePath: "/Users/fixture/Meetless.app",
+    bundleRealPath: "/Users/fixture/Meetless.app",
+    runtimeRoot: runtimeRoot
+  )
+  check(
+    !meetlessMayMigrateApprovedDevelopmentIdentity(
+      previous: sameOwner,
+      current: differentCurrentPath,
+      previousRequirement: observedDevelopment,
+      currentRequirement: testFlight,
+      packagedSignaturePolicy: .appStoreDistribution
+    ),
+    "development identity migration must not publish an identity for a noncanonical current path"
+  )
+  let differentCurrentBundle = MeetlessHostIdentityMigrationContext(
+    bundleIdentifier: "com.other.app",
+    bundlePath: sameOwner.bundlePath,
+    bundleRealPath: sameOwner.bundleRealPath,
+    runtimeRoot: runtimeRoot
+  )
+  check(
+    !meetlessMayMigrateApprovedDevelopmentIdentity(
+      previous: sameOwner,
+      current: differentCurrentBundle,
+      previousRequirement: observedDevelopment,
+      currentRequirement: testFlight,
+      packagedSignaturePolicy: .appStoreDistribution
+    ),
+    "development identity migration must not cross the bundle identifier"
+  )
+  check(
+    !meetlessMayMigrateApprovedDevelopmentIdentity(
+      previous: sameOwner,
+      current: sameOwner,
+      previousRequirement: observedDevelopment,
+      currentRequirement: testFlight,
+      packagedSignaturePolicy: .appStoreDevelopment
+    ),
+    "development identity migration must require the App Store distribution policy"
+  )
+  check(
+    !meetlessMayMigrateApprovedDevelopmentIdentity(
+      previous: sameOwner,
+      current: sameOwner,
+      previousRequirement: observedDevelopment,
+      currentRequirement: "not a valid requirement",
+      packagedSignaturePolicy: .appStoreDistribution
+    ),
+    "development identity migration must reject an unparseable current requirement"
+  )
 }
 
 private func testDeliveredStoreSigningIdentity() {
