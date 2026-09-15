@@ -69,12 +69,39 @@ func testProviderFolderAccessPersistence() throws {
   let direct = try meetlessProjectProviderEnvironment(ambient, runtimeRoot: root.appendingPathComponent("development").path, grants: [:])
   try require(direct["CODEX_HOME"] == "existing-override" && direct["HOME"] == home.path, "direct/development lookup must remain unchanged")
   try require(direct["MEETLESS_PROVIDER_ENV"] == nil, "ambient grant projection must not survive")
+  let directWithGrant = try meetlessProjectProviderEnvironment(
+    ambient,
+    runtimeRoot: root.appendingPathComponent("development").path,
+    grants: ["codex": ["CODEX_HOME": codex.path]]
+  )
+  try require(directWithGrant["CODEX_HOME"] == "existing-override" && directWithGrant["MEETLESS_PROVIDER_ENV"] == nil, "direct installations must not project a sandbox grant")
   let directPackaged = try meetlessProjectProviderEnvironment(ambient, runtimeRoot: home.appendingPathComponent("Library/Application Support/Meetless").path, grants: [:])
   try require(directPackaged["CODEX_HOME"] == "existing-override", "direct packaged override must remain unchanged")
   let masRoot = home.appendingPathComponent("Library/Containers/com.meetless.app/Data/Library/Application Support/Meetless").path
   let mas = try meetlessProjectProviderEnvironment(ambient, runtimeRoot: masRoot, grants: ["codex": ["CODEX_HOME": codex.path]])
   try require(mas["CODEX_HOME"] == nil && mas["MEETLESS_PROVIDER_ENV"] != nil, "MAS must project only the restored scoped override")
   try require(mas["HOME"] == home.path && mas["PASEO_HOME"] == "isolated-paseo", "provider grant must preserve application state roots")
+  let distribution = try meetlessProjectProviderEnvironment(
+    ambient,
+    runtimeRoot: masRoot,
+    grants: ["codex": ["CODEX_HOME": codex.path]],
+    bundleInfo: ["MeetlessStoreBackendRouting": true]
+  )
+  try require(distribution["CODEX_HOME"] == nil && distribution["MEETLESS_PROVIDER_ENV"] == mas["MEETLESS_PROVIDER_ENV"], "TestFlight distribution must project the same restored scoped provider grant")
+  let distributionWithoutGrant = try meetlessProjectProviderEnvironment(
+    ambient,
+    runtimeRoot: masRoot,
+    grants: [:],
+    bundleInfo: ["MeetlessStoreBackendRouting": true]
+  )
+  try require(distributionWithoutGrant["CODEX_HOME"] == nil && distributionWithoutGrant["MEETLESS_PROVIDER_ENV"] == nil, "TestFlight distribution must not retain an ambient Codex override without a restored grant")
+  let unknownRoot = try meetlessProjectProviderEnvironment(
+    ambient,
+    runtimeRoot: root.appendingPathComponent("unknown").path,
+    grants: ["codex": ["CODEX_HOME": codex.path]],
+    bundleInfo: ["MeetlessStoreBackendRouting": true]
+  )
+  try require(unknownRoot["CODEX_HOME"] == "existing-override" && unknownRoot["MEETLESS_PROVIDER_ENV"] == nil, "unknown runtime roots must not project provider grants")
   try require(MeetlessUnrestrictedProviderAccess().status().providers.allSatisfy { $0["status"] == "ready" }, "direct host requires no sandbox folder prompt")
   let panelDelegate = MeetlessProviderFolderPanelDelegate(expected: codex, realHome: home)
   try panelDelegate.panel(NSObject(), validate: codex)

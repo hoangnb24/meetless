@@ -26,10 +26,15 @@ struct MeetlessUnrestrictedProviderAccess: MeetlessProviderAccess {
   func request(provider: String, authorized: () -> Bool) -> MeetlessProviderAccessResult { status() }
 }
 
-func meetlessProjectProviderEnvironment(_ source: [String: String], runtimeRoot: String, grants: [String: [String: String]]) throws -> [String: String] {
+func meetlessProjectProviderEnvironment(
+  _ source: [String: String],
+  runtimeRoot: String,
+  grants: [String: [String: String]],
+  bundleInfo: [String: Any]? = Bundle.main.infoDictionary
+) throws -> [String: String] {
   var environment = source
   environment.removeValue(forKey: "MEETLESS_PROVIDER_ENV")
-  guard meetlessSignaturePolicy(forRuntimeRoot: runtimeRoot) == .appStoreDevelopment else { return environment }
+  guard let policy = meetlessSignaturePolicy(forRuntimeRoot: runtimeRoot, bundleInfo: bundleInfo), policy.isAppStore else { return environment }
   // Capture the original override in the manager, then forward it only via a restored grant.
   environment.removeValue(forKey: "CODEX_HOME")
   if !grants.isEmpty {
