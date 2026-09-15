@@ -1095,8 +1095,22 @@ no executable and is **not** a full signed candidate or production acceptance.
 Extracted runtime PNG SHA-256 is
 `581180daa9430d86573cd5539559be87560b66bd26c5f65737d18b12da32e042`.
 
-Next: complete independent parent-source review, then integrate with #30 for
-one coordinated candidate. Validate the actual signed package, installed Apple
+Independent parent reviewer and task Lead ACCEPTS **bounded source readiness**
+for integration `2b69c1ba4e3f7bf027193996d5cb9efcf0d591d6`, branding
+`d92db143f3fa780bfa69ab2e625d921aec77a65f`, and host/signed-metadata follow-up
+`e0135899116a0c165ffcd4e3b20adce0af70562a`. Reviewer found no blocking source
+defect and independently ran six files: 113 tests passed, one existing skip.
+Author reran the two affected branding/development files at final source:
+23 tests passed. The development host installer also copies its declared ICNS
+and includes it in the existing source hash; the installer was not executed.
+Accepted source snapshot at `e013589` is
+`4b0a6b453f6a7319566d3b0adc09b0603df912252ebb058399cb9ec8d63c035d`.
+This acceptance does not cover a full signed candidate, live installation or
+Apple-distributed UI. Parent branch is `codex/issue-31-dock-branding`; fork
+branch is published, and local parent commits are available for coordination.
+
+Next: integrate with the independently accepted #30 source for one coordinated
+candidate. Validate the actual signed package, installed Apple
 build, Dock at launch/ready and hover, app menu, Finder/bundle icon, TestFlight
 branding, update from build 3 and quit/relaunch. Fresh profile/install requires
 an authorized environment. Capture only the relevant UI and correlate the Dock
