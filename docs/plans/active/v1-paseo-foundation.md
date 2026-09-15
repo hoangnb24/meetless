@@ -903,6 +903,27 @@ Review or public release is inferred from this processing result.
   Builder pauses retries while native author diagnoses the actual test child
   and producer environment. No test bypass, source relaxation or runtime reset.
 
+- Controlled rerun of the same build3 release test binary under the same Node
+  parent/cwd/environment passed; retain the failed producer attempt. Source
+  review locates EPIPE in the deliberately unauthorized wrong-peer case: native
+  server validates peer before reading, sends invalid response and closes, so
+  client writing can observe EPIPE. A passing rerun alone is not timing proof.
+  Lead authorizes a test-only correction scoped to that wrong-peer EPIPE or
+  existing false-response outcome, with an authorized request afterward proving
+  server health. Other errors and all authorized transport failures remain
+  fatal; production server/auth/helper behavior is unchanged. Independent review
+  and new exact debug/release proof precede a newly frozen source and retry.
+
+- Independent reviewer and Lead ACCEPT the test-only correction at diff SHA-256
+  `8859144dbe118d7408510fc8e73af229f85a92f77081b4a15ae9669d3e6f00ce`:
+  only wrong-peer POSIX EPIPE is accepted alongside the existing explicit denial;
+  a trigger-gated, fresh authorized follow-up must match its request ID, response
+  type and empty registration state. Production transport/auth is unchanged.
+  Author rebuilt Debug and Release native tests on these exact bytes; both suites
+  passed under a Node parent with the producer cache/node-source environment.
+  This accepts the bounded test repair and a new build3 producer attempt only;
+  actual package, Apple distribution and idle CPU acceptance remain pending.
+
 Next: produce, validate and distribute build3, then verify TestFlight Open, idle
 CPU and data preservation to resolve #29. Resume screenshots and #15/#16/#20
 evidence after the updated app is healthy. TestFlight

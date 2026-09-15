@@ -939,6 +939,29 @@ private func runNativeProcessFixture(_ role: String) {
         try? data.write(to: URL(fileURLWithPath: diagnosticResponsePath), options: .atomic)
       }
     }
+    if let followupTriggerPath = environment["MEETLESS_NATIVE_PROCESS_FOLLOWUP_TRIGGER"],
+       let followupResponsePath = environment["MEETLESS_NATIVE_PROCESS_FOLLOWUP_RESPONSE"],
+       let response,
+       let generation = (response["generation"] as? NSNumber)?.uint64Value,
+       let ownerToken = response["ownerToken"] as? String {
+      let deadline = Date().addingTimeInterval(5)
+      while !FileManager.default.fileExists(atPath: followupTriggerPath), Date() < deadline {
+        usleep(10_000)
+      }
+      if FileManager.default.fileExists(atPath: followupTriggerPath) {
+        let followupRequest: [String: Any] = [
+          "version": meetlessHostProcessProtocolVersion,
+          "requestId": "transport-authorized-followup",
+          "operation": "registrationStatus",
+          "generation": NSNumber(value: generation),
+          "ownerToken": ownerToken,
+        ]
+        if let followup = try? requestNativeHostProcessProtocol(socketPath: socketPath, request: followupRequest),
+           let data = try? JSONSerialization.data(withJSONObject: followup) {
+          try? data.write(to: URL(fileURLWithPath: followupResponsePath), options: .atomic)
+        }
+      }
+    }
     while true { sleep(1) }
   }
   if role != "capture-helper",
@@ -1097,12 +1120,16 @@ private func testNativeProcessProtocolTransport() throws {
   defer { capability.stop() }
   let responsePath = root.appendingPathComponent("desktop-attestation.json").path
   let diagnosticResponsePath = root.appendingPathComponent("registration-diagnostic.json").path
+  let followupTriggerPath = root.appendingPathComponent("authorized-followup.trigger").path
+  let followupResponsePath = root.appendingPathComponent("authorized-followup.json").path
   var environment = ProcessInfo.processInfo.environment
   environment["MEETLESS_NATIVE_PROCESS_FIXTURE"] = "desktop"
   environment["MEETLESS_NATIVE_PROCESS_PROTOCOL_ONLY"] = "1"
   environment["MEETLESS_NATIVE_PROCESS_PROTOCOL_SOCKET"] = socketPath
   environment["MEETLESS_NATIVE_PROCESS_PROTOCOL_RESPONSE"] = responsePath
   environment["MEETLESS_NATIVE_PROCESS_DIAGNOSTIC_RESPONSE"] = diagnosticResponsePath
+  environment["MEETLESS_NATIVE_PROCESS_FOLLOWUP_TRIGGER"] = followupTriggerPath
+  environment["MEETLESS_NATIVE_PROCESS_FOLLOWUP_RESPONSE"] = followupResponsePath
   let desktop = Process()
   desktop.executableURL = URL(fileURLWithPath: executable)
   desktop.arguments = [runtimeCli, "desktop"]
@@ -1153,16 +1180,51 @@ private func testNativeProcessProtocolTransport() throws {
       check(!diagnosticText.contains(sentinel), "transport diagnostic must not expose sentinel \(sentinel)")
     }
   }
-  let wrongPeer = try requestNativeHostProcessProtocol(
-    socketPath: socketPath,
-    request: [
-      "version": meetlessHostProcessProtocolVersion,
-      "requestId": "transport-wrong-peer",
-      "operation": "desktopAttestation",
-      "challenge": "transport-wrong-peer-challenge",
-    ]
+  var wrongPeer: [String: Any]?
+  do {
+    wrongPeer = try requestNativeHostProcessProtocol(
+      socketPath: socketPath,
+      request: [
+        "version": meetlessHostProcessProtocolVersion,
+        "requestId": "transport-wrong-peer",
+        "operation": "desktopAttestation",
+        "challenge": "transport-wrong-peer-challenge",
+      ]
+    )
+  } catch {
+    let nsError = error as NSError
+    guard nsError.domain == NSPOSIXErrorDomain, nsError.code == Int(EPIPE) else { throw error }
+  }
+  check(
+    wrongPeer == nil || wrongPeer?["ok"] as? Bool == false,
+    "a different socket peer must be rejected before desktop attestation"
   )
-  check(wrongPeer["ok"] as? Bool == false, "a different socket peer must be rejected before desktop attestation")
+  guard !FileManager.default.fileExists(atPath: followupResponsePath) else {
+    throw NSError(
+      domain: "MeetlessHostTests",
+      code: 4,
+      userInfo: [NSLocalizedDescriptionKey: "authorized follow-up response unexpectedly exists before its trigger"]
+    )
+  }
+  try Data([1]).write(to: URL(fileURLWithPath: followupTriggerPath), options: .atomic)
+  let followupDeadline = Date().addingTimeInterval(5)
+  var followupResponse: [String: Any]?
+  while Date() < followupDeadline {
+    if let data = try? Data(contentsOf: URL(fileURLWithPath: followupResponsePath)),
+       let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+      followupResponse = decoded
+      break
+    }
+    usleep(10_000)
+  }
+  let followupRegistrations = followupResponse?["registrations"] as? [[String: Any]]
+  check(
+    followupResponse?["ok"] as? Bool == true &&
+      followupResponse?["type"] as? String == "host.process.registrations" &&
+      followupResponse?["requestId"] as? String == "transport-authorized-followup" &&
+      followupRegistrations?.isEmpty == true,
+    "the already-authorized desktop child must still complete a follow-up request"
+  )
   capability.stop()
   waitForNativeProcessFixtureExit(desktop.processIdentifier)
   check(state.snapshot() == nil, "capability shutdown must release the launch generation")
