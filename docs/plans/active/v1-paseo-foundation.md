@@ -160,8 +160,12 @@ TestFlight upload has been accepted.
   supplies `altool` for validation/upload. Available local Apple key is an
   In-App Purchase key, not an App Store Connect upload key. Root prepared the
   unsubmitted `Meetless Upload 2026-09-14` Team API key form with Developer role.
-  Creation is pending owner confirmation because this is a new access scope;
-  Apple applies team keys to all apps. No existing RevenueCat/Expo key is changed.
+  Owner explicitly approved the new Developer scope, including team-wide app
+  access. Created `Meetless Upload 2026-09-14`, key ID `V8ZBF889R7`; downloaded
+  once and saved as `keys/AuthKey_V8ZBF889R7.p8`, owner-only and Git-ignored.
+  No existing RevenueCat/Expo/IAP key is changed. ASC recheck still shows No
+  Builds; actual Apple validation of the accepted 1.0/build1 package is running.
+  Evidence: `.artifacts/app-store-upload/20260914-build1/`.
 - Actual Installer smoke output exposed a status wording mismatch in the new
   package validator. Independent reviewer and Lead ACCEPTS correction `2af425e`
   tied to the selected certificate, its installer purpose, fingerprint and Apple
@@ -275,10 +279,51 @@ TestFlight upload has been accepted.
   This acceptance is packaging/signing/provenance only.
   Prior failed proofs remain retained. No install, launch or upload performed.
 
-Next: #26 is accepted; #27 awaits owner confirmation for the separate Developer
-App Store Connect upload key prepared above. After confirmation, create/store
-that key securely, recheck app/version/build, validate/upload the exact accepted
-package and observe Apple's processing result. #22–#27 retain their original
+
+- Actual Apple `altool --validate-app` rejected the retained package with errors
+  90236 (ICNS 512pt@2x representation missing), 90242 (`LSApplicationCategoryType`
+  missing), 90255 (payload root-only readable files), and warning 90886 (signed
+  application identifier missing versus provisioning profile, blocking TestFlight).
+  No upload occurred. Prior local #26 acceptance remains historical, but this
+  candidate is not upload-ready. Packaging owner is correcting the actual route
+  and validator with independent review; original bytes and rejection are retained.
+  Category authority is owner-selected Productivity in ADR0005.
+
+
+- Resumed on 2026-09-15: prior broad 65-case regression processes are gone and
+  no final result was retained; their outcome is unknown, not a pass. Root ran
+  distribution/development/contract/signature focused tests: 92/92 passed.
+  Two targeted shared-profile evidence cases both failed because the new icon
+  input binding was incorrectly required for the unchanged development fixture.
+  Durable stdout/stderr/exit results are in
+  `.artifacts/production-preparation/apple-submission-source-fixes/resumed-20260915/`.
+  The packaging owner is correcting distribution-only input propagation while
+  keeping development v1 unchanged; independent review remains pending.
+  ASC Productivity was saved and observed selected; category UI evidence remains
+  in `.artifacts/app-store-upload/20260914-build1/category-ui-evidence.json`.
+
+
+- Store submission preparation: `docs/release/app-store-submission.md` contains
+  en-US copy, proposed review flow, screenshot shot list and explicitly missing
+  business/legal inputs. Root independently reviewed the revised draft and
+  ACCEPTS it as preparation only; metadata/publication and live-review claims
+  are not authorized by the draft. Final candidate and account readback still
+  govern any later submission. No storefront copy was published.
+
+
+- Independent reviewer and Lead ACCEPTS the corrected eight-file source set.
+  Distribution-only input propagation preserves development v1/profile 0400;
+  distribution requires ICNS, signed application/team IDs, Productivity category
+  and readable profile 0444. Reviewer observed 27 distribution + 19 development
+  tests pass after correction and both targeted shared-profile tests pass
+  (116.49s), including rejected absent/mutated/substituted profile proof.
+  Exact accepted file hashes and scope are retained in
+  `resumed-20260915/source-review-acceptance.json` under the source-fixes evidence
+  directory. Prior failures remain retained. No new artifact or Apple acceptance
+  is inferred from these source checks; fresh isolated production build follows.
+
+Next: correct Apple validation findings, review and build a fresh isolated
+package, then validate/upload and observe Apple processing. Authentication is ready. #22–#27 retain their original
 acceptance dependencies. Public release/App Review remain separate.
 
 ### Historical execution checkpoint — 2026-09-14
