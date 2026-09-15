@@ -744,6 +744,28 @@ Review or public release is inferred from this processing result.
   Sandbox targets, existing keys/profile and current app-group boundary.
   No build2 artifact, Apple validation/upload or runtime acceptance yet.
 
+- Before build2 update, the exact Apple TestFlight 1.0 (1) installation and
+  its existing secure host identity were separately snapshotted with APFS clone.
+  Independent review and Lead ACCEPTS preservation only at snapshot manifest
+  SHA-256 `90048585df156b42d4d205fc9e8ba9034eec2f2a618e2991089f11e999522ec3`.
+  Source/snapshot app fingerprint is
+  `9725a6acce9b47ccbadfda46a2d8a8479189de282acfde3436680af8f71ba591`;
+  current TestFlight signature and private identity hash/mode match. The prior
+  full development app/canonical/legacy runtime backups remain retained.
+  No runtime reset, recopy, restore rehearsal or build2 installation occurred.
+  Evidence: `backup-EgNIyA/testflight-build1-snapshot/`.
+
+- Build2 first actual producer attempt under
+  `.artifacts/macos-mas-distribution/20260915T052114Z-build2/` failed after
+  native Release compilation: isolated workspace lacked its ignored
+  `packages/meetless-app/node_modules` and Expo could not resolve `expo-audio`.
+  No candidate package was composed or signed. Retain this failure and wrapper
+  setup failures. Builder is restoring only the pinned dependency cache from
+  the prior isolated build and verifying resolution inside the clean c53e440
+  checkout before retrying with a fresh proof root; no source/profile/backend
+  change or installed-app mutation. A lingering security process belonged to
+  a completed read-only diagnostic and was stopped; no owner input is pending.
+
 Next: resolve and verify the actual Apple-distributed launch path, then resume
 screenshots and #15/#16/#20 evidence with preserved recording data. TestFlight
 and App Review purchases use the isolated Apple Sandbox route; only verified
