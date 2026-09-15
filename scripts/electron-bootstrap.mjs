@@ -39,6 +39,10 @@ app.on("browser-window-created", (_event, window) => {
 });
 
 const bootstrapDirectory = path.dirname(fileURLToPath(import.meta.url));
+// The embedder owns branding; the pinned fork uses this for both window and Dock.
+process.env.PASEO_APP_ICON_PATH = process.env.MEETLESS_RUNTIME_PACKAGED === "1"
+  ? path.resolve(bootstrapDirectory, "../../Meetless.png")
+  : path.resolve(bootstrapDirectory, "../design/assets/meetless-mark-512.png");
 const desktopMain = path.resolve(bootstrapDirectory, "../vendor/paseo/packages/desktop/dist/main.js");
 await import(pathToFileURL(desktopMain).href);
 app.setName("Meetless");

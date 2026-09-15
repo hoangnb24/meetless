@@ -333,7 +333,7 @@ describe("Mac App Store development package boundary", () => {
     expect(metadataIndex).toBeGreaterThan(copyIndex);
     expect(replacement).toContain("prepareR5DevelopmentElectronInfo(extractedInfo)");
     expect(replacement).toContain("plist.build(preparedInfo)");
-    expect(source).toContain("{ requireElectronTeamId: true, requireBundleIdentifier: true }");
+    expect(source).toContain("{ requireElectronTeamId: true, requireBundleIdentifier: true, requireBranding: true }");
     expect(source).toContain("{ expectedBundleIdentifier: R5_APP_STORE_ELECTRON_BUNDLE_ID }");
   });
 

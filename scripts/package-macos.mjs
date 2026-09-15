@@ -10,6 +10,7 @@ import {
   PACKAGE_SOURCE_SNAPSHOT_COMMAND,
 } from "./candidate-snapshot.mjs";
 import { PASEO_DEPENDENCY } from "./lib/paseo-dependency.mjs";
+import { MACOS_BRANDING_INFO, readApprovedMacOSBranding, writeMacOSBrandingResources } from "./lib/macos-branding.mjs";
 import { MACOS_LOCAL_PACKAGES, validateMacOSPackageComposition } from "./lib/macos-package-composition.mjs";
 import { digestManifest, validateMacOSPackage } from "./validate-macos-package.mjs";
 import { enumeratePackageEntries, inspectMachO, inspectPackageMachOEntries } from "./lib/macos-package-inventory.mjs";
@@ -197,6 +198,7 @@ async function createHostBundle() {
   await mkdir(path.dirname(executable), { recursive: true, mode: 0o755 });
   await mkdir(path.join(contentsPath, "Resources"), { recursive: true, mode: 0o755 });
   await cp(path.join(repositoryRoot, "native/macos-host/Info.plist"), path.join(contentsPath, "Info.plist"));
+  await writeMacOSBrandingResources(contentsPath, await readApprovedMacOSBranding(repositoryRoot));
   if (buildNumber !== null) {
     await run("plutil", ["-replace", "CFBundleVersion", "-string", buildNumber, path.join(contentsPath, "Info.plist")]);
   }
@@ -362,11 +364,17 @@ async function createElectronRuntime() {
   const source = path.join(repositoryRoot, "node_modules/electron/dist/Electron.app");
   const target = path.join(packageRoot, "runtime/electron/Electron.app");
   await copyPath(source, target);
+  await writeMacOSBrandingResources(path.join(target, "Contents"), await readApprovedMacOSBranding(repositoryRoot));
   const applications = await findDirectories(target, (candidate) => candidate.endsWith(".app"));
   for (const application of applications) {
     const info = path.join(application, "Contents", "Info.plist");
     if (!(await exists(info))) continue;
     const isOuter = application === target;
+    if (isOuter) {
+      for (const [key, value] of Object.entries(MACOS_BRANDING_INFO)) {
+        await run("plutil", ["-replace", key, "-string", value, info]);
+      }
+    }
     const suffix = isOuter ? "" : path.basename(application, ".app").replace(/^Electron Helper(?: \((.+)\))?$/u, "$1").toLowerCase().replaceAll(" ", "-");
     const identifier = isOuter ? "com.meetless.desktop" : `com.meetless.desktop.helper${suffix ? `.${suffix}` : ""}`;
     await run("plutil", ["-replace", "CFBundleIdentifier", "-string", identifier, info]);

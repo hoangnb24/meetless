@@ -1,3 +1,4 @@
+import { readApprovedMacOSBranding, writeMacOSBrandingResources, validateMacOSBrandingResources, validateMacOSBrandingInfo } from "./lib/macos-branding.mjs";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { chmod, cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -332,6 +333,7 @@ async function replaceElectronRuntime(electronArchiveSource) {
   await mkdir(path.dirname(nestedElectronAppPath), { recursive: true, mode: 0o755 });
   await rm(nestedElectronAppPath, { recursive: true, force: true });
   await cp(extractedAppPath, nestedElectronAppPath, { recursive: true, verbatimSymlinks: true });
+  await writeMacOSBrandingResources(path.join(nestedElectronAppPath, "Contents"), await readApprovedMacOSBranding(repositoryRoot));
   if (await pathExists(legacyNestedElectronAppPath)) {
     throw developmentError(`legacy MAS Electron app remains at ${MACOS_APP_STORE_LEGACY_ELECTRON_APP_PATH}`);
   }
@@ -353,12 +355,9 @@ async function injectBuildInputs() {
   const infoPath = path.join(contentsPath, "Info.plist");
   const info = parsePlistDocument(await readFile(infoPath, "utf8"), "outer Info.plist");
   const prepared = distribution ? prepareDistributionInfo(info, options) : prepareMacAppStoreDevelopmentInfo(info, publicSdkKey, convexUrl);
+  validateMacOSBrandingInfo(prepared);
   await writeFile(infoPath, plist.build(prepared), { mode: 0o644 });
-  if (distribution) {
-    const icon = await readFile(path.join(repositoryRoot, "native/macos-host/Meetless.icns"));
-    validateDistributionIcon(icon);
-    await writeFile(path.join(contentsPath, "Resources/Meetless.icns"), icon, { mode: 0o644 });
-  }
+  await writeMacOSBrandingResources(contentsPath, await readApprovedMacOSBranding(repositoryRoot));
 }
 
 async function signMasBundle(provisioningProfilePath) {
@@ -462,8 +461,11 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
       await readFile(path.join(nestedElectronAppPath, "Contents", "Info.plist"), "utf8"),
       "signed Electron MAS Info.plist",
     ),
-    { requireElectronTeamId: true, requireBundleIdentifier: true },
+    { requireElectronTeamId: true, requireBundleIdentifier: true, requireBranding: true },
   );
+  const branding = await readApprovedMacOSBranding(repositoryRoot);
+  await validateMacOSBrandingResources(contentsPath, branding);
+  await validateMacOSBrandingResources(path.join(nestedElectronAppPath, "Contents"), branding);
   validateSignature(
     await readCodesignDisplay(nestedElectronExecutablePath),
     "signed MAS Electron",

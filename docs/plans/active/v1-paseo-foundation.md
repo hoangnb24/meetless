@@ -1040,6 +1040,70 @@ checks. Website #28 final-domain HTTPS and all three ASC URLs
 are accepted; App Privacy correction/remaining metadata gates stay separate.
 App Review/public release require a separate owner decision.
 
+### #31 branding source repair — 2026-09-15
+
+Scope remains source/artifact work in worktree `3a42`; #30 owns the shared Mac.
+No app was launched, quit, focused, replaced, signed, uploaded, or released by
+this task. No TCC, entitlement, identity, user-data, or baseline-tag changes.
+
+Static inspection of installed TestFlight build 3 confirms source
+`7e958c3d7586029fa77347e987e0e380b980f563`. Outer `CFBundleName=Meetless`
+and `Meetless.icns` match the approved icon SHA-256
+`e147c112db6ecc8faae31448a4a45544f6f23bbcf8125a1d6a366eeaf0239006`.
+Nested `CFBundleName` and `CFBundleDisplayName` are both `Electron`, and
+`CFBundleIconFile=electron.icns`. Its ID remains `com.meetless.app.electron`;
+the host remains `com.meetless.app`. The shipped Paseo `assets/icon.png` is
+SHA-256 `585d202ff6a6e41bcd5c7464a1c4889b78977cea000f7b88ba1f67f3d9fff0bd`
+and visually differs from the accepted Meetless mark. The runtime already sets
+the name to Meetless, but its default icon selection feeds Paseo's asset to
+`app.dock.setIcon`. These are demonstrated shipping/source defects; live Dock
+tile ownership, actual icon selection at runtime, and cache contribution remain
+unobserved in this task.
+
+The repair gives both outer and nested bundles Meetless name/display/icon
+metadata before signing. Direct and MAS producers copy the approved ICNS and
+extract its existing 1024px PNG without redesign or rerasterization. Bootstrap
+sets the packaged PNG path before the vendor import; development uses the
+existing approved design PNG. Package-input evidence binds the source icon,
+provenance, producer module and outer/nested output resources. Newly produced
+MAS assets are byte-checked; installed older metadata remains compatible with
+existing identity/signature checks so build-3 recovery is not blocked by polish.
+
+Fork commit `249539c7446f16c7ed2f07abb89be2065b732bed`, published on owned
+fork branch `codex/desktop-icon-override`, adds only the generic
+`PASEO_APP_ICON_PATH` selection used by window and Dock icons. Independent
+review ACCEPTS this exact fork commit for bounded source integration, with no
+runtime/release acceptance. Existing fallback candidates are unchanged. Parent
+pin and fixture identities use the same commit. Its self-contained bundle is
+`vendor/paseo-bundles/7b38aec363b36b91887e5467140ffca09aee74b45d296d4400c762dd1973e920.bundle`
+(102268558 bytes); filename equals SHA-256. Previous bundles and refs remain.
+
+Validation: fork desktop build, targeted npm-script format/lint and icon test
+passed; independent reviewer reran the icon test. Parent `build:meetless`,
+`verify:paseo-bundle` (fresh offline checkout + fsck), syntax/whitespace checks,
+eight focused test files (149 passed, one existing skip), and three installed
+signature compatibility tests passed. A broader MAS-gate run failed because
+this worktree lacks its prebuilt release fixture and native mutation helper;
+the initial three branding/old-installed-metadata failures were fixed and those
+three tests rerun successfully. The full gate suite is not claimed passing.
+Full desktop smoke/recording proof is deferred to the coordinated candidate.
+
+Private evidence in this worktree: `.artifacts/issue31/static-evidence.json`,
+`approved-runtime-icon.png`, and `branding-fragment/Contents/`. The fragment
+uses the actual resource writer and installed nested plist as input, but contains
+no executable and is **not** a full signed candidate or production acceptance.
+Extracted runtime PNG SHA-256 is
+`581180daa9430d86573cd5539559be87560b66bd26c5f65737d18b12da32e042`.
+
+Next: complete independent parent-source review, then integrate with #30 for
+one coordinated candidate. Validate the actual signed package, installed Apple
+build, Dock at launch/ready and hover, app menu, Finder/bundle icon, TestFlight
+branding, update from build 3 and quit/relaunch. Fresh profile/install requires
+an authorized environment. Capture only the relevant UI and correlate the Dock
+tile with its owning process. Do not clear machine-wide caches as a product fix.
+Keep #31, #17 and Epic #21 open until their own acceptance gates pass; #29's
+bounded CPU/startup acceptance is unchanged and #14 remains open.
+
 ### Historical execution checkpoint — 2026-09-14
 
 Owner authorized implementation of Epic #21 and selected US East and separate

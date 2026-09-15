@@ -1,3 +1,4 @@
+import { MACOS_BRANDING_INFO, validateMacOSBrandingInfo } from "./macos-branding.mjs";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -360,19 +361,21 @@ export function prepareR5DevelopmentElectronInfo(info) {
   validateR5DevelopmentElectronInfo(info);
   const prepared = {
     ...info,
+    ...MACOS_BRANDING_INFO,
     CFBundleIdentifier: R5_APP_STORE_ELECTRON_BUNDLE_ID,
     ElectronTeamID: R5_APP_STORE_TEAM_ID,
   };
   validateR5DevelopmentElectronInfo(prepared, {
     requireElectronTeamId: true,
     requireBundleIdentifier: true,
+    requireBranding: true,
   });
   return prepared;
 }
 
 export function validateR5DevelopmentElectronInfo(
   info,
-  { requireElectronTeamId = false, requireBundleIdentifier = false } = {},
+  { requireElectronTeamId = false, requireBundleIdentifier = false, requireBranding = false } = {},
 ) {
   if (!info || typeof info !== "object" || Array.isArray(info)) {
     throw developmentError("extracted Electron MAS Info.plist is not a dictionary");
@@ -389,6 +392,7 @@ export function validateR5DevelopmentElectronInfo(
   if (requireBundleIdentifier && info.CFBundleIdentifier !== R5_APP_STORE_ELECTRON_BUNDLE_ID) {
     throw developmentError(`signed Electron MAS Info.plist bundle identifier does not match ${R5_APP_STORE_ELECTRON_BUNDLE_ID}`);
   }
+  if (requireBranding) validateMacOSBrandingInfo(info);
   return info;
 }
 

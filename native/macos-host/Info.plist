@@ -12,6 +12,10 @@
   <string>6.0</string>
   <key>CFBundleName</key>
   <string>Meetless</string>
+  <key>CFBundleDisplayName</key>
+  <string>Meetless</string>
+  <key>CFBundleIconFile</key>
+  <string>Meetless.icns</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

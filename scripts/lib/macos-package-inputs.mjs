@@ -317,6 +317,8 @@ export function buildMacOSPackageInputSpecs({
 } = {}) {
   const expectedArchiveSha256 = normalizeExpectedElectronArchiveSha256(expectedElectronArchiveSha256);
   const electronArtifactPrefix = electronArtifactPrefixForLayout(electronLayout);
+  const electronAppPrefix = electronLayout === MACOS_PACKAGE_ELECTRON_LAYOUT_MAS
+    ? electronArtifactPrefix : `${electronArtifactPrefix}Electron.app/`;
   const verifiedElectronArchiveSource = electronLayout === MACOS_PACKAGE_ELECTRON_LAYOUT_MAS
     ? validateMacOSPackageElectronArchiveSource(electronArchiveSource, expectedArchiveSha256)
     : rejectDirectElectronArchiveSource(electronArchiveSource);
@@ -330,10 +332,13 @@ export function buildMacOSPackageInputSpecs({
     {
       id: "meetless-native-sources",
       kind: "native-source",
-      sourcePaths: ["native/macos-host", "packages/runtime/native", "native/macos-capture/Package.swift", "native/macos-capture/Sources"],
+      sourcePaths: ["native/macos-host", "design/assets/meetless-mark.svg", "packages/runtime/native", "native/macos-capture/Package.swift", "native/macos-capture/Sources"],
       artifactPathPrefixes: [
         "Contents/Info.plist",
-        ...(distribution ? ["Contents/Resources/Meetless.icns"] : []),
+        "Contents/Resources/Meetless.icns",
+        "Contents/Resources/Meetless.png",
+        `${electronAppPrefix}Contents/Resources/Meetless.icns`,
+        `${electronAppPrefix}Contents/Resources/Meetless.png`,
         "Contents/MacOS/MeetlessHost",
         "Contents/Resources/meetless/native/macos-capture/",
         "Contents/Resources/meetless/packages/runtime/",
@@ -342,7 +347,7 @@ export function buildMacOSPackageInputSpecs({
     {
       id: "package-assembly-scripts",
       kind: "package-build-script",
-      sourcePaths: ["scripts/package-macos.mjs", "scripts/lib/macos-package-composition.mjs", "scripts/build-native.mjs", "scripts/electron-bootstrap.mjs", "scripts/launch-macos-host.mjs", "scripts/stop-macos-host.mjs", "scripts/lib/macos-package-contract.mjs", "scripts/lib/macos-package-contract.json"],
+      sourcePaths: ["scripts/package-macos.mjs", "scripts/lib/macos-package-composition.mjs", "scripts/lib/macos-branding.mjs", "scripts/build-native.mjs", "scripts/electron-bootstrap.mjs", "scripts/launch-macos-host.mjs", "scripts/stop-macos-host.mjs", "scripts/lib/macos-package-contract.mjs", "scripts/lib/macos-package-contract.json"],
       artifactPathPrefixes: ["Contents/Resources/host-config.json", "Contents/Resources/meetless/installation-contract.json", "Contents/Resources/meetless/meetless-package.json", "Contents/Resources/meetless/scripts/"],
     },
     {
