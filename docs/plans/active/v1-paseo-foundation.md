@@ -589,6 +589,25 @@ Review or public release is inferred from this processing result.
   PREPARE_FOR_SUBMISSION. Lead ACCEPTS this draft association and factual flag;
   no App Review submission or verified Ask reviewer-flow claim.
 
+- App Privacy preparation: `docs/release/app-privacy-draft.md` reviewed at
+  SHA-256 `2a052269a0cf3b637f05b073fc90d3fe9a8ac5917ac7e2e3fe6d697f9be74595`.
+  Independent reviewer required Other Diagnostic Data because hosted lifecycle/
+  quota logs are off-device diagnostics; the author added it and re-review
+  ACCEPTS staging seven categories, all App Functionality / Linked Yes /
+  Tracking No. Lead ACCEPTS this review-ready staging proposal only, not Publish
+  or unverified provider-retention claims. ASC operator owns saving draft form
+  only if separate Publish remains; no App Review/publication allowed here.
+- Backup producer reports verified original app plus canonical/legacy data in
+  `.artifacts/macos-mas-development/update-backups/backup-EgNIyA`, manifest hash
+  `2da9a03a98457d1de6345ffd6632ba9ed3c221d98a1919d1c5653d1ae23e5654`.
+  App was not running and all recordings were saved before copying; backup
+  acceptance is assigned to a separate reviewer before Meetless replacement.
+  TestFlight client was absent; operator may install official Apple TestFlight
+  first, pausing at credential or binding-terms prompts. No Meetless install
+  is authorized to proceed until backup acceptance. Original synthetic audio
+  (61.37 seconds) was rendered locally to an ignored file for later system-audio
+  capture; it has not been played or uploaded. Screenshot data remains pending.
+
 Next: the owner can accept the internal TestFlight invitation. Preserve the
 installed development app/data before testing, then continue #15/#16/#20 live evidence and
 #14/#17 release readiness. TestFlight and

@@ -46,8 +46,8 @@ ba.
   transcript/chat/citation, cloud transcription, subscription, enrollment và
   diagnostics. Code không đủ bằng chứng để tự điền các mục này.
 
-Mục “Input owner/business/legal còn thiếu” trong
-`docs/release/app-store-submission.md` ghi rõ Privacy Policy URL và App Privacy
-questionnaire còn cần rà soát theo binary cuối. Bản inventory này chỉ là evidence
-map để phục vụ lần rà soát đó; actual privacy form và văn bản chính sách vẫn cần
-được xem xét riêng.
+Privacy Policy đã được review và công bố tại `https://meetless.2m0r.com/privacy/`;
+URL đã lưu và xác minh trên ASC. App Privacy questionnaire vẫn là phạm vi riêng:
+`docs/release/app-privacy-draft.md` chứa đề xuất từ inventory này để rà soát trước
+khi lưu/Publish. Inventory kỹ thuật không tự chứng minh khai báo đã được gửi hay
+bản app đã được Apple xét duyệt.
