@@ -103,6 +103,15 @@ export function RecordingProvider({ enabled, children }: { enabled: boolean; chi
   }, [enabled, loadPermissions]);
 
   useEffect(() => {
+    if (!enabled || typeof window === "undefined" || !window.addEventListener) return;
+    // On desktop, switching to System Settings need not hide the web document,
+    // so React Native Web's visibility-based AppState may stay active.
+    const recheck = () => { void loadPermissions().catch(() => undefined); };
+    window.addEventListener("focus", recheck);
+    return () => window.removeEventListener("focus", recheck);
+  }, [enabled, loadPermissions]);
+
+  useEffect(() => {
     if (status.status !== "recording" || status.paused) return;
     const timer = setInterval(() => setTick(Date.now()), 250);
     return () => clearInterval(timer);

@@ -1281,20 +1281,47 @@ protocol MeetlessCapturePermissionAccess {
 
 final class MeetlessCapturePermissions: MeetlessCapturePermissionAccess {
   private let screenRequestKey = "MeetlessScreenCaptureRequestAttempted"
+  private let defaults: UserDefaults
+  private let screenPreflight: () -> Bool
+  private let screenRequest: () -> Bool
+  private let microphoneAuthorization: () -> AVAuthorizationStatus
+  private let microphoneRequest: () -> Void
+  private let requestLock = NSLock()
+
+  init(
+    defaults: UserDefaults = .standard,
+    screenPreflight: @escaping () -> Bool = { CGPreflightScreenCaptureAccess() },
+    screenRequest: @escaping () -> Bool = { CGRequestScreenCaptureAccess() },
+    microphoneAuthorization: @escaping () -> AVAuthorizationStatus = { AVCaptureDevice.authorizationStatus(for: .audio) },
+    microphoneRequest: @escaping () -> Void = {
+      let semaphore = DispatchSemaphore(value: 0)
+      AVCaptureDevice.requestAccess(for: .audio) { _ in semaphore.signal() }
+      semaphore.wait()
+    }
+  ) {
+    self.defaults = defaults
+    self.screenPreflight = screenPreflight
+    self.screenRequest = screenRequest
+    self.microphoneAuthorization = microphoneAuthorization
+    self.microphoneRequest = microphoneRequest
+  }
 
   func status() -> MeetlessCapturePermissionResult {
     result(settingsOpened: false, navigation: "none")
   }
 
   func request() -> MeetlessCapturePermissionResult {
-    if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-      let semaphore = DispatchSemaphore(value: 0)
-      AVCaptureDevice.requestAccess(for: .audio) { _ in semaphore.signal() }
-      semaphore.wait()
+    requestLock.lock()
+    defer { requestLock.unlock() }
+    if microphoneAuthorization() == .notDetermined {
+      microphoneRequest()
     }
-    if !CGPreflightScreenCaptureAccess() {
-      UserDefaults.standard.set(true, forKey: screenRequestKey)
-      _ = onMain { CGRequestScreenCaptureAccess() }
+    // A failed preflight can also mean a stale signing grant or a pending OS
+    // relaunch. Repeating the prompt does not repair either; recovery is in
+    // System Settings. Never infer authorization from the request's result.
+    if !screenPreflight() && !defaults.bool(forKey: screenRequestKey) {
+      defaults.set(true, forKey: screenRequestKey)
+      _ = onMain { screenRequest() }
     }
     return result(settingsOpened: false, navigation: "none")
   }
@@ -1313,10 +1340,10 @@ final class MeetlessCapturePermissions: MeetlessCapturePermissionAccess {
 
   private func result(settingsOpened: Bool, navigation: String) -> MeetlessCapturePermissionResult {
     MeetlessCapturePermissionResult(
-      microphone: microphoneStatus(AVCaptureDevice.authorizationStatus(for: .audio)),
-      systemAudio: CGPreflightScreenCaptureAccess()
+      microphone: microphoneStatus(microphoneAuthorization()),
+      systemAudio: screenPreflight()
         ? .authorized
-        : (UserDefaults.standard.bool(forKey: screenRequestKey) ? .denied : .notDetermined),
+        : (defaults.bool(forKey: screenRequestKey) ? .denied : .notDetermined),
       settingsOpened: settingsOpened,
       settingsNavigation: navigation
     )

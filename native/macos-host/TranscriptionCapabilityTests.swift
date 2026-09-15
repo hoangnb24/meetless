@@ -2,6 +2,7 @@ import Darwin
 import CryptoKit
 import Foundation
 import AppKit
+import AVFoundation
 import RevenueCat
 import Security
 @testable import MeetlessHostCore
@@ -5042,6 +5043,43 @@ private func testProductionRuntimeLaunchConvexBinding() {
   }
 }
 
+private func testCapturePermissionRecovery() {
+  let suite = "meetless-permission-fixture-\(UUID().uuidString)"
+  let defaults = UserDefaults(suiteName: suite)!
+  defer { defaults.removePersistentDomain(forName: suite) }
+  var screenAllowed = false
+  var microphone: AVAuthorizationStatus = .notDetermined
+  var screenRequests = 0
+  var microphoneRequests = 0
+  func makePermissions() -> MeetlessCapturePermissions {
+    MeetlessCapturePermissions(
+      defaults: defaults,
+      screenPreflight: { screenAllowed },
+      screenRequest: { screenRequests += 1; return true },
+      microphoneAuthorization: { microphone },
+      microphoneRequest: { microphoneRequests += 1; microphone = .denied }
+    )
+  }
+  let permissions = makePermissions()
+  check(permissions.status().systemAudio == .notDetermined, "fresh false preflight must not claim granted")
+  check(screenRequests == 0 && microphoneRequests == 0, "status must never request access")
+  let denied = permissions.request()
+  check(denied.microphone == .denied && denied.systemAudio == .denied, "request success is not authorization; only subsequent preflight establishes access")
+  _ = permissions.request()
+  _ = makePermissions().request()
+  check(screenRequests == 1 && microphoneRequests == 1, "denied access must use Settings recovery rather than repeated prompts, including after relaunch")
+  microphone = .authorized
+  screenAllowed = true
+  check(permissions.status().systemAudio == .authorized, "Settings grant must be read from OS, not the attempted-request flag")
+  check(permissions.request().microphone == .authorized, "authorized sources must remain usable")
+  check(screenRequests == 1, "authorized Start must not prompt")
+  screenAllowed = false
+  microphone = .restricted
+  let revoked = permissions.request()
+  check(revoked.systemAudio == .denied && revoked.microphone == .restricted, "revoked and restricted sources must fail closed")
+  check(screenRequests == 1 && microphoneRequests == 1, "revocation must not restart a prompt loop")
+}
+
 private func testCaptureSettingsFallbackPolicy() {
   check(meetlessSettingsNavigation(applicationOpened: true, fallbackOpened: false) == "system-settings-application", "supported System Settings application opening must be primary")
   check(meetlessSettingsNavigation(applicationOpened: false, fallbackOpened: true) == "best-effort-pane-url", "undocumented pane URL must be only a best-effort fallback")
@@ -5123,6 +5161,13 @@ private func testLegacyIdentityMigrationBoundary() {
 @main
 private struct TranscriptionCapabilityTests {
   static func main() {
+    if CommandLine.arguments.contains("--capture-permissions-only") {
+      testCapturePermissionRecovery()
+      testCaptureSettingsFallbackPolicy()
+      if failures > 0 { exit(1) }
+      print("Meetless capture permission recovery tests passed")
+      return
+    }
     if let fixtureRole = ProcessInfo.processInfo.environment["MEETLESS_NATIVE_PROCESS_FIXTURE"] {
       if fixtureRole == "closed-peer-response" {
         do { try exerciseClosedPeerResponse() } catch { exit(1) }
@@ -5273,6 +5318,7 @@ private struct TranscriptionCapabilityTests {
     testDeliveredStoreSigningIdentity()
     testSubmissionIdentityTransition()
     testCaptureSettingsFallbackPolicy()
+    testCapturePermissionRecovery()
     testProviderFailureNormalizationAndCancellation()
     testLegacyIdentityMigrationBoundary()
     do { try testMasRuntimeStartupLocatorBoundary() } catch {

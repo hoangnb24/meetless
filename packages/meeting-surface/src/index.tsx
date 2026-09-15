@@ -1250,7 +1250,10 @@ function PermissionGuidance({ source, label, onOpen, onRecheck }: {
 }) {
   return (
     <View testID={`permission-guidance-${source}`}>
-      <Text style={styles.error}>{label} access is off. Open System Settings, allow Meetless, return here, then recheck.</Text>
+      <Text style={styles.error}>{label} access is not available to this running app. Open System Settings, allow Meetless, return here, then recheck.</Text>
+      {source === "systemAudio" ? (
+        <Text style={styles.error} testID="permission-systemAudio-recovery">If Meetless is already enabled, macOS may still hold access for an earlier installed version. Turn Meetless access off and on in Screen & System Audio Recording. If macOS asks you to quit and reopen Meetless, do so, then recheck. Recording stays blocked until macOS confirms access.</Text>
+      ) : null}
       <View style={styles.setupActions}>
         <FocusPressable accessibilityLabel={`Open ${label} settings`} accessibilityRole="button" onPress={() => void onOpen()} style={styles.ghostButton} testID={`permission-settings-${source}`}>
           <Text style={styles.ghostButtonText}>Open System Settings</Text>

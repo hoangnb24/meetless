@@ -322,6 +322,37 @@ describe("production recording UI status delivery", () => {
     }));
   });
 
+  test("desktop focus refreshes a Settings grant and revocation without requesting or starting capture", async () => {
+    let allowed = false;
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({
+      microphone: "authorized", systemAudio: allowed ? "authorized" : "denied",
+    }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    const events = new EventTarget();
+    const remove = vi.fn(events.removeEventListener.bind(events));
+    const invoke = vi.fn(async (command: string, _args?: Record<string, unknown>) => command === "open_local_daemon_transport" ? "focus-session" : undefined);
+    vi.stubGlobal("window", {
+      location: { href: rendererHref }, addEventListener: events.addEventListener.bind(events), removeEventListener: remove,
+      paseoDesktop: { platform: "darwin", invoke, events: { on: async () => () => undefined } },
+    });
+    await act(async () => { renderer = create(<RecordingProvider enabled><ConnectedPermissionProbe /></RecordingProvider>); });
+    expect(renderer!.root.findByType(ProbeView).props.state.permissions.systemAudio).toBe("denied");
+    allowed = true;
+    await act(async () => { events.dispatchEvent(new Event("focus")); });
+    expect(renderer!.root.findByType(ProbeView).props.state.permissions.systemAudio).toBe("authorized");
+    allowed = false;
+    await act(async () => { events.dispatchEvent(new Event("focus")); });
+    expect(renderer!.root.findByType(ProbeView).props.state.permissions.systemAudio).toBe("denied");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const call of fetchMock.mock.calls) expect(call).toEqual(["/__meetless/capture-permissions", { method: "GET", cache: "no-store" }]);
+    const commands = invoke.mock.calls.filter(([command]) => command === "send_local_daemon_transport_message")
+      .map(([, args]) => JSON.parse(String(args?.text)).command);
+    expect(commands).toEqual(["status"]);
+    await act(async () => { renderer!.unmount(); });
+    renderer = null;
+    expect(remove).toHaveBeenCalledWith("focus", expect.any(Function));
+  });
+
   test("turns initial status transport failure into actionable recheck and recovers", async () => {
     let statusCalls = 0;
     const fetchMock = vi.fn(async (input: string) => {
