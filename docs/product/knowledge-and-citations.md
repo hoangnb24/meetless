@@ -38,6 +38,19 @@ automatically sending or retrying a question. This approval authorizes the
 scoped file entitlements; it does not establish that every provider's access or
 authentication has been implemented or verified.
 
+Owner approval, 2026-09-15: when the Mac App Store/TestFlight app cannot
+find the existing Codex program, Ask must offer a macOS file chooser for the
+user to select that installed executable once. Preserve access using a separate
+security-scoped bookmark, restore it before starting the runtime, and pass its
+absolute path through Paseo's existing provider command override. Keep the
+existing Codex configuration/authentication bookmark and account. Do not bundle
+or download Codex, modify the user's shell configuration or global PATH, guess
+installation directories, copy credentials, or grant the whole home directory.
+Cancellation, a missing/replaced executable and revoked access must leave a
+clear way to choose again. Reopening after a changed grant must not send or
+retry a question automatically. Finding the executable alone is not proof that
+models or an actual Ask response work.
+
 ## Meeting evidence and chat history
 
 Meeting chat history is durable. Leaving the meeting or restarting the app does

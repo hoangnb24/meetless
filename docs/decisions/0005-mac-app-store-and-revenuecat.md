@@ -227,6 +227,15 @@ not authorize whole-home access, copying credentials, or moving Meetless's
 product state or isolated Paseo state. Folder access alone does not prove
 provider authentication, including access to macOS Keychain entries.
 
+Owner approval, 2026-09-15: the same host-owned chooser/bookmark mechanism
+may select and remember the user's existing Codex executable when discovery
+fails in the Store app. Keep executable and configuration grants separate;
+restore both before child startup and use the selected absolute executable
+through Paseo's command override. This does not authorize bundling/downloading
+Codex, broad directory grants, credential copies or shell/global PATH changes.
+Actual executable launch, model loading and an Ask response must be checked on
+the Apple-distributed candidate before accepting this repair.
+
 Executable media tools are not writable product state. In the Mac App Store
 build, the runtime executes ffmpeg and ffprobe only from the host-verified,
 signed app-bundle media closure, with the inherited child App Sandbox

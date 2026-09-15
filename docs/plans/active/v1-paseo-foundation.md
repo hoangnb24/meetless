@@ -10,7 +10,34 @@ production. Freeze the current source before beginning this work.
 
 GitHub execution breakdown: [Epic #21](https://github.com/hoangnb24/meetless/issues/21), new sub-issues #22–#28 and retained #14–#17/#20. Native dependencies own the execution order; #22/#23 are the first inputs. Website #28 supplies final URLs to #17 and can proceed alongside app testing. This link does not change the frozen source.
 
-### Current execution — build 5 provider repair distributed, owner testing pending
+### Current execution — build 5 owner Ask test failed, executable discovery repair
+
+Owner reported at 21:59 local time that TestFlight build 5 still cannot Ask.
+Installed plist confirms 1.0 (5). Unlike build 4, actual runtime config now
+contains `agents.providers.codex.env.CODEX_HOME` pointing to the previously
+granted existing Codex folder. The build-5 projection correction took effect,
+but it was not sufficient for real Ask acceptance.
+
+The actual installed daemon's Codex diagnostic at 15:02 UTC reports default
+command `codex`, PATH `/usr/bin:/bin:/usr/sbin:/sbin`, no PATH matches and no
+resolved executable; status Unavailable. The existing shell command on this
+Mac is a symlink from the user's local bin directory into the granted Codex
+folder. Meetless must honor existing provider/Paseo lookup and scoped access;
+do not hardcode this user's path, guess a new directory list, copy credentials,
+or broaden home-directory access. Owner approved one-time macOS selection of the existing Codex executable,
+2026-09-15. Product authority is recorded in knowledge-and-citations.md.
+Implement a separate scoped executable bookmark, project an absolute Paseo
+command override alongside the existing configuration grant, add recovery UI,
+and produce the next TestFlight candidate with required native tests. Root owns
+coordination, product/plan records, packaging and delivery; separate authors own
+native access and TypeScript runtime/contracts/UI, with independent review.
+A live TestFlight Ask response remains the acceptance gate; no new Codex bundle,
+whole-home grant, shell/PATH change or credential copy is authorized.
+Evidence: `.artifacts/testflight-build5-provider-failure/` (private), including
+actual daemon diagnostic and owner intake. No app restart or permission change
+was performed during this diagnosis.
+
+### Historical delivery — build 5 provider repair distributed, before owner feedback
 
 Owner tested TestFlight 1.0 (4): recording permissions now work, Monthly was
 purchased, and transcription completed. Read-only UI confirmed Premium active
