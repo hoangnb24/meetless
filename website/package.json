@@ -1,0 +1,12 @@
+{
+  "name": "meetless-website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "check": "node scripts/check.mjs",
+    "check:release": "node scripts/check.mjs --release",
+    "deploy": "npm run check:release && wrangler deploy"
+  },
+  "devDependencies": { "wrangler": "4.131.2" }
+}

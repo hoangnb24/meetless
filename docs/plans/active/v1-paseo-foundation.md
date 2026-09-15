@@ -8,7 +8,7 @@ The owner selected production preparation as the next work: upload a Mac App
 Store build, configure RevenueCat for real App Store purchases, and use Convex
 production. Freeze the current source before beginning this work.
 
-GitHub execution breakdown: [Epic #21](https://github.com/hoangnb24/meetless/issues/21), new sub-issues #22–#27 and retained #14–#17/#20. Native dependencies own the execution order; #22/#23 are the first inputs. This link does not change the frozen source.
+GitHub execution breakdown: [Epic #21](https://github.com/hoangnb24/meetless/issues/21), new sub-issues #22–#28 and retained #14–#17/#20. Native dependencies own the execution order; #22/#23 are the first inputs. Website #28 supplies final URLs to #17 and can proceed alongside app testing. This link does not change the frozen source.
 
 ### Current execution checkpoint — 2026-09-15, Apple processing complete
 
@@ -17,8 +17,10 @@ failed-artifact observations below. #22–#26 are accepted, including the correc
 exact distribution package and actual Apple validation. Upload succeeded with
 delivery/build `0816cc3b-8b69-4357-bf0d-32537ec34b8b`. At 01:23:16 UTC,
 Apple reports upload COMPLETE and binary VALID, with no errors or warnings.
-TestFlight internal/external states are MISSING_EXPORT_COMPLIANCE; the owner
-declaration is still pending. Epic #21 remains in progress; no launch/billing/App
+After the owner explicitly approved the exact standard-encryption/non-France
+answers, the declaration was saved. At 02:24:21 UTC the API confirms internal
+READY_FOR_BETA_TESTING and external READY_FOR_BETA_SUBMISSION, with
+usesNonExemptEncryption false. Epic #21 remains in progress; no launch/billing/App
 Review or public release is inferred from this processing result.
 
 | Public release input | Verified value |
@@ -26,7 +28,7 @@ Review or public release is inferred from this processing result.
 | Frozen baseline | `production-baseline-2026-09-14`, `6b051116af4dbf8a22337f51b995e120454b79d0`; never move |
 | Deployed successor source | `63b3768ed334c68cb79dcfc87545b523349ed353`, isolated `/tmp/meetless-production-63b3768` |
 | Apple app / bundle / team | `6807070739` / `com.meetless.app` / `63M98WD275` |
-| Candidate version / build | `1.0` / `1`, MAC_OS; upload COMPLETE, binary VALID; TestFlight awaits export compliance |
+| Candidate version / build | `1.0` / `1`, MAC_OS; upload COMPLETE, binary VALID; internal TestFlight ready, external beta submission still separate |
 | Packaged source / package | `41cfc34382f95dcf3b08fca74347cccb673b15be` / SHA-256 `b6f0fde5bf1e80c5254a80e3c0151be4f05f167d7b04bc699700bff7c50b5da7` |
 | ASC upload key | `V8ZBF889R7`, dedicated Developer role explicitly approved; protected and Git-ignored |
 | RevenueCat project / app | `0d7b4465` / `appe0ef526253`; existing monthly/annual, premium/default catalog retained |
@@ -387,18 +389,53 @@ Review or public release is inferred from this processing result.
   matrix distinguishes standard third-party encryption and requires the French
   declaration for that category only when distributing in France:
   https://developer.apple.com/help/app-store-connect/reference/app-information/export-compliance-documentation-for-encryption
-  Owner decision still needed on France distribution before completing the
-  corresponding questionnaire. No export flag, declaration, storefront or
-  availability setting has been changed.
+  Owner subsequently decided not to distribute in France for the first release.
+  This resolves the storefront intent, not the remaining questionnaire answers.
+  After inspecting the actual questionnaire, the owner explicitly approved its
+  two prepared answers: standard encryption outside/in addition to Apple OS,
+  and France No. The browser operator saved those exact answers. Root's
+  independent API read `api-builds-after-export-owner-approval-01.json` confirms
+  the same build is VALID with usesNonExemptEncryption false, internal
+  READY_FOR_BETA_TESTING and external READY_FOR_BETA_SUBMISSION. Lead ACCEPTS
+  the declaration/eligibility result only. No tester invite, installation,
+  purchase or review submission occurred. This sets the server declaration;
+  the signed artifact and Info.plist are unchanged. Before public submission,
+  #17 must align actual storefront availability with the non-France decision.
+- Website #28 was explicitly authorized as a separate Epic sub-issue, hosted on
+  the owner's Cloudflare account. The owner has a domain and will configure the
+  subdomain and provide the support email. Root owns `website/`, using authored
+  static pages and the existing logo/design contract; the app build and root npm
+  workspaces remain unchanged. Native dependency #17 blocked-by #28 is recorded.
+  Cloudflare Wrangler 4.131.2 reports an authenticated OAuth session and one
+  account; no credential file was read or copied. Website publication remains
+  pending the actual contact/domain and complete privacy inputs. The local
+  preview is served at `http://127.0.0.1:4179/`; its Codex panel open request was
+  queued. Local checks pass the required routes, metadata and links/assets;
+  eight HTTP checks pass including missing-route 404. Wrangler dry-run passes;
+  public deployment check deliberately rejects four unresolved content markers.
+  Evidence: `.artifacts/website-preparation/local-draft-evidence.json`.
+  This is local draft proof, not public HTTPS or browser visual acceptance.
+  A mistakenly launched repository-wide check was stopped (exit 143), with no
+  tracked application source change or installation; it is not counted as a
+  complete test-suite pass. Independent source/content review accepted the draft
+  and requested two wording refinements, applied before integration.
+  The reviewer re-accepted support SHA-256
+  `8db6a1e850be7f4b17aba8df5970845abd127614a42c39fe2daf89b2dd356c33`
+  and privacy SHA-256
+  `0024b795ca33fccc4ff5e0db7b8bfc9006dca54563efd6e32ec4fec1d3cc98f2`.
+  Lead ACCEPTS this exact local source/content draft only. #28 remains open
+  until contact/privacy inputs, actual Cloudflare deployment and final-domain
+  HTTPS/route evidence are complete.
 
-Next: finish the export-compliance declaration before TestFlight testing, then
-continue #15/#16/#20 live evidence and #14/#17 release readiness. TestFlight and
+Next: arrange the owner's internal TestFlight access and preserve the installed
+development app/data before testing, then continue #15/#16/#20 live evidence and
+#14/#17 release readiness. TestFlight and
 App Review purchases use the isolated Apple Sandbox route; only verified Apple
 PRODUCTION transactions can establish production billing evidence. Do not
 replace the installed development app or its data to run a store candidate.
-The owner was asked for support/privacy URLs (or domain and support email);
-that input remains pending. App Review/public release require a separate owner
-decision.
+The owner was asked for the final subdomain and public support email; those
+values remain pending while website #28 proceeds. App Review/public release
+require a separate owner decision.
 
 ### Historical execution checkpoint — 2026-09-14
 

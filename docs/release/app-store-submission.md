@@ -21,13 +21,14 @@ quyết định hoặc tài liệu thật sự còn thiếu, không điền bằ
 | Primary language | English (U.S.) | ASC readback |
 | Baseline đóng băng | `production-baseline-2026-09-14` → `6b051116af4dbf8a22337f51b995e120454b79d0` | Tag lịch sử, không tự là release artifact |
 | Candidate đã đóng gói | `Meetless-1.0-1.pkg`, SHA-256 `b6f0fde5bf1e80c5254a80e3c0151be4f05f167d7b04bc699700bff7c50b5da7` | `.artifacts/macos-mas-distribution/20260915T003311276Z/` |
-| Trạng thái candidate | Upload COMPLETE, binary VALID; TestFlight thiếu export compliance | API 2026-09-15T01:23:16.219Z; source `41cfc34382f95dcf3b08fca74347cccb673b15be` |
+| Trạng thái candidate | Upload COMPLETE, binary VALID; TestFlight nội bộ sẵn sàng | API 2026-09-15T02:24:21.516Z; source `41cfc34382f95dcf3b08fca74347cccb673b15be` |
 
 Candidate mới đã qua kiểm tra ký/payload độc lập và Apple validation. Lần
 Apple từ chối candidate cũ được giữ trong lịch sử. Upload mới đã thành công
 với delivery/build `0816cc3b-8b69-4357-bf0d-32537ec34b8b`; Apple processing đã
-hoàn tất. TestFlight yêu cầu khai báo mã hóa (`MISSING_EXPORT_COMPLIANCE`).
-Chưa gửi App Review.
+hoàn tất. Owner đã duyệt và agent đã lưu khai báo mã hóa chuẩn ngoài macOS,
+không phân phối tại Pháp. API xác nhận TestFlight nội bộ READY_FOR_BETA_TESTING;
+thử bên ngoài mới ở READY_FOR_BETA_SUBMISSION. Chưa gửi App Review.
 
 ## Copy en-US
 
@@ -186,8 +187,9 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
 - **[OWNER INPUT] Wording đồng ý ghi âm và xử lý cloud:** duyệt hướng dẫn phù
   hợp pháp lý cho việc ghi microphone/system audio và gửi recording sau thao tác
   Transcribe. Product contract không thay cho tư vấn pháp lý theo từng vùng.
-- **[OWNER INPUT] Export-compliance response:** hoàn tất questionnaire về
-  encryption/export cho binary cuối. Packet này không khẳng định exemption.
+- **Export compliance đã hoàn tất cho build 1.0 (1):** owner duyệt đúng hai câu
+  trả lời về thuật toán chuẩn và France No; server đã ghi nhận. Trước khi gửi
+  App Review, đối chiếu storefront thực tế theo quyết định chưa mở Pháp.
 - **[OWNER INPUT] Custom EULA nếu muốn dùng:** xác nhận Apple standard license
   hay cung cấp văn bản đã được duyệt.
 - **[OWNER INPUT] Quyền sử dụng media:** xác nhận quyền đối với icon,
@@ -201,8 +203,8 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
   entitlement, icon, quyền đọc, chữ ký và signed routing đều được kiểm tra
   trên exact artifact nêu trên.
 - ASC đã xác nhận version `1.0` / build `1`, upload COMPLETE và binary VALID.
-  Bổ sung khai báo mã hóa trước khi thử TestFlight; processing không chứng minh
-  App Review hay billing đã đạt.
+  Khai báo mã hóa đã mở TestFlight nội bộ; còn chuẩn bị quyền truy cập và đường
+  thử bảo toàn dữ liệu. Kết quả này không chứng minh App Review hay billing đã đạt.
 - Recheck StoreKit sandbox purchase/restore, routing Sandbox riêng, backend
   review window và Ask path trên exact candidate. Không gọi đó là bằng chứng
   production billing nếu chưa có live evidence.
