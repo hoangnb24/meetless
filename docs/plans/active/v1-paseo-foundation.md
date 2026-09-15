@@ -732,6 +732,18 @@ Review or public release is inferred from this processing result.
   unchanged parent group require actual Apple-delivered runtime proof; no new
   group/profile privilege is authorized by this correction.
 
+- The complete-policy coordinator test was rerun on committed source
+  `c53e4407bd80a6ba11a7977ff1a3a2dad8e4f533` with its intended 300-second
+  timeout. It passed in 123.445 seconds (one selected test passed, 68 skipped);
+  full command duration 126.21 seconds. Owned test processes were absent after
+  completion. Lead ACCEPTS this additional bounded coordinator proof, retaining
+  the earlier premature timeout as history. Log retained in ignored upload
+  evidence `testflight-launch-crash/coordinator-300s.log`.
+  Build 1.0 (2) preparation is assigned to `testflight_build2` from this exact
+  reviewed source in an isolated checkout, using the unchanged production/
+  Sandbox targets, existing keys/profile and current app-group boundary.
+  No build2 artifact, Apple validation/upload or runtime acceptance yet.
+
 Next: resolve and verify the actual Apple-distributed launch path, then resume
 screenshots and #15/#16/#20 evidence with preserved recording data. TestFlight
 and App Review purchases use the isolated Apple Sandbox route; only verified
