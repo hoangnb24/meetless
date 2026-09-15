@@ -16,17 +16,18 @@ quyết định hoặc tài liệu thật sự còn thiếu, không điền bằ
 | Bundle ID | `com.meetless.app` | Distribution manifest |
 | App Apple ID | `6807070739` | App Store Connect readback trong execution plan |
 | SKU | `meetless-macos-v1` | App Store Connect readback trong execution plan |
-| Version / build | `1.0` / `1` | Producer contract; cần recheck trên record trước upload |
-| Primary category | Productivity | ASC đã lưu; binary mới vẫn phải được kiểm tra khớp category |
+| Version / build | `1.0` / `1` | ASC API xác nhận đúng MAC_OS build ngày 2026-09-15 |
+| Primary category | Productivity | ASC đã lưu; exact binary đã được kiểm tra khớp category |
 | Primary language | English (U.S.) | ASC readback |
 | Baseline đóng băng | `production-baseline-2026-09-14` → `6b051116af4dbf8a22337f51b995e120454b79d0` | Tag lịch sử, không tự là release artifact |
 | Candidate đã đóng gói | `Meetless-1.0-1.pkg`, SHA-256 `b6f0fde5bf1e80c5254a80e3c0151be4f05f167d7b04bc699700bff7c50b5da7` | `.artifacts/macos-mas-distribution/20260915T003311276Z/` |
-| Trạng thái candidate | Upload thành công; Apple đang PROCESSING | Review độc lập và Apple `altool` validation đã đạt, không lỗi/cảnh báo; source `41cfc34382f95dcf3b08fca74347cccb673b15be` |
+| Trạng thái candidate | Upload COMPLETE, binary VALID; TestFlight thiếu export compliance | API 2026-09-15T01:23:16.219Z; source `41cfc34382f95dcf3b08fca74347cccb673b15be` |
 
 Candidate mới đã qua kiểm tra ký/payload độc lập và Apple validation. Lần
 Apple từ chối candidate cũ được giữ trong lịch sử. Upload mới đã thành công
-với delivery `0816cc3b-8b69-4357-bf0d-32537ec34b8b`; Apple processing và
-App Review chưa hoàn tất.
+với delivery/build `0816cc3b-8b69-4357-bf0d-32537ec34b8b`; Apple processing đã
+hoàn tất. TestFlight yêu cầu khai báo mã hóa (`MISSING_EXPORT_COMPLIANCE`).
+Chưa gửi App Review.
 
 ## Copy en-US
 
@@ -199,9 +200,9 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
   đã được sửa. Actual Apple validation đạt, không lỗi/cảnh báo. Profile,
   entitlement, icon, quyền đọc, chữ ký và signed routing đều được kiểm tra
   trên exact artifact nêu trên.
-- Recheck record version `1.0` / build `1`; chỉ upload đúng package đã được
-  nghiệm thu. Ghi lại Apple processing result. Ký cục bộ hoặc `pkgutil` pass
-  không chứng minh upload/App Review.
+- ASC đã xác nhận version `1.0` / build `1`, upload COMPLETE và binary VALID.
+  Bổ sung khai báo mã hóa trước khi thử TestFlight; processing không chứng minh
+  App Review hay billing đã đạt.
 - Recheck StoreKit sandbox purchase/restore, routing Sandbox riêng, backend
   review window và Ask path trên exact candidate. Không gọi đó là bằng chứng
   production billing nếu chưa có live evidence.

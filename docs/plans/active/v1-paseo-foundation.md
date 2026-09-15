@@ -10,21 +10,23 @@ production. Freeze the current source before beginning this work.
 
 GitHub execution breakdown: [Epic #21](https://github.com/hoangnb24/meetless/issues/21), new sub-issues #22–#27 and retained #14–#17/#20. Native dependencies own the execution order; #22/#23 are the first inputs. This link does not change the frozen source.
 
-### Current execution checkpoint — 2026-09-15, upload accepted
+### Current execution checkpoint — 2026-09-15, Apple processing complete
 
 This checkpoint supersedes historical missing-login/key/empty-production and
 failed-artifact observations below. #22–#26 are accepted, including the corrected
 exact distribution package and actual Apple validation. Upload succeeded with
-delivery `0816cc3b-8b69-4357-bf0d-32537ec34b8b`; #27 remains open until Apple
-processing is observed. Epic #21 remains in progress; no launch/billing/App Review
-or public release is inferred from upload.
+delivery/build `0816cc3b-8b69-4357-bf0d-32537ec34b8b`. At 01:23:16 UTC,
+Apple reports upload COMPLETE and binary VALID, with no errors or warnings.
+TestFlight internal/external states are MISSING_EXPORT_COMPLIANCE; the owner
+declaration is still pending. Epic #21 remains in progress; no launch/billing/App
+Review or public release is inferred from this processing result.
 
 | Public release input | Verified value |
 | --- | --- |
 | Frozen baseline | `production-baseline-2026-09-14`, `6b051116af4dbf8a22337f51b995e120454b79d0`; never move |
 | Deployed successor source | `63b3768ed334c68cb79dcfc87545b523349ed353`, isolated `/tmp/meetless-production-63b3768` |
 | Apple app / bundle / team | `6807070739` / `com.meetless.app` / `63M98WD275` |
-| Candidate version / build | `1.0` / `1`; pre-upload API had no builds; exact upload succeeded, processing pending |
+| Candidate version / build | `1.0` / `1`, MAC_OS; upload COMPLETE, binary VALID; TestFlight awaits export compliance |
 | Packaged source / package | `41cfc34382f95dcf3b08fca74347cccb673b15be` / SHA-256 `b6f0fde5bf1e80c5254a80e3c0151be4f05f167d7b04bc699700bff7c50b5da7` |
 | ASC upload key | `V8ZBF889R7`, dedicated Developer role explicitly approved; protected and Git-ignored |
 | RevenueCat project / app | `0d7b4465` / `appe0ef526253`; existing monthly/annual, premium/default catalog retained |
@@ -355,17 +357,36 @@ or public release is inferred from upload.
   exact-package upload, which exited 0 with no errors and delivery UUID
   `0816cc3b-8b69-4357-bf0d-32537ec34b8b`; 319,883,948 bytes transferred.
   ASC buildUploads API independently confirms the same delivery, version 1.0,
-  build 1, platform MAC_OS and state PROCESSING with empty errors/warnings.
-  Builds API remains empty while import is pending. The owned read-only altool
+  build 1 and platform MAC_OS. At 2026-09-15T01:23:16.219Z, upload state is
+  COMPLETE with empty errors/warnings and the matching build is VALID.
+  Both TestFlight states are MISSING_EXPORT_COMPLIANCE, with
+  usesNonExemptEncryption null. Evidence: `api-builds-processing-08.json`
+  under the same upload evidence directory. Earlier empty/PROCESSING responses
+  remain as history. The owned read-only altool
   status query was terminated after the direct API supplied current state;
-  this did not cancel the completed upload or remote processing. Processing
-  result remains pending; no launch yet. Logs are retained under
+  this did not cancel the completed upload or remote processing. No launch yet.
+  Logs are retained under
   `.artifacts/production-preparation/isolated-41cfc34-setup/`.
+- Independent reviewer ACCEPTS the upload/processing handoff against the exact
+  prior accepted package, upload byte count/delivery UUID and final normalized
+  Apple API record. Lead ACCEPTS #27 for upload, binary processing and build
+  mapping only; TestFlight export compliance remains a separate open gate.
+- Lead reviewed and ACCEPTS the corrected factual draft
+  `docs/release/privacy-data-inventory.md` (SHA-256
+  `7913f16a74b9a260369db4626279b1e0524b858d5abef3c7d33da52ddf93ec89`).
+  Review corrected the Sandbox deployment fact, Ask workspace lifecycle and
+  backend audio cleanup timing. This is a source inventory, not a legal
+  classification or measured production retention acceptance. The content,
+  support/privacy URLs and actual App Privacy declarations remain #17 work.
 
-Next: observe the current upload and Apple processing result for #27, then
-continue the remaining live testing and store-readiness dependencies. #26 is
-accepted for the new exact artifact; App Review/public release remain separate. #22–#27 retain their original
-acceptance dependencies. Public release/App Review remain separate.
+Next: finish the export-compliance declaration before TestFlight testing, then
+continue #15/#16/#20 live evidence and #14/#17 release readiness. TestFlight and
+App Review purchases use the isolated Apple Sandbox route; only verified Apple
+PRODUCTION transactions can establish production billing evidence. Do not
+replace the installed development app or its data to run a store candidate.
+The owner was asked for support/privacy URLs (or domain and support email);
+that input remains pending. App Review/public release require a separate owner
+decision.
 
 ### Historical execution checkpoint — 2026-09-14
 
