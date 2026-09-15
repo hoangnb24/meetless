@@ -1186,7 +1186,11 @@ the debug/release native test executables, and records native test execution as
 `.artifacts/app-store-upload/20260915-build4/owner-beta-source-acceptance.json`.
 The default `required` policy continues to run both native test executables;
 the deferred route is limited to this internal beta and cannot establish App
-Review or public-release readiness. Exact artifact provenance,
+Review or public-release readiness. Build 4 also carries the existing
+owner-approved `ITSAppUsesNonExemptEncryption=false` declaration in
+`Info.plist`, matching Apple’s [Info.plist key documentation](https://developer.apple.com/documentation/bundleresources/information-property-list/itsappusesnonexemptencryption)
+and the API-verified declaration for builds 1–3; it does not change the
+encryption classification or France availability decision. Exact artifact provenance,
 package contents, signing/entitlements, installer integrity and Apple upload
 validation remain required. An independent reviewer and Lead must inspect the
 actual package before upload. The owner will test the Apple-distributed build;

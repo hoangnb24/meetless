@@ -210,6 +210,11 @@ describe("actual Apple submission requirements", () => {
     expect(info.CFBundleIconFile).toBe("Meetless.icns");
     for (const key of ["LSApplicationCategoryType", "CFBundleIconFile"]) expect(() => validateDistributionInfo({ ...info, [key]: undefined }, options)).toThrow(/differs/);
   });
+  it("preserves the owner-approved non-exempt encryption declaration in distribution metadata", async () => {
+    const info = plist.parse(await readFile(new URL("../../../native/macos-host/Info.plist", import.meta.url), "utf8"));
+    expect(info.ITSAppUsesNonExemptEncryption).toBe(false);
+    expect(prepareDistributionInfo(info, parse()).ITSAppUsesNonExemptEncryption).toBe(false);
+  });
   it("validates the actual committed brand ICNS 512pt@2x and rejects its removal or wrong dimensions", async () => {
     const icon = await readFile(new URL("../../../native/macos-host/Meetless.icns", import.meta.url));
     expect(validateDistributionIcon(icon).has512ptAt2x).toBe(true);
