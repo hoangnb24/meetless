@@ -19,6 +19,14 @@ zone lookup for `2m0r.com` (active zone `c4a00099227adaee669d3a51666798dc`).
 The owner reauthenticated before this correction. The account holding the zone
 is the target, rather than whichever account a login may select by default.
 
+Current deployment: https://meetless-website.longmaba.workers.dev
+from source `b7477ebb0558f94a4781db2253736b9444bc97fa`, version
+`38ac4662-b0c8-4d95-8a78-27fc326a5418`. All three routes and assets return
+HTTP 200 with the reviewed source bytes; unknown route returns the custom 404.
+Select **Longmaba@gmail.com's Account** in the dashboard, then Workers & Pages →
+**meetless-website** for domain setup. The login email may differ from the
+account name. Final `meetless.2m0r.com` attachment remains the owner handoff.
+
 The earlier deployment at https://meetless-website.frosty-base-76ce.workers.dev
 (version `80acd7a1-3b17-462b-bb12-6ce12a5fb954`, source `dc91fe5`) is in the
 previous account and does not satisfy the final-domain account requirement.

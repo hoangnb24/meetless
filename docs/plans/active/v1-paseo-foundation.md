@@ -504,6 +504,23 @@ Review or public release is inferred from this processing result.
   deployment, not an overwrite. Release check and Wrangler dry-run passed.
   Old-account Worker is retained; no DNS mutation or app/backend change.
 
+- Corrected-account deployment completed: source
+  `b7477ebb0558f94a4781db2253736b9444bc97fa`, Worker `meetless-website`, version
+  `38ac4662-b0c8-4d95-8a78-27fc326a5418` at
+  `https://meetless-website.longmaba.workers.dev`. Wrangler deployment readback
+  confirms this version serves 100% in the pinned domain account. Independent
+  reviewer ACCEPTS the one-line account target and actual HTTPS homepage/privacy
+  rendering. All seven root HTTP checks pass with exact source hashes, including
+  missing-route HTTP 404. Lead ACCEPTS this exact deployment in the verified
+  domain account. Evidence: `.artifacts/website-preparation/corrected-cloudflare-public-verification.json`.
+  Public assets remain identical to the earlier reviewed source. No new hook,
+  CI or branch-protection enforcement is claimed; account_id is the native
+  Wrangler target configuration, not an authentication or permission change.
+  Owner handoff: select Longmaba@gmail.com's Account → Workers & Pages →
+  meetless-website → Settings → Domains & Routes → Add → Custom Domain →
+  meetless.2m0r.com. Final-domain HTTPS remains pending; previous-account copy
+  has not been deleted. #28/#17/Epic URLs and release packet are corrected.
+
 Next: the owner can accept the internal TestFlight invitation. Preserve the
 installed development app/data before testing, then continue #15/#16/#20 live evidence and
 #14/#17 release readiness. TestFlight and

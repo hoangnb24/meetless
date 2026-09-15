@@ -172,7 +172,7 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
   `Hoang Nguyen Bang`. URLs dự kiến: `https://meetless.2m0r.com/privacy/`,
   `https://meetless.2m0r.com/support/`, `https://meetless.2m0r.com/`.
   Bản Cloudflare công khai đã kiểm tra tại
-  `https://meetless-website.frosty-base-76ce.workers.dev`; chưa điền final URLs
+  `https://meetless-website.longmaba.workers.dev`; chưa điền final URLs
   vào ASC trước khi domain thật có HTTPS và được kiểm tra.
 - **[OWNER INPUT] App Review contact:** tên, email, phone và người xử lý thư
   trao đổi với App Review.
