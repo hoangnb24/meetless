@@ -44,6 +44,11 @@ App đang idle trên build 3. Lịch sử lỗi startup/build 2 và producer th�
 
 ## Copy en-US
 
+**Blocker mới từ owner trên build 3:** #30 (P1) bị lặp xin quyền screen/audio
+khi Start recording; #31 (P2) Dock còn icon cũ và tên Electron. Cả hai cần sửa
+và kiểm chứng trên candidate tiếp theo trước App Review; chưa có kết luận nguyên
+nhân. Kết quả Open/CPU đã đạt không chứng minh permission hay branding đã đạt.
+
 Đã lưu trên ASC macOS 1.0 / English (U.S.): subtitle, promotional text,
 description và keywords. Root API readback xác nhận khớp từng byte với các
 block bên dưới; reviewer độc lập và Lead đã nghiệm thu phần copy.
@@ -237,7 +242,7 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
 - Recheck StoreKit sandbox purchase/restore, routing Sandbox riêng, backend
   review window và Ask path trên exact candidate. Không gọi đó là bằng chứng
   production billing nếu chưa có live evidence.
-- Hoàn tất dependency release còn lại của Epic: #14, #15, #16 và **#20**.
+- Hoàn tất dependency release còn lại của Epic: #14, #15, #16, **#20**, **#30** và **#31**.
   #29 đã giải quyết trên actual TestFlight build 3.
   Cấu hình đã accepted và package local không tự chứng minh reboot/focus, live
   billing, webhook delivery hay public publication.

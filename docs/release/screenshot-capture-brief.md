@@ -7,6 +7,11 @@ purchase/transcription success or use the design prototype as the product.
 
 ## Candidate and output
 
+Owner follow-up on build 3 reports a screen/audio permission loop (#30) and old
+Dock icon/Electron name (#31). These remain unverified root causes. Recording
+flow and final store assets must wait for fixes and actual candidate acceptance;
+the build3 Open/CPU acceptance below remains valid only within its stated scope.
+
 - Capture candidate: actual TestFlight macOS 1.0 (3), source
   `7e958c3d7586029fa77347e987e0e380b980f563`, Apple build
   `401bf672-c396-4ae0-8bb7-1ca1632e037d`. Open/relaunch, native idle CPU and

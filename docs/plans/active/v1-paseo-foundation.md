@@ -1009,7 +1009,29 @@ Review or public release is inferred from this processing result.
   `lead-acceptance.json`. This resolves #29's CPU regression; it does not close
   #14's partial foreground/reboot gates or the remaining release dependencies.
 
-Next: resume screenshots and #15/#16/#20 evidence on the accepted build3 runtime.
+### Owner build3 follow-up — permission and Dock polish
+
+Owner independently reports smooth TestFlight startup and preserved recordings,
+then identifies two new issues for separate tasks before Apple Review:
+
+- #30 (P1): Start recording remains stuck requesting screen/audio permission
+  after the owner grants access. Duplicate/stale TCC configuration is a hypothesis,
+  not a demonstrated cause. Reproduce permission/request/capture ownership and
+  state transitions before fixing; do not reset TCC or user data to mask the bug.
+- #31 (P2): the running Dock icon appears old and hover displays Electron.
+  Compare approved assets, wrapper/nested metadata and runtime overrides; retain
+  the distinct bundle IDs that fixed startup. Do not assume cache is the cause.
+
+Both are children of Epic #21 and prerequisites of #17. Source investigation
+can proceed independently in separate worktrees; only the #30 task may operate
+the shared installed app during initial diagnosis. #31 starts with code/artifact
+inspection and coordinates later UI verification. Neither task independently
+replaces/uploads a shared release candidate. Preserve accepted build3 evidence
+and #29 closure; new permission/branding reports do not erase bounded Open/CPU
+acceptance. Epic remains open. Actual reproduction/fixes are not claimed by intake.
+
+Next: address #30/#31 before recording/store screenshot acceptance, while
+independent #15/#16/#20 preparation can continue.
 Keep #14 open for explicit foreground and owner-scheduled reboot proof. TestFlight
 and App Review purchases use the isolated Apple Sandbox route; only verified
 Apple PRODUCTION transactions can establish production billing evidence.
