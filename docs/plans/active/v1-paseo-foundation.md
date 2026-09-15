@@ -469,14 +469,35 @@ Review or public release is inferred from this processing result.
   identified in `.artifacts/website-preparation/final-source-evidence.json`
   for initial Cloudflare deployment. This does not yet prove public hosting.
 
+- Actual first Cloudflare deployment completed from source
+  `dc91fe53b7d26db875da3b5b65dccdb89cde4c86` through `npm run deploy` and
+  Wrangler 4.131.2, uploading seven files to Worker `meetless-website`.
+  Version `80acd7a1-3b17-462b-bb12-6ce12a5fb954` serves 100% traffic at
+  `https://meetless-website.frosty-base-76ce.workers.dev`.
+  Public HTTPS curl checks returned 200 and exact reviewed SHA-256 bytes for
+  homepage/support/privacy plus CSS/logo/favicon; a nonexistent route returned
+  the exact reviewed custom 404 with HTTP 404. Initial urllib attempt returned
+  uniform 403; cause unknown, retained as failed evidence separately.
+  `apple_package_review` independently opened public homepage/privacy in Chrome,
+  confirmed final identity/contact and absence of access interstitials.
+  Lead ACCEPTS this exact public workers.dev deployment. Evidence:
+  `.artifacts/website-preparation/cloudflare-public-verification.json`;
+  prior failure: `cloudflare-deployment-evidence.json`. Local release validation
+  passed; no CI/hook/branch-protection enforcement claimed. Website source is
+  unchanged after review/deployment. No app/backend rebuild or installation.
+  Owner still needs to attach `meetless.2m0r.com` in Cloudflare Worker Settings →
+  Domains & Routes → Add → Custom Domain, in the account containing that domain.
+  No DNS change was made. Final-domain HTTPS verification remains open in #28,
+  then URLs can be entered in #17; no App Review/public app submission occurred.
+
 Next: the owner can accept the internal TestFlight invitation. Preserve the
 installed development app/data before testing, then continue #15/#16/#20 live evidence and
 #14/#17 release readiness. TestFlight and
 App Review purchases use the isolated Apple Sandbox route; only verified Apple
 PRODUCTION transactions can establish production billing evidence. Do not
 replace the installed development app or its data to run a store candidate.
-Website domain/contact/responsible individual are now supplied. Complete Cloudflare deployment and owner DNS handoff for #28; source/content
-and local rendered UI review are accepted.
+Website domain/contact/responsible individual are now supplied. Cloudflare deployment and DNS instructions are handed off. Await owner custom-domain
+setup, then verify final HTTPS for #28 and hand final URLs to #17.
 App Review/public release require a separate owner decision.
 
 ### Historical execution checkpoint — 2026-09-14

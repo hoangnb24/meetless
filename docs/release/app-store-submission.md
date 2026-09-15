@@ -167,12 +167,13 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
 
 - **[OWNER INPUT] Seller/developer display name và copyright line:** tên pháp
   lý hiển thị cho khách hàng và năm/nội dung copyright.
-- **[OWNER INPUT] Privacy Policy URL:** URL public, hoạt động, không phải
-  placeholder; nội dung phải khớp local audio/meeting data, explicit cloud
-  transcription, RevenueCat purchase state, device enrollment, retention và
-  deletion.
-- **[OWNER INPUT] Support URL và Marketing URL nếu dùng:** URL thật và đường
-  liên hệ hỗ trợ; không tự đoán domain/email.
+- **Website #28 đã deploy; chờ gắn domain:** owner đã cung cấp
+  `meetless.2m0r.com`, liên hệ `hoang@2m0r.com`, cá nhân chịu trách nhiệm
+  `Hoang Nguyen Bang`. URLs dự kiến: `https://meetless.2m0r.com/privacy/`,
+  `https://meetless.2m0r.com/support/`, `https://meetless.2m0r.com/`.
+  Bản Cloudflare công khai đã kiểm tra tại
+  `https://meetless-website.frosty-base-76ce.workers.dev`; chưa điền final URLs
+  vào ASC trước khi domain thật có HTTPS và được kiểm tra.
 - **[OWNER INPUT] App Review contact:** tên, email, phone và người xử lý thư
   trao đổi với App Review.
 - **[OWNER INPUT] Availability, age rating, content rights và DSA/trader
@@ -203,8 +204,8 @@ recheck hoặc engineering có thể chuẩn bị không được đưa vào dan
   entitlement, icon, quyền đọc, chữ ký và signed routing đều được kiểm tra
   trên exact artifact nêu trên.
 - ASC đã xác nhận version `1.0` / build `1`, upload COMPLETE và binary VALID.
-  Khai báo mã hóa đã mở TestFlight nội bộ; còn chuẩn bị quyền truy cập và đường
-  thử bảo toàn dữ liệu. Kết quả này không chứng minh App Review hay billing đã đạt.
+  Khai báo mã hóa đã mở TestFlight nội bộ. Nhóm Meetless Internal đã có đúng
+  build này và một tester được mời theo owner duyệt; còn đường thử bảo toàn dữ liệu. Kết quả này không chứng minh App Review hay billing đã đạt.
 - Recheck StoreKit sandbox purchase/restore, routing Sandbox riêng, backend
   review window và Ask path trên exact candidate. Không gọi đó là bằng chứng
   production billing nếu chưa có live evidence.

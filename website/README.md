@@ -11,6 +11,16 @@ support/privacy email `hoang@2m0r.com`, responsible individual `Hoang Nguyen Ban
 On 2026-09-15, public DNS showed Cloudflare nameservers for `2m0r.com` and no
 existing A/CNAME for `meetless.2m0r.com`; recheck before any future DNS mutation.
 
+## Deployed version
+
+Initial public deployment: https://meetless-website.frosty-base-76ce.workers.dev
+from source `dc91fe53b7d26db875da3b5b65dccdb89cde4c86`, Cloudflare version
+`80acd7a1-3b17-462b-bb12-6ce12a5fb954` (2026-09-15). Public HTTPS checks returned
+200 with exact reviewed bytes for the three pages and assets; an unknown route
+returned the exact custom 404 with HTTP 404. Final custom-domain setup and
+verification remain pending; follow step 6 below. This initial version is the
+rollback reference for later updates, not evidence of App Store publication.
+
 ## Local preview and validation
 
 From `website/`: `npm ci`, then `npm run dev`. Open the URL printed by Wrangler.
