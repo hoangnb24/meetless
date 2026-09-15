@@ -1,0 +1,7 @@
+{
+  "source": "design/assets/meetless-mark.svg",
+  "sourceSha256": "10984608bf2317a708009eeaab307dbd64af06ae37d4a7c151509c4327b1e2c0",
+  "artifact": "Meetless.icns",
+  "artifactSha256": "e147c112db6ecc8faae31448a4a45544f6f23bbcf8125a1d6a366eeaf0239006",
+  "transformation": "Unchanged existing vector geometry rasterized to standard macOS iconset sizes 16,32,128,256,512 points at 1x and 2x; iconutil ICNS container."
+}

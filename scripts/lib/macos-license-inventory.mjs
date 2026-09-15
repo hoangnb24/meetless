@@ -534,6 +534,7 @@ function artifactMemberSourcePaths(id, artifactPath, context) {
   }
   if (id === "sherpa-model-assets") return ["vendor/paseo/packages/server/src/server/speech/providers/local/sherpa/assets/silero_vad.onnx"];
   if (id === "fonts-assets") {
+    if (artifactPath === "Contents/Resources/Meetless.icns") return ["native/macos-host/Meetless.icns"];
     if (artifactPath.includes("/vendor/paseo/packages/desktop/assets/")) return [artifactPath.replace("Contents/Resources/meetless/", "")];
     if (packageSource) return [packageSource];
   }

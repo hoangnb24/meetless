@@ -1,10 +1,14 @@
+import plist from "plist";
+import { stageMacOSAppStoreEmbeddedProfile } from "../../../scripts/lib/macos-app-store-package-evidence.mjs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, chmod, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseMacAppStoreDistributionArguments, prepareDistributionInfo, validateDistributionInfo, validateDistributionProfile, validateDistributionSignature, validateDistributionSource, validateInstallerSignature, buildReviewedDistributionSource, rebuildDistributionSource } from "../../../scripts/lib/macos-app-store-distribution.mjs";
+import { parseMacAppStoreDistributionArguments, prepareDistributionInfo, validateDistributionInfo, validateDistributionProfile, validateDistributionSignature, validateDistributionSource, validateInstallerSignature, buildReviewedDistributionSource, rebuildDistributionSource, prepareDistributionEntitlements, validateDistributionEntitlements, validateDistributionIcon, validateDistributionReadableClosure } from "../../../scripts/lib/macos-app-store-distribution.mjs";
+import { buildMacOSPackageInputSpecs, MACOS_PACKAGE_ELECTRON_LAYOUT_MAS } from "../../../scripts/lib/macos-package-inputs.mjs";
+import { MACOS_APP_STORE_CONTRACT } from "../../../scripts/lib/macos-app-store-contract.mjs";
 const appIdentity = "Apple Distribution: Example (63M98WD275)";
 const installerIdentity = "3rd Party Mac Developer Installer: Example (63M98WD275)";
 const inputs = { "proof-root": "/tmp/distribution", "provisioning-profile": "/tmp/store.provisionprofile", "signing-identity": appIdentity, "installer-identity": installerIdentity, keychain: "/tmp/release.keychain-db", "keychain-password-file": "/tmp/password", version: "1.0", "build-number": "1", "sandbox-url": "https://sandbox-test.convex.cloud", "production-url": "https://production-test.convex.cloud", "public-sdk-key": "appl_test12345678", "source-commit": "a".repeat(40), "source-snapshot-sha256": "b".repeat(64) };
@@ -133,3 +137,69 @@ it("rebuilds real incremental TypeScript output after removing its cache outside
     expect(await readFile(path.join(desktop, "dist/main.js"), "utf8")).toContain("version");
   } finally { await rm(root, { recursive: true, force: true }); }
 }, 15000);
+
+describe("actual Apple submission requirements", () => {
+  it("binds the icon only for distribution package inputs, preserving the development MAS shape", () => {
+    const electronArchiveSource = {
+      schema: "MEETLESS_MAS_ELECTRON_ARCHIVE_SOURCE v1",
+      archiveName: MACOS_APP_STORE_CONTRACT.electron.archiveName,
+      path: `/tmp/${MACOS_APP_STORE_CONTRACT.electron.archiveName}`,
+      sha256: MACOS_APP_STORE_CONTRACT.electron.sha256,
+    };
+    const development = buildMacOSPackageInputSpecs({ electronLayout: MACOS_PACKAGE_ELECTRON_LAYOUT_MAS, electronArchiveSource });
+    const distribution = buildMacOSPackageInputSpecs({ electronLayout: MACOS_PACKAGE_ELECTRON_LAYOUT_MAS, distribution: true, electronArchiveSource });
+    const developmentNative = development.find(({ id }) => id === "meetless-native-sources");
+    const distributionNative = distribution.find(({ id }) => id === "meetless-native-sources");
+    expect(developmentNative?.artifactPathPrefixes).not.toContain("Contents/Resources/Meetless.icns");
+    expect(distributionNative?.artifactPathPrefixes).toContain("Contents/Resources/Meetless.icns");
+  });
+  it("embeds Productivity category and a named ICNS icon in distribution metadata", () => {
+    const options = parse();
+    const info = prepareDistributionInfo({ CFBundleIdentifier: "com.meetless.app" }, options);
+    expect(info.LSApplicationCategoryType).toBe("public.app-category.productivity");
+    expect(info.CFBundleIconFile).toBe("Meetless.icns");
+    for (const key of ["LSApplicationCategoryType", "CFBundleIconFile"]) expect(() => validateDistributionInfo({ ...info, [key]: undefined }, options)).toThrow(/differs/);
+  });
+  it("validates the actual committed brand ICNS 512pt@2x and rejects its removal or wrong dimensions", async () => {
+    const icon = await readFile(new URL("../../../native/macos-host/Meetless.icns", import.meta.url));
+    expect(validateDistributionIcon(icon).has512ptAt2x).toBe(true);
+    let offset = 8;
+    while (icon.toString("ascii", offset, offset + 4) !== "ic10") offset += icon.readUInt32BE(offset + 4);
+    const missing = Buffer.from(icon); missing.write("xxxx", offset, "ascii");
+    expect(() => validateDistributionIcon(missing)).toThrow(/missing required/);
+    const wrong = Buffer.from(icon); wrong.writeUInt32BE(512, offset + 8 + 16);
+    expect(() => validateDistributionIcon(wrong)).toThrow(/1024px/);
+    expect(() => validateDistributionIcon(icon.subarray(0, 32))).toThrow(/container/);
+  });
+  it("signs exactly the profile app/team identity while retaining strict sandbox closure", async () => {
+    const parent = plist.parse(await readFile(new URL("../../../native/macos-host/MeetlessAppStore.entitlements.plist", import.meta.url), "utf8"));
+    const selected = profile();
+    const prepared = prepareDistributionEntitlements(parent, selected);
+    expect(prepared["com.apple.application-identifier"]).toBe("63M98WD275.com.meetless.app");
+    expect(prepared["com.apple.developer.team-identifier"]).toBe("63M98WD275");
+    expect(validateDistributionEntitlements(prepared, selected)).toBe(prepared);
+    expect(() => validateDistributionEntitlements(parent, selected)).toThrow(/application-identifier/);
+    expect(() => validateDistributionEntitlements({ ...prepared, "com.apple.application-identifier": "other" }, selected)).toThrow(/match/);
+    expect(() => validateDistributionEntitlements({ ...prepared, "get-task-allow": true }, selected)).toThrow(/exactly/);
+  });
+  it("keeps only the embedded distribution profile publicly readable, preserving dev mode and rejecting unreadable payload", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "meetless-profile-mode-"));
+    try {
+      await chmod(root, 0o755); await mkdir(path.join(root, "Contents"), { mode: 0o755 });
+      const bytes = Buffer.from("controlled public provisioning profile fixture");
+      const dev = await stageMacOSAppStoreEmbeddedProfile({ bundlePath: root, profileBytes: bytes });
+      const target = path.join(root, "Contents/embedded.provisionprofile");
+      expect((await stat(target)).mode & 0o777).toBe(0o400);
+      expect(dev.schema).toBe("MEETLESS_MACOS_MAS_EMBEDDED_PROFILE v1");
+      await rm(target);
+      const distribution = await stageMacOSAppStoreEmbeddedProfile({ bundlePath: root, profileBytes: bytes, profileMode: 0o444 });
+      expect((await stat(target)).mode & 0o777).toBe(0o444);
+      expect(distribution.schema).toBe("MEETLESS_MACOS_MAS_EMBEDDED_PROFILE v2");
+      expect(distribution.mode).toBe(0o444);
+      expect((await validateDistributionReadableClosure(root)).nonRootReadable).toBe(true);
+      await chmod(target, 0o400);
+      await expect(validateDistributionReadableClosure(root)).rejects.toThrow(/non-root/);
+      await expect(stageMacOSAppStoreEmbeddedProfile({ bundlePath: root, profileBytes: bytes, profileMode: 0o666 })).rejects.toThrow(/Unsupported/);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});

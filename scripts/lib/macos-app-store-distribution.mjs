@@ -1,6 +1,7 @@
 import { createHash, X509Certificate } from "node:crypto";
 import path from "node:path";
-import { rm } from "node:fs/promises";
+import { MACOS_APP_STORE_PARENT_ENTITLEMENTS, validateEntitlementKeys } from "./macos-app-store-contract.mjs";
+import { rm, lstat, readdir } from "node:fs/promises";
 import { R5_APP_STORE_TEAM_ID as TEAM, R5_APP_STORE_BUNDLE_ID as BUNDLE, validateBuildScopedConvexUrl, validateRevenueCatPublicSdkKey } from "./macos-app-store-development.mjs";
 
 export const DISTRIBUTION_AUTHORITY = "docs/decisions/0005-mac-app-store-and-revenuecat.md";
@@ -50,14 +51,14 @@ export function distributionConfiguration(options) {
 export function prepareDistributionInfo(info, options) {
   validateDistributionRouting(options.sandboxUrl, options.productionUrl);
   validateRevenueCatPublicSdkKey(options.publicSdkKey);
-  const result = { ...info, ElectronTeamID: TEAM, CFBundleShortVersionString: options.version, CFBundleVersion: options.buildNumber, MeetlessRevenueCatAPIKey: options.publicSdkKey, MeetlessStoreBackendRouting: true, MeetlessConvexSandboxURL: options.sandboxUrl, MeetlessConvexProductionURL: options.productionUrl, MeetlessSourceCommit: options.sourceCommit, MeetlessSourceSnapshotSHA256: options.sourceSnapshotSha256, MeetlessDistributionConfigurationSHA256: createHash("sha256").update(JSON.stringify(distributionConfiguration(options))).digest("hex") };
+  const result = { ...info, CFBundleIconFile: "Meetless.icns", LSApplicationCategoryType: "public.app-category.productivity", ElectronTeamID: TEAM, CFBundleShortVersionString: options.version, CFBundleVersion: options.buildNumber, MeetlessRevenueCatAPIKey: options.publicSdkKey, MeetlessStoreBackendRouting: true, MeetlessConvexSandboxURL: options.sandboxUrl, MeetlessConvexProductionURL: options.productionUrl, MeetlessSourceCommit: options.sourceCommit, MeetlessSourceSnapshotSHA256: options.sourceSnapshotSha256, MeetlessDistributionConfigurationSHA256: createHash("sha256").update(JSON.stringify(distributionConfiguration(options))).digest("hex") };
   delete result.MeetlessConvexURL;
   validateDistributionInfo(result, options);
   return result;
 }
 export function validateDistributionInfo(info, options) {
   if (info?.CFBundleIdentifier !== BUNDLE || info.ElectronTeamID !== TEAM || info.MeetlessStoreBackendRouting !== true || Object.hasOwn(info, "MeetlessConvexURL")) fail("Signed distribution identity/routing mode is invalid");
-  const expected = { CFBundleShortVersionString: options.version, CFBundleVersion: options.buildNumber, MeetlessRevenueCatAPIKey: options.publicSdkKey, MeetlessConvexSandboxURL: options.sandboxUrl, MeetlessConvexProductionURL: options.productionUrl, MeetlessSourceCommit: options.sourceCommit, MeetlessSourceSnapshotSHA256: options.sourceSnapshotSha256, MeetlessDistributionConfigurationSHA256: createHash("sha256").update(JSON.stringify(distributionConfiguration(options))).digest("hex") };
+  const expected = { CFBundleIconFile: "Meetless.icns", LSApplicationCategoryType: "public.app-category.productivity", CFBundleShortVersionString: options.version, CFBundleVersion: options.buildNumber, MeetlessRevenueCatAPIKey: options.publicSdkKey, MeetlessConvexSandboxURL: options.sandboxUrl, MeetlessConvexProductionURL: options.productionUrl, MeetlessSourceCommit: options.sourceCommit, MeetlessSourceSnapshotSHA256: options.sourceSnapshotSha256, MeetlessDistributionConfigurationSHA256: createHash("sha256").update(JSON.stringify(distributionConfiguration(options))).digest("hex") };
   for (const [key, value] of Object.entries(expected)) if (info[key] !== value) fail(`Signed ${key} differs from reviewed input`);
   validateDistributionRouting(info.MeetlessConvexSandboxURL, info.MeetlessConvexProductionURL);
   return info;
@@ -130,4 +131,55 @@ export async function rebuildDistributionSource({ repositoryRoot, options, run, 
     },
     build: () => run("npm", ["run", "build"], { cwd: repositoryRoot }),
   });
+}
+
+export function prepareDistributionEntitlements(parent, profile) {
+  validateDistributionProfile(profile);
+  validateEntitlementKeys(parent, MACOS_APP_STORE_PARENT_ENTITLEMENTS, "distribution base parent", { applicationGroup: `${TEAM}.${BUNDLE}` });
+  return { ...parent, "com.apple.application-identifier": profile.Entitlements["com.apple.application-identifier"], "com.apple.developer.team-identifier": profile.Entitlements["com.apple.developer.team-identifier"] };
+}
+export function validateDistributionEntitlements(actual, profile) {
+  validateDistributionProfile(profile);
+  const identifiers = ["com.apple.application-identifier", "com.apple.developer.team-identifier"];
+  const base = { ...actual };
+  for (const key of identifiers) {
+    if (actual?.[key] !== profile?.Entitlements?.[key] || typeof actual?.[key] !== "string") fail(`Signed ${key} must match the provisioning profile`);
+    delete base[key];
+  }
+  validateEntitlementKeys(base, MACOS_APP_STORE_PARENT_ENTITLEMENTS, "distribution signed parent", { applicationGroup: `${TEAM}.${BUNDLE}` });
+  return actual;
+}
+export function validateDistributionIcon(bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.length < 8 || bytes.toString("ascii", 0, 4) !== "icns" || bytes.readUInt32BE(4) !== bytes.length) fail("Invalid ICNS container");
+  let offset = 8, required = false;
+  while (offset < bytes.length) {
+    if (offset + 8 > bytes.length) fail("Truncated ICNS chunk");
+    const kind = bytes.toString("ascii", offset, offset + 4), size = bytes.readUInt32BE(offset + 4);
+    if (size < 8 || offset + size > bytes.length) fail("Invalid ICNS chunk size");
+    if (kind === "ic10") {
+      const png = bytes.subarray(offset + 8, offset + size);
+      if (png.length < 24 || png.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a" || png.toString("ascii", 12, 16) !== "IHDR" || png.readUInt32BE(16) !== 1024 || png.readUInt32BE(20) !== 1024) fail("ICNS 512pt @2x must contain the 1024px PNG");
+      required = true;
+    }
+    offset += size;
+  }
+  if (!required) fail("ICNS missing required 512pt @2x representation");
+  return { format: "icns", has512ptAt2x: true };
+}
+export async function validateDistributionReadableClosure(bundlePath) {
+  let files = 0, directories = 0;
+  async function visit(target) {
+    const state = await lstat(target);
+    if (state.isSymbolicLink()) return;
+    if (state.isDirectory()) {
+      if ((state.mode & 0o005) !== 0o005) fail(`Distribution directory is not readable/traversable by non-root users: ${path.relative(bundlePath, target)}`);
+      directories++;
+      for (const name of await readdir(target)) await visit(path.join(target, name));
+    } else if (state.isFile()) {
+      if ((state.mode & 0o004) === 0) fail(`Distribution file is not readable by non-root users: ${path.relative(bundlePath, target)}`);
+      files++;
+    } else fail("Unsupported distribution filesystem entry");
+  }
+  await visit(bundlePath);
+  return { nonRootReadable: true, files, directories };
 }

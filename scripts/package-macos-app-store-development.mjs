@@ -66,7 +66,7 @@ import {
   validateRevenueCatPublicSdkKey,
 } from "./lib/macos-app-store-development.mjs";
 
-import { DISTRIBUTION_AUTHORITY, parseMacAppStoreDistributionArguments, validateDistributionProfile, validateDistributionSignature, validateDistributionSource, prepareDistributionInfo, validateDistributionInfo, distributionConfiguration, validateInstallerSignature, validateDistributionProfileCertificate, rebuildDistributionSource } from "./lib/macos-app-store-distribution.mjs";
+import { DISTRIBUTION_AUTHORITY, parseMacAppStoreDistributionArguments, validateDistributionProfile, validateDistributionSignature, validateDistributionSource, prepareDistributionInfo, validateDistributionInfo, distributionConfiguration, validateInstallerSignature, validateDistributionProfileCertificate, rebuildDistributionSource, prepareDistributionEntitlements, validateDistributionEntitlements, validateDistributionIcon, validateDistributionReadableClosure } from "./lib/macos-app-store-distribution.mjs";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -89,7 +89,9 @@ const masManifestPath = path.join(packagePaths.releaseRoot, distribution ? "app-
 const installationContractPath = path.join(packageRoot, "installation-contract.json");
 const packageMarkerPath = path.join(packageRoot, "meetless-package.json");
 const hostConfigPath = path.join(contentsPath, "Resources", "host-config.json");
-const parentEntitlementsPath = path.join(repositoryRoot, "native", "macos-host", "MeetlessAppStore.entitlements.plist");
+const sourceParentEntitlementsPath = path.join(repositoryRoot, "native", "macos-host", "MeetlessAppStore.entitlements.plist");
+const parentEntitlementsPath = distribution ? path.join(options.proofRoot, "distribution-parent-entitlements.plist") : sourceParentEntitlementsPath;
+let selectedDistributionProfile = null;
 const childEntitlementsPath = path.join(repositoryRoot, "native", "macos-host", "MeetlessAppStoreChild.entitlements.plist");
 
 if (distribution) await withDistributionKeychain(main);
@@ -101,6 +103,7 @@ async function main() {
   else await mkdir(options.proofRoot, { recursive: true, mode: 0o700 });
   const profileSnapshot = await snapshotProvisioningProfile(options.provisioningProfile);
   validateProfile(profileSnapshot.profile);
+  if (distribution) selectedDistributionProfile = profileSnapshot.profile;
   if (distribution) await assertReviewedSource();
   await readSourceEntitlements();
   await requireExactDevelopmentIdentity(options.signingIdentity);
@@ -119,12 +122,15 @@ async function main() {
   const embeddedProfile = await stageMacOSAppStoreEmbeddedProfile({
     bundlePath,
     profileBytes: profileSnapshot.bytes,
+    profileMode: distribution ? 0o444 : 0o400,
   });
+  if (distribution) await validateDistributionReadableClosure(bundlePath);
   const packageEvidence = await prepareMacOSAppStorePackageEvidence({
     bundlePath,
     repositoryRoot,
     candidateSnapshot: directComposition.candidateSnapshot,
     priorManifest: directComposition.packageInputs,
+    distribution,
     electronArchiveSource,
     embeddedProfile,
     profileBytes: profileSnapshot.bytes,
@@ -206,12 +212,16 @@ async function snapshotProvisioningProfile(profilePath) {
 }
 
 async function readSourceEntitlements() {
-  const parent = parsePlistDocument(await readFile(parentEntitlementsPath, "utf8"), "parent App Sandbox entitlements");
+  const parent = parsePlistDocument(await readFile(sourceParentEntitlementsPath, "utf8"), "parent App Sandbox entitlements");
   const child = parsePlistDocument(await readFile(childEntitlementsPath, "utf8"), "inherited child App Sandbox entitlements");
   validateMacAppStoreEntitlementClosure(parent, child, {
     teamId: R5_APP_STORE_TEAM_ID,
     applicationGroup: `${R5_APP_STORE_TEAM_ID}.${R5_APP_STORE_BUNDLE_ID}`,
   });
+  if (distribution) {
+    const prepared = prepareDistributionEntitlements(parent, selectedDistributionProfile);
+    await writeFile(parentEntitlementsPath, plist.build(prepared), { mode: 0o644 });
+  }
   return { parent, child };
 }
 
@@ -343,6 +353,11 @@ async function injectBuildInputs() {
   const info = parsePlistDocument(await readFile(infoPath, "utf8"), "outer Info.plist");
   const prepared = distribution ? prepareDistributionInfo(info, options) : prepareMacAppStoreDevelopmentInfo(info, publicSdkKey, convexUrl);
   await writeFile(infoPath, plist.build(prepared), { mode: 0o644 });
+  if (distribution) {
+    const icon = await readFile(path.join(repositoryRoot, "native/macos-host/Meetless.icns"));
+    validateDistributionIcon(icon);
+    await writeFile(path.join(contentsPath, "Resources/Meetless.icns"), icon, { mode: 0o644 });
+  }
 }
 
 async function signMasBundle(provisioningProfilePath) {
@@ -370,7 +385,8 @@ async function signMasBundle(provisioningProfilePath) {
   });
   await assertReadOnlyProfileMode(
     resolveMacAppStoreDevelopmentEmbeddedProfilePath(bundlePath),
-    "embedded development provisioning profile",
+    "embedded provisioning profile",
+    distribution ? 0o444 : 0o400,
   );
 }
 
@@ -391,7 +407,8 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
     "signed parent app",
     { expectedExecutablePath: path.join(bundlePath, "Contents", "MacOS", "MeetlessHost") },
   );
-  validateEntitlementKeys(
+  if (distribution) validateDistributionEntitlements(actualParent, profile);
+  else validateEntitlementKeys(
     actualParent,
     MACOS_APP_STORE_PARENT_ENTITLEMENTS,
     "signed parent app",
@@ -400,7 +417,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
 
   const profilePath = resolveMacAppStoreDevelopmentEmbeddedProfilePath(bundlePath);
   await requireRegularFile(profilePath, "embedded development provisioning profile");
-  await assertReadOnlyProfileMode(profilePath, "embedded development provisioning profile");
+  await assertReadOnlyProfileMode(profilePath, "embedded provisioning profile", distribution ? 0o444 : 0o400);
   const embeddedProfileBytes = await readFile(profilePath);
   if (!embeddedProfileBytes.equals(profileBytes)) {
     throw developmentError("embedded development provisioning profile bytes differ from the immutable selected-profile snapshot");
@@ -492,6 +509,7 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
     repositoryRoot,
     candidateSnapshot: directComposition.candidateSnapshot,
     preparedEvidence: packageEvidence,
+    distribution,
     signature,
     entries,
     machoEntries,
@@ -502,7 +520,15 @@ async function validateSignedArtifact({ profile, profileBytes, profileSnapshot, 
     throw developmentError("MAS embedded profile evidence is not cross-bound to the immutable provisioning-profile snapshot");
   }
 
+  const storeSubmission = distribution ? {
+    icon: validateDistributionIcon(await readFile(path.join(contentsPath, "Resources/Meetless.icns"))),
+    category: outerInfo.LSApplicationCategoryType,
+    permissions: await validateDistributionReadableClosure(bundlePath),
+    signedApplicationIdentifier: actualParent["com.apple.application-identifier"],
+    signedTeamIdentifier: actualParent["com.apple.developer.team-identifier"],
+  } : null;
   return {
+    ...(distribution ? { storeSubmission } : {}),
     schema: distribution ? "MEETLESS_MAC_APP_STORE_DISTRIBUTION v1" : "MEETLESS_MAC_APP_STORE_DEVELOPMENT v1",
     authority: distribution ? DISTRIBUTION_AUTHORITY : MACOS_APP_STORE_DEVELOPMENT_AUTHORITY,
     target: MACOS_APP_STORE_CONTRACT.target,
@@ -627,6 +653,10 @@ function validateMachOEntitlements(entitlements, policy, label) {
     label,
   );
   if (policy.entitlementPolicy === MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.NONE) return evidence;
+  if (distribution && policy.entitlementPolicy === MACOS_APP_STORE_DEVELOPMENT_MACHO_ENTITLEMENT_POLICIES.PARENT) {
+    validateDistributionEntitlements(entitlements, selectedDistributionProfile);
+    return evidence;
+  }
   validateEntitlementKeys(
     entitlements,
     policy.expectedEntitlementKeys,
@@ -670,10 +700,10 @@ async function requireDirectory(target, label) {
   if (!state?.isDirectory()) throw developmentError(`${label} is missing or is not a directory`);
 }
 
-async function assertReadOnlyProfileMode(target, label) {
+async function assertReadOnlyProfileMode(target, label, expectedMode = 0o400) {
   const state = await lstat(target).catch(() => null);
-  if (!state?.isFile() || (state.mode & 0o777) !== 0o400) {
-    throw developmentError(`${label} must remain a regular file with mode 0400`);
+  if (!state?.isFile() || (state.mode & 0o777) !== expectedMode) {
+    throw developmentError(`${label} must remain a regular file with mode ${expectedMode.toString(8)}`);
   }
 }
 
@@ -785,6 +815,7 @@ async function createDistributionInstaller() {
   if (payloadApps.length !== 1 || path.basename(payloadApps[0]) !== "Meetless.app") throw new Error("Installer payload must contain exactly the signed Meetless.app");
   const originalEntries = await enumeratePackageEntries(bundlePath);
   const payloadEntries = await enumeratePackageEntries(payloadApps[0]);
+  await validateDistributionReadableClosure(payloadApps[0]);
   if (JSON.stringify(originalEntries) !== JSON.stringify(payloadEntries)) throw new Error("Installer payload differs from validated signed app closure");
   await run("codesign", ["--verify", "--deep", "--strict", payloadApps[0]]);
   validateSignature(await readCodesignDisplay(payloadApps[0]), "installer payload");

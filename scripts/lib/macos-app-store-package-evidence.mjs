@@ -48,22 +48,24 @@ export const MACOS_APP_STORE_PACKAGE_EVIDENCE_AUTHORITY = "docs/decisions/0006-m
 export const MACOS_APP_STORE_PACKAGE_EVIDENCE_LAYOUT = MACOS_PACKAGE_ELECTRON_LAYOUT_MAS;
 export const MACOS_MAS_EMBEDDED_PROFILE_PATH = "Contents/embedded.provisionprofile";
 export const MACOS_MAS_EMBEDDED_PROFILE_MODE = 0o400;
+export const MACOS_MAS_DISTRIBUTION_PROFILE_MODE = 0o444;
 const MACOS_MAS_EMBEDDED_PROFILE_SCHEMA = "MEETLESS_MACOS_MAS_EMBEDDED_PROFILE v1";
 
 /**
  * Stage the exact selected profile in its final bundle location before any
  * MAS package-input or license evidence is derived.
  */
-export async function stageMacOSAppStoreEmbeddedProfile({ bundlePath, profileBytes } = {}) {
+export async function stageMacOSAppStoreEmbeddedProfile({ bundlePath, profileBytes, profileMode = MACOS_MAS_EMBEDDED_PROFILE_MODE } = {}) {
+  if (![MACOS_MAS_EMBEDDED_PROFILE_MODE, MACOS_MAS_DISTRIBUTION_PROFILE_MODE].includes(profileMode)) throw new Error("Unsupported embedded profile mode");
   const bytes = requireProfileBytes(profileBytes);
   const profilePath = path.join(bundlePath, MACOS_MAS_EMBEDDED_PROFILE_PATH);
   const existing = await lstat(profilePath).catch(() => null);
   if (existing?.isSymbolicLink()) {
     throw masEvidenceError("embedded development provisioning profile path is a symlink", "remove the indirection and stage the exact selected profile bytes at Contents/embedded.provisionprofile");
   }
-  await writeFile(profilePath, bytes, { mode: MACOS_MAS_EMBEDDED_PROFILE_MODE });
-  await chmod(profilePath, MACOS_MAS_EMBEDDED_PROFILE_MODE);
-  const embeddedProfile = createEmbeddedProfileBinding(bytes);
+  await writeFile(profilePath, bytes, { mode: profileMode });
+  await chmod(profilePath, profileMode);
+  const embeddedProfile = createEmbeddedProfileBinding(bytes, profileMode);
   await verifyEmbeddedProfileOnDisk({ bundlePath, embeddedProfile, profileBytes: bytes });
   return embeddedProfile;
 }
@@ -97,6 +99,7 @@ export async function prepareMacOSAppStorePackageEvidence({
   repositoryRoot,
   candidateSnapshot,
   priorManifest = null,
+  distribution = false,
   mediaSources = null,
   electronArchiveSource = null,
   embeddedProfile = null,
@@ -118,6 +121,7 @@ export async function prepareMacOSAppStorePackageEvidence({
     priorManifest,
     mediaSources,
     electronLayout: MACOS_PACKAGE_ELECTRON_LAYOUT_MAS,
+    distribution,
     electronArchiveSource,
     expectedElectronArchiveSha256: expectedArchiveSha256,
   });
@@ -165,6 +169,7 @@ export async function prepareMacOSAppStorePackageEvidence({
     repositoryRoot,
     bundlePath,
     candidateSnapshot: normalizedCandidateSnapshot,
+    distribution,
     masSigningPhase: MACOS_MAS_SIGNING_BOUNDARY_PHASE_PRE_SIGN,
     expectedElectronArchiveSha256: expectedArchiveSha256,
   });
@@ -180,6 +185,7 @@ export async function finalizeMacOSAppStorePackageEvidence({
   repositoryRoot,
   candidateSnapshot,
   preparedEvidence,
+  distribution = false,
   signature,
   entries = null,
   machoEntries = null,
@@ -240,6 +246,7 @@ export async function finalizeMacOSAppStorePackageEvidence({
     repositoryRoot,
     bundlePath,
     candidateSnapshot,
+    distribution,
     expectedElectronArchiveSha256: expectedArchiveSha256,
   });
   return evidence;
@@ -256,6 +263,7 @@ export async function verifyMacOSAppStorePackageEvidenceSources({
   repositoryRoot,
   bundlePath,
   candidateSnapshot,
+  distribution = false,
   masSigningPhase = MACOS_MAS_SIGNING_BOUNDARY_PHASE_FINAL,
   expectedElectronArchiveSha256 = MACOS_APP_STORE_CONTRACT.electron.sha256,
 } = {}) {
@@ -275,6 +283,7 @@ export async function verifyMacOSAppStorePackageEvidenceSources({
     bundlePath,
     candidateSnapshot: normalizeCandidateSnapshot(candidateSnapshot),
     electronLayout: MACOS_PACKAGE_ELECTRON_LAYOUT_MAS,
+    distribution,
     electronArchiveSource,
     masSigningPhase,
     expectedElectronArchiveSha256: expectedArchiveSha256,
@@ -529,10 +538,11 @@ function requireProfileBytes(profileBytes) {
   return profileBytes;
 }
 
-function createEmbeddedProfileBinding(profileBytes) {
+function createEmbeddedProfileBinding(profileBytes, profileMode = MACOS_MAS_EMBEDDED_PROFILE_MODE) {
   const bytes = requireProfileBytes(profileBytes);
   return validateEmbeddedProfileBinding({
-    schema: MACOS_MAS_EMBEDDED_PROFILE_SCHEMA,
+    schema: profileMode === MACOS_MAS_DISTRIBUTION_PROFILE_MODE ? "MEETLESS_MACOS_MAS_EMBEDDED_PROFILE v2" : MACOS_MAS_EMBEDDED_PROFILE_SCHEMA,
+    ...(profileMode === MACOS_MAS_DISTRIBUTION_PROFILE_MODE ? { mode: profileMode } : {}),
     path: MACOS_MAS_EMBEDDED_PROFILE_PATH,
     sha256: sha256(bytes),
     size: bytes.byteLength,
@@ -540,13 +550,14 @@ function createEmbeddedProfileBinding(profileBytes) {
 }
 
 function validateEmbeddedProfileBinding(binding) {
-  const expectedKeys = ["path", "schema", "sha256", "size"].sort();
+  const distributionProfile = binding?.schema === "MEETLESS_MACOS_MAS_EMBEDDED_PROFILE v2";
+  const expectedKeys = ["path", "schema", "sha256", "size", ...(distributionProfile ? ["mode"] : [])].sort();
   const actualKeys = binding && typeof binding === "object" && !Array.isArray(binding)
     ? Object.keys(binding).sort()
     : [];
   if (!binding || typeof binding !== "object" || Array.isArray(binding) ||
       JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys) ||
-      binding.schema !== MACOS_MAS_EMBEDDED_PROFILE_SCHEMA ||
+      (distributionProfile ? binding.mode !== MACOS_MAS_DISTRIBUTION_PROFILE_MODE : binding.schema !== MACOS_MAS_EMBEDDED_PROFILE_SCHEMA) ||
       binding.path !== MACOS_MAS_EMBEDDED_PROFILE_PATH ||
       !/^[a-f0-9]{64}$/u.test(binding.sha256 ?? "") ||
       !Number.isSafeInteger(binding.size) || binding.size < 1) {
@@ -559,8 +570,8 @@ async function verifyEmbeddedProfileOnDisk({ bundlePath, embeddedProfile, profil
   const descriptor = validateEmbeddedProfileBinding(embeddedProfile);
   const profilePath = path.join(bundlePath, MACOS_MAS_EMBEDDED_PROFILE_PATH);
   const state = await lstat(profilePath).catch(() => null);
-  if (!state?.isFile() || state.isSymbolicLink() || (state.mode & 0o777) !== MACOS_MAS_EMBEDDED_PROFILE_MODE) {
-    throw masEvidenceError("MAS embedded provisioning profile is absent or not a private regular file", "stage the exact selected profile at Contents/embedded.provisionprofile with mode 0400");
+  if (!state?.isFile() || state.isSymbolicLink() || (state.mode & 0o777) !== (descriptor.mode ?? MACOS_MAS_EMBEDDED_PROFILE_MODE)) {
+    throw masEvidenceError("MAS embedded provisioning profile is absent or has incorrect read-only permissions", "stage the exact selected profile with descriptor mode 0400 (development) or 0444 (distribution)");
   }
   const actual = await readFile(profilePath);
   if (actual.byteLength !== descriptor.size || sha256(actual) !== descriptor.sha256) {
