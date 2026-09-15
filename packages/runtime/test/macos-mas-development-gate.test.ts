@@ -1277,13 +1277,16 @@ describe("MAS development gate coordinator", () => {
     const mainElectronPath = path.resolve(fixture.bundlePath, "Contents", "Helpers", "Electron.app", "Contents", "MacOS", "Electron");
     const originalReadSecureFile = fixture.adapters.readSecureFile;
     const originalRunMacOSCommand = fixture.adapters.runMacOSCommand;
+    let mutationApplied = false;
     const adapters = {
       ...fixture.adapters,
       readSecureFile: async (target: string, label: string) => {
         const bytes = await originalReadSecureFile(target, label);
-        if (path.resolve(target) !== electronInfoPath || !mutation.startsWith("missing-plist") && !mutation.startsWith("wrong-plist")) {
+        const mutatesElectronInfoPlist = mutation.startsWith("missing-plist") || mutation.startsWith("wrong-plist") || mutation === "duplicate-parent-plist-bundle-id";
+        if (path.resolve(target) !== electronInfoPath || !mutatesElectronInfoPlist) {
           return bytes;
         }
+        mutationApplied = true;
         const info = plist.parse(bytes.toString("utf8")) as Record<string, unknown>;
         if (mutation === "missing-plist-bundle-id") delete info.CFBundleIdentifier;
         if (mutation === "duplicate-parent-plist-bundle-id") info.CFBundleIdentifier = R5_APP_STORE_BUNDLE_ID;
@@ -1298,6 +1301,7 @@ describe("MAS development gate coordinator", () => {
         if (mutation !== "wrong-signed-main-id" || command !== "codesign" || !arguments_.includes("--verbose=4") || typeof target !== "string" || path.resolve(target) !== mainElectronPath) {
           return result;
         }
+        mutationApplied = true;
         return {
           ...result,
           stdout: result.stdout.replace(`Identifier=${R5_APP_STORE_ELECTRON_BUNDLE_ID}`, "Identifier=com.github.Electron"),
@@ -1317,6 +1321,7 @@ describe("MAS development gate coordinator", () => {
         artifactValidationAdapters: adapters,
       },
     })).rejects.toThrow(expectedDiagnostic);
+    expect(mutationApplied).toBe(true);
     await expect(readFile(prior, "utf8")).resolves.toBe("prior\n");
     await expect(readFile(sessionIndexPath, "utf8")).resolves.toBe(sessionIndexBytes);
     await expect(lstat(context.activePath)).rejects.toMatchObject({ code: "ENOENT" });

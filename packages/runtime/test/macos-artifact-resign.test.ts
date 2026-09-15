@@ -479,12 +479,12 @@ describe("macOS artifact-only re-sign foundation", () => {
     })).rejects.toThrow(/manifest signing contract is invalid|bundle root is a symlink/);
   });
 
-  it("does not let retained artifact-only mode fall back to ordinary identity resolution", async () => {
+  it("rejects a canonical-repository retained stage before ordinary identity resolution", async () => {
     await expect(validateMacOSPackage(path.join(process.cwd(), "release/macos/composition-manifest.json"), {
       artifactOnly: true,
       retainedArtifactOnly: true,
       repositoryRoot: process.cwd(),
-    })).rejects.toThrow(/manifest signing contract is invalid|embedded retained signing evidence/);
+    })).rejects.toThrow(/retained artifact lifecycle authority is invalid: staged root .* inside the canonical repository/);
   });
 
   it("parses credential-free preparation and requires an explicit retained stage for owner mode", () => {
