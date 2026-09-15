@@ -933,6 +933,23 @@ Review or public release is inferred from this processing result.
   `.artifacts/macos-mas-distribution/20260915T072301Z-build3/`; the earlier failed
   producer attempt remains intact. This is a new attempt, not package acceptance.
 
+- Build3 retry actual producer exited 0. Independent artifact reviewer and Lead
+  ACCEPT the exact package for Apple validation/internal TestFlight upload:
+  `Meetless-1.0-3.pkg` SHA-256
+  `b6de8f6a5a04854155e40fc9b2701b56ee22c96d54fd55f2baceed1288066934`
+  (319,885,600 bytes); manifest SHA-256
+  `c3cfe6ec62cb0e63ae3af33a50d9db6a9d86c9c939d5be3f6decc1778ed4d316`;
+  app tree digest `8db883dead359bd332694d86afbc4e58be6f03199af67369827cff3c03e559dc`.
+  Source snapshots before/after match. Independent expanded installer payload
+  comparison found zero differences; app/payload strict signatures and all 43
+  Mach-O signatures pass with approved team, identities, entitlements, profile
+  and backend configuration. Signing keychain is locked and search list restored.
+  Actual producer passed native Debug/Release checks; its successful log retains
+  final JSON, not separate captured native stdout. Earlier failed EPIPE attempt
+  stays visible. Exact evidence and `lead-acceptance.json` are in the retry
+  evidence directory. Apple validation has started; its outcome, upload, actual
+  TestFlight Open and idle CPU remain pending. No release acceptance is inferred.
+
 Next: produce, validate and distribute build3, then verify TestFlight Open, idle
 CPU and data preservation to resolve #29. Resume screenshots and #15/#16/#20
 evidence after the updated app is healthy. TestFlight
