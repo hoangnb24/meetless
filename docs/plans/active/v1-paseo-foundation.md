@@ -1,6 +1,6 @@
 # Execution Plan: Meetless V1
 
-Updated: 2026-09-14
+Updated: 2026-09-15
 
 ## Production preparation — owner decision 2026-09-14
 
@@ -10,25 +10,30 @@ production. Freeze the current source before beginning this work.
 
 GitHub execution breakdown: [Epic #21](https://github.com/hoangnb24/meetless/issues/21), new sub-issues #22–#27 and retained #14–#17/#20. Native dependencies own the execution order; #22/#23 are the first inputs. This link does not change the frozen source.
 
-### Current execution checkpoint — 2026-09-14, after cloud deployment
+### Current execution checkpoint — 2026-09-15, upload accepted
 
-This checkpoint supersedes the historical missing-login/key/empty-production
-observations below. Epic #21 remains in progress; no distribution artifact or
-TestFlight upload has been accepted.
+This checkpoint supersedes historical missing-login/key/empty-production and
+failed-artifact observations below. #22–#26 are accepted, including the corrected
+exact distribution package and actual Apple validation. Upload succeeded with
+delivery `0816cc3b-8b69-4357-bf0d-32537ec34b8b`; #27 remains open until Apple
+processing is observed. Epic #21 remains in progress; no launch/billing/App Review
+or public release is inferred from upload.
 
 | Public release input | Verified value |
 | --- | --- |
 | Frozen baseline | `production-baseline-2026-09-14`, `6b051116af4dbf8a22337f51b995e120454b79d0`; never move |
 | Deployed successor source | `63b3768ed334c68cb79dcfc87545b523349ed353`, isolated `/tmp/meetless-production-63b3768` |
 | Apple app / bundle / team | `6807070739` / `com.meetless.app` / `63M98WD275` |
-| Candidate version / build | `1.0` / `1`; ASC recheck shows Prepare for Submission and TestFlight No Builds; recheck before upload |
+| Candidate version / build | `1.0` / `1`; pre-upload API had no builds; exact upload succeeded, processing pending |
+| Packaged source / package | `41cfc34382f95dcf3b08fca74347cccb673b15be` / SHA-256 `b6f0fde5bf1e80c5254a80e3c0151be4f05f167d7b04bc699700bff7c50b5da7` |
+| ASC upload key | `V8ZBF889R7`, dedicated Developer role explicitly approved; protected and Git-ignored |
 | RevenueCat project / app | `0d7b4465` / `appe0ef526253`; existing monthly/annual, premium/default catalog retained |
 | Convex project / region | `2906735`, `hoang-bang:meetless`, `aws-us-east-1` |
 | Production | `content-bulldog-967`, `https://content-bulldog-967.convex.cloud` |
 | Store-testing Sandbox | named reference `store-testing`, `posh-mink-212`, `https://posh-mink-212.convex.cloud` |
 | Production webhook | `whintgr3085ebc4c2`, `https://content-bulldog-967.convex.site/webhooks/revenuecat`, Production only |
 | Store-testing webhook | `whintgrb51603f89e`, `https://posh-mink-212.convex.site/webhooks/revenuecat`, Sandbox only |
-| Current Apple API key ID / issuer | `WZ7MKM8T9D` / `69a6de8c-6878-47e3-e053-5b8c7c11a4d1`; replaced and revoked `U48V6LU6X3` |
+| Current Apple IAP verification key ID / issuer | `WZ7MKM8T9D` / `69a6de8c-6878-47e3-e053-5b8c7c11a4d1`; replaced and revoked `U48V6LU6X3` |
 | Production provisioning | Portal `8CS67VVGJM`, UUID `1db987ef-8549-4c4f-afdd-4b0ee82d135d`, Meetless Mac App Store Production 2026-09-14; downloaded bytes accepted |
 
 - Both new webhooks are active, app-filtered to Meetless, HMAC enabled with
@@ -46,8 +51,8 @@ TestFlight upload has been accepted.
 - The distribution producer binds version `1.0` and build `1` into signed
   `CFBundleShortVersionString` and `CFBundleVersion`, and records both in its
   configuration and release manifest alongside source commit/snapshot and
-  configuration digest. These describe the reviewed producer contract; actual
-  artifact binding is verified only once the package has been produced.
+  configuration digest. These bindings were independently checked in the exact
+  corrected package; Apple validation passed with no errors or warnings.
 - Separate JWT key pairs/audiences/issuers and HMAC secrets were applied through
   protected local files. The existing backend OpenAI credential was reused for
   the same Meetless provider purpose; it remains backend-only. Public Apple
@@ -322,8 +327,44 @@ TestFlight upload has been accepted.
   directory. Prior failures remain retained. No new artifact or Apple acceptance
   is inferred from these source checks; fresh isolated production build follows.
 
-Next: correct Apple validation findings, review and build a fresh isolated
-package, then validate/upload and observe Apple processing. Authentication is ready. #22–#27 retain their original
+
+- Accepted source correction committed as `0e1018c`; draft/plan checkpoint
+  committed as `41cfc34382f95dcf3b08fca74347cccb673b15be`. Root took actual
+  producer execution ownership after interrupting the prior implementation
+  agent to prevent duplicate builds. Fresh detached checkout:
+  `/private/tmp/meetless-production-41cfc34`; pinned Paseo bundle/hash/commit and
+  genuine `npm ci` succeeded with no development env copied. All 17 workspace
+  links are isolated. Producer source snapshot:
+  `bddb986b3026ec899d0d9efe0dabd77f3ad9e1bbaf21bc34de75f2429c89c560`.
+  Actual producer evidence `.artifacts/macos-mas-distribution/20260915T003311276Z/`;
+  original proof `/private/tmp/meetless-mas-distribution-isolated-20260915T003311276Z`.
+  Actual full build/sign/package PASSED; source unchanged, keychain locked and
+  original search list restored. Exact durable new package SHA-256:
+  `b6f0fde5bf1e80c5254a80e3c0151be4f05f167d7b04bc699700bff7c50b5da7`
+  (319,883,948 bytes), manifest SHA-256:
+  `76b45c4aaf97d159aeb6da6aa8aba5e1f5f9303f7f57ad1a9c9865968e9fb6fc`.
+  Actual submission checks pass ICNS512pt@2x, Productivity category, readable
+  payload (16,177 files/2,150 directories) and signed application/team IDs.
+  Independent reviewer and Lead ACCEPTS the exact copied artifact after actual
+  expanded-payload/signature/profile/icon/permission/source/config checks.
+  Actual Apple `altool --validate-app` exited 0 with no errors or warnings;
+  pre-upload ASC API read returned HTTP 200 and an empty build list. The CLI
+  build-status-by-version alternative failed locally demanding a delivery ID,
+  so it is not treated as a remote status result. Evidence is retained in
+  `.artifacts/app-store-upload/20260915-build1/`. Root has started the authorized
+  exact-package upload, which exited 0 with no errors and delivery UUID
+  `0816cc3b-8b69-4357-bf0d-32537ec34b8b`; 319,883,948 bytes transferred.
+  ASC buildUploads API independently confirms the same delivery, version 1.0,
+  build 1, platform MAC_OS and state PROCESSING with empty errors/warnings.
+  Builds API remains empty while import is pending. The owned read-only altool
+  status query was terminated after the direct API supplied current state;
+  this did not cancel the completed upload or remote processing. Processing
+  result remains pending; no launch yet. Logs are retained under
+  `.artifacts/production-preparation/isolated-41cfc34-setup/`.
+
+Next: observe the current upload and Apple processing result for #27, then
+continue the remaining live testing and store-readiness dependencies. #26 is
+accepted for the new exact artifact; App Review/public release remain separate. #22–#27 retain their original
 acceptance dependencies. Public release/App Review remain separate.
 
 ### Historical execution checkpoint — 2026-09-14
