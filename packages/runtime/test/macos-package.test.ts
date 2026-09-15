@@ -861,7 +861,7 @@ function completeManifest() {
         excludedPaths: [...PACKAGE_SOURCE_EXCLUDED_PATHS],
         digest: "d".repeat(64),
         head: "b".repeat(40),
-        paseoCommit: "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc",
+        paseoCommit: "249539c7446f16c7ed2f07abb89be2065b732bed",
       },
       entryBinding: {
         algorithm: "sha256",
@@ -951,14 +951,14 @@ function completeManifest() {
     packageRoot: "Contents/Resources/meetless",
     packageMarker: "Contents/Resources/meetless/meetless-package.json",
     sourceCommit: "b".repeat(40),
-    paseoCommit: "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc",
+    paseoCommit: "249539c7446f16c7ed2f07abb89be2065b732bed",
     candidateSnapshot: {
       command: PACKAGE_SOURCE_SNAPSHOT_COMMAND,
       mode: PACKAGE_SOURCE_MODE,
       excludedPaths: [...PACKAGE_SOURCE_EXCLUDED_PATHS],
       digest: "d".repeat(64),
       head: "b".repeat(40),
-      paseoCommit: "a2c8ff349ffdf6f500eb09270c7f44af4c018bfc",
+      paseoCommit: "249539c7446f16c7ed2f07abb89be2065b732bed",
     },
     host: {
       bundleIdentifier: "com.meetless.app",
