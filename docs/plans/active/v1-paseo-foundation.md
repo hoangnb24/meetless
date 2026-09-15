@@ -766,6 +766,27 @@ Review or public release is inferred from this processing result.
   change or installed-app mutation. A lingering security process belonged to
   a completed read-only diagnostic and was stopped; no owner input is pending.
 
+- Build2 retry actual producer passed from clean c53e440 source, snapshot
+  `6692036c2ffd612e123e8e2eb22323656818bd80acfab68a7c5820bb7d2cde70`.
+  Durable evidence: `.artifacts/macos-mas-distribution/20260915T052951Z-build2/`.
+  Exact package SHA-256 `79b68f62687ccf515a95c91c4ca25091ca7da2f5aec09a3979dbc2977e3177ab`;
+  manifest SHA-256 `be5763c823d15fe856306f3806b4680d9cf19bdbb6bb2e18e9936ba687e2ee85`.
+  Independent review and Lead ACCEPTS this exact candidate for Apple validation
+  and authorized internal upload only: actual installer/app/expanded-payload
+  signatures, distinct outer/nested IDs, unchanged profile/group, source/native
+  migration/config provenance and readable payload pass. Clean source and
+  restored login-only keychain search list independently observed. Actual Apple
+  validation is running; no upload or TestFlight/runtime acceptance yet.
+
+- Builder finalized exact before/after clean source snapshot, locked the release
+  keychain and restored the original login-only search list; no owned build/
+  signing process remains. Actual Apple validation of the accepted build2 package
+  exited 0 at 2026-09-15T05:44:07Z with no errors. Evidence is retained under
+  `.artifacts/app-store-upload/20260915-build2/`. Fresh API still shows only
+  build1 VALID plus a build2 AWAITING_UPLOAD validation delivery; this is not an
+  uploaded build. Lead started the authorized exact-package upload after this
+  validation and artifact acceptance. No build2 TestFlight/runtime proof yet.
+
 Next: resolve and verify the actual Apple-distributed launch path, then resume
 screenshots and #15/#16/#20 evidence with preserved recording data. TestFlight
 and App Review purchases use the isolated Apple Sandbox route; only verified
