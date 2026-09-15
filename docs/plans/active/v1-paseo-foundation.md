@@ -959,6 +959,20 @@ Review or public release is inferred from this processing result.
   Open, the installed app stopped with no host/listener, and its accepted
   snapshot/identity intact; no update or new launch occurred in that preflight.
 
+- API readback `2026-09-15T08:00:21Z` confirms the exact build3 delivery
+  `401bf672-c396-4ae0-8bb7-1ca1632e037d` is COMPLETE, binary VALID, with no
+  upload errors/warnings and MISSING_EXPORT_COMPLIANCE. The Chrome operator
+  proceeds with the same owner-approved encryption/France answers and existing
+  internal group. No API permission expansion, external beta or public submit.
+
+- Chrome saved the approved export answers and added exact build3 to Meetless
+  Internal. Root API at `08:02:56Z` independently confirms encryption `false`,
+  IN_BETA_TESTING; group API at `08:03:03Z` confirms builds 1/2/3, one matching
+  intended tester, and an internal-only group. Lead ACCEPTS this availability
+  scope in `lead-internal-distribution-acceptance.json`. Actual same-Mac update,
+  one TestFlight Open, idle CPU and recording preservation checks are now running
+  under the existing owner approval. No runtime acceptance is implied yet.
+
 Next: produce, validate and distribute build3, then verify TestFlight Open, idle
 CPU and data preservation to resolve #29. Resume screenshots and #15/#16/#20
 evidence after the updated app is healthy. TestFlight
