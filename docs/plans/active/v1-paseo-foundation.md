@@ -10,7 +10,7 @@ production. Freeze the current source before beginning this work.
 
 GitHub execution breakdown: [Epic #21](https://github.com/hoangnb24/meetless/issues/21), new sub-issues #22–#28 and retained #14–#17/#20. Native dependencies own the execution order; #22/#23 are the first inputs. Website #28 supplies final URLs to #17 and can proceed alongside app testing. This link does not change the frozen source.
 
-### Current execution — build 5 provider repair, owner authorized 2026-09-15
+### Current execution — build 5 provider repair distributed, owner testing pending
 
 Owner tested TestFlight 1.0 (4): recording permissions now work, Monthly was
 purchased, and transcription completed. Read-only UI confirmed Premium active
@@ -22,13 +22,59 @@ Both builds 3 and 4 use Store backend routing; this is a development-to-Store
 coverage gap, not a newly introduced build-4-only change.
 
 Owner explicitly requested fixing this provider defect and distributing a new
-TestFlight build. Next candidate is 1.0 (5), subject to fresh Apple build-number
-verification. Keep bookmark-only provider access, inherited-environment
+TestFlight build. Candidate is 1.0 (5); fresh Apple API readback confirmed build 5 unused
+at 13:57 UTC before this producer. Keep bookmark-only provider access, inherited-environment
 scrubbing, existing Store routing, signing and data preservation. The previous
 native-suite deferral was limited to build 4; build 5 uses the normal required
 checks. No new provider support, Keychain changes, backend deployment, App Review
-submission or public release is part of this repair. Implementation, independent
-review, exact package and Apple delivery remain pending.
+submission or public release is part of this repair.
+
+Provider correction `36d03c1` (reviewed author commit `d157ec9`) is merged/pushed.
+An initial normal producer retained the prior native registration failure: its
+synthetic package marker still named the old Paseo revision `a2c8ff...` while the
+runtime requires `249539c...`. Exact one-line fixture correction `4516550` was
+independently reviewed; no production guard or assertion changed. The complete
+Debug suite passed in the diagnostic probe, then the normal clean producer
+passed with **required native Debug/Release tests**, no deferral, at 14:20:12 UTC.
+The earlier failed run remains in `.artifacts/app-store-upload/20260915-build5/`;
+the successful run is under its `producer-attempt2/` directory.
+
+Exact build-5 source is `4516550c00fab60ae8b2bf05c78af3d437b02cd6`, snapshot
+`a1934948eed46f6e906f5cb5ae3738488960bbbc511fa4530105974993b9c6b6` unchanged
+before/after production. Actual package:
+`.artifacts/macos-mas-distribution/20260915T141237Z-build5/release/macos/Meetless-1.0-5.pkg`,
+SHA-256 `4049d9fb38881e8bc10def68ba380c8b72965933bf050c3832bae04a900005b0`,
+320,023,597 bytes. Manifest SHA-256:
+`947611d1941869c1d03d9b56180e5b43b62047763c7978cc7dc2e24ee922ad7e`.
+Source/app signatures, installer trust and extracted payload equality passed
+through the actual producer. Independent final artifact review and Lead ACCEPT
+bind these exact bytes for Apple validation/upload. Apple validation passed at
+14:28:59 UTC with no errors. Upload succeeded at 14:33:52 UTC, delivery UUID
+`86967aa8-05f1-4ffd-b27d-3a815f2fd01b`. Apple completed processing and made
+internal beta eligible at 14:50:20 UTC. Assignment to the existing Meetless
+Internal group returned POST 204 at 14:50:54 UTC. Final API readback at
+14:51:08 UTC confirms upload COMPLETE, binary VALID and IN_BETA_TESTING.
+The intended single tester matches, public link remains disabled/unset, and
+builds 1–4 remain in the group. Fresh read-only UI before assignment showed
+Record meeting available, selected transcript Ready and Ask disabled; no active
+recording/transcription/generation controls were observed. No app install,
+quit, permission reset or runtime-data edit was performed for this handoff.
+Evidence: `.artifacts/app-store-upload/20260915-build5/`, including final build
+and group readbacks and the timestamped internal assignment result.
+Independent delivery review and Lead ACCEPT bind these final Apple readbacks
+(`lead-delivery-acceptance.json`) to the accepted package and source above.
+
+TestFlight **1.0 (5) is available internally**. Owner should update, open an
+existing transcribed meeting, select the previously authorized Codex provider
+and model in Ask, and verify an actual response. This delivery does not claim
+live Ask acceptance, new provider support, production billing or App Review
+readiness. Epic #21 remains open pending owner feedback and remaining release
+gates; historical child-issue statuses are not treated as fresh build-5 proof.
+
+The installed build-4 app-only APFS snapshot was independently reviewed and
+Lead accepted at `testflight-build4-snapshot/` under the retained `backup-EgNIyA`
+folder. Receipt contents were not read/hashed; runtime/recordings were not
+copied or changed. This is not a quiescence or restore-rehearsal claim.
 
 The six Transcribe security prompts were separately diagnosed from securityd:
 two managed-device Keychain items retained the old Apple Development access
