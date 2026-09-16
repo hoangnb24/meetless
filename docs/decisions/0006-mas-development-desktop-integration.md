@@ -2,18 +2,26 @@
 
 Date: 2026-09-06
 
+> **Current status — 2026-09-16:** This is retained historical development
+> evidence. Continuation is suspended by
+> [ADR0007](0007-stop-v1-pending-product-direction.md) pending the owner's
+> shutdown-or-pivot decision. The package, host-ownership, sandbox, and
+> cleanup boundaries below remain recorded constraints; they do not authorize
+> rebuilding, signing, installing, uploading, or App Review.
+
 ## Status
 
-Accepted development-integration decision. This does not establish Mac App
-Store publication, production billing, real recording, or release acceptance.
+Accepted historical development-integration decision; continuation suspended by
+ADR0007. This does not establish Mac App Store publication, production billing,
+real recording, provider execution, or release acceptance.
 
 ## Context
 
-The accepted Mac App Store package path needed a stable Electron namespace and
+The attempted Mac App Store package path needed a stable Electron namespace and
 an isolated Chromium temporary directory without changing the sandbox,
 entitlement, host-ownership, or dependency policy. The resulting desktop UI
-proof is useful development evidence, while the remaining external gates stay
-separate.
+proof remains useful historical development evidence, while the remaining
+external gates stay separate and the provider-reuse path remains unresolved.
 
 ## Decision
 
@@ -101,10 +109,13 @@ Supervisor role, and remains governed by the runtime ownership decisions.
 The private-temp choices preserve the existing app-group policy, Paseo pin,
 user data location, singleton routing, and sandbox boundary. The 2026-09-15
 identifier correction keeps those privilege/data constraints, but its changed
-Electron internal namespace still requires actual candidate compatibility proof. Source
-and focused composition proof plus the owner-observed visible/interactable UI
-support this development integration. They do not replace live proof of
-recording/TCC, second-instance handoff, purchase/restore, managed production,
-App Store publication, or legal release requirements. Those contracts remain
-owned by [ADR0004](0004-recording-host-and-capture-permission-boundary.md),
-[ADR0005](0005-mac-app-store-and-revenuecat.md), and the product documents.
+Electron internal namespace still required actual candidate compatibility proof.
+Source and focused composition proof plus the owner-observed
+visible/interactable UI support this historical development integration. They
+do not replace live proof of recording/TCC, second-instance handoff,
+purchase/restore, managed production, provider execution, App Store
+publication, or legal release requirements. Those contracts remain owned by
+[ADR0004](0004-recording-host-and-capture-permission-boundary.md), the
+historical/suspended [ADR0005](0005-mac-app-store-and-revenuecat.md), and the
+product documents. No further compatibility POC is authorized while the
+shutdown-or-pivot decision is pending under ADR0007.

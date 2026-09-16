@@ -1,5 +1,12 @@
 # Knowledge And Citations
 
+> **Current status — 2026-09-16:** The meeting evidence and existing-provider
+> experience below remain accepted product intent, while V1/App Store
+> development is paused pending a shutdown-or-pivot decision. The Apple
+> distributed provider path is not accepted: TestFlight build 1.0 (6) did not
+> produce a working Ask response. No new proof of concept or implementation is
+> authorized. See [ADR0007](../decisions/0007-stop-v1-pending-product-direction.md).
+
 The user selects a meeting from a sidebar and opens a detail screen containing
 the complete ordered transcript. Transcript timestamps remain connected to the
 audio ranges accepted in Milestone 3.
@@ -11,12 +18,14 @@ scoped only to the open meeting. Transcription starts only when the user selects
 
 ## Existing coding-agent configuration
 
-Owner decision, 2026-09-13: on first installation and on a new machine, Meetless
-must discover and use the user's existing coding-agent configuration and
-authentication through the lookup mechanisms already supported by Paseo.
-The reference is the real user's provider configuration, not an empty provider
-home created inside Meetless's app container. This applies to the supported
-providers, including Codex, Claude Code, and OpenCode.
+The accepted product intent, recorded on 2026-09-13, is that on first
+installation and on a new machine Meetless discovers and uses the user's
+existing coding-agent configuration and authentication through the lookup
+mechanisms already supported by Paseo. The reference is the real user's
+provider configuration, not an empty provider home created inside Meetless's
+app container. This applies to supported providers, including Codex, Claude
+Code, and OpenCode. This intent is retained while its Store execution remains
+unproven and paused.
 
 Provider-specific paths, explicit configuration-directory overrides and
 precedence belong to Paseo/the provider. Do not replace them with a second
@@ -26,30 +35,30 @@ solution for a provider that is already configured on the machine.
 
 Meetless's recordings, transcripts, chat records and isolated Paseo runtime
 state remain in their accepted app-owned locations. Reusing provider
-configuration does not relocate that product state. The MAS implementation must
-also establish actual access through an App-Sandbox-compatible mechanism:
-correctly naming a path alone is not proof that the provider can use it.
-Owner approval, 2026-09-13: explain the selected provider's required folder
-access in Ask, request it through the macOS system chooser, and preserve access
-with security-scoped bookmarks. Request only the provider-owned resources,
-not the user's entire home. Cancellation or revoked access must offer recovery.
-When a newly granted resource requires reopening the app, say so without
-automatically sending or retrying a question. This approval authorizes the
-scoped file entitlements; it does not establish that every provider's access or
-authentication has been implemented or verified.
+configuration does not relocate that product state. The previous MAS attempt
+requested provider folders and then a Codex executable through the macOS system
+chooser, preserving security-scoped bookmarks and passing an absolute path
+through Paseo's command override. TestFlight 1.0 (6) still did not establish
+executable access, model loading, or an Ask response; the chooser was cancelled
+after the existing symlink and canonical executable were rejected. The attempt
+is retained as failed evidence, and its implementation authority is suspended.
 
-Owner approval, 2026-09-15: when the Mac App Store/TestFlight app cannot
-find the existing Codex program, Ask must offer a macOS file chooser for the
-user to select that installed executable once. Preserve access using a separate
-security-scoped bookmark, restore it before starting the runtime, and pass its
-absolute path through Paseo's existing provider command override. Keep the
-existing Codex configuration/authentication bookmark and account. Do not bundle
-or download Codex, modify the user's shell configuration or global PATH, guess
-installation directories, copy credentials, or grant the whole home directory.
-Cancellation, a missing/replaced executable and revoked access must leave a
-clear way to choose again. Reopening after a changed grant must not send or
-retry a question automatically. Finding the executable alone is not proof that
-models or an actual Ask response work.
+The boundary is precise: a dynamic user-selected bookmark grants scoped file
+access, but does not grant `process-exec` for an external executable. A symlink
+is only another path to the same target and does not add that permission. Apple
+also documents static locations and temporary exceptions that can technically
+permit execution in narrower cases; Meetless has not tested those paths, a
+child still inherits sandbox limits, and Mac App Store review is uncertain. See
+Apple's [sandbox file-access documentation](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox),
+[symbolic-link guidance](https://developer.apple.com/documentation/security/migrating-your-app-s-files-to-its-app-sandbox-container),
+[DTS guidance on static execution](https://developer.apple.com/forums/thread/746478),
+and [DTS guidance on temporary exceptions](https://developer.apple.com/forums/thread/709333).
+
+The product does not bundle or download Codex/Claude, modify the user's shell
+configuration or global PATH, guess installation directories, copy credentials,
+grant the whole home directory, or add a second Meetless provider login. A
+future implementation would need new owner authority and fresh acceptance
+criteria; ADR0007 authorizes no new proof of concept.
 
 ## Meeting evidence and chat history
 
@@ -57,9 +66,11 @@ Meeting chat history is durable. Leaving the meeting or restarting the app does
 not discard the thread; reopening the meeting restores its previous messages so
 the user can continue the conversation.
 
-A question scoped to one meeting returns cited support or says the meeting does
-not contain enough evidence. Clicking a meeting citation opens the player and
-seeks to a small interval around the cited segment.
+A question scoped to one meeting is intended to return cited support or say the
+meeting does not contain enough evidence. Clicking a meeting citation opens the
+player and seeks to a small interval around the cited segment. The cited Ask
+behavior remains product intent; no Apple-distributed Ask response has been
+accepted.
 
 The application accepts only known transcript segment IDs as citation
 authority. Model-written timestamps are display text, not citation identity.

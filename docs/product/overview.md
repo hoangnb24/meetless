@@ -1,8 +1,16 @@
 # Meetless V1
 
+> **Current status — 2026-09-16:** V1 and Mac App Store development are paused
+> pending the owner's final decision to shut down or pivot. This document keeps
+> the accepted product intent and the bounded behavior already validated; it is
+> not a release promise or authorization to continue development. The core
+> provider-reuse path remains unresolved: the Apple-distributed build 1.0 (6)
+> did not establish an actual Ask response through the user's existing provider.
+> See [ADR0007](../decisions/0007-stop-v1-pending-product-direction.md).
+
 Meetless is a personal, local-first meeting recorder and knowledge tool. One
 person records Zoom or Google Meet on a desktop host, then uses an existing
-coding agent such as Codex to ask questions about the result.
+coding agent such as Codex or Claude Code to ask questions about the result.
 
 The V1 loop is:
 
@@ -35,4 +43,23 @@ a meeting; a meeting is not an agent or coding workspace.
 V1 excludes team workspaces, cloud source-of-truth storage, calendar ingestion,
 call-joining bots, task-system synchronization, speaker diarization as a release
 gate, mobile system-audio recording, cross-meeting Q&A, and document-folder
-indexing. Cross-meeting Q&A and document folders are post-MVP work.
+indexing. Cross-meeting Q&A and document folders remain outside this paused V1
+scope.
+
+## Current acceptance boundary
+
+The owner confirmed the following bounded TestFlight behavior on build 1.0 (4):
+recording permissions and meeting recording worked, a monthly Sandbox purchase
+was completed, and audio transcription completed. These results preserve the
+recording, billing, and managed-transcription work as historical product
+evidence; they do not establish App Review, public release, or the provider
+reuse required by the V1 loop.
+
+On build 1.0 (6), the Store app reached the existing meeting but the
+chooser/bookmark attempt did not establish executable access to the existing
+Codex installation, and no model launch or actual Ask response was accepted.
+That is a failure of the attempted Store integration, not a proof that every
+possible provider architecture is impossible. The product requirement remains
+minimal-setup reuse of the user's existing Codex/Claude configuration and
+account, without copying credentials or adding a second Meetless login. Further
+proof or implementation is suspended by ADR0007.

@@ -1,6 +1,13 @@
 # Local MAS Development
 
-Use the existing simple development loop. This guide governs local development;
+> **Suspended — 2026-09-16:** V1/App Store development is stopped pending the
+> owner's shutdown-or-pivot decision under
+> [ADR0007](decisions/0007-stop-v1-pending-product-direction.md). Commands below
+> are retained as historical operating guidance, not authorization to build,
+> install, reset data or resume testing. A new owner decision is required before
+> resuming this workflow; all existing data-preservation rules still apply.
+
+The existing simple development loop is retained below. It governed local development;
 release/App Store validation remains separate under
 [ADR0005](decisions/0005-mac-app-store-and-revenuecat.md).
 

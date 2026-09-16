@@ -28,11 +28,13 @@ docs/plans/active/<slug>.md
 The plan is the primary task artifact. Promote a lasting product or architecture
 decision into `docs/decisions/`; keep task-local choices in the plan.
 
-## Active Plans
+## Current Status
 
-- [Meetless V1](active/v1-paseo-foundation.md) — #12 closed by owner scope
-  decision; remaining real quota validation is deferred to #19 (P2 / Later).
-  #13 (P1) is next, after the current commit and workspace cleanup.
+No active implementation: current V1/App Store work stopped on 2026-09-16.
+[The retained stop record](active/v1-paseo-foundation.md) records issue disposition,
+evidence limits and the undecided shutdown/pivot choice. It remains under its
+original path for link continuity, not as authorization to resume or a claim
+of completion. See [ADR0007](../decisions/0007-stop-v1-pending-product-direction.md).
 
 ## Historical Evidence — Read Only When Needed
 

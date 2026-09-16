@@ -1,8 +1,12 @@
 # Packet chuẩn bị đưa Meetless lên Mac App Store
 
-**Trạng thái:** Owner đã cho phép tiếp tục chuẩn bị và lưu metadata nháp.
-Trạng thái từng trường được xác minh riêng trong active plan. App Review và
-phát hành công khai vẫn là quyết định riêng.
+**Trạng thái ngày 2026-09-16: DỪNG chuẩn bị phát hành.** Owner yêu cầu đóng
+các issue của hướng V1/App Store hiện tại, chờ quyết định shutdown hoặc pivot.
+Xem [ADR0007](../decisions/0007-stop-v1-pending-product-direction.md).
+Nội dung và bảng candidate bên dưới là snapshot lịch sử ở build 3, không phải
+trạng thái hiện tại hay chỉ thị tiếp tục. Build nội bộ cuối được ghi nhận là
+1.0 (6); Ask vẫn chưa đạt. Không gửi App Review hoặc tạo build tiếp theo theo
+packet này. Metadata đã lưu trên Apple và các dịch vụ chưa bị thay đổi.
 
 Copy để dán vào localization chính của App Store Connect dùng en-US; phần
 giải thích và checklist dùng tiếng Việt. Các mục có nhãn **[OWNER INPUT]** là
@@ -17,7 +21,7 @@ quyết định hoặc tài liệu thật sự còn thiếu, không điền bằ
 | Bundle ID | `com.meetless.app` | Distribution manifest |
 | App Apple ID | `6807070739` | App Store Connect readback trong execution plan |
 | SKU | `meetless-macos-v1` | App Store Connect readback trong execution plan |
-| Version / build TestFlight hiện tại | `1.0` / `3` | ASC API 2026-09-15T08:03:03Z; hồ sơ App Review nháp vẫn gắn build 1 |
+| Version / build trong snapshot lịch sử | `1.0` / `3` | ASC API 2026-09-15T08:03:03Z; tại thời điểm này hồ sơ App Review nháp gắn build 1; không phải build mới nhất |
 | Primary category | Productivity | ASC đã lưu; exact binary đã được kiểm tra khớp category |
 | Primary language | English (U.S.) | ASC readback |
 | Baseline đóng băng | `production-baseline-2026-09-14` → `6b051116af4dbf8a22337f51b995e120454b79d0` | Tag lịch sử, không tự là release artifact |
@@ -39,15 +43,18 @@ kiểm chứng bảo toàn. Review độc lập và Lead ACCEPT đúng phạm vi
 
 #14 vẫn còn foreground proof ở mức partial và reboot chưa thực hiện; recording,
 transcription, Ask, billing và phát hành chưa được suy ra từ lần thử Open.
-App đang idle trên build 3. Lịch sử lỗi startup/build 2 và producer thất bại
-được giữ trong active plan; hồ sơ App Review version 1.0 vẫn gắn build 1.
+Tại thời điểm snapshot, app idle trên build 3 và hồ sơ App Review version 1.0
+gắn build 1. Lịch sử lỗi startup/build 2 và producer thất bại được giữ trong
+lịch sử kế hoạch; trạng thái dừng mới nhất nằm trong V1 stop record.
 
 ## Copy en-US
 
-**Blocker mới từ owner trên build 3:** #30 (P1) bị lặp xin quyền screen/audio
-khi Start recording; #31 (P2) Dock còn icon cũ và tên Electron. Cả hai cần sửa
-và kiểm chứng trên candidate tiếp theo trước App Review; chưa có kết luận nguyên
-nhân. Kết quả Open/CPU đã đạt không chứng minh permission hay branding đã đạt.
+**Lịch sử báo lỗi build 3:** #30 (P1) lặp xin quyền screen/audio khi Start
+recording; #31 (P2) Dock còn icon cũ và tên Electron. Các bản sửa đã lên build 4;
+owner xác nhận grant permissions và recording hoạt động, còn nghiệm thu branding
+đầy đủ chưa được xác nhận. Ngày 2026-09-16, cả hai issue đóng vì không tiếp tục
+hướng phát hành hiện tại; không có chỉ thị làm candidate tiếp theo. Kết quả
+Open/CPU trước đó không tự chứng minh permission hay branding đã đạt.
 
 Đã lưu trên ASC macOS 1.0 / English (U.S.): subtitle, promotional text,
 description và keywords. Root API readback xác nhận khớp từng byte với các

@@ -1,13 +1,19 @@
 # Documentation Map
 
+Current V1/App Store development is **stopped as of 2026-09-16**, pending an
+owner decision on shutdown or pivot. Start with
+[ADR0007](decisions/0007-stop-v1-pending-product-direction.md) and the
+[stop record](plans/active/v1-paseo-foundation.md). Retained development guides
+and historical plans are not authorization to resume.
+
 Start with the smallest applicable surface.
 
 ## Current Authority And Work
 
 - [`product/`](product/README.md): sole authority for accepted consumer behavior
   and UX.
-- [`macos-development.md`](macos-development.md): current local MAS build/install/
-  relaunch route; read this before operating the development app.
+- [`macos-development.md`](macos-development.md): retained local MAS build/install/
+  relaunch guidance; suspended under ADR0007, not authorization to operate the app.
 - [`WORKFLOW.md`](WORKFLOW.md): request shape, planning, judgment, operation,
   validation, and completion.
 - [`decisions/`](decisions/README.md): lasting technical, runtime, permission,

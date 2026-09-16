@@ -2,31 +2,42 @@
 
 Date: 2026-08-30; amended 2026-09-13
 
+> **Current status — 2026-09-16:** This App Store/RevenueCat release decision
+> is historical and its continuation is suspended by
+> [ADR0007](0007-stop-v1-pending-product-direction.md) pending the owner's
+> shutdown-or-pivot decision. The bounded recording, billing, managed
+> transcription, privacy, and credential-safety policies below remain recorded
+> product decisions. They do not authorize another build, upload, production
+> deployment, App Review submission, or provider proof of concept. No public
+> release is claimed.
+
 ## Status
 
-Accepted
+Historical accepted decision; continuation suspended by ADR0007.
 
 ## Context
 
-Meetless is entering RevenueCat Shipaton 2026. The event requires a newly
-published app on an eligible store and a working RevenueCat-powered purchase.
-ADR0002 selected direct DMG distribution and explicitly excluded Mac App Store
-sandboxing, App Store Connect, and App Review. The owner has now replaced that
-distribution decision and selected the premium policy for the store release.
+At the time of this decision, Meetless was entering RevenueCat Shipaton 2026.
+The event required a newly published app on an eligible store and a working
+RevenueCat-powered purchase. ADR0002 selected direct DMG distribution and
+explicitly excluded Mac App Store sandboxing, App Store Connect, and App
+Review. The owner then selected the Mac App Store path and premium policy for
+the proposed store release. ADR0007 later paused continuation of that path.
 
 ## Decision
 
 ### Distribution
 
-The first public Meetless release will target the Mac App Store under bundle ID
-`com.meetless.app`. The Mac App Store build is the release authority. Direct-DMG
-artifacts remain historical development evidence and are not release evidence
-for this distribution.
+The proposed first public Meetless release targeted the Mac App Store under
+bundle ID `com.meetless.app`. The Mac App Store build was the release authority
+for that proposed distribution. Direct-DMG artifacts remain historical
+development evidence and are not release evidence for this distribution.
 
-The Mac App Store artifact must use App Sandbox, the In-App Purchase capability,
-an Apple Distribution identity, an App Store provisioning profile, and the
-package/upload path accepted by App Store Connect. Store publication and App
-Review remain external evidence; a local build cannot claim either.
+The proposed Mac App Store artifact was required to use App Sandbox, the
+In-App Purchase capability, an Apple Distribution identity, an App Store
+provisioning profile, and the package/upload path accepted by App Store
+Connect. Store publication and App Review remain external evidence; no local
+build or retained TestFlight delivery claims either.
 
 ### Premium policy
 
@@ -211,13 +222,18 @@ not remove future free BYOK policy or change Ask and citation behavior.
 
 ### Runtime and data boundary
 
+The provider-reuse paragraphs in this section record the previous MAS
+implementation attempt. They remain bounded by the product intent to reuse the
+user's existing Codex/Claude account and configuration with minimal setup, but
+ADR0007 suspends their implementation and grants no new proof of concept.
+
 The Mac App Store package must preserve ADR0003 and ADR0004 ownership where
 compatible with App Sandbox. Writable product state moves inside the app
 container unless the user explicitly chooses an export destination through an
 App-Sandbox-compatible flow. The app must not assume unrestricted access to
 `~/Documents/meetings/` in the store build.
 
-Owner approval, 2026-09-13: the host may request read/write access to the
+Historical owner approval, 2026-09-13: the host may request read/write access to the
 selected coding agent's existing configuration/authentication resources through
 the macOS system chooser and persist security-scoped app bookmarks. The parent
 may carry `com.apple.security.files.user-selected.read-write` and
@@ -227,7 +243,7 @@ not authorize whole-home access, copying credentials, or moving Meetless's
 product state or isolated Paseo state. Folder access alone does not prove
 provider authentication, including access to macOS Keychain entries.
 
-Owner approval, 2026-09-15: the same host-owned chooser/bookmark mechanism
+Historical owner approval, 2026-09-15: the same host-owned chooser/bookmark mechanism
 may select and remember the user's existing Codex executable when discovery
 fails in the Store app. Keep executable and configuration grants separate;
 restore both before child startup and use the selected absolute executable
@@ -253,9 +269,9 @@ native errors do not enter ordinary logs or durable meeting state. RevenueCat's
 public Apple SDK key is supplied at build time and may be embedded in the app;
 secret keys are forbidden from the bundle and repository.
 
-### Local MAS development loop
+### Historical local MAS development loop
 
-The owner-approved development route is the simple loop accepted on 2026-09-10:
+The owner-approved development route was the simple loop accepted on 2026-09-10:
 `npm run dev:mas` builds and signs, validates and publishes the artifact to
 ignored durable storage, replaces the installed development app, opens it
 through LaunchServices, and verifies the real Meetless plugin. Ordinary
@@ -281,9 +297,11 @@ rejected. Historical run instructions and one-time reset permissions are not
 current operating instructions. Active work and any unresolved session are
 recorded in [the active plan](../plans/active/v1-paseo-foundation.md).
 
-### Release and security validation remains required
+### Suspended release and security validation gates
 
-Simplifying development does not weaken strict release/App Store validation.
+If the release path is ever resumed, simplifying development must not weaken
+strict release/App Store validation. The gates below are retained as historical
+requirements, not current work authorization.
 Complete read-only artifact validation remains required before installation,
 with the installed signed closure rechecked before launch. The exact candidate, manifest and installed signed closure still require their
 existing validation: package inputs and pinned dependencies; licenses/notices;
@@ -302,7 +320,7 @@ This limit does not relax receipt opacity, artifact validation, signature
 rechecks or fail-closed handling of ambiguous state. New trust anchors or
 release/security policy require separate owner authority.
 
-### R5 repository owner decisions
+### Historical R5 repository owner decisions
 
 The R5 sandbox acceptance evidence is monthly only and must come from a real
 Apple sandbox purchase or an explicit user-selected Restore Purchases action.
@@ -331,7 +349,7 @@ signals only, and Apple verification remains entitlement authority. Signed
 transactions, receipts, secrets, and raw original transaction identifiers are
 never logged or durably persisted.
 
-### Production preparation decisions — 2026-09-14
+### Historical production preparation decisions — 2026-09-14
 
 The owner approved 1,800 seconds for each store-testing Sandbox allocation,
 including trial; production remains 28,800 seconds per monthly allocation and
@@ -367,9 +385,13 @@ implementation, not a claim that real webhook/Apple verification already passed.
 - RevenueCat must own the matching app, products, entitlement, offering, and
   project ID. Sandbox purchase and restore evidence are required before upload.
 
-## Verification
+These consequences and gates are suspended by ADR0007. They preserve the
+accepted safety and billing boundaries if the owner later chooses to resume;
+they are not a commitment to publish.
 
-The minimum proof is:
+## Historical verification record
+
+The minimum proof for the proposed release would have been:
 
 1. policy tests proving Ask and BYOK remain free while managed transcription
    fails closed without entitlement, quota, or an enrolled device;
