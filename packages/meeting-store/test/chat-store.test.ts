@@ -58,6 +58,46 @@ async function readyMeeting(store: MeetingStore, meetingId: string, recordingId:
 }
 
 describe("durable meeting chat store", () => {
+  test("failure and explicit retry remain immutable after a new question and reopen", async () => {
+    const root = await temporaryRoot();
+    const store = new MeetingStore({ root });
+    const [segmentId] = await readyMeeting(store, "meeting-1", "recording-1");
+    const selection = { provider: "codex", model: "gpt-5" };
+    await store.startChatQuestion({
+      meetingId: "meeting-1", userMessageId: "user-1", attemptId: "attempt-1",
+      question: "What did we decide?", ...selection,
+    });
+    await store.failChatTurn("meeting-1", "attempt-1", "invalid_answer");
+    await store.retryChatTurn("meeting-1", { attemptId: "attempt-2", ...selection });
+    const failed = await store.failChatTurn("meeting-1", "attempt-2", "invalid_answer");
+    expect(failed.messages).toHaveLength(1);
+    expect(failed.attempts.map((attempt) => attempt.userMessageId)).toEqual(["user-1", "user-1"]);
+    const reopened = new MeetingStore({ root });
+    await expect(reopened.getChatThread("meeting-1")).resolves.toEqual(failed);
+    await reopened.startChatQuestion({
+      meetingId: "meeting-1", userMessageId: "user-2", attemptId: "attempt-3",
+      question: "What does the transcript say?", ...selection,
+    });
+    const runningBytes = await readFile(store.filePath, "utf8");
+    await expect(reopened.startChatQuestion({
+      meetingId: "meeting-1", question: "Concurrent question", ...selection,
+    })).rejects.toThrow(/only one turn at a time/);
+    expect(await readFile(store.filePath, "utf8")).toBe(runningBytes);
+    await reopened.recordChatRetrieval("meeting-1", "attempt-3", [segmentId!]);
+    const completed = await reopened.completeChatTurn("meeting-1", {
+      attemptId: "attempt-3", assistantMessageId: "assistant-3", outcome: "supported",
+      text: "The transcript contains this segment.", citationSegmentIds: [segmentId!],
+    });
+    expect(completed.messages.slice(0, 1)).toEqual(failed.messages);
+    expect(completed.attempts.slice(0, 2)).toEqual(failed.attempts);
+    expect(completed.messages.filter((message) => message.role === "user")).toHaveLength(2);
+    const finalStore = new MeetingStore({ root });
+    await expect(finalStore.getChatThread("meeting-1")).resolves.toEqual(completed);
+    const completedBytes = await readFile(store.filePath, "utf8");
+    await expect(finalStore.retryChatTurn("meeting-1", selection)).rejects.toThrow(/Only a failed chat turn can be retried/);
+    expect(await readFile(store.filePath, "utf8")).toBe(completedBytes);
+  });
+
   test("atomically creates one thread, appends the question, and starts one attempt", async () => {
     const root = await temporaryRoot();
     const store = new MeetingStore({ root, now: () => "2026-08-20T10:00:00.000Z" });

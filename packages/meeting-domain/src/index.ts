@@ -1402,8 +1402,10 @@ export function startChatQuestion(
     now: string;
   },
 ): MeetingChatThread {
-  if (thread.status !== "ready" || thread.activeAttemptId !== null) {
-    throw chatViolation("A chat thread can run only one turn at a time", "Complete or fail the active turn first.");
+  if (thread.status === "running" || thread.activeAttemptId !== null) {
+    throw new ChatPolicyError(
+      `Chat thread ${thread.id} can run only one turn at a time (docs/product/desktop-managed-ai.md#accepted-ask-behavior). Complete or fail the active turn first.`,
+    );
   }
   const now = chatInstant(input.now, "chat question timestamp");
   const userMessage: ChatUserMessage = {

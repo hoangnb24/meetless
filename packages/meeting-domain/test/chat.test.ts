@@ -129,11 +129,43 @@ describe("meeting chat policy", () => {
     } as unknown as Parameters<typeof completeChatAttempt>[1])).toThrow(/malformed.*operational failure/i);
   });
 
-  test("allows only one active turn", () => {
-    expect(() => startChatQuestion(runningThread(), {
+  test("a failed inactive turn permits a new question without changing old history", () => {
+    const failed = failChatAttempt(runningThread(), {
+      attemptId: "attempt-1", reason: "invalid_answer", now: finishedAt,
+    });
+    const before = structuredClone(failed);
+    const next = startChatQuestion(failed, {
       userMessageId: "message-user-2", attemptId: "attempt-2", question: "Another question",
       provider: "codex", model: "gpt-5", now: finishedAt,
-    })).toThrow(ChatPolicyError);
+    });
+    expect(next).toMatchObject({ status: "running", activeAttemptId: "attempt-2" });
+    expect(next.messages.slice(0, -1)).toEqual(before.messages);
+    expect(next.attempts.slice(0, -1)).toEqual(before.attempts);
+    expect(failed).toEqual(before);
+    const completed = completeChatAttempt(next, {
+      attemptId: "attempt-2", assistantMessageId: "message-assistant-2",
+      outcome: "insufficient_evidence", citationSegmentIds: [], availableSegmentIds: [], now: finishedAt,
+    });
+    expect(() => retryChatAttempt(completed, {
+      attemptId: "attempt-3", provider: "codex", model: "gpt-5", now: finishedAt,
+    })).toThrow(/Only a failed chat turn can be retried/);
+  });
+
+  test.each([
+    { status: "running", activeAttemptId: "attempt-1" },
+    { status: "running", activeAttemptId: null },
+    { status: "ready", activeAttemptId: "attempt-1" },
+    { status: "failed", activeAttemptId: "attempt-1" },
+  ] as const)("rejects overlapping turns for $status/$activeAttemptId", (state) => {
+    const thread = { ...runningThread(), ...state };
+    const before = structuredClone(thread);
+    const start = () => startChatQuestion(thread, {
+      userMessageId: "message-user-2", attemptId: "attempt-2", question: "Another question",
+      provider: "codex", model: "gpt-5", now: finishedAt,
+    });
+    expect(start).toThrow(ChatPolicyError);
+    expect(start).toThrow("Chat thread thread-1 can run only one turn at a time (docs/product/desktop-managed-ai.md#accepted-ask-behavior). Complete or fail the active turn first.");
+    expect(thread).toEqual(before);
   });
 
   test("restart marks a running attempt retryable without replay or duplicate user message", () => {
