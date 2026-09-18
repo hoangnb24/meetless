@@ -471,6 +471,7 @@ export class MeetlessClient {
   }
 
   async askMeetingQuestion(input: {
+    consent?: boolean;
     meetingId: string;
     question: string;
     provider: string;
@@ -485,6 +486,7 @@ export class MeetlessClient {
   }
 
   async retryMeetingQuestion(input: {
+    consent?: boolean;
     meetingId: string;
     provider: string;
     model: string;
@@ -498,6 +500,7 @@ export class MeetlessClient {
   }
 
   async askMeetingQuestionWithSelection(input: {
+    consent?: boolean;
     meetingId: string;
     question: string;
     selection: ChatSelectionWire;
@@ -511,6 +514,7 @@ export class MeetlessClient {
   }
 
   async retryMeetingQuestionWithSelection(input: {
+    consent?: boolean;
     meetingId: string;
     attemptId?: string;
     selection: ChatSelectionWire;

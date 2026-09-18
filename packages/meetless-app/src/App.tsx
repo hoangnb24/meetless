@@ -36,6 +36,7 @@ import { RecordingProvider, useRecording } from "./recording-provider";
 import { playCitationAudio, type CitationPlaybackHandle } from "./playback";
 import { CompanionPairing } from "./CompanionPairing";
 import { clearCompanionProfile, loadCompanionProfile, saveCompanionProfile } from "./companion-storage";
+import { hasManagedAskControls, useManagedAskConsent } from "./managed-ask-consent";
 
 interface ActiveConnection {
   client: MeetlessClient;
@@ -162,6 +163,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   const [chatFeaturesLoading, setChatFeaturesLoading] = useState(false);
   const [chatThread, setChatThread] = useState<MeetingChatThreadWire | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
+  const askConsent = useManagedAskConsent();
   const [chatError, setChatError] = useState<string | null>(null);
   const [premiumAccess, setPremiumAccess] = useState<PremiumAccessWire | null>(null);
   const [premiumPending, setPremiumPending] = useState(false);
@@ -208,8 +210,12 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     setProviderAccess(null);
     setProviderAccessError(null);
     if (mode === "desktop" && typeof client.getProviderAccess === "function") {
-      void client.getProviderAccess().then((result) => {
+      void (async () => {
+        if (typeof client.getChatControls === "function" && hasManagedAskControls(await client.getChatControls())) return null;
+        return client.getProviderAccess();
+      })().then((result) => {
         if (connection.current !== active || providerAccessEpoch.current !== accessEpoch) return;
+        if (!result) return;
         setProviderAccess(result);
         setProviderAccessPending(result.outcome === "pending");
       }).catch(() => {
@@ -408,12 +414,6 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
   ) => {
     setChatLoading(true);
     try {
-      if (mode === "desktop" && typeof active.client.getProviderAccess === "function") {
-        const accessEpoch = providerAccessEpoch.current;
-        void active.client.getProviderAccess().then((result) => {
-          if (isCurrentConnection(active) && providerAccessEpoch.current === accessEpoch) { setProviderAccess(result); setProviderAccessPending(result.outcome === "pending"); setProviderAccessError(null); }
-        }).catch(() => { if (isCurrentConnection(active)) setProviderAccessError("Provider access could not be checked. Reopen the meeting to try again."); });
-      }
       const threadPromise = active.client.getMeetingChat(meetingId);
       const controlsCapability = typeof active.client.getChatControls === "function";
       const controlsPromise = controlsCapability
@@ -421,6 +421,12 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         : active.client.listChatProviders().then((providerResult) => legacyChatControls(providerResult.providers, null));
       const [controls, thread] = await Promise.all([controlsPromise, threadPromise]);
       if (!isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
+      if (mode === "desktop" && !hasManagedAskControls(controls) && typeof active.client.getProviderAccess === "function") {
+        const accessEpoch = providerAccessEpoch.current;
+        void active.client.getProviderAccess().then((result) => {
+          if (isCurrentConnection(active) && providerAccessEpoch.current === accessEpoch) { setProviderAccess(result); setProviderAccessPending(result.outcome === "pending"); setProviderAccessError(null); }
+        }).catch(() => { if (isCurrentConnection(active)) setProviderAccessError("Provider access could not be checked. Reopen the meeting to try again."); });
+      }
       setChatControls(controls);
       if (chatSelectionRequest.current === controlsSelectionRequest) {
         setChatSelection(controlsCapability
@@ -591,7 +597,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
 
   useEffect(() => {
     const active = connection.current;
-    if (!providerAccessPending || !active) return;
+    if (!providerAccessPending || !active || hasManagedAskControls(chatControls)) return;
     const epoch = providerAccessEpoch.current;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -610,7 +616,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     };
     timer = setTimeout(() => void poll(), 1_000);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [providerAccessPending, providerAccessConnection, isCurrentConnection]);
+  }, [providerAccessPending, providerAccessConnection, isCurrentConnection, chatControls]);
 
   const requestProviderAccess = useCallback(async (provider: ProviderAccessId) => {
     const active = connection.current;
@@ -638,13 +644,16 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     if (!active || !meetingId || !chatSelection) {
       throw new Error("Select an available chat model first");
     }
+    const version = selectionVersion.current;
+    const consent = await askConsent.confirm();
+    if (!consent || !isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) throw new Error("Ask cancelled; nothing was sent.");
     setChatLoading(true);
     setChatError(null);
     try {
       const thread = typeof active.client.askMeetingQuestionWithSelection === "function"
-        ? await active.client.askMeetingQuestionWithSelection({ meetingId, question, selection: chatSelection })
+        ? await active.client.askMeetingQuestionWithSelection({ meetingId, question, selection: chatSelection, consent })
         : await active.client.askMeetingQuestion({
-            meetingId, question, provider: chatSelection.provider, model: chatSelection.model,
+            meetingId, question, provider: chatSelection.provider, model: chatSelection.model, consent,
           });
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) setChatThread(thread);
     } catch (reason) {
@@ -655,19 +664,22 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     } finally {
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) setChatLoading(false);
     }
-  }, [chatSelection, isCurrentConnection]);
+  }, [chatSelection, isCurrentConnection, askConsent.confirm]);
 
   const retryQuestion = useCallback(async () => {
     const active = connection.current;
     const meetingId = selectedMeetingIdRef.current;
     if (!active || !meetingId || !chatSelection) return;
+    const version = selectionVersion.current;
+    const consent = await askConsent.confirm();
+    if (!consent || !isCurrentConnection(active) || selectionVersion.current !== version || selectedMeetingIdRef.current !== meetingId) return;
     setChatLoading(true);
     setChatError(null);
     try {
       const thread = typeof active.client.retryMeetingQuestionWithSelection === "function"
-        ? await active.client.retryMeetingQuestionWithSelection({ meetingId, selection: chatSelection })
+        ? await active.client.retryMeetingQuestionWithSelection({ meetingId, selection: chatSelection, consent })
         : await active.client.retryMeetingQuestion({
-            meetingId, provider: chatSelection.provider, model: chatSelection.model,
+            meetingId, provider: chatSelection.provider, model: chatSelection.model, consent,
           });
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) setChatThread(thread);
     } catch (reason) {
@@ -677,7 +689,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
     } finally {
       if (isCurrentConnection(active) && selectedMeetingIdRef.current === meetingId) setChatLoading(false);
     }
-  }, [chatSelection, isCurrentConnection]);
+  }, [chatSelection, isCurrentConnection, askConsent.confirm]);
 
   useEffect(() => {
     const active = connection.current;
@@ -1248,7 +1260,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         chatModel={chatSelection?.model ?? null}
         chatThread={chatThread}
         chatLoading={chatLoading}
-        providerAccessNotice={mode === "desktop" ? <ProviderFolderAccess
+        providerAccessNotice={mode === "desktop" && !hasManagedAskControls(chatControls) ? <ProviderFolderAccess
           result={providerAccess} provider={chatSelection?.provider ?? null} pending={providerAccessPending}
           error={providerAccessError} onRequest={requestProviderAccess}
           runtimeProviderUnavailable={(chatControls?.catalogError === null && chatControls.catalog.providers.some((entry) => entry.id === "codex" && entry.status === "unavailable")) ?? false} /> : undefined}
@@ -1277,6 +1289,7 @@ export function AppContent({ mode }: { mode: "desktop" | "companion" }) {
         onCancelDeleteMeeting={cancelDeleteMeeting}
         onConfirmDeleteMeeting={confirmDeleteMeeting}
       />
+      {askConsent.dialog}
     </SafeAreaView>
   );
 }

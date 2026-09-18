@@ -493,6 +493,7 @@ const ChatQuestionInputSchema = z.object({
   meetingId: z.string().trim().min(1),
   provider: z.string().trim().min(1),
   model: z.string().trim().min(1),
+  consent: z.boolean().optional(),
 }).strict();
 
 export const MeetingChatAskRpc = defineRpc({
@@ -510,6 +511,7 @@ export const MeetingChatRetryRpc = defineRpc({
 export const MeetingChatAskV1Rpc = defineRpc({
   name: "meeting.chat.ask.v1",
   input: z.object({
+    consent: z.boolean().optional(),
     meetingId: z.string().trim().min(1),
     question: z.string().trim().min(1).max(4_000),
     selection: ChatSelectionWireSchema,
@@ -520,6 +522,7 @@ export const MeetingChatAskV1Rpc = defineRpc({
 export const MeetingChatRetryV1Rpc = defineRpc({
   name: "meeting.chat.retry.v1",
   input: z.object({
+    consent: z.boolean().optional(),
     meetingId: z.string().trim().min(1),
     attemptId: z.string().trim().min(1).optional(),
     selection: ChatSelectionWireSchema,

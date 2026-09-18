@@ -1,4 +1,5 @@
 import type { PluginContext } from "@paseo/plugin";
+import { requireManagedAskConsent } from "@meetless/meeting-contracts/managed-ask";
 import {
   MeetingProviderAccessStatusRpc,
   MeetingProviderAccessRequestRpc,
@@ -164,21 +165,25 @@ export default function contribute(plugin: PluginContext) {
     return { thread: await (await server.getMeetingChatService(paseo)).get(meetingId) };
   });
   plugin.handle(MeetingChatAskRpc, async (input, { paseo }) => {
+    requireManagedAskConsent(input.consent);
     const server = await import("./src/server.js");
     chatCleanup = server.stopMeetingChatService;
     return (await server.getMeetingChatService(paseo)).ask(input);
   });
   plugin.handle(MeetingChatRetryRpc, async (input, { paseo }) => {
+    requireManagedAskConsent(input.consent);
     const server = await import("./src/server.js");
     chatCleanup = server.stopMeetingChatService;
     return (await server.getMeetingChatService(paseo)).retry(input);
   });
   plugin.handle(MeetingChatAskV1Rpc, async (input, { paseo }) => {
+    requireManagedAskConsent(input.consent);
     const server = await import("./src/server.js");
     chatCleanup = server.stopMeetingChatService;
     return (await server.getMeetingChatService(paseo)).askWithSelection(input);
   });
   plugin.handle(MeetingChatRetryV1Rpc, async (input, { paseo }) => {
+    requireManagedAskConsent(input.consent);
     const server = await import("./src/server.js");
     chatCleanup = server.stopMeetingChatService;
     return (await server.getMeetingChatService(paseo)).retryWithSelection(input);

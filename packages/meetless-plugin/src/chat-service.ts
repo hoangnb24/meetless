@@ -20,6 +20,8 @@ import type {
 import type { ChatSelection, MeetingChatThread, TranscriptState } from "@meetless/meeting-domain";
 import type { MeetingStore } from "@meetless/meeting-store";
 import { z } from "zod";
+import { requireManagedAskConsent } from "@meetless/meeting-contracts/managed-ask";
+import { MANAGED_ASK_HOST_FAILURE } from "./managed-ask.js";
 import { MeetingLifecycleCoordinator, type MeetingLifecycleLease } from "./meeting-lifecycle-coordinator.js";
 
 const AgentAnswerSchema = z.discriminatedUnion("outcome", [
@@ -59,6 +61,8 @@ export interface ChatProviderOption {
 }
 
 export interface ChatExecutionInput {
+  attemptId?: string;
+  consent?: boolean;
   provider: string;
   model: string;
   selection?: ChatSelection;
@@ -68,6 +72,7 @@ export interface ChatExecutionInput {
 }
 
 export interface MeetingChatAgentPort {
+  readonly requiresExplicitConsent?: boolean;
   listProviders(): Promise<ChatProviderOption[]>;
   execute(input: ChatExecutionInput): Promise<AgentAnswer>;
   close(): Promise<void>;
@@ -76,7 +81,7 @@ export interface MeetingChatAgentPort {
   validateSelection?(selection: ChatSelection): Promise<ChatSelection>;
 }
 
-/** Ask is a free local-evidence capability; Premium admission belongs only to the managed transcription adapter. */
+/** Local history/lifecycle owner. Managed admission belongs to the backend adapter. */
 export class MeetingChatService {
   private initialized: Promise<void> | null = null;
   private readonly active = new Set<Promise<void>>();
@@ -138,17 +143,20 @@ export class MeetingChatService {
   }
 
   async ask(input: {
+    consent?: boolean;
     meetingId: string;
     question: string;
     provider: string;
     model: string;
   }): Promise<MeetingChatThreadWire> {
+    if (this.agent.requiresExplicitConsent) requireManagedAskConsent(input.consent);
     const lease = this.lifecycle.tryAcquireWork(input.meetingId, "ask");
     if (!lease) throw new Error("Meeting deletion is in progress");
     try {
       await this.initialize();
+      await this.validateLegacySelection(input);
       const thread = await this.store.startChatQuestion(input);
-      this.startExecution(input.meetingId, thread, lease, false);
+      this.startExecution(input.meetingId, thread, lease, false, input.consent);
       return toThreadWire(thread);
     } catch (error) {
       lease.release();
@@ -157,16 +165,19 @@ export class MeetingChatService {
   }
 
   async retry(input: {
+    consent?: boolean;
     meetingId: string;
     provider: string;
     model: string;
   }): Promise<MeetingChatThreadWire> {
+    if (this.agent.requiresExplicitConsent) requireManagedAskConsent(input.consent);
     const lease = this.lifecycle.tryAcquireWork(input.meetingId, "ask");
     if (!lease) throw new Error("Meeting deletion is in progress");
     try {
       await this.initialize();
+      await this.validateLegacySelection(input);
       const thread = await this.store.retryChatTurn(input.meetingId, input);
-      this.startExecution(input.meetingId, thread, lease, false);
+      this.startExecution(input.meetingId, thread, lease, false, input.consent);
       return toThreadWire(thread);
     } catch (error) {
       lease.release();
@@ -175,10 +186,12 @@ export class MeetingChatService {
   }
 
   async askWithSelection(input: {
+    consent?: boolean;
     meetingId: string;
     question: string;
     selection: ChatSelection;
   }): Promise<MeetingChatThreadWire> {
+    if (this.agent.requiresExplicitConsent) requireManagedAskConsent(input.consent);
     const lease = this.lifecycle.tryAcquireWork(input.meetingId, "ask");
     if (!lease) throw new Error("Meeting deletion is in progress");
     try {
@@ -190,7 +203,7 @@ export class MeetingChatService {
         question: input.question,
         selection,
       });
-      this.startExecution(input.meetingId, thread, lease, true);
+      this.startExecution(input.meetingId, thread, lease, true, input.consent);
       return toThreadWire(thread);
     } catch (error) {
       lease.release();
@@ -199,10 +212,12 @@ export class MeetingChatService {
   }
 
   async retryWithSelection(input: {
+    consent?: boolean;
     meetingId: string;
     attemptId?: string;
     selection: ChatSelection;
   }): Promise<MeetingChatThreadWire> {
+    if (this.agent.requiresExplicitConsent) requireManagedAskConsent(input.consent);
     const lease = this.lifecycle.tryAcquireWork(input.meetingId, "ask");
     if (!lease) throw new Error("Meeting deletion is in progress");
     try {
@@ -210,11 +225,17 @@ export class MeetingChatService {
       if (!this.agent.validateSelection) throw new Error("This host does not support Meetless chat selection; update the host.");
       const selection = await this.agent.validateSelection(input.selection);
       const thread = await this.store.retryChatTurnWithSelection(input.meetingId, { attemptId: input.attemptId, selection });
-      this.startExecution(input.meetingId, thread, lease, true);
+      this.startExecution(input.meetingId, thread, lease, true, input.consent);
       return toThreadWire(thread);
     } catch (error) {
       lease.release();
       throw error;
+    }
+  }
+
+  private async validateLegacySelection(input: { provider: string; model: string }): Promise<void> {
+    if (this.agent.requiresExplicitConsent && this.agent.validateSelection) {
+      await this.agent.validateSelection({ ...input, modeId: null, thinkingOptionId: null, featureValues: {} });
     }
   }
 
@@ -232,11 +253,12 @@ export class MeetingChatService {
     thread: MeetingChatThread,
     lease: MeetingLifecycleLease,
     completeSelection: boolean,
+    consent?: boolean,
   ): void {
     const attempt = thread.attempts.find((candidate) => candidate.id === thread.activeAttemptId);
     if (!attempt) throw new Error("Running chat thread has no active attempt");
     this.activeMeetings.add(meetingId);
-    const work = this.execute(meetingId, thread, attempt.id, completeSelection).finally(() => {
+    const work = this.execute(meetingId, thread, attempt.id, completeSelection, consent).finally(() => {
       this.active.delete(work);
       this.activeMeetings.delete(meetingId);
       lease.release();
@@ -249,6 +271,7 @@ export class MeetingChatService {
     thread: MeetingChatThread,
     attemptId: string,
     completeSelection: boolean,
+    consent?: boolean,
   ): Promise<void> {
     try {
       const transcript = await this.store.getTranscriptForMeeting(meetingId);
@@ -257,6 +280,8 @@ export class MeetingChatService {
       }
       const attempt = thread.attempts.find((candidate) => candidate.id === attemptId)!;
       const answer = await this.agent.execute({
+        attemptId,
+        consent,
         provider: attempt.provider,
         model: attempt.model,
         ...(completeSelection ? { selection: attempt } : {}),
@@ -292,7 +317,7 @@ export class MeetingChatService {
         await this.store.failChatTurn(
           meetingId,
           attemptId,
-          CHAT_OPERATIONAL_FAILURE_MESSAGE,
+          this.agent.requiresExplicitConsent ? MANAGED_ASK_HOST_FAILURE : CHAT_OPERATIONAL_FAILURE_MESSAGE,
         );
       }
     }

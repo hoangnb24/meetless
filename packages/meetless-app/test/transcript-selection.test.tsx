@@ -11,7 +11,7 @@ const { connectMeetlessClient, playCitationAudio, recordingState } = vi.hoisted(
 
 vi.mock("@meetless/client", () => ({ connectMeetlessClient }));
 vi.mock("react-native", () => ({
-  Platform: { OS: "web" }, SafeAreaView: "SafeAreaView",
+  Platform: { OS: "web" }, SafeAreaView: "SafeAreaView", View: "View", Text: "Text", Pressable: "Pressable",
   StyleSheet: { create: <T,>(styles: T) => styles }, useWindowDimensions: () => ({ width: 1_000 }),
 }));
 vi.mock("expo-status-bar", () => ({ StatusBar: () => null }));
@@ -28,6 +28,15 @@ vi.mock("../src/recording-provider.js", () => ({
 import { AppContent, loadCompanionRestoration, retainPremiumCatalog, selectionForChatControls } from "../src/App.js";
 
 const TRANSCRIPTION_FAILURE_MESSAGE = "Transcription could not be completed. Your saved audio remains safe. Retry transcription when you are ready.";
+
+async function confirmAsk(renderer: ReactTestRenderer, question: string): Promise<void> {
+  let pending!: Promise<void>;
+  await act(async () => { pending = renderer.root.findByType("MeetingListSurface").props.onAskQuestion(question); });
+  await act(async () => {
+    renderer.root.findByProps({ accessibilityLabel: "Confirm and send to OpenAI" }).props.onPress();
+    await pending;
+  });
+}
 
 test("does not expose a stale Ask selection after host controls report it unavailable", () => {
   const selection = {
@@ -978,16 +987,16 @@ describe("transcript meeting selection ordering", () => {
     await act(async () => { await surface().props.onOpenTranscript("m-1"); });
     expect(surface().props.chatSelection).toEqual(selection);
     expect(surface().props.chatFeatures?.selection).toEqual(selection);
-    await act(async () => { await surface().props.onAskQuestion("What did we decide?"); });
+    await confirmAsk(renderer!, "What did we decide?");
     expect(askMeetingQuestionWithSelection).toHaveBeenCalledWith({
-      meetingId: "m-1", question: "What did we decide?", selection,
+      meetingId: "m-1", question: "What did we decide?", selection, consent: true,
     });
 
     await act(async () => { await surface().props.onOpenTranscript("m-2"); });
     expect(surface().props.chatSelection).toEqual(selection);
-    await act(async () => { await surface().props.onAskQuestion("What did we decide next?"); });
+    await confirmAsk(renderer!, "What did we decide next?");
     expect(askMeetingQuestionWithSelection).toHaveBeenLastCalledWith({
-      meetingId: "m-2", question: "What did we decide next?", selection,
+      meetingId: "m-2", question: "What did we decide next?", selection, consent: true,
     });
   });
 
@@ -1040,9 +1049,9 @@ describe("transcript meeting selection ordering", () => {
     expect(applyChatSelection).toHaveBeenCalledWith(selection);
     expect(surface().props.chatSelection).toEqual(selection);
 
-    await act(async () => { await surface().props.onAskQuestion("What changed?"); });
+    await confirmAsk(renderer!, "What changed?");
     expect(askMeetingQuestionWithSelection).toHaveBeenCalledWith({
-      meetingId: "m-1", question: "What changed?", selection,
+      meetingId: "m-1", question: "What changed?", selection, consent: true,
     });
   });
 
@@ -1086,18 +1095,16 @@ describe("transcript meeting selection ordering", () => {
 
     await act(async () => { await surface().props.onOpenTranscript("m-1"); });
     let askError: unknown;
-    await act(async () => {
-      try {
-        await surface().props.onAskQuestion("Transcribe this meeting");
-      } catch (reason) {
-        askError = reason;
-      }
-    });
+    try {
+      await confirmAsk(renderer!, "Transcribe this meeting");
+    } catch (reason) {
+      askError = reason;
+    }
     await act(async () => { await Promise.resolve(); });
 
     expect(askError).toEqual(new Error("Premium access required"));
     expect(askMeetingQuestionWithSelection).toHaveBeenCalledWith({
-      meetingId: "m-1", question: "Transcribe this meeting", selection,
+      meetingId: "m-1", question: "Transcribe this meeting", selection, consent: true,
     });
     expect(getPremiumAccess).toHaveBeenCalledOnce();
     expect(surface().props.premiumAccess).toEqual(activePremium);

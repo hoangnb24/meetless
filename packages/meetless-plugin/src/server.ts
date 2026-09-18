@@ -25,9 +25,8 @@ import { UiTestIdentitySchema, type UiTestIdentity } from "./readiness-protocol.
 import type { PluginHandlerContext } from "@paseo/plugin";
 import {
   MeetingChatService,
-  PaseoMeetingChatAgentPort,
-  resolveChatExecutionRoot,
 } from "./chat-service.js";
+import { ManagedMeetingChatAgentPort, dispatchManagedAsk } from "./managed-ask.js";
 import { MeetingLifecycleCoordinator, type MeetingWorkKind } from "./meeting-lifecycle-coordinator.js";
 import { listRecordingOwnedStagePaths } from "./finalizer.js";
 import {
@@ -148,11 +147,11 @@ export function getMeetingStore(): MeetingStore {
 }
 
 export async function getMeetingChatService(
-  paseo: PluginHandlerContext["paseo"],
+  _paseo: PluginHandlerContext["paseo"],
 ): Promise<MeetingChatService> {
   chatService ??= new MeetingChatService(
     getMeetingStore(),
-    new PaseoMeetingChatAgentPort(paseo, resolveChatExecutionRoot()),
+    new ManagedMeetingChatAgentPort((request, signal) => dispatchManagedAsk(getManagedBackendRouter(), request, signal)),
     meetingLifecycle,
   );
   await chatService.initialize();

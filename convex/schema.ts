@@ -22,6 +22,16 @@ const providerResult = v.object({
 });
 
 export default defineSchema({
+  /** E2 observation, not billing settlement. No meeting inputs, outputs, or secrets. */
+  managedAskUsage: defineTable({
+    accountId: v.string(), deviceId: v.string(), attemptId: v.string(),
+    model: v.literal("gpt-5.6-luna"), observedAt: v.number(), latencyMs: v.number(),
+    status: v.union(v.literal("supported"), v.literal("insufficient_evidence"), v.literal("invalid_answer"), v.literal("provider_error"), v.literal("unknown")),
+    usage: v.object({
+      inputTokens: v.union(v.number(), v.null()), outputTokens: v.union(v.number(), v.null()), totalTokens: v.union(v.number(), v.null()),
+      cachedInputTokens: v.union(v.number(), v.null()), cacheWriteInputTokens: v.union(v.number(), v.null()), reasoningTokens: v.union(v.number(), v.null()),
+    }),
+  }).index("by_attempt", ["accountId", "attemptId"]),
   /** Only a future verified-lineage adapter may create production principals. */
   managedPrincipals: defineTable({
     tokenIdentifier: v.string(),
