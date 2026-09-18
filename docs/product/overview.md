@@ -1,5 +1,10 @@
 # Meetless V1
 
+> **Current direction — 2026-09-18:** [Desktop Managed AI](desktop-managed-ai.md)
+> supersedes the existing-agent and companion scope below for the Mac pivot.
+> E1 policy is approved; E2 has bounded authority under ADR0008. The V1 text and
+> observations below are retained history, not current provider requirements.
+
 > **Current status — 2026-09-16:** V1 and Mac App Store development are paused
 > pending the owner's final decision to shut down or pivot. This document keeps
 > the accepted product intent and the bounded behavior already validated; it is

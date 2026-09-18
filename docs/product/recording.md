@@ -1,5 +1,10 @@
 # Recording
 
+> **Current direction — 2026-09-18:** [Desktop Managed AI](desktop-managed-ai.md)
+> governs access and privacy for the pivot; future BYOK routing referenced below
+> is not a delivery requirement. Recording/source retention and explicit
+> Transcribe behavior remain required. Bounded E2 authority is recorded in ADR0008.
+
 ## Start And Control
 
 A persistent desktop action starts a meeting with microphone and system audio

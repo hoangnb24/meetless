@@ -1,5 +1,10 @@
 # V1 Platform Matrix
 
+> **Current direction — 2026-09-18:** [Desktop Managed AI](desktop-managed-ai.md)
+> limits the pivot to Mac; mobile is later and web/companion delivery is outside
+> this phase. The matrix below is historical V1 scope/evidence, not a new support
+> claim. No additional platform or pivot runtime has been verified.
+
 > **Current status — 2026-09-16:** Current V1 and Mac App Store work is paused
 > pending a shutdown-or-pivot decision. The matrix and verification notes below
 > preserve accepted scope and observed evidence; they do not authorize another

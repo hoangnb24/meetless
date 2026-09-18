@@ -1,5 +1,11 @@
 # 0005 Distribute Meetless Through The Mac App Store With RevenueCat
 
+> **2026-09-18 amendment:** [ADR0008](0008-desktop-managed-ai-pivot.md) and the
+> [current product contract](../product/desktop-managed-ai.md) supersede free new
+> Ask, future BYOK precedence, provider reuse, and V1 offer defaults for the
+> desktop pivot. Preserve non-conflicting safety constraints and historical
+> observations. Bounded E2 execution authority is recorded in ADR0008.
+
 Date: 2026-08-30; amended 2026-09-13
 
 > **Current status — 2026-09-16:** This App Store/RevenueCat release decision

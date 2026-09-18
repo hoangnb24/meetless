@@ -1,5 +1,12 @@
 # Meetless Premium
 
+> **Current direction — 2026-09-18:** [Desktop Managed AI](desktop-managed-ai.md)
+> governs this pivot: subscription covers Transcribe and new Ask requests;
+> recording and reading/playing existing evidence stay free. Free new Ask,
+> BYOK precedence, and the V1 offer/trial/quota values below are historical, not
+> pivot requirements or defaults. E3 must approve the new offer. Non-conflicting
+> credential, billing-safety, and cleanup constraints remain in force.
+
 ## Product boundary
 
 Meetless keeps the trustworthy meeting evidence loop useful without payment.

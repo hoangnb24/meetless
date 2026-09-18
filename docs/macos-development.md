@@ -1,11 +1,9 @@
 # Local MAS Development
 
-> **Suspended — 2026-09-16:** V1/App Store development is stopped pending the
-> owner's shutdown-or-pivot decision under
-> [ADR0007](decisions/0007-stop-v1-pending-product-direction.md). Commands below
-> are retained as historical operating guidance, not authorization to build,
-> install, reset data or resume testing. A new owner decision is required before
-> resuming this workflow; all existing data-preservation rules still apply.
+> **Bounded resumption — 2026-09-18:** [ADR0008](decisions/0008-desktop-managed-ai-pivot.md)
+> now authorizes build/install for E2 managed Ask. Use the preserving update route;
+> no runtime/data reset is authorized. V1 provider-reuse work remains stopped.
+> All existing data-preservation rules below still apply.
 
 The existing simple development loop is retained below. It governed local development;
 release/App Store validation remains separate under
@@ -76,7 +74,7 @@ the old coordinator, replay a handoff, edit a journal, or design a new transacti
 schema. Preserve the data and report the exact blocker. Disposition of retained
 state requires its own bounded authorization; this guide grants no cleanup.
 
-Check [the active plan](plans/active/v1-paseo-foundation.md) for any current
+Check [the active pivot plan](plans/active/desktop-managed-ai-pivot.md) for any current
 blocker before operating the app. The completed issue #8 ad hoc disposition is
 historical evidence, not a reusable reset or recovery command.
 

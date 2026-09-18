@@ -1,5 +1,11 @@
 # Knowledge And Citations
 
+> **Current direction — 2026-09-18:** [Desktop Managed AI](desktop-managed-ai.md)
+> replaces existing-provider selection/reuse below with subscription-managed
+> Ask for this phase. Meeting-scoped evidence, segment-ID citations, and durable
+> history remain required. Provider attempts below are historical, not a task to
+> resume. Current bounded E2 execution authority is recorded in ADR0008.
+
 > **Current status — 2026-09-16:** The meeting evidence and existing-provider
 > experience below remain accepted product intent, while V1/App Store
 > development is paused pending a shutdown-or-pivot decision. The Apple

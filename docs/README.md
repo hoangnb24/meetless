@@ -1,8 +1,13 @@
 # Documentation Map
 
-Current V1/App Store development is **stopped as of 2026-09-16**, pending an
-owner decision on shutdown or pivot. Start with
-[ADR0007](decisions/0007-stop-v1-pending-product-direction.md) and the
+Current V1/App Store implementation remains **stopped as of 2026-09-16**.
+On 2026-09-18, the owner approved E1 scope and policy in the
+[desktop managed-AI pivot](plans/active/desktop-managed-ai-pivot.md).
+[ADR0008](decisions/0008-desktop-managed-ai-pivot.md) records E1 policy/documentation
+and subsequent bounded E2 code/build/install/OpenAI/TestFlight authority;
+Human selected `gpt-5.6-luna`, accepted disclosed OpenAI retention, and authorized
+Sandbox deploy/config. Production remains unchanged. Start with
+[the current product contract](product/desktop-managed-ai.md), ADR0008, and the
 [stop record](plans/active/v1-paseo-foundation.md). Retained development guides
 and historical plans are not authorization to resume.
 

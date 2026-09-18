@@ -1,5 +1,11 @@
 # Meetless Trustworthy Meeting Experience
 
+> **Current direction — 2026-09-18:** [Desktop Managed AI](desktop-managed-ai.md)
+> governs the pivot. Coding-agent/provider selection and companion flows below
+> are historical; the new Mac flow needs neither agent setup nor an API key.
+> Retain non-conflicting evidence and recovery UX. E6 will reconcile the detailed
+> screens; descriptions below do not prove a working Apple-distributed Ask.
+
 ## 1. Purpose
 
 Meetless needs one clear path from recording a call to using its evidence.

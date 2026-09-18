@@ -1,5 +1,10 @@
 # 0007 Pause V1 And App Store Development Pending Product Direction
 
+> **2026-09-18 amendment:** [ADR0008](0008-desktop-managed-ai-pivot.md) settles
+> direction in favor of desktop managed AI and supersedes provider-reuse intent
+> for that phase. Its later amendment grants bounded E2 execution authority;
+> the pause outside E2 and historical failure evidence below remain in effect.
+
 Date: 2026-09-16
 
 ## Status
